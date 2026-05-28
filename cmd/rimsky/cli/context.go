@@ -22,7 +22,7 @@ func RunCtxList(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx list", flag.ContinueOnError)
 	var common CommonFlags
 	RegisterCommonFlags(fs, &common)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	if err := common.ResolveFormat(); err != nil {
@@ -59,7 +59,7 @@ func RunCtxList(args []string, configPath string) int {
 // RunCtxUse implements `ctx use`.
 func RunCtxUse(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx use", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
@@ -94,7 +94,7 @@ func RunCtxAdd(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx add", flag.ContinueOnError)
 	var endpoint string
 	fs.StringVar(&endpoint, "endpoint", "", "API endpoint for the new context")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
@@ -137,7 +137,7 @@ func RunCtxAdd(args []string, configPath string) int {
 // RunCtxRm implements `ctx rm`.
 func RunCtxRm(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx rm", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
@@ -170,7 +170,7 @@ func RunCtxRm(args []string, configPath string) int {
 // RunCtxCurrent implements `ctx current`.
 func RunCtxCurrent(args []string, configPath string) int {
 	fs := flag.NewFlagSet("ctx current", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	cfg, err := LoadConfig(configPath)

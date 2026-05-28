@@ -33,11 +33,12 @@ type fakeProxy struct {
 
 	addr string
 
-	mu          sync.Mutex
-	stream      genv1.HostAgent_ConnectServer
-	register    *genv1.Register
-	connected   chan struct{}
-	clientFrame chan *genv1.ClientFrame // every non-Register frame the agent sent
+	mu            sync.Mutex
+	stream        genv1.HostAgent_ConnectServer
+	register      *genv1.Register
+	connected     chan struct{}
+	connectedOnce sync.Once               // guards the single close of connected across reconnects
+	clientFrame   chan *genv1.ClientFrame // every non-Register frame the agent sent
 }
 
 // startFakeProxy binds a real gRPC server on 127.0.0.1:0 and returns the proxy
@@ -76,7 +77,9 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 	fp.stream = stream
 	fp.register = reg
 	fp.mu.Unlock()
-	close(fp.connected)
+	// Connect may run more than once (the host agent reconnects after a
+	// backoff); close the signal channel exactly once.
+	fp.connectedOnce.Do(func() { close(fp.connected) })
 
 	if err := stream.Send(&genv1.ServerFrame{Body: &genv1.ServerFrame_RegisterAck{RegisterAck: &genv1.RegisterAck{
 		ProxyVersion: "test",

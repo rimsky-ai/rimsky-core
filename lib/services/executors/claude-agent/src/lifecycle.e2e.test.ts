@@ -251,7 +251,6 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
     // Build a fake CLI runner whose handle "spawns," then before it
     // exits we drive the schema-correction loop. Use the dispatch's
     // internal MCP server to look up the registered token.
-    let dispatchMcp: CallbackServerHandle | null = null;
     const fakeCli: CliRunner = {
       spawn: async (_req: CliSpawnRequest) => {
         return makeFakeHandle({
@@ -330,10 +329,9 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
     expect(winner).toBe("timeout");
     expect(registered).toBe(true);
 
-    // Suppress unused variable lints; these are reserved for a deeper
+    // Suppress unused variable lint; `onComplete` is reserved for a deeper
     // version of the test that captures the per-dispatch onComplete.
     void onComplete;
-    void dispatchMcp;
   });
 });
 

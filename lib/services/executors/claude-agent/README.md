@@ -73,8 +73,8 @@ will error.
 
 | Variable                         | Default       | Purpose                                                             |
 | -------------------------------- | ------------- | ------------------------------------------------------------------- |
-| `RIMSKY_EXECUTOR_PORT_GRPC`      | `7071`        | gRPC bind port                                                      |
-| `RIMSKY_EXECUTOR_PORT_HTTP`      | `7072`        | HTTP bridge bind port                                                |
+| `RIMSKY_EXECUTOR_PORT_GRPC`      | `9090`        | gRPC bind port                                                      |
+| `RIMSKY_EXECUTOR_PORT_HTTP`      | `9190`        | HTTP bridge bind port                                                |
 | `RIMSKY_EXECUTOR_HOST`           | `0.0.0.0`     | bind host                                                           |
 | `RIMSKY_EXECUTOR_STUB_MODE`      | unset         | `1` to enable stub mode                                             |
 | `RIMSKY_EXECUTOR_CLAUDE_BINARY`  | `claude`      | path to Claude CLI                                                   |

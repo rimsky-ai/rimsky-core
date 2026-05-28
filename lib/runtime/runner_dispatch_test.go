@@ -418,9 +418,9 @@ func TestResolveAttributes_ExecutorSchemaUnavailable(t *testing.T) {
 		errs := node.CheckEffectiveAttributesSchema(
 			schema,
 			makeAcq().NodeDef.Attributes.Schema,
+			execSchema,
 			extractReadOnlyPropsLocal(execSchema),
 			visible,
-			visible && node.IsPermissiveExecutorSchema(execSchema),
 		)
 		if len(errs) != 0 {
 			t.Fatalf("permissive schema: unified-surface check should bypass readOnly leg; got errors: %+v", errs)

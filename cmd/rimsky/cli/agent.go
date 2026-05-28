@@ -56,7 +56,7 @@ func runAgentStart(args []string) int {
 	allowPaths := fs.String("allow-paths", "", "comma-separated glob patterns for binary path validation")
 	listen := fs.String("listen", "", "agent local listener addr (default 127.0.0.1:0)")
 	foreground := fs.Bool("foreground", false, "run in foreground (don't daemonize)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
@@ -152,15 +153,6 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	if len(entry.Routes) == 0 {
 		return nil, &Error{Code: CodeInternalError, Message: "tool has no route: " + name}
 	}
-	// Prefer the canonical (non-admin) route when an action is
-	// mapped to multiple routes. Admin variants typically require
-	// additional path parameters (e.g. `node:invalidate` exposes
-	// both `/nodes/{id}/invalidate` and
-	// `/admin/instances/{instance}/nodes/{node_id}/invalidate`); the
-	// MCP-canonical route is the shorter one that takes the same
-	// parameters the tool name implies.
-	route := pickCanonicalRoute(entry.Routes)
-
 	parsedArgs := map[string]json.RawMessage{}
 	if len(args) > 0 {
 		// `null`-only args are tolerated as empty.
@@ -171,12 +163,29 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		}
 	}
 
+	// Select the canonical route when an action maps to several. The
+	// choice is tool-aware (see pickCanonicalRoute): it skips /admin/
+	// variants, prefers the route whose path placeholders the args
+	// satisfy, and breaks remaining ties by the tool's `_list`/`_get`
+	// suffix — so e.g. `node_list` dispatches to `/instances/{idOrKey}/
+	// nodes` and `node_get` to `/nodes/{id}` rather than both landing on
+	// the shortest path.
+	route := pickCanonicalRoute(name, entry.Routes, parsedArgs)
+
 	path, remaining, err := substitutePathParams(route.Path, parsedArgs)
 	if err != nil {
 		return nil, &Error{Code: CodeInvalidParams, Message: err.Error()}
 	}
 
-	var body io.Reader
+	// Default to http.NoBody (a non-nil no-op ReadCloser) rather than a
+	// nil io.Reader. http.NewRequestWithContext leaves req.Body nil when
+	// passed a nil body, and chi's ServeHTTP does not populate it — so any
+	// handler that touches req.Body (defer req.Body.Close(), json.Decode,
+	// io.ReadAll) nil-dereferences for GET/DELETE tools and body-less POST
+	// tools dispatched through this skin. http.NoBody makes those reads and
+	// the deferred Close behave like a real empty-body request.
+	var body io.Reader = http.NoBody
+	hasBody := false
 	switch route.Method {
 	case "GET", "DELETE":
 		// Query params: each remaining arg becomes a query param.
@@ -199,6 +208,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 				return nil, &Error{Code: CodeInvalidParams, Message: "marshal body: " + err.Error()}
 			}
 			body = bytes.NewReader(bs)
+			hasBody = true
 		}
 	}
 
@@ -210,8 +220,16 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	if bearer := r.Header.Get("Authorization"); bearer != "" {
 		inner.Header.Set("Authorization", bearer)
 	}
-	if body != nil {
+	if hasBody {
 		inner.Header.Set("Content-Type", "application/json")
+	}
+	// Write tools that emit a message (POST /instances/{id}/messages)
+	// require a universal Idempotency-Key header. The skin synthesizes a
+	// fresh key per tool call — each MCP invocation is a distinct intent,
+	// not a retry — so the dispatch isn't rejected by the idempotency gate.
+	// Harmless on routes that don't consult it.
+	if route.Method == http.MethodPost || route.Method == http.MethodPut {
+		inner.Header.Set("Idempotency-Key", "mcp-"+uuid.NewString())
 	}
 	// Carry the MCP protocol-skin tag so audit records mark the
 	// origin correctly. The setter is exposed as a package-level
@@ -310,28 +328,117 @@ func url4QueryFromRemaining(m map[string]json.RawMessage) string {
 	return values.Encode()
 }
 
-// pickCanonicalRoute selects the MCP-canonical route from the
-// registry entry's route list. The heuristic is "shortest path
-// without an `/admin/` prefix"; admin variants are operator HTTP-
-// only and typically require additional path parameters the MCP
-// tool name doesn't imply.
-func pickCanonicalRoute(routes []RegistryRoute) RegistryRoute {
-	pick := routes[0]
+// pickCanonicalRoute selects the route an MCP tool dispatches to when its
+// action maps to several HTTP routes. The selection is tool-aware:
+//
+//  1. /admin/ routes are skipped when a non-admin alternative exists — admin
+//     variants are operator HTTP-only and take extra path params the tool
+//     name doesn't imply.
+//  2. Among the rest, prefer routes whose every path placeholder is supplied
+//     in args. This routes a by-instance list tool (e.g. `node_list`, which
+//     supplies `idOrKey`) to `/instances/{idOrKey}/nodes` rather than the
+//     by-id `/nodes/{id}`.
+//  3. When several routes are still satisfiable — e.g. both `message_list`
+//     and `message_get` supply `id`, and both `/instances/{id}/messages` and
+//     `/messages/{id}` match — break the tie by tool-name suffix: a `*_list`
+//     tool wants the collection route (path ends in a literal segment); every
+//     other tool wants the item route (path ends in a `{placeholder}`).
+//  4. Shortest path wins among whatever remains.
+//
+// A plain shortest-path heuristic mis-routes here: it sends both `_list` and
+// `_get` (and `instance_get`/`template_get`) to the shortest route, ignoring
+// which entity the tool's argument names.
+func pickCanonicalRoute(toolName string, routes []RegistryRoute, args map[string]json.RawMessage) RegistryRoute {
+	hasNonAdmin := false
 	for _, r := range routes {
-		// Skip /admin/ routes when a non-admin alternative exists.
-		if strings.HasPrefix(pick.Path, "/admin/") && !strings.HasPrefix(r.Path, "/admin/") {
-			pick = r
+		if !strings.HasPrefix(r.Path, "/admin/") {
+			hasNonAdmin = true
+			break
+		}
+	}
+	candidates := make([]RegistryRoute, 0, len(routes))
+	for _, r := range routes {
+		if hasNonAdmin && strings.HasPrefix(r.Path, "/admin/") {
 			continue
 		}
-		if strings.HasPrefix(r.Path, "/admin/") && !strings.HasPrefix(pick.Path, "/admin/") {
-			continue
-		}
-		// Same admin-ness: prefer the shorter path (fewer placeholders).
+		candidates = append(candidates, r)
+	}
+
+	// (2) Prefer routes whose placeholders are all supplied in args.
+	if narrowed := filterRoutes(candidates, func(r RegistryRoute) bool {
+		return placeholdersSatisfied(r.Path, args)
+	}); len(narrowed) > 0 {
+		candidates = narrowed
+	}
+
+	// (3) Break ties by tool-name suffix: `*_list` → collection route,
+	// otherwise → item route (trailing `{placeholder}`).
+	wantItem := !strings.HasSuffix(toolName, "_list")
+	if narrowed := filterRoutes(candidates, func(r RegistryRoute) bool {
+		return isItemRoute(r.Path) == wantItem
+	}); len(narrowed) > 0 {
+		candidates = narrowed
+	}
+
+	// (4) Shortest path among the survivors.
+	pick := candidates[0]
+	for _, r := range candidates[1:] {
 		if len(r.Path) < len(pick.Path) {
 			pick = r
 		}
 	}
 	return pick
+}
+
+// filterRoutes returns the subset of routes satisfying keep.
+func filterRoutes(routes []RegistryRoute, keep func(RegistryRoute) bool) []RegistryRoute {
+	out := make([]RegistryRoute, 0, len(routes))
+	for _, r := range routes {
+		if keep(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// placeholdersSatisfied reports whether every `{param}` in path has a
+// matching key in args.
+func placeholdersSatisfied(path string, args map[string]json.RawMessage) bool {
+	for _, name := range pathPlaceholders(path) {
+		if _, ok := args[name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// pathPlaceholders extracts the `{name}` placeholder names from a chi path
+// pattern, using the same `{`/`}` scan as substitutePathParams.
+func pathPlaceholders(path string) []string {
+	var names []string
+	rest := path
+	for {
+		i := strings.Index(rest, "{")
+		if i < 0 {
+			break
+		}
+		j := strings.Index(rest[i:], "}")
+		if j < 0 {
+			break
+		}
+		names = append(names, rest[i+1:i+j])
+		rest = rest[i+j+1:]
+	}
+	return names
+}
+
+// isItemRoute reports whether the path's final segment is a placeholder
+// (e.g. `/nodes/{id}` — an item route) rather than a literal collection
+// segment (e.g. `/instances/{idOrKey}/nodes`).
+func isItemRoute(path string) bool {
+	segs := strings.Split(strings.Trim(path, "/"), "/")
+	last := segs[len(segs)-1]
+	return len(last) >= 2 && last[0] == '{' && last[len(last)-1] == '}'
 }
 
 // rawOrString decodes the response body as JSON if possible; falls

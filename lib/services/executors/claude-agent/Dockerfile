@@ -14,6 +14,14 @@ WORKDIR /build
 COPY lib/services/executors/claude-agent/ ./lib/services/executors/claude-agent/
 WORKDIR /build/lib/services/executors/claude-agent
 RUN npm run build
+# npm materializes the `file:../../../../lib/protocols` dependency as a
+# symlink in node_modules pointing OUTSIDE /app (at /build/lib/protocols),
+# which would dangle once only /app is copied into the final stage. Stage a
+# dereferenced copy (`cp -rL` follows symlinks into real directories) so the
+# final image carries the real @rimsky-ai/protocols package — including its
+# proto/v1/*.proto files, which proto-loader.ts resolves at runtime via
+# import.meta.url relative to the installed package.
+RUN cp -rL node_modules /build/node_modules_deref
 
 FROM node:20-alpine
 RUN apk add --no-cache tini git
@@ -24,7 +32,10 @@ RUN apk add --no-cache tini git
 RUN npm install -g @anthropic-ai/claude-code
 WORKDIR /app
 COPY --from=builder /build/lib/services/executors/claude-agent/dist ./dist
-COPY --from=builder /build/lib/services/executors/claude-agent/node_modules ./node_modules
+# Use the dereferenced node_modules staged in the builder so
+# @rimsky-ai/protocols is a real directory (with its .proto files), not a
+# dangling symlink to a /build path absent from this image.
+COPY --from=builder /build/node_modules_deref ./node_modules
 ENV NODE_ENV=production
 USER node
 EXPOSE 9090 9190

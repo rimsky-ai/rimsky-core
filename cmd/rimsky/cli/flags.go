@@ -5,7 +5,70 @@
 // flags.go — shared flag definitions for CLI subcommands.
 package cli
 
-import "flag"
+import (
+	"flag"
+	"strings"
+)
+
+// parseInterspersed parses args into fs, tolerating flags that appear
+// AFTER positional arguments. Stdlib flag.Parse stops interpreting flags
+// at the first non-flag token, so `tag create my-tag --template ref`
+// silently drops `--template` (the documented usage strings put the
+// positional first, so the flag is never seen). This helper makes a
+// single pre-pass that separates flags (and their values) from
+// positionals, then hands fs.Parse the flags-first ordering it expects.
+//
+// Recognised forms: `--flag`, `-flag`, `--flag=value`, `-flag=value`, and
+// `--flag value` (space-separated, for value-taking flags). A literal
+// `--` terminates flag interpretation; everything after it is positional.
+// A bare `-` is a positional. Unknown flags are passed through untouched
+// so fs.Parse reports them exactly as before. Behaviour is identical to
+// fs.Parse when flags already precede positionals.
+func parseInterspersed(fs *flag.FlagSet, args []string) error {
+	var flags, positionals []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		// Non-flag token (including a bare "-") is a positional.
+		if len(a) < 2 || a[0] != '-' {
+			positionals = append(positionals, a)
+			continue
+		}
+		flags = append(flags, a)
+		// `--flag=value` carries its own value.
+		if strings.Contains(a, "=") {
+			continue
+		}
+		// A value-taking flag consumes the next token. Boolean flags and
+		// unknown flags do not (unknown is left standalone so fs.Parse
+		// surfaces the "not defined" error rather than swallowing a
+		// positional).
+		name := strings.TrimLeft(a, "-")
+		if flagTakesValue(fs, name) && i+1 < len(args) {
+			flags = append(flags, args[i+1])
+			i++
+		}
+	}
+	return fs.Parse(append(flags, positionals...))
+}
+
+// flagTakesValue reports whether the named flag is registered on fs and
+// is NOT a boolean flag (boolean flags accept `--flag` with no value).
+// Unregistered flags return false: they don't consume the next token, so
+// fs.Parse can report them unchanged.
+func flagTakesValue(fs *flag.FlagSet, name string) bool {
+	f := fs.Lookup(name)
+	if f == nil {
+		return false
+	}
+	if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
+		return false
+	}
+	return true
+}
 
 // CommonFlags collects the flags every verb supports.
 type CommonFlags struct {

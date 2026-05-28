@@ -986,8 +986,7 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 	}
 
 	effective := MergeAttributeDefaults(execSchema, l1Defaults, n.Attributes.Schema)
-	execSchemaPermissive := execSchemaVisible && IsPermissiveExecutorSchema(execSchema)
-	checkAttributesSchema(effective, n.Attributes.Schema, execReadOnlyProps, execSchemaVisible, execSchemaPermissive, sbase, res)
+	checkAttributesSchema(effective, n.Attributes.Schema, execSchema, execReadOnlyProps, execSchemaVisible, sbase, res)
 	if execSchemaVisible {
 		validateCompositionAgainstExecutor(execSchema, l1Defaults, n.Attributes.Schema, sbase, res)
 	}
@@ -1572,13 +1571,16 @@ type AttributesSchemaCheckError struct {
 // reapplies under the same MergeAttributeDefaults shape).
 //
 // @concept: attribute
-func CheckEffectiveAttributesSchema(effective, nodeSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible, execSchemaPermissive bool) []AttributesSchemaCheckError {
+func CheckEffectiveAttributesSchema(effective, nodeSchema, execSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible bool) []AttributesSchemaCheckError {
 	var out []AttributesSchemaCheckError
 	if effective == nil {
 		return nil
 	}
 	effProps, _ := effective["properties"].(map[string]any)
 	nodeProps, _ := nodeSchema["properties"].(map[string]any)
+	execProps, _ := execSchema["properties"].(map[string]any)
+	schemaHasNoProps := IsPermissiveExecutorSchema(execSchema)
+	execOpen := executorSchemaAllowsExtensions(execSchema)
 	for name, raw := range effProps {
 		prop, ok := raw.(map[string]any)
 		if !ok {
@@ -1594,22 +1596,24 @@ func CheckEffectiveAttributesSchema(effective, nodeSchema map[string]any, execut
 			})
 			continue
 		}
-		// The readOnly-fallback leg only fires when the executor's
-		// schema both is visible AND constrains its attribute shape
-		// (has a `properties` block). An executor whose advertised
-		// schema is "permissive" (e.g. `{"type":"object"}` with no
-		// `properties` block, or with `additionalProperties: true` and
-		// no constraints) is declaring "I accept any attribute shape" —
-		// there's no fixed set of executor-written properties to
-		// compare against.
-		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !execSchemaPermissive {
+		_, execEnumerates := execProps[name]
+		// A property the executor does not enumerate is unconstrained when
+		// the executor's schema is open: it declares no `properties` block
+		// at all (fully permissive — e.g. `{"type":"object"}`), or it admits
+		// extensions via `additionalProperties` (not `false`). The executor
+		// has delegated naming authority for such properties, so the
+		// readOnly-fallback and readOnly-authorship legs below don't apply:
+		// there's no fixed set of executor-written properties to compare
+		// against. An enumerated property still goes through both legs.
+		propUnconstrained := schemaHasNoProps || (execOpen && !execEnumerates)
+		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !propUnconstrained {
 			out = append(out, AttributesSchemaCheckError{
 				Path: fmt.Sprintf("properties.%s", name),
 				Msg:  "property has no `source:`, no `default:`, and is not marked `readOnly: true` in the executor's expected_attributes_schema — declare one of these or the property is unpopulated at dispatch",
 			})
 			continue
 		}
-		if nodeProps != nil && execSchemaVisible && !execSchemaPermissive {
+		if nodeProps != nil && execSchemaVisible && !propUnconstrained {
 			if rawNode, present := nodeProps[name]; present {
 				if nodeProp, ok := rawNode.(map[string]any); ok {
 					if ro, _ := nodeProp["readOnly"].(bool); ro && !execRO {
@@ -1643,6 +1647,43 @@ func IsPermissiveExecutorSchema(execSchema map[string]any) bool {
 	}
 	_, hasProps := execSchema["properties"]
 	return !hasProps
+}
+
+// executorSchemaAllowsExtensions reports whether the executor's advertised
+// schema EXPLICITLY opts into accepting properties it does not enumerate —
+// i.e. it carries an `additionalProperties` directive that is either the
+// boolean `true` or a schema object (e.g. `{"type":"string"}`). Such an
+// executor has delegated naming authority for extension properties: a
+// template author may declare those properties (source-bound, default,
+// write-back, or `readOnly: true`) without the executor enumerating them, so
+// the readOnly-fallback and readOnly-authorship legs of the unified-attribute-
+// surface check do not apply to an unenumerated property here.
+//
+// An ABSENT `additionalProperties` returns false even though strict JSON
+// Schema would default it to true. The unified-attribute-surface check treats
+// the presence of a `properties` block as "the executor declares its
+// contract" (see IsPermissiveExecutorSchema): an unenumerated property under
+// such a schema must still justify how it is populated (source / default /
+// executor readOnly) unless the executor explicitly opens the door. Only the
+// explicit directive delegates that authority. An explicit `additionalProperties:
+// false` (closed) also returns false. The value-type check for extension
+// properties under a schema-object value lives in
+// validateCompositionAgainstExecutor.
+//
+// @concept: attribute
+func executorSchemaAllowsExtensions(execSchema map[string]any) bool {
+	if execSchema == nil {
+		return false
+	}
+	add, has := execSchema["additionalProperties"]
+	if !has {
+		return false
+	}
+	if b, ok := add.(bool); ok {
+		return b
+	}
+	// Schema-object value ⇒ extensions admitted (subject to that subschema).
+	return true
 }
 
 // checkAttributesSchema enforces the unified-attribute-surface
@@ -1679,12 +1720,15 @@ func IsPermissiveExecutorSchema(execSchema map[string]any) bool {
 // §"Attribute as the unified surface".
 //
 // @concept: attribute
-func checkAttributesSchema(effective, nodeSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible, execSchemaPermissive bool, sbase string, res *ValidationResult) {
+func checkAttributesSchema(effective, nodeSchema, execSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible bool, sbase string, res *ValidationResult) {
 	if effective == nil {
 		return
 	}
 	effProps, _ := effective["properties"].(map[string]any)
 	nodeProps, _ := nodeSchema["properties"].(map[string]any)
+	execProps, _ := execSchema["properties"].(map[string]any)
+	schemaHasNoProps := IsPermissiveExecutorSchema(execSchema)
+	execOpen := executorSchemaAllowsExtensions(execSchema)
 	for name, raw := range effProps {
 		prop, ok := raw.(map[string]any)
 		if !ok {
@@ -1700,11 +1744,16 @@ func checkAttributesSchema(effective, nodeSchema map[string]any, executorReadOnl
 			})
 			continue
 		}
+		_, execEnumerates := execProps[name]
 		// readOnly-fallback leg: see CheckEffectiveAttributesSchema for
-		// the permissive-schema rationale (an executor that declines to
-		// enumerate its properties is declaring open shape, so no
-		// per-name comparison is meaningful).
-		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !execSchemaPermissive {
+		// the open-schema rationale. A property the executor does not
+		// enumerate is unconstrained when the executor's schema declares no
+		// `properties` block (fully permissive) or admits extensions via
+		// `additionalProperties` (not `false`) — the executor has delegated
+		// naming authority, so there is no per-name comparison to make. An
+		// enumerated property still goes through both legs.
+		propUnconstrained := schemaHasNoProps || (execOpen && !execEnumerates)
+		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !propUnconstrained {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: fmt.Sprintf("%s.properties.%s", sbase, name),
 				Msg:  "property has no `source:`, no `default:`, and is not marked `readOnly: true` in the executor's expected_attributes_schema — declare one of these or the property is unpopulated at dispatch",
@@ -1719,9 +1768,10 @@ func checkAttributesSchema(effective, nodeSchema map[string]any, executorReadOnl
 		// validation time — we cannot tell whether the executor
 		// produces the property or not, so we trust the author's
 		// declaration. Runtime dispatch reapplies the rule once the
-		// executor schema is known. Also skipped for permissive
-		// schemas (no `properties` block) — open shape, no contract.
-		if nodeProps != nil && execSchemaVisible && !execSchemaPermissive {
+		// executor schema is known. Also skipped for properties the
+		// executor leaves unconstrained under an open schema — the
+		// author owns extension properties the executor admits by name.
+		if nodeProps != nil && execSchemaVisible && !propUnconstrained {
 			if rawNode, present := nodeProps[name]; present {
 				if nodeProp, ok := rawNode.(map[string]any); ok {
 					if ro, _ := nodeProp["readOnly"].(bool); ro && !execRO {

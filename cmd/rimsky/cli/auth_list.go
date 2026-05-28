@@ -29,7 +29,7 @@ func RunAuthList(ctx context.Context, args []string) int {
 	fs.StringVar(&nameFilter, "name-filter", "", "glob filter on key name")
 	fs.BoolVar(&includeRevoked, "include-revoked", false, "include revoked rows")
 	fs.BoolVar(&jsonOut, "json", false, "output JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	endpoint, key, err := resolveAuthEndpointAndKey(endpointFlag, keyFlag)

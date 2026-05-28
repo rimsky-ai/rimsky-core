@@ -58,6 +58,17 @@ import { TokenRegistry } from "./token-registry.js";
  * gets SIGTERM. Mirrors brain's `setTimeout(() => config.onTopicPublished(result), 0)`
  * pattern.
  */
+/**
+ * MCP server name advertised to the Claude CLI via `--mcp-config`. The CLI
+ * namespaces every tool from this server as
+ * `mcp__${CALLBACK_MCP_SERVER_NAME}__<toolName>`, so the executor's
+ * allowlist derivation (cli-runner.ts) MUST use this same constant to build
+ * the fully-qualified tool names — a literal drift here would silently break
+ * the `--allowedTools` gate under Claude Code's deferred-MCP permission
+ * surface.
+ */
+export const CALLBACK_MCP_SERVER_NAME = "rimsky-callback";
+
 export interface CallbackServerHandle {
   readonly host: string;
   readonly port: number;
@@ -103,7 +114,7 @@ export async function startInternalMcpServer(opts: {
 
   const createSession = async (): Promise<SessionEntry> => {
     const mcp = new McpServer({
-      name: "rimsky-callback",
+      name: CALLBACK_MCP_SERVER_NAME,
       version: "1.0.0",
     });
     registerTools(mcp, registry, log);

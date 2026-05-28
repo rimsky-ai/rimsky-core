@@ -142,8 +142,13 @@ func main() {
 	callbackPort := cfg.Callback.Port
 
 	advertiseHost := os.Getenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST")
+	advertiseHostSource := "env:RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST"
 	if advertiseHost == "" {
 		advertiseHost = cfg.Callback.AdvertiseHost
+		advertiseHostSource = "yaml:callback.advertise_host"
+	}
+	if advertiseHost == "" {
+		advertiseHostSource = "unset"
 	}
 	advertisePort := 0
 	if s := os.Getenv("RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_PORT"); s != "" {
@@ -156,6 +161,28 @@ func main() {
 	}
 	if advertisePort == 0 {
 		advertisePort = cfg.Callback.AdvertisePort
+	}
+
+	// Surface the resolved callback advertise host (and where it came from)
+	// at startup. Executors dial this address to POST async-callback
+	// outcomes; when it is empty or a loopback, the POST fails with a bare
+	// "fetch failed" and no other diagnostic — a silent misconfiguration in
+	// any multi-container deployment. The bind host (callbackHost, typically
+	// 0.0.0.0 in a container) is NOT how executors reach the supervisor; only
+	// the advertise host is, so warn rather than log quietly when it can't be
+	// reached from another container.
+	if advertiseHost == "" || advertiseHost == "127.0.0.1" || advertiseHost == "localhost" || advertiseHost == "::1" {
+		log.Warn("callback advertise host is loopback or unset — executors on other hosts/containers cannot reach this supervisor",
+			"advertise_host", advertiseHost,
+			"source", advertiseHostSource,
+			"bind_host", callbackHost,
+			"bind_port", callbackPort,
+			"hint", "set RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST (or callback.advertise_host) to a hostname executors can reach this supervisor at")
+	} else {
+		log.Info("callback advertise host resolved",
+			"advertise_host", advertiseHost,
+			"source", advertiseHostSource,
+			"advertise_port", advertisePort)
 	}
 
 	ctx := context.Background()

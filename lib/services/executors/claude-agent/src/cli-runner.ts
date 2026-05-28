@@ -7,6 +7,42 @@ import { writeFile, unlink, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildCliEnv, type CliAuthConfig } from "./cli-env.js";
+import { CALLBACK_MCP_SERVER_NAME } from "./internal-mcp-server.js";
+import { TOOL_DEFINITIONS } from "./internal-mcp-tools.js";
+
+/**
+ * Fully-qualified names of the executor's own internal MCP callback tools,
+ * as the Claude CLI namespaces them: `mcp__${server}__<toolName>`.
+ *
+ * Derived programmatically from {@link TOOL_DEFINITIONS} (which already folds
+ * in `ATTRIBUTES_TOOL_DEFINITIONS`) and the single
+ * {@link CALLBACK_MCP_SERVER_NAME} constant, so adding or renaming a callback
+ * tool keeps the allowlist in sync with zero manual edits here.
+ *
+ * Why this must always be allowlisted: the executor spawns the CLI with
+ * `--permission-mode bypassPermissions`, but Claude Code 2.1.x moved MCP
+ * tools onto a deferred permission surface that bypassPermissions no longer
+ * covers. Without these names in `--allowedTools`, the agent's
+ * `report_complete` / `report_park` / etc. calls are blocked with
+ * "Claude requested permissions to use mcp__rimsky-callback__…" and the
+ * dispatch never lands a terminal outcome (notably on 2nd+ dispatches in a
+ * container and on resume).
+ */
+export const REQUIRED_CALLBACK_TOOLS: string[] = TOOL_DEFINITIONS.map(
+  (t) => `mcp__${CALLBACK_MCP_SERVER_NAME}__${t.name}`,
+);
+
+/**
+ * Unions the always-required callback tools with any per-template allowed
+ * tools, de-duplicating while preserving order (callback tools first, then
+ * the template's extras). The result is the value passed to
+ * `--allowedTools`, which is always emitted so the callback surface is never
+ * gated by Claude Code's permission prompt.
+ */
+export function buildAllowedTools(templateAllowed?: string[]): string[] {
+  const merged = [...REQUIRED_CALLBACK_TOOLS, ...(templateAllowed ?? [])];
+  return [...new Set(merged)];
+}
 
 /**
  * CLI runner abstraction — launches an agentic CLI subprocess (e.g. the
@@ -190,9 +226,13 @@ export function buildClaudeCliArgs(
     permissionMode,
     ...(req.sessionId ? ["--session-id", req.sessionId] : []),
     ...(req.bare ? ["--bare"] : []),
-    ...(req.allowedTools && req.allowedTools.length > 0
-      ? ["--allowedTools", req.allowedTools.join(" ")]
-      : []),
+    // Always emit --allowedTools: the executor's own rimsky-callback MCP
+    // tools must be allowlisted regardless of the per-template config, or
+    // Claude Code 2.1.x's deferred-MCP permission surface blocks the
+    // terminal callback even under bypassPermissions. Per-template tools
+    // are merged on top (union, de-duplicated).
+    "--allowedTools",
+    buildAllowedTools(req.allowedTools).join(" "),
     ...(req.disallowedTools && req.disallowedTools.length > 0
       ? ["--disallowedTools", req.disallowedTools.join(" ")]
       : []),
@@ -236,6 +276,14 @@ export function buildClaudeCliResumeArgs(
     "--output-format",
     "stream-json",
     "--verbose",
+    // Resume runs the reminder/park-recovery prompt whose whole purpose is to
+    // land a rimsky-callback terminal outcome, so the callback tools MUST be
+    // allowlisted here too — otherwise the deferred-MCP permission gate
+    // blocks the very call we resumed to make. `--allowedTools` is NOT
+    // restored from session state (it is process-local invocation config,
+    // like --mcp-config), so it must be re-emitted on every resume.
+    "--allowedTools",
+    buildAllowedTools().join(" "),
     "--mcp-config",
     paths.mcpConfigPath,
     "-p",

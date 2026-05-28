@@ -1477,6 +1477,111 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		hasErrorAt(t, res, "nodes[0].attributes.schema.properties.orphan")
 	})
 
+	t.Run("extension property without source/default/readOnly accepted when executor declares additionalProperties:true", func(t *testing.T) {
+		// The claude-agent case: the executor enumerates its known inputs
+		// AND declares `additionalProperties: true`, explicitly delegating
+		// naming authority for extension attributes used for inter-node
+		// dataflow. An author-declared output the executor doesn't enumerate
+		// (e.g. a write-back the agent populates) must be admitted without a
+		// synthetic `default:` or `readOnly:` fabrication.
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"zone_codes": map[string]any{
+							"type": "array",
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				// `model` carries a default (a realistic enumerated input), so
+				// it passes the leg; `zone_codes` is the unenumerated extension
+				// under test.
+				return []byte(`{"type":"object","properties":{"model":{"type":"string","default":"claude-sonnet-4-5"}},"additionalProperties":true}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("extension property marked readOnly accepted when executor declares additionalProperties:true", func(t *testing.T) {
+		// Under an explicitly-open executor schema, the author may mark an
+		// unenumerated extension property `readOnly: true` (the natural way
+		// to say "the agent writes this back") — the executor has delegated
+		// authority over names it does not enumerate.
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"notes": map[string]any{
+							"type":     "string",
+							"readOnly": true,
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				return []byte(`{"type":"object","properties":{"model":{"type":"string","default":"claude-sonnet-4-5"}},"additionalProperties":true}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+	})
+
+	t.Run("ENUMERATED property still requires source/default/readOnly under additionalProperties:true", func(t *testing.T) {
+		// The open-schema exemption is per-property, keyed on enumeration:
+		// a property the executor DOES enumerate is still subject to the full
+		// unified-surface check even when the schema also admits extensions.
+		spec := &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "a",
+				Executor: "h",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"model": map[string]any{
+							"type": "string",
+						},
+					},
+				}},
+			}},
+		}
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				// `model` is enumerated (not readOnly) and the schema admits
+				// extensions. Declaring `model` with no source/default/readOnly
+				// is still an unpopulated-input error.
+				return []byte(`{"type":"object","properties":{"model":{"type":"string"}},"additionalProperties":true}`), true
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		require.False(t, res.Ok())
+		hasErrorAt(t, res, "nodes[0].attributes.schema.properties.model")
+	})
+
 	t.Run("L1 default plus L2 source on same property: L2 source wins (no both-set error)", func(t *testing.T) {
 		// L1 (template defaults.attributes.by_executor.<exec>.<attr>)
 		// contributes a `default:` value for property `cli`. L2 (the

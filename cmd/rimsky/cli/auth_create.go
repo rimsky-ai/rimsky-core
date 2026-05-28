@@ -43,7 +43,7 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 	fs.Var(&removeFlags, "remove", "remove grant entries matching this action (repeatable)")
 	fs.Var(&dryRunFlags, "dry-run", "append a grant entry with mode=dry_run (repeatable)")
 	fs.StringVar(&expires, "expires", "", "duration until the key expires (e.g. 24h, 30d)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	if strings.TrimSpace(name) == "" {

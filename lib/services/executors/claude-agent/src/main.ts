@@ -32,11 +32,11 @@ async function main(): Promise<void> {
   registerCrashHandlers(logger);
   const host = process.env.RIMSKY_EXECUTOR_HOST ?? "0.0.0.0";
   const grpcPort = parseInt(
-    process.env.RIMSKY_EXECUTOR_PORT_GRPC ?? "7071",
+    process.env.RIMSKY_EXECUTOR_PORT_GRPC ?? "9090",
     10,
   );
   const httpPort = parseInt(
-    process.env.RIMSKY_EXECUTOR_PORT_HTTP ?? "7072",
+    process.env.RIMSKY_EXECUTOR_PORT_HTTP ?? "9190",
     10,
   );
   const callbackHost =

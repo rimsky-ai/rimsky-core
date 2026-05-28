@@ -37,7 +37,7 @@ func runWithCommon(name string, args []string, registerExtra func(fs *flag.FlagS
 	if registerExtra != nil {
 		registerExtra(fs)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return nil, nil, "", 2
 	}
 	if err := common.ResolveFormat(); err != nil {

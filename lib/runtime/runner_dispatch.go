@@ -443,9 +443,9 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if errs := node.CheckEffectiveAttributesSchema(
 		schema,
 		acq.NodeDef.Attributes.Schema,
+		execSchema,
 		extractReadOnlyPropsLocal(execSchema),
 		execSchemaVisible,
-		execSchemaVisible && node.IsPermissiveExecutorSchema(execSchema),
 	); len(errs) > 0 {
 		first := errs[0]
 		return nil, schema, &attributeValidationError{

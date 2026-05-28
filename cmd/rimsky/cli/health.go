@@ -17,7 +17,7 @@ func RunHealth(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("health", flag.ContinueOnError)
 	var common CommonFlags
 	RegisterCommonFlags(fs, &common)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	if err := common.ResolveFormat(); err != nil {

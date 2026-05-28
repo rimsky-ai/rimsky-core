@@ -253,7 +253,11 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
   let srv: RunningServer;
   let supervisorLike: http.Server;
   let supervisorBase: string;
-  const received: Array<{ path: string; ackId: string; body: any }> = [];
+  const received: Array<{
+    path: string;
+    ackId: string;
+    body: Record<string, unknown>;
+  }> = [];
 
   const fakeCli: CliRunner = {
     spawn: async () => {
@@ -286,7 +290,11 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
           res.end(JSON.stringify({ error: "invalid json" }));
           return;
         }
-        received.push({ path: req.url ?? "", ackId, body: parsed });
+        received.push({
+          path: req.url ?? "",
+          ackId,
+          body: parsed as Record<string, unknown>,
+        });
         res.statusCode = 200;
         res.setHeader("content-type", "application/json");
         res.end(JSON.stringify({ status: "accepted" }));

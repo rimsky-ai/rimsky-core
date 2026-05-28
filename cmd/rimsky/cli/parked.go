@@ -31,7 +31,7 @@ func RunParkedList(ctx context.Context, args []string) int {
 	reason := fs.String("reason", "", "filter by parked reason (snake_case ParkReason; e.g. awaiting_human)")
 	olderThan := fs.Duration("older-than", 0, "filter to rows parked longer ago than this duration")
 	instance := fs.String("instance", "", "filter to a specific instance id")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 2
 	}
 	if err := common.ResolveFormat(); err != nil {
