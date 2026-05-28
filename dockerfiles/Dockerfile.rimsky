@@ -10,14 +10,17 @@
 
 FROM golang:1.25-alpine AS build
 WORKDIR /src
-# Post-2026-05-12 layer restructure (commit:9c072b4): lib/foundation and
-# lib/protocols are separate Go modules tied together by go.work. Copy all
-# module manifests + the workspace file before `go mod download` so
-# the build sees the same module graph as the host workspace.
+# The Go workspace ties four modules together (root + lib/foundation
+# + lib/protocols + lib/services). Copy every module manifest plus
+# go.work before `go mod download` so the build sees the same module
+# graph as the host workspace. The core binaries built here don't
+# import lib/services, but go.work lists it so its go.mod must be
+# present or `go mod download` aborts.
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
 COPY lib/foundation/go.mod lib/foundation/go.sum ./lib/foundation/
 COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
+COPY lib/services/go.mod lib/services/go.sum ./lib/services/
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
