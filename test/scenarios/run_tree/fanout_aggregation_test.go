@@ -13,10 +13,10 @@ package runtree
 import (
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
-	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
-	tmplspec "github.com/rimsky-ai/rimsky-core/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 // TestFanoutAggregation_PolicyTable iterates every declared policy

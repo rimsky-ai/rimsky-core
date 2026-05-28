@@ -18,7 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // fixturePublisher is a minimal Publisher impl used to exercise the

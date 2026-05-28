@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	tmplspec "github.com/rimsky-ai/rimsky-core/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
+	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 func TestMainGraphWithEntryRejected(t *testing.T) {

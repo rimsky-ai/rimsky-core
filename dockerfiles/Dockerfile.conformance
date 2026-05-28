@@ -1,39 +1,28 @@
 # syntax=docker/dockerfile:1.7
 #
 # Multi-stage build of the `rimsky-conformance` image. Bundles every
-# protocol conformance runner in one image; pick a runner by the container
-# command, e.g.:
-#   docker run rimsky-conformance rimsky-executor-conformance \
+# protocol conformance runner in one image; select a runner via
+# `rimsky conformance <protocol>`, e.g.:
+#   docker run rimsky-conformance rimsky conformance executor \
 #     --endpoint <addr> --transport grpc
 # The runners probe an EXTERNAL impl (executor / claim-producer / publisher /
 # validation / data-processing / blob-backend) against the rimsky protocol.
 
 FROM golang:1.25-alpine AS build
 WORKDIR /src
-# foundation, protocols, and testpg are separate Go modules tied together by
+# lib/foundation and lib/protocols are separate Go modules tied together by
 # go.work. Copy all module manifests + the workspace file before `go mod
 # download`.
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
-COPY foundation/go.mod foundation/go.sum ./foundation/
-COPY protocols/go.mod protocols/go.sum ./protocols/
-COPY testpg/go.mod testpg/go.sum ./testpg/
+COPY lib/foundation/go.mod lib/foundation/go.sum ./lib/foundation/
+COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
 RUN go mod download
 COPY . .
-RUN for bin in \
-      rimsky-executor-conformance \
-      rimsky-claim-producer-conformance \
-      rimsky-publisher-conformance \
-      rimsky-validation-conformance \
-      rimsky-data-processing-conformance \
-      rimsky-blob-backend-conformance \
-      rimsky-conformance-probe; do \
-      CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-        -o /out/$bin ./cmd/$bin || exit 1; \
-    done
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/rimsky ./cmd/rimsky
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.title="rimsky-conformance"
-LABEL org.opencontainers.image.description="Protocol conformance runners (executor, claim-producer, publisher, validation, data-processing, blob-backend) plus the conformance probe. Pick a runner by container command."
+LABEL org.opencontainers.image.description="Protocol conformance runners (executor, claim-producer, publisher, validation, data-processing, blob-backend) plus the conformance probe, selected via 'rimsky conformance <protocol>'."
 COPY --from=build /out/ /usr/local/bin/
 USER nonroot:nonroot

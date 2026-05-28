@@ -30,13 +30,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	pgtest "github.com/rimsky-ai/rimsky-core/internal/pgmigrate"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
 func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {

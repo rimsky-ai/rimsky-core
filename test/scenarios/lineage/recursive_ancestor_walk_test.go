@@ -21,9 +21,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 // TestRecursiveAncestorWalk_ChainsParentRunID seeds a parent_run_id

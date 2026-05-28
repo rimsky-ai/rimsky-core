@@ -3,7 +3,7 @@
 ## Pre-v1 — break freely
 Rimsky is pre-v1. There is no production data to preserve and no consumer is locked into a particular schema. When a refactor would be cleaner without a migration path, take the clean path. Delete dead code rather than carrying it forward.
 
-- Migrations in `foundation/persistence/{postgres,sqlite}/migrations/` are still numbered and append-only — that's how the migration runner works, not a backwards-compat guarantee. If a schema needs rethinking before v1 ships, write a new migration that drops + recreates rather than threading a compat shim.
+- Migrations in `lib/foundation/persistence/{postgres,sqlite}/migrations/` are still numbered and append-only — that's how the migration runner works, not a backwards-compat guarantee. If a schema needs rethinking before v1 ships, write a new migration that drops + recreates rather than threading a compat shim.
 - No backwards-compat guarantees on the wire protocol, the YAML config shape, the event-log payloads, or the resource interface until v1 ships. If a change requires nuking a dev Postgres, say so explicitly.
 - When v1 ships, replace this section with deployed-stage rules.
 
@@ -14,12 +14,12 @@ You are NOT done with a task until you have completed ALL of the following. Do t
 Run **every** check that could be affected by the change. This is mandatory, not optional.
 
 - **Any Go change:** `go build ./... && go test ./... && make lint`
-- **Proto changes (`proto/v1/*.proto`):** `make proto-gen` first, then the Go checks above.
-- **Scenario or storage changes:** `go test ./test/scenarios/... ./foundation/persistence/... -count=1` (these spin up real Postgres via testcontainers — Docker must be running).
-- **Race-sensitive paths (queue, supervisor, scheduler):** add `-race`, e.g. `go test ./foundation/persistence/postgres/... ./runtime/... ./graph/scheduler/... -race -count=3`.
+- **Proto changes (`lib/protocols/proto/v1/*.proto`):** `make proto-gen` first, then the Go checks above.
+- **Scenario or storage changes:** `go test ./test/scenarios/... ./lib/foundation/persistence/... -count=1` (these spin up real Postgres via testcontainers — Docker must be running).
+- **Race-sensitive paths (queue, supervisor, scheduler):** add `-race`, e.g. `go test ./lib/foundation/persistence/postgres/... ./lib/runtime/... ./lib/graph/scheduler/... -race -count=3`.
 - **Reference-binary or deploy changes:** rebuild the Docker images touched by the change (`deploy/build-images.sh`) and bring up `deploy/docker-compose.yml` to verify the stack still reaches `/health`.
 - **TypeScript executor (`executors/claude-agent/`):** `cd executors/claude-agent && npm install && npm test && npm run build`.
-- **Conformance-relevant changes (protocol, executor surface):** `go run ./cmd/rimsky-executor-conformance --endpoint <executor> --transport grpc` against the executors you touched.
+- **Conformance-relevant changes (protocol, executor surface):** `go run ./cmd/rimsky conformance executor --endpoint <executor> --transport grpc` against the executors you touched.
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.
 
 ### Update documentation
@@ -43,7 +43,7 @@ All new code must follow cold-read conventions (see `cold-read-cheatsheet.md` an
 The Go-specific lint set is enforced by `.golangci.yml` (`make lint`): gofmt, goimports, govet, staticcheck, unused, ineffassign, errcheck, revive (without the `exported` rule). Logging is stdlib `log/slog` only — no Zap, no Zerolog. HTTP routing is `go-chi/chi`. Postgres is `jackc/pgx/v5`. Cron parsing is `robfig/cron/v3`. Resist adding heavier alternatives (Viper, Cobra, Gin, Echo).
 
 ## Search Scoping
-Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `proto/v1/gen/` (generated), `executors/claude-agent/node_modules/`, `executors/claude-agent/dist/`, `coverage.out`, `coverage.html`.
+Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `lib/protocols/proto/v1/gen/` (generated), `executors/claude-agent/node_modules/`, `executors/claude-agent/dist/`, `coverage.out`, `coverage.html`.
 
 ## Writing & Analysis
 - Save project-specific notes to project-local paths (e.g. `./CLAUDE.md`), not external memory.

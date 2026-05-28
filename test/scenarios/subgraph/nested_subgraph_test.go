@@ -20,9 +20,9 @@ import (
 	"strings"
 	"testing"
 
-	tmplspec "github.com/rimsky-ai/rimsky-core/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {

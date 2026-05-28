@@ -44,12 +44,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
-	"github.com/rimsky-ai/rimsky-core/control/config"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
-	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 // TestCanary_LifecycleSubscriberCallbackContract drives rimsky through

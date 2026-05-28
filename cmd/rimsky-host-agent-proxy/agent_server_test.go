@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // newAgentTestServer stands up the HostAgent server on an in-process

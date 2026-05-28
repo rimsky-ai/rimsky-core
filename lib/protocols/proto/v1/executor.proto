@@ -1,0 +1,344 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+
+syntax = "proto3";
+
+package rimsky.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1";
+
+// Executor is the protocol rimsky supervisors use to dispatch work to
+// external executors. See docs/history/2026-04-27-stores-redesign-v2-design.md §12
+// for the full contract (transports, async handoff, attributes, stores,
+// versioning, auth).
+service Executor {
+  // Execute is called by the rimsky supervisor when dispatching a node.
+  // The response stream carries zero or more `Heartbeat` events, zero or
+  // more `NamedEvent` records, and exactly ONE `StreamClose` event; the
+  // executor MUST close the stream immediately after the `StreamClose`
+  // event. Stream close without a `StreamClose` event is treated by the
+  // supervisor as an infrastructure error.
+  rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
+}
+
+// ExecuteRequest carries the full context of a node dispatch. The
+// attributes bag is the unified surface for both rimsky-populated
+// inputs and executor-written outputs. See spec §12.1.
+message ExecuteRequest {
+  string node_id = 1;
+  string instance_id = 2;
+  string node_type = 3;
+
+  // Reserved (was: google.protobuf.Struct userdata = 4). The userdata
+  // concept retired in the 2026-05-21 collapse; all template-supplied
+  // values now flow through `attributes` (field 5), keyed by attribute
+  // name with each property either source-bound (rimsky resolves at
+  // dispatch), static-default (resolved at registration), or
+  // executor-written (populated at commit).
+  reserved 4;
+  reserved "userdata";
+
+  // Per-run typed attributes. Source-directive fields are pre-populated by
+  // rimsky at dispatch; static-default fields carry their declared
+  // default value; sourceless/executor-written fields are populated by
+  // the executor (terminal-final via attributes_delta on Success, or
+  // incremental via POST {callback_url}/v1/attributes/{node_id}).
+  google.protobuf.Struct attributes = 5;
+
+  // The declared JSON Schema for the node's attributes. For executor reference;
+  // rimsky validates at dispatch (substitution) and at commit (writeback)
+  // regardless.
+  google.protobuf.Struct attributes_schema = 6;
+
+  // Handles for each store the node references. Keyed by store-config name.
+  map<string, StoreHandle> stores = 7;
+
+  // HTTP+JSON callback URL the executor may POST to for async handoff and
+  // incremental attribute writes. Populated by the supervisor; empty string
+  // if the supervisor did not configure a callback endpoint.
+  string callback_url = 8;
+
+  // Token the supervisor watches for cancellation requests, also used as the
+  // bearer token on incremental attribute and async terminal callbacks.
+  string cancel_token = 9;
+
+  // Reserved (was: bool resumed = 10). Under stores-redesign-v2 resume
+  // is universal — the store detects resumed-vs-fresh internally
+  // by lookup against its own state, keyed by the lock-holder identity
+  // (per spec §11.5). The supervisor no longer threads a resumed flag
+  // through the wire. Field number 10 is reserved to keep the wire
+  // shape stable for clients that still parse it as part of an older
+  // executor's struct.
+  reserved 10;
+  reserved "resumed";
+
+  // Reserved (was: int32 run_attempt = 11). Removed per per-run attribute
+  // keying spec — each dispatch has a fresh node_run_id, and executors
+  // that previously read run_attempt for idempotency migrate to
+  // dispatch_id (field 12, the supervisor-side rimsky_node_runs.id).
+  reserved 11;
+  reserved "run_attempt";
+
+  // The supervisor-side rimsky_node_runs.id for this dispatch. Exposed
+  // so executors can key per-dispatch traces/state (the executor
+  // observability protocol, spec §2, identifies dispatches by this id).
+  // The wire field name `dispatch_id` is preserved for compatibility
+  // with the executor observability protocol; the underlying table is
+  // `rimsky_node_runs` post-Phase-5 consolidation and the 2026-05-12
+  // nomenclature resolution. May be empty when the supervisor invokes
+  // Execute outside the node-run-row path (e.g. unit tests or stub-mode
+  // probes).
+  string dispatch_id = 12;
+
+  // resume_context carries the bytes the executor previously emitted on
+  // Park. When absent, this is a fresh dispatch; when present, this
+  // is a resume of a parked node. See ResumeContext.
+  ResumeContext resume_context = 13;
+
+  // prior_dispatch_id is set when this dispatch supersedes a prior
+  // failed / abandoned / stale-recovered dispatch for the same
+  // (run_scope_id, node_id) pair. Used by executors that maintain
+  // per-dispatch session state to identify the predecessor and
+  // (optionally) recover or hand off work-in-progress. Unset on the
+  // initial dispatch of a node within a RunScope. Per spec
+  // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+  // §Recovery-aware executor protocol.
+  //
+  // @concept: run-scope
+  optional string prior_dispatch_id = 14;
+
+  // prior_dispatch_disposition explains why prior_dispatch_id is set,
+  // so the executor can route its recovery / handoff logic. Unset
+  // (== PRIOR_NONE) on the initial dispatch. Per spec.
+  optional PriorDispatchDisposition prior_dispatch_disposition = 15;
+}
+
+// PriorDispatchDisposition is the classifier accompanying
+// ExecuteRequest.prior_dispatch_id. Tells the executor *why* the
+// supervisor is asking it to take over from a predecessor dispatch.
+enum PriorDispatchDisposition {
+  // PRIOR_NONE is the wire default. Equivalent to the field being unset.
+  PRIOR_NONE              = 0;
+  // PRIOR_HEARTBEAT_STALE: the supervisor's heartbeat-loss sweep
+  // transitioned the prior run to stale; this dispatch is the
+  // re-enqueue.
+  PRIOR_HEARTBEAT_STALE   = 1;
+  // PRIOR_RETRY_AFTER_ERROR: the prior dispatch reported an Error
+  // terminal that the error-policy resolved to retry; this dispatch
+  // is the retry.
+  PRIOR_RETRY_AFTER_ERROR = 2;
+  // PRIOR_RECALCULATE: the cascade walker invalidated the prior run
+  // (upstream input changed); this dispatch is the recalculate.
+  PRIOR_RECALCULATE       = 3;
+}
+
+// ResumeContext is rimsky's way of handing back to the executor the
+// session-resume material the executor itself produced when it parked.
+// Rimsky persists payload + session_token + resume_at on Park, then
+// constructs this message on resume dispatch. Both payload and
+// session_token are inert to rimsky.
+message ResumeContext {
+  // The original Park.payload bytes.
+  bytes payload = 1;
+  // The original Park.session_token.
+  string session_token = 2;
+  // Why the parked node is being resumed: "deadline_elapsed" when the
+  // SweepParkedNodes sweep woke the node because resume_at passed;
+  // "external_invalidate" when the wake came from an admin endpoint or
+  // an in-graph on_event invalidate.
+  string resume_reason = 3;
+}
+
+// StoreHandle is the per-store reference handed to the executor at
+// dispatch (spec §19.1). `handle` carries the producer-supplied Address
+// bytes returned by ClaimProducer.Open — opaque to Rimsky, decoded by
+// the executor per its store-specific knowledge.
+message StoreHandle {
+  // Operator-configured producer kind (e.g. "filesystem", "postgres",
+  // or a producer's own canonical kind name). Conventionally
+  // informational — the executor knows its producer's kind from the
+  // deployment's operator config.
+  string kind = 1;
+  // Producer-supplied Address bytes returned by ClaimProducer.Open,
+  // wrapped as a google.protobuf.Struct so JSON-shaped addresses
+  // round-trip cleanly. Inert to Rimsky per @blessed-invariant 20.
+  google.protobuf.Struct handle = 2;
+  // Reserved field numbers (legacy `write_regions`, `read_regions`,
+  // `resumed`). The new model uses ClaimSpec.Selector + .Intent on the
+  // template side; the producer-side address handles whatever
+  // sub-scope semantics the producer chooses. Resume is universal
+  // (spec §11.5).
+  reserved 3, 4, 5;
+  reserved "write_regions", "read_regions", "resumed";
+  // candidate_handle is set by the supervisor for
+  // DataProcessing-capable claims at fan-out leaf dispatch. Opaque to
+  // rimsky; the executor passes this back to its own writes against
+  // the producer (see proto:data_processing.proto::CommitCandidate).
+  // Empty for non-DataProcessing claims and non-fan-out claims. Per
+  // @blessed-invariant 20 the bytes are inert in rimsky — passed
+  // verbatim from the sub-claim row to the wire.
+  bytes candidate_handle = 6;
+}
+
+// ExecuteEvent is the per-record event type in the gRPC response stream.
+// Three categories: Heartbeat (zero or more), NamedEvent (zero or more),
+// StreamClose (exactly one final record carrying the outcome).
+message ExecuteEvent {
+  oneof event {
+    Heartbeat   heartbeat   = 1;
+    NamedEvent  named_event = 2;
+    StreamClose stream_close = 3;
+  }
+}
+
+// StreamClose terminates the gRPC stream. Exactly one is emitted per
+// successful Execute call. The outcome oneof carries the verdict; the
+// supervisor routes by outcome variant.
+message StreamClose {
+  oneof outcome {
+    Success            success      = 1;
+    Error              error        = 2;
+    Park               park         = 3;
+    AwaitAsyncCallback await_async  = 4;
+  }
+}
+
+// Success reports a successful executor run with a producer-declared
+// `changed` verdict. Optional `attributes_delta` carries terminal-final
+// attribute writeback; empty for the incremental-via-callback pattern.
+message Success {
+  bool changed = 1;
+  string change_summary = 2;
+  google.protobuf.Struct attributes_delta = 3;
+}
+
+// Error reports an executor error. `error_class` is the discriminator
+// the operator-side `error_types:` policy routes on. Common classes
+// include "executor_blocked" (the Phase-Pre-2026-05-12 Blocked terminal
+// collapsed into this), "rate_limited", "transient_io", etc.
+message Error {
+  string error_class = 1;
+  google.protobuf.Struct payload = 2;
+}
+
+// ParkReason categorizes why an executor parked a node. Storage form
+// (col:rimsky_node_runs.parked_reason) is lower_snake_case derived
+// from the enum symbol (e.g. PARK_REASON_AWAIT_CALLBACK ->
+// await_callback). The same form is used on the diagnostics
+// endpoint, the rimsky `parked list --reason=` flag, and the
+// Prometheus rimsky_parked_nodes_by_reason gauge label.
+//
+// @blessed-invariant: ParkReason is a closed two-value set
+// (PARK_REASON_AWAIT_CALLBACK, PARK_REASON_SNOOZE). The proto wire
+// layer rejects any other value at decode. No UNSPECIFIED, no
+// OTHER, no fallback. Storage CHECK on
+// col:rimsky_node_runs.parked_reason mirrors the closed set. Per
+// spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
+//
+// proto3 requires a defined zero value; PARK_REASON_AWAIT_CALLBACK
+// occupies tag 0 deliberately — an executor that forgets to set
+// the field gets the wait-on-callback interpretation, which won't
+// auto-resume, which is the safer default.
+//
+// @concept: parked-state
+enum ParkReason {
+  PARK_REASON_AWAIT_CALLBACK = 0;
+  PARK_REASON_SNOOZE         = 2;
+}
+
+// Park signals that the executor wants to pause the node and resume
+// later. The held claim handle is retained across the park boundary;
+// on resume, rimsky re-dispatches with ExecuteRequest.resume_context
+// populated from payload + session_token captured here.
+//
+// At least one of resume_at or external invalidation must wake the
+// node; rimsky does not enforce this in-protocol.
+message Park {
+  // Typed reason. Stored as lower_snake_case text in
+  // col:rimsky_node_runs.parked_reason.
+  ParkReason reason = 1;
+  // Inert to rimsky. Passed back as ResumeContext.payload on resume.
+  bytes payload = 2;
+  // Optional. When non-zero, the supervisor's SweepParkedNodes sweep
+  // wakes the node at this wall-clock time with
+  // resume_reason = "deadline_elapsed". Absent means signal-based-only.
+  google.protobuf.Timestamp resume_at = 3;
+  // Optional. Inert to rimsky. Passed back as
+  // ResumeContext.session_token on resume.
+  string session_token = 4;
+  // Free-form human annotation. Inert in rimsky.
+  string reason_note = 5;
+  // reason_label is a freeform tag carrying optional additional
+  // context for the (closed) ParkReason set (PARK_REASON_AWAIT_CALLBACK
+  // | PARK_REASON_SNOOZE). It is always optional under the post-collapse
+  // enum — there is no "other" variant that mandates it. Persisted on
+  // col:rimsky_node_runs.parked_reason_label.
+  string reason_label = 6;
+}
+
+// AwaitAsyncCallback (formerly AsyncAccepted) signals that the executor
+// has accepted the work but will report the final outcome later via
+// HTTP+JSON POST to ExecuteRequest.callback_url. The supervisor holds
+// the dispatch row claim and keeps the node in running state until the
+// callback arrives (subject to heartbeat-loss sweep).
+message AwaitAsyncCallback {
+  // Echoed back by the executor on the callback so the supervisor can
+  // correlate.
+  string async_ack_id = 1;
+  // Optional hint; the supervisor still uses its own heartbeat-loss
+  // cutoff for timeout enforcement.
+  int64 expected_completion_ms = 2;
+}
+
+// AsyncCallbackBody is the canonical schema for the HTTP+JSON body an
+// executor POSTs to ${callback_url}/v1/callback/{async_ack_id} after
+// emitting AwaitAsyncCallback. The body carries an optional `events`
+// stream replayed before the outcome verdict, plus exactly one outcome
+// oneof variant. The legacy `{type: "complete"|"blocked"|"errored"}`
+// fallback is no longer accepted; bodies failing to parse as this
+// message receive HTTP 400.
+//
+// AwaitAsyncCallback is not present in this outcome oneof because the
+// webhook IS the second half of the async path; chaining is forbidden.
+message AsyncCallbackBody {
+  // Optional NamedEvent stream replayed before the outcome verdict.
+  // Field number 1 stays reserved for events; oneof outcome fields
+  // start at 2 to keep events numerically first.
+  repeated NamedEvent events = 1;
+  oneof outcome {
+    Success success = 2;
+    Error   error   = 3;
+    Park    park    = 4;
+  }
+}
+
+// Heartbeat is a non-terminal progress indicator. Executors may emit any
+// number of these during a long-running execution; supervisors refresh
+// the node's last_heartbeat_at on receipt.
+message Heartbeat {
+  int64 timestamp_ms = 1;
+  string note = 2;
+}
+
+// NamedEvent is a non-terminal record an executor MAY emit zero or more
+// times during a run. Emissions are persisted in the per-instance event
+// ledger (rimsky_node_events) and are made available to substitution via
+// the source kind `nodes.<emitter>.event.<name>.<json_path>`. The
+// executor MUST still emit exactly one StreamClose after any number of
+// NamedEvent records.
+//
+// `name` MUST appear in the executor's ObservabilityCapabilities.declared_events;
+// rimsky validates this at template registration and rejects emissions
+// of undeclared names at the supervisor.
+message NamedEvent {
+  // Domain-meaningful event name. MUST be in declared_events.
+  string name = 1;
+  // Inert to rimsky. Available to substitution via walkPath in the
+  // same way as inline attribute values; per blessed-invariant 21 for
+  // spilled bytes, rimsky never logs, formats, transforms, or
+  // attaches payload bytes to traces or errors.
+  bytes payload = 2;
+}

@@ -24,11 +24,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
-	persistence "github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	tmplspec "github.com/rimsky-ai/rimsky-core/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	persistence "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 // fakeRunTreeForExit is the minimal RunTreeTable stand-in

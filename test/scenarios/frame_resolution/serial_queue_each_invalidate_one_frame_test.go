@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {

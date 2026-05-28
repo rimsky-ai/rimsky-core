@@ -11,7 +11,7 @@ files differ, those files control.
 
 | You are…                                                              | Your obligation                                                                 |
 | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Implementing or linking against the `protocols/` module               | Apache 2.0 — permissive, no copyleft.                                           |
+| Implementing or linking against the `lib/protocols/` module               | Apache 2.0 — permissive, no copyleft.                                           |
 | Running, modifying, or distributing the rest of Rimsky under open terms | AGPL-3.0-or-later — copyleft, including network-service source disclosure (§13). |
 | Doing the above but unable or unwilling to accept the AGPL            | Buy a Fall Guy Consulting commercial license.                                   |
 
@@ -19,7 +19,7 @@ files differ, those files control.
 
 Rimsky ships under two licenses, divided by a single boundary:
 
-- **`protocols/` is Apache License 2.0.** This module is the wire contract —
+- **`lib/protocols/` is Apache License 2.0.** This module is the wire contract —
   the protocol IDL, the generated bindings, and the helper/conformance
   packages a consumer implements or links against to speak to Rimsky. It is
   deliberately permissive so that anyone can build a service that talks to
@@ -32,9 +32,9 @@ Rimsky ships under two licenses, divided by a single boundary:
   They are meant to be used as-is, and that use carries the AGPL's copyleft.
 
 The boundary is enforced mechanically, not just described here. `licensing.yml`
-is the source-of-truth path map; `cmd/rimsky-license-check` verifies that every
+is the source-of-truth path map; `tools/license-check` verifies that every
 file carries the right per-file header, that no Apache file imports an AGPL
-package, and that every path the map names still exists. Because the `protocols/`
+package, and that every path the map names still exists. Because the `lib/protocols/`
 module imports nothing internal, the Apache code forms a single closed island —
 there is no code path by which Apache-licensed source depends on AGPL-licensed
 source.
@@ -42,18 +42,18 @@ source.
 ## Why the line is drawn here
 
 The only thing a consumer is ever *required* to implement or link against is in
-`protocols/`. That is the integration surface, so it is permissive.
+`lib/protocols/`. That is the integration surface, so it is permissive.
 
 Everything else — including the reference services — is something Rimsky offers
 you ready to run. Using a real service Rimsky ships is using Rimsky, and that is
 the AGPL boundary. If you want to integrate with Rimsky without accepting the
 AGPL and without a commercial license, the escape hatch is built in: implement
-the protocols from your own process. The permissive `protocols/` module exists
+the protocols from your own process. The permissive `lib/protocols/` module exists
 precisely so that path is open to everyone.
 
 ## What each license requires
 
-**Apache 2.0** (`protocols/`, plus the `testpg/` and `cold-read/` carve-outs).
+**Apache 2.0** (`lib/protocols/`, plus the `cold-read/` carve-out).
 Permissive. You may use, modify, and redistribute under the Apache terms,
 including in closed-source products. Preserve the license and copyright
 notices and the `NOTICE` file; see `LICENSE.apache`.
@@ -70,7 +70,7 @@ agreement). For organizations that want to use, modify, or distribute the
 orchestrator and services without the AGPL's §5 (copyleft) or §13
 (network-service source disclosure) obligations. This is a separately
 negotiated grant over the same AGPL-licensed code; it does not change the
-Apache terms on `protocols/`. Contact **licensing@fallguyconsulting.com**.
+Apache terms on `lib/protocols/`. Contact **licensing@fallguyconsulting.com**.
 
 ## How to tell which license a file is under
 
@@ -104,6 +104,6 @@ license is not a trademark license. See `TRADEMARKS.md` for the usage policy.
 | `LICENSE.agpl`   | Full GNU AGPL v3 text.                                            |
 | `COPYRIGHT`      | The formal per-layer copyright notice (referenced by file headers). |
 | `NOTICE`         | Apache §4(d) attribution notice.                                  |
-| `licensing.yml`  | Machine-readable boundary map enforced by `cmd/rimsky-license-check`. |
+| `licensing.yml`  | Machine-readable boundary map enforced by `tools/license-check`. |
 | `CLA.md`         | Contributor License Agreement.                                    |
 | `TRADEMARKS.md`  | Trademark usage policy.                                           |

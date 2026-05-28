@@ -31,12 +31,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/control/controlapi"
-	"github.com/rimsky-ai/rimsky-core/foundation/auth"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	_ "github.com/rimsky-ai/rimsky-core/foundation/persistence/sqlite"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 type authFixture struct {

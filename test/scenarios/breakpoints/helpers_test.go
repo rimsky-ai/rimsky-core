@@ -26,9 +26,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 // breakpointCreate POSTs a create-breakpoint body and returns the new

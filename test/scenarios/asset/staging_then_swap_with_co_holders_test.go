@@ -17,8 +17,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
-	"github.com/rimsky-ai/rimsky-core/stores/stub/dataprocessing"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/stores/stub/dataprocessing"
 )
 
 func TestStagingThenSwapWithCoHolders(t *testing.T) {

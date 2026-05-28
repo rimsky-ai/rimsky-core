@@ -16,7 +16,7 @@
 package main
 
 import (
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 type unimplementedPublisher struct {

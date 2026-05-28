@@ -13,7 +13,7 @@ package verifier
 import (
 	"testing"
 
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 func TestCrossTableVerifier_ClaimAliasesPassThroughExecutorContext(t *testing.T) {

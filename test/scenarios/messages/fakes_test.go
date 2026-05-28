@@ -16,8 +16,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 type fakeMessages struct {

@@ -4,9 +4,9 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 ## Where to look first
 
-**Architecture, concepts, invariants** — `.ok-planner/design/concepts.md` is the TOC; per-noun definitions, boundaries, and invariants live under `.ok-planner/design/concepts/<slug>.md`. The concept catalog is the durable design surface, updated alongside code through `/execute-plan` runs, and is the authoritative source for ownership and invariants. Start with `concepts/module-layout.md` for the four-module / four-layer split (`protocols/` + `foundation/` + the opt-in test-only `testpg/` + root with `graph/` → `runtime/` → `control/`).
+**Architecture, concepts, invariants** — `.ok-planner/design/concepts.md` is the TOC; per-noun definitions, boundaries, and invariants live under `.ok-planner/design/concepts/<slug>.md`. The concept catalog is the durable design surface, updated alongside code through `/execute-plan` runs, and is the authoritative source for ownership and invariants. Start with `concepts/module-layout.md` for the three-module / four-layer split: the repo root holds four idiomatic top-level code directories — `cmd/` (binaries), `lib/` (shippable library code), `test/` (out-of-tree tests + their machinery), `tools/` (dev tooling). Library packages live under `lib/` (`lib/protocols`, `lib/foundation`, plus the root-module `lib/graph` → `lib/runtime` → `lib/control` layer ordering); test scaffolding lives under `test/support/`.
 
-**Enforced import boundaries** — `.golangci.yml` `depguard` block (`pgx-isolation`, `foundation-internal-isolation`, `protocols-purity`, `foundation-purity`, `graph-purity`, `runtime-purity`, `consumption-side-isolation`). If lint and prose disagree, lint wins. `go.work` ties the four Go modules together (root, `foundation`, `protocols`, `testpg`).
+**Enforced import boundaries** — `.golangci.yml` `depguard` block (`pgx-isolation`, `foundation-internal-isolation`, `protocols-purity`, `foundation-purity`, `graph-purity`, `runtime-purity`, `consumption-side-isolation`). If lint and prose disagree, lint wins. `go.work` ties the three Go modules together (root, `lib/foundation`, `lib/protocols`).
 
 **Load-bearing safety properties** — `grep -rn '@blessed-invariant' .` in source. Each annotation carries the invariant plus the code site that enforces it; scenario tests under `test/scenarios/` exercise them.
 
@@ -14,11 +14,11 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 **Open / unresolved design questions** — `.ok-planner/design/tensions/`.
 
-**Build commands** — `Makefile`. Standard targets: `make build-all`, `make test-all`, `make lint`, `make tidy`, `make proto-gen`. Scenario and storage tests under `test/scenarios/...` and `foundation/persistence/...` use testcontainers-go and require a working Docker socket.
+**Build commands** — `Makefile`. Standard targets: `make build-all`, `make test-all`, `make lint`, `make tidy`, `make proto-gen`. Scenario and storage tests under `test/scenarios/...` and `lib/foundation/persistence/...` use testcontainers-go and require a working Docker socket.
 
 **Public docs** — not part of this repo. This tree carries no docs sources, no docs-lint tooling, and no docs gate.
 
-**Image builds** — Dockerfiles live in `dockerfiles/`. `make core-images` builds the four distributed images: `rimsky` (all role binaries + `rimsky-entrypoint` under one image — role by container command, backend by config — `dockerfiles/Dockerfile.rimsky`), `rimsky-all-in-one` (the `rimsky` image plus baked zero-config SQLite defaults so it runs out of the box for local dev — built `FROM rimsky:$(VERSION)`, so it must follow the `rimsky` build — `dockerfiles/Dockerfile.all-in-one`, baking `dockerfiles/all-in-one.{rimsky,supervisor-config}.yml`), `rimsky-host-agent-proxy` (`dockerfiles/Dockerfile.go-base`), and `rimsky-conformance` (the bundled protocol conformance runners — `dockerfiles/Dockerfile.conformance`). The CLI ships as a binary (`make cli`), not an image.
+**Image builds** — Dockerfiles live in `dockerfiles/`. `make core-images` builds the four distributed images: `rimsky` (all role binaries + `rimsky-entrypoint` under one image — role by container command, backend by config — `dockerfiles/Dockerfile.rimsky`), `rimsky-all-in-one` (the `rimsky` image plus baked zero-config SQLite defaults so it runs out of the box for local dev — built `FROM rimsky:$(VERSION)`, so it must follow the `rimsky` build — `dockerfiles/Dockerfile.all-in-one`, baking `dockerfiles/all-in-one.{rimsky,supervisor-config}.yml`), `rimsky-host-agent-proxy` (`dockerfiles/Dockerfile.go-base`), and `rimsky-conformance` (the protocol conformance runners, now `rimsky conformance <protocol>` subcommands shipped in the `rimsky` binary — the image runs `rimsky conformance …` — `dockerfiles/Dockerfile.conformance`). The CLI ships as a binary (`make cli`), not an image.
 
 **Recent changes** — `git log`. This repo keeps no CHANGELOG; design rationale lives in the concept catalog (above) and `.ok-planner/` history.
 

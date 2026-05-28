@@ -26,7 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 const protocolClaimProducer = "claim_producer"

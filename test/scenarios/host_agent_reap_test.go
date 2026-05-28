@@ -21,8 +21,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {

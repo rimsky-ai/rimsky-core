@@ -23,7 +23,7 @@ import (
 	"net/url"
 	"time"
 
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // httpForwarder relays agent LocalHttpForward frames to the original

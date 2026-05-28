@@ -23,8 +23,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 func TestChildRunsPerPartitionKey_OneChildPerKey(t *testing.T) {

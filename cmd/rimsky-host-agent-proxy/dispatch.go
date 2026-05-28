@@ -26,7 +26,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc/metadata"
 
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // Error-class vocabulary surfaced by the proxy (slots into the existing

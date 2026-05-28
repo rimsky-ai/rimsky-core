@@ -31,11 +31,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
-	"github.com/rimsky-ai/rimsky-core/runtime/executor"
-	"github.com/rimsky-ai/rimsky-core/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 // proxyExecutorName is the static executor name the proxy is registered
@@ -182,7 +182,7 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 	}
 	startProxyOnPort(t, proxyPort, controlURL, controlToken)
 
-	stub := buildBinary(t, "runtime/hostagent/testdata/stubchild")
+	stub := buildBinary(t, "lib/runtime/hostagent/testdata/stubchild")
 
 	fx := &hostAgentFixture{
 		h:          h,

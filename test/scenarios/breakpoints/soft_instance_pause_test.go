@@ -27,10 +27,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
-	foundationshared "github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 func TestSoftInstancePause(t *testing.T) {

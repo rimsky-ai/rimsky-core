@@ -1,13 +1,13 @@
 # Rimsky licensing boundary map.
 # Single source of truth for the per-file license headers and the
-# import-graph lint enforced by `cmd/rimsky-license-check/`. See COPYRIGHT
+# import-graph lint enforced by `tools/license-check/`. See COPYRIGHT
 # for the per-layer breakdown.
 #
 # Update procedure: edit this file, run `make license-lint` to verify import
 # direction + entry existence, then `make license-stamp` to reconcile
 # per-file headers (it adds missing headers and replaces wrong-kind ones).
 #
-# Boundary rule (one bright line): the `protocols/` module is the
+# Boundary rule (one bright line): the `lib/protocols/` module is the
 # implementer-facing wire contract — everything a consumer implements or
 # links against to speak to rimsky — and is Apache 2.0. Everything else is a
 # runnable artifact rimsky ships (the orchestrator AND its services) and is
@@ -15,29 +15,26 @@
 # integrate without AGPL, implement the protocols from your own process.
 #
 # Enforcement: Apache files may import only stdlib + permissive third-party +
-# other Apache packages; AGPL imports anything. Because `protocols/` imports
-# nothing internal (the protocols-purity depguard), there is exactly one
-# Apache island and no Apache→AGPL path can exist.
+# other Apache packages; AGPL imports anything. Because `lib/protocols/`
+# imports nothing internal (the protocols-purity depguard), there is exactly
+# one Apache island and no Apache→AGPL path can exist.
 #
 # Path classification rule: longest-prefix-match wins (so a more specific
 # subdirectory can override its parent's bucket).
 
 apache:
-  - protocols/   # wire IDL + generated bindings + protocol kit/helper packages + conformance libraries — the implement/link surface
+  - lib/protocols/   # wire IDL + generated bindings + protocol kit/helper packages + conformance libraries — the implement/link surface
   # Edge carve-outs — not the wire contract, but deliberately permissive:
-  - testpg/      # standalone Postgres-testcontainers helper; imports no rimsky package; carries no rimsky IP
   - cold-read/   # documentation (style guide); docs ship Apache
 
 agpl:
-  - foundation/
-  - graph/
-  - control/
-  - runtime/
-  - internal/
-  - stores/
-  - executors/
+  - lib/foundation/
+  - lib/graph/
+  - lib/control/
+  - lib/runtime/
   - cmd/
   - test/
+  - tools/
 
 exempt:
   # Non-source files at the repo root that carry no per-file header.
@@ -60,5 +57,5 @@ exempt:
   # Build artifacts and vendor trees. The walker only hard-skips VCS dirs
   # (.git, .svn, .hg); every other "skip me" directory must be listed here.
   - bin/
-  - protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
+  - lib/protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
   - .elves/

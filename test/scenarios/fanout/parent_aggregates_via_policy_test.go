@@ -21,11 +21,11 @@ package fanout
 import (
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
-	signalpkg "github.com/rimsky-ai/rimsky-core/foundation/signal"
-	tmplspec "github.com/rimsky-ai/rimsky-core/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
+	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 func TestParentAggregatesViaPolicy_StrictFailsOnAnyFailure(t *testing.T) {

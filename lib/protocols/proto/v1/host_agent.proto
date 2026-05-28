@@ -1,0 +1,153 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Licensed under the Apache License, Version 2.0.
+
+syntax = "proto3";
+
+package rimsky.v1;
+
+option go_package = "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1";
+
+// HostAgent is the protocol that rimsky-host-agent-proxy uses to communicate
+// with connected rimsky-host-agent daemons running on user dev machines.
+// Single bidi long-lived stream per connected agent. Frame oneof shapes
+// enumerated below.
+//
+// This protocol is INTERNAL to the proxy binary; it is not part of the
+// public service-protocol surface. Operators do not implement against it.
+service HostAgent {
+  rpc Connect(stream ClientFrame) returns (stream ServerFrame);
+}
+
+message ClientFrame {
+  oneof body {
+    Register           register          = 1;
+    HostAgentHeartbeat heartbeat         = 2;
+    SpawnAck           spawn_ack         = 3;
+    Reaped             reaped            = 4;
+    DispatchFrame      dispatch_frame    = 5;  // from spawned process → supervisor
+    LocalHttpForward   http_forward      = 6;  // from spawned process → rimsky-side
+  }
+}
+
+message ServerFrame {
+  oneof body {
+    RegisterAck           register_ack       = 1;
+    HostAgentHeartbeatAck heartbeat_ack      = 2;
+    Spawn                 spawn              = 3;
+    Reap                  reap               = 4;
+    DispatchFrame         dispatch_frame     = 5;  // from supervisor → spawned process
+    LocalHttpResponse     http_response      = 6;  // from rimsky-side → spawned process
+  }
+}
+
+message Register {
+  string api_key   = 1;
+  string agent_label = 2;       // e.g., "hostname-pid"; for multi-agent disambiguation
+  string agent_version = 3;
+  // Base URL the agent's local HTTP listener serves for spawned processes.
+  // The proxy uses this to rewrite callback_url and other rimsky-side URLs
+  // before tunneling them into the spawned process.
+  string local_callback_base_url = 4;
+}
+
+message RegisterAck {
+  string proxy_version = 1;
+  // If a prior agent for this api_key was connected, this ack carries
+  // a notice that the prior connection has been displaced.
+  bool displaced_prior = 2;
+}
+
+// HostAgentHeartbeat / HostAgentHeartbeatAck are the agent-liveness frames
+// on the proxy↔agent stream. Named distinctly from executor.proto's
+// Heartbeat (a different shape on a different protocol) because all v1
+// protos share the flat rimsky.v1 message namespace.
+message HostAgentHeartbeat    { int64 sent_at_unix_ms = 1; }
+message HostAgentHeartbeatAck { int64 received_at_unix_ms = 1; }
+
+message Spawn {
+  string spawn_id           = 1;
+  Binding binding           = 2;
+  string cwd                = 3;
+  string run_scope_id       = 4;
+  repeated string expected_protocols = 5;  // e.g., ["executor"], ["claim_producer"], or both
+  int32  ready_timeout_seconds = 6;
+}
+
+message Binding {
+  string path               = 1;
+  // future-extensible: args, env, per-binding cwd, etc.
+}
+
+message SpawnAck {
+  string spawn_id           = 1;
+  enum SpawnStatus {
+    SPAWN_STATUS_UNSPECIFIED = 0;
+    SPAWN_STATUS_READY       = 1;
+    SPAWN_STATUS_FAILED      = 2;
+  }
+  SpawnStatus status        = 2;
+  // On READY: per-protocol Capabilities responses, keyed by protocol name.
+  // Bytes are the serialized CapabilitiesResponse for each protocol.
+  map<string, bytes> capabilities = 3;
+  HostAgentError error      = 4;        // populated when status = SPAWN_STATUS_FAILED
+}
+
+message Reap            { string spawn_id = 1; int32 sigterm_grace_seconds = 2; }
+message Reaped          { string spawn_id = 1; bool clean = 2; HostAgentError error = 3; }
+
+message DispatchFrame {
+  string spawn_id           = 1;
+  string protocol           = 2;  // "executor", "claim_producer", etc. — used at dispatch start
+  bytes  payload            = 3;  // serialized gRPC frame for the named protocol
+  // Stream multiplexing: a single spawn_id can host concurrent dispatch
+  // streams (e.g., concurrent ClaimProducer.Open calls). Each stream
+  // carries a stream_id.
+  string stream_id          = 4;
+  enum DispatchFrameKind {
+    DISPATCH_FRAME_KIND_UNSPECIFIED = 0;
+    DISPATCH_FRAME_KIND_DATA        = 1;
+    DISPATCH_FRAME_KIND_HALF_CLOSE  = 2;
+    DISPATCH_FRAME_KIND_CANCEL      = 3;
+  }
+  DispatchFrameKind kind    = 5;
+  // claim_producer_verb names the unary ClaimProducer RPC the agent must
+  // invoke on the child. Carried on the wire because CommitRequest /
+  // AbandonRequest / ReleaseRequest are byte-identical at claim_id — the
+  // agent cannot infer the verb from the payload shape, and committing an
+  // Abandon/Release on a side-effecting producer is a state-integrity bug.
+  // Only meaningful when protocol == "claim_producer"; UNSPECIFIED on
+  // executor dispatch and on Open (Open is distinguished by its payload).
+  enum ClaimProducerVerb {
+    CLAIM_PRODUCER_VERB_UNSPECIFIED = 0;
+    CLAIM_PRODUCER_VERB_OPEN        = 1;
+    CLAIM_PRODUCER_VERB_COMMIT      = 2;
+    CLAIM_PRODUCER_VERB_ABANDON     = 3;
+    CLAIM_PRODUCER_VERB_RELEASE     = 4;
+  }
+  ClaimProducerVerb claim_producer_verb = 6;
+}
+
+message LocalHttpForward {
+  string forward_id         = 1;
+  string method             = 2;
+  string url                = 3;       // full URL as the spawned process saw it
+  bytes  body               = 4;
+  map<string, string> headers = 5;
+  string spawn_id           = 6;       // for routing back through the proxy if needed
+}
+
+message LocalHttpResponse {
+  string forward_id         = 1;
+  int32  status             = 2;
+  bytes  body               = 3;
+  map<string, string> headers = 4;
+}
+
+// HostAgentError carries a failure on the proxy↔agent stream. Named
+// distinctly from executor.proto's Error (a different shape on a different
+// protocol) because all v1 protos share the flat rimsky.v1 message
+// namespace.
+message HostAgentError {
+  string class              = 1;       // matches rimsky's error-class vocabulary
+  string message            = 2;
+}

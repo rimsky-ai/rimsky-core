@@ -10,11 +10,11 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/rimsky-ai/rimsky-core/control/config"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	_ "github.com/rimsky-ai/rimsky-core/foundation/persistence/postgres" // register driver
-	_ "github.com/rimsky-ai/rimsky-core/foundation/persistence/sqlite"   // register driver
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres" // register driver
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"   // register driver
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 func main() {

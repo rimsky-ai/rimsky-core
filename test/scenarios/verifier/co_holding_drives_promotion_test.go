@@ -23,7 +23,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
 // TestCoHoldingDrivesPromotion_VerifierPassEmitsSuccess pins the

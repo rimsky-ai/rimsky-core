@@ -39,17 +39,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/control/config"
-	"github.com/rimsky-ai/rimsky-core/foundation/locks"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
-	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/runtime"
-	"github.com/rimsky-ai/rimsky-core/runtime/executor"
-	peer "github.com/rimsky-ai/rimsky-core/runtime/peer"
-	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/stores/stub/testfixture"
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 // TestClaimScopeClaimRace_OneAcquirerWins exercises the single-writer-per-

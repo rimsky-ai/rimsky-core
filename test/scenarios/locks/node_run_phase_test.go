@@ -28,13 +28,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/control/config"
-	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
-	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
-	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/stores/stub/testfixture"
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 // TestNodeRunPhaseAdvancesOnClaim asserts that a successful

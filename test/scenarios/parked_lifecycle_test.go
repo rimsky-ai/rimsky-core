@@ -19,16 +19,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/control/config"
-	"github.com/rimsky-ai/rimsky-core/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/graph/node"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
-	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
-	genv1 "github.com/rimsky-ai/rimsky-core/protocols/proto/v1/gen"
-	stubstore "github.com/rimsky-ai/rimsky-core/stores/stub/store"
-	stubfixture "github.com/rimsky-ai/rimsky-core/stores/stub/testfixture"
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
+	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
+	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
 )
 
 // TestParkedLifecycleResumeOnDeadline covers E6 case (a). Executor emits

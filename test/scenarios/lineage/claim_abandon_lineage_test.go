@@ -28,13 +28,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/locks"
-	"github.com/rimsky-ai/rimsky-core/foundation/locks/storetest"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	pgtest "github.com/rimsky-ai/rimsky-core/internal/pgmigrate"
-	"github.com/rimsky-ai/rimsky-core/protocols/claimproducer"
-	"github.com/rimsky-ai/rimsky-core/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
 func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {

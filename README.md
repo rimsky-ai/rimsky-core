@@ -314,7 +314,7 @@ service or an adjacent system, not to grow the primitive.
 ## 6. Where to learn more
 
 For agents: point your coding agent at this repo and ask. The source,
-the protocol definitions under `protocols/proto/v1/`, and the concept
+the protocol definitions under `lib/protocols/proto/v1/`, and the concept
 catalog below are the canonical surfaces.
 
 For the concept catalog: `.ok-planner/design/concepts.md` is an
@@ -325,13 +325,13 @@ the concept evolved. Inline `@concept:` annotations in the source code
 point at enforcement sites.
 
 For protocols: the wire definitions live in this repo under
-`protocols/proto/v1/`.
+`lib/protocols/proto/v1/`.
 
 Point your coding agent at this repo and ask.
 
 ## 7. License
 
-Rimsky is multi-licensed. The `protocols/` module — the wire contract a
+Rimsky is multi-licensed. The `lib/protocols/` module — the wire contract a
 consumer implements or links against — is Apache 2.0. Everything else Rimsky
 ships, the orchestrator binaries and the reference services, is
 AGPL-3.0-or-later or, by agreement, a Fall Guy Consulting commercial license.

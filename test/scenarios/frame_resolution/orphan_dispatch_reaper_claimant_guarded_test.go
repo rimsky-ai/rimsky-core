@@ -32,10 +32,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/graph/frame"
-	"github.com/rimsky-ai/rimsky-core/graph/scenario"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
+	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 func TestOrphanDispatchReaper_ReleasesTerminalFrameClaim(t *testing.T) {

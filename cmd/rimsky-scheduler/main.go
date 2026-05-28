@@ -37,12 +37,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/rimsky-ai/rimsky-core/control/config"
-	"github.com/rimsky-ai/rimsky-core/control/observability"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
-	_ "github.com/rimsky-ai/rimsky-core/foundation/persistence/postgres" // register driver
-	_ "github.com/rimsky-ai/rimsky-core/foundation/persistence/sqlite"   // register driver
-	"github.com/rimsky-ai/rimsky-core/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
+	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres" // register driver
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"   // register driver
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 // defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.

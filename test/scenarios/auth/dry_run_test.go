@@ -19,8 +19,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/rimsky-ai/rimsky-core/foundation/auth"
-	"github.com/rimsky-ai/rimsky-core/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 func TestDryRun_AuthCreateIsNotDryRunnable(t *testing.T) {

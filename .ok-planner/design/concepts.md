@@ -45,7 +45,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `lineage` — A persisted projection of computational + data-promotion records.
 - `lineage-record` — An append-only record in the lineage projection (see `concept:lineage`), in two kinds.
 - `message` — A boundary-crossing dispatch unit.
-- `module-layout` (aliases: workspace-layout) — The Go workspace ties four modules into one build, with the root module itself carrying a four-layer split.
+- `module-layout` (aliases: workspace-layout) — The Go workspace ties three modules into one build, with the root module itself carrying a four-layer split.
 - `named-event` — A named event is a non-terminal executor emission carrying a name and an inert payload.
 - `named-lock` — A named lock is a producer-independent capacity-counter primitive.
 - `node` (aliases: graph-node) — A node is one declarative unit of work in a template's graph.

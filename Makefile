@@ -3,7 +3,7 @@
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
 proto-gen:
-	cd protocols/proto/v1 && protoc --go_out=gen --go_opt=paths=source_relative \
+	cd lib/protocols/proto/v1 && protoc --go_out=gen --go_opt=paths=source_relative \
 	  --go-grpc_out=gen --go-grpc_opt=paths=source_relative \
 	  executor.proto events.proto claim_producer.proto lifecycle.proto \
 	  executor_observability.proto claim_producer_observability.proto \
@@ -17,21 +17,20 @@ build:
 
 lint:
 	golangci-lint run
-	cd foundation && golangci-lint run
-	cd protocols && golangci-lint run
-	cd testpg && golangci-lint run
+	cd lib/foundation && golangci-lint run
+	cd lib/protocols && golangci-lint run
 
 # license-lint enforces the multi-license boundary documented in
 # docs/future-work/2026-05-02-licensing-design.md. Apache-classified packages
 # cannot import AGPL-classified ones, and every source file's header must
 # match its directory's classification per licensing.yml.
 license-lint:
-	go run ./cmd/rimsky-license-check
+	go run ./tools/license-check
 
 # license-stamp adds the appropriate header to any source file that lacks
 # one. Idempotent. Run after moving files across the licensing boundary.
 license-stamp:
-	go run ./cmd/rimsky-license-check --stamp
+	go run ./tools/license-check --stamp
 
 tidy:
 	go mod tidy
@@ -41,20 +40,18 @@ tidy:
 # Docs sources and the docs-lint binaries are not part of this repo. This
 # repo carries no docs targets and no docs gate.
 
-# Multi-module helpers — exercise every Go module in the repo (root + foundation + protocols + testpg).
+# Multi-module helpers — exercise every Go module in the repo (root + lib/foundation + lib/protocols).
 # Each `cd` runs against that module's go.mod; the go.work file at the repo root makes
 # inter-module references resolve via local replace.
 test-all:
 	go test ./...
-	cd foundation && go test ./...
-	cd protocols && go test ./...
-	cd testpg && go test ./...
+	cd lib/foundation && go test ./...
+	cd lib/protocols && go test ./...
 
 build-all:
 	go build ./...
-	cd foundation && go build ./...
-	cd protocols && go build ./...
-	cd testpg && go build ./...
+	cd lib/foundation && go build ./...
+	cd lib/protocols && go build ./...
 
 # ── rimsky CLI targets ──
 
@@ -124,7 +121,7 @@ push-images: check-clean
 # protocols/vX.Y.Z Go-module tag), not $(VERSION) — but the clean-tree guard
 # still applies so we never publish from an uncommitted tree.
 publish-protocols: check-clean
-	cd protocols && npm publish
+	cd lib/protocols && npm publish
 
 # Publish guard shared by push-images / publish-protocols. Refuses to publish
 # from a dirty tree: $(VERSION) would carry the -dirty suffix and the artifact
@@ -169,9 +166,8 @@ lint-docker:
 	  command -v golangci-lint >/dev/null || \
 	    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
 	  PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
-	  cd foundation && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
-	  cd ../protocols && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
-	  cd ../testpg && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
+	  cd /src/lib/foundation && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
+	  cd /src/lib/protocols && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
 
 tidy-docker:
 	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) go mod tidy

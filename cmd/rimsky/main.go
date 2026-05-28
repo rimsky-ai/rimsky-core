@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // main.go — rimsky entry point. Dispatches subcommands to handlers
-// in control/cli/. Hand-rolled subcommand routing on os.Args[1].
+// in cmd/rimsky/cli/. Hand-rolled subcommand routing on os.Args[1].
 package main
 
 import (
@@ -12,7 +12,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/rimsky-ai/rimsky-core/control/cli"
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 )
 
 func main() {
@@ -71,6 +71,8 @@ func main() {
 		os.Exit(cli.RunLogs(context.Background(), os.Args[2:]))
 	case "auth":
 		os.Exit(cli.RunAuth(os.Args[2:]))
+	case "conformance":
+		os.Exit(dispatchConformance(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "rimsky: unknown command %q\n\n", os.Args[1])
 		printRootUsage(os.Stderr)
@@ -372,6 +374,10 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Host agent:")
 	fmt.Fprintln(w, "  agent start | status | stop      Manage the local host-agent daemon")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Conformance:")
+	fmt.Fprintln(w, "  conformance executor | claim-producer | publisher | validation |")
+	fmt.Fprintln(w, "              data-processing | blob-backend | probe")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Common flags (all verbs):")
 	fmt.Fprintln(w, "  --endpoint <url>     Override control-api endpoint")
