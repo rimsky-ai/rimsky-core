@@ -2,10 +2,6 @@
 concept: write-semantics
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-write-semantics-envelope-handshake.md
-  - _discover/2026-05-10-byte-equal-scope-conflict.md
-  - _discover/2026-05-10-lock-state-in-rimsky-not-producer.md
 ---
 
 # Write semantics

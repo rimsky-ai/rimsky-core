@@ -4,12 +4,6 @@ status: as-is
 aliases:
   - lock-holder (legacy)
   - held-claim (folded; see Held variant below)
-references:
-  - _discover/2026-05-10-worker-request-phase-lifecycle.md
-  - _discover/2026-05-10-claimant-guarded-release.md
-  - _discover/2026-05-10-lock-state-in-rimsky-not-producer.md
-  - _discover/2026-05-10-auto-terminal-aggregate-resolution.md
-  - _discover/2026-05-10-orphan-reaper-no-producer-abandon.md
 ---
 
 # Claim handle

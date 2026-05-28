@@ -3,8 +3,6 @@ concept: cascade-graph
 status: as-is
 aliases:
   - operator dashboard backplane
-references:
-  - _discover/observability-cascade-graph-endpoint.md
 ---
 
 # Cascade graph

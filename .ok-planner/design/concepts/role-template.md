@@ -3,8 +3,6 @@ concept: role-template
 status: as-is
 aliases:
   - bundled role
-references:
-  - .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
 ---
 
 # Role template

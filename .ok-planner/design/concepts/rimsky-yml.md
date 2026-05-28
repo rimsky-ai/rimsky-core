@@ -3,10 +3,6 @@ concept: rimsky-yml
 status: as-is
 aliases:
   - unified config
-references:
-  - _discover/2026-05-10-unified-rimsky-yml-config.md
-  - _discover/2026-05-10-postgres-only-runtime-state.md
-  - _discover/2026-05-10-write-semantics-envelope-handshake.md
 ---
 
 # rimsky.yml

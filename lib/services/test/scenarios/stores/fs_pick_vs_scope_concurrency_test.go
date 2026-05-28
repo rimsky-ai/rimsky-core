@@ -1,0 +1,87 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// Pick-policy vs scope concurrency. A pick-policy claim and an
+// explicit scope-byte claim both target the same folder. Scope bytes
+// match byte-equal; rimsky's conflict predicate serializes. Both
+// nodes eventually reach terminal state in some order.
+//
+// Pre-2026-05-24-repo-reorganization the test drove rimsky via
+// `graph/scenario.Start`. Post-reorganization the rewrite uses
+// `test/harness.BringUpRimsky` to bring up rimsky/all + the locally-
+// built filesystem-store + executor-stub images on a shared docker
+// network.
+package stores
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
+)
+
+// TestFSPickVsScopeConcurrency drives a pick-policy claim and a
+// scope-byte claim that target the same folder; rimsky must
+// serialize them and both must reach terminal.
+func TestFSPickVsScopeConcurrency(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	netName := harness.NewNetwork(ctx, t)
+
+	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
+		harness.FilesystemStoreSpec{
+			PickPolicies: map[string]harness.FilesystemPickPolicy{
+				"@r": {
+					Root:                     "docs",
+					OnCommit:                 "recycle",
+					OnGiveUp:                 "recycle",
+					VisibilityTimeoutSeconds: 60,
+					SyncStrategy:             "on_open",
+				},
+			},
+			SeedFolders: [][]string{{"docs", "alpha"}},
+		})
+	_ = fs
+
+	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+
+	ep := harness.BringUpRimsky(ctx, t,
+		harness.WithExistingNetwork(netName),
+		harness.WithClaimProducer("docs", fs.InternalEndpoint),
+		harness.WithExecutor("stub", "executor-stub:9300"),
+	)
+
+	templateID := deployTemplate(t, ep, map[string]any{
+		"spec": map[string]any{
+			"name":                  "fs-pick-vs-scope",
+			"version":               "1",
+			"frame_resolution_mode": "serial_queue",
+			"frame_timeout_ms":      600000,
+			"nodes": []map[string]any{
+				{
+					"type":     "pick-worker",
+					"executor": "stub",
+					"stores": []map[string]any{
+						{"name": "docs", "selector": "@r", "intent": "rw"},
+					},
+				},
+				{
+					"type":     "scope-worker",
+					"executor": "stub",
+					"stores": []map[string]any{
+						// Scope-byte selector: same folder, byte-equal scope.
+						{"name": "docs", "selector": "docs/alpha", "intent": "rw"},
+					},
+				},
+			},
+		},
+	})
+
+	instanceID := createInstance(t, ep, templateID, "ck-fs-pick-vs-scope")
+
+	const deadline = 90 * time.Second
+	waitForNodeTerminal(t, ep, instanceID, "pick-worker", deadline)
+	waitForNodeTerminal(t, ep, instanceID, "scope-worker", deadline)
+}

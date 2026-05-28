@@ -19,7 +19,7 @@ The blob-backend surface is in-process Go (`persistence.BlobBackend`), not a wir
 
 ## Why it matters
 
-A third-party `BlobBackend` implementer who wants to run the same checks under `go test` (instead of via the binary) has to either invoke `rimsky-blob-backend-conformance` as a subprocess or copy-paste the check logic. The two existing patterns — shared library function (`RunClaimProducerConformance`) or shared scenarios package (`foundation/persistence/conformance/`) — would both work. Two patterns for "the same kind of thing" (in-process driver/backend validation), one of them not reusing the shared fixture path, is the cold-read inconsistency.
+A third-party `BlobBackend` implementer who wants to run the same checks under `go test` (instead of via the binary) has to either invoke `rimsky-blob-backend-conformance` as a subprocess or copy-paste the check logic. The two existing patterns — a shared library function exposed by the claim-producer conformance, or a shared scenarios package consumed by both the binary and the driver-internal tests — would both work. Two patterns for "the same kind of thing" (in-process driver/backend validation), one of them not reusing the shared fixture path, is the cold-read inconsistency.
 
 ## Resolution candidates (do NOT pick)
 

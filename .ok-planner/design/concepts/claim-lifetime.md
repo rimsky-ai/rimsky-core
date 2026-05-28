@@ -2,8 +2,6 @@
 concept: claim-lifetime
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-15-data-platform-extensions-design.md
 ---
 
 # Claim lifetime

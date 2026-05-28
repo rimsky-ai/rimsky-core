@@ -4,8 +4,6 @@ status: as-is
 aliases:
   - peer (legacy)
   - peer service (legacy)
-references:
-  - _discover/2026-05-10-multi-protocol-services.md
 ---
 
 # Service

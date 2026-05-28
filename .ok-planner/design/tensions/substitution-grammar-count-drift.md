@@ -31,5 +31,5 @@ Template authors writing `{{nodes.emitter.event.name.path}}` need to know whethe
 
 ## Notes
 
-- 2026-05-19 — Partly addressed by spec 2026-05-19-multi-instance-template-ergonomics-design: `concepts/attribute.md`'s Invariants section now reflects the current grammar (retired `deps.*`, added live `trigger.*`/`child.*`). The cross-doc sweep (CLAUDE.md, `docs/concepts/attributes.md`) remains open.
+- 2026-05-19 — Partly addressed by `spec:2026-05-19-multi-instance-template-ergonomics-design`: `concept:attribute`'s Invariants section now reflects the current grammar (retired `deps.*`, added live `trigger.*`/`child.*`). The cross-doc sweep against other surfaces remains open.
 

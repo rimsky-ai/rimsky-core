@@ -2,12 +2,6 @@
 concept: supervisor
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-supervisor-acceptance-lists.md
-  - _discover/2026-05-10-verify-before-run-guard.md
-  - _discover/2026-05-10-claimant-guarded-release.md
-  - _discover/2026-05-10-atomic-acquisition-decoupled-tx.md
-  - _discover/2026-05-10-postgres-only-runtime-state.md
 ---
 
 # Supervisor

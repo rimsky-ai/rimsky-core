@@ -3,9 +3,6 @@ concept: tag
 status: as-is
 aliases:
   - template-tag
-references:
-  - _discover/2026-05-10-content-addressed-templates.md
-  - _discover/rimsky-cli-compose-prefix-reservation.md
 ---
 
 # Template tag

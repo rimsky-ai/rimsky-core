@@ -91,6 +91,10 @@ func verifyHeaders(files []fileEntry) []violation {
 			out = append(out, violation{path: f.relPath, message: "missing license header"})
 			continue
 		}
+		if isApache && isAGPL {
+			out = append(out, violation{path: f.relPath, message: "contradictory license markers (both Apache and AGPL) — run `make license-stamp`"})
+			continue
+		}
 		switch f.classification {
 		case classApache:
 			if !isApache {
@@ -149,7 +153,10 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 // adds a header to files that lack one and REPLACES a header of the wrong
 // kind (e.g. an Apache header on a now-AGPL file after a relicense). Files
 // already carrying the correct header are left untouched, so repeated runs
-// are idempotent.
+// are idempotent. A file that ends up with BOTH markers (e.g. an AGPL
+// boilerplate header followed by a stale `SPDX-License-Identifier: Apache-2.0`
+// line — what a prior buggy strip pass would leave behind) is also re-stamped
+// so the contradictory header is cleaned up.
 func stampHeaders(files []fileEntry) (int, error) {
 	stamped := 0
 	for _, f := range files {
@@ -160,8 +167,9 @@ func stampHeaders(files []fileEntry) (int, error) {
 		if err != nil {
 			return stamped, fmt.Errorf("%s: %w", f.relPath, err)
 		}
-		correct := (f.classification == classApache && isApache) ||
-			(f.classification == classAGPL && isAGPL)
+		mixed := isApache && isAGPL
+		correct := !mixed && ((f.classification == classApache && isApache) ||
+			(f.classification == classAGPL && isAGPL))
 		if hasHeader && correct {
 			continue
 		}
@@ -200,6 +208,7 @@ var licenseHeaderMarkers = []string{
 	"LICENSE",
 	"apache.org/licenses",
 	"repo root",
+	"SPDX-License-Identifier",
 }
 
 func commentPrefixFor(kind sourceKind) string {
@@ -216,7 +225,11 @@ func commentPrefixFor(kind sourceKind) string {
 // stripLeadingHeader removes an existing license-header block (plus the
 // single blank line separating it from the body) so stampOne can splice a
 // replacement. A leading "// Code generated" (Go) or shebang line is
-// preserved. If no header boilerplate is found, body is returned unchanged.
+// preserved. A single blank line between header-marker lines is tolerated,
+// so a file that carries both a boilerplate block and a separate
+// SPDX-License-Identifier line (with a blank line between them) has all
+// of it stripped, not just the first group. If no header boilerplate is
+// found, body is returned unchanged.
 func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 	prefix := commentPrefixFor(kind)
 	lines := strings.SplitAfter(string(body), "\n")
@@ -229,14 +242,32 @@ func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 		}
 	}
 	preambleEnd := i
-	for i < len(lines) && isHeaderLine(lines[i], prefix) {
-		i++
+	// Walk forward across the contiguous header region. A header-marker
+	// line continues the block. A single blank line followed by another
+	// header-marker line also continues the block (this covers the
+	// boilerplate-then-SPDX layout). The first non-blank, non-marker line
+	// ends the block.
+	lastHeaderIdx := -1
+	for i < len(lines) {
+		if isHeaderLine(lines[i], prefix) {
+			lastHeaderIdx = i
+			i++
+			continue
+		}
+		// Tolerate at most one blank line between marker runs.
+		if strings.TrimSpace(lines[i]) == "" && i+1 < len(lines) && isHeaderLine(lines[i+1], prefix) {
+			i++
+			continue
+		}
+		break
 	}
-	if i == preambleEnd {
+	if lastHeaderIdx < preambleEnd {
 		return body // no header boilerplate after the preamble
 	}
+	// Position i at the first non-marker, non-tolerated-blank line. Drop
+	// one additional blank separator between header and body if present.
 	if i < len(lines) && strings.TrimSpace(lines[i]) == "" {
-		i++ // drop the header/body separator blank line
+		i++
 	}
 	var b strings.Builder
 	for j := 0; j < preambleEnd; j++ {

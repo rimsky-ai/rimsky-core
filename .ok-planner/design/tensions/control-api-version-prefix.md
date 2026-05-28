@@ -20,7 +20,7 @@ The bare-paths shape is deliberate v1-deferral. But:
 
 ## Why it matters
 
-Anyone building tooling against the control-api (third-party CLIs, agent shims, dashboards) needs to know whether the URL shape is stable or transitional. Rolling upgrades work only if old + new are compatible; CLAUDE.md acknowledges this is operator-managed.
+Anyone building tooling against the control-api (third-party CLIs, agent shims, dashboards) needs to know whether the URL shape is stable or transitional. Rolling upgrades work only if old + new are compatible, and the burden of guaranteeing that compatibility is on the operator.
 
 ## Resolution candidates (do NOT pick)
 

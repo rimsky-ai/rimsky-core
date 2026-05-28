@@ -2,8 +2,6 @@
 concept: run-scope
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-22-fan-out-safety-scope-first-design.md
 ---
 
 # RunScope

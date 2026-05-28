@@ -2,8 +2,6 @@
 concept: wait-set
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
 ---
 
 # Wait-set

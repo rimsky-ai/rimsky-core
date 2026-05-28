@@ -6,8 +6,6 @@ affects:
   - delegation
   - fan-out
   - run-scope
-references:
-  - ../../sketches/2026-05-23-unify-child-execution-sketch.md
 ---
 
 # Delegation and fan-out are the same run-side primitive with two template surfaces
@@ -41,7 +39,7 @@ Two emission sites (`applyTerminalCompleteSubgraphCaller`, `CreateFanOutChildren
 - Bug-fix duplication: defects in one path (e.g., the cascade bridge missing from `applyTerminalCompleteSubgraphExit` discovered during Phase F2, or the partition-RunScope-closure-on-aggregation-settlement work) need parallel fixes in the other.
 - Concept-doc duplication: `concept:delegation` and `concept:fan-out` re-state the same RunScope tree shape, the same closure-on-rendezvous invariant, the same parent-settlement cascade contract.
 - Mental-model cost: a new contributor learning rimsky encounters "delegation" and "fan-out" as two things to internalize when the run-side is one shape.
-- The just-landed RunScope-first reshape (per `.ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md`) makes the unification newly tractable — pre-RunScope, the two had different inline disambiguators on `rimsky_node_runs` and weren't structurally parallel. Now they are.
+- The just-landed RunScope-first reshape (per `spec:2026-05-22-fan-out-safety-scope-first-design`) makes the unification newly tractable — pre-RunScope, the two had different inline disambiguators on the node-run row and weren't structurally parallel. Now they are.
 
 ## Resolution candidates (do NOT pick)
 

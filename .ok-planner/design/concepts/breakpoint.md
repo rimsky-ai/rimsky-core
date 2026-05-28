@@ -2,8 +2,6 @@
 concept: breakpoint
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-24-instance-debugger-design.md
 ---
 
 # Breakpoint

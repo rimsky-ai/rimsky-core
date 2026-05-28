@@ -2,8 +2,6 @@
 concept: signal
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md
 ---
 
 # Signal

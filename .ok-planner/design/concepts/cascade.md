@@ -3,10 +3,6 @@ concept: cascade
 status: as-is
 aliases:
   - reactive-cascade
-references:
-  - _discover/2026-05-10-cascade-fires-on-last-outcome.md
-  - _discover/2026-05-10-frame-resolution-model.md
-  - _discover/2026-05-10-state-machine-no-self-loop.md
 ---
 
 # Cascade

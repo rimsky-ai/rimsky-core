@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SPDX-License-Identifier: Apache-2.0
-
 // Package testpg provides a testcontainer helper for spinning up a plain
 // Postgres container without applying any migrations. Implementer-facing:
 // service authors building rimsky publishers / executors / store-services

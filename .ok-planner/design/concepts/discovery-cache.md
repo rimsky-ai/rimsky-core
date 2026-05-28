@@ -3,8 +3,6 @@ concept: discovery-cache
 status: as-is
 aliases:
   - capabilities cache
-references:
-  - _discover/observability-handshake-discovery-cache.md
 ---
 
 # Discovery cache

@@ -24,6 +24,7 @@
 
 apache:
   - lib/protocols/   # wire IDL + generated bindings + protocol kit/helper packages + conformance libraries — the implement/link surface
+  - lib/services/executors/claude-agent/   # TS executor reference impl; independently Apache-licensed
   # Edge carve-outs — not the wire contract, but deliberately permissive:
   - cold-read/   # documentation (style guide); docs ship Apache
 
@@ -32,6 +33,7 @@ agpl:
   - lib/graph/
   - lib/control/
   - lib/runtime/
+  - lib/services/
   - cmd/
   - test/
   - tools/
@@ -58,4 +60,6 @@ exempt:
   # (.git, .svn, .hg); every other "skip me" directory must be listed here.
   - bin/
   - lib/protocols/proto/v1/gen/  # generated bindings — handled separately by protoc plugin
+  - lib/services/executors/claude-agent/node_modules/
+  - lib/services/executors/claude-agent/dist/
   - .elves/

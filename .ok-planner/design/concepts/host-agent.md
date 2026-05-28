@@ -2,8 +2,6 @@
 concept: host-agent
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-24-host-agent-and-proxy-design.md
 ---
 
 # Host agent

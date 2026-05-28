@@ -3,8 +3,6 @@ concept: api-key
 status: as-is
 aliases:
   - bearer token
-references:
-  - .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
 ---
 
 # API key

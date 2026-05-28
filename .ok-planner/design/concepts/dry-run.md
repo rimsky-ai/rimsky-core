@@ -2,8 +2,6 @@
 concept: dry-run
 status: as-is
 aliases: []
-references:
-  - .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
 ---
 
 # Dry-run

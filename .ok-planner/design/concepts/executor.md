@@ -2,12 +2,6 @@
 concept: executor
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-executor-streamed-execute.md
-  - _discover/2026-05-10-typescript-executor-claude-agent.md
-  - _discover/claude-agent-async-handoff-always.md
-  - _discover/2026-05-10-observability-optional-protocols.md
-  - _discover/2026-05-10-parked-state-and-resume.md
 ---
 
 # Executor

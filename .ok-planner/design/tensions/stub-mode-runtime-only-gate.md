@@ -17,7 +17,7 @@ Default behavior is permissive: no probe runs unless the operator opts in. The r
 
 ## Why it matters
 
-A new operator running `rimsky-executor-conformance --endpoint http://claude-agent` without reading the docs hits real APIs. Cost: real money. The safety net only fires when the operator already knows it should.
+A new operator running the executor-conformance binary against an arbitrary endpoint without the stub-mode gate hits real APIs. Cost: real money. The safety net only fires when the operator already knows it should.
 
 ## Resolution candidates (do NOT pick)
 

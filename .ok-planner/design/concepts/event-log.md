@@ -3,8 +3,6 @@ concept: event-log
 status: as-is
 aliases:
   - audit log
-references:
-  - _discover/2026-05-10-event-log-append-only-jsonb.md
 ---
 
 # Event log (audit log)

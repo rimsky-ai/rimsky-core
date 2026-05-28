@@ -3,10 +3,6 @@ concept: frame
 status: as-is
 aliases:
   - cascade-frame
-references:
-  - _discover/2026-05-10-frame-resolution-model.md
-  - _discover/2026-05-10-frame-stuck-is-advisory.md
-  - _discover/2026-05-10-cron-no-backfill.md
 ---
 
 # Frame

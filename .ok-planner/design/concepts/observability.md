@@ -2,8 +2,6 @@
 concept: observability
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-observability-optional-protocols.md
 ---
 
 # Observability

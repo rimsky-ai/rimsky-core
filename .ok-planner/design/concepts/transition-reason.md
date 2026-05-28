@@ -2,10 +2,6 @@
 concept: transition-reason
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-state-machine-no-self-loop.md
-  - _discover/2026-05-10-cascade-fires-on-last-outcome.md
-  - ../../specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md
 ---
 
 # Transition reason

@@ -2,9 +2,6 @@
 concept: node-subscription
 status: as-is
 aliases: [subscription]
-references:
-  - ../../specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
-  - ../../specs/2026-05-17-sensor-messaging-unification-design.md
 ---
 
 # Node-subscription

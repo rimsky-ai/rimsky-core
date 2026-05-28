@@ -2,11 +2,6 @@
 concept: control-api
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-rimsky-cli-thin-client.md
-  - _discover/control-api-mcp-server.md
-  - _discover/observability-cascade-graph-endpoint.md
-  - _discover/2026-05-10-lifecycle-subscriber-opt-in.md
 ---
 
 # Control API

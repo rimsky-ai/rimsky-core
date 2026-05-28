@@ -2,10 +2,6 @@
 concept: named-lock
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-named-and-scope-locks-deterministic-order.md
-  - _discover/2026-05-10-advisory-locks-tick-and-migrate.md
-  - _discover/2026-05-10-write-semantics-envelope-handshake.md
 ---
 
 # Named lock

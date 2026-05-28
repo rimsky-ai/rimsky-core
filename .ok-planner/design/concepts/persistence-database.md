@@ -2,11 +2,6 @@
 concept: persistence-database
 status: as-is
 aliases: [persistence-driver]
-references:
-  - _discover/2026-05-10-postgres-only-runtime-state.md
-  - _discover/2026-05-10-sqlite-dev-only.md
-  - _discover/2026-05-10-depguard-enforced-package-boundaries.md
-  - _discover/2026-05-10-pre-v1-break-freely-migrations.md
 ---
 
 # Persistence database

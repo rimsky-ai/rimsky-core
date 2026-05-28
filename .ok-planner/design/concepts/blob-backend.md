@@ -2,10 +2,6 @@
 concept: blob-backend
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-blob-spill-pluggable-backends.md
-  - _discover/2026-05-10-opacity-of-userdata-claim-blob.md
-  - _discover/2026-05-10-postgres-only-runtime-state.md
 ---
 
 # Blob backend

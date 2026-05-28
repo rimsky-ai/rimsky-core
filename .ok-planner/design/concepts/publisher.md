@@ -2,8 +2,6 @@
 concept: publisher
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-17-sensor-messaging-unification-design.md
 ---
 
 # Publisher

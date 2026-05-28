@@ -2,10 +2,6 @@
 concept: instance
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-content-addressed-templates.md
-  - _discover/2026-05-10-userdata-overrides-by-instance.md
-  - _discover/2026-05-10-frame-resolution-model.md
 ---
 
 # Instance

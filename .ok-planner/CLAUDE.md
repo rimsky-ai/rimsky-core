@@ -145,6 +145,22 @@ doc that moves to another repo does not orphan one. To make
 that durable, citations in concept body are restricted to
 forms that survive the codebase moving.
 
+**The rule applies to frontmatter as well as body.** A
+`references:` frontmatter field that lists `_discover/...`
+artifacts, spec paths, sketch paths, or any other file-form
+citation is the same durability problem the rule exists to
+prevent — those paths rot when the scaffolding is retired,
+when specs are archived, or when the repo is reorganized.
+Once a concept is baked, the lineage that produced it lives
+in the `_discover/` scaffolding (as history) and in the
+body's dated Notes entries (which cite specs by slug);
+frontmatter is restricted to slug-form metadata only:
+`concept:` / `tension:`, `status:`, `aliases:` (list of
+names), and for tensions `category:` and `affects:` (list
+of concept slugs). Path-form `references:` does not belong
+in concept or tension frontmatter; if a `discover-design`
+or earlier-version run wrote one, strip it.
+
 **Allowed in concept body:**
 - Other concept slugs (`see also: claim-handle`,
   `concept:claim-handle`).

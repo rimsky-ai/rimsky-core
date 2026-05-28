@@ -2,9 +2,6 @@
 concept: message
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-15-data-platform-extensions-design.md
-  - ../../specs/2026-05-17-sensor-messaging-unification-design.md
 ---
 
 # Message

@@ -2,8 +2,6 @@
 concept: publisher-subscription
 status: as-is
 aliases: [sensor-watch]
-references:
-  - ../../specs/2026-05-17-sensor-messaging-unification-design.md
 ---
 
 # Publisher-subscription

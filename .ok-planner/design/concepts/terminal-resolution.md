@@ -3,12 +3,6 @@ concept: terminal-resolution
 status: as-is
 aliases:
   - executor-terminal-spine
-references:
-  - _discover/terminal-resolution.md
-  - _discover/2026-05-10-auto-terminal-aggregate-resolution.md
-  - _discover/error-policy-retry-loop-cap.md
-  - _discover/reactive-loops-and-lifecycle-handlers.md
-  - _discover/2026-05-10-executor-streamed-execute.md
 ---
 
 # Terminal resolution

@@ -4,12 +4,6 @@ status: as-is
 aliases:
   - store (legacy / colloquial)
   - claim-store
-references:
-  - _discover/2026-05-10-out-of-process-claim-producers.md
-  - _discover/2026-05-10-atomic-acquisition-decoupled-tx.md
-  - _discover/2026-05-10-byte-equal-scope-conflict.md
-  - _discover/2026-05-10-write-semantics-envelope-handshake.md
-  - _discover/2026-05-10-lock-state-in-rimsky-not-producer.md
 ---
 
 # Claim producer

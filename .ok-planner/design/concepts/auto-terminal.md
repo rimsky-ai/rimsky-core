@@ -3,9 +3,6 @@ concept: auto-terminal
 status: as-is
 aliases:
   - held-claim resolution
-references:
-  - _discover/2026-05-10-auto-terminal-aggregate-resolution.md
-  - _discover/2026-05-10-claimant-guarded-release.md
 ---
 
 # Auto-terminal

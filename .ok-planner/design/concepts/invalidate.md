@@ -2,10 +2,6 @@
 concept: invalidate
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-frame-resolution-model.md
-  - _discover/2026-05-10-cascade-fires-on-last-outcome.md
-  - _discover/reactive-loops-and-lifecycle-handlers.md
 ---
 
 # Invalidate

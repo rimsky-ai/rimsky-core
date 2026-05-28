@@ -3,10 +3,6 @@ concept: node
 status: as-is
 aliases:
   - graph-node
-references:
-  - _discover/2026-05-10-state-machine-no-self-loop.md
-  - _discover/2026-05-10-cascade-fires-on-last-outcome.md
-  - _discover/2026-05-10-parked-state-and-resume.md
 ---
 
 # Node

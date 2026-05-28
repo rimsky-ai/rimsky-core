@@ -2,9 +2,6 @@
 concept: conformance
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-conformance-test-binaries.md
-  - _discover/conformance-probe-stub-mode-handshake.md
 ---
 
 # Conformance

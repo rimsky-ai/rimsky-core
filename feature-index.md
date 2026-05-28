@@ -89,11 +89,34 @@ tooling and no docs gate.
 | --- | --- | --- |
 | license-check | `tools/license-check/` | License-boundary lint + header stamp (reads `licensing.yml`). Run via `make license-lint` / `make license-stamp`. |
 
-## Bundled service reference impls
+## Bundled services (`lib/services/`)
 
-Production-side bundled implementations are not part of this repo. Only
-test-infrastructure carve-outs and the in-rimsky testfixture wrappers
-remain here.
+Consumption-side services shipped as images. Their own Go module
+(`github.com/rimsky-ai/rimsky-core/lib/services`); depend only on
+`lib/protocols`; never imported back into core internals (enforced
+by the module graph and the `consumption-side-isolation` lint rule).
+Each has a co-located Dockerfile; `make service-images` builds them
+all.
+
+| Service | Path | Purpose |
+| --- | --- | --- |
+| store-filesystem | `lib/services/stores/filesystem/` | Filesystem-backed claim producer (atomic stage-then-swap). |
+| store-postgres | `lib/services/stores/postgres/` | Postgres-backed claim producer. |
+| sensor-cron | `lib/services/sensors/sensor-cron/` | Cron-schedule sensor: emits messages on a cron firing. |
+| sensor-http | `lib/services/sensors/sensor-http/` | HTTP-poll sensor: polls a URL and emits on changed body / status. |
+| sensor-object-store | `lib/services/sensors/sensor-object-store/` | Object-store sensor: emits on new/changed objects under a prefix. |
+| sensor-webhook | `lib/services/sensors/sensor-webhook/` | Webhook sensor: receives inbound HTTP and emits a message. |
+| subscriber-openlineage | `lib/services/subscribers/openlineage/` | OpenLineage lifecycle subscriber: persists lineage events to an OL backend. |
+| executor-http-node | `lib/services/executors/http-node/` | HTTP-call executor: dispatches a node by issuing a configured HTTP request. |
+| executor-verifier-http | `lib/services/executors/verifier-http/` | Verifier executor: validates a claim's data via an HTTP probe. |
+| executor-verifier-shape-checks | `lib/services/executors/verifier-shape-checks/` | Verifier executor: structural shape checks on a claim's data. |
+| executor-claude-agent | `lib/services/executors/claude-agent/` | TypeScript executor (separate Apache deliverable; consumes `lib/protocols` as a local npm `file:` dep). |
+
+## Bundled service test-infra carve-outs
+
+Test-infrastructure carve-outs and in-rimsky testfixture wrappers
+that stay in the root module (separate from the production-side
+services under `lib/services/`).
 
 ### Claim producers (`test/support/stores/`)
 
@@ -108,14 +131,6 @@ remain here.
 | Executor | Path | Purpose |
 | --- | --- | --- |
 | stub | `test/support/executors/stub/` | In-memory test fixture (Go). Stays in rimsky as test infrastructure. |
-
-### Sensors
-
-No sensor reference impls are part of this repo.
-
-### Lifecycle subscribers
-
-No subscriber reference impls are part of this repo.
 
 ### Dashboards
 

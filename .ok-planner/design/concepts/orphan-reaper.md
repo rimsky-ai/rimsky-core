@@ -2,11 +2,6 @@
 concept: orphan-reaper
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-orphan-reaper-no-producer-abandon.md
-  - _discover/orphan-claim-cutoff-five-heartbeats.md
-  - _discover/2026-05-10-claimant-guarded-release.md
-  - _discover/2026-05-10-verify-before-run-guard.md
 ---
 
 # Orphan reaper

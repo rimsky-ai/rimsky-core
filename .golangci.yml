@@ -1,3 +1,12 @@
+issues:
+  # node_modules occasionally ships stray Go files (e.g. the npm
+  # `flatted` package ships `golang/pkg/flatted/flatted.go`). Skip
+  # them globally so a `npm install` in lib/services/executors/*/
+  # doesn't suddenly fail `make lint`. `exclude-dirs` is a list of
+  # regexps (NOT globs), so a bare `node_modules` matches the segment
+  # anywhere in the path.
+  exclude-dirs:
+    - "node_modules"
 linters:
   enable:
     - depguard
@@ -30,9 +39,10 @@ linters-settings:
           - "!**/sensors/**"
           - "!**/subscribers/**"
           - "!**/test/smoke/**"
+          - "!**/lib/services/test/scenarios/**"
         deny:
           - pkg: "github.com/jackc/pgx/v5"
-            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, cmd/, test/support/pgmigrate/, test/support/testpg/, test/support/scenario/, test/support/stores/, sensors/, subscribers/, and test/smoke/. Use the persistence interfaces."
+            desc: "pgx is allowed only in foundation/persistence/postgres/, foundation/internal/pgtest/, cmd/, test/support/pgmigrate/, test/support/testpg/, test/support/scenario/, test/support/stores/, sensors/, subscribers/, test/smoke/, lib/services/test/scenarios/, lib/services/stores/, lib/services/sensors/, and lib/services/subscribers/. Use the persistence interfaces."
           - pkg: "github.com/jackc/pgx/v5/pgxpool"
             desc: "see pgx isolation rule above"
           - pkg: "github.com/jackc/pgx/v5/pgconn"
@@ -125,36 +135,29 @@ linters-settings:
             desc: "runtime/ may not import test/support/stores/ (test-support stubs)."
           - pkg: "github.com/rimsky-ai/rimsky-core/test/support/executors"
             desc: "runtime/ may not import test/support/executors/ (test-support stubs)."
-      # consumption-side-isolation: stores/, sensors/, subscribers/, executors/
-      # are bundled reference impls that the 2026-05-24 reorganization
-      # moved out of this repo. They must implement against protocols/ only;
-      # importing rimsky-internal packages would prevent that separation.
-      # The `files:` targets no longer have local matches in rimsky; the
-      # rule stays as a defensive guard against re-bundling.
+      # consumption-side-isolation: lib/services/ is the in-tree home of the
+      # bundled consumption-side services (stores, sensors, subscribers,
+      # executors) that rimsky ships as images. They implement against
+      # lib/protocols/ only — the lib/services module's go.mod requires only
+      # lib/protocols, so the module graph already prevents importing any
+      # rimsky-internal layer (foundation, graph, runtime, control, cmd).
+      # This depguard rule is retained as defense-in-depth at the package
+      # level, in case a future refactor would otherwise grow such an edge.
       #
-      # The in-repo stub claim-producer (stores/stub/**) and stub executor
-      # (executors/stub/**) deliberately stayed in rimsky as test
-      # infrastructure (Apache-classified rimsky-internal carve-outs), so
-      # they are exempt — they may consume rimsky-internal helpers. The bare
-      # stores/**, executors/** globs over-match the stub, hence the
-      # !stores/stub/** and !executors/stub/** exclusions.
+      # The root-anchored globs (stores/**, sensors/**, subscribers/**,
+      # executors/**) are intentionally distinct from the workspace-rooted
+      # `**/lib/services/**` form: depending on how golangci-lint resolves
+      # paths when linting the lib/services module (module-relative vs.
+      # workspace-relative vs. absolute), one form or the other is the one
+      # that matches. Listing both keeps the rule effective in every case.
       consumption-side-isolation:
         list-mode: lax
-        # Root-anchored patterns intentionally — the spec's
-        # `**/stores/**` would also match `test/scenarios/stores/`,
-        # which is rimsky-internal scenario test code, not bundled
-        # consumption-side binaries scheduled to move out. The
-        # production consumption-side directories live only at the
-        # repo root (`stores/`, `sensors/`, `subscribers/`,
-        # `executors/`); the in-tree scenario tests under
-        # `test/scenarios/stores/` will be addressed by P3.4.
         files:
+          - "**/lib/services/**"
           - "stores/**"
-          - "!stores/stub/**"
           - "sensors/**"
           - "subscribers/**"
           - "executors/**"
-          - "!executors/stub/**"
         deny:
           - pkg: "github.com/rimsky-ai/rimsky-core/lib/foundation"
             desc: "Consumption-side binaries implement against protocols/ only. foundation/ is rimsky-internal."

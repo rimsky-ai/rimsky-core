@@ -245,6 +245,163 @@ func TestStampReplacePreservesGeneratedMarker(t *testing.T) {
 	}
 }
 
+// TestVerifyHeadersFlagsContradictoryMarkers covers the
+// `verifyHeaders` branch added by the 2026-05-27 mixed-marker fix-
+// forward (headers.go:94-97): a file carrying BOTH an AGPL
+// boilerplate block AND a stale `SPDX-License-Identifier: Apache-2.0`
+// line must be reported as contradictory rather than silently passing
+// the AGPL classification check.
+func TestVerifyHeadersFlagsContradictoryMarkers(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/mixed.go"
+	body := agplHeaderGo +
+		"\n// SPDX-License-Identifier: Apache-2.0\n" +
+		"\npackage x\n"
+	if err := writeTestFile(path, []byte(body)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f := fileEntry{relPath: "mixed.go", absPath: path, kind: kindGo, classification: classAGPL}
+	vs := verifyHeaders([]fileEntry{f})
+	if len(vs) != 1 {
+		t.Fatalf("expected exactly one violation, got %d: %+v", len(vs), vs)
+	}
+	if !strings.Contains(vs[0].message, "contradictory") {
+		t.Errorf("violation message should call out contradictory markers, got %q", vs[0].message)
+	}
+}
+
+// TestStampOneStripsMixedMarkersAndEmitsSingleHeader covers the
+// mixed-marker re-stamp path in `stampHeaders` (headers.go:170-172)
+// and the blank-line-tolerant strip path in `stripLeadingHeader`
+// (headers.go:245-263). The stamp must remove BOTH header runs (the
+// boilerplate block AND the trailing SPDX line) and emit exactly one
+// header of the correct kind.
+func TestStampOneStripsMixedMarkersAndEmitsSingleHeader(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/mixed.go"
+	body := agplHeaderGo +
+		"\n// SPDX-License-Identifier: Apache-2.0\n" +
+		"\npackage x\n\nfunc F() {}\n"
+	if err := writeTestFile(path, []byte(body)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f := fileEntry{relPath: "mixed.go", absPath: path, kind: kindGo, classification: classAGPL}
+	if err := stampOne(f, true); err != nil {
+		t.Fatalf("stampOne: %v", err)
+	}
+	s := readFileString(t, path)
+	if !strings.HasPrefix(s, agplHeaderGo) {
+		t.Errorf("expected AGPL header at top, got:\n%s", s[:min(200, len(s))])
+	}
+	// The stale Apache SPDX line must be gone.
+	if strings.Contains(s, "SPDX-License-Identifier: Apache-2.0") {
+		t.Errorf("stale Apache SPDX line should be stripped:\n%s", s)
+	}
+	// Body must survive.
+	for _, want := range []string{"package x", "func F() {}"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("body must be preserved; missing %q:\n%s", want, s)
+		}
+	}
+	// Exactly one copyright line.
+	if got := strings.Count(s, "Copyright © 2026"); got != 1 {
+		t.Errorf("exactly one copyright line expected, got %d:\n%s", got, s)
+	}
+}
+
+// TestStampHeadersIdempotentOnMixedMarkerRecovery confirms that after
+// the mixed-marker re-stamp, a second pass through `stampHeaders` is
+// a no-op (stamped count == 0) and the file content is unchanged.
+func TestStampHeadersIdempotentOnMixedMarkerRecovery(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/mixed.go"
+	body := agplHeaderGo +
+		"\n// SPDX-License-Identifier: Apache-2.0\n" +
+		"\npackage x\n\nfunc F() {}\n"
+	if err := writeTestFile(path, []byte(body)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f := fileEntry{relPath: "mixed.go", absPath: path, kind: kindGo, classification: classAGPL}
+	stamped, err := stampHeaders([]fileEntry{f})
+	if err != nil {
+		t.Fatalf("stampHeaders (first pass): %v", err)
+	}
+	if stamped != 1 {
+		t.Errorf("first pass should stamp exactly 1 file, got %d", stamped)
+	}
+	afterFirst := readFileString(t, path)
+
+	stamped2, err := stampHeaders([]fileEntry{f})
+	if err != nil {
+		t.Fatalf("stampHeaders (second pass): %v", err)
+	}
+	if stamped2 != 0 {
+		t.Errorf("second pass should be a no-op, got stamped=%d", stamped2)
+	}
+	afterSecond := readFileString(t, path)
+	if afterFirst != afterSecond {
+		t.Errorf("second pass changed the file (re-stamp should be idempotent):\n---first---\n%s\n---second---\n%s", afterFirst, afterSecond)
+	}
+}
+
+// TestDetectHeaderRecognizesSPDXShortForm confirms detectHeader
+// treats both Apache and AGPL SPDX one-liners as headers (headers.go:
+// 137-144). The SPDX line is the bundled-services convention; before
+// the fix-forward the verifier rejected SPDX-only files as missing a
+// header.
+func TestDetectHeaderRecognizesSPDXShortForm(t *testing.T) {
+	dir := t.TempDir()
+	{
+		path := dir + "/apache-spdx.go"
+		body := "// SPDX-License-Identifier: Apache-2.0\n\npackage x\n"
+		if err := writeTestFile(path, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		has, isApa, isAgp, err := detectHeader(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !has || !isApa || isAgp {
+			t.Errorf("apache SPDX header: has=%v apa=%v agp=%v (want true,true,false)", has, isApa, isAgp)
+		}
+	}
+	{
+		path := dir + "/agpl-spdx.go"
+		body := "// SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial\n\npackage x\n"
+		if err := writeTestFile(path, []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		has, isApa, isAgp, err := detectHeader(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !has || isApa || !isAgp {
+			t.Errorf("agpl SPDX header: has=%v apa=%v agp=%v (want true,false,true)", has, isApa, isAgp)
+		}
+	}
+}
+
+// TestStripLeadingHeaderTolerantOfBlankBetweenMarkerRuns directly
+// exercises `stripLeadingHeader`'s blank-line tolerance: two
+// header-marker runs separated by a single blank line are both
+// stripped, not just the first.
+func TestStripLeadingHeaderTolerantOfBlankBetweenMarkerRuns(t *testing.T) {
+	body := []byte(agplHeaderGo +
+		"\n// SPDX-License-Identifier: Apache-2.0\n" +
+		"\npackage x\n")
+	out := stripLeadingHeader(body, kindGo)
+	s := string(out)
+	if strings.Contains(s, "Copyright © 2026") {
+		t.Errorf("AGPL boilerplate should be stripped:\n%s", s)
+	}
+	if strings.Contains(s, "SPDX-License-Identifier: Apache-2.0") {
+		t.Errorf("trailing SPDX marker should also be stripped:\n%s", s)
+	}
+	if !strings.HasPrefix(s, "package x") {
+		t.Errorf("body should start with `package x` after strip, got:\n%s", s)
+	}
+}
+
 // writeTestFile is a small test helper.
 func writeTestFile(path string, body []byte) error {
 	return os.WriteFile(path, body, 0o644)

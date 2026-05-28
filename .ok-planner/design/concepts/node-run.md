@@ -4,11 +4,6 @@ status: as-is
 aliases:
   - worker-request (legacy)
   - dispatch (legacy)
-references:
-  - _discover/2026-05-10-worker-request-phase-lifecycle.md
-  - _discover/2026-05-10-supervisor-acceptance-lists.md
-  - _discover/orphan-claim-cutoff-five-heartbeats.md
-  - _discover/2026-05-10-parked-state-and-resume.md
 ---
 
 # Node-run

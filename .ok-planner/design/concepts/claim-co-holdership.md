@@ -3,8 +3,6 @@ concept: claim-co-holdership
 status: as-is
 aliases:
   - inherits (legacy singular directive; superseded by `holds:`)
-references:
-  - ../../specs/2026-05-15-data-platform-extensions-design.md
 ---
 
 # Claim co-holdership

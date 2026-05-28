@@ -2,10 +2,6 @@
 concept: named-event
 status: as-is
 aliases: []
-references:
-  - _discover/named-events-and-on-event-handlers.md
-  - _discover/2026-05-10-event-log-append-only-jsonb.md
-  - _discover/2026-05-10-attribute-substitution-grammar.md
 ---
 
 # Named event

@@ -3,10 +3,6 @@ concept: rimsky
 status: as-is
 aliases:
   - rimsky-cli
-references:
-  - _discover/2026-05-10-rimsky-cli-thin-client.md
-  - _discover/rimsky-cli-compose-prefix-reservation.md
-  - .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
 ---
 
 # rimsky (CLI)

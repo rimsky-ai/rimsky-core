@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+#
+# Test-only stub executor. Built on demand by the integration harness via
+# testcontainers FromDockerfile and never published. Implements the Executor
+# gRPC service returning Success for every dispatch, so harness tests about
+# stores / subscribers / observability can complete the claim loop without a
+# real executor.
+#
+# Build context: the rimsky-core repo root. The bundled services build
+# against the in-tree lib/protocols module via go.work — no module proxy,
+# no published-tag pin.
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY go.work go.work.sum ./
+COPY go.mod go.sum ./
+COPY lib/foundation/go.mod lib/foundation/go.sum ./lib/foundation/
+COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
+COPY lib/services/go.mod lib/services/go.sum ./lib/services/
+RUN cd lib/services && go mod download
+COPY . .
+RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/stubexecutor ./test/stubexecutor
+
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /out/stubexecutor /usr/local/bin/stubexecutor
+USER nonroot
+EXPOSE 9300
+ENTRYPOINT ["/usr/local/bin/stubexecutor"]

@@ -36,5 +36,5 @@ A code-review discipline that grep-checks for "introspection-adjacent calls" nee
 
 ## Notes
 
-- 2026-05-19 — Stale name `makeStoreHandle` updated to `makeClaimHandle` per spec 2026-05-19-multi-instance-template-ergonomics-design. The "single sanctioned introspection site" framing remains drifted from three actual sites; this is a name fix only. Tension stays open.
+- 2026-05-19 — Stale symbol name updated per `spec:2026-05-19-multi-instance-template-ergonomics-design`. The "single sanctioned introspection site" framing remains drifted from three actual sites; this is a name fix only. Tension stays open.
 

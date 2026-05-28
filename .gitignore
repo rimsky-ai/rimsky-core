@@ -6,7 +6,7 @@ vendor/
 .idea/
 .vscode/
 
-# Compiled binaries (built ad-hoc at module root)
+# Compiled binaries (built ad-hoc at the repo-root module root)
 /rimsky-supervisor
 /rimsky-scheduler
 /rimsky-control-api
@@ -15,15 +15,28 @@ vendor/
 /rimsky-entrypoint
 /rimsky-host-agent
 /rimsky-host-agent-proxy
-/openlineage
 
 # Test fixture binary — harness_test.go rebuilds it into a temp dir per run
 /lib/runtime/hostagent/testdata/stubchild/stubchild
 
-# The bundled-services (sensors, executors, subscribers, production
-# stores, dashboards, docs-lint binaries) moved to sibling repos in the
-# 2026-05-24 reorganization. Their build-output / node_modules patterns
-# moved with them and no longer apply here.
+# Bundled-service node/TS build trees (lib/services/executors/claude-agent)
+lib/services/executors/*/node_modules/
+lib/services/executors/*/dist/
+
+# Stray ad-hoc service binaries (built without -o at the lib/services
+# module root, e.g. `cd lib/services && go build ./sensors/sensor-cron`
+# leaves a binary at lib/services/sensor-cron). Anchored to lib/services/
+# because that is the actual module root for these services.
+lib/services/store-filesystem
+lib/services/store-postgres
+lib/services/sensor-cron
+lib/services/sensor-http
+lib/services/sensor-object-store
+lib/services/sensor-webhook
+lib/services/http-node
+lib/services/verifier-http
+lib/services/verifier-shape-checks
+lib/services/openlineage
 
 # Local env / coverage
 .env

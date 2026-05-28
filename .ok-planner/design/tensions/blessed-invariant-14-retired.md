@@ -16,7 +16,7 @@ This is a deliberate convention (don't renumber after removal), but a reader sca
 
 ## Why it matters
 
-A grep for `@blessed-invariant 14` should return zero hits (or only the CLAUDE.md "retired" note). If any source comment still cites it, that's dead code/comment. The retirement is captured in CLAUDE.md but a project-wide audit hasn't been performed against the comment surface.
+A grep for `@blessed-invariant 14` should return zero hits (or only a documented retirement note). If any source comment still cites it, that's dead code/comment. The retirement is documented but a project-wide audit hasn't been performed against the comment surface.
 
 ## Resolution candidates (do NOT pick)
 

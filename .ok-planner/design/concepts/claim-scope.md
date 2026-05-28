@@ -2,8 +2,6 @@
 concept: claim-scope
 status: as-is
 aliases: [scope (pre-2026-05-22, retired)]
-references:
-  - ../../specs/2026-05-22-fan-out-safety-scope-first-design.md
 ---
 
 # Claim Scope

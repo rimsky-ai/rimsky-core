@@ -2,9 +2,6 @@
 concept: lifecycle-subscriber
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-lifecycle-subscriber-opt-in.md
-  - _discover/2026-05-10-content-addressed-templates.md
 ---
 
 # Lifecycle subscriber

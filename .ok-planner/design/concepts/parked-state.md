@@ -4,10 +4,6 @@ status: as-is
 aliases:
   - park
   - parked node
-references:
-  - _discover/2026-05-10-parked-state-and-resume.md
-  - _discover/2026-05-10-state-machine-no-self-loop.md
-  - _discover/2026-05-10-orphan-reaper-no-producer-abandon.md
 ---
 
 # Parked state

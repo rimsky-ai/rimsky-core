@@ -3,8 +3,6 @@ concept: anonymous-mode
 status: as-is
 aliases:
   - implicit anonymous mode
-references:
-  - .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
 ---
 
 # Anonymous mode

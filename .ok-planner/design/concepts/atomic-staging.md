@@ -2,8 +2,6 @@
 concept: atomic-staging
 status: as-is
 aliases: []
-references:
-  - ../../specs/2026-05-15-data-platform-extensions-design.md
 ---
 
 # Atomic staging

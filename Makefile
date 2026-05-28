@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images push-images publish-protocols check-clean smoke-all test-all build-all license-lint license-stamp
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all build-all license-lint license-stamp
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -19,6 +19,7 @@ lint:
 	golangci-lint run
 	cd lib/foundation && golangci-lint run
 	cd lib/protocols && golangci-lint run
+	cd lib/services && golangci-lint run
 
 # license-lint enforces the multi-license boundary documented in
 # docs/future-work/2026-05-02-licensing-design.md. Apache-classified packages
@@ -40,18 +41,29 @@ tidy:
 # Docs sources and the docs-lint binaries are not part of this repo. This
 # repo carries no docs targets and no docs gate.
 
-# Multi-module helpers — exercise every Go module in the repo (root + lib/foundation + lib/protocols).
+# Multi-module helpers — exercise every Go module in the repo (root + lib/foundation + lib/protocols + lib/services).
 # Each `cd` runs against that module's go.mod; the go.work file at the repo root makes
 # inter-module references resolve via local replace.
+#
+# lib/services filters `go list ./...` to drop any path containing
+# `node_modules/` — the claude-agent npm tree ships a stray Go file
+# (`node_modules/flatted/golang/...`) that `go build ./...` would
+# otherwise pick up. Filtering at the list step keeps the toolchain
+# off third-party Go code that has no business compiling here. The
+# build filter additionally drops packages with no non-test Go files,
+# because passing explicit paths to `go build` (unlike `./...`) turns
+# the "no non-test Go files" notice into an error.
 test-all:
 	go test ./...
 	cd lib/foundation && go test ./...
 	cd lib/protocols && go test ./...
+	cd lib/services && go test $$(go list ./... | grep -v /node_modules/)
 
 build-all:
 	go build ./...
 	cd lib/foundation && go build ./...
 	cd lib/protocols && go build ./...
+	cd lib/services && go build $$(go list -f '{{if .GoFiles}}{{.ImportPath}}{{end}}' ./... | grep -v /node_modules/)
 
 # ── rimsky CLI targets ──
 
@@ -95,12 +107,37 @@ core-images:
 	  -t rimsky-host-agent-proxy:$(VERSION) -t rimsky-host-agent-proxy:latest .
 	docker build -f dockerfiles/Dockerfile.conformance -t rimsky-conformance:$(VERSION) -t rimsky-conformance:latest .
 
-# Retag the four core images under $(REGISTRY) and push $(VERSION) + latest.
-# Requires `make core-images` first (pushes what is already built locally) and
-# a prior `docker login` to the registry. The Hub repo name mirrors the local
-# tag, so this is a pure namespace prefix — docker.io/rimskyai/rimsky,
-# docker.io/rimskyai/rimsky-all-in-one, docker.io/rimskyai/rimsky-host-agent-proxy,
-# docker.io/rimskyai/rimsky-conformance.
+# Bundled-service images: the consumption-side services (stores, sensors,
+# subscribers, executors) shipped by rimsky as images. Each Dockerfile lives
+# co-located with its service under lib/services/; the build context is the
+# repo root so the build can reach lib/protocols + lib/services + go.work
+# (the bundled services build against the in-tree protocols module via the
+# workspace, with no published-tag pin). Each image is tagged $(VERSION) +
+# latest, with a `rimsky-` prefix matching the core-image naming.
+service-images:
+	docker build -f lib/services/stores/filesystem/Dockerfile.filesystem -t rimsky-store-filesystem:$(VERSION) -t rimsky-store-filesystem:latest .
+	docker build -f lib/services/stores/postgres/Dockerfile.postgres -t rimsky-store-postgres:$(VERSION) -t rimsky-store-postgres:latest .
+	docker build -f lib/services/sensors/sensor-cron/Dockerfile.sensor-cron -t rimsky-sensor-cron:$(VERSION) -t rimsky-sensor-cron:latest .
+	docker build -f lib/services/sensors/sensor-http/Dockerfile.sensor-http -t rimsky-sensor-http:$(VERSION) -t rimsky-sensor-http:latest .
+	docker build -f lib/services/sensors/sensor-object-store/Dockerfile.sensor-object-store -t rimsky-sensor-object-store:$(VERSION) -t rimsky-sensor-object-store:latest .
+	docker build -f lib/services/sensors/sensor-webhook/Dockerfile.sensor-webhook -t rimsky-sensor-webhook:$(VERSION) -t rimsky-sensor-webhook:latest .
+	docker build -f lib/services/subscribers/openlineage/Dockerfile.openlineage -t rimsky-subscriber-openlineage:$(VERSION) -t rimsky-subscriber-openlineage:latest .
+	docker build -f lib/services/executors/http-node/Dockerfile.http-node -t rimsky-executor-http-node:$(VERSION) -t rimsky-executor-http-node:latest .
+	docker build -f lib/services/executors/verifier-http/Dockerfile.verifier-http -t rimsky-executor-verifier-http:$(VERSION) -t rimsky-executor-verifier-http:latest .
+	docker build -f lib/services/executors/verifier-shape-checks/Dockerfile.verifier-shape-checks -t rimsky-executor-verifier-shape-checks:$(VERSION) -t rimsky-executor-verifier-shape-checks:latest .
+	docker build -f lib/services/executors/claude-agent/Dockerfile -t rimsky-executor-claude-agent:$(VERSION) -t rimsky-executor-claude-agent:latest .
+
+# Retag every locally-built rimsky image under $(REGISTRY) and push
+# $(VERSION) + latest. Covers both the four core images and the eleven
+# bundled-service images in one pass — a release ships them together.
+# Requires `make core-images && make service-images` first (this target pushes
+# what's already built locally; it does not build) and a prior `docker login`
+# to the registry. The Hub repo name mirrors the local tag, so this is a pure
+# namespace prefix — docker.io/rimskyai/rimsky, .../rimsky-all-in-one,
+# .../rimsky-store-filesystem, .../rimsky-executor-claude-agent, etc.
+#
+# A future release-management skill will likely split this into per-set
+# targets; for now, keep it as one script.
 #
 # NOTE: the Docker Hub org is `rimskyai`, NOT `rimsky-ai`. Docker Hub namespaces
 # disallow hyphens (unlike GitHub `rimsky-ai` and the npm `@rimsky-ai` scope);
@@ -108,7 +145,12 @@ core-images:
 # "correct" this to rimsky-ai to match the other namespaces — it does not exist.
 REGISTRY ?= docker.io/rimskyai
 push-images: check-clean
-	@for img in rimsky rimsky-all-in-one rimsky-host-agent-proxy rimsky-conformance; do \
+	@for img in \
+	    rimsky rimsky-all-in-one rimsky-host-agent-proxy rimsky-conformance \
+	    rimsky-store-filesystem rimsky-store-postgres \
+	    rimsky-sensor-cron rimsky-sensor-http rimsky-sensor-object-store rimsky-sensor-webhook \
+	    rimsky-subscriber-openlineage \
+	    rimsky-executor-http-node rimsky-executor-verifier-http rimsky-executor-verifier-shape-checks rimsky-executor-claude-agent; do \
 	  for tag in $(VERSION) latest; do \
 	    docker tag $$img:$$tag $(REGISTRY)/$$img:$$tag; \
 	    docker push $(REGISTRY)/$$img:$$tag; \
@@ -167,7 +209,8 @@ lint-docker:
 	    go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
 	  PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
 	  cd /src/lib/foundation && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
-	  cd /src/lib/protocols && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
+	  cd /src/lib/protocols && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m && \
+	  cd /src/lib/services && PATH=/go/bin:$$PATH golangci-lint run --timeout 5m'
 
 tidy-docker:
 	$(DOCKER_RUN) $(DOCKER_GO_IMAGE) go mod tidy

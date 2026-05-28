@@ -3,10 +3,6 @@ concept: error-policy
 status: as-is
 aliases:
   - error-types policy chain
-references:
-  - _discover/error-policy-retry-loop-cap.md
-  - _discover/reactive-loops-and-lifecycle-handlers.md
-  - ../../specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md
 ---
 
 # Error policy

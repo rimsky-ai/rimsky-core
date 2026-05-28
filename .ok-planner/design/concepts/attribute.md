@@ -2,9 +2,6 @@
 concept: attribute
 status: as-is
 aliases: []
-references:
-  - _discover/2026-05-10-attribute-substitution-grammar.md
-  - _discover/quality-rules-and-attribute-validation.md
 ---
 
 # Attribute

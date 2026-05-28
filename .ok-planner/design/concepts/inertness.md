@@ -4,10 +4,6 @@ status: as-is
 aliases:
   - opacity (legacy)
   - inert bytes
-references:
-  - _discover/2026-05-10-opacity-of-userdata-claim-blob.md
-  - _discover/2026-05-10-attribute-substitution-grammar.md
-  - _discover/2026-05-10-blob-spill-pluggable-backends.md
 ---
 
 # Inertness (cross-cutting discipline)
