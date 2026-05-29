@@ -249,3 +249,6 @@ through `execute-plan` runs.
 - `history/specs/` and `history/plans/` — specs and plans
   archived here automatically when an execute-* skill finishes
   a plan (workflow scratch)
+- `history/sketches/` — sketches archived here automatically by
+  `/brainstorm` when it produces a spec from them (workflow
+  scratch)
