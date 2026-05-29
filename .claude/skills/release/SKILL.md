@@ -215,7 +215,7 @@ Outward actions on confirmation:
 - Tags: vX.Y.Z, lib/protocols/vX.Y.Z (local; pushed after build)
 - Build + gates: lint, license-lint, test-all, core-images, service-images, scan
 - Hub push: 15 images at :vX.Y.Z + :latest (via make release's push-images)
-- Git push: vX.Y.Z lib/protocols/vX.Y.Z to origin
+- Git push: current branch + tags vX.Y.Z, lib/protocols/vX.Y.Z to origin (atomic)
 - npm publish: @rimsky-ai/protocols@X.Y.Z to @latest (via make publish-protocols)
 - GitHub release: vX.Y.Z with releases/vX.Y.Z.md as notes
 
@@ -267,13 +267,19 @@ cleanup. No Hub push.
    - Build failure → abort with the build output. Same disposition.
    - Scan failure → enter CVE remediation (step 7a).
    - Push failure → abort. Hub state may be partial; surface clearly.
-4. Push git tags. `--atomic` is load-bearing: without it, a partial-push
-   (the second tag fails on a transient network glitch after the first has
-   already landed on origin) leaves an orphan tag on the remote that no
-   cleanup can heal and a re-run can't auto-heal. With `--atomic`, either
-   both refs land or neither does.
+4. Push the release branch and both git tags together. `--atomic` is
+   load-bearing: without it, a partial push (a later ref fails on a
+   transient network glitch after an earlier ref has already landed on
+   origin) leaves the remote inconsistent — an orphan tag pointing at a
+   commit the pushed branch doesn't yet reach, or a branch pushed without
+   its tags — that no cleanup can heal and a re-run can't auto-heal. With
+   `--atomic`, either the branch and both tags all land or none do,
+   keeping the pushed branch and the tags it carries consistent. The
+   branch is resolved from `HEAD` rather than hard-coded, since releases
+   are no longer restricted to `main`.
    ```
-   git push --atomic origin vX.Y.Z lib/protocols/vX.Y.Z
+   branch=$(git rev-parse --abbrev-ref HEAD)
+   git push --atomic origin "$branch" vX.Y.Z lib/protocols/vX.Y.Z
    ```
 5. npm publish:
    ```
@@ -327,6 +333,7 @@ back with `git reset --soft HEAD~1 && git tag -d vX.Y.Z lib/protocols/vX.Y.Z`.
 Released vX.Y.Z
 
 Hub: 15 images at docker.io/rimskyai/{rimsky, rimsky-all-in-one, ...}:vX.Y.Z (and :latest)
+Branch: <current-branch> (pushed to origin)
 Git tags: vX.Y.Z, lib/protocols/vX.Y.Z (pushed to origin)
 npm: @rimsky-ai/protocols@X.Y.Z (on @latest)
 GitHub Release: https://github.com/rimsky-ai/rimsky-core/releases/tag/vX.Y.Z

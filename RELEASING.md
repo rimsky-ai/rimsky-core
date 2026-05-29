@@ -32,8 +32,9 @@ walks:
    `releases/vX.Y.Z.md`), creates both git tags, invokes `make
    release` (which runs the extended `lint → license-lint →
    test-all → core-images → service-images → scan → push-images`
-   chain), pushes git tags, runs `make publish-protocols`, creates
-   the GitHub Release via `gh release create`.
+   chain), pushes the release branch and git tags, runs `make
+   publish-protocols`, creates the GitHub Release via `gh release
+   create`.
 
 If scan finds CVEs, the skill attempts mechanical patch-level base-
 image remediation (per `docker scout recommendations`); anything
