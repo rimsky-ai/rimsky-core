@@ -14,8 +14,8 @@ For human-cut releases that carry SemVer judgment and notes, invoke
 `/release` from a Claude Code session in the repo root. The skill
 walks:
 
-1. Preflight (verify clean tree, branch on `main`, docker/npm/gh
-   logins active, tooling available).
+1. Preflight (verify clean tree, docker/npm/gh logins active, tooling
+   available).
 2. Diff inspection — reads the diff since the last stable tag,
    classifies against high-signal surfaces (proto files, persistence
    migrations, exported Go symbols, CLI flags, env vars), proposes

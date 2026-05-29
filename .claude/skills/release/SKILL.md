@@ -53,8 +53,6 @@ specific missing prereq:
 
 - Working tree is clean (no uncommitted changes; no staged changes).
   Run `git status --porcelain` and confirm empty output.
-- Current branch is `main`. Run `git rev-parse --abbrev-ref HEAD` and
-  confirm.
 - `docker info` exits 0 (Docker daemon reachable).
 - `docker buildx version` exits 0 (buildx plugin available).
 - `docker scout --help` exits 0 (Scout plugin available).
@@ -341,8 +339,6 @@ GitHub Release: https://github.com/rimsky-ai/rimsky-core/releases/tag/vX.Y.Z
   cuts.
 - **`HEAD == last-stable-tag`.** No new commits. Reject: nothing to
   release.
-- **Operator on non-default branch.** Reject: releases are cut from
-  `main` only.
 - **Uncommitted changes in working tree.** Reject in preflight.
 - **Concurrent invocations.** Out of scope. The skill assumes a single
   operator.
