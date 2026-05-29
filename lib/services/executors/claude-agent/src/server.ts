@@ -13,7 +13,7 @@ import { createClaudeCliRunner } from "./cli-runner.js";
 import type { CliAuthConfig } from "./cli-env.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
 import type { Observability, TraceEvent } from "./observability.js";
-import { expectedAttributesSchemaBytes, declaredEvents, declaredErrorClasses } from "./expected-attributes-schema.js";
+import { expectedAttributesSchemaBytes, resolveDeclaredEvents, declaredErrorClasses } from "./expected-attributes-schema.js";
 
 /**
  * gRPC Executor implementation. Always responds with the async-handoff
@@ -171,7 +171,7 @@ export async function startGrpcServer(
         custom_ui: null,
         http_bridge_url: config.observabilityHttpBridgeUrl ?? "",
         expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()),
-        declared_events: declaredEvents,
+        declared_events: resolveDeclaredEvents(),
         // 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
         declared_error_classes: declaredErrorClasses,
       });
@@ -495,14 +495,39 @@ function encodeBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
 }
 
-function outcomeToCallbackBody(
+// Projects the per-dispatch named-event buffer into the AsyncCallbackBody
+// `events` slot (proto field 1). Each entry is `{name, payload}` with the
+// payload base64-encoded — the proto-JSON convention for `bytes` fields, as
+// the Go supervisor's `asyncCallbackNamedEvent.Payload []byte` expects. An
+// empty / absent buffer yields no `events` key (no behavior change for
+// agents that emit nothing).
+//
+// Exported for unit tests; not part of the agent-contract surface.
+export function emittedEventsCallbackSlot(
+  outcome: AgentOutcome,
+): { events: { name: string; payload: string }[] } | Record<string, never> {
+  const emitted = outcome.emittedEvents ?? [];
+  if (emitted.length === 0) return {};
+  return {
+    events: emitted.map((e) => ({
+      name: e.name,
+      payload: encodeBase64(e.payload),
+    })),
+  };
+}
+
+// Exported for unit tests; not part of the agent-contract surface.
+export function outcomeToCallbackBody(
   outcome: AgentOutcome,
 ): Record<string, unknown> {
   // The callback body uses the AsyncCallbackBody outcome-oneof shape
-  // (success | error | park). The legacy `{type: ...}` discriminator
-  // is no longer accepted by the supervisor.
+  // (success | error | park), optionally preceded by an `events[]` stream
+  // replayed before the outcome verdict. The legacy `{type: ...}`
+  // discriminator is no longer accepted by the supervisor.
+  const events = emittedEventsCallbackSlot(outcome);
   if (outcome.kind === "complete") {
     return {
+      ...events,
       success: {
         attributes_delta: outcome.attributesDelta,
         changed: outcome.changed,
@@ -515,6 +540,7 @@ function outcomeToCallbackBody(
     // `Error{error_class: "agent/blocked"}` (renamed 2026-05-23 per
     // signal-taxonomy spec, hierarchical-class convention).
     return {
+      ...events,
       error: {
         error_class: "agent/blocked",
         payload: { reason: outcome.reason, context: outcome.context },
@@ -531,6 +557,7 @@ function outcomeToCallbackBody(
     // §ParkReason collapse. `reason_note` is the free-form human
     // annotation; inert in rimsky.
     return {
+      ...events,
       park: {
         reason: outcome.reason,
         reason_note: outcome.reasonNote ?? "",
@@ -541,6 +568,7 @@ function outcomeToCallbackBody(
     };
   }
   return {
+    ...events,
     error: {
       error_class: outcome.errorClass,
       payload: outcome.payload,

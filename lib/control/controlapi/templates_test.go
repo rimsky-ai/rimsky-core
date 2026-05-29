@@ -65,6 +65,63 @@ func TestTemplateRegister_RejectsUnknownExecutor(t *testing.T) {
 		"unknown-executor template must be rejected at register time")
 }
 
+// TestTemplateValidate_RejectsButDoesNotPersist confirms POST
+// /templates/validate runs the full validation pipeline on a spec with
+// a deliberate error and returns HTTP 200 with ok:false + non-empty
+// validation_errors, while persisting nothing (a follow-up GET by the
+// would-be hash 404s).
+func TestTemplateValidate_RejectsButDoesNotPersist(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("validate-bad-" + uuid.NewString())
+	spec := specOf(body)
+	nodes := spec["nodes"].([]map[string]any)
+	nodes[0]["executor"] = "ghost-executor"
+	spec["nodes"] = nodes
+
+	// Count templates before validate so we can assert nothing changed.
+	_, listBefore := h.httpJSON(t, "GET", "/templates", nil)
+	beforeCount := len(listBefore["templates"].([]any))
+
+	status, out := h.httpJSON(t, "POST", "/templates/validate", body)
+	require.Equal(t, http.StatusOK, status,
+		"validate ran; verdict carried in the body, not the status code")
+	require.Equal(t, false, out["ok"], "unknown-executor spec must lint as not-ok")
+	errs, ok := out["validation_errors"].([]any)
+	require.True(t, ok, "validation_errors must be present")
+	require.NotEmpty(t, errs, "validation_errors must be non-empty for an invalid spec")
+
+	// Nothing was persisted: template count is unchanged.
+	_, listAfter := h.httpJSON(t, "GET", "/templates", nil)
+	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
+		"validate must not persist a template row")
+}
+
+// TestTemplateValidate_CleanSpecOk confirms a valid spec lints clean:
+// HTTP 200, ok:true, empty errors — and still persists nothing.
+func TestTemplateValidate_CleanSpecOk(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	body := validTemplateBody("validate-ok-" + uuid.NewString())
+
+	_, listBefore := h.httpJSON(t, "GET", "/templates", nil)
+	beforeCount := len(listBefore["templates"].([]any))
+
+	status, out := h.httpJSON(t, "POST", "/templates/validate", body)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["ok"], "valid spec must lint as ok")
+	require.Empty(t, out["validation_errors"], "valid spec must have no errors")
+
+	// Validate-only must not register the template.
+	_, listAfter := h.httpJSON(t, "GET", "/templates", nil)
+	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
+		"validate must not persist even for a clean spec")
+}
+
 // TestTemplateRegister_Idempotent confirms the second POST with the
 // same canonical spec returns 200 OK and the same template_id, and
 // that the lifecycle fan-out runs exactly once across both POSTs (re-

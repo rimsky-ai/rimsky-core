@@ -36,6 +36,7 @@ var allReasons = []TransitionReason{
 	ReasonParkTimeout,
 	ReasonChildTransitioned,
 	ReasonSubGraphInternalCascadeFired,
+	ReasonInstanceKilled,
 }
 
 var allStates = []NodeState{
@@ -74,14 +75,16 @@ func TestTransitionTable(t *testing.T) {
 			"infra_reenqueue":  NodeStateStale,
 			"policy_give_up":   NodeStateFailed,
 			"handler_park":     NodeStateParked,
+			"instance_killed":  NodeStateFailed,
 		},
 		NodeStateFailed: {
 			"operator_reset":      NodeStateStale,
 			"operator_invalidate": NodeStateStale,
 		},
 		NodeStateParked: {
-			"handler_resume": NodeStateStale,
-			"park_timeout":   NodeStateFailed,
+			"handler_resume":  NodeStateStale,
+			"park_timeout":    NodeStateFailed,
+			"instance_killed": NodeStateFailed,
 		},
 	}
 
@@ -302,10 +305,10 @@ func TestParkedToParkedRejected(t *testing.T) {
 			if got == NodeStateParked {
 				t.Fatalf("parked → parked under reason %q must be rejected, got success", reason.Kind)
 			}
-			// handler_resume → running and park_timeout → failed are
-			// the only legal exits from parked; everything else must
-			// surface ErrIllegalTransition.
-			if reason.Kind != "handler_resume" && reason.Kind != "park_timeout" {
+			// handler_resume → stale, park_timeout → failed, and
+			// instance_killed → failed are the only legal exits from
+			// parked; everything else must surface ErrIllegalTransition.
+			if reason.Kind != "handler_resume" && reason.Kind != "park_timeout" && reason.Kind != "instance_killed" {
 				require.Error(t, err, "reason=%s", reason.Kind)
 				require.True(t, errors.Is(err, ErrIllegalTransition))
 			}

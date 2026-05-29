@@ -112,6 +112,7 @@ func builtinSchemas() map[string][]byte {
 		"instance_terminate": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_pause":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_resume":    []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
+		"instance_kill":      []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"reason":{"type":"string","description":"optional reason recorded on the teardown audit event"}},"required":["idOrKey"]}`),
 
 		// Breakpoints (concept:breakpoint — instance-debugger surface; spec §4).
 		"breakpoint_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
@@ -122,6 +123,7 @@ func builtinSchemas() map[string][]byte {
 		// Templates.
 		"template_list":       obj,
 		"template_get":        []byte(`{"type":"object","properties":{"id":{"type":"string","description":"template tag or content hash"}},"required":["id"]}`),
+		"template_validate":   []byte(`{"type":"object","properties":{"spec":{"type":"object"}},"required":["spec"]}`),
 		"template_register":   []byte(`{"type":"object","properties":{"spec":{"type":"object"},"tag":{"type":"string"},"source":{"type":"string"}},"required":["spec"]}`),
 		"template_deploy":     []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		"template_undeploy":   []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),

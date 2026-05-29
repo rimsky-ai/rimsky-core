@@ -46,6 +46,8 @@ func registerBreakpointsRoutes(r chi.Router, deps AppDeps) {
 		gate(deps, "breakpoint:create", handleCreateBreakpoint(deps)))
 	r.Get("/instances/{idOrKey}/breakpoints",
 		gate(deps, "breakpoint:read", handleListBreakpoints(deps)))
+	r.Get("/instances/{idOrKey}/breakpoint-hits",
+		gate(deps, "breakpoint:read", handleListBreakpointHits(deps)))
 	r.Delete("/instances/{idOrKey}/breakpoints/{breakpoint_id}",
 		gate(deps, "breakpoint:delete", handleDeleteBreakpoint(deps)))
 	r.Post("/instances/{idOrKey}/breakpoints/{breakpoint_id}/resume",
@@ -271,6 +273,63 @@ func handleListBreakpoints(deps AppDeps) http.HandlerFunc {
 			out = append(out, toBreakpointItem(r))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"breakpoints": out})
+	}
+}
+
+// handleListBreakpointHits surfaces the pending breakpoint hits for an
+// instance as a read-only, paginated feed — the HTTP twin of the MCP
+// `rimsky://instances/{id}/breakpoint-hits` resource read. The
+// `status`/`watch` CLI aggregators poll this route. Returns the same
+// {hits, next_since, truncated} shape the MCP resource produces
+// (mcp_resources.go Read), reusing hitToWireShape / parseSinceLimit and
+// the resourceRead*Limit bounds. Pagination is `?since=<seq>&limit=<n>`;
+// rows are fetched limit+1 so `truncated` reports whether a row exists
+// beyond the requested page.
+func handleListBreakpointHits(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		inst, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if inst == nil {
+			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
+			return
+		}
+		since, limit, mcpErr := parseSinceLimit(req.URL.Query())
+		if mcpErr != nil {
+			badRequest(w, mcpErr.Message)
+			return
+		}
+		// Fetch limit+1 so `truncated` reflects an actual row beyond the
+		// requested page rather than speculating whenever the page size
+		// happens to equal `limit` (mirrors mcp_resources.go Read).
+		var hits []persistence.BreakpointHitRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			var err error
+			hits, err = deps.Persist.BreakpointHits().ListSinceForInstance(ctx, inst.ID, since, limit+1, tx)
+			return err
+		}); err != nil {
+			writeError(w, err)
+			return
+		}
+		truncated := len(hits) > limit
+		if truncated {
+			hits = hits[:limit]
+		}
+		items := make([]map[string]any, 0, len(hits))
+		for _, h := range hits {
+			items = append(items, hitToWireShape(h))
+		}
+		nextSince := since
+		if len(hits) > 0 {
+			nextSince = hits[len(hits)-1].Seq
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"hits":       items,
+			"next_since": nextSince,
+			"truncated":  truncated,
+		})
 	}
 }
 

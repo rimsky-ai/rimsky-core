@@ -19,6 +19,8 @@ import {
   type PostAttributesFn,
 } from "./attributes-tools.js";
 import { detectRateLimit } from "./rate-limit.js";
+import { resolveDeclaredEvents } from "./expected-attributes-schema.js";
+import type { NamedEventEmission } from "./token-registry.js";
 
 /**
  * Outcome the executor relays back to the rimsky supervisor via the async
@@ -38,7 +40,19 @@ import { detectRateLimit } from "./rate-limit.js";
  *
  * @source rimsky/src/supervisor/agentic-runner.ts (semantic port)
  */
-export type AgentOutcome =
+/**
+ * Non-terminal named events the agent emitted via the `emit_named_event`
+ * MCP tool during the dispatch. Rides the async-callback body's `events[]`
+ * array (the gRPC stream already closed at dispatch, so events cannot ride
+ * it). Absent / empty when the agent emitted nothing. Threaded onto every
+ * outcome variant so `outcomeToCallbackBody` can read it uniformly.
+ */
+export type AgentOutcomeBase = {
+  emittedEvents?: NamedEventEmission[];
+};
+
+export type AgentOutcome = AgentOutcomeBase &
+  (
   | {
       kind: "complete";
       attributesDelta: Record<string, unknown> | null;
@@ -67,7 +81,8 @@ export type AgentOutcome =
       payload: Uint8Array;
       resumeAt: Date | null; // null → indefinite park
       sessionToken: string;
-    };
+    }
+  );
 
 export interface AgentRunOptions {
   runId: string;
@@ -517,12 +532,25 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     };
   };
 
+  // Per-dispatch named-event sink. The `emit_named_event` MCP tool
+  // appends one `{name, payload}` per accepted emission; the buffer rides
+  // the async-callback body's `events[]` array when the run resolves. The
+  // declared-events list is the executor's resolved `declared_events`
+  // (RIMSKY_EXECUTOR_DECLARED_EVENTS) — the tool's self-consistency check.
+  const emittedEvents: NamedEventEmission[] = [];
+  const declaredEvents = resolveDeclaredEvents();
+
   effectiveCallback.registry.register(callbackToken, {
     runId,
     attributesAtSpawn: attributes,
     cancelToken,
     nodeId,
     callbackUrl,
+    declaredEvents,
+    emittedEvents,
+    emitNamedEvent: (name, payload) => {
+      emittedEvents.push({ name, payload });
+    },
     onComplete: async (
       attributesDelta,
       changed,
@@ -930,7 +958,15 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   })();
 
   try {
-    return await outcomePromise;
+    const outcome = await outcomePromise;
+    // Stamp the per-dispatch named-event buffer onto the resolved outcome
+    // so `outcomeToCallbackBody` can ride the events on the async-callback
+    // body's `events[]` array (the gRPC stream already closed at dispatch).
+    // Buffer is captured before the registry entry is released below.
+    if (emittedEvents.length > 0) {
+      outcome.emittedEvents = emittedEvents;
+    }
+    return outcome;
   } finally {
     silenceStopped = true;
     teardownResolve();

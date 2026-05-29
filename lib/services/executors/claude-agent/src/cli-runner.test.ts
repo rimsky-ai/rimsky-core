@@ -140,6 +140,11 @@ describe("buildClaudeCliArgs", () => {
     expect(REQUIRED_CALLBACK_TOOLS).toContain(
       "mcp__rimsky-callback__report_complete",
     );
+    // emit_named_event is auto-included because the allowlist derives from
+    // TOOL_DEFINITIONS — adding the tool needs no manual allowlist edit.
+    expect(REQUIRED_CALLBACK_TOOLS).toContain(
+      "mcp__rimsky-callback__emit_named_event",
+    );
   });
 
   it("forwards each addDirs entry as a separate token after --add-dir", () => {

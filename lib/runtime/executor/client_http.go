@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,5 +87,3 @@ func (e *httpEventStream) Recv() (*genv1.ExecuteEvent, error) {
 	return &ev, nil
 }
 func (e *httpEventStream) Close() error { return e.body.Close() }
-
-var _ = json.Marshal // keep encoding/json import for future use

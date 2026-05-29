@@ -8,7 +8,9 @@ aliases: []
 
 ## What it is
 
-The transition reason is the closed enum carried on every node-state transition. It is a closed set of ~18 named values, each a reason value carrying a kind discriminator (handler-complete, handler-error, pure-cascade, infra-reenqueue, acquire-pass, handler-park, handler-resume, park-timeout, etc.). Written by the state-transition apply path that drives the state machine.
+The transition reason is the closed enum carried on every node-state transition. It is a closed set of ~18 named values, each a reason value carrying a kind discriminator (handler-complete, handler-error, pure-cascade, infra-reenqueue, acquire-pass, handler-park, handler-resume, park-timeout, `instance_killed`, etc.). Written by the state-transition apply path that drives the state machine.
+
+`instance_killed` is the forced-instance-teardown reason: it drives a resource-holding node-run (running or parked — the states that hold or await a claim) to failed, and is accepted by the next-state function only from those two states. Non-resource-holding non-terminal states (fresh, stale) are not force-failed — a terminated instance's pending node-runs are left inert — so the next-state function rejects `instance_killed` from them as an illegal transition. It is **state-machine-validation-only** — it is NOT emitted as an audit-event kind. When the force-terminate control path tears an instance down, the teardown's auditable cause is the single administrative `instance_terminated` event-log row, not the per-node reason kind (the per-node state update writes run-row state only, with no audit row). It is distinct from `policy_give_up` (policy-chain-driven) and the operator reset/invalidate reasons.
 
 ## Purpose
 
@@ -39,6 +41,7 @@ Adjacent: `concept:signal`, `concept:cascade`, `concept:event-log`.
 - The handler-error reason is a deliberate dead-end sentinel: legal in audit but rejected as a transition reason by the next-state function.
 - Reason values are enumerated as named values, each a reason value carrying a kind discriminator; the form is not a closed type-system enum (a caller could in principle construct a reason value with an arbitrary kind string), but the next-state function rejects any reason whose kind is not in the known per-state switch with the illegal-transition sentinel. The runtime guard, not the type system, enforces the closed set.
 - Reason is written at every state transition; absence from the audit row for non-signal transitions is a defect. Signal-bearing transitions emit their signal type-path as the audit kind instead.
+- `instance_killed` is a state-machine-validation-only reason: the next-state function accepts it from the resource-holding states (running, parked), driving each to failed, and rejects it from the non-resource-holding non-terminal states (fresh, stale) as an illegal transition. It is never written as an audit-event kind. Forced instance teardown records its auditable cause once via the administrative `instance_terminated` event-log row, not per node-run.
 
 ## Aliases and historical names
 
@@ -48,3 +51,4 @@ None live. Pre-migration-004 code used a boolean changed flag for the cascade-fi
 
 - 2026-05-23 — Scope narrowed per spec:2026-05-23-signal-taxonomy-and-policy-decoupling. The enum stays for state-machine validation in the next-state function; the audit-write role retires for signal-bearing transitions (which use signal type-paths as the audit-event kind). Non-signal transitions (`dispatch_claimed`, `pure_cascade`, `infra_reenqueue`, `handler_resume`, `park_timeout`, etc.) continue to write the transition reason's kind discriminator as the audit kind — part of the un-taxonomized audit-kind set left open by `tension:events-kind-no-enum`. The last-outcome concept is retired; the relationship table is dropped as the sibling no longer exists.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-28 — instance_killed transition reason added per spec:2026-05-28-quality-of-life-features for forced instance teardown of in-flight node-runs; validation-only, not an audit kind.

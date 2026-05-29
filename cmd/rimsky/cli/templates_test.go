@@ -122,6 +122,107 @@ func TestRunTemplateRegister_WarningsAsErrors_Rejected(t *testing.T) {
 	}
 }
 
+// driftSpec references the clitest fake's sentinel "drift-executor"
+// so the validate route returns ok:false with a finding.
+const driftSpec = `name: x
+version: "1.0"
+frame_resolution_mode: coalesce
+nodes:
+  - type: a
+    executor: drift-executor
+`
+
+func writeSpecContent(t *testing.T, name, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestRunTemplateLint_Clean: a spec with no drift lints clean and the
+// verb exits 0 (linter convention: zero == no findings).
+func TestRunTemplateLint_Clean(t *testing.T) {
+	_ = setupClitest(t)
+	specPath := writeSpec(t)
+	if got := cli.RunTemplateLint(context.Background(), []string{specPath}); got != 0 {
+		t.Errorf("exit %d, want 0 (clean spec)", got)
+	}
+}
+
+// TestRunTemplateLint_Findings: a spec with drift lints not-ok and the
+// verb exits 1 (linter convention: non-zero == findings).
+func TestRunTemplateLint_Findings(t *testing.T) {
+	_ = setupClitest(t)
+	specPath := writeSpecContent(t, "drift.yml", driftSpec)
+	if got := cli.RunTemplateLint(context.Background(), []string{specPath}); got != 1 {
+		t.Errorf("exit %d, want 1 (findings)", got)
+	}
+}
+
+// warnSpec references the clitest fake's sentinel "warn-executor" so the
+// validate route returns a warning (and no errors).
+const warnSpec = `name: x
+version: "1.0"
+frame_resolution_mode: coalesce
+nodes:
+  - type: a
+    executor: warn-executor
+`
+
+// TestRunTemplateLint_WarningsAsErrors: a warning-only spec lints clean
+// by default (warnings are non-fatal → exit 0), but exits 1 under
+// --warnings-as-errors, which folds warnings into the ok verdict.
+func TestRunTemplateLint_WarningsAsErrors(t *testing.T) {
+	_ = setupClitest(t)
+	specPath := writeSpecContent(t, "warn.yml", warnSpec)
+	if got := cli.RunTemplateLint(context.Background(), []string{specPath}); got != 0 {
+		t.Errorf("exit %d, want 0 (warning is non-fatal by default)", got)
+	}
+	if got := cli.RunTemplateLint(context.Background(),
+		[]string{"--warnings-as-errors", specPath}); got != 1 {
+		t.Errorf("exit %d, want 1 (--warnings-as-errors folds the warning in)", got)
+	}
+}
+
+// TestRunTemplateLint_RequiresOneFile: zero or extra positionals are a
+// usage error (exit 2).
+func TestRunTemplateLint_RequiresOneFile(t *testing.T) {
+	_ = setupClitest(t)
+	if got := cli.RunTemplateLint(context.Background(), nil); got != 2 {
+		t.Errorf("exit %d, want 2 (no file)", got)
+	}
+}
+
+// TestRunTemplateLint_SourceFileResolution: a spec whose attribute
+// value is a `{source_file: <rel>}` reference resolves the file inline
+// before validation and still lints clean (exit 0). Confirms the lint
+// verb shares readSpecFile's source_file: resolution with register.
+func TestRunTemplateLint_SourceFileResolution(t *testing.T) {
+	_ = setupClitest(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "prompt.txt"), []byte("hello from a referenced file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	specWithRef := `name: x
+version: "1.0"
+frame_resolution_mode: coalesce
+nodes:
+  - type: a
+    executor: http-node
+    description:
+      source_file: prompt.txt
+`
+	specPath := filepath.Join(dir, "spec.yml")
+	if err := os.WriteFile(specPath, []byte(specWithRef), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := cli.RunTemplateLint(context.Background(), []string{specPath}); got != 0 {
+		t.Errorf("exit %d, want 0 (source_file resolved, clean spec)", got)
+	}
+}
+
 func TestRunTemplateList(t *testing.T) {
 	srv := setupClitest(t)
 	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")

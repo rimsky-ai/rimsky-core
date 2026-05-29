@@ -141,14 +141,41 @@ func TestV1Registry(t *testing.T) {
 		// Instance-debugger surface (concept:breakpoint).
 		"instance:pause":    true,
 		"instance:resume":   true,
+		"instance:kill":     true,
 		"breakpoint:read":   true,
 		"breakpoint:create": true,
 		"breakpoint:resume": true,
 		"breakpoint:delete": true,
+		// Template lint surface (spec 2026-05-28-quality-of-life-features).
+		"template:validate": true,
 	}
 	for _, a := range surplus {
 		if !allowed[a] {
 			t.Errorf("V1 registry has surplus action %q not in spec and not in the allowed-supplement list", a)
+		}
+	}
+}
+
+// TestBuiltinSchemasLockstep guards the lockstep the builtinSchemas
+// doc-comment promises: every WRITE tool advertised in v1Actions must
+// carry an explicit (non-fallback) inputSchema so an MCP client can
+// validate args before round-tripping. Read tools may fall back to the
+// generic `{"type":"object"}` (argument-free list tools are fine), but a
+// write tool with no shape silently degrades to the generic object and
+// the client loses argument validation. Without this guard the gap is
+// invisible (the catalog defaults a missing entry to the generic shape).
+func TestBuiltinSchemasLockstep(t *testing.T) {
+	schemas := builtinSchemas()
+	for _, e := range v1Actions {
+		if !e.IsWrite {
+			continue
+		}
+		for _, tool := range e.MCPTools {
+			if len(schemas[tool]) == 0 {
+				t.Errorf("write tool %q (action %q) has no builtinSchemas entry; "+
+					"add an explicit inputSchema so MCP clients can validate args "+
+					"(keep builtinSchemas in lockstep with v1Actions)", tool, e.Action)
+			}
 		}
 	}
 }

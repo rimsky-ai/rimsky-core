@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// instances.go — `instance create/list/get/delete/nodes/events`.
+// instances.go — `instance create/list/get/status/delete/kill/nodes/events`.
 package cli
 
 import (
@@ -209,6 +209,200 @@ func RunInstanceDelete(ctx context.Context, args []string) int {
 	}
 	fmt.Fprintf(os.Stdout, "%s deleted\n", rest[0])
 	return 0
+}
+
+// RunInstanceKill implements `instance kill`: force-terminate a (possibly
+// stuck) instance via POST /instances/{idOrKey}/terminate. Termination is
+// destructive — it abandons any in-flight node-runs — so it refuses unless
+// the operator opts in with --force or the common --yes flag.
+//
+// kill makes the instance terminal but does NOT free its instance_key; the
+// follow-up `rimsky instance delete <id>` removes the row (its terminal
+// guard now passes) and frees the key.
+func RunInstanceKill(ctx context.Context, args []string) int {
+	var reason string
+	var force bool
+	fs, common, endpoint, code := runWithCommon("instance kill", args, func(fs *flag.FlagSet) {
+		fs.StringVar(&reason, "reason", "", "reason recorded on the teardown audit event")
+		fs.BoolVar(&force, "force", false, "confirm forced termination")
+	})
+	if code != 0 {
+		return code
+	}
+	rest := fs.Args()
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance kill <id-or-key> [--reason ...] --force")
+		return 2
+	}
+	if !force && !common.Yes {
+		fmt.Fprintln(os.Stderr, "refusing to terminate without --force")
+		return 2
+	}
+	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
+	inst, err := c.TerminateInstance(ctx, rest[0], reason)
+	if err != nil {
+		return reportError(err)
+	}
+	if common.Format == FormatJSON {
+		_ = EmitJSON(os.Stdout, inst)
+		return 0
+	}
+	pairs := [][2]string{
+		{"id", inst.UUID()},
+		{"template_hash", inst.TemplateHash},
+	}
+	if inst.InstanceKey != nil {
+		pairs = append(pairs, [2]string{"instance_key", *inst.InstanceKey})
+	}
+	if inst.TerminatedAt != nil {
+		pairs = append(pairs, [2]string{"terminated_at", *inst.TerminatedAt})
+	}
+	EmitKV(os.Stdout, pairs)
+	fmt.Fprintf(os.Stdout, "\ninstance terminated; run `rimsky instance delete %s` to free the instance key\n", rest[0])
+	return 0
+}
+
+// statusReportEventLimit bounds the recent-events and pending-hits fan-out
+// for `instance status`. Status is a snapshot, not a full history dump.
+const statusReportEventLimit = 50
+
+// InstanceStatus is the assembled one-shot snapshot `instance status`
+// renders: the instance projection plus the three per-instance read
+// fan-outs (nodes, recent events, pending breakpoint hits). The JSON
+// shape doubles as the `-o json` envelope.
+type InstanceStatus struct {
+	Instance       *Instance        `json:"instance"`
+	Nodes          []Node           `json:"nodes"`
+	RecentEvents   []Event          `json:"recent_events"`
+	BreakpointHits []map[string]any `json:"breakpoint_hits"`
+}
+
+// gatherInstanceStatus fans out GetInstance + ListInstanceNodes +
+// ListEvents + ListBreakpointHits for one already-resolved instance UUID
+// and assembles them into an InstanceStatus, the one-shot snapshot
+// `instance status` renders. The four reads are independent; a failure on
+// any is returned to the caller. (`watch` does not use this — it runs its
+// own incremental poll loop over the same read sources.)
+func gatherInstanceStatus(ctx context.Context, c *Client, uuid string) (*InstanceStatus, error) {
+	inst, err := c.GetInstance(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+	nodesResp, err := c.ListInstanceNodes(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+	eventsResp, err := c.ListEvents(ctx, ListEventsQuery{InstanceID: uuid, Limit: statusReportEventLimit})
+	if err != nil {
+		return nil, err
+	}
+	hitsResp, err := c.ListBreakpointHits(ctx, uuid, 0, statusReportEventLimit)
+	if err != nil {
+		return nil, err
+	}
+	return &InstanceStatus{
+		Instance:       inst,
+		Nodes:          nodesResp.Nodes,
+		RecentEvents:   eventsResp.Events,
+		BreakpointHits: hitsResp.Hits,
+	}, nil
+}
+
+// RunInstanceStatus implements `instance status`: a client-side aggregator
+// that fans out across the existing per-instance read endpoints (instance
+// projection, node states, recent events, pending breakpoint hits) and
+// renders one combined snapshot. No new server endpoint — purely a
+// composition over reads.
+func RunInstanceStatus(ctx context.Context, args []string) int {
+	fs, common, endpoint, code := runWithCommon("instance status", args, nil)
+	if code != 0 {
+		return code
+	}
+	rest := fs.Args()
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance status <id-or-key>")
+		return 2
+	}
+	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
+
+	id := rest[0]
+	if !LooksLikeUUID(id) {
+		inst, err := c.GetInstance(ctx, id)
+		if err != nil {
+			return reportError(err)
+		}
+		id = inst.UUID()
+	}
+
+	status, err := gatherInstanceStatus(ctx, c, id)
+	if err != nil {
+		return reportError(err)
+	}
+
+	if common.Format == FormatJSON {
+		_ = EmitJSON(os.Stdout, status)
+		return 0
+	}
+	printInstanceStatus(status)
+	return 0
+}
+
+// printInstanceStatus renders the human view of an InstanceStatus: an
+// instance header (KV), a per-node state table, a recent-events table, and
+// a pending-hits table.
+func printInstanceStatus(status *InstanceStatus) {
+	inst := status.Instance
+	state := "running"
+	if inst.TerminatedAt != nil {
+		state = "terminal"
+	}
+	pairs := [][2]string{
+		{"id", inst.UUID()},
+		{"state", state},
+		{"template_hash", inst.TemplateHash},
+	}
+	if inst.InstanceKey != nil {
+		pairs = append(pairs, [2]string{"instance_key", *inst.InstanceKey})
+	}
+	if inst.TerminatedAt != nil {
+		pairs = append(pairs, [2]string{"terminated_at", *inst.TerminatedAt})
+	}
+	EmitKV(os.Stdout, pairs)
+
+	fmt.Fprintln(os.Stdout, "\nNodes:")
+	nodeRows := make([][]string, 0, len(status.Nodes))
+	for _, n := range status.Nodes {
+		hb := ""
+		if n.LastHeartbeatAt != nil {
+			hb = *n.LastHeartbeatAt
+		}
+		nodeRows = append(nodeRows, []string{
+			n.ID, n.NodeType, n.State, n.CurrentErrorClass,
+			fmt.Sprintf("%d", n.RetryCounter), hb,
+		})
+	}
+	EmitTable(os.Stdout, []string{"ID", "TYPE", "STATE", "ERROR_CLASS", "RETRIES", "LAST_HEARTBEAT"}, nodeRows)
+
+	fmt.Fprintln(os.Stdout, "\nRecent events:")
+	eventRows := make([][]string, 0, len(status.RecentEvents))
+	for _, e := range status.RecentEvents {
+		eventRows = append(eventRows, []string{e.OccurredAt, fmt.Sprintf("%d", e.ID), e.Kind})
+	}
+	EmitTable(os.Stdout, []string{"OCCURRED_AT", "ID", "KIND"}, eventRows)
+
+	fmt.Fprintln(os.Stdout, "\nPending breakpoint hits:")
+	hitRows := make([][]string, 0, len(status.BreakpointHits))
+	for _, h := range status.BreakpointHits {
+		hitRows = append(hitRows, []string{
+			fmt.Sprintf("%v", h["seq"]),
+			fmt.Sprintf("%v", h["checkpoint"]),
+			fmt.Sprintf("%v", h["mode"]),
+			fmt.Sprintf("%v", h["hit_id"]),
+		})
+	}
+	EmitTable(os.Stdout, []string{"SEQ", "CHECKPOINT", "MODE", "HIT_ID"}, hitRows)
 }
 
 // RunInstanceNodes implements `instance nodes`.

@@ -18,13 +18,17 @@ package controlapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -254,6 +258,96 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["resumed"])
 	require.Equal(t, false, out["first_resume"])
+}
+
+// TestBreakpoint_ListHits_HTTPMirrorsMCPResource asserts the read-only
+// GET /instances/{id}/breakpoint-hits route returns the same
+// {hits, next_since, truncated} shape the MCP resource read produces for
+// the same instance, and that ?since/?limit pagination (including the
+// fetch-+1 truncation flag) behaves. The CLI status/watch aggregators
+// (Pass 5) poll this route.
+func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	_, instID := seedBPInstance(t, h, uuid.NewString())
+	instUUID := shared.UUID(uuid.MustParse(instID))
+
+	// Seed a breakpoint + 3 hits with strictly increasing seq.
+	bpID := createBreakpointForRead(t, h, instID)
+	base := time.Now().UTC().Add(-3 * time.Minute)
+	_, seq1 := seedBPHit(t, h, bpID, instUUID, base)
+	_, seq2 := seedBPHit(t, h, bpID, instUUID, base.Add(time.Minute))
+	_, seq3 := seedBPHit(t, h, bpID, instUUID, base.Add(2*time.Minute))
+	require.Less(t, seq1, seq2)
+	require.Less(t, seq2, seq3)
+
+	// Full page: all 3 hits, next_since == last seq, not truncated.
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	hits, _ := out["hits"].([]any)
+	require.Len(t, hits, 3)
+	require.EqualValues(t, seq3, int64(out["next_since"].(float64)))
+	require.Equal(t, false, out["truncated"])
+
+	// Each row carries the same flattened envelope hitToWireShape
+	// produces (row-identity fields + snapshot fields). Cross-check the
+	// HTTP route against the MCP resource read for byte-identical rows.
+	first, _ := hits[0].(map[string]any)
+	require.EqualValues(t, seq1, int64(first["seq"].(float64)))
+	require.NotEmpty(t, first["hit_id"])
+	require.Equal(t, instID, first["instance_id"])
+	require.Equal(t, "before_dispatch", first["checkpoint"])
+	require.NotNil(t, first["dispatch_context"])
+
+	cat := buildResourceCatalog(h)
+	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*:read"}}})
+	mcpReq := httptest.NewRequest("POST", "/mcp", nil)
+	contents, rpcErr := cat.Read(mcpReq, fmt.Sprintf("rimsky://instances/%s/breakpoint-hits", instID))
+	require.Nil(t, rpcErr, "mcp read failed: %+v", rpcErr)
+	var mcpBody map[string]any
+	require.NoError(t, json.Unmarshal([]byte(contents.Text), &mcpBody))
+	// The HTTP body marshals to the same JSON object the MCP resource
+	// serializes (both flow through writeJSON/json.Marshal of the same
+	// map shape). Compare round-tripped.
+	httpJSONBytes, err := json.Marshal(out)
+	require.NoError(t, err)
+	var httpBody map[string]any
+	require.NoError(t, json.Unmarshal(httpJSONBytes, &httpBody))
+	require.Equal(t, mcpBody, httpBody, "HTTP route and MCP resource must return identical breakpoint-hits payloads")
+
+	// since cursor: ?since=seq1 drops the first hit, keeps seq2 + seq3.
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits?since=%d", instID, seq1), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	hits, _ = out["hits"].([]any)
+	require.Len(t, hits, 2)
+	require.EqualValues(t, seq3, int64(out["next_since"].(float64)))
+	require.Equal(t, false, out["truncated"])
+
+	// limit truncation: ?limit=2 over 3 hits → 2 returned, truncated
+	// true (the handler fetches limit+1 and observes the third row),
+	// next_since advances to the last returned seq (seq2).
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits?limit=2", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	hits, _ = out["hits"].([]any)
+	require.Len(t, hits, 2)
+	require.EqualValues(t, seq2, int64(out["next_since"].(float64)))
+	require.Equal(t, true, out["truncated"])
+
+	// Bad query param → 400 (parseSinceLimit error mapped to badRequest).
+	status, _ = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits?since=-1", instID), nil)
+	require.Equal(t, http.StatusBadRequest, status)
+}
+
+// TestBreakpoint_ListHits_InstanceNotFound returns 404 for an unknown
+// instance id.
+func TestBreakpoint_ListHits_InstanceNotFound(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	status, _ := h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits", uuid.NewString()), nil)
+	require.Equal(t, http.StatusNotFound, status)
 }
 
 // TestBreakpoint_ResumeMissingHitID returns 404 when the hit id is a

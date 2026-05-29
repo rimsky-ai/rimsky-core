@@ -69,6 +69,8 @@ func main() {
 		os.Exit(cli.RunLs(context.Background(), os.Args[2:]))
 	case "logs":
 		os.Exit(cli.RunLogs(context.Background(), os.Args[2:]))
+	case "watch":
+		os.Exit(cli.RunWatch(context.Background(), os.Args[2:]))
 	case "auth":
 		os.Exit(cli.RunAuth(os.Args[2:]))
 	case "conformance":
@@ -82,7 +84,7 @@ func main() {
 
 func dispatchTemplate(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky template <register|list|get|deploy|undeploy|rm> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky template <register|lint|list|get|deploy|undeploy|rm> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -90,6 +92,8 @@ func dispatchTemplate(args []string) int {
 	switch args[0] {
 	case "register":
 		return cli.RunTemplateRegister(ctx, rest)
+	case "lint":
+		return cli.RunTemplateLint(ctx, rest)
 	case "list":
 		return cli.RunTemplateList(ctx, rest)
 	case "get":
@@ -101,7 +105,7 @@ func dispatchTemplate(args []string) int {
 	case "rm":
 		return cli.RunTemplateRm(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky template <register|list|get|deploy|undeploy|rm> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky template <register|lint|list|get|deploy|undeploy|rm> ...")
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "rimsky template: unknown subcommand %q\n", args[0])
@@ -136,7 +140,7 @@ func dispatchTag(args []string) int {
 
 func dispatchInstance(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky instance <create|list|get|delete|nodes|events> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky instance <create|list|get|status|delete|kill|nodes|events> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -148,14 +152,18 @@ func dispatchInstance(args []string) int {
 		return cli.RunInstanceList(ctx, rest)
 	case "get":
 		return cli.RunInstanceGet(ctx, rest)
+	case "status":
+		return cli.RunInstanceStatus(ctx, rest)
 	case "delete":
 		return cli.RunInstanceDelete(ctx, rest)
+	case "kill":
+		return cli.RunInstanceKill(ctx, rest)
 	case "nodes":
 		return cli.RunInstanceNodes(ctx, rest)
 	case "events":
 		return cli.RunInstanceEvents(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky instance <create|list|get|delete|nodes|events> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky instance <create|list|get|status|delete|kill|nodes|events> ...")
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "rimsky instance: unknown subcommand %q\n", args[0])
@@ -350,12 +358,13 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  rm-instance <id>      Delete a terminal instance")
 	fmt.Fprintln(w, "  ls [templates|instances|tags]")
 	fmt.Fprintln(w, "  logs <id-or-key>      Stream events (poll-based)")
+	fmt.Fprintln(w, "  watch <id-or-key>     Live feed: events + breakpoint hits until terminal")
 	fmt.Fprintln(w, "  health")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Literal API:")
-	fmt.Fprintln(w, "  template register | list | get | deploy | undeploy | rm")
+	fmt.Fprintln(w, "  template register | lint | list | get | deploy | undeploy | rm")
 	fmt.Fprintln(w, "  tag create | list | get | mv | rm")
-	fmt.Fprintln(w, "  instance create | list | get | delete | nodes | events")
+	fmt.Fprintln(w, "  instance create | list | get | status | delete | kill | nodes | events")
 	fmt.Fprintln(w, "  node get")
 	fmt.Fprintln(w, "  admin invalidate | reset")
 	fmt.Fprintln(w, "  messages tail | show")

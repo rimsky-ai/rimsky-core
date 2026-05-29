@@ -14,10 +14,12 @@ import {
   isoToProtoTimestamp,
   jsToProtoStruct,
   jsToProtoValue,
+  outcomeToCallbackBody,
   traceEventToProto,
   unwrapStruct,
   unwrapStructValue,
 } from "./server.js";
+import type { AgentOutcome } from "./agent-run.js";
 import {
   startInternalMcpServer,
   type CallbackServerHandle,
@@ -573,5 +575,112 @@ describe("unwrapStructValue defensive defaults", () => {
     expect(unwrapStructValue("x")).toBe("x");
     expect(unwrapStructValue(7)).toBe(7);
     expect(unwrapStructValue(true)).toBe(true);
+  });
+});
+
+// The gRPC ExecutorObservability.Capabilities surface must carry the
+// RIMSKY_EXECUTOR_DECLARED_EVENTS-resolved list in declared_events (field 7).
+// This pairs with the HTTP capabilitiesPayload coverage in observability.test.ts
+// to cover "both capability surfaces."
+describe("ExecutorObservability.Capabilities declared_events (gRPC surface)", () => {
+  let cb: CallbackServerHandle;
+  let srv: RunningServer;
+  const fakeCli: CliRunner = {
+    spawn: async () => {
+      throw new Error("should not be called");
+    },
+  };
+
+  beforeEach(async () => {
+    process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS = "a,b";
+    cb = await startInternalMcpServer({ logger });
+    srv = await startGrpcServer({
+      host: "127.0.0.1",
+      port: 0,
+      callback: cb,
+      cliRunner: fakeCli,
+      silenceTimeoutMs: 5000,
+      logger,
+    });
+  });
+
+  afterEach(async () => {
+    delete process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS;
+    await srv.shutdown();
+    await cb.close();
+  });
+
+  it("advertises the env-resolved declared_events over gRPC", async () => {
+    const pkg = loadExecutorProto();
+    const ObsClient = pkg.rimsky.v1.ExecutorObservability as unknown as new (
+      addr: string,
+      creds: grpc.ChannelCredentials,
+    ) => grpc.Client;
+    const client = new ObsClient(srv.address, grpc.credentials.createInsecure());
+    const caps = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client as any).Capabilities({}, (err: unknown, resp: Record<string, unknown>) => {
+        if (err) return reject(err);
+        resolve(resp);
+      });
+    });
+    expect(caps.declared_events).toEqual(["a", "b"]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).close?.();
+  });
+});
+
+// outcomeToCallbackBody must ride the per-dispatch named-event buffer on the
+// AsyncCallbackBody `events[]` array (the gRPC stream already closed at
+// dispatch). Payloads are base64-encoded per the proto-JSON `bytes` rule the
+// Go supervisor expects.
+describe("outcomeToCallbackBody named-event surfacing", () => {
+  it("populates events[] from the buffer with base64 payloads", () => {
+    const payloadA = Buffer.from(JSON.stringify({ pct: 50 }), "utf8");
+    const payloadB = Buffer.from("null", "utf8");
+    const outcome: AgentOutcome = {
+      kind: "complete",
+      attributesDelta: { ok: true },
+      changed: true,
+      changeSummary: "did",
+      emittedEvents: [
+        { name: "progress", payload: payloadA },
+        { name: "ping", payload: payloadB },
+      ],
+    };
+    const body = outcomeToCallbackBody(outcome);
+    expect(body.events).toEqual([
+      { name: "progress", payload: payloadA.toString("base64") },
+      { name: "ping", payload: payloadB.toString("base64") },
+    ]);
+    // The outcome verdict is still present alongside the events.
+    expect(body.success).toBeDefined();
+  });
+
+  it("omits events[] entirely when the buffer is empty (no behavior change)", () => {
+    const outcome: AgentOutcome = {
+      kind: "complete",
+      attributesDelta: null,
+      changed: false,
+      changeSummary: null,
+    };
+    const body = outcomeToCallbackBody(outcome);
+    expect("events" in body).toBe(false);
+    expect(body.success).toBeDefined();
+  });
+
+  it("rides events[] alongside an error verdict too", () => {
+    const payload = Buffer.from(JSON.stringify({ detail: "x" }), "utf8");
+    const outcome: AgentOutcome = {
+      kind: "errored",
+      errorClass: "agent/blocked",
+      payload: { reason: "stuck" },
+      emittedEvents: [{ name: "diag", payload }],
+    };
+    const body = outcomeToCallbackBody(outcome);
+    expect(body.events).toEqual([
+      { name: "diag", payload: payload.toString("base64") },
+    ]);
+    expect(body.error).toBeDefined();
   });
 });

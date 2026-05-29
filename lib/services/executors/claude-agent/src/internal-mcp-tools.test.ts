@@ -8,6 +8,7 @@ import {
   ReportBlockedInput,
   ReportErrorInput,
   ReportParkInput,
+  EmitNamedEventInput,
   AttributesReadInput,
   AttributesSetInput,
   TOOL_DEFINITIONS,
@@ -72,16 +73,36 @@ describe("internal-mcp-tools schemas", () => {
     ).toThrow();
   });
 
-  it("TOOL_DEFINITIONS exposes the six tools (incl. report_park)", () => {
+  it("TOOL_DEFINITIONS exposes the seven tools (incl. report_park + emit_named_event)", () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name).sort();
     expect(names).toEqual([
       "attributes_read",
       "attributes_set",
+      "emit_named_event",
       "report_blocked",
       "report_complete",
       "report_error",
       "report_park",
     ]);
+  });
+
+  it("EmitNamedEventInput requires token + name; payload is optional and opaque", () => {
+    const parsed = EmitNamedEventInput.parse({
+      token: "tok",
+      name: "progress",
+      payload: { pct: 42, nested: { ok: true } },
+    });
+    expect(parsed.token).toBe("tok");
+    expect(parsed.name).toBe("progress");
+    expect(parsed.payload).toEqual({ pct: 42, nested: { ok: true } });
+
+    // payload is optional — name-only emission is valid.
+    const minimal = EmitNamedEventInput.parse({ token: "tok", name: "ping" });
+    expect(minimal.payload).toBeUndefined();
+
+    // token + name are required.
+    expect(() => EmitNamedEventInput.parse({ token: "tok" })).toThrow();
+    expect(() => EmitNamedEventInput.parse({ name: "x" } as unknown)).toThrow();
   });
 
   it("ReportParkInput accepts a typed reason + optional fields", () => {

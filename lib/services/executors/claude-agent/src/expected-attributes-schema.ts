@@ -89,12 +89,30 @@ export const expectedAttributesSchema = {
 
 /**
  * Names of events claude-agent may emit via the NamedEvent wire type.
- * Empty: rate-limit handling uses the `Park` terminal, not events. Reachable
- * from `Capabilities.declared_events` (server.ts + observability.ts);
- * keeping it as an exported symbol means future emission points land in
- * one place rather than scattered constants.
+ *
+ * The base set is empty: rate-limit handling uses the `Park` terminal, not
+ * events. A deployment (or a derivative image) declares the names its
+ * agents will emit via the `emit_named_event` MCP tool through the
+ * `RIMSKY_EXECUTOR_DECLARED_EVENTS` env var (comma-separated; whitespace
+ * trimmed; empty segments dropped). The resolved list is advertised via
+ * `Capabilities.declared_events` (server.ts + observability.ts), so
+ * rimsky's registration-time `subscribes:` cross-check sees the names
+ * without a source fork, and it is the self-consistency list the
+ * `emit_named_event` handler checks an emitted name against.
+ *
+ * Resolved at call time (not module-load) so a test (or a late
+ * env-var set) is reflected without re-importing the module — mirrors
+ * the lazy `process.env` reads elsewhere in this executor
+ * (e.g. `stubModeEnabled()`).
  */
-export const declaredEvents: string[] = [];
+export function resolveDeclaredEvents(): string[] {
+  const raw = process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS;
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
 
 /**
  * Hierarchical error-class vocabulary claude-agent advertises via

@@ -4,12 +4,17 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import pino from "pino";
-import { startHttpBridge, type RunningHttpBridge } from "./http-bridge.js";
+import {
+  startHttpBridge,
+  outcomeToCallbackBody,
+  type RunningHttpBridge,
+} from "./http-bridge.js";
 import {
   startInternalMcpServer,
   type CallbackServerHandle,
 } from "./internal-mcp-server.js";
 import type { CliRunner } from "./cli-runner.js";
+import type { AgentOutcome } from "./agent-run.js";
 import { Observability } from "./observability.js";
 
 const logger = pino({ level: "silent" });
@@ -47,7 +52,7 @@ describe("HTTP bridge stub-mode /execute", () => {
     await cb.close();
   });
 
-  it("returns 202 + ackId and POSTs Complete with attributes_delta keyed by `type`", async () => {
+  it("returns 202 + ackId and POSTs Complete in the AsyncCallbackBody success oneof", async () => {
     const res = await fetch(`${bridge.address}/execute`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -66,13 +71,17 @@ describe("HTTP bridge stub-mode /execute", () => {
     await waitFor(() => posts.length > 0, 2000);
     expect(posts[0]!.url).toBe("http://supervisor.invalid/cb");
     const cb0 = posts[0]!.body as Record<string, unknown>;
-    // Spec §12.3: HTTP bridge body keyed by `type`. Ensure no legacy `kind`.
-    expect(cb0.type).toBe("complete");
+    // AsyncCallbackBody oneof shape the supervisor's parseAsyncCallback
+    // requires (success | error | park). The legacy `{type: ...}` / `kind`
+    // discriminators are rejected with HTTP 400.
+    expect(cb0.type).toBeUndefined();
     expect(cb0.kind).toBeUndefined();
     expect(cb0.async_ack_id).toBe(body.async_ack_id);
-    // Spec §12.2: legacy `result` retired in favour of `attributes_delta`.
-    expect(cb0.attributes_delta).toEqual({ stub: true });
-    expect(cb0.changed).toBe(true);
+    const success = cb0.success as Record<string, unknown>;
+    expect(success).toBeDefined();
+    // Legacy `result` retired in favour of `attributes_delta`.
+    expect(success.attributes_delta).toEqual({ stub: true });
+    expect(success.changed).toBe(true);
   });
 });
 
@@ -151,5 +160,41 @@ describe("HTTP bridge /execute observability ledger", () => {
     expect(cats).toContain("step_completed");
     expect(cats).toContain("trace_complete");
     expect(trace.complete).toBe(true);
+  });
+});
+
+// The HTTP bridge body must also ride the per-dispatch named-event buffer on
+// the `events[]` array (the Go supervisor's callback parser reads `events`
+// regardless of transport). Payloads are base64-encoded per the proto-JSON
+// `bytes` rule.
+describe("http-bridge outcomeToCallbackBody named-event surfacing", () => {
+  it("populates events[] from the buffer with base64 payloads", () => {
+    const payload = Buffer.from(JSON.stringify({ pct: 50 }), "utf8");
+    const outcome: AgentOutcome = {
+      kind: "complete",
+      attributesDelta: { ok: true },
+      changed: true,
+      changeSummary: "did",
+      emittedEvents: [{ name: "progress", payload }],
+    };
+    const body = outcomeToCallbackBody(outcome, "ack-1");
+    expect(body.async_ack_id).toBe("ack-1");
+    expect(body.events).toEqual([
+      { name: "progress", payload: payload.toString("base64") },
+    ]);
+    // AsyncCallbackBody oneof shape the supervisor requires (success |
+    // error | park) — not the legacy `{type: ...}` discriminator.
+    expect(body.success).toBeDefined();
+  });
+
+  it("omits events[] entirely when the buffer is empty (no behavior change)", () => {
+    const outcome: AgentOutcome = {
+      kind: "errored",
+      errorClass: "agent/internal_error",
+      payload: { error: "boom" },
+    };
+    const body = outcomeToCallbackBody(outcome, "ack-2");
+    expect("events" in body).toBe(false);
+    expect(body.error).toBeDefined();
   });
 });

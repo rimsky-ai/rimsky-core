@@ -233,13 +233,17 @@ async function runAndCallback(
       config.observability.markComplete(traceId);
     }
     if (body.callback_url) {
+      // Same AsyncCallbackBody oneof shape the supervisor's
+      // parseAsyncCallback requires (success | error | park); the legacy
+      // `{type: ...}` discriminator is rejected with HTTP 400.
       await post(
         body.callback_url,
         {
           async_ack_id: ackId,
-          type: "errored",
-          error_class: "agent/internal_error",
-          payload: { error: String(e) },
+          error: {
+            error_class: "agent/internal_error",
+            payload: { error: String(e) },
+          },
         },
         logger,
       ).catch(() => {});
@@ -256,38 +260,76 @@ function encodeBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
 }
 
-function outcomeToCallbackBody(
+// Projects the per-dispatch named-event buffer into the callback body's
+// `events` slot (proto field 1 of AsyncCallbackBody). Each entry is
+// `{name, payload}` with the payload base64-encoded — the proto-JSON
+// convention for `bytes` fields the Go supervisor's
+// `asyncCallbackNamedEvent.Payload []byte` decodes regardless of transport.
+// An empty / absent buffer yields no `events` key.
+//
+// Exported for unit tests; not part of the agent-contract surface.
+export function emittedEventsCallbackSlot(
+  outcome: AgentOutcome,
+): { events: { name: string; payload: string }[] } | Record<string, never> {
+  const emitted = outcome.emittedEvents ?? [];
+  if (emitted.length === 0) return {};
+  return {
+    events: emitted.map((e) => ({
+      name: e.name,
+      payload: encodeBase64(e.payload),
+    })),
+  };
+}
+
+// Exported for unit tests; not part of the agent-contract surface.
+export function outcomeToCallbackBody(
   outcome: AgentOutcome,
   ackId: string,
 ): Record<string, unknown> {
+  // The callback body uses the AsyncCallbackBody outcome-oneof shape
+  // (success | error | park), identical to the gRPC variant in server.ts —
+  // both POST to the same supervisor `/v1/callback/{ack}` endpoint, whose
+  // parser (Go parseAsyncCallback) requires exactly one of success | error |
+  // park and rejects the legacy `{type: ...}` / `{park_requested: ...}`
+  // discriminator shape with HTTP 400. `async_ack_id` is carried in the body
+  // for the HTTP bridge (the gRPC variant omits it — it rides the route
+  // param); the supervisor reads the ack from the route and ignores the
+  // body field, so it is harmless. Events ride the `events[]` array.
+  //
+  // @source server.ts::outcomeToCallbackBody (the gRPC sibling; same oneof
+  // body, minus async_ack_id).
+  const events = emittedEventsCallbackSlot(outcome);
   if (outcome.kind === "complete") {
-    // Spec §12.3: HTTP+JSON bridge body keyed by `type`. Spec §12.2:
-    // legacy `result` field retired in favour of `attributes_delta`.
     return {
       async_ack_id: ackId,
-      type: "complete",
-      attributes_delta: outcome.attributesDelta,
-      changed: outcome.changed,
-      change_summary: outcome.changeSummary,
+      ...events,
+      success: {
+        attributes_delta: outcome.attributesDelta,
+        changed: outcome.changed,
+        change_summary: outcome.changeSummary,
+      },
     };
   }
   if (outcome.kind === "blocked") {
+    // Post-E.2 collapse: `Blocked` maps to
+    // `Error{error_class: "agent/blocked"}` (renamed 2026-05-23 per
+    // signal-taxonomy spec, hierarchical-class convention).
     return {
       async_ack_id: ackId,
-      type: "blocked",
-      reason: outcome.reason,
-      context: outcome.context,
+      ...events,
+      error: {
+        error_class: "agent/blocked",
+        payload: { reason: outcome.reason, context: outcome.context },
+      },
     };
   }
   if (outcome.kind === "park_requested") {
-    // Plan A5/J9: emit the new AsyncCallbackBody shape (the supervisor
-    // tries the new shape first and falls back to the legacy shape on
-    // parse error, so emitting the new shape is forward-compatible).
     // The proto-JSON convention for `bytes` fields is base64; Go's
     // `encoding/json.Unmarshal` into []byte expects a base64 string.
     return {
       async_ack_id: ackId,
-      park_requested: {
+      ...events,
+      park: {
         reason: outcome.reason,
         reason_note: outcome.reasonNote ?? "",
         payload: encodeBase64(outcome.payload),
@@ -298,9 +340,11 @@ function outcomeToCallbackBody(
   }
   return {
     async_ack_id: ackId,
-    type: "errored",
-    error_class: outcome.errorClass,
-    payload: outcome.payload,
+    ...events,
+    error: {
+      error_class: outcome.errorClass,
+      payload: outcome.payload,
+    },
   };
 }
 

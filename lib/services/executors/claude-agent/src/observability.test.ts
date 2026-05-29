@@ -2,8 +2,9 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { Observability, capabilitiesPayload } from "./observability.js";
+import { resolveDeclaredEvents } from "./expected-attributes-schema.js";
 
 describe("Observability ledger", () => {
   it("records and retrieves events for a dispatch", () => {
@@ -55,5 +56,34 @@ describe("Observability ledger", () => {
     expect(c.supports_trace_get).toBe(true);
     expect(c.supports_trace_stream).toBe(true);
     expect(typeof c.retention_after_terminal_seconds).toBe("number");
+  });
+});
+
+describe("RIMSKY_EXECUTOR_DECLARED_EVENTS env override", () => {
+  afterEach(() => {
+    delete process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS;
+  });
+
+  it("defaults to [] when unset", () => {
+    delete process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS;
+    expect(resolveDeclaredEvents()).toEqual([]);
+    expect(capabilitiesPayload().declared_events).toEqual([]);
+  });
+
+  it('parses "a,b" into ["a","b"] and surfaces it in capabilitiesPayload (HTTP surface)', () => {
+    process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS = "a,b";
+    expect(resolveDeclaredEvents()).toEqual(["a", "b"]);
+    // The HTTP+JSON observability surface advertises declared_events from
+    // the resolved list.
+    expect(capabilitiesPayload().declared_events).toEqual(["a", "b"]);
+  });
+
+  it("trims whitespace and drops empty segments", () => {
+    process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS = " progress , , milestone ,";
+    expect(resolveDeclaredEvents()).toEqual(["progress", "milestone"]);
+    expect(capabilitiesPayload().declared_events).toEqual([
+      "progress",
+      "milestone",
+    ]);
   });
 });

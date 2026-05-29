@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -43,6 +44,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -187,6 +189,7 @@ func registerInstancesRoutes(r chi.Router, deps AppDeps) {
 	r.Delete("/instances/{idOrKey}", gate(deps, "instance:terminate", handleDeleteInstance(deps)))
 	r.Post("/instances/{idOrKey}/pause", gate(deps, "instance:pause", handlePauseInstance(deps)))
 	r.Post("/instances/{idOrKey}/resume", gate(deps, "instance:resume", handleResumeInstance(deps)))
+	r.Post("/instances/{idOrKey}/terminate", gate(deps, "instance:kill", handleTerminateInstance(deps)))
 }
 
 // handlePauseInstance toggles rimsky_instances.paused to TRUE. Per
@@ -584,6 +587,29 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 	}
 }
 
+// instanceRedact loads the bound template's ParamsRedact list for an
+// instance projection. A failed template load is non-fatal: it WARN-logs
+// and returns nil (no redaction) rather than failing the read — the same
+// best-effort discipline handleListInstances uses per-hash. Used by the
+// single-instance projection handlers (GET, terminate).
+func instanceRedact(ctx context.Context, deps AppDeps, templateHash string, instanceID foundationshared.UUID) []string {
+	var tpl *persistence.TemplateRow
+	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		t, err := deps.Persist.Templates().GetByHash(ctx, templateHash, tx)
+		tpl = t
+		return err
+	}); err != nil && deps.Logger != nil {
+		deps.Logger.Warn("instanceRedact: load template for params_redact failed; skipping redaction",
+			"instance_id", instanceID.String(),
+			"template_hash", templateHash,
+			"error", err.Error())
+	}
+	if tpl != nil {
+		return tpl.Spec.ParamsRedact
+	}
+	return nil
+}
+
 func handleGetInstance(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		inst, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
@@ -595,21 +621,7 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		var tpl *persistence.TemplateRow
-		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
-			tpl = t
-			return err
-		}); err != nil && deps.Logger != nil {
-			deps.Logger.Warn("handleGetInstance: load template for params_redact failed; skipping redaction",
-				"instance_id", inst.ID.String(),
-				"template_hash", inst.TemplateHash,
-				"error", err.Error())
-		}
-		var redact []string
-		if tpl != nil {
-			redact = tpl.Spec.ParamsRedact
-		}
+		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
 		writeJSON(w, http.StatusOK, toInstanceItem(*inst, redact))
 	}
 }
@@ -760,6 +772,233 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
+	}
+}
+
+// handleTerminateInstance force-terminates an instance: it marks the
+// instance terminal (sets terminated_at) and force-fails every
+// resource-holding in-flight node-run, abandoning each run's
+// uncommitted claim handles. Per spec
+// .ok-planner/specs/2026-05-28-quality-of-life-features-design.md
+// Feature 2 — this is the first production instance-teardown path
+// (MarkTerminated was previously test-only), and the only path that can
+// rescue a node wedged in `running` awaiting an async callback that
+// never arrives.
+//
+// Relationship to DELETE: terminate makes the instance *terminal* but
+// does NOT remove the row or free the instance_key — DELETE remains the
+// reaper, and its 409 terminal guard now passes once terminate has run.
+// Held-DURABLE claim release (runtime.ReleaseHeldDurableClaims) stays
+// DELETE's job; terminate only abandons the uncommitted in-flight claims
+// of the node-runs it force-fails.
+//
+// Force-fail scope: only node-runs surfaced as `running` (incl. the
+// await_async-stuck case) or `parked` are torn down — those hold/await a
+// claim and carry a non-nil RunScopeID. `fresh`/`stale` node-runs hold
+// no claim, are not dispatched, and have a nil RunScopeID, so a
+// terminated instance's pending nodes are left inert.
+func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		inst, err := resolveInstance(req.Context(), deps, chi.URLParam(req, "idOrKey"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if inst == nil {
+			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
+			return
+		}
+		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
+		// Idempotent: an already-terminal instance returns its current
+		// projection with 200 and mutates nothing.
+		if inst.TerminatedAt != nil {
+			writeJSON(w, http.StatusOK, toInstanceItem(*inst, redact))
+			return
+		}
+		// Optional `{reason}` body; empty/absent body is acceptable.
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			// `json.Decoder.Decode` returns io.EOF on empty input —
+			// reason is optional, so only true JSON errors are surfaced.
+			if !errors.Is(err, io.EOF) {
+				badRequest(w, "invalid JSON body: "+err.Error())
+				return
+			}
+		}
+		reason := body.Reason
+
+		// Gather the resource-holding node-runs that would be force-failed
+		// (running | parked). Used for both the dry-run projection and the
+		// real teardown.
+		var toFail []persistence.NodeRow
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			nodes, err := deps.Persist.Nodes().ListByInstance(ctx, inst.ID, tx)
+			if err != nil {
+				return err
+			}
+			toFail = resourceHoldingNodeRuns(nodes)
+			return nil
+		}); err != nil {
+			writeError(w, err)
+			return
+		}
+
+		// Dry-run: validation passed; list what would be force-failed and
+		// mutate nothing.
+		wouldFail := make([]string, 0, len(toFail))
+		for _, n := range toFail {
+			wouldFail = append(wouldFail, n.ID.String())
+		}
+		if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
+			"instance_id":          inst.ID.String(),
+			"reason":               reason,
+			"would_fail_node_runs": wouldFail,
+		}) {
+			return
+		}
+
+		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+			// (a) Force-fail the resource-holding node-runs. Re-list inside
+			// the teardown tx so the force-fail acts on current state, not
+			// the snapshot taken above for the dry-run preview — that closes
+			// the window where a node-run could leave running/parked between
+			// the preview gather and here (which would make its → failed
+			// transition illegal and roll the whole teardown back). Each row
+			// carries a non-nil RunScopeID (projected from its in-flight
+			// run); a terminal → failed transition passes a non-nil settling
+			// signal (cousin: runtime/on_error.go give_up branch).
+			nodes, err := deps.Persist.Nodes().ListByInstance(ctx, inst.ID, tx)
+			if err != nil {
+				return err
+			}
+			for _, run := range resourceHoldingNodeRuns(nodes) {
+				if run.RunScopeID == nil {
+					// Defensive: ListByInstance projects RunScopeID for any
+					// row whose state is running/parked, so this is
+					// unreachable — but never deref a nil pointer.
+					continue
+				}
+				sig := "terminal/error/instance_killed"
+				if err := deps.Persist.Nodes().UpdateState(ctx, run.ID, *run.RunScopeID,
+					cascade.NodeStateFailed, cascade.ReasonInstanceKilled, &sig, tx); err != nil {
+					return err
+				}
+				abandonInFlightClaims(ctx, deps, run.ID, tx)
+			}
+			// (b) Close the instance's main run-scope (idempotent: the
+			// UPDATE no-ops if it is already closed). Done in the teardown
+			// tx so a terminated instance never carries an open main
+			// run-scope. Terminate closes it itself rather than leaving it
+			// to the instance_terminator worker — that worker's sweep only
+			// covers terminated instances that still carry
+			// lifecycle-subscriber bookkeeping rows, so an instance with no
+			// lifecycle subscribers would otherwise keep its run-scope open
+			// until DELETE.
+			if inst.MainRunScopeID != (foundationshared.UUID{}) {
+				if err := deps.Persist.RunScopes().Close(ctx, tx, inst.MainRunScopeID); err != nil {
+					return err
+				}
+			}
+			// (c) Mark the instance terminal (idempotent UPDATE).
+			if err := deps.Persist.Instances().MarkTerminated(ctx, inst.ID, tx); err != nil {
+				return err
+			}
+			// (d) Record the teardown cause as an administrative audit row.
+			// Kind `instance_terminated` is the underscore administrative
+			// form (matching work_started / message_emitted); the slash
+			// form is reserved for the concept:signal type-path taxonomy.
+			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				InstanceID: &inst.ID,
+				Kind:       "instance_terminated",
+				Payload:    map[string]any{"reason": reason},
+			}, tx)
+		}); err != nil {
+			writeError(w, err)
+			return
+		}
+
+		// Fire OnRunScopeTerminal for the now-closed main run-scope so the
+		// host-agent-proxy reaps any processes spawned under it — the same
+		// fan-out handleDeleteInstance and the terminator worker perform.
+		// After-commit because it does subscriber / host-agent RPCs;
+		// at-least-once (the worker re-fires for subscriber-backed
+		// instances and store handlers are idempotent). A template-load
+		// failure only skips the fan-out — the run-scope is already closed
+		// in the committed tx above.
+		if inst.MainRunScopeID != (foundationshared.UUID{}) {
+			var tpl *persistence.TemplateRow
+			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+				t, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+				tpl = t
+				return err
+			}); err != nil {
+				if deps.Logger != nil {
+					deps.Logger.Warn("handleTerminateInstance: load template for run-scope fan-out failed",
+						"instance_id", inst.ID.String(), "error", err.Error())
+				}
+			} else if tpl != nil {
+				_, _, _ = FanOutRunScopeEvent(req.Context(), deps, tpl.Spec,
+					inst.MainRunScopeID, inst.ID, "instance_terminated", nil)
+			}
+		}
+
+		updated, err := resolveInstance(req.Context(), deps, inst.ID.String())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if updated == nil {
+			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, toInstanceItem(*updated, redact))
+	}
+}
+
+// resourceHoldingNodeRuns filters a node-row listing down to the
+// resource-holding non-terminal runs (running | parked) — the rows the
+// force-terminate handler tears down. `fresh`/`stale` rows hold no claim
+// and are not dispatched, so they are excluded; their RunScopeID is nil.
+func resourceHoldingNodeRuns(nodes []persistence.NodeRow) []persistence.NodeRow {
+	var out []persistence.NodeRow
+	for _, n := range nodes {
+		if n.State == cascade.NodeStateRunning || n.State == cascade.NodeStateParked {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// abandonInFlightClaims abandons a node-run's in-flight (active,
+// uncommitted) claim handles during force-terminate. Mirrors the
+// best-effort discipline in handleDeleteInstance's claim release:
+// abandon failures are WARN-logged and non-fatal so a producer-side
+// hiccup can't wedge the operator's teardown — the run row is already
+// transitioned to failed in the same tx.
+//
+// Committed-durable claims are NOT touched here: their release stays
+// DELETE's job (runtime.ReleaseHeldDurableClaims). Only `active`-state
+// rows are promoted to `abandoned`.
+func abandonInFlightClaims(ctx context.Context, deps AppDeps, nodeID foundationshared.UUID, tx persistence.Tx) {
+	handles, err := deps.Persist.ClaimHandles().ListByHolderNode(ctx, nodeID, tx)
+	if err != nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("handleTerminateInstance: list claim handles for force-fail failed",
+				"node_id", nodeID.String(), "error", err.Error())
+		}
+		return
+	}
+	for _, h := range handles {
+		if h.State != spec.ClaimHandleStateActive || h.HolderSupervisorID == nil {
+			continue
+		}
+		if err := deps.Persist.ClaimHandles().Promote(ctx, h.ID, *h.HolderSupervisorID,
+			spec.ClaimHandleStateAbandoned, tx); err != nil && deps.Logger != nil {
+			deps.Logger.Warn("handleTerminateInstance: abandon in-flight claim failed",
+				"node_id", nodeID.String(), "claim_id", h.ID.String(), "error", err.Error())
+		}
 	}
 }
 

@@ -69,6 +69,15 @@ export const ReportParkInput = z.object({
   resume_at: z.string().optional(),
 });
 
+export const EmitNamedEventInput = z.object({
+  token: z.string(),
+  name: z.string(),
+  // Opaque per concept:inertness (@blessed-invariant 21): the tool
+  // serializes the payload to bytes and rides it through verbatim — it
+  // never inspects, validates-beyond-serialization, or transforms it.
+  payload: z.unknown(),
+});
+
 export { AttributesReadInput, AttributesSetInput };
 
 export interface ToolDefinition {
@@ -147,6 +156,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           format: "date-time",
           description: "Optional ISO 8601 timestamp at which to wake. Absent means signal-only.",
         },
+      },
+    },
+  },
+  {
+    name: "emit_named_event",
+    description:
+      "Emit a non-terminal named event. The event name must be one the " +
+      "executor declares (RIMSKY_EXECUTOR_DECLARED_EVENTS); an undeclared " +
+      "name is rejected. The payload is an opaque JSON value carried " +
+      "through verbatim. Events ride the dispatch's final callback; this " +
+      "does not end the run — still call report_complete/blocked/error/park.",
+    inputSchema: {
+      type: "object",
+      required: ["token", "name"],
+      properties: {
+        token: { type: "string" },
+        name: { type: "string" },
+        payload: {},
       },
     },
   },

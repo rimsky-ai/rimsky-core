@@ -81,6 +81,9 @@ type templateGetResponse struct {
 // registerTemplatesRoutes wires the /templates group.
 func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/templates", gate(deps, "template:register", handleDeployTemplate(deps)))
+	// Static segment registered alongside the others; chi resolves the
+	// static `/templates/validate` ahead of the `/templates/{id}` wildcard.
+	r.Post("/templates/validate", gate(deps, "template:validate", handleValidateTemplate(deps)))
 	r.Get("/templates", gate(deps, "template:read", handleListTemplates(deps)))
 	r.Get("/templates/{id}", gate(deps, "template:read", handleGetTemplate(deps)))
 	r.Delete("/templates/{id}", gate(deps, "template:deregister", handleDeleteTemplate(deps)))
@@ -346,6 +349,106 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			Tags:       tags,
 		})
 	}
+}
+
+// handleValidateTemplate is POST /templates/validate: run the full
+// registration validation pipeline (static `node.ValidateTemplate` +
+// the Validation-protocol mix-in pipeline) against the live registry,
+// but stop before canonicalization-for-persistence and any DB insert.
+// It always returns HTTP 200 when validation ran; the `ok` flag and the
+// findings carry the verdict. Non-2xx is reserved for request-level
+// failures (a malformed body → 400). Per spec
+// 2026-05-28-quality-of-life-features.
+func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		raw, err := readAllBody(req)
+		if err != nil {
+			badRequest(w, "read body: "+err.Error())
+			return
+		}
+		// Tag and source are accepted-but-ignored on the lint path: they
+		// only affect persistence, which validate-only never reaches.
+		specBody, _, _, err := decodeRegisterRequest(raw)
+		if err != nil {
+			badRequest(w, err.Error())
+			return
+		}
+
+		spec := *specBody
+		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
+
+		// Project static findings into the unified {path, msg} shape.
+		validationErrors := make([]map[string]string, 0, len(res.Errors))
+		for _, e := range res.Errors {
+			validationErrors = append(validationErrors, map[string]string{"path": e.Path, "msg": e.Msg})
+		}
+
+		// Default-fill frame-resolution fields before the pipeline, exactly
+		// as register does, so the spec the validators see matches what
+		// would be persisted.
+		node.ApplyFrameResolutionDefaults(&spec)
+
+		// CanonicalSpecHash is computed purely to feed the validation
+		// pipeline (validation input, not persistence). A hash error is a
+		// request-level failure.
+		hash, err := canonical.CanonicalSpecHash(spec)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+
+		var execSchemaLookup runtime.ExpectedAttributesSchemaLookup
+		if deps.ExecutorCapabilities != nil {
+			execSchemaLookup = func(executor string) ([]byte, bool) {
+				_, _, schema, ok := deps.ExecutorCapabilities(executor)
+				if !ok || len(schema) == 0 {
+					return nil, false
+				}
+				return schema, true
+			}
+		}
+		outcome, vErr := runtime.RunValidationPipeline(
+			req.Context(), deps.Validators, spec, hash, deps.UnreachableValidatorPolicy, execSchemaLookup,
+		)
+		if vErr != nil {
+			writeError(w, vErr)
+			return
+		}
+
+		// Merge the pipeline findings (ValidationFinding) into the unified
+		// {path, msg} projection.
+		for _, e := range outcome.Errors {
+			validationErrors = append(validationErrors, findingToProjection(e))
+		}
+		validationWarnings := make([]map[string]string, 0, len(outcome.Warnings))
+		for _, wn := range outcome.Warnings {
+			validationWarnings = append(validationWarnings, findingToProjection(wn))
+		}
+
+		warningsAsErrors := req.URL.Query().Get("warnings_as_errors") == "true"
+		ok := len(validationErrors) == 0 && (!warningsAsErrors || len(validationWarnings) == 0)
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                  ok,
+			"validation_errors":   validationErrors,
+			"validation_warnings": validationWarnings,
+		})
+	}
+}
+
+// findingToProjection flattens a pipeline ValidationFinding into the
+// unified {path, msg} shape the lint response and CLI consume. When the
+// finding carries no path, fall back to the originating service/role so
+// the operator still sees where it came from.
+func findingToProjection(f runtime.ValidationFinding) map[string]string {
+	path := f.Path
+	if path == "" {
+		path = f.ServiceName
+		if f.Role != "" {
+			path = f.ServiceName + " (" + f.Role + ")"
+		}
+	}
+	return map[string]string{"path": path, "msg": f.Message}
 }
 
 // handleListTemplates is GET /templates: paginated list of registry rows.

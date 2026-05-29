@@ -18,7 +18,7 @@ Agentic supervision needs a way to ask "what would happen if I did X?" without a
 
 ## Boundaries
 
-Owns: the per-grant-entry mode vocabulary (`execute` / `dry_run`), the per-request context plumbing, the dry-run-response helper, the per-handler dry-run branches (instance:create, instance:terminate, template:register, template:deploy/undeploy/deregister, tag:create/set/delete, node:invalidate/reset, message:send, lineage:prune, backfill:create/cancel, asset:materialize/delete). Does NOT own: auth mutations (those ignore mode by design; see Invariants below). Adjacent: `concept:permission`, `concept:event-log` (the audit row reflects `executed: false`).
+Owns: the per-grant-entry mode vocabulary (`execute` / `dry_run`), the per-request context plumbing, the dry-run-response helper, the per-handler dry-run branches (instance:create, instance:terminate, instance:kill, template:register, template:deploy/undeploy/deregister, tag:create/set/delete, node:invalidate/reset, message:send, lineage:prune, backfill:create/cancel, asset:materialize/delete). Does NOT own: auth mutations (those ignore mode by design; see Invariants below). Adjacent: `concept:permission`, `concept:event-log` (the audit row reflects `executed: false`).
 
 ## Invariants
 
@@ -47,3 +47,4 @@ Clients (CLI, MCP) check the top-level `dry_run` flag to render the response dis
 
 - [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth` ("Dry-run mode").
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-28 — instance:kill added to the dry-run-branch enumeration per spec:2026-05-28-quality-of-life-features; the force-terminate write action returns a would_have_terminated envelope under a dry_run grant.

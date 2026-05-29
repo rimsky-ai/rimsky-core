@@ -25,7 +25,7 @@ Enable agent-driven debugging of live rimsky instances. The agent installs break
 
 Owns: the per-instance breakpoint ledger and the hit ledger (schema, CRUD, sweeps); the `before_dispatch` and `after_terminal` supervisor checkpoint logic; the resume-with-overlay L6 merge; the per-mode overflow policies and the queue-cap (100 unresumed hits per breakpoint).
 
-Does NOT own: the matcher grammar itself (shared with `concept:attribute`'s by_match via the common foundation matcher package); template-baked pauses (none exist — `concept:parked-state` is executor-emitted, this concept is operator-injected at runtime); the audit-log emission for the API surface (covered by the existing auth audit event kinds per `concept:event-log`); the MCP transport for hit delivery (`concept:control-api` owns the read-only resource-listing and resource-read extension that surfaces hits).
+Does NOT own: the matcher grammar itself (shared with `concept:attribute`'s by_match via the common foundation matcher package); template-baked pauses (none exist — `concept:parked-state` is executor-emitted, this concept is operator-injected at runtime); the audit-log emission for the API surface (covered by the existing auth audit event kinds per `concept:event-log`); hit *delivery* (`concept:control-api` owns it, exposing **both** the read-only MCP resource-listing and resource-read extension and a read-only REST route that surface hits — this concept owns the ledger, not the transport).
 
 Adjacent: `concept:supervisor`, `concept:control-api`, `concept:attribute`, `concept:instance`, `concept:signal`, `concept:permission`, `concept:parked-state`.
 
@@ -61,3 +61,4 @@ None.
 
 - 2026-05-24 — Introduced per spec:2026-05-24-instance-debugger-design.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-05-28 — hit-delivery boundary broadened to include a REST read route alongside the MCP resource per spec:2026-05-28-quality-of-life-features.

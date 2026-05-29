@@ -26,6 +26,7 @@ Owns: the per-deployment runtime state, params, attribute_overrides (including `
 - Candidate selection by the supervisor skips paused instances (the candidate query filters out paused rows).
 - `service_bindings` is opaque JSON, set at instance creation and consumed by the `concept:host-agent-proxy` at dispatch time to resolve a late-bound service name to a dev-machine binary.
 - `created_by_api_key_id` is the api-key whose authenticated request created the instance (nullable for instances created under `concept:anonymous-mode`); it is the routing key the host-agent-proxy uses to find the owner's connected `concept:host-agent`.
+- An instance is terminal exactly when its terminal timestamp is set. The force-terminate control action is the production mechanism that sets it, abandoning any in-flight node-runs (transitioning them to failed) and closing the instance's main `concept:run-scope` in the same teardown, so a terminated instance never retains an open main run-scope. Terminal is not removal: the instance key is freed for reuse only by the subsequent row delete, which is permitted only once the instance is terminal.
 
 ## Aliases and historical names
 
@@ -45,3 +46,5 @@ Owns: the per-deployment runtime state, params, attribute_overrides (including `
 
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 - [2026-05-24] Adds `service_bindings` (opaque late-bound service catalog) and `created_by_api_key_id` (the creating api-key, nullable under `concept:anonymous-mode`) to the instance row, consumed by the `concept:host-agent-proxy` for late-bound dispatch resolution and agent routing. Per spec 2026-05-24-host-agent-and-proxy-design.
+- 2026-05-28 — termination invariant added per spec:2026-05-28-quality-of-life-features; force-terminate is the first production path to mark an instance terminal, distinct from the row-delete reaper that frees the instance key.
+- 2026-05-28 — force-terminate teardown refined per spec:2026-05-28-quality-of-life-features: the action closes the instance's main concept:run-scope in the same teardown that marks it terminal and abandons in-flight node-runs, so a terminated instance never retains an open main run-scope. This does not depend on the background terminator sweep, which only reaches terminated instances that still carry concept:lifecycle-subscriber bookkeeping.

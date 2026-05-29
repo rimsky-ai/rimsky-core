@@ -162,6 +162,14 @@ var (
 	// internal child nodes. Same parent-row restriction as
 	// ReasonChildTransitioned.
 	ReasonSubGraphInternalCascadeFired = TransitionReason{Kind: "subgraph_internal_cascade_fired"}
+
+	// ReasonInstanceKilled — forced instance teardown. Drives a
+	// resource-holding non-terminal node-run (running | parked) → failed
+	// when an operator force-terminates the instance. State-machine-
+	// validation-only: NOT emitted as an audit-event kind (the teardown's
+	// audit identity is the `instance_terminated` event-log row written by
+	// the control handler).
+	ReasonInstanceKilled = TransitionReason{Kind: "instance_killed"}
 )
 
 // NextState returns the new state for a transition.
@@ -178,9 +186,11 @@ var (
 // involving parked are: running → parked under handler_park; parked →
 // stale under handler_resume (the wake transitions to stale so the
 // standard SelectCandidates → atomic-acquisition → transitionToRunning
-// path re-dispatches); parked → failed under park_timeout. All other
-// transitions involving parked (including parked → fresh, parked →
-// running directly, parked → parked) are illegal.
+// path re-dispatches); parked → failed under park_timeout; parked →
+// failed under instance_killed (forced instance teardown force-fails a
+// parked node-run, which retains its held claim across the park
+// boundary). All other transitions involving parked (including parked →
+// fresh, parked → running directly, parked → parked) are illegal.
 func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 	switch current {
 	case NodeStateFresh:
@@ -236,6 +246,12 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		if reason.Kind == "policy_give_up" {
 			return NodeStateFailed, nil
 		}
+		// instance_killed force-fails a running node-run during forced
+		// instance teardown (covers the await_async-stuck case too —
+		// such a run is still `running` and holds its claim).
+		if reason.Kind == "instance_killed" {
+			return NodeStateFailed, nil
+		}
 	case NodeStateFailed:
 		if reason.Kind == "operator_reset" || reason.Kind == "operator_invalidate" {
 			return NodeStateStale, nil
@@ -255,6 +271,13 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateStale, nil
 		}
 		if reason.Kind == "park_timeout" {
+			return NodeStateFailed, nil
+		}
+		// instance_killed force-fails a parked node-run during forced
+		// instance teardown. A parked node retains its held claim across
+		// the park boundary, so it is resource-holding and must be torn
+		// down too.
+		if reason.Kind == "instance_killed" {
 			return NodeStateFailed, nil
 		}
 	}

@@ -37,6 +37,14 @@ type InMemoryState struct {
 	events    []cli.Event
 	nodes     map[string]map[string]*cli.Node // instance_id → node_id → node
 	nextEvent int64
+
+	// breakpointHits holds pending breakpoint-hit rows keyed by instance
+	// ID. Each hit is the flat wire shape the live route returns (seq,
+	// hit_id, …, plus snapshot keys). nextHitSeq assigns seq monotonically
+	// across all instances, mirroring the live ledger's per-instance seq
+	// being a strictly increasing cursor.
+	breakpointHits map[string][]map[string]any
+	nextHitSeq     int64
 }
 
 type storedTemplate struct {
@@ -59,10 +67,11 @@ type storedInstance struct {
 // NewInMemoryState constructs an empty state.
 func NewInMemoryState() *InMemoryState {
 	return &InMemoryState{
-		templates: map[string]*storedTemplate{},
-		tags:      map[string]string{},
-		instances: map[string]*storedInstance{},
-		nodes:     map[string]map[string]*cli.Node{},
+		templates:      map[string]*storedTemplate{},
+		tags:           map[string]string{},
+		instances:      map[string]*storedInstance{},
+		nodes:          map[string]map[string]*cli.Node{},
+		breakpointHits: map[string][]map[string]any{},
 	}
 }
 
@@ -292,6 +301,19 @@ func (s *InMemoryState) SetInstanceTerminated(id string, t *time.Time) {
 	inst.TerminatedAt = t
 }
 
+// IsTerminated reports whether the instance's terminated_at is set.
+// Returns false when the instance is unknown. Used by tests asserting
+// terminal state without reaching into the unexported storedInstance.
+func (s *InMemoryState) IsTerminated(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inst, ok := s.instances[id]
+	if !ok {
+		return false
+	}
+	return inst.TerminatedAt != nil
+}
+
 // AddNode injects a node row for the given instance.
 func (s *InMemoryState) AddNode(instanceID string, node cli.Node) {
 	s.mu.Lock()
@@ -426,6 +448,51 @@ func (s *InMemoryState) SetNodeState(id, state string) {
 			return
 		}
 	}
+}
+
+// AddBreakpointHit appends a pending breakpoint hit for an instance,
+// assigning seq monotonically. The supplied fields are merged into the
+// flat wire envelope the live route returns; identity fields (seq,
+// instance_id) are filled in here. Used by tests seeding hits.
+func (s *InMemoryState) AddBreakpointHit(instanceID string, fields map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextHitSeq++
+	hit := map[string]any{
+		"seq":         s.nextHitSeq,
+		"instance_id": instanceID,
+	}
+	for k, v := range fields {
+		hit[k] = v
+	}
+	if _, ok := hit["hit_id"]; !ok {
+		hit["hit_id"] = fmt.Sprintf("hit-%d", s.nextHitSeq)
+	}
+	s.breakpointHits[instanceID] = append(s.breakpointHits[instanceID], hit)
+}
+
+// BreakpointHitsFor returns the pending hits for an instance with seq >
+// since, capped at limit+1 rows so the caller can compute `truncated`
+// (mirrors the live route's fetch-+1 discipline). Returns value copies.
+func (s *InMemoryState) BreakpointHitsFor(instanceID string, since int64, limit int) []map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []map[string]any{}
+	for _, h := range s.breakpointHits[instanceID] {
+		seq, _ := h["seq"].(int64)
+		if seq <= since {
+			continue
+		}
+		cp := map[string]any{}
+		for k, v := range h {
+			cp[k] = v
+		}
+		out = append(out, cp)
+		if limit > 0 && len(out) >= limit+1 {
+			break
+		}
+	}
+	return out
 }
 
 // EventsFor returns events filtered by instance ID; if cursor is non-

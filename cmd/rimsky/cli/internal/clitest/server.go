@@ -107,6 +107,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 	r.Get("/health", s.handleHealth)
 
 	r.Post("/templates", s.handleRegisterTemplate)
+	r.Post("/templates/validate", s.handleValidateTemplate)
 	r.Get("/templates", s.handleListTemplates)
 	r.Get("/templates/{id}", s.handleGetTemplate)
 	r.Post("/templates/{id}/deploy", s.handleDeployTemplate)
@@ -122,7 +123,9 @@ func (s *Server) registerRoutes(r chi.Router) {
 	r.Get("/instances", s.handleListInstances)
 	r.Get("/instances/{idOrKey}", s.handleGetInstance)
 	r.Delete("/instances/{idOrKey}", s.handleDeleteInstance)
+	r.Post("/instances/{idOrKey}/terminate", s.handleTerminateInstance)
 	r.Get("/instances/{idOrKey}/nodes", s.handleListInstanceNodes)
+	r.Get("/instances/{idOrKey}/breakpoint-hits", s.handleListBreakpointHits)
 
 	r.Get("/nodes/{id}", s.handleGetNode)
 	r.Post("/nodes/{id}/invalidate", s.handleInvalidateNode)
@@ -179,6 +182,60 @@ func (s *Server) handleRegisterTemplate(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, status, map[string]any{
 		"template_id": hash,
 		"tags":        tags,
+	})
+}
+
+// handleValidateTemplate mirrors POST /templates/validate: always HTTP
+// 200 with {ok, validation_errors, validation_warnings}, and persists
+// nothing (it never touches s.State). This fake does not run the real
+// validation pipeline; the verdict is derived deterministically from
+// the spec so tests can drive the not-ok path — any node referencing the
+// sentinel executor "drift-executor" yields an error, and any node
+// referencing "warn-executor" yields a warning. `?warnings_as_errors=true`
+// folds warnings into the ok verdict, mirroring the live handler.
+func (s *Server) handleValidateTemplate(w http.ResponseWriter, r *http.Request) {
+	if s.maybeFail(w, r, "/templates/validate") {
+		return
+	}
+	var body struct {
+		Spec map[string]any `json:"spec"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad body"})
+		return
+	}
+	if body.Spec == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing spec"})
+		return
+	}
+	errs := []map[string]string{}
+	warns := []map[string]string{}
+	if nodes, ok := body.Spec["nodes"].([]any); ok {
+		for i, raw := range nodes {
+			n, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch n["executor"] {
+			case "drift-executor":
+				errs = append(errs, map[string]string{
+					"path": fmt.Sprintf("nodes[%d].executor", i),
+					"msg":  "undeclared executor \"drift-executor\"",
+				})
+			case "warn-executor":
+				warns = append(warns, map[string]string{
+					"path": fmt.Sprintf("nodes[%d].executor", i),
+					"msg":  "executor \"warn-executor\" is unreachable in the discovery cache",
+				})
+			}
+		}
+	}
+	warningsAsErrors := r.URL.Query().Get("warnings_as_errors") == "true"
+	ok := len(errs) == 0 && (!warningsAsErrors || len(warns) == 0)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                  ok,
+		"validation_errors":   errs,
+		"validation_warnings": warns,
 	})
 }
 
@@ -520,6 +577,31 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 }
 
+// handleTerminateInstance mirrors POST /instances/{idOrKey}/terminate: it
+// marks the instance terminal (sets terminated_at) and returns the updated
+// instance projection with 200. Idempotent — an already-terminal instance
+// returns its current projection unchanged. The optional `{reason}` body is
+// accepted and ignored (the real handler records it as an audit event;
+// the fake holds no event log for terminate). This mirrors the live
+// control-api force-terminate surface so CLI tests don't pass against the
+// fake while breaking against the real server.
+func (s *Server) handleTerminateInstance(w http.ResponseWriter, r *http.Request) {
+	idOrKey := chi.URLParam(r, "idOrKey")
+	if s.maybeFail(w, r, "/instances/"+idOrKey+"/terminate") {
+		return
+	}
+	inst := s.State.FindInstance(idOrKey)
+	if inst == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "instance not found"})
+		return
+	}
+	if inst.TerminatedAt == nil {
+		s.State.SetInstanceTerminated(inst.ID, nil)
+		inst = s.State.FindInstance(idOrKey)
+	}
+	writeJSON(w, http.StatusOK, instanceToWire(inst))
+}
+
 func (s *Server) handleListInstanceNodes(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
 	if s.maybeFail(w, r, "/instances/"+idOrKey+"/nodes") {
@@ -532,6 +614,58 @@ func (s *Server) handleListInstanceNodes(w http.ResponseWriter, r *http.Request)
 	}
 	out := s.State.ListNodes(inst.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": out, "next_cursor": ""})
+}
+
+// handleListBreakpointHits mirrors GET /instances/{idOrKey}/breakpoint-hits:
+// the read-only twin of the MCP `rimsky://instances/{id}/breakpoint-hits`
+// resource. Returns the live route's {hits, next_since, truncated} shape,
+// fetching limit+1 rows so `truncated` reflects a row beyond the requested
+// page. since defaults to 0; limit defaults to 100 and is capped at 500,
+// matching resourceReadDefaultLimit / resourceReadMaxLimit on the real
+// route so CLI tests don't pass against the fake while breaking against
+// the real server.
+func (s *Server) handleListBreakpointHits(w http.ResponseWriter, r *http.Request) {
+	idOrKey := chi.URLParam(r, "idOrKey")
+	if s.maybeFail(w, r, "/instances/"+idOrKey+"/breakpoint-hits") {
+		return
+	}
+	inst := s.State.FindInstance(idOrKey)
+	if inst == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "instance not found"})
+		return
+	}
+	q := r.URL.Query()
+	var since int64
+	if v := q.Get("since"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			since = n
+		}
+	}
+	limit := 100
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	hits := s.State.BreakpointHitsFor(inst.ID, since, limit)
+	truncated := len(hits) > limit
+	if truncated {
+		hits = hits[:limit]
+	}
+	nextSince := since
+	if len(hits) > 0 {
+		if seq, ok := hits[len(hits)-1]["seq"].(int64); ok {
+			nextSince = seq
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"hits":       hits,
+		"next_since": nextSince,
+		"truncated":  truncated,
+	})
 }
 
 func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {

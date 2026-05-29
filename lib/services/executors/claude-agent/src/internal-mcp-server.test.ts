@@ -28,16 +28,26 @@ function makeRegistryEntry(overrides: {
   cancelToken?: string;
   nodeId?: string;
   callbackUrl?: string;
+  declaredEvents?: string[];
+  emittedEvents?: import("./token-registry.js").NamedEventEmission[];
   onComplete?: import("./token-registry.js").TokenEntry["onComplete"];
   onPark?: import("./token-registry.js").TokenEntry["onPark"];
   onAttributesSet?: import("./token-registry.js").TokenEntry["onAttributesSet"];
 } = {}): import("./token-registry.js").TokenEntry {
+  const emittedEvents =
+    overrides.emittedEvents ??
+    ([] as import("./token-registry.js").NamedEventEmission[]);
   return {
     runId: "run-1",
     attributesAtSpawn: overrides.attributesAtSpawn ?? {},
     cancelToken: overrides.cancelToken ?? "ct",
     nodeId: overrides.nodeId ?? "n-1",
     callbackUrl: overrides.callbackUrl ?? "http://supervisor.invalid/cb",
+    declaredEvents: overrides.declaredEvents ?? [],
+    emittedEvents,
+    emitNamedEvent: (name, payload) => {
+      emittedEvents.push({ name, payload });
+    },
     onComplete:
       overrides.onComplete ??
       (async () => ({ status: "accepted" as const })),
@@ -68,7 +78,7 @@ function parseToolText<T>(content: unknown): T {
 }
 
 describe("rimsky-callback MCP tools", () => {
-  it("lists all six tools (incl. report_park)", async () => {
+  it("lists all seven tools (incl. report_park + emit_named_event)", async () => {
     const registry = new TokenRegistry();
     const client = await buildClient(registry);
 
@@ -77,6 +87,7 @@ describe("rimsky-callback MCP tools", () => {
     expect(names).toEqual([
       "attributes_read",
       "attributes_set",
+      "emit_named_event",
       "report_blocked",
       "report_complete",
       "report_error",
@@ -280,6 +291,110 @@ describe("rimsky-callback MCP tools", () => {
     // in production. Either shape is acceptable; we just want to
     // assert the path doesn't crash.
     expect(typeof res.content).toBe("object");
+  });
+
+  it("emit_named_event accepts a declared name and buffers it", async () => {
+    const registry = new TokenRegistry();
+    const buffer: import("./token-registry.js").NamedEventEmission[] = [];
+    registry.register(
+      "tok-emit",
+      makeRegistryEntry({
+        declaredEvents: ["progress", "milestone"],
+        emittedEvents: buffer,
+      }),
+    );
+    const client = await buildClient(registry);
+
+    const payload = { pct: 50, note: "halfway" };
+    const res = await client.callTool({
+      name: "emit_named_event",
+      arguments: { token: "tok-emit", name: "progress", payload },
+    });
+    expect(parseToolText(res.content)).toEqual({ status: "accepted" });
+    expect(res.isError).toBeFalsy();
+    expect(buffer).toHaveLength(1);
+    expect(buffer[0]!.name).toBe("progress");
+    // Inertness: the buffered bytes are exactly the JSON serialization of
+    // the input payload — the handler never inspects or transforms it.
+    expect(buffer[0]!.payload.toString("utf8")).toBe(JSON.stringify(payload));
+  });
+
+  it("emit_named_event rejects an undeclared name (tool error) and buffers nothing", async () => {
+    const registry = new TokenRegistry();
+    const buffer: import("./token-registry.js").NamedEventEmission[] = [];
+    registry.register(
+      "tok-undeclared",
+      makeRegistryEntry({
+        declaredEvents: ["progress"],
+        emittedEvents: buffer,
+      }),
+    );
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "emit_named_event",
+      arguments: { token: "tok-undeclared", name: "not_declared", payload: { x: 1 } },
+    });
+    expect(res.isError).toBe(true);
+    const body = parseToolText<{ status: string; error: string }>(res.content);
+    expect(body.status).toBe("rejected");
+    expect(body.error).toBe("undeclared_event");
+    expect(buffer).toHaveLength(0);
+  });
+
+  it("emit_named_event treats the payload opaquely (passes serialization through unmodified)", async () => {
+    const registry = new TokenRegistry();
+    const buffer: import("./token-registry.js").NamedEventEmission[] = [];
+    registry.register(
+      "tok-opaque",
+      makeRegistryEntry({
+        declaredEvents: ["data"],
+        emittedEvents: buffer,
+      }),
+    );
+    const client = await buildClient(registry);
+
+    // A nested, mixed-type payload. The buffered bytes must equal the
+    // input's JSON serialization byte-for-byte — no transformation.
+    const payload = { a: [1, 2, { b: "x" }], c: null, d: true };
+    await client.callTool({
+      name: "emit_named_event",
+      arguments: { token: "tok-opaque", name: "data", payload },
+    });
+    expect(buffer).toHaveLength(1);
+    expect(buffer[0]!.payload.toString("utf8")).toBe(JSON.stringify(payload));
+  });
+
+  it("emit_named_event with an omitted payload buffers the JSON null literal", async () => {
+    const registry = new TokenRegistry();
+    const buffer: import("./token-registry.js").NamedEventEmission[] = [];
+    registry.register(
+      "tok-nopayload",
+      makeRegistryEntry({
+        declaredEvents: ["ping"],
+        emittedEvents: buffer,
+      }),
+    );
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "emit_named_event",
+      arguments: { token: "tok-nopayload", name: "ping" },
+    });
+    expect(parseToolText(res.content)).toEqual({ status: "accepted" });
+    expect(buffer).toHaveLength(1);
+    expect(buffer[0]!.payload.toString("utf8")).toBe("null");
+  });
+
+  it("emit_named_event returns isError for an unknown token", async () => {
+    const registry = new TokenRegistry();
+    const client = await buildClient(registry);
+
+    const res = await client.callTool({
+      name: "emit_named_event",
+      arguments: { token: "nope", name: "progress", payload: {} },
+    });
+    expect(res.isError).toBe(true);
   });
 });
 

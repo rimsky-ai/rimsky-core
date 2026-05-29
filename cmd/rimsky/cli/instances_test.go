@@ -6,6 +6,7 @@ package cli_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -14,6 +15,36 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/internal/clitest"
 )
+
+// captureStdout runs fn with os.Stdout redirected to a pipe and returns
+// everything fn wrote. The pipe is drained on a goroutine so writes larger
+// than the OS pipe buffer don't deadlock.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	out := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 0, 64*1024)
+		tmp := make([]byte, 4096)
+		for {
+			n, rerr := r.Read(tmp)
+			buf = append(buf, tmp[:n]...)
+			if rerr != nil {
+				break
+			}
+		}
+		out <- string(buf)
+	}()
+	fn()
+	os.Stdout = saved
+	_ = w.Close()
+	return <-out
+}
 
 func deployedTemplate(t *testing.T, srv *clitest.Server, tag string) string {
 	t.Helper()
@@ -54,6 +85,166 @@ func TestRunInstanceDelete_Conflict(t *testing.T) {
 	srv.State.SetInstanceTerminated(inst.ID, &now)
 	if got := cli.RunInstanceDelete(context.Background(), []string{inst.ID}); got != 0 {
 		t.Errorf("exit %d", got)
+	}
+}
+
+func TestRunInstanceKill_RefusedWithoutForce(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	// No --force / --yes → refused with exit 2; instance stays non-terminal.
+	if got := cli.RunInstanceKill(context.Background(), []string{inst.ID}); got != 2 {
+		t.Errorf("exit %d, want 2", got)
+	}
+	if srv.State.IsTerminated(inst.ID) {
+		t.Error("instance terminated despite refusal")
+	}
+}
+
+func TestRunInstanceKill_Force(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	if got := cli.RunInstanceKill(context.Background(), []string{"--force", "--reason", "stuck", inst.ID}); got != 0 {
+		t.Errorf("exit %d, want 0", got)
+	}
+	if !srv.State.IsTerminated(inst.ID) {
+		t.Error("instance not terminal after kill --force")
+	}
+	// --yes is the alternative confirmation; idempotent on already-terminal.
+	if got := cli.RunInstanceKill(context.Background(), []string{"--yes", inst.ID}); got != 0 {
+		t.Errorf("exit %d (--yes), want 0", got)
+	}
+}
+
+func TestRunInstanceStatus_JSONHasAllSections(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "running"})
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_started", Payload: map[string]any{}})
+	srv.State.AddBreakpointHit(inst.ID, map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"})
+
+	var exit int
+	out := captureStdout(t, func() {
+		exit = cli.RunInstanceStatus(context.Background(), []string{"-o", "json", inst.ID})
+	})
+	if exit != 0 {
+		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
+	}
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode status JSON: %v; output:\n%s", err, out)
+	}
+	for _, section := range []string{"instance", "nodes", "recent_events", "breakpoint_hits"} {
+		if _, ok := got[section]; !ok {
+			t.Errorf("status JSON missing section %q; output:\n%s", section, out)
+		}
+	}
+
+	// Sanity-check the populated sections decode to the expected shapes.
+	var nodes []cli.Node
+	if err := json.Unmarshal(got["nodes"], &nodes); err != nil || len(nodes) != 1 {
+		t.Errorf("nodes section: err=%v len=%d", err, len(nodes))
+	}
+	var events []cli.Event
+	if err := json.Unmarshal(got["recent_events"], &events); err != nil || len(events) != 1 {
+		t.Errorf("recent_events section: err=%v len=%d", err, len(events))
+	}
+	var hits []map[string]any
+	if err := json.Unmarshal(got["breakpoint_hits"], &hits); err != nil || len(hits) != 1 {
+		t.Errorf("breakpoint_hits section: err=%v len=%d", err, len(hits))
+	}
+}
+
+func TestRunInstanceStatus_KeyResolution(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	key := "compose:p:n"
+	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
+	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "fresh"})
+	if got := cli.RunInstanceStatus(context.Background(), []string{key}); got != 0 {
+		t.Errorf("exit %d, want 0", got)
+	}
+}
+
+// TestRunWatch_ExitsOnTerminal asserts watch returns promptly with exit 0
+// when the instance is already terminal: the loop drains events + hits
+// once, sees terminated_at set, prints the terminal line, and returns
+// without sleeping the poll interval.
+func TestRunWatch_ExitsOnTerminal(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_started", Payload: map[string]any{}})
+	srv.State.AddBreakpointHit(inst.ID, map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"})
+	now := time.Now()
+	srv.State.SetInstanceTerminated(inst.ID, &now)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		// A long poll-interval would only matter if the loop slept; a
+		// terminal instance must exit on the first iteration, so this is
+		// deterministic regardless of the interval.
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit promptly on a terminal instance")
+		}
+	})
+	if exit != 0 {
+		t.Errorf("exit %d, want 0", exit)
+	}
+	if !strings.Contains(out, "terminal") {
+		t.Errorf("watch output missing terminal line; output:\n%s", out)
+	}
+	if !strings.Contains(out, "work_started") {
+		t.Errorf("watch output missing the seeded event; output:\n%s", out)
+	}
+	if !strings.Contains(out, "breakpoint.hit") {
+		t.Errorf("watch output missing the seeded breakpoint hit; output:\n%s", out)
+	}
+}
+
+// TestRunWatch_DrainsAllHitsBeforeTerminal: a terminating instance with a
+// hit backlog larger than one page (>100) must surface every pending hit
+// before the terminal line. watch drains all hit pages each cycle, so the
+// tail (seq 101, on the second page) is not lost when the instance is
+// already terminal.
+func TestRunWatch_DrainsAllHitsBeforeTerminal(t *testing.T) {
+	srv := setupClitest(t)
+	hash := deployedTemplate(t, srv, "v1")
+	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
+	for i := 0; i < 101; i++ {
+		srv.State.AddBreakpointHit(inst.ID, map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"})
+	}
+	now := time.Now()
+	srv.State.SetInstanceTerminated(inst.ID, &now)
+
+	done := make(chan int, 1)
+	exit := -1
+	out := captureStdout(t, func() {
+		go func() {
+			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
+		}()
+		select {
+		case exit = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("watch did not exit promptly on a terminal instance")
+		}
+	})
+	if exit != 0 {
+		t.Errorf("exit %d, want 0", exit)
+	}
+	// seq 101 lives on the second page; its presence proves the loop
+	// drained past the first 100-row page before exiting on terminal.
+	if !strings.Contains(out, "seq=101") {
+		t.Errorf("watch dropped the hit-backlog tail (no seq=101); output:\n%s", out)
 	}
 }
 

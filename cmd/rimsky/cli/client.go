@@ -240,6 +240,46 @@ func (c *Client) RegisterTemplate(ctx context.Context, body RegisterTemplateRequ
 	return &out, nil
 }
 
+// ValidationFinding is one entry in a validate response — the unified
+// {path, msg} projection the control-api flattens both static and
+// pipeline findings into.
+type ValidationFinding struct {
+	Path string `json:"path"`
+	Msg  string `json:"msg"`
+}
+
+// ValidateResult is the POST /templates/validate body shape. Validation
+// always runs (HTTP 200); Ok carries the verdict and the two finding
+// slices carry detail.
+type ValidateResult struct {
+	Ok                 bool                `json:"ok"`
+	ValidationErrors   []ValidationFinding `json:"validation_errors"`
+	ValidationWarnings []ValidationFinding `json:"validation_warnings"`
+}
+
+// ValidateTemplate calls POST /templates/validate: run the full
+// registration validation pipeline without persisting. The endpoint
+// returns HTTP 200 even for an invalid spec, so a non-nil error here
+// signals a transport/request-level failure, not a lint failure — the
+// caller reads ValidateResult.Ok for the verdict. When warningsAsErrors
+// is set, the server folds any warnings into the Ok=false verdict (the
+// `?warnings_as_errors=true` query param).
+func (c *Client) ValidateTemplate(ctx context.Context, body RegisterTemplateRequest, warningsAsErrors bool) (*ValidateResult, error) {
+	path := "/templates/validate"
+	if warningsAsErrors {
+		path += "?warnings_as_errors=true"
+	}
+	req, err := c.request(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, err
+	}
+	var out ValidateResult
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ListTemplates calls GET /templates with optional state filter and cursor.
 func (c *Client) ListTemplates(ctx context.Context, q ListTemplatesQuery) (*ListTemplatesResponse, error) {
 	v := url.Values{}
@@ -546,6 +586,26 @@ func (c *Client) DeleteInstance(ctx context.Context, idOrKey string) error {
 	return c.do(req, nil)
 }
 
+// TerminateInstance calls POST /instances/{idOrKey}/terminate, force-
+// terminating the instance (marking it terminal and force-failing its
+// resource-holding node-runs). The optional reason is recorded on the
+// administrative audit event. The handler responds with the updated
+// instance projection (200), which decodes into *Instance. Terminate is
+// idempotent: an already-terminal instance returns its current
+// projection unchanged.
+func (c *Client) TerminateInstance(ctx context.Context, idOrKey string, reason string) (*Instance, error) {
+	body := map[string]string{"reason": reason}
+	req, err := c.request(ctx, http.MethodPost, "/instances/"+url.PathEscape(idOrKey)+"/terminate", body)
+	if err != nil {
+		return nil, err
+	}
+	var out Instance
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ListInstanceNodes calls GET /instances/{idOrKey}/nodes.
 func (c *Client) ListInstanceNodes(ctx context.Context, idOrKey string) (*ListInstanceNodesResponse, error) {
 	req, err := c.request(ctx, http.MethodGet, "/instances/"+url.PathEscape(idOrKey)+"/nodes", nil)
@@ -553,6 +613,46 @@ func (c *Client) ListInstanceNodes(ctx context.Context, idOrKey string) (*ListIn
 		return nil, err
 	}
 	var out ListInstanceNodesResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// BreakpointHitsResponse is the GET /instances/{idOrKey}/breakpoint-hits
+// body shape. Each hit is a flat object (the row-identity fields — seq,
+// hit_id, breakpoint_id, … — alongside the snapshot map's top-level keys),
+// so it is decoded as an untyped map rather than a fixed struct: the
+// snapshot contents vary by checkpoint and are surfaced verbatim for the
+// status/watch aggregators. NextSince is the highest seq on the page (a
+// since-cursor for the next poll); Truncated reports whether a row exists
+// beyond the requested page.
+type BreakpointHitsResponse struct {
+	Hits      []map[string]any `json:"hits"`
+	NextSince int64            `json:"next_since"`
+	Truncated bool             `json:"truncated"`
+}
+
+// ListBreakpointHits calls GET /instances/{idOrKey}/breakpoint-hits with
+// the `?since=<seq>&limit=<n>` pagination cursor. since=0 starts from the
+// beginning; limit<=0 omits the param so the server applies its default.
+func (c *Client) ListBreakpointHits(ctx context.Context, idOrKey string, since int64, limit int) (*BreakpointHitsResponse, error) {
+	v := url.Values{}
+	if since > 0 {
+		v.Set("since", strconv.FormatInt(since, 10))
+	}
+	if limit > 0 {
+		v.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/instances/" + url.PathEscape(idOrKey) + "/breakpoint-hits"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	req, err := c.request(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out BreakpointHitsResponse
 	if err := c.do(req, &out); err != nil {
 		return nil, err
 	}

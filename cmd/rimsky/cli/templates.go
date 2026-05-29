@@ -273,6 +273,58 @@ func RunTemplateRegister(ctx context.Context, args []string) int {
 	return 0
 }
 
+// RunTemplateLint implements `template lint`: validate a spec file
+// against the control-api without persisting. Exit codes diverge from
+// the rest of the template verbs by linter convention: 0 = clean, 1 =
+// findings (or a transport/control-api error), 2 = usage/local error.
+// The non-zero-on-findings rule deliberately extends the general
+// "1 = runtime error" convention so the verb composes in CI scripts.
+// Per spec 2026-05-28-quality-of-life-features.
+func RunTemplateLint(ctx context.Context, args []string) int {
+	var warningsAsErrors bool
+	fs, common, endpoint, code := runWithCommon("template lint", args, func(fs *flag.FlagSet) {
+		fs.BoolVar(&warningsAsErrors, "warnings-as-errors", false,
+			"treat validation warnings as findings (exit 1 if any warnings)")
+	})
+	if code != 0 {
+		return code
+	}
+	rest := fs.Args()
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: rimsky template lint [--warnings-as-errors] <file>")
+		return 2
+	}
+	spec, err := readSpecFile(rest[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	c := NewClient(endpoint)
+	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
+	res, err := c.ValidateTemplate(ctx, RegisterTemplateRequest{Spec: spec}, warningsAsErrors)
+	if err != nil {
+		return reportError(err)
+	}
+
+	if common.Format == FormatJSON {
+		_ = EmitJSON(os.Stdout, res)
+	} else {
+		for _, w := range res.ValidationWarnings {
+			fmt.Fprintf(os.Stderr, "warning: %s: %s\n", w.Path, w.Msg)
+		}
+		for _, e := range res.ValidationErrors {
+			fmt.Fprintf(os.Stderr, "error: %s: %s\n", e.Path, e.Msg)
+		}
+		if res.Ok {
+			fmt.Fprintln(os.Stdout, "ok")
+		}
+	}
+	if res.Ok {
+		return 0
+	}
+	return 1
+}
+
 // RunTemplateList implements `template list`.
 func RunTemplateList(ctx context.Context, args []string) int {
 	var stateFlag, tagPrefix string
