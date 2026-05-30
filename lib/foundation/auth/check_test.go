@@ -19,8 +19,8 @@ func TestCheckGrantEmpty(t *testing.T) {
 func TestCheckGrantWildcardStar(t *testing.T) {
 	g := Grant{{Action: "*"}}
 	res := CheckGrant(g, "instance:create")
-	if !res.Allowed || res.Mode != ModeExecute {
-		t.Fatalf("star grant should allow with execute: %+v", res)
+	if !res.Allowed {
+		t.Fatalf("star grant should allow: %+v", res)
 	}
 }
 
@@ -34,30 +34,37 @@ func TestCheckGrantVerbSuffix(t *testing.T) {
 	}
 }
 
-func TestCheckGrantFirstMatchWins_SpecificFirst(t *testing.T) {
+// TestCheckGrantSetMembership_AnyMatchAllows: evaluation is set
+// membership — any entry whose action matches allows; order is not
+// significant. A non-matching action is denied regardless of position.
+func TestCheckGrantSetMembership_AnyMatchAllows(t *testing.T) {
 	g := Grant{
-		{Action: "instance:create", Mode: ModeDryRun},
-		{Action: "*"},
+		{Action: "instance:create"},
+		{Action: "*:read"},
 	}
-	res := CheckGrant(g, "instance:create")
-	if !res.Allowed || res.Mode != ModeDryRun {
-		t.Fatalf("specific-first: expected dry_run; got %+v", res)
+	if !CheckGrant(g, "instance:create").Allowed {
+		t.Fatalf("specific entry should allow instance:create")
 	}
-	// A different action falls through to the wildcard.
-	res = CheckGrant(g, "node:read")
-	if !res.Allowed || res.Mode != ModeExecute {
-		t.Fatalf("wildcard fallthrough: expected execute; got %+v", res)
+	if !CheckGrant(g, "node:read").Allowed {
+		t.Fatalf("wildcard entry should allow node:read")
+	}
+	if CheckGrant(g, "node:invalidate").Allowed {
+		t.Fatalf("no entry matches node:invalidate; must deny")
 	}
 }
 
-func TestCheckGrantFirstMatchWins_WildcardFirst(t *testing.T) {
-	g := Grant{
-		{Action: "*"},
-		{Action: "instance:create", Mode: ModeDryRun},
-	}
-	res := CheckGrant(g, "instance:create")
-	if !res.Allowed || res.Mode != ModeExecute {
-		t.Fatalf("wildcard-first: expected execute; got %+v", res)
+// TestCheckGrantSetMembership_OrderIrrelevant: the same grant in either
+// order yields the same allow/deny decision (no first-match-wins).
+func TestCheckGrantSetMembership_OrderIrrelevant(t *testing.T) {
+	specificFirst := Grant{{Action: "instance:create"}, {Action: "*"}}
+	wildcardFirst := Grant{{Action: "*"}, {Action: "instance:create"}}
+	for _, action := range []string{"instance:create", "node:read"} {
+		if CheckGrant(specificFirst, action).Allowed != CheckGrant(wildcardFirst, action).Allowed {
+			t.Fatalf("order changed the decision for %q", action)
+		}
+		if !CheckGrant(specificFirst, action).Allowed {
+			t.Fatalf("wildcard grant should allow %q", action)
+		}
 	}
 }
 

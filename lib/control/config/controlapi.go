@@ -121,10 +121,6 @@ type controlAPIHandle struct {
 	// peerClosers releases any non-locks gRPC clients (sensors,
 	// validators, data-processing producers) dialed at startup.
 	peerClosers []func()
-	// authState is retained so Shutdown can stop the audit dispatcher
-	// after the HTTP server has drained — handler responses that fire
-	// audit submissions on their way out must still find an open queue.
-	authState *controlapi.AuthState
 }
 
 func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
@@ -132,15 +128,10 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	if h.srv != nil {
 		err = h.srv.Shutdown(ctx)
 	}
-	// Stop the audit dispatcher AFTER srv.Shutdown returns so any
-	// in-flight handler responses still enqueue their final audit rows
-	// before the channel closes. Stop closes the queue and waits for
-	// the workers to drain, so any queued rows are persisted before
-	// process exit. Without this the four dispatcher goroutines would
-	// leak and queued rows would be silently discarded.
-	if h.authState != nil {
-		h.authState.StopAuditDispatcher()
-	}
+	// Audit rows are written synchronously in the request goroutine
+	// (controlapi.AuthState.insertEvent), so by the time srv.Shutdown
+	// returns every in-flight handler has already persisted its audit
+	// row. There is no dispatcher to stop.
 	if h.cancelLoops != nil {
 		h.cancelLoops()
 	}
@@ -250,12 +241,10 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Clock:    cfg.Clock,
 		Logger:   cfg.Logger,
 	}
-	// Wire the audit-dispatcher worker pool so audit-row inserts run
-	// off the request hot path. Without this, insertEvent falls
-	// back to a synchronous insert per row — fine for tests, but in
-	// production a slow Postgres would hold request goroutines open
-	// past response write.
-	authState.EnsureAuditDispatcher()
+	// Audit rows are written synchronously in the request goroutine
+	// (controlapi.AuthState.insertEvent) — the event log is the
+	// canonical forensic record and must never silently drop a row, so
+	// there is no background dispatcher to wire here.
 	// In-process bridge for the rotation-grace sweep: when sweep
 	// runs in the same process as this AuthState (lifecycle tests
 	// and any future single-binary deploy), drop the anonymous-
@@ -351,7 +340,6 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		cancelLoops:     cancelLoops,
 		cancelDiscovery: cancelDiscovery,
 		peerClosers:     peerClosers,
-		authState:       authState,
 	}
 	go func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed && cfg.Logger != nil {

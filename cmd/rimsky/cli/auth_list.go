@@ -108,7 +108,7 @@ func grantsEqual(a, b auth.Grant) bool {
 		return false
 	}
 	for i := range a {
-		if a[i].Action != b[i].Action || a[i].Mode != b[i].Mode {
+		if a[i].Action != b[i].Action {
 			return false
 		}
 	}

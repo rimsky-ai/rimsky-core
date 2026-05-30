@@ -16,6 +16,7 @@
     { "action": "asset:*" },
     { "action": "diagnostics:read" },
     { "action": "auth:read" },
+    { "action": "audit:read" },
     { "action": "mcp:read" }
   ]
 }

@@ -125,11 +125,10 @@ func serveRPC(t *testing.T, s *mcp.Server, body string) mcp.Response {
 // TestCatalogFiltered exercises catalog.Filtered against a fake
 // registry. Verifies the wildcard-based filter.
 //
-// Uses SetIdentityHook with a t.Cleanup-scoped restore so the global
-// identity hook can't bleed into sibling tests (matters under -race
-// when tests within the same package run concurrently via t.Parallel
-// or via -count=N).
+// Injects the identity resolver as a Catalog field (no package-global
+// hook), so the filter runs in isolation with no shared state to race.
 func TestCatalogFiltered(t *testing.T) {
+	t.Parallel()
 	reg := &fakeRegistry{
 		tools: []string{"a_read", "a_write", "b_read"},
 		entries: map[string]mcp.RegistryEntry{
@@ -138,11 +137,12 @@ func TestCatalogFiltered(t *testing.T) {
 			"b_read":  {Action: "b:read", IsWrite: false, Routes: []mcp.RegistryRoute{{Method: "GET", Path: "/b"}}},
 		},
 	}
-	restore := mcp.SetIdentityHook(func(ctx context.Context) (auth.Identity, bool) {
-		return auth.Identity{Permissions: auth.Grant{{Action: "*:read"}}}, true
-	})
-	t.Cleanup(restore)
-	cat := &mcp.Catalog{Registry: reg}
+	cat := &mcp.Catalog{
+		Registry: reg,
+		ResolveIdentity: func(ctx context.Context) (auth.Identity, bool) {
+			return auth.Identity{Permissions: auth.Grant{{Action: "*:read"}}}, true
+		},
+	}
 	got := cat.Filtered(httptest.NewRequest("GET", "/", nil))
 	names := []string{}
 	for _, t := range got {

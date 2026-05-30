@@ -109,7 +109,21 @@ type KeyRevokedPayload struct {
 }
 
 // KeyRotatedPayload is the JSONB body of auth.key_rotated.
+//
+// KeyID / KeyName are the uniform "actor" fields the audit reader
+// (GET /audit) filters on, mirroring KeyCreatedPayload and
+// KeyRevokedPayload so a rotation is findable by ?key_id= / ?key_name=
+// like any other auth row — without them an actor filter silently
+// dropped every rotation. They carry the *new* (surviving) key: a
+// rotation is the new key's provenance record. The retired key lives in
+// OldKeyID and is found under its own key_id via the
+// key_revoked(rotation_grace) row the grace sweep emits when its grace
+// expires. NewKeyID/Name duplicate KeyID/KeyName by design — the
+// descriptive old/new pair is preserved alongside the uniform actor key
+// the filter surface needs.
 type KeyRotatedPayload struct {
+	KeyID    shared.UUID `json:"key_id"`
+	KeyName  string      `json:"key_name"`
 	OldKeyID shared.UUID `json:"old_key_id"`
 	NewKeyID shared.UUID `json:"new_key_id"`
 	Name     string      `json:"name"`

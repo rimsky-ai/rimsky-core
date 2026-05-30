@@ -52,36 +52,28 @@ func TestLoadRole_File(t *testing.T) {
 	}
 }
 
-func TestApplyGrantPatches_AddRemoveDryRun(t *testing.T) {
+func TestApplyGrantPatches_AddRemove(t *testing.T) {
 	base := auth.Grant{{Action: "*:read"}}
-	got, err := applyGrantPatches(base, []string{"node:invalidate"}, []string{"*:read"}, []string{"message:send"})
+	got, err := applyGrantPatches(base, []string{"node:invalidate", "message:send"}, []string{"*:read"})
 	if err != nil {
 		t.Fatalf("applyGrantPatches: %v", err)
 	}
-	// After: --add added; --remove removed; --dry-run added with mode=dry_run.
+	// After: both --add entries appended; the --remove dropped the base
+	// `*:read`. Grant entries carry only an action string — there is no
+	// per-grant mode.
 	if len(got) != 2 {
 		t.Fatalf("expected 2 entries; got %d: %+v", len(got), got)
 	}
-	if got[0].Action != "node:invalidate" || got[0].Mode != auth.ModeExecute {
+	if got[0].Action != "node:invalidate" {
 		t.Errorf("entry[0]: %+v", got[0])
 	}
-	if got[1].Action != "message:send" || got[1].Mode != auth.ModeDryRun {
+	if got[1].Action != "message:send" {
 		t.Errorf("entry[1]: %+v", got[1])
 	}
 }
 
-func TestApplyGrantPatches_DryRunReadRejected(t *testing.T) {
-	_, err := applyGrantPatches(nil, nil, nil, []string{"node:read"})
-	if err == nil {
-		t.Fatalf("expected error for dry-run on read action")
-	}
-}
-
-func TestApplyGrantPatches_DryRunAuthRejected(t *testing.T) {
-	for _, action := range []string{"auth:create", "auth:revoke", "auth:rotate"} {
-		_, err := applyGrantPatches(nil, nil, nil, []string{action})
-		if err == nil {
-			t.Errorf("expected error for dry-run on %q", action)
-		}
+func TestApplyGrantPatches_BadAddRejected(t *testing.T) {
+	if _, err := applyGrantPatches(nil, []string{"no-colon"}, nil); err == nil {
+		t.Fatalf("expected error for --add of a malformed action string")
 	}
 }

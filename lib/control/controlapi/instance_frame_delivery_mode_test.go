@@ -24,7 +24,7 @@ import (
 // strPtr is a local helper for *string literals in JSON bodies.
 func strPtr(s string) *string { return &s }
 
-func TestInstanceCreate_FrameDeliveryMode_DefaultIsCoalesce(t *testing.T) {
+func TestInstanceCreate_FrameDeliveryMode_DefaultIsSerialQueue(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -43,11 +43,13 @@ func TestInstanceCreate_FrameDeliveryMode_DefaultIsCoalesce(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, out)
 	instID, _ := out["instance_id"].(string)
 
-	// GET response echoes the persisted value, which falls through to the
-	// column DEFAULT 'coalesce'.
+	// GET response echoes the persisted value. An omitted mode is defaulted
+	// by the INSERT literal (COALESCE(?, 'serial_queue')) to 'serial_queue'
+	// — the new default per spec 2026-05-29 (one message per frame; coalesce
+	// is now the opt-in mode).
 	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
-	require.Equal(t, "coalesce", out["frame_delivery_mode"])
+	require.Equal(t, "serial_queue", out["frame_delivery_mode"])
 
 	// Row inspection confirms persistence.
 	id, err := uuid.Parse(instID)
@@ -59,7 +61,7 @@ func TestInstanceCreate_FrameDeliveryMode_DefaultIsCoalesce(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, inst)
-	require.Equal(t, "coalesce", inst.FrameDeliveryMode)
+	require.Equal(t, "serial_queue", inst.FrameDeliveryMode)
 }
 
 func TestInstanceCreate_FrameDeliveryMode_SerialQueueRoundTrips(t *testing.T) {

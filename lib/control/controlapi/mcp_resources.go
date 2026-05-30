@@ -67,7 +67,7 @@ func newBreakpointResourceCatalog(deps AppDeps) mcp.ResourceCatalog {
 // breakpoint-scoped URI shape is constructed by the agent after the
 // create call returns its `breakpoint_id` and is not enumerated.
 func (c *breakpointResourceCatalog) List(r *http.Request) ([]mcp.Resource, error) {
-	ident, _ := mcp.IdentityFromContext(r.Context())
+	ident, _ := IdentityFromContextOK(r.Context())
 	// `breakpoint:read` covers both URI families per spec §6.7. If the
 	// requesting identity can't read any breakpoint at all (no `*:read`,
 	// no `breakpoint:*`, no `breakpoint:read`), return an empty list.
@@ -123,7 +123,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 		return nil, rpcErr
 	}
 
-	ident, _ := mcp.IdentityFromContext(r.Context())
+	ident, _ := IdentityFromContextOK(r.Context())
 	if !auth.CheckGrant(ident.Permissions, "breakpoint:read").Allowed {
 		// Mirror the HTTP gateByAction shape — denials are 403 with
 		// `permission_denied`; map to JSON-RPC -32603 with the same

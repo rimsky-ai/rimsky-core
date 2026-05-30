@@ -45,7 +45,7 @@ func TestMultiReceiverMatch_AllDeliveredInCoalesceMode(t *testing.T) {
 			t.Fatalf("EnqueueMessage[%d]: %v", i, err)
 		}
 	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now)
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now, nil)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}

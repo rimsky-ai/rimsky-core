@@ -74,6 +74,34 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		untilArg = formatTime(*filter.Until)
 	}
 
+	// Auth-payload filters. Each predicate is NULL-tolerant
+	// (`? IS NULL OR ...`) so a nil pointer never excludes a row.
+	// response_status is a JSON number; json_extract returns it as an
+	// integer, so we bind the int directly. action prefix uses LIKE with
+	// a trailing %.
+	var keyIDArg, keyNameArg, actionExactArg, actionPrefixArg, respStatusArg, modeArg, requestPathArg any
+	if filter.KeyID != nil {
+		keyIDArg = *filter.KeyID
+	}
+	if filter.KeyName != nil {
+		keyNameArg = *filter.KeyName
+	}
+	if filter.ActionExact != nil {
+		actionExactArg = *filter.ActionExact
+	}
+	if filter.ActionPrefix != nil {
+		actionPrefixArg = *filter.ActionPrefix + "%"
+	}
+	if filter.ResponseStatus != nil {
+		respStatusArg = *filter.ResponseStatus
+	}
+	if filter.Mode != nil {
+		modeArg = *filter.Mode
+	}
+	if filter.RequestPath != nil {
+		requestPathArg = *filter.RequestPath
+	}
+
 	// Build a kind_in IN (...) clause dynamically because sqlite has no
 	// native array bind. Skipped when filter.KindIn is empty.
 	kindInClause := ""
@@ -93,6 +121,17 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		}
 		kindInClause = " AND kind IN (" + placeholders + ")"
 	}
+	// Auth-payload predicates appended after the kind_in clause so their
+	// binds line up with the placeholders below.
+	args = append(args,
+		keyIDArg, keyIDArg,
+		keyNameArg, keyNameArg,
+		actionExactArg, actionExactArg,
+		actionPrefixArg, actionPrefixArg,
+		respStatusArg, respStatusArg,
+		modeArg, modeArg,
+		requestPathArg, requestPathArg,
+	)
 	args = append(args, limit)
 
 	rows, err := s.q(tx).QueryContext(ctx,
@@ -104,7 +143,14 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		   AND (? IS NULL OR occurred_at >= ?)
 		   AND (? IS NULL OR occurred_at <= ?)
 		   AND (? IS NULL OR (occurred_at, id) < (?, ?))`+kindInClause+
-			` ORDER BY occurred_at DESC, id DESC
+			` AND (? IS NULL OR json_extract(payload, '$.key_id') = ?)
+		   AND (? IS NULL OR json_extract(payload, '$.key_name') = ?)
+		   AND (? IS NULL OR json_extract(payload, '$.action') = ?)
+		   AND (? IS NULL OR json_extract(payload, '$.action') LIKE ?)
+		   AND (? IS NULL OR json_extract(payload, '$.response_status') = ?)
+		   AND (? IS NULL OR json_extract(payload, '$.mode') = ?)
+		   AND (? IS NULL OR json_extract(payload, '$.request_path') = ?)
+		 ORDER BY occurred_at DESC, id DESC
 		 LIMIT ?`,
 		args...,
 	)

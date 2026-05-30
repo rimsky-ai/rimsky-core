@@ -91,3 +91,14 @@ func (f *fakeMessages) Get(_ context.Context, id shared.UUID) (*persistence.Mess
 func (f *fakeMessages) List(_ context.Context, _ persistence.MessageListFilter, _ persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	return persistence.PaginatedListResult[persistence.MessageRow]{}, nil
 }
+
+func (f *fakeMessages) ListDeliveredForFrame(_ context.Context, _ persistence.Tx, frame shared.UUID) ([]persistence.MessageRow, error) {
+	var out []persistence.MessageRow
+	for _, r := range f.rows {
+		if r.FrameID == nil || *r.FrameID != frame {
+			continue
+		}
+		out = append(out, *r)
+	}
+	return out, nil
+}

@@ -141,8 +141,13 @@ func (b *lineageImpl) QueryByParentRunID(ctx context.Context, parentRunID shared
 	return collectLineage(rows)
 }
 
-const deleteOlderThanSQL = `
-DELETE FROM rimsky_lineage l
+// lineagePruneWhereSQL is the shared predicate for both DeleteOlderThan
+// (the live prune) and CountOlderThan (the dry-run preview): rows older
+// than the cutoff whose corresponding run AND claim_handle are no longer
+// present. Defined once so the dry-run count is a true preview of the
+// live delete — keeping the WHERE clause byte-identical across the two
+// statements is the load-bearing invariant (see CountOlderThan doc).
+const lineagePruneWhereSQL = `
  WHERE observed_at < $1
    AND NOT EXISTS (
        SELECT 1 FROM rimsky_node_runs r WHERE r.id::text = l.record->>'run_id'
@@ -151,12 +156,24 @@ DELETE FROM rimsky_lineage l
        SELECT 1 FROM rimsky_claim_handles c WHERE c.id::text = l.record->>'claim_handle_id'
    )`
 
+const deleteOlderThanSQL = `DELETE FROM rimsky_lineage l` + lineagePruneWhereSQL
+
 func (b *lineageImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
 	tag, err := (*tablesImpl)(b).pool.Exec(ctx, deleteOlderThanSQL, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("postgres.Lineage.DeleteOlderThan: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
+}
+
+const countOlderThanSQL = `SELECT count(*) FROM rimsky_lineage l` + lineagePruneWhereSQL
+
+func (b *lineageImpl) CountOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
+	var n int
+	if err := (*tablesImpl)(b).pool.QueryRow(ctx, countOlderThanSQL, cutoff).Scan(&n); err != nil {
+		return 0, fmt.Errorf("postgres.Lineage.CountOlderThan: %w", err)
+	}
+	return n, nil
 }
 
 func collectLineage(rows pgx.Rows) ([]persistence.LineageRow, error) {

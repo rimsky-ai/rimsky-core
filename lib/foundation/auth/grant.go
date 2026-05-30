@@ -12,8 +12,9 @@ import (
 	"sort"
 )
 
-// Mode is the per-grant-entry write modifier. Read actions ignore
-// Mode entirely.
+// Mode is the per-request write modifier, resolved from the
+// `?dry_run=true` request flag (NOT from the grant — a grant entry is
+// just an action string). Read actions honor the flag as a no-op.
 type Mode string
 
 const (
@@ -22,18 +23,24 @@ const (
 
 	// ModeDryRun: the handler runs validation, returns a synthetic
 	// dry_run-envelope response, and does NOT mutate state. Audit
-	// records the attempted action with `executed: false`.
+	// records the attempted action with `executed: false` (for writes).
 	ModeDryRun Mode = "dry_run"
 )
 
-// GrantEntry is one entry in an API-key's permission grant.
+// GrantEntry is one entry in an API-key's permission grant — an action
+// string (the wildcard grammar `*`, `<noun>:*`, `*:<verb>`). Permission
+// is set membership: a request is allowed iff any entry's action
+// matches. There is no per-entry mode modifier; dry-run is a per-request
+// flag (see Mode).
+//
 // Forward-compatible: unknown JSON fields are preserved in Extras so a
 // future server reading a key minted by this server doesn't lose data.
 // Today's parser ignores Extras for matching; V2 may consume `scope`
-// / `rate_limit` etc. without a schema migration.
+// / `rate_limit` etc. without a schema migration. A legacy `mode` key on
+// a persisted grant now falls into Extras like any other unknown field
+// (pre-v1: dropped from the matcher, no compat shim).
 type GrantEntry struct {
 	Action string `json:"action"`
-	Mode   Mode   `json:"mode,omitempty"`
 
 	// Extras carries any unknown JSON fields encountered during
 	// unmarshal. Preserved on the wire; ignored by the permission
@@ -41,8 +48,8 @@ type GrantEntry struct {
 	Extras map[string]json.RawMessage `json:"-"`
 }
 
-// Grant is the full grant on a key — an ordered list of entries.
-// First-match-wins; ordering is significant for mode resolution.
+// Grant is the full grant on a key — a list of entries. Evaluation is
+// set membership (any matching entry allows); order is not significant.
 type Grant []GrantEntry
 
 // ErrInvalidGrant is the sentinel returned by UnmarshalJSON and
@@ -50,8 +57,9 @@ type Grant []GrantEntry
 var ErrInvalidGrant = errors.New("auth: invalid grant")
 
 // UnmarshalJSON preserves unknown fields in Extras and validates the
-// basic shape (action is a non-empty string; mode if set is a known
-// value).
+// basic shape (action is a non-empty string). A `mode` key on a legacy
+// persisted grant is no longer a recognized field; it falls into Extras
+// like any other unknown key and is ignored by the matcher.
 func (g *GrantEntry) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -68,32 +76,19 @@ func (g *GrantEntry) UnmarshalJSON(data []byte) error {
 	}
 	g.Action = actionStr
 	delete(raw, "action")
-	if v, ok := raw["mode"]; ok {
-		var modeStr string
-		if err := json.Unmarshal(v, &modeStr); err != nil {
-			return fmt.Errorf("grant entry: mode: %w", err)
-		}
-		switch Mode(modeStr) {
-		case ModeExecute, ModeDryRun:
-			g.Mode = Mode(modeStr)
-		default:
-			return fmt.Errorf("%w: mode must be %q or %q (got %q)", ErrInvalidGrant, ModeExecute, ModeDryRun, modeStr)
-		}
-		delete(raw, "mode")
-	}
 	if len(raw) > 0 {
 		g.Extras = raw
 	}
 	return nil
 }
 
-// MarshalJSON omits Mode if zero, omits Extras if empty, and
-// preserves any extras encountered at unmarshal. Keys are emitted in
-// a deterministic order — `action` then `mode` then any extras in
-// lexical order — so the persisted JSON round-trips byte-stably.
-// (The persisted grant is later carried in audit `permissions`
-// payloads; downstream consumers that hash-key the JSON, e.g. the
-// V2-deferred `tools/list` cache-by-grant-hash, rely on this.)
+// MarshalJSON omits Extras if empty and preserves any extras
+// encountered at unmarshal. Keys are emitted in a deterministic order —
+// `action` then any extras in lexical order — so the persisted JSON
+// round-trips byte-stably. (The persisted grant is later carried in
+// audit `permissions` payloads; downstream consumers that hash-key the
+// JSON, e.g. the V2-deferred `tools/list` cache-by-grant-hash, rely on
+// this.)
 func (g GrantEntry) MarshalJSON() ([]byte, error) {
 	// Build the output by hand so the key order is deterministic
 	// regardless of Go's randomized map iteration.
@@ -106,15 +101,6 @@ func (g GrantEntry) MarshalJSON() ([]byte, error) {
 	}
 	buf.WriteString(`"action":`)
 	buf.Write(actionJSON)
-	// "mode": <mode> (omit-empty)
-	if g.Mode != "" {
-		modeJSON, err := json.Marshal(g.Mode)
-		if err != nil {
-			return nil, err
-		}
-		buf.WriteString(`,"mode":`)
-		buf.Write(modeJSON)
-	}
 	// Extras in sorted-key order.
 	if len(g.Extras) > 0 {
 		keys := make([]string, 0, len(g.Extras))

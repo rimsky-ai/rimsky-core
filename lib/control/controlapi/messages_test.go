@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -81,6 +82,71 @@ func TestMessages_PostListGet(t *testing.T) {
 	require.Equal(t, "invalidate", row.Kind)
 	require.Equal(t, "operator", row.SenderKind)
 	require.Nil(t, row.BackfillOperationID)
+}
+
+// TestMessages_ListByFrameID pins the ?frame_id= filter on GET
+// /instances/{id}/messages — the "what landed in frame X" forensic query
+// for backfill / fan-out debugging. It returns exactly the messages
+// delivered into the named frame, excludes other frames and still-pending
+// messages, and 400s on a malformed frame id. The driver-level frame_id
+// predicate is conformance-tested on both engines; this pins that the HTTP
+// handler threads the query param into MessageListFilter.FrameID.
+func TestMessages_ListByFrameID(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID := newInstanceForMessages(t, h, "frame-filter")
+
+	post := func() string {
+		status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+			"kind":   "invalidate",
+			"target": "root",
+		})
+		require.Equal(t, http.StatusCreated, status, out)
+		id, _ := out["message_id"].(string)
+		require.NotEmpty(t, id)
+		return id
+	}
+	deliveredID := post()
+	_ = post() // left pending (frame_id NULL) — must never match a frame filter
+
+	// Deliver the first message into a synthetic frame.
+	// rimsky_messages.frame_id carries no FK, so the frame id needs no row.
+	frameID := shared.UUID(uuid.New())
+	mid, err := uuid.Parse(deliveredID)
+	require.NoError(t, err)
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		ok, err := h.persist.Messages().MarkDelivered(ctx, tx, shared.UUID(mid), frameID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		require.True(t, ok, "MarkDelivered should update exactly one row")
+		return nil
+	}))
+
+	// ?frame_id=<frame> → exactly the delivered message.
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/instances/%s/messages?frame_id=%s", instID, frameID.String()), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Len(t, msgs, 1, "frame filter must narrow to the one delivered message")
+	got := msgs[0].(map[string]any)
+	require.Equal(t, deliveredID, got["id"])
+	require.Equal(t, frameID.String(), got["frame_id"])
+
+	// ?frame_id=<other> → nothing (cross-frame exclusion; pending excluded).
+	status, out = h.httpJSON(t, "GET",
+		fmt.Sprintf("/instances/%s/messages?frame_id=%s", instID, uuid.NewString()), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ = out["messages"].([]any)
+	require.Empty(t, msgs, "a frame with no delivered message returns zero")
+
+	// Malformed frame id → 400.
+	status, _ = h.httpJSON(t, "GET",
+		fmt.Sprintf("/instances/%s/messages?frame_id=not-a-uuid", instID), nil)
+	require.Equal(t, http.StatusBadRequest, status)
 }
 
 // TestMessages_PostInvalidKind rejects non-invalidate kinds at the

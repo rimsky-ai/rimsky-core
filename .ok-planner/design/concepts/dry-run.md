@@ -8,24 +8,25 @@ aliases: []
 
 ## What it is
 
-A per-grant-entry modifier on `concept:permission` entries: `{ "action": "<action>", "mode": "dry_run" }`. When the per-request mode resolves to `dry_run`, the handler runs validation (including side-effect-free external calls like the validation protocol's checks; see `concept:validation`) but skips the actual mutation, returning a synthetic envelope of the form `{ dry_run: true, would_have_X: { ... } }`.
+A per-request flag — `?dry_run=true` on the control-plane request — that asks "what would happen if I did this?" without applying it. The auth middleware honors the flag, resolving the request's mode to `dry_run` regardless of the (now mode-less) grant in `concept:permission`. Default (flag absent) is `execute`. When the request resolves to `dry_run`, a write handler runs validation (including side-effect-free external calls like the validation protocol's checks; see `concept:validation`) but skips the actual mutation, returning a synthetic envelope of the form `{ dry_run: true, would_have_X: { ... } }`.
 
-The control-plane auth middleware threads the resolved mode through the request context; handlers read it back from the context and gate the side-effectful path through a shared dry-run-response helper that emits the synthetic envelope.
+The flag is the *only* source of dry-run. There is no preview-only key to escalate from — the grant carries no mode. The auth middleware threads the resolved mode through the request context; handlers read it back from the context and gate the side-effectful path through a shared dry-run-response helper that emits the synthetic envelope.
 
 ## Purpose
 
-Agentic supervision needs a way to ask "what would happen if I did X?" without applying X. The same audit-log trail then serves as evidence of agent intent — "this agent attempted these operations; we did not apply them" — which is the precondition for promoting an agent from supervised dry-run to live execution.
+Dry-run is human-in-the-loop preview-before-commit and validate-without-commit: an operator or agent can preview the effect of any write before applying it, and can validate that a request would be accepted (well-formed, authorized, structurally valid) without committing its side effect. The same audit-log trail records the attempt — "this request was previewed; we did not apply it" — as forensic evidence.
 
 ## Boundaries
 
-Owns: the per-grant-entry mode vocabulary (`execute` / `dry_run`), the per-request context plumbing, the dry-run-response helper, the per-handler dry-run branches (instance:create, instance:terminate, instance:kill, template:register, template:deploy/undeploy/deregister, tag:create/set/delete, node:invalidate/reset, message:send, lineage:prune, backfill:create/cancel, asset:materialize/delete). Does NOT own: auth mutations (those ignore mode by design; see Invariants below). Adjacent: `concept:permission`, `concept:event-log` (the audit row reflects `executed: false`).
+Owns: the per-request `dry_run` flag handling in the auth middleware, the per-request context plumbing, the dry-run-response helper, and the per-handler dry-run branches. Dry-run covers **all** write actions uniformly — there is no auth carve-out; `auth:create` / `auth:revoke` / `auth:rotate` are previewable like any other write. Does NOT own: the read path (a read has no mutation to skip, so the flag is a no-op there; see Invariants). Adjacent: `concept:permission` (the request flag is orthogonal to the binary grant), `concept:event-log` (the audit row records `mode: dry_run`).
 
 ## Invariants
 
-- **Read actions ignore mode.** The dry-run modifier is meaningful only for write actions.
+- **Reads honor the flag as a no-op.** A read has no mutation to skip, so `?dry_run=true` on a `*:read` action runs the read normally and returns it. This lets a mixed read/write script set the flag uniformly without special-casing reads. The audit row records `mode: dry_run` with `executed: true` (the read genuinely ran).
+- **Every write is previewable.** Each write action has a dry-run branch returning a `would_have_*` envelope and performing no mutation. This is guaranteed structurally by a coverage conformance test that enumerates every write action and asserts each, invoked under the flag, mutates nothing — not by a runtime gate. A future write handler that omits its branch fails the test.
 - **Validation runs faithfully.** Dry-run is "validate-without-mutate." For `template:register`, this includes firing the validation protocol's checks against advertising services (see `concept:validation`) — those are side-effect-free reads from the platform's perspective.
-- **Audit row reflects intent.** The middleware emits `auth.access_attempted` with `mode: dry_run` and `executed: false`. The row is the canonical evidence of "the agent attempted this; we didn't apply it."
-- **Auth mutations are NOT dry-runnable.** `auth:create`, `auth:revoke`, `auth:rotate` always execute regardless of the matching grant entry's mode. Rationale: dry-running auth mutations doesn't compose well with the implicit-anonymous predicate (a dry-run create wouldn't change the active-key count, leading to confusing audit trails).
+- **A request resolved to `dry_run` never mutates.** With no carve-outs, this holds by construction; the coverage conformance test is its enforcement.
+- **Audit row reflects intent.** The middleware emits `auth.access_attempted` with `mode: dry_run`. For a write the row carries `executed: false`; for a read, `executed: true`. The row is the canonical evidence of "the request was previewed; we didn't apply it."
 
 ## Synthetic response shape
 
@@ -48,3 +49,4 @@ Clients (CLI, MCP) check the top-level `dry_run` flag to render the response dis
 - [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth` ("Dry-run mode").
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
 - 2026-05-28 — instance:kill added to the dry-run-branch enumeration per spec:2026-05-28-quality-of-life-features; the force-terminate write action returns a would_have_terminated envelope under a dry_run grant.
+- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: dry-run becomes a per-request flag (`?dry_run=true`), not a per-grant-entry mode modifier — the grant in `concept:permission` no longer carries a mode. Coverage is uniform across all writes with no auth carve-out; `auth:create` / `auth:revoke` / `auth:rotate` are now previewable (the "auth mutations are NOT dry-runnable" carve-out is removed). Reads honor the flag as a no-op with `executed: true`. The "forced dry-run never mutates" guarantee is enforced structurally by a coverage conformance test enumerating every write action. The graduated-trust / agent-promotion narrative is dropped; purpose is human-in-the-loop preview-before-commit and validate-without-commit.

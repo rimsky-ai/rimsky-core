@@ -5,9 +5,11 @@
 // N4 scenarios — frame_delivery_mode_serial_queue and
 // frame_delivery_mode_coalesce.
 //
-// `serial_queue` delivers only the oldest pending message into the
-// new frame; remaining messages stay pending until the next frame.
-// `coalesce` (default) delivers all pending messages.
+// `serial_queue` (the default) delivers only the oldest pending message
+// into the new frame; remaining messages stay pending until the next
+// frame. `coalesce` (opt-in) delivers pending messages in received-order,
+// coalescing until a value-conflict; with no conflict resolver (these
+// pure-fake tests) it delivers all pending messages.
 package messages
 
 import (
@@ -42,7 +44,7 @@ func TestFrameDeliveryMode_SerialQueueOnlyOldest(t *testing.T) {
 			t.Fatalf("EnqueueMessage[%d]: %v", i, err)
 		}
 	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliverySerialQueue, t0)
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliverySerialQueue, t0, nil)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}
@@ -82,7 +84,7 @@ func TestFrameDeliveryMode_CoalesceDeliversAll(t *testing.T) {
 			t.Fatalf("EnqueueMessage[%d]: %v", i, err)
 		}
 	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now)
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now, nil)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}

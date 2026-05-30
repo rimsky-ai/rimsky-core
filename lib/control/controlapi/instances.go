@@ -207,6 +207,15 @@ func handlePauseInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
+		// Dry-run: instance resolved; skip the SetPaused mutation. The
+		// envelope is written BEFORE any state change so a dry_run
+		// request never flips the paused flag (the dry-run
+		// never-mutates property; @concept: dry-run).
+		if WriteDryRunResponse(w, req, "would_have_paused", map[string]any{
+			"instance_id": inst.ID.String(),
+		}) {
+			return
+		}
 		var prior bool
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			var err error
@@ -236,6 +245,15 @@ func handleResumeInstance(deps AppDeps) http.HandlerFunc {
 		}
 		if inst == nil {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
+			return
+		}
+		// Dry-run: instance resolved; skip the SetPaused mutation. The
+		// envelope is written BEFORE any state change so a dry_run
+		// request never flips the paused flag (the dry-run
+		// never-mutates property; @concept: dry-run).
+		if WriteDryRunResponse(w, req, "would_have_resumed", map[string]any{
+			"instance_id": inst.ID.String(),
+		}) {
 			return
 		}
 		var prior bool

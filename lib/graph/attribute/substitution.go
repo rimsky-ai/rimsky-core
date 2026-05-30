@@ -154,6 +154,52 @@ func (e *ErrFallbackChain) Error() string {
 // directivePattern captures the inside of a single `{{...}}` directive.
 var directivePattern = regexp.MustCompile(`\{\{([^}]*)\}\}`)
 
+// ReferencesTriggerMessage reports whether rawValue carries at least one
+// `{{trigger.message.payload(.field?)}}` directive — i.e. whether the
+// value is wired to pull a binding from the frame's trigger message.
+//
+// Used by the control-api backfill-target validator to confirm a
+// fan-out node's `partition_request` can actually consume a backfill's
+// `partition_request_override` (the override rides the invalidate
+// message's payload and is read back through the trigger source kind).
+// A `partition_request` that does not reference the trigger message
+// silently degrades to its template default — rimsky rejects the
+// backfill at submit rather than accept-and-ignore the override.
+//
+// The check mirrors the resolver's notion of a trigger directive
+// exactly: a directive is a trigger ref iff, after stripping the
+// `| <literal>` fallback and `?` lenient markers, its source kind is
+// `trigger` and the shape is `trigger.message.payload[.<field>…]`
+// (the only form resolveTriggerValue accepts). This keeps the
+// validator's "is it wired?" judgment in lock-step with the runtime's
+// "can it resolve?" judgment.
+func ReferencesTriggerMessage(rawValue string) bool {
+	if !strings.Contains(rawValue, "{{") {
+		return false
+	}
+	for _, match := range directivePattern.FindAllString(rawValue, -1) {
+		inside := strings.TrimSpace(match[2 : len(match)-2])
+		if inside == "" {
+			continue
+		}
+		// Strip the `| <literal>` fallback tail: only the left-hand
+		// directive determines the source kind.
+		if idx := strings.Index(inside, "|"); idx >= 0 {
+			inside = strings.TrimSpace(inside[:idx])
+		}
+		// Strip the trailing `?` lenient marker.
+		inside = strings.TrimSpace(strings.TrimSuffix(inside, "?"))
+		parts := strings.Split(inside, ".")
+		// trigger.message.payload[.<field>…] — the exact prefix
+		// resolveTriggerValue admits (kind=trigger, second=message,
+		// third=payload).
+		if len(parts) >= 3 && parts[0] == "trigger" && parts[1] == "message" && parts[2] == "payload" {
+			return true
+		}
+	}
+	return false
+}
+
 // Substitute performs a single-pass replacement of `{{...}}` directives
 // in rawValue against ctx. Per spec §16.3:
 //

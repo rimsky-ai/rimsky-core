@@ -6,13 +6,15 @@
 // auth-endpoint handlers. Writes rows into rimsky_events with the
 // `auth.*` kind and the structured payload from foundation/auth.
 //
-// Audit writes happen off the request hot path: the auth middleware
-// hands a fully-built payload to `insertEvent` which dispatches the
-// actual DB transaction via a bounded worker pool
-// (`auditDispatcher`). Failures are logged and swallowed; the spec
-// (section "Audit and dry-run") requires that audit-system trouble
-// never affect user-facing latency, and a slow / hung Postgres must
-// not back up the response loop.
+// Audit writes are SYNCHRONOUS and DURABLE: the auth middleware hands
+// a fully-built payload to `insertEvent`, which runs the DB
+// transaction inline in the request goroutine before the gate
+// returns. There is deliberately no queue/worker/buffer here — the
+// event log is the canonical forensic record (concept:event-log) and
+// must never silently drop a row under load. The per-request latency
+// cost is one small INSERT, negligible at control-plane traffic
+// volume; see spec:2026-05-29-console-upstream-auth-audit-and-fixes
+// section "Event log durability" for the recorded tradeoff.
 //
 // @concept: event-log
 
@@ -23,12 +25,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 // emitAttempted writes one auth.access_attempted event.
@@ -46,8 +46,14 @@ func (s *AuthState) emitAttempted(
 	paramsInvalid bool,
 	status int,
 	mode auth.Mode,
+	isWrite bool,
 ) {
 	elapsed := s.Clock.Now().Sub(start).Milliseconds()
+	// `executed` semantics: a read genuinely runs even under dry_run
+	// (no mutation to skip), so reads record executed:true whenever they
+	// returned cleanly. A write under dry_run skips its mutation, so it
+	// records executed:false. isWrite comes from the action registry.
+	executed := status < 400 && (!isWrite || mode == auth.ModeExecute)
 	p := auth.AccessAttemptedPayload{
 		KeyID:                ident.KeyID,
 		KeyName:              ident.KeyName,
@@ -60,7 +66,7 @@ func (s *AuthState) emitAttempted(
 		RequestParamsInvalid: paramsInvalid,
 		ResponseStatus:       status,
 		Mode:                 mode,
-		Executed:             mode == auth.ModeExecute && status < 400,
+		Executed:             executed,
 		DurationMS:           elapsed,
 		ClientIP:             clientIP(r),
 		UserAgent:            r.Header.Get("User-Agent"),
@@ -134,102 +140,28 @@ func (s *AuthState) EmitKeyRotated(ctx context.Context, p auth.KeyRotatedPayload
 	s.insertEvent(ctx, auth.EventKeyRotated, p)
 }
 
-// auditQueueSize bounds the audit dispatcher's pending-job buffer.
-// Sized for steady-state bursts; if the worker pool can't keep up the
-// channel fills and `insertEvent` drops the row with a logged warning
-// rather than blocking the request goroutine.
-const auditQueueSize = 1024
-
-// auditWorkers is the goroutine count consuming the queue. Bounded so
-// a slow Postgres can't pin the process under unbounded goroutines.
-const auditWorkers = 4
-
-// auditWriteTimeout is the per-row DB-write deadline. A request that
-// took 1ms shouldn't pay >2s for its audit-row insertion to surface
-// as a logged error; the bound mirrors the existing UpdateLastUsed
-// background timeout.
+// auditWriteTimeout is the per-row DB-write deadline. The synchronous
+// insert runs in the request goroutine; the bound caps how long a
+// wedged Postgres can hold the request open before the insert errors
+// out (which is then surfaced, not swallowed — see insertEvent). It
+// mirrors the existing UpdateLastUsed timeout.
 const auditWriteTimeout = 2 * time.Second
-
-// auditJob carries one pending insert. The payload is already
-// serialized into a map[string]any so the dispatcher goroutine never
-// touches request-scoped state.
-type auditJob struct {
-	kind    string
-	payload map[string]any
-}
-
-// auditDispatcher buffers audit inserts and runs them off the request
-// hot path. Construct via newAuditDispatcher; Stop drains the queue.
-type auditDispatcher struct {
-	tables persistence.Tables
-	logger foundationshared.Logger
-	queue  chan auditJob
-	wg     sync.WaitGroup
-}
-
-// newAuditDispatcher starts `auditWorkers` goroutines consuming the
-// bounded queue. The dispatcher lives for the life of the AuthState.
-func newAuditDispatcher(tables persistence.Tables, logger foundationshared.Logger) *auditDispatcher {
-	d := &auditDispatcher{
-		tables: tables,
-		logger: logger,
-		queue:  make(chan auditJob, auditQueueSize),
-	}
-	for i := 0; i < auditWorkers; i++ {
-		d.wg.Add(1)
-		go d.run()
-	}
-	return d
-}
-
-// run consumes jobs from the queue until it closes.
-func (d *auditDispatcher) run() {
-	defer d.wg.Done()
-	for job := range d.queue {
-		d.write(job)
-	}
-}
-
-// write performs the actual DB insert with a bounded timeout.
-func (d *auditDispatcher) write(job auditJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), auditWriteTimeout)
-	defer cancel()
-	err := d.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return d.tables.Events().Append(ctx, persistence.EventAppendInput{
-			Kind:    job.kind,
-			Payload: job.payload,
-		}, tx)
-	})
-	if err != nil && d.logger != nil {
-		d.logger.Error("audit.insert", "kind", job.kind, "err", err.Error())
-	}
-}
-
-// submit enqueues a job non-blockingly. On a full queue, the job is
-// dropped with a logged warning — preferring a missing audit row over
-// a blocked request goroutine.
-func (d *auditDispatcher) submit(job auditJob) {
-	select {
-	case d.queue <- job:
-	default:
-		if d.logger != nil {
-			d.logger.Warn("audit.queue_full_dropped", "kind", job.kind)
-		}
-	}
-}
-
-// Stop closes the queue and waits for the workers to drain. Tests use
-// this to deterministically observe audit rows before assertions.
-func (d *auditDispatcher) Stop() {
-	close(d.queue)
-	d.wg.Wait()
-}
 
 // insertEvent marshals the typed payload, decodes it back into the
 // generic map[string]any shape the EventTable.Append signature wants,
-// and submits the job to the audit dispatcher. The actual DB insert
-// runs on a background worker so request-handler latency is decoupled
-// from audit-system health.
+// and writes the row SYNCHRONOUSLY in the calling (request) goroutine.
+//
+// @blessed-invariant: the event log is the canonical forensic record
+// (concept:event-log) — the per-request auth-audit write is durable
+// and is never silently dropped. There is no queue/worker/buffer: the
+// row lands (or the failure is surfaced) before the gate returns. The
+// write is derived from request context (response_status / duration_ms
+// are already known), so it runs after the handler returns.
+//
+// Durability over latency: on insert failure we log at Error (the
+// operator-visible signal that the forensic record has a gap) rather
+// than dropping silently. The bounded auditWriteTimeout caps the
+// per-row cost so a wedged Postgres cannot pin the request goroutine.
 func (s *AuthState) insertEvent(_ context.Context, kind string, payload any) {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -241,23 +173,16 @@ func (s *AuthState) insertEvent(_ context.Context, kind string, payload any) {
 		s.Logger.Error("audit.unmarshal-to-map", "kind", kind, "err", err.Error())
 		return
 	}
-	d := s.dispatcher()
-	if d == nil {
-		// No dispatcher wired (test path that bypassed
-		// EnsureAuditDispatcher). Fall back to the synchronous insert
-		// so audit rows still land. Production wires the dispatcher
-		// via EnsureAuditDispatcher at startup.
-		if err := s.Tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
-			return s.Tables.Events().Append(ctx, persistence.EventAppendInput{
-				Kind:    kind,
-				Payload: payloadMap,
-			}, tx)
-		}); err != nil {
-			s.Logger.Error("audit.insert", "kind", kind, "err", err.Error())
-		}
-		return
+	ctx, cancel := context.WithTimeout(context.Background(), auditWriteTimeout)
+	defer cancel()
+	if err := s.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return s.Tables.Events().Append(ctx, persistence.EventAppendInput{
+			Kind:    kind,
+			Payload: payloadMap,
+		}, tx)
+	}); err != nil {
+		s.Logger.Error("audit.insert", "kind", kind, "err", err.Error())
 	}
-	d.submit(auditJob{kind: kind, payload: payloadMap})
 }
 
 // clientIP extracts a usable client IP from the request. Prefer the

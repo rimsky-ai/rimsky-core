@@ -16,11 +16,13 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 )
@@ -83,10 +85,26 @@ func acquireFanOutIfDeclared(
 	}
 	frameID := cand.FrameID
 	// Substitute partition_request with the runtime-resolved trigger
-	// payload. Pre-v1: the trigger-message wiring (E14) passes
-	// substitution through at dispatch time; until the
-	// substitution-aware caller lands, the literal bytes of the
-	// canonicalized partition_request flow through verbatim.
+	// payload before handing it to SplitScope. The fan-out node's
+	// partition_request is authored to pull the backfill's
+	// partition_request_override off the triggering message (canonical
+	// form `{{trigger.message.payload.partition_request_override |
+	// <template-default>}}`); the override rides the delivered
+	// invalidate message's payload keyed to this frame.
+	//
+	// Load-bearing property: the bytes that reach AcquireSubClaims /
+	// SplitScope are the SUBSTITUTED bytes (the override genuinely
+	// binds), not the literal template. Passing the literal verbatim —
+	// the prior behaviour — silently dropped every backfill override
+	// because the `{{trigger…}}` directive was never resolved and the
+	// `|`-fallback to the template default always fired.
+	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, tx, frameID, out, nodeDef.FanOut.PartitionRequest)
+	if err != nil {
+		args.Logger.Warn("tryAcquire: fan-out partition_request substitution failed",
+			"node_id", cand.NodeID.String(),
+			"error", err.Error())
+		return fmt.Errorf("acquireFanOutIfDeclared: partition_request substitution: %w", err)
+	}
 	subClaims, err := AcquireSubClaims(ctx, args, tx, AcquireSubClaimsInput{
 		ParentClaimHandleID: parent.ClaimHandleID,
 		ParentClaimScope:    parent.ClaimResult.ClaimScope,
@@ -97,7 +115,7 @@ func acquireFanOutIfDeclared(
 		InstanceID:          instanceID,
 		FrameID:             &frameID,
 		HeartbeatInterval:   heartbeatInterval,
-		PartitionRequest:    []byte(nodeDef.FanOut.PartitionRequest),
+		PartitionRequest:    partitionRequest,
 		// Sub-claims inherit the parent's is_held so the rows survive
 		// the leaf's active terminal until the parent's recursive
 		// resolution walks them. Without this, non-held sub-claim
@@ -119,6 +137,111 @@ func acquireFanOutIfDeclared(
 	}
 	out.SubClaims = subClaims
 	return nil
+}
+
+// substituteFanOutPartitionRequest resolves a fan-out node's
+// partition_request template against the frame's trigger message and
+// returns the producer-interpreted bytes to hand to SplitScope.
+//
+// The directive the operator authors is canonically
+// `{{trigger.message.payload.partition_request_override | <default>}}`:
+// it pulls the backfill's `partition_request_override` off the message
+// delivered into this frame. The override is bound through
+// ResolveContext.TriggerMessagePayload — the slot resolveTriggerValue
+// reads — so the substituted bytes carry the operator's override, not
+// the template default.
+//
+// Trigger message recovery (the load-bearing ordering): message
+// delivery marks rimsky_messages.frame_id and invalidates the target
+// node BEFORE the resulting node-run is acquired, so by the time
+// fan-out acquisition runs the delivered message for this frame is
+// present and recoverable by frame_id. We bind it only when EXACTLY
+// one delivered message exists for the frame; zero or more than one →
+// leave TriggerMessagePayload empty so the directive's `|`-fallback
+// (or ErrMissingSource for a strict directive) governs — never a
+// silent wrong-partition run. (Conflicting-override coalescing into
+// one frame is prevented by the conflict-aware delivery pass.)
+//
+// Value→bytes conversion: SubstituteValue lifts a whole `{{…}}`
+// directive to its JSON value. A string result (a string-shaped
+// override, or a literal partition_request with no directives such as
+// "all") flows through as its raw bytes — preserving the producer's
+// existing interpretation. A non-string result (object/array/number/
+// bool) is JSON-encoded, the form a producer that splits on a
+// structured override expects.
+//
+// @concept: fan-out
+// @concept: backfill
+func substituteFanOutPartitionRequest(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	frameID shared.UUID, out *acquisition, partitionRequest string,
+) ([]byte, error) {
+	resolveCtx := attributes.ResolveContext{
+		Params: instanceParamsRaw(out),
+		Claim:  out.HeldClaims,
+	}
+	if payload := triggerMessagePayloadForFrame(ctx, args, tx, frameID); len(payload) > 0 {
+		resolveCtx.TriggerMessagePayload = payload
+	}
+	val, err := attributes.SubstituteValue(partitionRequest, resolveCtx)
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := val.(string); ok {
+		return []byte(s), nil
+	}
+	b, err := json.Marshal(val)
+	if err != nil {
+		return nil, fmt.Errorf("marshal substituted partition_request: %w", err)
+	}
+	return b, nil
+}
+
+// instanceParamsRaw marshals the acquisition's instance params blob to
+// raw JSON for the substitution ResolveContext, mirroring the shaping
+// buildLockSpecs performs. Returns nil when there are no params (nil is
+// treated as empty by the resolver).
+func instanceParamsRaw(out *acquisition) json.RawMessage {
+	if out == nil || len(out.InstanceParams) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(out.InstanceParams)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// triggerMessagePayloadForFrame returns the payload bytes of the single
+// delivered message bound to frameID, or nil when zero or more than one
+// delivered message exists (the directive's fallback / refuse path then
+// governs).
+//
+// Reuses the caller's open acquisition tx via the tx-aware
+// ListDeliveredForFrame. The tx-less Messages().List would deadlock
+// here: under the SQLite driver's MaxOpenConns=1, a fresh-connection
+// read from inside the open tx blocks forever waiting for the only pool
+// conn (held by the tx). The delivered row is visible inside the tx
+// because message delivery committed it before this acquisition began
+// (see the ordering note on substituteFanOutPartitionRequest).
+//
+// Per @blessed-invariant 20/21 the payload bytes are inert — forwarded
+// verbatim into the substitution context, never logged or transformed.
+func triggerMessagePayloadForFrame(ctx context.Context, args RunArgs, tx persistence.Tx, frameID shared.UUID) json.RawMessage {
+	if args.Persist == nil || args.Persist.Messages() == nil {
+		return nil
+	}
+	rows, err := args.Persist.Messages().ListDeliveredForFrame(ctx, tx, frameID)
+	if err != nil {
+		args.Logger.Warn("acquireFanOutIfDeclared: trigger-message lookup failed; partition_request falls back to template default",
+			"frame_id", frameID.String(),
+			"error", err.Error())
+		return nil
+	}
+	if len(rows) != 1 {
+		return nil
+	}
+	return rows[0].Payload
 }
 
 // loadResumeMetadataIfParked reads the per-run resume metadata from

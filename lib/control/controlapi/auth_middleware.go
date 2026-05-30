@@ -64,13 +64,6 @@ type AuthState struct {
 	// registerMCPRoute; NewApp's tail assigns the built router into it.
 	mcpRouterRef *routerRef
 
-	// auditDisp is the bounded worker pool that absorbs audit-row
-	// inserts off the request hot path. Populated lazily by
-	// EnsureAuditDispatcher; tests that prefer synchronous inserts
-	// (so they can assert on row presence) can leave it nil and rely
-	// on the synchronous fallback in insertEvent.
-	auditDisp atomic.Pointer[auditDispatcher]
-
 	// lastUsedUpdates bounds the in-flight UpdateLastUsed goroutine
 	// count so a burst of authenticated requests against a slow
 	// Postgres can't accumulate thousands of pgx-bound goroutines.
@@ -135,44 +128,6 @@ func (s *AuthState) InvalidateAnonCache() {
 // the anonCacheTTL bound, as the spec accepts).
 func (s *AuthState) OnAuthMutation() {
 	s.InvalidateAnonCache()
-}
-
-// EnsureAuditDispatcher wires the background audit-write worker pool.
-// Idempotent; safe to call multiple times. Production wiring calls
-// this at startup; tests can opt in or rely on the synchronous-insert
-// fallback in insertEvent. The returned *auditDispatcher can be used
-// to Stop the workers (drains the queue) — config.StartControlAPI
-// hooks this into its shutdown path.
-func (s *AuthState) EnsureAuditDispatcher() *auditDispatcher {
-	if d := s.auditDisp.Load(); d != nil {
-		return d
-	}
-	d := newAuditDispatcher(s.Tables, s.Logger)
-	if !s.auditDisp.CompareAndSwap(nil, d) {
-		// Lost the race; another goroutine wired one. Stop ours.
-		d.Stop()
-		return s.auditDisp.Load()
-	}
-	return d
-}
-
-// dispatcher returns the audit dispatcher (nil if not yet wired).
-func (s *AuthState) dispatcher() *auditDispatcher {
-	return s.auditDisp.Load()
-}
-
-// StopAuditDispatcher closes the dispatcher's queue and waits for
-// the workers to drain queued jobs. Safe to call multiple times and
-// safe to call when no dispatcher was wired (no-op). Production
-// wiring calls this from controlAPIHandle.Shutdown AFTER the HTTP
-// server has finished draining so any in-flight handlers have
-// already enqueued their final audit rows.
-func (s *AuthState) StopAuditDispatcher() {
-	d := s.auditDisp.Swap(nil)
-	if d == nil {
-		return
-	}
-	d.Stop()
 }
 
 // lastUsedSem returns the per-process semaphore for in-flight
@@ -292,8 +247,8 @@ func rowIdentity(row persistence.APIKey) auth.Identity {
 //   - reads the identity placed on ctx by IdentityResolver
 //   - checks the identity's grant against the named action
 //   - on deny, returns 403 with auth.access_denied audit
-//   - on allow, sets ctxKeyMode from the matched entry, runs the
-//     inner handler, then emits auth.access_attempted with the
+//   - on allow, sets ctxKeyMode from the `?dry_run=true` request flag,
+//     runs the inner handler, then emits auth.access_attempted with the
 //     captured status code
 //   - best-effort updates last_used_at on the key
 //
@@ -341,12 +296,28 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "permission denied"})
 			return
 		}
-		ctx := context.WithValue(r.Context(), ctxKeyMode{}, res.Mode)
+		// Permission is binary (set membership); the request mode is the
+		// per-request `?dry_run=true` flag, not a grant-entry modifier.
+		// @concept: dry-run
+		mode := auth.ModeExecute
+		if r.URL.Query().Get("dry_run") == "true" {
+			mode = auth.ModeDryRun
+		}
+		ctx := context.WithValue(r.Context(), ctxKeyMode{}, mode)
+
+		// IsWrite discriminates `executed` semantics in the audit row: a
+		// read genuinely runs even under dry_run (no mutation to skip),
+		// so it records executed:true; a write under dry_run records
+		// executed:false. Unknown actions (shouldn't happen — the route
+		// is gated, so the action is registered) default to write-shaped
+		// to stay on the conservative side.
+		entry, known := s.Registry.Entry(action)
+		isWrite := !known || entry.IsWrite
 
 		ww := newCapturingWriter(w)
 		inner.ServeHTTP(ww, r.WithContext(ctx))
 
-		s.emitAttempted(r.Context(), r, start, ident, action, skin, params, paramsInvalid, ww.status(), res.Mode)
+		s.emitAttempted(r.Context(), r, start, ident, action, skin, params, paramsInvalid, ww.status(), mode, isWrite)
 
 		if ident.KeyID != nil {
 			id := *ident.KeyID

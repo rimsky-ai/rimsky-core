@@ -208,3 +208,138 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 // cascade. The rimsky_schedules table and the
 // `ScheduleTable.ListForObservability` helper it exercised are gone;
 // cron firing is owned by `sensors/sensor-cron/`.)
+
+// testEventsListAuthPayloadFilters exercises the JSONB-payload filters
+// on EventListFilter that back GET /audit (spec
+// 2026-05-29-console-upstream-auth-audit-and-fixes). It inserts
+// auth.access_attempted rows with varied key_id / action /
+// response_status / mode / request_path payloads and asserts each
+// filter narrows correctly across both drivers. The load-bearing
+// property: a nil filter pointer is a no-op (never excludes a row), and
+// each non-nil filter genuinely narrows the result set.
+func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
+	t.Helper()
+	defer d.Close()
+	ctx := context.Background()
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	store := d.Tables()
+
+	keyA := uuid.NewString()
+	keyB := uuid.NewString()
+
+	// Each row's payload mirrors the shape of auth.AccessAttemptedPayload
+	// (the keys GET /audit filters on). response_status is a JSON number;
+	// mode is a string.
+	rows := []map[string]any{
+		{"key_id": keyA, "key_name": "alpha", "action": "instance:create", "response_status": 201, "mode": "execute", "request_path": "/instances"},
+		{"key_id": keyA, "key_name": "alpha", "action": "instance:read", "response_status": 200, "mode": "execute", "request_path": "/instances/abc"},
+		{"key_id": keyB, "key_name": "beta", "action": "auth:create", "response_status": 200, "mode": "dry_run", "request_path": "/auth/keys"},
+		{"key_id": keyB, "key_name": "beta", "action": "auth:revoke", "response_status": 403, "mode": "execute", "request_path": "/auth/keys/xyz"},
+	}
+	for _, p := range rows {
+		p := p
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.Events().Append(ctx, persistence.EventAppendInput{
+				Kind:    "auth.access_attempted",
+				Payload: p,
+			}, tx)
+		}); err != nil {
+			t.Fatalf("append auth row: %v", err)
+		}
+	}
+
+	sp := func(s string) *string { return &s }
+	ip := func(i int) *int { return &i }
+
+	list := func(f persistence.EventListFilter) []persistence.EventRow {
+		t.Helper()
+		var res persistence.EventListResult
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			r, err := store.Events().List(ctx, f, persistence.ListPagination{Limit: 50}, tx)
+			res = r
+			return err
+		}); err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		return res.Events
+	}
+
+	kindIn := []string{"auth.access_attempted", "auth.access_denied"}
+
+	// No payload filter → all 4 rows (nil pointers are no-ops).
+	if got := list(persistence.EventListFilter{KindIn: kindIn}); len(got) != 4 {
+		t.Fatalf("no-filter = %d rows, want 4", len(got))
+	}
+
+	// key_id narrows to the two rows for keyA.
+	if got := list(persistence.EventListFilter{KindIn: kindIn, KeyID: sp(keyA)}); len(got) != 2 {
+		t.Fatalf("KeyID = %d rows, want 2", len(got))
+	}
+
+	// key_name narrows to the two beta rows.
+	if got := list(persistence.EventListFilter{KindIn: kindIn, KeyName: sp("beta")}); len(got) != 2 {
+		t.Fatalf("KeyName = %d rows, want 2", len(got))
+	}
+
+	// action exact narrows to the single instance:create row.
+	got := list(persistence.EventListFilter{KindIn: kindIn, ActionExact: sp("instance:create")})
+	if len(got) != 1 {
+		t.Fatalf("ActionExact = %d rows, want 1", len(got))
+	}
+	if a, _ := got[0].Payload["action"].(string); a != "instance:create" {
+		t.Fatalf("ActionExact row action = %q, want instance:create", a)
+	}
+
+	// action prefix "instance:" narrows to the two instance:* rows.
+	if got := list(persistence.EventListFilter{KindIn: kindIn, ActionPrefix: sp("instance:")}); len(got) != 2 {
+		t.Fatalf("ActionPrefix instance: = %d rows, want 2", len(got))
+	}
+	// action prefix "auth:" narrows to the two auth:* rows.
+	if got := list(persistence.EventListFilter{KindIn: kindIn, ActionPrefix: sp("auth:")}); len(got) != 2 {
+		t.Fatalf("ActionPrefix auth: = %d rows, want 2", len(got))
+	}
+
+	// response_status narrows: 200 → two rows; 403 → one row.
+	if got := list(persistence.EventListFilter{KindIn: kindIn, ResponseStatus: ip(200)}); len(got) != 2 {
+		t.Fatalf("ResponseStatus 200 = %d rows, want 2", len(got))
+	}
+	if got := list(persistence.EventListFilter{KindIn: kindIn, ResponseStatus: ip(403)}); len(got) != 1 {
+		t.Fatalf("ResponseStatus 403 = %d rows, want 1", len(got))
+	}
+
+	// mode narrows: dry_run → one row; execute → three rows.
+	if got := list(persistence.EventListFilter{KindIn: kindIn, Mode: sp("dry_run")}); len(got) != 1 {
+		t.Fatalf("Mode dry_run = %d rows, want 1", len(got))
+	}
+	if got := list(persistence.EventListFilter{KindIn: kindIn, Mode: sp("execute")}); len(got) != 3 {
+		t.Fatalf("Mode execute = %d rows, want 3", len(got))
+	}
+
+	// request_path (the audit "target") narrows to the single matching
+	// row; a path with no row matches nothing.
+	got = list(persistence.EventListFilter{KindIn: kindIn, RequestPath: sp("/instances")})
+	if len(got) != 1 {
+		t.Fatalf("RequestPath /instances = %d rows, want 1", len(got))
+	}
+	if a, _ := got[0].Payload["action"].(string); a != "instance:create" {
+		t.Fatalf("RequestPath row action = %q, want instance:create", a)
+	}
+	if got := list(persistence.EventListFilter{KindIn: kindIn, RequestPath: sp("/auth/keys/xyz")}); len(got) != 1 {
+		t.Fatalf("RequestPath /auth/keys/xyz = %d rows, want 1", len(got))
+	}
+	if got := list(persistence.EventListFilter{KindIn: kindIn, RequestPath: sp("/nonexistent")}); len(got) != 0 {
+		t.Fatalf("RequestPath /nonexistent = %d rows, want 0", len(got))
+	}
+
+	// Composed filters AND together: keyB + status 200 → the single
+	// auth:create dry_run row.
+	got = list(persistence.EventListFilter{KindIn: kindIn, KeyID: sp(keyB), ResponseStatus: ip(200)})
+	if len(got) != 1 {
+		t.Fatalf("KeyID(B)+Status(200) = %d rows, want 1", len(got))
+	}
+	if a, _ := got[0].Payload["action"].(string); a != "auth:create" {
+		t.Fatalf("composed-filter row action = %q, want auth:create", a)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -69,6 +70,14 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	if len(filter.KindIn) > 0 {
 		kindInArg = filter.KindIn
 	}
+	// Auth-payload filters. Each is a NULL-tolerant predicate ($N IS NULL
+	// → no-op) so a nil pointer never excludes a row. response_status is
+	// stored as a JSON number; payload->>'response_status' renders it as
+	// text, so we compare against the int cast to text.
+	var respStatusArg any
+	if filter.ResponseStatus != nil {
+		respStatusArg = strconv.Itoa(*filter.ResponseStatus)
+	}
 	rows, err := ex.Query(ctx,
 		`SELECT id, instance_id, node_id, kind, payload, occurred_at
 		 FROM rimsky_events
@@ -79,6 +88,13 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		   AND ($5::timestamptz IS NULL OR occurred_at >= $5)
 		   AND ($6::timestamptz IS NULL OR occurred_at <= $6)
 		   AND ($7::timestamptz IS NULL OR (occurred_at, id) < ($7, $8))
+		   AND ($10::text IS NULL OR payload->>'key_id' = $10)
+		   AND ($11::text IS NULL OR payload->>'key_name' = $11)
+		   AND ($12::text IS NULL OR payload->>'action' = $12)
+		   AND ($13::text IS NULL OR payload->>'action' LIKE $13 || '%')
+		   AND ($14::text IS NULL OR payload->>'response_status' = $14)
+		   AND ($15::text IS NULL OR payload->>'mode' = $15)
+		   AND ($16::text IS NULL OR payload->>'request_path' = $16)
 		 ORDER BY occurred_at DESC, id DESC
 		 LIMIT $9`,
 		nodeIDArg(filter.NodeID), instanceIDArg(filter.InstanceID),
@@ -86,6 +102,10 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		nullableTime(filter.Since), nullableTime(filter.Until),
 		nullableTime(cursorOccurred), nullableInt64(cursorID),
 		limit,
+		nullableStringPtr(filter.KeyID), nullableStringPtr(filter.KeyName),
+		nullableStringPtr(filter.ActionExact), nullableStringPtr(filter.ActionPrefix),
+		respStatusArg, nullableStringPtr(filter.Mode),
+		nullableStringPtr(filter.RequestPath),
 	)
 	if err != nil {
 		return persistence.EventListResult{}, err
@@ -236,6 +256,18 @@ func nullableTime(p *time.Time) any {
 	return *p
 }
 func nullableInt64(p *int64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// nullableStringPtr maps a *string filter field to a query arg: nil →
+// SQL NULL (the predicate short-circuits to a no-op), non-nil → the
+// dereferenced value. Distinct from nullableString (which maps an empty
+// string to NULL); here an empty-but-non-nil filter is a real "= ”"
+// match, so we never collapse it.
+func nullableStringPtr(p *string) any {
 	if p == nil {
 		return nil
 	}

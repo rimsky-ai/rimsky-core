@@ -51,12 +51,19 @@ type EnqueueMessageRequest struct {
 }
 
 // MessageListFilter selects rows for the messages list endpoints.
+//
+// FrameID, when non-nil, narrows to the message(s) delivered into a
+// specific frame (rimsky_messages.frame_id = ?). Fan-out acquisition
+// uses it to recover the frame's trigger message so the node's
+// partition_request can be substituted from the override the message
+// carries (see runtime/runner_acquire_helpers.go::acquireFanOutIfDeclared).
 type MessageListFilter struct {
 	InstanceID          *shared.UUID
 	Kind                string
 	SenderKind          string
 	Target              string
 	BackfillOperationID *shared.UUID
+	FrameID             *shared.UUID
 	DeliveredAfter      *time.Time
 	DeliveredBefore     *time.Time
 }
@@ -85,6 +92,16 @@ type MessagesTable interface {
 	// ordered by received_at ascending. Used at frame-boundary
 	// delivery.
 	ListPendingForInstance(ctx context.Context, tx Tx, instanceID shared.UUID) ([]MessageRow, error)
+
+	// ListDeliveredForFrame returns the messages delivered into the given
+	// frame (frame_id = frame), ordered by received_at ascending. Reuses
+	// the caller's tx — unlike the tx-less List, this is safe to call
+	// from inside an open transaction (the SQLite driver's
+	// MaxOpenConns=1 makes a fresh-connection read from inside a tx
+	// deadlock). Used by fan-out acquisition to recover the frame's
+	// trigger message so the node's partition_request substitutes the
+	// backfill's override.
+	ListDeliveredForFrame(ctx context.Context, tx Tx, frame shared.UUID) ([]MessageRow, error)
 
 	// Get returns a single message by id, or nil when absent.
 	Get(ctx context.Context, id shared.UUID) (*MessageRow, error)

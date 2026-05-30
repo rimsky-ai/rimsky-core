@@ -9,7 +9,7 @@
 //   - Bootstrap: anonymous mode → admin key minted → authenticated
 //   - Permission grants: *:read read-only key denied on writes
 //   - Wildcard semantics: noun-prefix and verb-suffix wildcards
-//   - First-match-wins: dry-run override appears before wildcard
+//   - Dry-run flag: ?dry_run=true previews a write; absent → executes
 //   - Rotation: dual-active during grace; sweep revokes after grace
 //   - Revoke-last-key guard: 409 unless ?force_leave_anonymous=true
 //   - MCP-as-skin: same identity gate via /mcp tools/call
@@ -33,6 +33,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -69,11 +70,18 @@ func newAuthFixture(t *testing.T) *authFixture {
 		Logger:   shared.SilentLogger{},
 	}
 	app := controlapi.NewApp(controlapi.AppDeps{
-		Persist:   d.Tables(),
-		Queue:     d.Queue(),
-		Clock:     clock,
-		Logger:    shared.SilentLogger{},
-		AuthState: state,
+		Persist: d.Tables(),
+		Queue:   d.Queue(),
+		Clock:   clock,
+		Logger:  shared.SilentLogger{},
+		// An empty (non-nil) lifecycle registry: store-referencing
+		// templates (e.g. the wired fan-out node a backfill target
+		// requires) register/deploy cleanly — the referenced store is
+		// not subscribed, so the lifecycle fan-out skips it silently
+		// rather than failing on a nil registry. No store backend runs
+		// in this fixture; the engine never dispatches.
+		LifecycleSubs: locks.NewLifecycleRegistry(),
+		AuthState:     state,
 	})
 	srv := httptest.NewServer(app)
 	return &authFixture{
@@ -90,23 +98,25 @@ func newAuthFixture(t *testing.T) *authFixture {
 
 func (f *authFixture) Close() { f.teardown() }
 
-// flushAudit drains any pending audit-row inserts so subsequent
-// rimsky_events.List calls in tests observe rows that the
-// asynchronous dispatcher hasn't yet committed. Tests that don't
-// wire EnsureAuditDispatcher get the synchronous-insert fallback in
-// insertEvent and this method is a no-op for them; the helper is
-// safe to call unconditionally.
+// flushAudit is a no-op kept for call-site readability. Audit rows are
+// written synchronously in the request goroutine
+// (controlapi.AuthState.insertEvent), so by the time a request returns
+// its audit row is already committed and visible to a subsequent
+// rimsky_events.List — there is nothing to drain. The method survives
+// so the dry-run / audit assertions that call it read clearly.
 func (f *authFixture) flushAudit() {
-	// When the test fixture installs the audit dispatcher, the
-	// caller must Stop it to drain. Tests in this package use the
-	// synchronous fallback, so this is currently a no-op. Kept as a
-	// method so the dry-run / audit assertions read clearly and so
-	// future tests that opt into the async dispatcher have an
-	// obvious extension point.
 }
 
 // post helper.
 func (f *authFixture) request(t *testing.T, method, path, key string, body any) (int, map[string]any) {
+	t.Helper()
+	return f.requestWithHeader(t, method, path, key, body, "", "")
+}
+
+// requestWithHeader is request plus one optional extra header (e.g.
+// Idempotency-Key on message:send). headerKey == "" skips the extra
+// header.
+func (f *authFixture) requestWithHeader(t *testing.T, method, path, key string, body any, headerKey, headerVal string) (int, map[string]any) {
 	t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -119,6 +129,9 @@ func (f *authFixture) request(t *testing.T, method, path, key string, body any) 
 	}
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	if headerKey != "" {
+		req.Header.Set(headerKey, headerVal)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -205,7 +218,13 @@ func TestPermissionGrants_ReadOnlyDenyOnWrite(t *testing.T) {
 	}
 }
 
-func TestPermissionGrants_FirstMatchWinsDryRun(t *testing.T) {
+// TestPermissionGrants_DryRunFlagPreviewsWrite covers the per-request
+// dry-run flag (the old per-grant `mode: dry_run` modifier and the
+// first-match-wins-for-mode evaluator are gone — Pass 1). The SAME key
+// (no mode in its grant) previews when `?dry_run=true` is set and
+// executes when it is absent: dry-run is sourced solely from the
+// request flag, not from the grant.
+func TestPermissionGrants_DryRunFlagPreviewsWrite(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
@@ -219,68 +238,43 @@ func TestPermissionGrants_FirstMatchWinsDryRun(t *testing.T) {
 	// reaches the in-transaction dry-run gate. Without a real
 	// template, resolveTagOrHash returns "" BEFORE the transaction
 	// and the handler 404s without ever consulting the request's
-	// auth mode — which would make this test unable to distinguish
-	// "first-match-wins worked" from "validation failed before mode
-	// was even checked."
-	tplHash := seedDeployedTemplate(t, f, adminKey, "first-match-wins")
+	// auth mode.
+	tplHash := seedDeployedTemplate(t, f, adminKey, "dry-run-flag")
 
-	// Direction 1: specific dry-run BEFORE wildcard. Per spec section
-	// "First-match-wins grant evaluation" the specific entry must
-	// shadow the wildcard for instance:create — the call must run in
-	// dry-run mode and return the synthetic 200 envelope rather than
-	// a 201 Created.
+	// Mint an ordinary execute-capable key (no mode in the grant).
 	code, body := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
-		"name": "specific-first",
-		"permissions": []map[string]any{
-			{"action": "instance:create", "mode": "dry_run"},
-			{"action": "*"},
-		},
+		"name":        "creator",
+		"permissions": []map[string]any{{"action": "instance:create"}, {"action": "instance:read"}},
 	})
 	if code != 201 {
-		t.Fatalf("mint specific-first: %d %+v", code, body)
+		t.Fatalf("mint creator: %d %+v", code, body)
 	}
-	specificFirstKey, _ := body["plaintext"].(string)
-	if specificFirstKey == "" {
+	creatorKey, _ := body["plaintext"].(string)
+	if creatorKey == "" {
 		t.Fatalf("expected plaintext key in mint response: %+v", body)
 	}
 
-	code, body = f.request(t, "POST", "/instances", specificFirstKey, map[string]any{
+	// With ?dry_run=true the SAME key previews — 200 dry-run envelope,
+	// no instance created.
+	code, body = f.request(t, "POST", "/instances?dry_run=true", creatorKey, map[string]any{
 		"template": tplHash,
 	})
 	if code != http.StatusOK {
-		t.Fatalf("specific-first: expected 200 dry-run envelope; got %d %+v", code, body)
+		t.Fatalf("dry-run create: expected 200 dry-run envelope; got %d %+v", code, body)
 	}
 	if dryRun, _ := body["dry_run"].(bool); !dryRun {
-		t.Fatalf("specific-first: expected dry_run:true; got %+v", body)
+		t.Fatalf("dry-run create: expected dry_run:true; got %+v", body)
 	}
 
-	// Direction 2: wildcard BEFORE the dry-run override. The wildcard
-	// matches first (mode unset → execute), the later dry-run entry
-	// must NOT fire — so the call must be a real 201 Created, proving
-	// the engine does not scan further once it has a match.
-	code, body = f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
-		"name": "wildcard-first",
-		"permissions": []map[string]any{
-			{"action": "*"},
-			{"action": "instance:create", "mode": "dry_run"},
-		},
-	})
-	if code != 201 {
-		t.Fatalf("mint wildcard-first: %d %+v", code, body)
-	}
-	wildcardFirstKey, _ := body["plaintext"].(string)
-	if wildcardFirstKey == "" {
-		t.Fatalf("expected plaintext key in mint response: %+v", body)
-	}
-
-	code, body = f.request(t, "POST", "/instances", wildcardFirstKey, map[string]any{
+	// Without the flag the SAME key executes — a real 201 Created.
+	code, body = f.request(t, "POST", "/instances", creatorKey, map[string]any{
 		"template": tplHash,
 	})
 	if code != http.StatusCreated {
-		t.Fatalf("wildcard-first: expected 201 (wildcard match shadows later dry-run); got %d %+v", code, body)
+		t.Fatalf("execute create: expected 201; got %d %+v", code, body)
 	}
 	if dryRun, _ := body["dry_run"].(bool); dryRun {
-		t.Fatalf("wildcard-first: dry_run override fired despite wildcard match earlier in list: %+v", body)
+		t.Fatalf("execute create: dry_run envelope returned without the flag: %+v", body)
 	}
 }
 

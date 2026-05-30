@@ -105,6 +105,22 @@ func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistenc
 	return collectMessages(rows)
 }
 
+const listDeliveredForFrameSQL = `
+SELECT id, instance_id, kind, sender, sender_kind, target, payload,
+       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+  FROM rimsky_messages
+ WHERE frame_id = $1
+ ORDER BY received_at ASC, id ASC`
+
+func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, tx persistence.Tx, frame shared.UUID) ([]persistence.MessageRow, error) {
+	rows, err := b.q(tx).Query(ctx, listDeliveredForFrameSQL, frame)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.Messages.ListDeliveredForFrame: %w", err)
+	}
+	defer rows.Close()
+	return collectMessages(rows)
+}
+
 const getMessageSQL = `
 SELECT id, instance_id, kind, sender, sender_kind, target, payload,
        backfill_operation_id, received_at, delivered_at, frame_id, cancelled
@@ -128,8 +144,8 @@ func (b *messagesImpl) Get(ctx context.Context, id shared.UUID) (*persistence.Me
 }
 
 // List is a paginated list with filter. V1 implementation supports
-// instance_id + kind + sender_kind + target + backfill_operation_id
-// filters; cursor pagination follows received_at DESC.
+// instance_id + kind + sender_kind + target + backfill_operation_id +
+// frame_id filters; cursor pagination follows received_at DESC.
 func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	// V1 implementation: full-scan filter; cursor pagination is a
 	// follow-up. Returns at most pag.Limit rows.
@@ -154,6 +170,10 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 	if filter.BackfillOperationID != nil {
 		args = append(args, *filter.BackfillOperationID)
 		where += fmt.Sprintf(" AND backfill_operation_id = $%d", len(args))
+	}
+	if filter.FrameID != nil {
+		args = append(args, *filter.FrameID)
+		where += fmt.Sprintf(" AND frame_id = $%d", len(args))
 	}
 	limit := pag.Limit
 	if limit <= 0 {

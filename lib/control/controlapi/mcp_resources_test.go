@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -35,16 +36,15 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// withIdentity returns a request whose Context carries the given
-// Identity via the mcp.SetIdentityHook channel. The hook is restored on
-// test cleanup so concurrent siblings can't race.
-func withIdentity(t *testing.T, ident auth.Identity) *httptest.ResponseRecorder {
+// withIdentity returns a POST /mcp request whose context carries the
+// given Identity under controlapi's identity context key — the same key
+// the auth middleware sets and IdentityFromContextOK reads. The resource
+// catalog reads identity straight off the request context, so there is
+// no process-global hook to race: these tests run in parallel.
+func withIdentity(t *testing.T, ident auth.Identity) *http.Request {
 	t.Helper()
-	restore := mcp.SetIdentityHook(func(ctx context.Context) (auth.Identity, bool) {
-		return ident, ident.Kind != ""
-	})
-	t.Cleanup(restore)
-	return httptest.NewRecorder()
+	ctx := context.WithValue(context.Background(), ctxKeyIdentity{}, ident)
+	return httptest.NewRequest("POST", "/mcp", nil).WithContext(ctx)
 }
 
 // seedBPHit inserts a breakpoint hit row directly into persistence and
@@ -108,8 +108,7 @@ func TestResources_List_AdminSeesInstance(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
 
 	got, err := cat.List(req)
 	require.NoError(t, err)
@@ -137,8 +136,7 @@ func TestResources_List_NoBreakpointReadReturnsEmpty(t *testing.T) {
 
 	cat := buildResourceCatalog(h)
 	// Grant only `instance:read` — does NOT cover `breakpoint:read`.
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "instance:read"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "instance:read"}}})
 
 	got, err := cat.List(req)
 	require.NoError(t, err)
@@ -166,8 +164,7 @@ func TestResources_Read_ByInstance(t *testing.T) {
 	require.Less(t, seq2, seq3)
 
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*:read"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*:read"}}})
 	uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits", instID)
 	contents, rpcErr := cat.Read(req, uri)
 	require.Nil(t, rpcErr, "read failed: %+v", rpcErr)
@@ -208,8 +205,7 @@ func TestResources_Read_BySinceCursor(t *testing.T) {
 	_, seq3 := seedBPHit(t, h, bpID, instUUID, now.Add(-time.Minute))
 
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
 	uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?since=%d", instID, seq1)
 	contents, rpcErr := cat.Read(req, uri)
 	require.Nil(t, rpcErr)
@@ -246,8 +242,7 @@ func TestResources_Read_PollingCursorFlow(t *testing.T) {
 	}
 
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
 
 	cursor := int64(0)
 	collected := []int64{}
@@ -288,8 +283,7 @@ func TestResources_Read_ByBreakpoint(t *testing.T) {
 	_, seq1 := seedBPHit(t, h, bpID, instUUID, time.Now().UTC().Add(-time.Minute))
 
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
 	uri := fmt.Sprintf("rimsky://breakpoints/%s/hits", bpID.String())
 	contents, rpcErr := cat.Read(req, uri)
 	require.Nil(t, rpcErr, "%+v", rpcErr)
@@ -313,8 +307,7 @@ func TestResources_Read_RejectsUnknownScheme(t *testing.T) {
 	t.Cleanup(teardown)
 
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
 	_, rpcErr := cat.Read(req, "http://instances/abc/breakpoint-hits")
 	require.NotNil(t, rpcErr)
 	require.Equal(t, mcp.CodeInvalidParams, rpcErr.Code)
@@ -327,8 +320,7 @@ func TestResources_Read_RejectsMalformedURI(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
 
 	for _, bad := range []string{
 		"rimsky://instances/00000000-0000-0000-0000-000000000001/wrong-suffix",
@@ -351,8 +343,7 @@ func TestResources_Read_PermissionDenied(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 	cat := buildResourceCatalog(h)
 	// `event:read` does NOT cover `breakpoint:read`.
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "event:read"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "event:read"}}})
 	uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits", instID)
 	_, rpcErr := cat.Read(req, uri)
 	require.NotNil(t, rpcErr, "expected permission denial")
@@ -373,8 +364,7 @@ func TestResources_Read_LimitCappedAtMax(t *testing.T) {
 	_, _ = seedBPHit(t, h, bpID, instUUID, time.Now().UTC().Add(-time.Minute))
 
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
-	req := httptest.NewRequest("POST", "/mcp", nil)
+	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*"}}})
 	uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?limit=9999", instID)
 	contents, rpcErr := cat.Read(req, uri)
 	require.Nil(t, rpcErr)

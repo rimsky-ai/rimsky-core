@@ -46,3 +46,7 @@ func (f *fakeLineage) QueryByParentRunID(_ context.Context, _ shared.UUID, _ int
 func (f *fakeLineage) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) {
 	return 0, nil
 }
+
+func (f *fakeLineage) CountOlderThan(_ context.Context, _ time.Time) (int, error) {
+	return 0, nil
+}

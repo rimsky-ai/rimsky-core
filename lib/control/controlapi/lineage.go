@@ -73,10 +73,14 @@ type pruneLineageRequest struct {
 }
 
 // handleLineagePrune deletes lineage rows older than `before`. Wraps
-// `code:foundation/persistence/lineage.go::LineageTable.DeleteOlderThan`
-// so operators can prune the projection from the CLI (G4) without
-// reaching for SQL. Returns `{deleted: N, before: <timestamp>}` on
-// success.
+// LineageTable.DeleteOlderThan so operators can prune the projection
+// from the CLI (G4) without reaching for SQL. Returns `{deleted: N,
+// before: <timestamp>}` on success.
+//
+// Under `?dry_run=true` it elides the delete and instead returns the
+// would-prune count via LineageTable.CountOlderThan — the identical
+// predicate — so operators get a true preview:
+// `{dry_run: true, would_have_pruned: {before, count}}`.
 func handleLineagePrune(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var body pruneLineageRequest
@@ -93,9 +97,23 @@ func handleLineagePrune(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "before must be RFC3339 timestamp: "+err.Error())
 			return
 		}
-		if WriteDryRunResponse(w, req, "would_have_pruned", map[string]any{
-			"before": body.Before,
-		}) {
+		// Dry-run: return the real would-prune count by running the same
+		// "older than cutoff AND run/claim_handle no longer present"
+		// predicate as the live delete — CountOlderThan is a true
+		// preview, not an approximation. We resolve the mode explicitly
+		// (rather than via WriteDryRunResponse's internal check) so the
+		// count query only runs in dry-run mode, then write the synthetic
+		// envelope via WriteDryRunResponseForced.
+		if ModeFromContext(req.Context()) == authModeDryRun {
+			n, err := deps.Persist.Lineage().CountOlderThan(req.Context(), cutoff)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			WriteDryRunResponseForced(w, "would_have_pruned", map[string]any{
+				"before": body.Before,
+				"count":  n,
+			})
 			return
 		}
 		n, err := deps.Persist.Lineage().DeleteOlderThan(req.Context(), cutoff)

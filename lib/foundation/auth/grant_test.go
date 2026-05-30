@@ -14,8 +14,8 @@ import (
 func TestGrantRoundTrip(t *testing.T) {
 	cases := []string{
 		`{"action":"instance:read"}`,
-		`{"action":"instance:create","mode":"dry_run"}`,
-		`{"action":"node:invalidate","mode":"execute"}`,
+		`{"action":"instance:create"}`,
+		`{"action":"node:invalidate"}`,
 	}
 	for _, src := range cases {
 		var e GrantEntry
@@ -26,14 +26,30 @@ func TestGrantRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
-		// Round-trip back; verify Action + Mode preserved.
+		// Round-trip back; verify Action preserved.
 		var e2 GrantEntry
 		if err := json.Unmarshal(out, &e2); err != nil {
 			t.Fatalf("re-unmarshal %s: %v", out, err)
 		}
-		if e.Action != e2.Action || e.Mode != e2.Mode {
+		if e.Action != e2.Action {
 			t.Errorf("round-trip differs: %+v vs %+v", e, e2)
 		}
+	}
+}
+
+// TestGrantLegacyModeFallsIntoExtras: a legacy `mode` key on a persisted
+// grant is no longer a recognized field — it survives in Extras (no
+// error) and is ignored by the matcher (pre-v1; no compat shim).
+func TestGrantLegacyModeFallsIntoExtras(t *testing.T) {
+	var e GrantEntry
+	if err := json.Unmarshal([]byte(`{"action":"instance:create","mode":"dry_run"}`), &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if e.Action != "instance:create" {
+		t.Fatalf("action: %q", e.Action)
+	}
+	if _, ok := e.Extras["mode"]; !ok {
+		t.Fatalf("legacy mode key should land in Extras: %+v", e.Extras)
 	}
 }
 
@@ -67,7 +83,6 @@ func TestGrantInvalid(t *testing.T) {
 	cases := []string{
 		`{"action":""}`,
 		`{}`,
-		`{"action":"x","mode":"weird"}`,
 	}
 	for _, src := range cases {
 		var e GrantEntry
@@ -79,14 +94,14 @@ func TestGrantInvalid(t *testing.T) {
 }
 
 func TestGrantArrayUnmarshal(t *testing.T) {
-	src := `[{"action":"instance:read"},{"action":"node:*","mode":"dry_run"}]`
+	src := `[{"action":"instance:read"},{"action":"node:*"}]`
 	var g Grant
 	if err := json.Unmarshal([]byte(src), &g); err != nil {
 		t.Fatalf("unmarshal grant: %v", err)
 	}
 	want := Grant{
 		{Action: "instance:read"},
-		{Action: "node:*", Mode: ModeDryRun},
+		{Action: "node:*"},
 	}
 	if !reflect.DeepEqual(g, want) {
 		t.Fatalf("grant array: got %+v want %+v", g, want)

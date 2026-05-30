@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -301,8 +300,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.NotNil(t, first["dispatch_context"])
 
 	cat := buildResourceCatalog(h)
-	_ = withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*:read"}}})
-	mcpReq := httptest.NewRequest("POST", "/mcp", nil)
+	mcpReq := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "*:read"}}})
 	contents, rpcErr := cat.Read(mcpReq, fmt.Sprintf("rimsky://instances/%s/breakpoint-hits", instID))
 	require.Nil(t, rpcErr, "mcp read failed: %+v", rpcErr)
 	var mcpBody map[string]any

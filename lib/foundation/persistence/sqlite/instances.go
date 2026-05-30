@@ -48,7 +48,9 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 
-	// Empty string → fall through to the column DEFAULT 'coalesce'. Any
+	// Empty string → the INSERT's COALESCE(?, 'serial_queue') defaults an
+	// omitted mode to 'serial_queue' (the load-bearing default; this is NOT
+	// taken from the column DEFAULT — the literal here decides it). Any
 	// other value is sent verbatim; the CHECK constraint enforces the
 	// {serial_queue, coalesce} vocabulary so a bad value surfaces as a
 	// constraint violation from SQLite.
@@ -73,7 +75,7 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	}
 	row := s.q(tx).QueryRowContext(ctx,
 		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, attribute_overrides_match_counts, main_run_scope_id, paused, service_bindings, created_by_api_key_id)
-		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'coalesce'), ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'serial_queue'), ?, ?, ?, ?, ?, ?)
 		 RETURNING `+instanceCols,
 		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), deliveryMode, nowUTC(), string(matchCountsBytes), in.MainRunScopeID.String(), pausedArg, serviceBindingsArg, createdByAPIKeyArg,
 	)

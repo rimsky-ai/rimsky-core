@@ -135,9 +135,12 @@ func Suite(
 	})
 	t.Run("StoreLifecycleListByStore", func(t *testing.T) { testStoreLifecycleListByStore(t, factory(t)) })
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
+	t.Run("EventsListAuthPayloadFilters", func(t *testing.T) { testEventsListAuthPayloadFilters(t, factory(t)) })
+	t.Run("MessagesListByFrameID", func(t *testing.T) { testMessagesListByFrameID(t, factory(t)) })
 	// (SchedulesDenseSameTimestampPagination retired by the 2026-05-15
 	// plan B10 / D7 / E16 schedule-retirement cascade.)
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
 	t.Run("LineageQueryByParentRunID", func(t *testing.T) { testLineageQueryByParentRunID(t, factory(t)) })
+	t.Run("LineageCountOlderThanMatchesDelete", func(t *testing.T) { testLineageCountOlderThanMatchesDelete(t, factory(t)) })
 	t.Run("APIKeys", func(t *testing.T) { TestAPIKeys(t, factory(t)) })
 }

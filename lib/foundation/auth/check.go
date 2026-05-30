@@ -9,25 +9,20 @@ import "fmt"
 // CheckResult describes the outcome of CheckGrant.
 type CheckResult struct {
 	Allowed    bool
-	Mode       Mode // ModeExecute if entry didn't set mode and the request matched
-	MatchedIdx int  // index into the grant of the matching entry; -1 if not allowed
+	MatchedIdx int // index into the grant of a matching entry; -1 if not allowed
 }
 
-// CheckGrant runs the first-match-wins algorithm against the grant
-// for the given requestAction. Returns Allowed=false when no entry
-// matches.
+// CheckGrant evaluates the grant for the given requestAction by set
+// membership: the request is allowed iff any entry's action matches
+// (wildcard grammar unchanged). Returns Allowed=false when no entry
+// matches. Order is not significant — any match allows.
 //
-// First-match-wins is by iteration order over the grant array.
-// "Specific" entries should appear before "general" entries when an
-// operator wants a specific mode override to apply.
+// Permission is binary (allow/deny only); the request mode (execute vs
+// dry_run) is resolved from the request flag, not the grant.
 func CheckGrant(grant Grant, requestAction string) CheckResult {
 	for i, e := range grant {
 		if ActionMatches(e.Action, requestAction) {
-			mode := e.Mode
-			if mode == "" {
-				mode = ModeExecute
-			}
-			return CheckResult{Allowed: true, Mode: mode, MatchedIdx: i}
+			return CheckResult{Allowed: true, MatchedIdx: i}
 		}
 	}
 	return CheckResult{Allowed: false, MatchedIdx: -1}

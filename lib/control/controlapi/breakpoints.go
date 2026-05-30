@@ -24,6 +24,7 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -184,6 +185,7 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 		// + graph name sets. Open a tx, lock the template row FOR UPDATE
 		// (so concurrent template-deploy / undeploy can't race), and
 		// validate.
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		var (
 			created persistence.BreakpointRow
 			bpID    foundationshared.UUID
@@ -199,6 +201,16 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			refs := breakpointMatcherRefs(tpl.Spec, deps.Executors)
 			if err := matcher.Validate(matcher.Matcher(body.Matcher), refs, -1); err != nil {
 				return err
+			}
+			// Dry-run gate: every validation step above has succeeded
+			// (instance + body + checkpoint/mode/overflow/signal parsing,
+			// and the matcher validated against the locked template).
+			// Skip the Create insert and signal the caller via errDryRunOK
+			// so the outer code writes the synthetic envelope before any
+			// row is written (the dry-run never-mutates property;
+			// @concept: dry-run). The tx rolls back the FOR UPDATE lock.
+			if isDryRun {
+				return errDryRunOK
 			}
 			row := persistence.BreakpointRow{
 				InstanceID:     inst.ID,
@@ -237,6 +249,18 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			created = *fresh
 			return nil
 		})
+		if isDryRun && errors.Is(txErr, errDryRunOK) {
+			summary := map[string]any{
+				"instance_id": inst.ID.String(),
+				"checkpoint":  string(checkpoint),
+				"mode":        string(mode),
+			}
+			if body.Matcher != nil {
+				summary["matcher"] = body.Matcher
+			}
+			WriteDryRunResponseForced(w, "would_have_created_breakpoint", summary)
+			return
+		}
 		if txErr != nil {
 			writeError(w, txErr)
 			return
@@ -352,6 +376,7 @@ func handleDeleteBreakpoint(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "breakpoint_id must be a UUID")
 			return
 		}
+		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			bp, err := deps.Persist.Breakpoints().Get(ctx, bpID, tx)
 			if err != nil {
@@ -360,8 +385,22 @@ func handleDeleteBreakpoint(deps AppDeps) http.HandlerFunc {
 			if bp == nil || bp.InstanceID != inst.ID {
 				return foundationshared.ErrBreakpointNotFound
 			}
+			// Dry-run gate: existence + instance-ownership validated
+			// against the same row a real delete would act on; skip the
+			// Delete and signal the caller via errDryRunOK so the
+			// envelope is written before any row is removed (the dry-run
+			// never-mutates property; @concept: dry-run).
+			if isDryRun {
+				return errDryRunOK
+			}
 			return deps.Persist.Breakpoints().Delete(ctx, bpID, tx)
 		}); err != nil {
+			if isDryRun && errors.Is(err, errDryRunOK) {
+				WriteDryRunResponseForced(w, "would_have_deleted_breakpoint", map[string]any{
+					"breakpoint_id": bpID.String(),
+				})
+				return
+			}
 			writeError(w, err)
 			return
 		}
@@ -435,6 +474,18 @@ func handleResumeBreakpointHit(deps AppDeps) http.HandlerFunc {
 			return nil
 		}); err != nil {
 			writeError(w, err)
+			return
+		}
+		// Dry-run: instance/breakpoint/hit URL-shape resolved and the hit
+		// confirmed to belong to the named breakpoint. Skip the resume
+		// mutation (ValidateAndPersistResume) and write the envelope
+		// before any state change — its resume-time validation is coupled
+		// to the persist step, so the achievable no-mutation gate is here,
+		// after the ownership checks (the dry-run never-mutates property;
+		// @concept: dry-run).
+		if WriteDryRunResponse(w, req, "would_have_resumed_breakpoint", map[string]any{
+			"hit_id": hitID.String(),
+		}) {
 			return
 		}
 		args := runtime.RunArgs{Persist: deps.Persist, Logger: deps.Logger}

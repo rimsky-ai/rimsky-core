@@ -14,82 +14,19 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
-// ctxKeyIdentity matches controlapi.ctxKeyIdentity by value (an empty
-// struct of the same definition site). Catalog cannot import
-// controlapi (back-cycle); the identity lookup runs by reading the
-// context value installed by IdentityResolver. To avoid an unexported
-// cross-package key, the mcp package consumes identity via an
-// interface contract: the caller passes the request whose context
-// already carries the identity, and the catalog reads it through the
-// IdentityReader closure.
-//
-// In V1 we expose the identity via a typed context key that mirrors
-// controlapi's. The controlapi package is the only writer; mcp is the
-// only consumer. Since both packages live in the same repo and the
-// design is one-way (controlapi → mcp), we share a small re-export
-// in controlapi/mcp/identity.go.
-
-// identityHookFn is the function signature backing the
-// IdentityFromContext indirection.
-type identityHookFn func(context.Context) (auth.Identity, bool)
-
-// identityHook holds the active resolver atomically. The variable is
-// hot-swapped by controlapi.NewApp at startup and by tests via
-// SetIdentityHook (which returns a restore closure so the swap is
-// race-free even when tests run with -race).
-var identityHook atomic.Value // identityHookFn
-
-func init() {
-	identityHook.Store(identityHookFn(func(context.Context) (auth.Identity, bool) {
-		return auth.Identity{}, false
-	}))
-}
-
-// loadIdentityHook returns the current resolver.
-func loadIdentityHook() identityHookFn {
-	v := identityHook.Load()
-	if v == nil {
-		return func(context.Context) (auth.Identity, bool) { return auth.Identity{}, false }
-	}
-	return v.(identityHookFn)
-}
-
-// IdentityFromContext is the catalog's read-side entry point. The
-// function signature is preserved so call sites read naturally.
-//
-// Deprecated for write access: assignment-style mutation
-// (`mcp.IdentityFromContext = ...`) compiles but is not race-safe.
-// Use SetIdentityHook from tests; controlapi.NewApp installs the
-// production hook via SetIdentityHook as well.
-var IdentityFromContext = func(ctx context.Context) (auth.Identity, bool) {
-	return loadIdentityHook()(ctx)
-}
-
-// SetIdentityHook installs `fn` as the active identity resolver and
-// returns a closure that restores the previous resolver. Tests use
-// it via `t.Cleanup(SetIdentityHook(myFn))` for race-safe scoping.
-func SetIdentityHook(fn func(context.Context) (auth.Identity, bool)) func() {
-	prev := identityHook.Load()
-	identityHook.Store(identityHookFn(fn))
-	return func() {
-		if prev == nil {
-			identityHook.Store(identityHookFn(func(context.Context) (auth.Identity, bool) {
-				return auth.Identity{}, false
-			}))
-			return
-		}
-		identityHook.Store(prev)
-	}
-}
-
 // Catalog implements ToolCatalog by consulting the action registry +
 // per-tool input-schema map + a router-dispatch handler.
+//
+// Identity and protocol-skin are injected as fields (ResolveIdentity /
+// WithProtocolSkin) by the constructing package — the mcp package needs
+// neither a back-import of controlapi nor a package-global mutable hook.
+// The constructor (controlapi.registerMCPRoute) supplies closures that
+// read/tag the request context; tests construct a Catalog with their own.
 type Catalog struct {
 	// Registry resolves tool names to actions + routes.
 	Registry Registry
@@ -107,13 +44,29 @@ type Catalog struct {
 	// Schemas is an optional per-tool inputSchema map. Missing /
 	// nil entries default to `{"type":"object"}`.
 	Schemas map[string][]byte
+
+	// ResolveIdentity reads the requesting identity off the request
+	// context. Injected by the constructor (controlapi passes its
+	// context-reader, which knows the unexported identity key). Nil →
+	// no identity (the conservative default: an unidentified caller
+	// sees no tools).
+	ResolveIdentity func(context.Context) (auth.Identity, bool)
+
+	// WithProtocolSkin tags a context with the given protocol skin so
+	// the re-entrant tool dispatch records the "mcp" origin in the
+	// audit log. Injected by the constructor; nil → no-op (acceptable
+	// for tests that don't assert the skin tag).
+	WithProtocolSkin func(ctx context.Context, skin string) context.Context
 }
 
 // Filtered renders the catalog filtered by the requesting identity's
 // grant. A tool is included if the identity's grant matches the
 // tool's action under the wildcard rules.
 func (c *Catalog) Filtered(r *http.Request) []Tool {
-	ident, _ := IdentityFromContext(r.Context())
+	var ident auth.Identity
+	if c.ResolveIdentity != nil {
+		ident, _ = c.ResolveIdentity(r.Context())
+	}
 	out := []Tool{}
 	for _, name := range c.Registry.AllTools() {
 		entry, ok := c.Registry.EntryForTool(name)
@@ -232,11 +185,11 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		inner.Header.Set("Idempotency-Key", "mcp-"+uuid.NewString())
 	}
 	// Carry the MCP protocol-skin tag so audit records mark the
-	// origin correctly. The setter is exposed as a package-level
-	// hook (mirrors controlapi.WithProtocolSkin) to keep this
-	// package's imports tight.
-	if WithProtocolSkin != nil {
-		inner = inner.WithContext(WithProtocolSkin(inner.Context(), "mcp"))
+	// origin correctly. WithProtocolSkin is the injected tagger
+	// (mirrors controlapi.WithProtocolSkin) so this package needs no
+	// back-import; nil is a no-op.
+	if c.WithProtocolSkin != nil {
+		inner = inner.WithContext(c.WithProtocolSkin(inner.Context(), "mcp"))
 	}
 
 	rec := httptest.NewRecorder()
@@ -258,12 +211,6 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	}
 	return rawOrString(bs), nil
 }
-
-// WithProtocolSkin is set at startup by controlapi to bridge the
-// context-key without a back-import. Catalog.Invoke calls it on the
-// inner request's context before dispatching; if nil, the call is a
-// no-op (acceptable for tests that don't care about the skin tag).
-var WithProtocolSkin func(ctx context.Context, skin string) context.Context
 
 // substitutePathParams replaces `{name}` placeholders in pattern
 // with the matching value from args. The substituted args are

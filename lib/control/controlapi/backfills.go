@@ -28,6 +28,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -36,8 +37,26 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
+
+// errBackfillTargetInvalid is returned from inside the create-backfill
+// transaction when `target_node` is not a fan-out node wired to accept
+// the partition override. It carries the operator-facing reason and is
+// mapped to a 400 by the outer handler.
+//
+// Load-bearing property (`@concept: backfill`): a backfill against a
+// target that cannot consume `partition_request_override` is REJECTED
+// at submit, never accepted-and-silently-degraded to a plain invalidate
+// that processes the template default. The check fires identically on
+// the live and dry-run paths.
+type errBackfillTargetInvalid struct {
+	reason string
+}
+
+func (e errBackfillTargetInvalid) Error() string { return e.reason }
 
 func registerBackfillsRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/instances/{id}/backfills", gate(deps, "backfill:create", handleCreateBackfill(deps)))
@@ -57,6 +76,48 @@ type createBackfillRequest struct {
 type createBackfillResponse struct {
 	MessageID           string `json:"message_id"`
 	BackfillOperationID string `json:"backfill_operation_id"`
+}
+
+// validateBackfillTarget confirms `targetNode` is a fan-out node in the
+// template that is wired to consume a `partition_request_override`. The
+// runtime defers this validation to the control-api layer
+// (`@concept: backfill`); this is where it lands.
+//
+// Rejects (returns errBackfillTargetInvalid) when:
+//   - the target node is not declared in the template, OR
+//   - the node declares no `fan_out` block (a backfill is meaningless
+//     without a partition, and thus a fan-out), OR
+//   - the node's `fan_out.partition_request` does not reference the
+//     trigger message (`{{trigger.message.payload…}}`), so the override
+//     would be ignored and the template default would silently fire.
+//
+// The trigger-substitution check is the subtle one and the load-bearing
+// part of this validation: a fan-out node whose `partition_request` is a
+// fixed literal cannot consume the override. We reject it rather than
+// accept-and-silently-degrade. The detector mirrors the runtime
+// resolver's notion of a trigger directive exactly (see
+// attributes.ReferencesTriggerMessage).
+func validateBackfillTarget(tpl spec.TemplateSpec, targetNode string) error {
+	var found *spec.TemplateNodeDef
+	for i := range tpl.Nodes {
+		if tpl.Nodes[i].Type == targetNode {
+			found = &tpl.Nodes[i]
+			break
+		}
+	}
+	if found == nil {
+		return errBackfillTargetInvalid{reason: fmt.Sprintf(
+			"target_node %q is not declared in the instance's template", targetNode)}
+	}
+	if found.FanOut == nil {
+		return errBackfillTargetInvalid{reason: fmt.Sprintf(
+			"target_node %q is not a fan-out node; a backfill requires a fan-out node whose partition_request is wired for the override", targetNode)}
+	}
+	if !attributes.ReferencesTriggerMessage(found.FanOut.PartitionRequest) {
+		return errBackfillTargetInvalid{reason: fmt.Sprintf(
+			"target_node %q fan-out is not wired for the override: its partition_request must reference the trigger message (e.g. {{trigger.message.payload.partition_request_override | <default>}}) to consume partition_request_override", targetNode)}
+	}
+	return nil
 }
 
 func handleCreateBackfill(deps AppDeps) http.HandlerFunc {
@@ -89,9 +150,24 @@ func handleCreateBackfill(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
 			}
-			// Dry-run gate: instance exists and is not terminated.
-			// Signal the outer code to write the synthetic envelope; the
-			// tx rolls back without enqueuing the backfill message.
+			// Validate the target is a fan-out node wired for the
+			// override BEFORE the dry-run gate, so the live and dry-run
+			// paths reject an invalid target identically (a bad target
+			// fails the same way in preview). `@concept: backfill`.
+			tpl, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+			if err != nil {
+				return err
+			}
+			if tpl == nil {
+				return shared.ErrTemplateNotFound
+			}
+			if err := validateBackfillTarget(tpl.Spec, body.TargetNode); err != nil {
+				return err
+			}
+			// Dry-run gate: instance exists, is not terminated, and the
+			// target validated. Signal the outer code to write the
+			// synthetic envelope; the tx rolls back without enqueuing the
+			// backfill message.
 			if isDryRun {
 				return errDryRunOK
 			}
@@ -119,6 +195,11 @@ func handleCreateBackfill(deps AppDeps) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, shared.ErrInstanceNotFound) {
 				notFoundResp(w, shared.ErrInstanceNotFound.Error())
+				return
+			}
+			var targetErr errBackfillTargetInvalid
+			if errors.As(err, &targetErr) {
+				badRequest(w, targetErr.reason)
 				return
 			}
 			if errors.Is(err, errInstanceTerminated) {

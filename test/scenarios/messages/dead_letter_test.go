@@ -59,7 +59,7 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	if n, err := m.MarkCancelled(ctx, nil, backfillOp, now); err != nil || n != 1 {
 		t.Fatalf("MarkCancelled: n=%d err=%v", n, err)
 	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now)
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now, nil)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}

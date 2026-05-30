@@ -148,6 +148,9 @@ func TestV1Registry(t *testing.T) {
 		"breakpoint:delete": true,
 		// Template lint surface (spec 2026-05-28-quality-of-life-features).
 		"template:validate": true,
+		// Audit read surface (spec 2026-05-29-console-upstream-auth-audit-and-fixes):
+		// the auth.* slice of the event log, granted separately from event:read.
+		"audit:read": true,
 	}
 	for _, a := range surplus {
 		if !allowed[a] {
@@ -220,6 +223,7 @@ func TestRegistryCoversRouter(t *testing.T) {
 	registerBreakpointsRoutes(r, deps)
 	registerNodesRoutes(r, deps)
 	registerEventsRoutes(r, deps)
+	registerAuditRoutes(r, deps)
 	registerClaimsRoutes(r, deps)
 	registerMessagesRoutes(r, deps)
 	registerBackfillsRoutes(r, deps)

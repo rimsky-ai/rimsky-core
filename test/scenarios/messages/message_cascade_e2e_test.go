@@ -106,10 +106,19 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 		}); err != nil {
 			return err
 		}
+		// coalesce delivery: this scenario enqueues two envelopes (a
+		// targeted invalidate + a broadcast) and asserts BOTH are delivered
+		// into one frame so the cascade walker is exercised against both at
+		// once. The default flipped to serial_queue (one message per frame)
+		// per spec 2026-05-29, so coalesce is now opt-in and must be set
+		// explicitly here. The two envelopes carry no payload, so the
+		// conflict-aware coalesce path sees no value-disagreement and
+		// coalesces them.
 		i, err := backend.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID: instID, TemplateHash: tmplRow.ID,
 			InstanceKey: &ck, Params: map[string]any{},
-			MainRunScopeID: mainScopeID,
+			MainRunScopeID:    mainScopeID,
+			FrameDeliveryMode: string(runtime.FrameDeliveryCoalesce),
 		}, tx)
 		if err != nil {
 			return err

@@ -105,4 +105,13 @@ type LineageTable interface {
 	// before cutoff AND whose corresponding run or claim_handle is no
 	// longer present. Used by the retention sweep (E10).
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error)
+
+	// CountOlderThan returns the number of rows DeleteOlderThan would
+	// delete for the same cutoff — the identical "before cutoff AND
+	// corresponding run/claim_handle no longer present" predicate, but
+	// SELECT count(*) instead of DELETE. Used by the prune dry-run
+	// (POST /admin/lineage/prune?dry_run=true) so the would-prune count
+	// is a true preview of the live delete, not an approximation. Drivers
+	// MUST keep the WHERE clause identical to DeleteOlderThan.
+	CountOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 }

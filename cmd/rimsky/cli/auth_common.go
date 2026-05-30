@@ -100,21 +100,20 @@ func loadRole(name, path string) (roleSpec, error) {
 	return r, nil
 }
 
-// applyGrantPatches mutates a grant by applying --add / --remove /
-// --dry-run patches. Returns the patched grant.
+// applyGrantPatches mutates a grant by applying --add / --remove
+// patches. Returns the patched grant.
 //
-// Validation per spec:
-//   - `--dry-run=<action>` rejects read actions (`*:read` ending) and
-//     auth-mutation actions (auth:create / revoke / rotate); CLI-side
-//     nicety, not a server enforcement.
-func applyGrantPatches(grant auth.Grant, add, remove, dryRun []string) (auth.Grant, error) {
+// A grant entry is just an action string — permission is set
+// membership. Dry-run is no longer a per-grant modifier; it is a
+// per-request `?dry_run=true` flag, so there is no --dry-run patch.
+func applyGrantPatches(grant auth.Grant, add, remove []string) (auth.Grant, error) {
 	out := append(auth.Grant{}, grant...)
 
 	for _, a := range add {
 		if err := auth.ValidateActionString(a); err != nil {
 			return nil, fmt.Errorf("--add %q: %w", a, err)
 		}
-		out = append(out, auth.GrantEntry{Action: a, Mode: auth.ModeExecute})
+		out = append(out, auth.GrantEntry{Action: a})
 	}
 
 	for _, a := range remove {
@@ -127,18 +126,6 @@ func applyGrantPatches(grant auth.Grant, add, remove, dryRun []string) (auth.Gra
 		out = filtered
 	}
 
-	for _, a := range dryRun {
-		if err := auth.ValidateActionString(a); err != nil {
-			return nil, fmt.Errorf("--dry-run %q: %w", a, err)
-		}
-		if strings.HasSuffix(a, ":read") {
-			return nil, fmt.Errorf("--dry-run %q: dry-run is meaningless for read actions", a)
-		}
-		if a == "auth:create" || a == "auth:revoke" || a == "auth:rotate" {
-			return nil, fmt.Errorf("--dry-run %q: auth mutations are not dry-runnable", a)
-		}
-		out = append(out, auth.GrantEntry{Action: a, Mode: auth.ModeDryRun})
-	}
 	return out, nil
 }
 

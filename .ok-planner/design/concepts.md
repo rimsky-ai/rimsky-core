@@ -29,7 +29,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `data-processing` — Optional mix-in protocol on a claim producer, advertised in the capabilities handshake alongside the claim-producer protocol, for the typed-data version lifecycle.
 - `delegation` — Delegation is the relationship between a calling node and a sub-graph: a node carries `delegate: <graph-name>` instead of `executor:`, and dispatches the named sub-graph as its execution unit.
 - `discovery-cache` (aliases: capabilities cache) — An in-memory per-service capabilities cache populated by the observability handshake at startup.
-- `dry-run` — A per-grant-entry modifier on `concept:permission` entries that runs validation but skips the actual mutation, returning a synthetic would-have envelope.
+- `dry-run` — A per-request flag (`?dry_run=true`) that runs a write's validation but skips its mutation, returning a synthetic would-have envelope; a no-op on reads.
 - `error-policy` (aliases: error-types policy chain) — The template-level error-types block maps per-error-class strings to one of four runtime actions: pass, give_up, retry, discard_claims_then_retry.
 - `event-log` (aliases: audit log) — Rimsky's internal append-only audit-log ledger.
 - `executor` — An executor is an out-of-process service that implements the gRPC executor's server-streaming execute method plus an optional executor-observability protocol.
@@ -54,7 +54,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `observability` — The service-facing optional observability protocols and the startup handshake that probes them.
 - `orphan-reaper` — A periodic sweep that hard-deletes stale rows from the node-run ledger and the claim-handle ledger.
 - `parked-state` (aliases: park, parked node) — `parked` is the fifth legal node state, entered from `running` when the executor emits a park outcome.
-- `permission` (aliases: grant, action) — The per-key authorization grant attached to a `concept:api-key`.
+- `permission` (aliases: grant, action) — The per-key authorization grant attached to a `concept:api-key`: a set of action-string entries evaluated by set-membership, with no per-entry mode modifier.
 - `persistence-database` (aliases: persistence-driver) — The top-level database interface is the umbrella over the rimsky persistence layer.
 - `publisher` — A publisher is a peer service that publishes messages into rimsky.
 - `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, kind) triple.
@@ -85,6 +85,6 @@ See `concepts/_retired/` for the full retirement notes.
 - `node-state` — The five-state node enum now lives entirely on the node-run rather than the node row; its semantics are documented under `concept:node-run`.
 - `on-event-handler` — The `on_event:` map, retired in favor of subscription-to-event entries under `concept:node-subscription` (which subsume both the substitution and the invalidate-downstream paths).
 - `quality-rule` — Replaced by the verifier-executor pattern (a regular executor that co-holds the upstream claim, runs checks, and returns success or error); no successor concept — the pattern is documentation only.
-- `sdk` — The separate Go SDK module dissolved into the protocols module (implementer scaffolding, action vocabulary, and the conformance library), the ops glue demoted to a rimsky-internal package, and the Postgres testcontainer helper carved into its own opt-in module. Retired 2026-05-26: for Go there is no separate SDK — the protocols module is the single public surface; a future development kit is a different-purpose, Python-first authoring layer, not a Go SDK successor.
 - `schedule` — Replaced by the bundled cron sensor; cron-style firing is now a sensor kind under `concept:sensor` plus `concept:message`, preserving the missed-fires-not-backfilled semantic.
+- `sdk` — The separate Go SDK module dissolved into the protocols module (implementer scaffolding, action vocabulary, and the conformance library), the ops glue demoted to a rimsky-internal package, and the Postgres testcontainer helper carved into its own opt-in module. Retired 2026-05-26: for Go there is no separate SDK — the protocols module is the single public surface; a future development kit is a different-purpose, Python-first authoring layer, not a Go SDK successor.
 - `userdata` — Collapsed into `concept:attribute`; per-node executor configuration now uses static-default attribute properties, with per-instance overrides renamed from userdata-overrides to attribute-overrides.

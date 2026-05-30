@@ -322,6 +322,14 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"event_list"},
 		Description: "Read the event log."},
 
+	// Audit (the auth.* slice of the event log; granted separately
+	// from event:read because actor identity / IP / user-agent /
+	// actions are sensitive — see concept:event-log, concept:permission).
+	{Action: "audit:read", IsWrite: false,
+		Routes:      []Route{{"GET", "/audit"}},
+		MCPTools:    []string{"audit_list"},
+		Description: "Read the auth audit log."},
+
 	// Lineage
 	{Action: "lineage:read", IsWrite: false,
 		Routes: []Route{

@@ -140,8 +140,14 @@ func (b *lineageImpl) QueryByParentRunID(ctx context.Context, parentRunID shared
 	return scanLineage(rows)
 }
 
-const sqliteDeleteOlderThanSQL = `
-DELETE FROM rimsky_lineage
+// sqliteLineagePruneWhereSQL is the shared predicate for both
+// DeleteOlderThan (the live prune) and CountOlderThan (the dry-run
+// preview): rows older than the cutoff whose corresponding run AND
+// claim_handle are no longer present. Defined once so the dry-run count
+// is a true preview of the live delete — keeping the WHERE clause
+// byte-identical across the two statements is the load-bearing
+// invariant (see persistence.LineageTable.CountOlderThan doc).
+const sqliteLineagePruneWhereSQL = `
  WHERE observed_at < ?
    AND NOT EXISTS (
        SELECT 1 FROM rimsky_node_runs r
@@ -152,6 +158,8 @@ DELETE FROM rimsky_lineage
         WHERE c.id = json_extract(rimsky_lineage.record, '$.claim_handle_id')
    )`
 
+const sqliteDeleteOlderThanSQL = `DELETE FROM rimsky_lineage` + sqliteLineagePruneWhereSQL
+
 func (b *lineageImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
 	res, err := (*tablesImpl)(b).db.ExecContext(ctx, sqliteDeleteOlderThanSQL, cutoff)
 	if err != nil {
@@ -159,6 +167,16 @@ func (b *lineageImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (in
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+const sqliteCountOlderThanSQL = `SELECT count(*) FROM rimsky_lineage` + sqliteLineagePruneWhereSQL
+
+func (b *lineageImpl) CountOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
+	var n int
+	if err := (*tablesImpl)(b).db.QueryRowContext(ctx, sqliteCountOlderThanSQL, cutoff).Scan(&n); err != nil {
+		return 0, fmt.Errorf("sqlite.Lineage.CountOlderThan: %w", err)
+	}
+	return n, nil
 }
 
 func scanLineage(rows *sql.Rows) ([]persistence.LineageRow, error) {

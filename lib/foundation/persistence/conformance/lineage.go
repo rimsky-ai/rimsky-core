@@ -112,3 +112,99 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 		t.Fatalf("QueryByParentRunID(unknown): got %d rows want 0", len(rows))
 	}
 }
+
+// testLineageCountOlderThanMatchesDelete pins that CountOlderThan (the
+// prune dry-run preview) returns exactly what DeleteOlderThan would
+// delete for the same cutoff. Both must share the identical predicate
+// ("observed_at < cutoff AND the run/claim_handle no longer present"),
+// so the dry-run count is a true preview of the live delete rather than
+// an approximation. The test seeds three classes of row:
+//
+//   - prunable: old observed_at, run_id with no matching node_run row.
+//   - too-recent: observed_at after the cutoff (must NOT prune).
+//   - present-run: old observed_at, but its run_id references a live
+//     rimsky_node_runs row (the EXISTS guard must spare it).
+//
+// It asserts CountOlderThan == the live delete count, then re-checks
+// CountOlderThan is 0 (nothing left to prune) — proving Count was a
+// true preview, not a stale or always-zero stub.
+func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	store := d.Tables()
+
+	insertLeaf := func(t *testing.T, runID shared.UUID, observedAt time.Time) {
+		t.Helper()
+		rec := map[string]any{
+			"run_id":               runID.String(),
+			"frame_id":             fix.FrameID.String(),
+			"state":                "fresh",
+			"settling_signal_type": "terminal/success",
+		}
+		recBytes, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatalf("marshal lineage record: %v", err)
+		}
+		if err := inTx(ctx, store, func(tx persistence.Tx) error {
+			return store.Lineage().Insert(ctx, tx, persistence.LineageRow{
+				ID:         shared.UUID(uuid.New()),
+				RecordKind: persistence.LineageRecordKindLeafRun,
+				InstanceID: fix.InstanceID,
+				FrameID:    fix.FrameID,
+				ObservedAt: observedAt,
+				Record:     recBytes,
+			})
+		}); err != nil {
+			t.Fatalf("Lineage.Insert: %v", err)
+		}
+	}
+
+	// A live rimsky_node_runs row whose id the present-run lineage row
+	// will cite — the NOT EXISTS(run) half of the predicate must spare
+	// it even though it's old.
+	liveRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
+
+	now := time.Now().UTC()
+	cutoff := now.Add(-1 * time.Hour)
+
+	// Two prunable rows: old, and their run_id has no live node_run.
+	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-3*time.Hour))
+	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-2*time.Hour))
+	// Too-recent: observed_at is after cutoff, so the `observed_at <
+	// cutoff` half of the predicate excludes it.
+	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-1*time.Minute))
+	// Present-run: old enough, but the run_id references a live
+	// node_run, so the NOT EXISTS guard spares it.
+	insertLeaf(t, liveRunID, now.Add(-4*time.Hour))
+
+	wantPrunable := 2
+
+	// CountOlderThan (dry-run preview) must equal the eventual delete.
+	gotCount, err := store.Lineage().CountOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("CountOlderThan: %v", err)
+	}
+	if gotCount != wantPrunable {
+		t.Fatalf("CountOlderThan: got %d want %d (2 old rows with no live run)", gotCount, wantPrunable)
+	}
+
+	// Live delete with the SAME cutoff must remove exactly what Count
+	// previewed.
+	gotDeleted, err := store.Lineage().DeleteOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan: %v", err)
+	}
+	if gotDeleted != gotCount {
+		t.Fatalf("DeleteOlderThan deleted %d but CountOlderThan previewed %d — predicates diverged", gotDeleted, gotCount)
+	}
+
+	// Nothing left to prune: Count is now 0, proving it reflects the
+	// post-delete state (not an always-N or always-zero stub).
+	afterCount, err := store.Lineage().CountOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("CountOlderThan (after delete): %v", err)
+	}
+	if afterCount != 0 {
+		t.Fatalf("CountOlderThan after delete: got %d want 0", afterCount)
+	}
+}

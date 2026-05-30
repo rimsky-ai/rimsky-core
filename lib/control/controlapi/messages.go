@@ -310,6 +310,18 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 			u := shared.UUID(opID)
 			filter.BackfillOperationID = &u
 		}
+		// frame_id narrows to the messages delivered into a given frame —
+		// the "what landed in frame X" forensic query for backfill / fan-out
+		// debugging. Backed by the frame_id predicate in both drivers' List.
+		if s := q.Get("frame_id"); s != "" {
+			frameID, err := uuid.Parse(s)
+			if err != nil {
+				badRequest(w, "invalid frame_id")
+				return
+			}
+			u := shared.UUID(frameID)
+			filter.FrameID = &u
+		}
 		if s := q.Get("delivered_after"); s != "" {
 			t, err := time.Parse(time.RFC3339, s)
 			if err != nil {

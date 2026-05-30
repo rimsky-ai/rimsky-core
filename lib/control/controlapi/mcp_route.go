@@ -11,28 +11,12 @@
 package controlapi
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi/mcp"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
-
-// Wire the cross-package hooks the mcp package consumes so it doesn't
-// need to import controlapi (back-cycle). SetIdentityHook is the
-// race-safe entry point that uses an atomic.Value under the hood;
-// assigning the package-level var directly compiles but races under
-// -race when tests touch the same var.
-func init() {
-	mcp.SetIdentityHook(func(ctx context.Context) (auth.Identity, bool) {
-		return IdentityFromContextOK(ctx)
-	})
-	mcp.WithProtocolSkin = func(ctx context.Context, skin string) context.Context {
-		return WithProtocolSkin(ctx, skin)
-	}
-}
 
 // routerRef is a lazily-bound http.Handler — the catalog needs the
 // chi router for in-process tool dispatch, but the router only
@@ -71,6 +55,13 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 		Router:      rr,
 		Description: descriptionForTool,
 		Schemas:     builtinSchemas(),
+		// Inject the identity reader + protocol-skin tagger directly
+		// rather than poking package-global hooks (which raced under
+		// parallel tests). Both reference controlapi's own helpers, which
+		// know the unexported context keys; the mcp package never imports
+		// controlapi.
+		ResolveIdentity:  IdentityFromContextOK,
+		WithProtocolSkin: WithProtocolSkin,
 	}
 	// Resources skin: a parallel-shaped catalog for the breakpoint-hits
 	// URI family. Per spec

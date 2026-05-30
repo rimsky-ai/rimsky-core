@@ -62,12 +62,11 @@ func rowToDTO(row persistence.APIKey) keyDTO {
 // the action registry (wildcards are accepted without registry
 // lookup; exact action strings must be registered).
 //
-// Note (spec K12): auth mutations are NOT dry-runnable in V1. The
-// handler intentionally ignores ModeFromContext — a `mode: dry_run`
-// grant entry for `auth:create` is parsed and stored but the handler
-// always executes. Rationale: a dry-run create wouldn't change the
-// active-key count, leading to confusing audit trails interacting
-// with the implicit-anonymous predicate.
+// Dry-run (`?dry_run=true`): after grant validation succeeds, the
+// handler returns a placeholder envelope and mints NO plaintext
+// credential and persists no row (the dry-run never-mutates property;
+// @concept: dry-run). In anonymous-mode (zero active keys) the
+// envelope notes that committing the first key exits anonymous mode.
 func handleCreateKey(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		type req struct {
@@ -108,6 +107,24 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 				badRequest(w, "unknown action: "+e.Action)
 				return
 			}
+		}
+		// Dry-run: grant validation passed; skip the mint + insert. Mint
+		// NO plaintext (a previewed key must never surface a usable
+		// credential) and persist no row — return a placeholder id
+		// mirroring instance:create's "dry-run-not-persisted". In
+		// anonymous-mode the note warns that committing the first key
+		// exits anonymous mode. @concept: dry-run.
+		if ModeFromContext(r.Context()) == auth.ModeDryRun {
+			details := map[string]any{
+				"key_id":      "dry-run-not-persisted",
+				"name":        body.Name,
+				"permissions": body.Permissions,
+			}
+			if isAnon, _ := deps.AuthState.IsAnonymousMode(r.Context()); isAnon {
+				details["note"] = "this is the first key; committing it exits anonymous mode and requires auth on all future requests"
+			}
+			WriteDryRunResponseForced(w, "would_have_created_key", details)
+			return
 		}
 		plaintext, hash, err := auth.Mint()
 		if err != nil {
@@ -243,6 +260,14 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
+		// Dry-run: key resolved and the last-key guard passed; skip the
+		// MarkRevoked mutation and write the envelope before any state
+		// change (the dry-run never-mutates property; @concept: dry-run).
+		if WriteDryRunResponse(w, r, "would_have_revoked_key", map[string]any{
+			"key_id": row.ID.String(),
+		}) {
+			return
+		}
 		changed, found, err := keys.MarkRevoked(ctx, row.ID, now, nil)
 		if err != nil {
 			writeError(w, err)
@@ -323,6 +348,15 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot rotate a revoked key"})
 			return
 		}
+		// Dry-run: key resolved, grace parsed, and not-revoked confirmed;
+		// skip the rotate transaction. The gate is BEFORE auth.Mint so a
+		// previewed rotate mints no plaintext and persists nothing (the
+		// dry-run never-mutates property; @concept: dry-run).
+		if WriteDryRunResponse(w, r, "would_have_rotated_key", map[string]any{
+			"key_id": oldRow.ID.String(),
+		}) {
+			return
+		}
 		plaintext, hash, err := auth.Mint()
 		if err != nil {
 			writeError(w, err)
@@ -350,6 +384,8 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 		}
 		deps.AuthState.InvalidateAnonCache()
 		deps.AuthState.EmitKeyRotated(ctx, auth.KeyRotatedPayload{
+			KeyID:    newRow.ID,   // uniform actor key: a rotation is found by its new key id
+			KeyName:  oldRow.Name, // name is preserved across the rotation
 			OldKeyID: oldRow.ID,
 			NewKeyID: newRow.ID,
 			Name:     oldRow.Name,

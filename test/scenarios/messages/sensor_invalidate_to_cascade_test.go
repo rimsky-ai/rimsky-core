@@ -42,7 +42,7 @@ func TestSensorInvalidateToCascade(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("EnqueueMessage: %v", err)
 	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now)
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now, nil)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}

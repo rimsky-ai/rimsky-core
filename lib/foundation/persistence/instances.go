@@ -26,7 +26,8 @@ import (
 // FrameDeliveryMode selects per-instance message-delivery semantics for
 // `DeliverPendingMessages` at frame creation
 // (col:rimsky_instances.frame_delivery_mode). One of "serial_queue" or
-// "coalesce"; the column default is "coalesce".
+// "coalesce"; an omitted mode defaults to "serial_queue" (decided by the
+// driver INSERT literal, not the column DEFAULT).
 type InstanceRow struct {
 	ID                 shared.UUID    `json:"id"`
 	TemplateHash       string         `json:"template_hash"` // FK to rimsky_templates.id
@@ -123,9 +124,10 @@ type InstanceTable interface {
 // not re-validate; it serialises and stores. nil/empty are equivalent
 // and persisted as `{}`.
 //
-// FrameDeliveryMode, when empty, falls back to the column default
-// ("coalesce"). Otherwise the value is written verbatim — the column's
-// CHECK constraint enforces the discriminator vocabulary.
+// FrameDeliveryMode, when empty, is defaulted to "serial_queue" by the
+// driver INSERT literal (COALESCE(?, 'serial_queue')) — not the column
+// DEFAULT. Otherwise the value is written verbatim — the column's CHECK
+// constraint enforces the discriminator vocabulary.
 type InstanceCreateInput struct {
 	ID                 shared.UUID
 	TemplateHash       string

@@ -15,7 +15,7 @@ import (
 )
 
 // authStringSliceFlag is a repeatable `--flag=value` accumulator used
-// by the auth subcommands (--add / --remove / --dry-run).
+// by the auth subcommands (--add / --remove).
 type authStringSliceFlag []string
 
 func (s *authStringSliceFlag) String() string { return strings.Join(*s, ",") }
@@ -33,15 +33,14 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 		roleName, rolePath    string
 		expires               string
 	)
-	var addFlags, removeFlags, dryRunFlags authStringSliceFlag
+	var addFlags, removeFlags authStringSliceFlag
 	fs.StringVar(&endpointFlag, "endpoint", "", "control-api endpoint URL")
 	fs.StringVar(&keyFlag, "key", "", "API key (Bearer token)")
 	fs.StringVar(&name, "name", "", "name for the new key (required)")
 	fs.StringVar(&roleName, "role", "", "bundled role name (required unless --role-file is set)")
 	fs.StringVar(&rolePath, "role-file", "", "load role from a JSON file instead of bundled")
-	fs.Var(&addFlags, "add", "append a grant entry with mode=execute (repeatable)")
+	fs.Var(&addFlags, "add", "append a grant entry for this action (repeatable)")
 	fs.Var(&removeFlags, "remove", "remove grant entries matching this action (repeatable)")
-	fs.Var(&dryRunFlags, "dry-run", "append a grant entry with mode=dry_run (repeatable)")
 	fs.StringVar(&expires, "expires", "", "duration until the key expires (e.g. 24h, 30d)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 2
@@ -59,7 +58,7 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	grant, err := applyGrantPatches(role.Permissions, addFlags, removeFlags, dryRunFlags)
+	grant, err := applyGrantPatches(role.Permissions, addFlags, removeFlags)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2

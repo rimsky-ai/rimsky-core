@@ -99,6 +99,22 @@ func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistenc
 	return scanMessages(rows)
 }
 
+const sqliteListDeliveredForFrameSQL = `
+SELECT id, instance_id, kind, sender, sender_kind, target, payload,
+       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+  FROM rimsky_messages
+ WHERE frame_id = ?
+ ORDER BY received_at ASC, id ASC`
+
+func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, tx persistence.Tx, frame shared.UUID) ([]persistence.MessageRow, error) {
+	rows, err := b.q(tx).QueryContext(ctx, sqliteListDeliveredForFrameSQL, frame.String())
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.Messages.ListDeliveredForFrame: %w", err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
 const sqliteGetMessageSQL = `
 SELECT id, instance_id, kind, sender, sender_kind, target, payload,
        backfill_operation_id, received_at, delivered_at, frame_id, cancelled
@@ -143,6 +159,10 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 	if filter.BackfillOperationID != nil {
 		args = append(args, filter.BackfillOperationID.String())
 		conds = append(conds, "backfill_operation_id = ?")
+	}
+	if filter.FrameID != nil {
+		args = append(args, filter.FrameID.String())
+		conds = append(conds, "frame_id = ?")
 	}
 	limit := pag.Limit
 	if limit <= 0 {

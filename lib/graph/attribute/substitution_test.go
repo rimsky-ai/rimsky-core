@@ -629,3 +629,40 @@ func TestSubstitute_EmbeddedSourceWithMarkers(t *testing.T) {
 		t.Fatalf("want %q, got %q", "greeting: hello, optional: ", s)
 	}
 }
+
+// TestReferencesTriggerMessage pins the backfill-target detector: a
+// `partition_request` is "wired for the override" iff it carries a
+// `{{trigger.message.payload…}}` directive, regardless of the
+// `| <fallback>` / `?` markers. A fixed literal or a non-trigger source
+// kind is NOT wired.
+func TestReferencesTriggerMessage(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"bare trigger payload", "{{trigger.message.payload}}", true},
+		{"trigger payload field", "{{trigger.message.payload.partition_request_override}}", true},
+		{"trigger with fallback literal", `{{trigger.message.payload.partition_request_override | {"partition_keys":["default"]}}}`, true},
+		{"trigger with lenient marker", "{{trigger.message.payload.x ?}}", true},
+		{"trigger with surrounding whitespace", "{{  trigger.message.payload.x  }}", true},
+		{"embedded among literal text", `prefix-{{trigger.message.payload.k}}-suffix`, true},
+		{"second directive is trigger", "{{params.region}}/{{trigger.message.payload.k}}", true},
+		{"fixed literal — no directive", `{"partition_keys":["a","b","c"]}`, false},
+		{"params source kind", "{{params.partition_request}}", false},
+		{"node attribute source kind", "{{nodes.upstream.attribute.x}}", false},
+		{"claim source kind", "{{claim.data.payload.x}}", false},
+		{"child partition key", "{{child.partition_key}}", false},
+		{"trigger but wrong second segment", "{{trigger.event.payload}}", false},
+		{"trigger but wrong third segment", "{{trigger.message.address}}", false},
+		{"empty string", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ReferencesTriggerMessage(tc.in)
+			if got != tc.want {
+				t.Fatalf("ReferencesTriggerMessage(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}

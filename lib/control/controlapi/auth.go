@@ -20,9 +20,9 @@ import (
 // ctxKeyIdentity is the context key for the resolved Identity.
 type ctxKeyIdentity struct{}
 
-// ctxKeyMode is the context key for the per-request Mode resolved
-// from the matching grant entry. Read by handlers via
-// ModeFromContext to honor dry-run.
+// ctxKeyMode is the context key for the per-request Mode resolved from
+// the `?dry_run=true` request flag by gateByAction. Read by handlers
+// via ModeFromContext to honor dry-run.
 type ctxKeyMode struct{}
 
 // ctxKeyProtocolSkin is the context key for the protocol-skin
@@ -49,9 +49,10 @@ func IdentityFromContextOK(ctx context.Context) (auth.Identity, bool) {
 	return v, ok
 }
 
-// ModeFromContext returns the per-request Mode (execute or dry_run).
-// Defaults to execute for read actions, when no mode was set on the
-// matched grant entry, or when the auth middleware didn't run.
+// ModeFromContext returns the per-request Mode (execute or dry_run),
+// resolved from the `?dry_run=true` request flag by gateByAction.
+// Defaults to execute when the flag is absent or the auth middleware
+// didn't run.
 func ModeFromContext(ctx context.Context) auth.Mode {
 	if m, ok := ctx.Value(ctxKeyMode{}).(auth.Mode); ok {
 		return m

@@ -31,6 +31,14 @@ type EventAppendInput struct {
 }
 
 // EventListFilter is the observability/list filter.
+//
+// The KeyID / KeyName / ActionExact / ActionPrefix / ResponseStatus /
+// Mode / RequestPath fields filter on keys inside the JSONB `payload`
+// column. They are only meaningful for `auth.*` kinds (the auth audit
+// rows, whose payload carries those keys) and back the GET /audit read
+// surface; on non-auth event kinds the payload lacks those keys so a
+// non-nil filter simply matches nothing. A nil pointer is "no filter"
+// — it must never exclude a row.
 type EventListFilter struct {
 	InstanceID *shared.UUID
 	NodeID     *shared.UUID
@@ -40,6 +48,16 @@ type EventListFilter struct {
 	KindIn []string
 	Since  *time.Time
 	Until  *time.Time
+
+	// Auth-payload filters (JSONB payload keys; meaningful for auth.*
+	// kinds). Each is AND-composed; a nil pointer is a no-op.
+	KeyID          *string // payload->>'key_id'
+	KeyName        *string // payload->>'key_name'
+	ActionExact    *string // payload->>'action' = ?
+	ActionPrefix   *string // payload->>'action' LIKE ? || '%'
+	ResponseStatus *int    // payload->>'response_status' = ?
+	Mode           *string // payload->>'mode'
+	RequestPath    *string // payload->>'request_path' (the audit "target")
 }
 
 // EventListResult wraps a row slice with the next-cursor.

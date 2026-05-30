@@ -18,10 +18,14 @@
 //
 // Delivery semantics follow the instance's `frame_delivery_mode`
 // (col:rimsky_instances.frame_delivery_mode):
-//   - `coalesce` (default): deliver all pending messages into the new
-//     frame.
-//   - `serial_queue`: deliver the oldest one message; leave the rest
-//     pending.
+//   - `serial_queue` (default): deliver the oldest one message; leave
+//     the rest pending. One message per frame, so each backfill is its
+//     own rerun/override — unambiguous.
+//   - `coalesce`: deliver pending messages in received-order, coalescing
+//     until a message would resolve a payload-reading node's
+//     substitution to a value different from one already accumulated in
+//     this frame, then stop (the rest stay pending for the next frame).
+//     Same-value (idempotent) bindings keep coalescing.
 //
 // @blessed-invariant: messages are inert in rimsky. The delivery path
 // touches envelope routing fields (kind, sender, sender_kind, target,
@@ -36,6 +40,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -83,11 +88,15 @@ func EnqueueMessage(ctx context.Context, tx persistence.Tx, m persistence.Messag
 type FrameDeliveryMode string
 
 const (
-	// FrameDeliveryCoalesce delivers all pending messages into the new
-	// frame. The default.
+	// FrameDeliveryCoalesce delivers pending messages in received-order,
+	// coalescing until a message would bind a payload-reading node's
+	// substitution to a value that conflicts with one already accumulated
+	// in this frame; the rest stay pending for the next frame. The opt-in
+	// "fancy" mode.
 	FrameDeliveryCoalesce FrameDeliveryMode = "coalesce"
 	// FrameDeliverySerialQueue delivers the oldest pending message;
-	// remaining messages stay pending until the next frame.
+	// remaining messages stay pending until the next frame. The default —
+	// one message per frame, so each backfill is its own rerun/override.
 	FrameDeliverySerialQueue FrameDeliveryMode = "serial_queue"
 )
 
@@ -169,7 +178,8 @@ func SweepDeliverMessagesForRunningFrames(
 
 // deliverForRunningFrame loads the per-instance delivery mode and calls
 // DeliverPendingMessages in a short transaction. Empty/unknown mode falls
-// back to coalesce so a defaulted column does the safe thing.
+// back to serial_queue (the default — one message per frame) so a
+// defaulted column does the safe, unambiguous thing.
 //
 // After marking messages delivered, walks the per-template subscription
 // edges keyed on `TopicKind="message"` and stale-marks every receiver
@@ -190,12 +200,25 @@ func deliverForRunningFrame(
 		if inst == nil {
 			return nil
 		}
-		mode := FrameDeliveryCoalesce
-		if inst.FrameDeliveryMode == string(FrameDeliverySerialQueue) {
-			mode = FrameDeliverySerialQueue
+		mode := FrameDeliverySerialQueue
+		if inst.FrameDeliveryMode == string(FrameDeliveryCoalesce) {
+			mode = FrameDeliveryCoalesce
+		}
+		// Conflict resolver for coalesce: load the per-template
+		// subscription edges so DeliverPendingMessages can tell whether two
+		// candidate messages would bind the *same* payload-reading node to
+		// *different* values (a conflict that must break the frame). serial_
+		// queue ignores the resolver (it delivers one message regardless),
+		// so we only pay the load cost under coalesce.
+		var resolver coalesceConflictResolver
+		if mode == FrameDeliveryCoalesce {
+			resolver, err = buildCoalesceConflictResolver(ctx, persist, tx, inst.TemplateHash)
+			if err != nil {
+				return err
+			}
 		}
 		delivered, err := DeliverPendingMessages(ctx, tx, persist.Messages(),
-			instanceID, frameID, mode, now)
+			instanceID, frameID, mode, now, resolver)
 		if err != nil {
 			return err
 		}
@@ -392,10 +415,96 @@ func cascadeMessageSubscribersInTx(
 	return nil
 }
 
+// coalesceConflictResolver returns, for one pending message, the set of
+// payload-reading receiver node types the message would invalidate (the
+// same set the delivery cascade later stale-marks). nil means "no
+// resolver" — conflict detection is skipped and coalesce delivers every
+// pending message (the legacy behavior, used by the pure unit fakes that
+// have no template). Returning an empty set means the message matches no
+// payload-reading node, so it can never conflict.
+type coalesceConflictResolver func(msg persistence.MessageRow) (matchedReceiverTypes []string)
+
+// buildCoalesceConflictResolver loads the per-template subscription edges
+// once and returns a resolver that maps a message to the receiver node
+// types it would invalidate. It reuses the exact match path
+// (`ExtractSubstitutionRefsFromTemplate` → `BuildSubscriptionEdges` →
+// `edges.Match` + CEL `when:` eval) that `cascadeMessageSubscribersInTx`
+// runs after delivery, so the conflict decision and the stale-mark agree
+// on which nodes a message touches.
+func buildCoalesceConflictResolver(
+	ctx context.Context, persist persistence.Tables, tx persistence.Tx, templateHash string,
+) (coalesceConflictResolver, error) {
+	tmpl, err := persist.Templates().GetByHash(ctx, templateHash, tx)
+	if err != nil {
+		return nil, fmt.Errorf("buildCoalesceConflictResolver: get template: %w", err)
+	}
+	if tmpl == nil {
+		return nil, nil
+	}
+	subRefs := node.ExtractSubstitutionRefsFromTemplate(tmpl.Spec)
+	edges, err := node.BuildSubscriptionEdges(tmpl.Spec, subRefs)
+	if err != nil {
+		return nil, fmt.Errorf("buildCoalesceConflictResolver: build edges: %w", err)
+	}
+	if edges == nil {
+		return func(persistence.MessageRow) []string { return nil }, nil
+	}
+	return func(msg persistence.MessageRow) []string {
+		target := msg.Target
+		if target == "" {
+			target = "_unspecified"
+		}
+		msgSigType := signalpkg.TypePath(fmt.Sprintf("message/%s/%s/%s",
+			msg.Kind, msg.SenderKind, target))
+		msgSig := signalpkg.Signal{
+			Type: msgSigType,
+			Payload: map[string]any{
+				"kind":            msg.Kind,
+				"sender_kind":     msg.SenderKind,
+				"sender":          msg.Sender,
+				"target":          msg.Target,
+				"message_payload": messagePayloadAsMap(msg.Payload),
+			},
+		}
+		// Messages cross-cut: match against the empty sender-key bucket
+		// (same call cascadeMessageSubscribersInTx makes).
+		matched := edges.Match("", msgSigType)
+		var receivers []string
+		for _, e := range matched {
+			if e.WhenExpr != nil {
+				ok, _ := e.WhenExpr.Eval(msgSig)
+				if !ok {
+					continue
+				}
+			}
+			receivers = append(receivers, e.ReceiverNodeType)
+		}
+		return receivers
+	}, nil
+}
+
+// DeliverPendingMessages selects pending messages for the instance, picks
+// the deliver-set per `mode`, marks them delivered with the new frame_id,
+// and returns the rows so the caller can drive subscription matching.
+//
+// Delivery-set selection by mode:
+//   - serial_queue: the oldest one message; the rest stay pending.
+//   - coalesce: messages in strict received-order, coalescing until a
+//     message would bind a payload-reading node's substitution to a value
+//     conflicting with one already accumulated in this frame — then stop
+//     (the rest stay pending for the next frame). Same-value (idempotent)
+//     bindings keep coalescing. This is the load-bearing no-silent-loss
+//     property: two messages that would resolve the *same* node to
+//     *different* values MUST land in *separate* frames, so a distinct
+//     backfill override is never silently collapsed into another's rerun.
+//
+// `resolve` (coalesce only) maps a candidate message to the payload-
+// reading receiver node types it would invalidate; a nil resolver skips
+// conflict detection and coalesces everything (legacy behavior).
 func DeliverPendingMessages(
 	ctx context.Context, tx persistence.Tx, m persistence.MessagesTable,
 	instanceID shared.UUID, frameID shared.UUID, mode FrameDeliveryMode,
-	now time.Time,
+	now time.Time, resolve coalesceConflictResolver,
 ) (DeliveredMessages, error) {
 	pending, err := m.ListPendingForInstance(ctx, tx, instanceID)
 	if err != nil {
@@ -417,7 +526,7 @@ func DeliverPendingMessages(
 	case FrameDeliverySerialQueue:
 		deliverSet = live[:1]
 	default: // coalesce
-		deliverSet = live
+		deliverSet = coalesceDeliverSet(live, resolve)
 	}
 	delivered := make([]persistence.MessageRow, 0, len(deliverSet))
 	for _, msg := range deliverSet {
@@ -435,4 +544,60 @@ func DeliverPendingMessages(
 		delivered = append(delivered, msg)
 	}
 	return DeliveredMessages{Messages: delivered}, nil
+}
+
+// coalesceDeliverSet walks `live` (received-order, ascending) and
+// accumulates messages into the frame until one would bind a payload-
+// reading node to a value conflicting with one an already-accumulated
+// message bound for the same node. The conflicting message — and every
+// message after it — stays pending for the next frame.
+//
+// @blessed-invariant: no silent override loss under coalesce. Two
+// messages that would resolve the SAME payload-reading node to DIFFERENT
+// values land in SEPARATE frames; only same-value (idempotent) bindings
+// coalesce into one. A distinct backfill `partition_request_override` is
+// therefore never silently collapsed into another override's rerun. The
+// comparison is conservative: when two messages match a common receiver
+// node type, any payload difference is treated as a conflict (we don't
+// inspect which substitution slot the node reads), and received-order is
+// always preserved.
+//
+// A nil resolver (no template — the pure unit fakes) skips detection and
+// delivers everything, the legacy coalesce behavior.
+func coalesceDeliverSet(live []persistence.MessageRow, resolve coalesceConflictResolver) []persistence.MessageRow {
+	if resolve == nil || len(live) <= 1 {
+		return live
+	}
+	// boundPayload records, per receiver node type already accumulated,
+	// the message payload that bound it. A later message that matches the
+	// same receiver type with a different payload is a conflict.
+	boundPayload := make(map[string][]byte)
+	accepted := 0
+	for _, msg := range live {
+		receivers := resolve(msg)
+		conflict := false
+		for _, rt := range receivers {
+			prev, seen := boundPayload[rt]
+			if seen && !bytes.Equal(prev, msg.Payload) {
+				conflict = true
+				break
+			}
+		}
+		if conflict {
+			break // stop; this message + the rest wait for the next frame.
+		}
+		for _, rt := range receivers {
+			if _, seen := boundPayload[rt]; !seen {
+				boundPayload[rt] = msg.Payload
+			}
+		}
+		accepted++
+	}
+	if accepted == 0 {
+		// The first message conflicts with nothing (empty map on entry),
+		// so accepted is always ≥ 1; this guard is defensive — never
+		// deliver an empty set when there is live work.
+		return live[:1]
+	}
+	return live[:accepted]
 }
