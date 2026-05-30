@@ -8,14 +8,7 @@ aliases: []
 
 ## What it is
 
-A **signal** is the unified emission shape for any transition that affects a node-run. Every signal carries a canonical hierarchical type-path and a structured payload:
-
-```
-Signal {
-  type:    <type-path>   // slash-separated, hierarchical, validator-enforced
-  payload: <object>      // typed per type-path; see "Payload schemas" below
-}
-```
+A **signal** is the unified emission shape for any transition that affects a node-run. Every signal is a type-path plus a typed payload object: a `type` field carrying a canonical hierarchical type-path (slash-separated, hierarchical, validator-enforced) and a `payload` field carrying a structured object (typed per type-path; see "Payload schemas" below).
 
 The signal travels two independent paths once emitted:
 
@@ -34,23 +27,13 @@ Five top-level kinds. Type-paths are canonical and validator-enforced.
 
 ### `terminal/*` — dispatch finished, run row settled
 
-```
-terminal/success
-terminal/error/<error_class>          # error_class may itself contain '/'
-terminal/park/snooze
-terminal/park/await_callback
-terminal/infra/<reason>
-```
+The `terminal/*` leaves are `terminal/success`; `terminal/error/<error_class>` (the `error_class` segment may itself contain `/`); `terminal/park/snooze` and `terminal/park/await_callback`; and `terminal/infra/<reason>`.
 
 Emitted exactly once per run, at the moment the run settles. `terminal/park/*` leaves are exactly the park-reason enum (a two-value closed set fixed on the wire executor protocol).
 
 ### `transient/*` — mid-dispatch transitions, dispatch not yet settled
 
-```
-transient/retry/<attempt>/<error_class>
-transient/heartbeat_missed
-transient/await_async
-```
+The `transient/*` leaves are `transient/retry/<attempt>/<error_class>`, `transient/heartbeat_missed`, and `transient/await_async`.
 
 `transient/await_async` is the executor await-async-callback outcome — the node stays in `running` state until the callback's eventual terminal settles it. It is NOT a `terminal/park/*` leaf.
 

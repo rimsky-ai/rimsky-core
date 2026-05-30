@@ -30,17 +30,11 @@ Owns: the per-request `dry_run` flag handling in the auth middleware, the per-re
 
 ## Synthetic response shape
 
-Each handler picks a verb that describes the intent:
+Each handler picks a verb that describes the intent. The synthetic envelope sets `dry_run` to `true` and carries a single `would_have_<verb>` key (`would_have_created`, `would_have_invalidated`, and so on) whose object echoes the target identifiers the live write would have produced.
 
-```json
-{ "dry_run": true, "would_have_created": { "instance_id": "dry-run-not-persisted", "template_hash": "<actual>", "params": { ... } } }
-```
+For the create case, the envelope's `would_have_created` object holds a placeholder `instance_id` of `dry-run-not-persisted` (no row is created, so there is no real ID), the actual `template_hash`, and the actual `params` the create would have used.
 
-For non-create writes the placeholder ID is replaced with the actual target:
-
-```json
-{ "dry_run": true, "would_have_invalidated": { "instance_id": "<actual>", "node_id": "<actual>" } }
-```
+For non-create writes the placeholder ID is replaced with the actual targets: an invalidate, for example, carries a `would_have_invalidated` object with the actual `instance_id` and `node_id` of the target being invalidated.
 
 Clients (CLI, MCP) check the top-level `dry_run` flag to render the response distinctly from a live invocation.
 

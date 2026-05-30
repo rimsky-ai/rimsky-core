@@ -27,25 +27,16 @@ Owns: the per-kind record shape, the projection-write path. Does NOT own: the pr
 
 ## Leaf-run record shape
 
-```
-{
-  record_kind: "leaf_run",
-  instance_id, frame_id, observed_at, record: {
-    run_id, node_id, frame_id, child_key,
-    node_alias, parent_run_id,
-    frame_trigger_kind, trigger_message_id,
-    substitution_refs: [
-      {source_kind, source_node_alias, source_version_or_id}
-    ],
-    held_claims: [{claim_handle_id, role, producer_name, claim_scope_data_hash}],
-    executor_name, executor_version,
-    template_hash, template_node_alias,
-    params_snapshot_hash, userdata_hash, claim_scope_data_hash,
-    state, last_outcome, changed, terminal_kind,
-    error_class, extra
-  }
-}
-```
+A `leaf_run` record has `record_kind` set to `leaf_run` and carries the top-level envelope fields `instance_id`, `frame_id`, and `observed_at`, plus a nested `record` object with the following fields:
+
+- Identity and tree position: `run_id`, `node_id`, `frame_id`, `child_key`, `node_alias`, `parent_run_id`.
+- Frame trigger: `frame_trigger_kind`, `trigger_message_id`.
+- `substitution_refs` — a list of entries, each an object of `source_kind`, `source_node_alias`, and `source_version_or_id` (see "Substitution-ref entries" below).
+- `held_claims` — a list of entries, each an object of `claim_handle_id`, `role`, `producer_name`, and `claim_scope_data_hash`.
+- Executor metadata: `executor_name`, `executor_version`.
+- Template metadata: `template_hash`, `template_node_alias`.
+- Input hashes: `params_snapshot_hash`, `userdata_hash`, `claim_scope_data_hash`.
+- Outcome: `state`, `last_outcome`, `changed`, `terminal_kind`, `error_class`, `extra`.
 
 ### Substitution-ref entries
 
@@ -96,23 +87,16 @@ Downstream consumers pair the two records by `run_id` and discriminate on `termi
 
 ## Claim-terminal record shape
 
-```
-{
-  record_kind: "claim_terminal",
-  outcome: "committed" | "abandoned" | "force_cancelled",
-  instance_id, frame_id, observed_at, record: {
-    claim_handle_id, run_id, node_id, frame_id,
-    parent_claim_handle_id, parent_run_id,
-    sub_claim_handle_ids: [...],
-    producer_name, claim_scope_data_hash, version_id,
-    outcome, cause,                       # "natural" | "sibling_cancel" | "descendant_cancel"
-    committed_at,
-    producer_metadata
-  }
-}
-```
+A `claim_terminal` record has `record_kind` set to `claim_terminal` and a top-level `outcome` discriminator whose value is one of `committed`, `abandoned`, or `force_cancelled`. It carries the top-level envelope fields `instance_id`, `frame_id`, and `observed_at`, plus a nested `record` object with the following fields:
 
-The per-record `outcome` discriminator mirrors the JSON `outcome` field so analytical queries can filter without JSON extraction. The three-value discriminator (`committed` / `abandoned` / `force_cancelled`) distinguishes the per-terminal disposition; the `cause` field further discriminates Abandon provenance — `natural` (give_up / error policy), `sibling_cancel` (sibling-cancel walker), `descendant_cancel` (parent-Abandon recursive descent).
+- Identity and tree position: `claim_handle_id`, `run_id`, `node_id`, `frame_id`, `parent_claim_handle_id`, `parent_run_id`.
+- `sub_claim_handle_ids` — a list of sub-claim-handle ids (for fan-out parents).
+- Producer and data: `producer_name`, `claim_scope_data_hash`, `version_id`.
+- Disposition: `outcome`, and `cause` whose value is one of `natural`, `sibling_cancel`, or `descendant_cancel`.
+- `committed_at`.
+- `producer_metadata`.
+
+The per-record `outcome` discriminator mirrors the top-level `outcome` field so analytical queries can filter without JSON extraction. The three-value discriminator (`committed` / `abandoned` / `force_cancelled`) distinguishes the per-terminal disposition; the `cause` field further discriminates Abandon provenance — `natural` (give_up / error policy), `sibling_cancel` (sibling-cancel walker), `descendant_cancel` (parent-Abandon recursive descent).
 
 ## Notes
 
