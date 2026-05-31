@@ -3,8 +3,8 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Package dataprocessing is the importable form of the DataProcessing
-// mix-in conformance suite. The cmd/rimsky-data-processing-conformance
-// binary is a thin wrapper that dials the endpoint and invokes Run;
+// mix-in conformance suite. The `rimsky conformance data-processing`
+// subcommand is a thin wrapper that dials the endpoint and invokes Run;
 // tests can invoke Run directly against an in-process or testcontainers-
 // hosted producer to assert the standard suite passes against the
 // target.

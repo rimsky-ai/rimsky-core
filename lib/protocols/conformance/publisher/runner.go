@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Package publisher is the importable form of the Publisher protocol
-// conformance suite. The cmd/rimsky-publisher-conformance binary is a
+// conformance suite. The `rimsky conformance publisher` subcommand is a
 // thin wrapper that dials the endpoint and invokes Run; tests can
 // invoke Run directly against an in-process or testcontainers-hosted
 // publisher.

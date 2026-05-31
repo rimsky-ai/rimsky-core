@@ -30,7 +30,7 @@ starting point.
    h.Stub.WhenType("blocked-worker").
        Error("executor_blocked", map[string]any{"reason": "waiting"})
    h.Stub.WhenType("snoozer").
-       Park(genv1.ParkReason_PARK_REASON_RETRY_BACKOFF, "rate_limit", payload, resumeAt, sessionToken)
+       Park(genv1.ParkReason_PARK_REASON_SNOOZE, "rate_limit", payload, resumeAt, sessionToken)
    h.Stub.WhenType("async-worker").
        AwaitAsyncCallback("ack-1", 5000)
    ```

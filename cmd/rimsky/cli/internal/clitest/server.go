@@ -132,8 +132,6 @@ func (s *Server) registerRoutes(r chi.Router) {
 	r.Post("/nodes/{id}/reset", s.handleResetNode)
 
 	r.Get("/events", s.handleListEvents)
-
-	r.Post("/admin/scheduled-nodes/{node_id}/force-fire", s.handleAdminForceFire)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -742,14 +740,6 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		"events":      events,
 		"next_cursor": nextCursor,
 	})
-}
-
-func (s *Server) handleAdminForceFire(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "node_id")
-	if s.maybeFail(w, r, "/admin/scheduled-nodes/"+id+"/force-fire") {
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func instanceToWire(inst *storedInstance) map[string]any {

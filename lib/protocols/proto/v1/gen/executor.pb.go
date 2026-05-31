@@ -168,7 +168,7 @@ type ExecuteRequest struct {
 	// rimsky at dispatch; static-default fields carry their declared
 	// default value; sourceless/executor-written fields are populated by
 	// the executor (terminal-final via attributes_delta on Success, or
-	// incremental via POST {callback_url}/v1/attributes/{node_id}).
+	// incremental via POST {callback_url}/v1/runs/{run_id}/attributes).
 	Attributes *structpb.Struct `protobuf:"bytes,5,opt,name=attributes,proto3" json:"attributes,omitempty"`
 	// The declared JSON Schema for the node's attributes. For executor reference;
 	// rimsky validates at dispatch (substitution) and at commit (writeback)

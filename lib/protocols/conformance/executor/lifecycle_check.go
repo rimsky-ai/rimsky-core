@@ -8,9 +8,9 @@
 // Implementations that don't react to a given event return success
 // immediately, which is the published contract.
 //
-// Lives under the executor conformance package because the cmd binary
-// (`cmd/rimsky-executor-conformance`) hosts the `--check-lifecycle`
-// flag — the lifecycle protocol has no dedicated conformance binary
+// Lives under the executor conformance package because
+// `rimsky conformance executor` hosts the `--check-lifecycle`
+// flag — the lifecycle protocol has no dedicated conformance subcommand
 // per `concept:conformance`.
 
 package conformance

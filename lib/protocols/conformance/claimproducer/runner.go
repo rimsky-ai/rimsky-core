@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Package claimproducer is the importable form of the ClaimProducer
-// conformance suite. The cmd/rimsky-claim-producer-conformance binary
+// conformance suite. The `rimsky conformance claim-producer` subcommand
 // is a thin wrapper that dials the endpoint and invokes Run; tests can
 // invoke Run directly against an in-process or testcontainers-hosted
 // producer to assert the standard suite passes against the target.
@@ -36,8 +36,8 @@ type CheckResult struct {
 // producer. Each check is independent; failures do not short-circuit
 // so the caller sees the full surface.
 //
-// Mirrors `cmd/rimsky-claim-producer-conformance/main.go::RunClaimProducerConformance`.
-// The binary delegates here so tests can invoke the same code path.
+// The `rimsky conformance claim-producer` subcommand delegates here so
+// tests can invoke the same code path.
 func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 	results := make([]CheckResult, 0, 10)
 	caps, err := c.Capabilities(ctx)

@@ -4,7 +4,7 @@
 
 // Package conformance provides the rimsky node-executor protocol conformance
 // suite. Any executor speaking the protocol (gRPC canonical + HTTP+JSON bridge)
-// can be validated against this suite via the `rimsky-executor-conformance`
+// can be validated against this suite via the `rimsky conformance executor`
 // CLI or invoked directly from a Go test as a library.
 //
 // The package lives at `protocols/conformance/executor/` and is imported

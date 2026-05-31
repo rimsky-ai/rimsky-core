@@ -3,8 +3,8 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // observability_check.go implements the spec §6 / Task F1
-// --check-observability probe extracted from
-// cmd/rimsky-executor-conformance. Substantive checks:
+// --check-observability probe run by `rimsky conformance executor`.
+// Substantive checks:
 //
 //   - Capabilities returns a usable shape.
 //   - GetTrace on a known-missing dispatch returns the evicted-shape

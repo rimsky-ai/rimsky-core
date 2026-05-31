@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // observability_check.go implements the ClaimProducerObservability
-// probe extracted from cmd/rimsky-claim-producer-conformance. Substantive
+// probe run by `rimsky conformance claim-producer`. Substantive
 // checks: Capabilities, the per-admin-view GetAdminView round-trips, the
 // missing-claim probes for GetClaim and StreamClaim (when supported),
 // and a structural ListClaims round-trip (when supported).

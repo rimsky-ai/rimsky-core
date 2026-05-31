@@ -36,7 +36,7 @@ func runParkReasonEmission(ctx context.Context, env conformance.Env) error {
 	ud, _ := structpb.NewStruct(map[string]any{
 		"probe_park":       true,
 		"park_reason":      "await_callback",
-		"park_reason_note": "rimsky-executor-conformance park-reason probe",
+		"park_reason_note": "rimsky conformance executor park-reason probe",
 	})
 	req := &genv1.ExecuteRequest{
 		NodeId: "conformance", InstanceId: "conformance",

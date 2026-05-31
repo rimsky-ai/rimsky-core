@@ -3,7 +3,7 @@
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 // Package validation is the importable form of the Validation mix-in
-// conformance suite. The cmd/rimsky-validation-conformance binary is a
+// conformance suite. The `rimsky conformance validation` subcommand is a
 // thin wrapper that dials the endpoint and invokes Run; tests can
 // invoke Run directly against an in-process or testcontainers-hosted
 // service that advertises the validation protocol.
