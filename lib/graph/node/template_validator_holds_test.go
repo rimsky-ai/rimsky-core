@@ -84,6 +84,79 @@ func TestValidateHolds_Ok(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
+// A node that co-holds a claim via holds: may read it through a
+// {{claim.<alias>...}}` attribute source — the modern co-holdership
+// directive (concept:claim-co-holdership) must support claim reads the
+// same way the legacy inherits: form does. Regression for the validator
+// omitting holds: aliases from the recognized-alias set.
+func TestValidateHolds_ClaimReadFromHeldAliasOk(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{
+				Type:     "producer",
+				Executor: "handler.producer",
+				Stores: []NodeStoreRef{
+					{Name: "content", Alias: "shared_thing", Intent: "rw", Selector: "{{params.s}}"},
+				},
+			},
+			{
+				Type:     "consumer",
+				Executor: "handler.consumer",
+				Holds: map[string]HoldsBinding{
+					"shared_thing": {From: "producer"},
+				},
+				Attributes: &NodeAttributesDef{
+					Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"addr": map[string]any{
+								"type":   "string",
+								"source": "{{claim.shared_thing.address}}",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// Reading {{claim.<alias>}}` for an alias that is neither acquired
+// (stores:), inherited (inherits:), nor co-held (holds:) is still
+// rejected — the holds: fix must not blanket-accept any claim alias.
+func TestValidateAttributes_ClaimReadUndeclaredAliasRejected(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{
+				Type:     "consumer",
+				Executor: "handler.consumer",
+				Attributes: &NodeAttributesDef{
+					Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"addr": map[string]any{
+								"type":   "string",
+								"source": "{{claim.ghost.address}}",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].attributes.schema.properties.addr.source")
+}
+
 func TestValidateFanOut_RejectsUnknownClaim(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "demo",

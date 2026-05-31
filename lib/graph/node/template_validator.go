@@ -897,6 +897,15 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 			inheritedAliases[ie.Claim] = struct{}{}
 		}
 	}
+	// Aliases this node co-holds via `holds:` (modern co-holdership
+	// directive; concept:claim-co-holdership). Each holds entry's local
+	// alias is bound into the leaf's per-claim slot at dispatch, so
+	// `{{claim.<alias>...}}` reads against it are valid — same as a direct
+	// or inherited alias.
+	heldAliases := make(map[string]struct{}, len(n.Holds))
+	for alias := range n.Holds {
+		heldAliases[alias] = struct{}{}
+	}
 
 	properties, ok := n.Attributes.Schema["properties"].(map[string]any)
 	if !ok {
@@ -917,7 +926,7 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 				})
 				continue
 			}
-			checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, inheritedAliases, res)
+			checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, inheritedAliases, heldAliases, res)
 
 			// Validate hard_dep, if present.
 			if hd, present := propMap["hard_dep"]; present {
@@ -1254,7 +1263,7 @@ func isAttributeSourceDirective(src string) bool {
 // fallback).
 //
 // @concept: attribute
-func checkAttributeSource(src, path string, declared map[string]int, directAliases, inheritedAliases map[string]struct{}, res *ValidationResult) {
+func checkAttributeSource(src, path string, declared map[string]int, directAliases, inheritedAliases, heldAliases map[string]struct{}, res *ValidationResult) {
 	trimmed := strings.TrimSpace(src)
 	if trimmed == "" {
 		res.Errors = append(res.Errors, ValidationError{
@@ -1272,7 +1281,7 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 	}
 	for _, m := range matches {
 		body := strings.TrimSpace(trimmed[m[2]:m[3]])
-		checkAttributeDirectiveBody(body, path, declared, directAliases, inheritedAliases, res)
+		checkAttributeDirectiveBody(body, path, declared, directAliases, inheritedAliases, heldAliases, res)
 	}
 }
 
@@ -1280,7 +1289,7 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 // directive (caller has already stripped the outer braces). Handles
 // `?` lenient marker and `| <literal>` fallback parsing, then routes
 // to per-kind validation.
-func checkAttributeDirectiveBody(body, path string, declared map[string]int, directAliases, inheritedAliases map[string]struct{}, res *ValidationResult) {
+func checkAttributeDirectiveBody(body, path string, declared map[string]int, directAliases, inheritedAliases, heldAliases map[string]struct{}, res *ValidationResult) {
 	body = strings.TrimSpace(body)
 	// Pipe-fallback parsing first (longest reach) so a trailing `?` is
 	// still recognised on the left side of the pipe if present.
@@ -1370,14 +1379,16 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				Msg:  fmt.Sprintf("claim directive %q second segment must be address|scope|payload", body),
 			})
 		}
-		// Alias must be acquired here OR inherited.
-		if _, isOwn := directAliases[alias]; !isOwn {
-			if _, isInherited := inheritedAliases[alias]; !isInherited {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: path,
-					Msg:  fmt.Sprintf("claim directive references alias %q which is neither acquired here nor declared in inherits:", alias),
-				})
-			}
+		// Alias must be acquired here (stores:), inherited (inherits:), or
+		// co-held (holds:).
+		_, isOwn := directAliases[alias]
+		_, isInherited := inheritedAliases[alias]
+		_, isHeld := heldAliases[alias]
+		if !isOwn && !isInherited && !isHeld {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("claim directive references alias %q which is neither acquired here (stores:) nor declared in inherits: or holds:", alias),
+			})
 		}
 	case "params":
 		if len(parts) < 1 || parts[0] == "" {
