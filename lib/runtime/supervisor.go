@@ -294,8 +294,11 @@ func Start(cfg Config) (*Handle, error) {
 		return nil, err
 	}
 
-	// Parse host:port from addr for registration in rimsky_supervisors.
-	host, port := splitHostPort(addr)
+	// Register the *advertised* callback host:port — the address peers use
+	// to reach this supervisor — into rimsky_supervisors, NOT the listener
+	// bind address (e.g. 0.0.0.0), which is not dialable. Falls back to the
+	// listener host:port when no advertise host is configured.
+	host, port := effectiveCallbackHostPort(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	accepted := cfg.Resolver.AcceptedNames()
 	acceptedStores := storeRegistryNames(cfg.StoreRegistry)
 	if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
@@ -335,19 +338,30 @@ func storeRegistryNames(reg *locks.Registry) []string {
 	return out
 }
 
-// advertisedCallbackURL computes the base URL the supervisor hands to
-// executors as `callback_url`. Preference order: (advertiseHost,
-// advertisePort) → (advertiseHost, listener port) → listener addr.
-func advertisedCallbackURL(listenerAddr, advertiseHost string, advertisePort int) string {
+// effectiveCallbackHostPort resolves the host:port that peers use to reach
+// this supervisor for async-handoff callbacks. Preference order:
+// (advertiseHost, advertisePort) → (advertiseHost, listener port) →
+// listener host:port. The listener bind host (e.g. 0.0.0.0 in a container)
+// is the last resort: operators set advertiseHost when the bind address is
+// not reachable by executors. This single value is both handed to executors
+// as `callback_url` and persisted to rimsky_supervisors, so a peer reading
+// the row always gets a dialable address.
+func effectiveCallbackHostPort(listenerAddr, advertiseHost string, advertisePort int) (string, int) {
+	bindHost, bindPort := splitHostPort(listenerAddr)
 	if advertiseHost == "" {
-		return "http://" + listenerAddr
+		return bindHost, bindPort
 	}
-	port := advertisePort
-	if port == 0 {
-		_, lp := splitHostPort(listenerAddr)
-		port = lp
+	if advertisePort == 0 {
+		return advertiseHost, bindPort
 	}
-	return "http://" + net.JoinHostPort(advertiseHost, strconv.Itoa(port))
+	return advertiseHost, advertisePort
+}
+
+// advertisedCallbackURL computes the base URL the supervisor hands to
+// executors as `callback_url`, built from effectiveCallbackHostPort.
+func advertisedCallbackURL(listenerAddr, advertiseHost string, advertisePort int) string {
+	host, port := effectiveCallbackHostPort(listenerAddr, advertiseHost, advertisePort)
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // runLoop is the main claim/heartbeat loop. Exits when h.stop closes.
