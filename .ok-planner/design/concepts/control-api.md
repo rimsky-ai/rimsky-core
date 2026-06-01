@@ -10,7 +10,7 @@ aliases: []
 
 The operator interface exposed by the control-api binary. Serves two protocol skins on the same TCP port and the same operation set:
 
-- **HTTP+JSON** — routed at bare, unversioned paths covering template registration, instance lifecycle (create, pause, resume), per-instance breakpoint management (set, delete, resume), the auth surface, observability reads, and admin diagnostics and scheduled-node force-fire endpoints.
+- **HTTP+JSON** — routed at bare, unversioned paths covering template registration, instance lifecycle (create, pause, resume), per-instance breakpoint management (set, delete, resume), the auth surface, observability reads, and admin diagnostics endpoints.
 - **MCP** (Model Context Protocol) — JSON-RPC 2.0 over HTTP at a dedicated MCP endpoint, served by an in-process MCP package. Tools-only V1, plus read-only resource list and read added by `spec:2026-05-24-instance-debugger-design`. No resource-subscribe and no server-pushed notifications in V1 — those await a transport upgrade. The tool catalog is computed from the canonical action registry; the tool-list call filters by the requesting key's permission grant.
 
 Both skins pass through the same auth + permission middleware. Fires lifecycle-subscriber events at state transitions (synchronously; see `concept:lifecycle-subscriber`).
