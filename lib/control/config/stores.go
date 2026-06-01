@@ -556,25 +556,8 @@ func dialRemoteStores(
 	lateBindServiceProxies map[string]string,
 ) (*locks.Registry, error) {
 	// Bindings-lookup hook backed by the live persistence layer.
-	// `shared.UUID` is an alias for `github.com/google/uuid.UUID`; parse
-	// via uuid.Parse (no shared.ParseUUID helper).
 	lookupBindings := func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
-		instID, err := uuid.Parse(instanceID)
-		if err != nil {
-			return nil, false, err
-		}
-		row, err := persist.Instances().Get(ctx, instID, nil)
-		if err != nil {
-			return nil, false, err
-		}
-		if row == nil || len(row.ServiceBindings) == 0 {
-			return nil, false, nil
-		}
-		var bindings map[string]json.RawMessage
-		if err := json.Unmarshal(row.ServiceBindings, &bindings); err != nil {
-			return nil, false, err
-		}
-		return bindings, true, nil
+		return lookupInstanceBindings(ctx, persist, instanceID)
 	}
 	reg := locks.NewRegistry(
 		locks.WithLookupInstanceBindings(lookupBindings),
@@ -600,6 +583,42 @@ func dialRemoteStores(
 		reg.Add(name, client)
 	}
 	return reg, nil
+}
+
+// lookupInstanceBindings reads a per-instance late-bound service catalog
+// from rimsky_instances.service_bindings. Backs the Registry's late-bind
+// resolution hook (consumed by the executor resolver at dispatch). Returns
+// (bindings, true, nil) when the row exists and carries a non-empty
+// service_bindings blob; (nil, false, nil) when the instance is unknown or
+// has no bindings.
+//
+// The instance read runs inside a short transaction: every Table method
+// requires an explicit tx and panics on nil under both the SQLite and
+// Postgres drivers (option-C contract; see
+// foundation/persistence/sqlite/deadlock_guard_test.go). `instanceID` is a
+// string because the resolver hook is typed that way; `shared.UUID` is an
+// alias for google/uuid.UUID, parsed via uuid.Parse.
+func lookupInstanceBindings(ctx context.Context, persist persistence.Tables, instanceID string) (map[string]json.RawMessage, bool, error) {
+	instID, err := uuid.Parse(instanceID)
+	if err != nil {
+		return nil, false, err
+	}
+	var row *persistence.InstanceRow
+	if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := persist.Instances().Get(ctx, instID, tx)
+		row = r
+		return err
+	}); err != nil {
+		return nil, false, err
+	}
+	if row == nil || len(row.ServiceBindings) == 0 {
+		return nil, false, nil
+	}
+	var bindings map[string]json.RawMessage
+	if err := json.Unmarshal(row.ServiceBindings, &bindings); err != nil {
+		return nil, false, err
+	}
+	return bindings, true, nil
 }
 
 // DialLifecycleSubscribers walks the union of claim_producers and
