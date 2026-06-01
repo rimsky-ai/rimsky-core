@@ -80,7 +80,7 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 	// log, including dry-runs and metadata calls). The per-tool gate
 	// still runs for `tools/call` because Catalog.Invoke re-enters
 	// the chi router through the routerRef; the umbrella's verb is
-	// `read` so the `*:read` wildcard in the bundled `viewer` role
+	// `read` so the `*:read` wildcard in the bundled `read-only` role
 	// covers `tools/list` automatically.
 	r.Post("/mcp", deps.AuthState.gateByAction("mcp:read", server.ServeHTTP))
 }

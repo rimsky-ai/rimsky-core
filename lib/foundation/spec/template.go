@@ -191,7 +191,7 @@ type TemplateNodeDef struct {
 	Holds map[string]HoldsBinding `yaml:"holds,omitempty" json:"holds,omitempty"`
 
 	// FanOut, when set, declares the node fans out across sub-scopes
-	// of one of its `claims:` aliases. The supervisor calls
+	// of one of its `stores:` aliases. The supervisor calls
 	// ClaimProducer.SplitScope inside the acquisition tx and dispatches
 	// one leaf run per sub-scope. Per spec §Fan-out template DSL.
 	FanOut *FanOutSpec `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`

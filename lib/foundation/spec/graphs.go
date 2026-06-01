@@ -36,7 +36,7 @@ const MainGraphName = "main"
 // outer key in the `holds:` block (in YAML) is the local alias; the
 // value is `{from: <upstream-node-alias>}`. The canonicalizer
 // validates that `From` points to an upstream dependency and that the
-// upstream declares the referenced claim alias in its `claims:` block.
+// upstream declares the referenced claim alias in its `stores:` block.
 type HoldsBinding struct {
 	// From names the upstream node whose claim this node co-holds.
 	From string `yaml:"from" json:"from"`
@@ -46,9 +46,9 @@ type HoldsBinding struct {
 }
 
 // FanOutSpec declares that a node fans out across sub-scopes of one of
-// its `claims:` aliases. Per spec §Fan-out template DSL.
+// its `stores:` aliases. Per spec §Fan-out template DSL.
 type FanOutSpec struct {
-	// Claim references a claim alias declared on the node (in `claims:`
+	// Claim references a claim alias declared on the node (in `stores:`
 	// or `holds:`). The producer of this claim must advertise
 	// supports_split_scope.
 	Claim string `yaml:"claim" json:"claim"`

@@ -8,13 +8,15 @@
 // At a held claim's holding-subgraph completion, the supervisor fires
 // exactly one store verb based on aggregate outcome — Commit if
 // every claim-holder reached `'completed'`, Abandon if any reached
-// `'failed'` — then deletes the lock-holder row. The store decides
-// what Commit / Abandon mean for its own state per its own
+// `'failed'` — then promotes the lock-holder row: its state flips to
+// `'committed'`/`'failed'` and the row is preserved past terminal (a
+// later retention sweep reaps it), rather than being deleted. The store
+// decides what Commit / Abandon mean for its own state per its own
 // configuration; rimsky carries only the success/failure binary.
 // Race-safe via SELECT … FOR UPDATE on the lock-holder row plus a
 // state='active' filter on the claim-holders rows: concurrent
 // terminations on the same subgraph see the row already locked /
-// already deleted and no-op.
+// already promoted and no-op.
 //
 // Post-stage-5 of the run-row lifecycle cutover, claim-holders rows
 // are keyed by `holder_run_id` (a `rimsky_node_runs.id`). The acquirer's
@@ -53,8 +55,10 @@ import (
 // terminal-decision engine in terminal_decision.go.
 //
 // Runs inside the caller's tx so the producer verb + the claim_handle
-// delete + the cascade-cleared claim-holder rows commit atomically
-// with whatever else the caller is mutating.
+// Promote (state flip to committed/abandoned; the row is preserved past
+// terminal and reaped later by the retention sweep) + the cascade-cleared
+// claim-holder rows commit atomically with whatever else the caller is
+// mutating.
 //
 // Returns nil when the subgraph is not yet complete (some active
 // rows remain) — the next terminating member will re-check.
@@ -70,7 +74,7 @@ import (
 // is a no-op.
 //
 // Phase-6 unification: the body of this function is the held-terminal
-// detection logic; the actual verb-fire + row-delete sequence
+// detection logic; the actual verb-fire + Promote sequence
 // delegates to ResolveClaimHandleTerminal.
 func CheckAndFireResolution(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
@@ -81,8 +85,10 @@ func CheckAndFireResolution(
 		return err
 	}
 	if row == nil {
-		// Already deleted by a concurrent termination on the same
-		// subgraph (race-safe per §4.10 invariant 13.2).
+		// Gone from the table — reaped by the retention sweep after a
+		// prior termination promoted it to non-active (race-safe per
+		// §4.10 invariant 13.2). The non-active-but-present case is
+		// handled by the state guard below.
 		return nil
 	}
 	if row.HolderSupervisorID == nil || *row.HolderSupervisorID != args.SupervisorID {
@@ -219,11 +225,10 @@ func CheckAndFireResolution(
 		hint.InstanceID = acquirer.InstanceID
 	}
 	// Recursive claim-tree resolution is now driven by
-	// `ResolveClaimHandleTerminal` itself when it walks the non-durable
-	// Delete branch (sub-claim rows always release via that branch
-	// because the durable promotion happens only at the parent
-	// resolution). Forwarding `ParentClaimHandleID` here keeps the held
-	// path firing the parent walk after the Delete commits. Spec
+	// `ResolveClaimHandleTerminal` itself: after it promotes the row to
+	// terminal it runs the parent-claim recursion (`bumpParentAndRecurse`).
+	// Forwarding `ParentClaimHandleID` here keeps the held path firing the
+	// parent walk after the resolution commits. Spec
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Recursive claim-tree resolution + §Fan-out template DSL.
 	//

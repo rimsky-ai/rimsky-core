@@ -7,7 +7,7 @@ connection: "postgres://store_postgres:store_postgres@db:5432/rimsky?sslmode=dis
 
 # Store's advertised write_semantics. Operator declares the same
 # value in stores.yml; the rimsky-side handshake is strict-equal.
-write_semantics: direct
+write_semantics: sync
 
 # Pick policies are store-internal — rimsky never sees them. Each
 # entry is keyed by the recognized selector form (recommended:

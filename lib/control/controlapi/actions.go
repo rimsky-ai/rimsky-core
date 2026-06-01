@@ -450,7 +450,7 @@ var v1Actions = []ActionEntry{
 	// catalog and pick up the per-tool action gate there.
 	//
 	// Named `mcp:read` rather than `mcp:invoke` so the wildcard-
-	// `*:read` bundled `viewer` role automatically covers
+	// `*:read` bundled `read-only` role automatically covers
 	// `tools/list`. The JSON-RPC dispatch surface is read-shaped at
 	// the umbrella level — `tools/call` mutations re-gate against
 	// the per-tool action and require those write permissions.
