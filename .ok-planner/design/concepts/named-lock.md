@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-A named lock is a producer-independent capacity-counter primitive. Declared in operator config (a `named_locks:` block) with `mode: mutex | counting` and a capacity. The named-lock spec carries just a name; at runtime it materializes as a `named`-kind row in the claim-handle ledger (see `concept:claim-handle`).
+A named lock is a producer-independent capacity-counter primitive. Declared in operator config (a `named_locks:` block) with a single `limit:` per name — `limit: 1` is a mutex, `limit: N` (N > 1) a counting semaphore; the mode is inferred from the limit, not declared separately. The named-lock spec carries just a name; at runtime it materializes as a `named`-kind row in the claim-handle ledger (see `concept:claim-handle`).
 
 ## Purpose
 
