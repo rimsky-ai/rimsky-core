@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // writeFixtureBinary creates a small shell-script "binary" in dir under
@@ -97,6 +99,154 @@ func TestExitCode(t *testing.T) {
 	if got := exitCode(err); got != 12 {
 		t.Errorf("exitCode(%v) = %d, want 12", err, got)
 	}
+}
+
+// TestEntrypointRoleSelection covers the os.Args[1:] → spawn-list mapping:
+// no args spawns all three roles (preserved all-in-one behavior), a single
+// known role arg spawns only that role, and an unknown role arg is rejected
+// with a clear error. The pure selectChildren mapping is asserted directly,
+// then the single-role and no-arg cases are exercised against fixture
+// binaries that drop a marker file when they run — proving the OTHER roles
+// are never spawned, not merely that the returned slice is short.
+func TestEntrypointRoleSelection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixtures unavailable on windows")
+	}
+
+	allThree := []string{"rimsky-scheduler", "rimsky-supervisor", "rimsky-control-api"}
+
+	t.Run("mapping", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			args    []string
+			want    []string
+			wantErr bool
+		}{
+			{"no args spawns all three", nil, allThree, false},
+			{"empty args spawns all three", []string{}, allThree, false},
+			{"single scheduler", []string{"rimsky-scheduler"}, []string{"rimsky-scheduler"}, false},
+			{"single supervisor", []string{"rimsky-supervisor"}, []string{"rimsky-supervisor"}, false},
+			{"single control-api", []string{"rimsky-control-api"}, []string{"rimsky-control-api"}, false},
+			{"unknown role errors", []string{"bogus"}, nil, true},
+			{"unknown role rimsky-migrate is not a runtime role", []string{"rimsky-migrate"}, nil, true},
+			{"too many args errors", []string{"rimsky-scheduler", "rimsky-supervisor"}, nil, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				got, err := selectChildren(tc.args)
+				if tc.wantErr {
+					if err == nil {
+						t.Fatalf("selectChildren(%v) = %v, want error", tc.args, got)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("selectChildren(%v) returned error: %v", tc.args, err)
+				}
+				if !equalStrings(got, tc.want) {
+					t.Fatalf("selectChildren(%v) = %v, want %v", tc.args, got, tc.want)
+				}
+			})
+		}
+	})
+
+	// Spawn-level proof: each fixture role binary touches a marker file when it
+	// runs. The single-role case must leave the other two markers ABSENT.
+	t.Run("single role spawns only that role", func(t *testing.T) {
+		dir := t.TempDir()
+		markerDir := t.TempDir()
+		for _, n := range allThree {
+			// Touch a per-role marker, then exec into sleep so SIGTERM
+			// terminates the process directly (no backgrounded grandchild that
+			// would otherwise keep the inherited stdout/stderr pipe open after
+			// the shell dies and hang `go test`).
+			writeFixtureBinary(t, dir, n,
+				`touch "`+filepath.Join(markerDir, n)+`"; exec sleep 60`)
+		}
+		t.Cleanup(func() { binaryDir = "/usr/local/bin" })
+		binaryDir = dir
+
+		cmds, exitCh, err := spawnChildren([]string{"rimsky-scheduler"})
+		if err != nil {
+			t.Fatalf("spawnChildren: %v", err)
+		}
+		t.Cleanup(func() { terminateAndReap(cmds, exitCh) })
+
+		// Give the spawned fixture a moment to touch its marker.
+		waitForFile(t, filepath.Join(markerDir, "rimsky-scheduler"))
+
+		for _, n := range []string{"rimsky-supervisor", "rimsky-control-api"} {
+			if _, err := os.Stat(filepath.Join(markerDir, n)); err == nil {
+				t.Fatalf("role %q was spawned but only rimsky-scheduler should run", n)
+			}
+		}
+	})
+
+	t.Run("no args spawns all three", func(t *testing.T) {
+		dir := t.TempDir()
+		markerDir := t.TempDir()
+		for _, n := range allThree {
+			writeFixtureBinary(t, dir, n,
+				`touch "`+filepath.Join(markerDir, n)+`"; exec sleep 60`)
+		}
+		t.Cleanup(func() { binaryDir = "/usr/local/bin" })
+		binaryDir = dir
+
+		cmds, exitCh, err := spawnChildren(nil)
+		if err != nil {
+			t.Fatalf("spawnChildren: %v", err)
+		}
+		t.Cleanup(func() { terminateAndReap(cmds, exitCh) })
+
+		for _, n := range allThree {
+			waitForFile(t, filepath.Join(markerDir, n))
+		}
+	})
+}
+
+// terminateAndReap SIGTERMs every spawned fixture and drains exitCh (one
+// message per child, sent by spawnChildren's wait goroutines) so the test's
+// inherited stdout/stderr pipes are released before the test process tears
+// down. Draining the channel — rather than calling Wait directly — avoids
+// racing the per-child wait goroutine already reaping the process.
+func terminateAndReap(cmds []*exec.Cmd, exitCh chan childExit) {
+	n := 0
+	for _, c := range cmds {
+		if c.Process != nil {
+			_ = c.Process.Signal(syscall.SIGTERM)
+			n++
+		}
+	}
+	for i := 0; i < n; i++ {
+		<-exitCh
+	}
+}
+
+// equalStrings reports whether two string slices are element-wise equal.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// waitForFile polls for path to appear, failing the test if it does not
+// within a short budget. Used to observe that a fixture role binary actually
+// ran (touched its marker).
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected file %q to appear", path)
 }
 
 // TestSignalForwarding spawns the entrypoint as a subprocess against a

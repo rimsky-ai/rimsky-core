@@ -159,6 +159,13 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 }
 func (h *controlAPIHandle) Addr() string { return h.addr }
 
+// resyncPublishersAtStartup is the startup publisher-subscription
+// reconciliation hook. Production points it at
+// runtime.ResyncPublisherSubscriptions (re-issue dropped subs, tear down
+// orphans). It is a package-level var so the wiring test can override it to
+// inject a fake publisher registry and assert StartControlAPI fires resync.
+var resyncPublishersAtStartup = runtime.ResyncPublisherSubscriptions
+
 // StartControlAPI binds host:port (port=0 for OS-assigned) and starts
 // serving.
 func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
@@ -350,6 +357,31 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	// Anonymous-mode banner: logs once at startup and every 5
 	// minutes thereafter while no API keys exist.
 	go controlapi.WatchAnonymousMode(loopCtx, authState, controlapi.DefaultBannerInterval)
+	// F8: reconcile publisher subscriptions against the live publisher
+	// peers at startup — re-issue subs rimsky persisted as active but the
+	// publisher dropped (e.g. publisher restart), tear down orphan subs the
+	// publisher reports for instances rimsky no longer tracks. The
+	// publisher registry lives in the control-api (the supervisor never
+	// holds one), so this is the correct home for resync.
+	//
+	// Run in a goroutine, best-effort, log-and-continue on error (matching
+	// the sweep discipline): a slow or unreachable publisher must not delay
+	// control-api from serving traffic, and one broken publisher cannot
+	// wedge startup. Bound by loopCtx so shutdown cancels it.
+	resyncLog := cfg.Logger
+	if resyncLog == nil {
+		resyncLog = shared.SilentLogger{}
+	}
+	go func() {
+		if err := resyncPublishersAtStartup(loopCtx, runtime.PublisherLifecycleDeps{
+			Persist:    persistStore,
+			Publishers: publisherReg,
+			Clock:      cfg.Clock,
+			Logger:     resyncLog,
+		}); err != nil {
+			resyncLog.Warn("controlapi.publisher_resync.failed", "error", err.Error())
+		}
+	}()
 	return h, nil
 }
 

@@ -172,6 +172,18 @@ type Config struct {
 	// as a stand-in for late-bound executor / claim-producer references.
 	// Empty → the admit-list extension is inert.
 	LateBindServiceProxies map[string]string
+
+	// DataProcessors resolves a producer name to its DataProcessing client
+	// (the `data_processing` mix-in protocol). Threaded into RunArgs so the
+	// fan-out acquisition path can mint a candidate per sub-claim
+	// (`BeginCandidate`) and the terminal path can Commit/Abandon those
+	// candidates. Nil → the supervisor treats every producer as
+	// non-DataProcessing (no candidate handles minted; the leaf falls back
+	// to claim_scope_data + parent address). Populated by
+	// `config.StartSupervisor` via `DialPublisherAndValidationRegistries`.
+	//
+	// @concept: data-processing
+	DataProcessors DataProcessingRegistry
 }
 
 // Handle is returned by Start. Callers drive lifecycle via Shutdown and
@@ -288,6 +300,7 @@ func Start(cfg Config) (*Handle, error) {
 		Metrics:                          cfg.Metrics,
 		LifecycleSubs:                    cfg.LifecycleSubs,
 		LifecyclePeersForSpec:            cfg.LifecyclePeersForSpec,
+		DataProcessors:                   cfg.DataProcessors,
 	}
 	addr, err := callbackSrv.Start(cfg.CallbackHost, cfg.CallbackPort)
 	if err != nil {
@@ -509,6 +522,7 @@ func runLoop(
 				LifecycleSubs:                    cfg.LifecycleSubs,
 				LifecyclePeersForSpec:            cfg.LifecyclePeersForSpec,
 				LateBindServiceProxies:           cfg.LateBindServiceProxies,
+				DataProcessors:                   cfg.DataProcessors,
 			}, reg.Register)
 			if runErr != nil {
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())

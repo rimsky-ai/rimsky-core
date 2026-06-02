@@ -8,7 +8,7 @@
 // rows + body-hash watermarks persist across restarts. When empty,
 // the binary runs in-memory (subscriptions reconstructed via
 // Publisher.Subscribe replay from rimsky's
-// runtime.ResyncPublisherSubscriptions at supervisor startup).
+// runtime.ResyncPublisherSubscriptions at control-api startup).
 //
 // Driver constraint: the DSN MUST be a Postgres DSN (the schema uses
 // `now()` and `TIMESTAMPTZ`, which are Postgres-only). Operators
@@ -16,7 +16,7 @@
 // schema or database on the shared rimsky Postgres; SQLite is not
 // supported. If lightweight dev-only persistence is needed, leave the
 // env var empty and rely on the in-memory mode + Publisher.Subscribe
-// resync at supervisor startup.
+// resync at control-api startup.
 //
 // The table shape is sensor-http-specific (URL, poll interval, match
 // predicate, body hash) — it is NOT shared with rimsky's

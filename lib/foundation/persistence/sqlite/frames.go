@@ -116,7 +116,11 @@ func (s *framesImpl) PruneOldRunsForRetention(ctx context.Context, recentFramesK
 	if recentFramesKept <= 0 {
 		return 0, nil
 	}
-	res, err := s.q(nil).ExecContext(ctx, `
+	// Standalone retention sweep — no caller-supplied tx. The single
+	// DELETE is atomic on its own, so run it directly against the db handle
+	// (mirroring Lineage.DeleteOlderThan); calling s.q(nil) here would trip
+	// the no-nil-tx contract and panic the scheduler tick.
+	res, err := (*tablesImpl)(s).db.ExecContext(ctx, `
         DELETE FROM rimsky_node_runs
          WHERE frame_id IN (
             SELECT frame_id FROM (

@@ -2,21 +2,16 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Holding-subgraph computation and inheritance validation
-// (spec §18.4 / §18.5). Runs at template deploy.
+// Holding-subgraph computation (spec §18.4). Runs at template deploy.
 //
-// The holding subgraph for a held claim is `{acquirer} ∪ {direct
-// inheritors}`. Inheritance is direct only — does not propagate
-// transitively through dep chains. Each downstream node that needs
-// the live claim declares it explicitly via `inherits: [{claim:
-// <alias>}]`.
+// The holding subgraph for a held claim is `{acquirer} ∪ {co-holders}`.
+// Co-holdership is direct only — does not propagate transitively
+// through dep chains. Each downstream node that needs the live claim
+// declares it explicitly via `holds: {<alias>: {from: <acquirer>}}`.
 //
-// At deploy time we verify that every `inherits:` reference resolves
-// to a real upstream claim alias acquired by some node N₁ that this
-// node depends on (transitively through deps). Per the 2026-04-30
-// stores cleanup, no per-alias claim_resolutions validation runs at
-// deploy: store disposition (Commit / Abandon) is governed by
-// per-store config, not by template-level declarations.
+// Per the 2026-04-30 stores cleanup, no per-alias claim_resolutions
+// validation runs at deploy: store disposition (Commit / Abandon) is
+// governed by per-store config, not by template-level declarations.
 //
 // Pick-policy intent enforcement (per spec §4.6: pick-policy claims
 // must be intent: rw) needs the operator's store registry; that check
@@ -24,14 +19,11 @@
 
 package node
 
-import (
-	"fmt"
-	"sort"
-)
+import "sort"
 
 // HoldingSubgraph is one held claim's deploy-time metadata: the
 // acquirer node type, the alias, and the set of node types in its
-// holding subgraph (acquirer + direct inheritors).
+// holding subgraph (acquirer + every co-holder of the alias).
 type HoldingSubgraph struct {
 	AcquirerType string
 	Alias        string
@@ -39,142 +31,32 @@ type HoldingSubgraph struct {
 }
 
 // IsHeld reports whether this claim is held — i.e., the subgraph has
-// at least one inheritor beyond the acquirer.
+// at least one co-holder (declared via `holds:`) beyond the acquirer.
 func (h HoldingSubgraph) IsHeld() bool { return len(h.Members) > 1 }
 
-// ValidateInheritance walks all inherits: declarations and validates
-// against the §18.4 / §18.5 rules. Appends errors to res. Run from
-// inside ValidateTemplate.
-//
-// Duplicate alias-acquirers (two distinct nodes both naming the same
-// alias on their `stores:` block) are accepted only when no
-// `inherits:` references that alias. When an inheritor references a
-// multiply-acquired alias, the deps-walk picks exactly one acquirer
-// per inheritor; if more than one acquirer is reachable for some
-// inheritor the configuration is ambiguous and rejected here.
-// Otherwise the runtime `HoldingSubgraphsForTemplate` reproduces the
-// same deps-walk so the deploy-time and runtime subgraph computations
-// agree.
-func ValidateInheritance(spec *TemplateSpec, res *ValidationResult) {
-	if spec == nil {
-		return
-	}
-	// Build acquirer index: alias → set of acquirer node types.
-	acquirerByAlias := make(map[string][]string)
-	seenAcq := make(map[string]map[string]struct{})
-	for _, n := range spec.Nodes {
-		for _, s := range n.Stores {
-			alias := s.AliasOf()
-			if _, ok := seenAcq[alias]; !ok {
-				seenAcq[alias] = make(map[string]struct{})
-			}
-			if _, dup := seenAcq[alias][n.Type]; dup {
-				continue
-			}
-			seenAcq[alias][n.Type] = struct{}{}
-			acquirerByAlias[alias] = append(acquirerByAlias[alias], n.Type)
-		}
-	}
-
-	// Build the dep-reachability map: nodeType → set of all its
-	// transitive ancestors (the nodes it depends on, directly or via
-	// chains).
-	ancestors := transitiveAncestors(spec.Nodes)
-
-	// Walk inherits: declarations.
-	for i, n := range spec.Nodes {
-		for j, ie := range n.Inherits {
-			alias := ie.Claim
-			if alias == "" {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("nodes[%d].inherits[%d].claim", i, j),
-					Msg:  "inherits claim alias is required",
-				})
-				continue
-			}
-			candidates, ok := acquirerByAlias[alias]
-			if !ok {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("nodes[%d].inherits[%d].claim", i, j),
-					Msg:  fmt.Sprintf("inherits references alias %q which is not acquired by any node", alias),
-				})
-				continue
-			}
-			// Find every candidate acquirer this node transitively
-			// depends on. Exactly one must be reachable; zero is
-			// "no upstream", more than one is ambiguous and rejected
-			// here (the runtime cannot pick deterministically).
-			reachable := make([]string, 0, len(candidates))
-			for _, c := range candidates {
-				if c == n.Type {
-					continue
-				}
-				if _, depended := ancestors[n.Type][c]; depended {
-					reachable = append(reachable, c)
-				}
-			}
-			if len(reachable) == 0 {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("nodes[%d].inherits[%d].claim", i, j),
-					Msg:  fmt.Sprintf("inherits references alias %q but no acquirer is reachable via deps from %q", alias, n.Type),
-				})
-				continue
-			}
-			if len(reachable) > 1 {
-				sort.Strings(reachable)
-				res.Errors = append(res.Errors, ValidationError{
-					Path: fmt.Sprintf("nodes[%d].inherits[%d].claim", i, j),
-					Msg:  fmt.Sprintf("inherits references alias %q but %d acquirers are reachable via deps from %q (%v); aliases inherited via inherits: must be unambiguous — disambiguate by giving each acquirer a distinct alias", alias, len(reachable), n.Type, reachable),
-				})
-				continue
-			}
-		}
-	}
-}
-
 // HoldingSubgraphsForTemplate computes the materialized holding
-// subgraphs for every (acquirer, alias) pair that has at least one
-// inheritance edge. Returned for runtime use by the supervisor's
-// auto-terminal mechanism.
+// subgraphs for every (acquirer, alias) pair. A claim is held when its
+// subgraph has at least one co-holder beyond the acquirer. Returned for
+// runtime use by the supervisor's auto-terminal mechanism.
+//
+// Members come from `holds:` (the sole co-holdership directive): each
+// `holds:` entry `{<alias>: {from: <acquirer-type>}}` adds the
+// declaring node to the (<acquirer-type>, <alias>) subgraph. The outer
+// key IS the acquirer's claim alias (the template validator enforces
+// that the `from:` node declares that alias on its `stores:` block),
+// and `from:` names the acquirer node-type directly — no deps-walk is
+// needed to route a holds edge to its acquirer.
 //
 // For non-held claims (subgraph size == 1, i.e. only the acquirer),
 // the result includes a HoldingSubgraph with a single member; the
 // supervisor checks IsHeld() to decide whether to insert
 // rimsky_claim_holders rows at acquisition.
 //
-// Multiple-acquirer aliases (the same alias-string acquired by two
-// distinct nodes) are handled via the same deps-reachability walk
-// `ValidateInheritance` performs at deploy: each `inherits:` edge is
-// routed to the acquirer reachable from the inheritor's node-type via
-// `dependencies`. ValidateInheritance rejects the ambiguous case
-// (multiple reachable acquirers per inheritor) at deploy time, so this
-// function picks the first reachable acquirer per inheritor and
-// produces the same subgraphs the validator emitted.
-//
 // Returns subgraphs sorted by (acquirer node type, alias) for
 // deterministic iteration.
 func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 	if spec == nil {
 		return nil
-	}
-	ancestors := transitiveAncestors(spec.Nodes)
-
-	// alias → list of acquirer node types (deduped, deterministic
-	// order — input order, then sorted by type for stability).
-	acqsByAlias := make(map[string][]string)
-	seenAcq := make(map[string]map[string]struct{})
-	for _, n := range spec.Nodes {
-		for _, s := range n.Stores {
-			alias := s.AliasOf()
-			if _, ok := seenAcq[alias]; !ok {
-				seenAcq[alias] = make(map[string]struct{})
-			}
-			if _, dup := seenAcq[alias][n.Type]; dup {
-				continue
-			}
-			seenAcq[alias][n.Type] = struct{}{}
-			acqsByAlias[alias] = append(acqsByAlias[alias], n.Type)
-		}
 	}
 
 	subgraphs := make(map[string]map[string]struct{}) // key: acquirer|alias → members set
@@ -189,40 +71,26 @@ func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 			}
 			subgraphs[key][acquirer] = struct{}{}
 		}
-		// For each inherits edge, pick the unique acquirer this node
-		// transitively depends on.
-		for _, ie := range n.Inherits {
-			alias := ie.Claim
-			if alias == "" {
+		// For each `holds:` co-holdership, the acquirer is named directly
+		// by `from:` and the outer key is the acquirer's claim alias —
+		// add this node to the (acquirer, alias) subgraph. A single
+		// co-holder makes the alias held (subgraph size > 1).
+		for alias, hb := range n.Holds {
+			acquirer := hb.From
+			if acquirer == "" || alias == "" {
 				continue
 			}
-			cands, ok := acqsByAlias[alias]
-			if !ok {
+			if acquirer == n.Type {
+				// A node co-holding its own claim adds no member beyond
+				// the acquirer it already seeded above; skip to avoid a
+				// spurious self-edge.
 				continue
 			}
-			var picked string
-			for _, c := range cands {
-				if c == n.Type {
-					continue
-				}
-				if _, depended := ancestors[n.Type][c]; depended {
-					if picked != "" {
-						// Ambiguity already rejected by
-						// ValidateInheritance — preserve
-						// determinism by sticking with the first
-						// reachable acquirer.
-						break
-					}
-					picked = c
-				}
-			}
-			if picked == "" {
-				continue
-			}
-			key := picked + "|" + alias
+			key := acquirer + "|" + alias
 			if _, ok := subgraphs[key]; !ok {
 				subgraphs[key] = make(map[string]struct{})
 			}
+			subgraphs[key][acquirer] = struct{}{}
 			subgraphs[key][n.Type] = struct{}{}
 		}
 	}
@@ -247,70 +115,6 @@ func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 		}
 		return out[i].Alias < out[j].Alias
 	})
-	return out
-}
-
-// transitiveAncestors returns, for each node type, the set of all
-// node types it is reactively coupled to transitively (the closure of
-// the subscription relation upward). Self is not included.
-//
-// Post-2026-05-14 the relation is driven by SubscriptionEntry +
-// substitution-ref inference rather than the retired Dependencies
-// field. We collect the direct upstream node-types from each node's
-// explicit `subscribes:` entries plus any `{{nodes.<X>...}}`
-// substitution refs in the node's attribute-schema sources.
-//
-//	@concept: node-subscription
-func transitiveAncestors(nodes []TemplateNodeDef) map[string]map[string]struct{} {
-	directDeps := make(map[string][]string, len(nodes))
-	for _, n := range nodes {
-		directDeps[n.Type] = upstreamNodeTypes(n)
-	}
-	out := make(map[string]map[string]struct{}, len(nodes))
-	for _, n := range nodes {
-		seen := make(map[string]struct{})
-		var walk func(t string)
-		walk = func(t string) {
-			for _, d := range directDeps[t] {
-				if _, already := seen[d]; already {
-					continue
-				}
-				seen[d] = struct{}{}
-				walk(d)
-			}
-		}
-		walk(n.Type)
-		out[n.Type] = seen
-	}
-	return out
-}
-
-// upstreamNodeTypes returns the direct upstream node-types this node is
-// reactively coupled to: explicit per-node Subscribes entries plus
-// substitution refs in attribute-schema sources. Cross-cutting
-// (instance:true) entries do not contribute a direct edge (the
-// inheritance walker needs concrete node types).
-func upstreamNodeTypes(n TemplateNodeDef) []string {
-	seen := make(map[string]struct{})
-	for _, s := range n.Subscribes {
-		if s.Node == "" || s.Node == n.Type {
-			continue
-		}
-		seen[s.Node] = struct{}{}
-	}
-	for _, ref := range parseSubstitutionRefsFromAttributes(n) {
-		if ref.SenderNodeType == "" || ref.SenderNodeType == n.Type {
-			continue
-		}
-		seen[ref.SenderNodeType] = struct{}{}
-	}
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(seen))
-	for t := range seen {
-		out = append(out, t)
-	}
 	return out
 }
 

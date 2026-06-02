@@ -82,7 +82,16 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 	// the chi router through the routerRef; the umbrella's verb is
 	// `read` so the `*:read` wildcard in the bundled `read-only` role
 	// covers `tools/list` automatically.
-	r.Post("/mcp", deps.AuthState.gateByAction("mcp:read", server.ServeHTTP))
+	//
+	// Both POST and GET are registered: POST carries the JSON-RPC
+	// messages; GET opens the MCP Streamable HTTP server-to-client SSE
+	// stream the default `type: http` client probes on connect (idle in
+	// v1 — connect-and-control only, no live push). Without the GET
+	// handler chi answers the probe with 405 and the client fails to
+	// connect. server.ServeHTTP routes by HTTP method internally.
+	gated := deps.AuthState.gateByAction("mcp:read", server.ServeHTTP)
+	r.Post("/mcp", gated)
+	r.Get("/mcp", gated)
 }
 
 // builtinSchemas returns per-tool input JSON schemas, mirroring the

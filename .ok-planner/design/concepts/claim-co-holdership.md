@@ -1,8 +1,6 @@
 ---
 concept: claim-co-holdership
 status: as-is
-aliases:
-  - inherits (legacy singular directive; superseded by `holds:`)
 ---
 
 # Claim co-holdership
@@ -27,7 +25,7 @@ Owns: the `holds:` template directive, the per-co-holder row insertion at the co
 ## Invariants
 
 - A co-holdership `from:` pointer MUST reference an upstream dependency. The co-holdership graph is a subset of the cell graph and naturally acyclic.
-- At dispatch, the co-holder's execution request carries the inherited claim's address (the same acquired result the original acquirer received) — same wire shape as a fresh acquire. Per `@blessed-invariant 20` the bytes are inert in rimsky.
+- At dispatch, the co-holder's execution request carries the co-held claim's address (the same acquired result the original acquirer received) — same wire shape as a fresh acquire. Per `@blessed-invariant 20` the bytes are inert in rimsky.
 - Persistence: the co-holder row is inserted in the co-holder's own acquire transaction, keyed by the holder run (post-2026-05-15 the holder key is the run; legacy keyed on the node).
 - Auto-terminal fires when every co-holder row for the claim handle is non-active. The holding-subgraph extension includes the acquirer plus every co-holder.
 - Multiple co-holders are supported — the `holds:` block can list many; multiple nodes can co-hold the same claim independently. The default cancel-siblings error policy walks the co-holder set when one fails; the walk is supervisor-scoped — see `concept:cancel-siblings` for the multi-supervisor consequence.
@@ -38,3 +36,4 @@ Introduced by `spec:2026-05-15-data-platform-extensions-design`. The verifier pa
 
 - [2026-05-18] Folded content from a former, now-retired co-holdership doc. The retired doc framed co-holdership under the legacy `inherits:` directive name; examples rewritten to use the modern `holds:` directive. Added value-pass-vs-claim-pass distinction + lifetime-extension authoring story to Definition. `inherits:` recorded in Aliases as a legacy singular synonym.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-06-02 — Legacy `inherits:` directive deleted entirely; `holds:` is the sole co-holdership directive. The `inherits` alias removed from frontmatter and the legacy-synonym framing dropped from the body. Per spec:2026-06-02-rimsky-core-remediation.

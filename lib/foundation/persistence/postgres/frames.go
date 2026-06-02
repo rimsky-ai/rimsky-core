@@ -543,7 +543,11 @@ func (s *framesImpl) PruneOldRunsForRetention(ctx context.Context, recentFramesK
 	// the frames themselves — but the retention sweep keeps the frame
 	// row (so observability can still surface it) and deletes only the
 	// associated run rows.
-	tag, err := s.q(nil).Exec(ctx, `
+	// Standalone retention sweep — no caller-supplied tx. The single
+	// DELETE is atomic on its own, so run it directly against the pool
+	// (mirroring Lineage.DeleteOlderThan); calling s.q(nil) here would trip
+	// the no-nil-tx contract and panic the scheduler tick.
+	tag, err := (*tablesImpl)(s).pool.Exec(ctx, `
         DELETE FROM rimsky_node_runs
         WHERE frame_id IN (
             SELECT frame_id FROM (

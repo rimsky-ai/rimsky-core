@@ -54,14 +54,17 @@ type ParkedSweepArgs struct {
 	// so `rimsky_invalidates_total` covers parked-resume sweeps. Nil →
 	// no-op.
 	Metrics MetricsHook
-	// PerReasonMaxPark holds the deployment-level per-reason cap. The
-	// per-row col:rimsky_node_runs.max_park_duration_seconds always
-	// takes priority — when set, it overrides any per-reason cap. When
-	// the per-row column is NULL and the row's parked_reason matches
+	// PerReasonMaxPark holds the deployment-level per-reason cap. Keys
+	// are the stored ParkReason values ("await_callback" / "snooze" —
+	// the closed two-value enum); sweepParkedByReason does exact-equality
+	// against the stored reason, so a key outside that set never matches a
+	// parked row. The per-row col:rimsky_node_runs.max_park_duration_seconds
+	// always takes priority — when set, it overrides any per-reason cap.
+	// When the per-row column is NULL and the row's parked_reason matches
 	// a key here, the per-reason cap applies. Per spec
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Parked-state taxonomy. Recommended defaults:
-	//   time_wait: 1h, callback_wait: 7d, retry_backoff: 1h, other: 1h.
+	//   await_callback: 7d, snooze: 1h.
 	// Empty / nil → no per-reason cap is applied (only per-row caps fire).
 	PerReasonMaxPark map[string]time.Duration
 }

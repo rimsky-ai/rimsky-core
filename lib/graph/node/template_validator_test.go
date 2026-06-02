@@ -152,122 +152,11 @@ func TestValidateStores_Error_UnknownStoreKind(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].stores[0].name")
 }
 
-func TestValidateInheritance_Ok_HeldClaim(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{
-			{
-				Type: "pick", Executor: "h",
-				Stores: []NodeStoreRef{
-					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
-				},
-			},
-			{
-				Type: "process", Executor: "h",
-				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*"}},
-				Inherits:   []InheritEntry{{Claim: "queue"}},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
-}
-
-func TestValidateInheritance_Error_UnknownAlias(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{
-			{Type: "pick", Executor: "h"},
-			{
-				Type: "process", Executor: "h",
-				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*"}},
-				Inherits:   []InheritEntry{{Claim: "ghost"}},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[1].inherits[0].claim")
-}
-
-func TestValidateInheritance_Error_AliasNotReachableViaDeps(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{
-			{
-				Type: "isolated", Executor: "h",
-				Stores: []NodeStoreRef{
-					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
-				},
-			},
-			{
-				Type:     "downstream",
-				Executor: "h",
-				// No deps on "isolated".
-				Inherits: []InheritEntry{{Claim: "queue"}},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[1].inherits[0].claim")
-}
-
-func TestValidateInheritance_Error_AmbiguousAcquirers(t *testing.T) {
-	// Two distinct nodes both acquire alias "queue", and a downstream
-	// node depends on BOTH and inherits "queue". The validator must
-	// reject because the runtime cannot pick a deterministic acquirer.
-	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
-		Nodes: []TemplateNodeDef{
-			{
-				Type: "pick_a", Executor: "h",
-				Stores: []NodeStoreRef{
-					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
-				},
-			},
-			{
-				Type: "pick_b", Executor: "h",
-				Stores: []NodeStoreRef{
-					{Name: "topics", Selector: "@queue", Intent: "rw", Alias: "queue"},
-				},
-			},
-			{
-				Type:     "downstream",
-				Executor: "h",
-				Subscribes: []SubscriptionEntry{
-					{Node: "pick_a", Type: "terminal/*"},
-					{Node: "pick_b", Type: "terminal/*"},
-				},
-				Inherits: []InheritEntry{{Claim: "queue"}},
-			},
-		},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[2].inherits[0].claim")
-	// Confirm the error message specifically calls out the
-	// reachable-acquirer count, distinguishing this from the
-	// unknown-alias and not-reachable-via-deps cases.
-	var found bool
-	for _, e := range res.Errors {
-		if e.Path == "nodes[2].inherits[0].claim" &&
-			strings.Contains(e.Msg, "acquirers are reachable") {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "expected error mentioning %q, got %+v", "acquirers are reachable", res.Errors)
-}
-
+// TestHoldingSubgraphsForTemplate_HeldChain exercises the held-subgraph
+// computation for a `holds:`-only co-holdership (the sole co-holdership
+// directive after `inherits:` was removed). A downstream node co-holds
+// the acquirer's `queue` claim, so the subgraph has two members and is
+// held.
 func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
 	spec := &TemplateSpec{
 		Nodes: []TemplateNodeDef{
@@ -280,7 +169,9 @@ func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
 			{
 				Type:       "process",
 				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*"}},
-				Inherits:   []InheritEntry{{Claim: "queue"}},
+				Holds: map[string]HoldsBinding{
+					"queue": {From: "pick"},
+				},
 			},
 		},
 	}

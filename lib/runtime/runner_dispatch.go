@@ -452,7 +452,16 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 			Reason: fmt.Sprintf("attributes_schema_invalid: %s: %s", first.Path, first.Msg),
 		}
 	}
-	rctx, err := buildResolveContextForDispatch(ctx, args, acq)
+	// Resolve the acquisition's RunScope projection ONCE here, above the
+	// substitution-context build, and thread its partition key into both
+	// the resolve context (so `{{child.partition_key}}` binds for fan-out
+	// leaves — E14) and the override-matcher overlay below (its
+	// `child_key:` predicate). A single read avoids a duplicate RunScope
+	// GetByID; the zero/empty partition key for non-fan-out runs is the
+	// correct "no binding" signal — `{{child.partition_key}}` stays
+	// ErrMissingSource off the main RunScope.
+	scope := resolveAcqScope(ctx, args, acq)
+	rctx, err := buildResolveContextForDispatch(ctx, args, acq, scope.PartitionKey)
 	if err != nil {
 		return nil, schema, err
 	}
@@ -460,7 +469,6 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err != nil {
 		return nil, schema, err
 	}
-	scope := resolveAcqScope(ctx, args, acq)
 	merged, matched := applyAttributeOverrides(
 		resolved,
 		acq.InstanceAttributeOverrides,
@@ -586,8 +594,15 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 // emission row from rimsky_node_events, (c) materializes the spilled
 // payload via BlobBackend if necessary, (d) returns the bytes for
 // walkPath. Empty bytes / no row → ok=false.
+//
+// partitionKey is the acquisition's RunScope partition key, resolved
+// once by the caller (resolveAttributes) and threaded in to avoid a
+// duplicate RunScope read. It binds `{{child.partition_key}}` for
+// fan-out leaf dispatches (E14); empty string off the main RunScope is
+// the "no binding" signal — `{{child.partition_key}}` then stays
+// ErrMissingSource, which is correct for non-fan-out runs.
 func buildResolveContextForDispatch(
-	ctx context.Context, args RunArgs, acq *acquisition,
+	ctx context.Context, args RunArgs, acq *acquisition, partitionKey string,
 ) (attributes.ResolveContext, error) {
 	deps := loadSubscribedNodeAttributesByID(ctx, args, acq)
 	claims := map[string]claimproducer.ClaimResult{}
@@ -609,10 +624,11 @@ func buildResolveContextForDispatch(
 		return lookupEventPayload(ctx, args, acq.InstanceID, emitter, eventName)
 	}
 	return attributes.ResolveContext{
-		Deps:        deps,
-		Claim:       claims,
-		Params:      paramsRaw,
-		EventLookup: eventLookup,
+		Deps:              deps,
+		Claim:             claims,
+		Params:            paramsRaw,
+		EventLookup:       eventLookup,
+		ChildPartitionKey: partitionKey,
 	}, nil
 }
 
@@ -1076,7 +1092,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 
 // buildStoreHandles converts each ClaimSpec acquisition into a per-
 // store StoreHandle proto entry, then layers any co-held claims
-// (`holds:` / legacy `inherits:`) on top under their local alias. The
+// (`holds:`) on top under their local alias. The
 // handle's `handle` struct carries the store-supplied address bytes
 // verbatim under the "address" key — opaque to Rimsky per
 // `@blessed-invariant 20`. The leaf executor cannot tell from
@@ -1213,5 +1229,14 @@ func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.Stor
 		return nil, fmt.Errorf("makeClaimHandle: structpb: %w", err)
 	}
 	out.Handle = s
+	// E4: a fan-out leaf's per-partition candidate handle (minted by
+	// `DataProcessing.BeginCandidate`, persisted on the sub-claim row, and
+	// bound onto this lock at leaf acquisition by
+	// `bindLeafCandidateHandles`). Empty for non-fan-out / non-
+	// DataProcessing claims — the wire field stays unset. Per
+	// @blessed-invariant 20 the bytes are inert in rimsky: passed verbatim
+	// from the sub-claim row to the wire so the executor can hand them
+	// straight back to the producer on its writes.
+	out.CandidateHandle = lk.ProducerCandidateHandle
 	return out, nil
 }

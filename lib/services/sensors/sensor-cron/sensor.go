@@ -22,7 +22,7 @@
 // Subscriptions are dropped on process restart; rimsky's
 // `runtime/publishers.go::ResyncPublisherSubscriptions` re-issues
 // `Subscribe` for each active row in `rimsky_publisher_subscriptions`
-// at supervisor startup, so subscriptions return to active state with
+// at control-api startup, so subscriptions return to active state with
 // `next_fire_at = sched.Next(now)`. This produces at most one MISSED
 // fire per restart per publisher-subscription, which the spec accepts
 // (see concept:sensor invariants — persist only when state is

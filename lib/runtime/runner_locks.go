@@ -79,7 +79,7 @@ func producerNameForSpec(sp any) string {
 // declarations into concrete spec values. Substitutes `{{params.x}}`,
 // `{{nodes.<n>.attribute.<f>}}`, and
 // `{{claim.<alias>.{address|scope|payload.<f>}}}` (when the alias has
-// a live inherited claim) into the selector and named-lock name per
+// a live co-held claim) into the selector and named-lock name per
 // the substitution grammar.
 //
 // All persistence reads share the caller's tx — passing nil here would
@@ -137,30 +137,29 @@ func buildLockSpecs(
 			Alias:        sref.AliasOf(),
 			TemplateID:   instTemplateScope(inst),
 			InstanceID:   instInstanceScope(inst),
+			// Carry the template store-ref's lifetime hint ("subgraph" /
+			// "durable") through to the persistence boundary. NodeStoreRef.Lifetime
+			// is a plain string; acquireClaim converts it to spec.ClaimLifetime
+			// at the ClaimHandleInsertInput. @concept: claim-lifetime
+			Lifetime: sref.Lifetime,
 		})
 	}
 	return out, nil
 }
 
 // loadInheritedClaimsForNode resolves the per-alias `{{claim.<alias>}}`
-// substitution context for an inheritor / co-holder at acquire-time.
-// Returns the upstream's `ClaimResult` (address + scope bytes) per
-// alias, sourced from `rimsky_claim_handles` rows the upstream nodes
-// hold.
+// substitution context for a co-holder at acquire-time. Returns the
+// upstream's `ClaimResult` (address + scope bytes) per alias, sourced
+// from `rimsky_claim_handles` rows the upstream nodes hold.
 //
-// Resolution sources, in order of preference:
-//
-//  1. `holds:` declarations on the node's template (spec §Claim
-//     co-holdership) — each entry names an upstream node-alias; the
-//     upstream's claim handle for the matching alias is the source of
-//     the address bytes.
-//  2. `inherits:` declarations on the node's template (legacy,
-//     pre-co-holdership) — each entry names a claim alias; the upstream
-//     acquirer is resolved via `HoldingSubgraphsForTemplate`.
+// Resolution source: `holds:` declarations on the node's template (spec
+// §Claim co-holdership) — each entry names an upstream node-alias; the
+// upstream's claim handle for the matching alias is the source of the
+// address bytes.
 //
 // Pre-stage-5 the runtime joined through `rimsky_claim_holders` rows
 // the supervisor eagerly inserted at acquire-time of the acquirer; the
-// post-stage-5 model defers the holder INSERT to the inheritor's own
+// post-stage-5 model defers the holder INSERT to the co-holder's own
 // dispatch time, so the lookup now starts from the template directive
 // and walks to the upstream's `rimsky_claim_handles` row directly.
 //
@@ -181,15 +180,14 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 	if nodeDef == nil {
 		return nil
 	}
-	// Fast path: nodes with neither `holds:` nor `inherits:` skip the
-	// per-binding lookup entirely. Avoids a ListByInstance + per-handle
-	// roundtrip on every acquire of a non-co-holding node.
-	if len(nodeDef.Holds) == 0 && len(nodeDef.Inherits) == 0 {
+	// Fast path: nodes without `holds:` skip the per-binding lookup
+	// entirely. Avoids a ListByInstance + per-handle roundtrip on every
+	// acquire of a non-co-holding node.
+	if len(nodeDef.Holds) == 0 {
 		return nil
 	}
 	out := map[string]claimproducer.ClaimResult{}
 	collectCoHeldClaims(ctx, args, tx, &tmpl.Spec, nd.InstanceID, nodeDef, out)
-	collectInheritedClaims(ctx, args, tx, &tmpl.Spec, nd.InstanceID, nodeDef, out)
 	if len(out) == 0 {
 		return nil
 	}
@@ -231,60 +229,6 @@ func collectCoHeldClaims(
 			localAlias = binding.As
 		}
 		out[localAlias] = claimproducer.ClaimResult{
-			Address:    lh.Address,
-			ClaimScope: lh.ClaimScopeData,
-		}
-	}
-}
-
-// collectInheritedClaims walks the node's `inherits:` block (legacy
-// pre-co-holdership path) and populates `out` with the upstream
-// acquirer's claim handle address. The acquirer is resolved via the
-// holding-subgraph computation that ValidateInheritance ran at deploy.
-func collectInheritedClaims(
-	ctx context.Context, args RunArgs, tx persistence.Tx,
-	spec *node.TemplateSpec, instanceID shared.UUID,
-	nodeDef *node.TemplateNodeDef, out map[string]claimproducer.ClaimResult,
-) {
-	if nodeDef == nil || len(nodeDef.Inherits) == 0 {
-		return
-	}
-	subgraphs := node.HoldingSubgraphsForTemplate(spec)
-	for _, ie := range nodeDef.Inherits {
-		alias := ie.Claim
-		if alias == "" {
-			continue
-		}
-		if _, alreadyResolved := out[alias]; alreadyResolved {
-			continue
-		}
-		// Find the acquirer node-type for this (member, alias) pair.
-		var acquirerType string
-		for _, sg := range subgraphs {
-			if sg.Alias != alias {
-				continue
-			}
-			if !memberOf(sg, nodeDef.Type) {
-				continue
-			}
-			if sg.AcquirerType == nodeDef.Type {
-				continue
-			}
-			acquirerType = sg.AcquirerType
-			break
-		}
-		if acquirerType == "" {
-			continue
-		}
-		upstreamNode := findInstanceNodeByType(ctx, args, tx, instanceID, acquirerType)
-		if upstreamNode == nil {
-			continue
-		}
-		lh := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, spec, acquirerType, alias)
-		if lh == nil {
-			continue
-		}
-		out[alias] = claimproducer.ClaimResult{
 			Address:    lh.Address,
 			ClaimScope: lh.ClaimScopeData,
 		}
@@ -357,9 +301,9 @@ func lookupClaimHandleForAlias(
 //
 // (The pre-stage-5 `aliasFromAcquirerStores` helper was retired by the
 // rewrite of `loadInheritedClaimsForNode`: the post-stage-5 lookup
-// starts from the template `holds:` / `inherits:` directive and walks
-// to the upstream claim handle directly, so there's no need to invert
-// from a holder row's producer_name back to an alias.)
+// starts from the template `holds:` directive and walks to the upstream
+// claim handle directly, so there's no need to invert from a holder
+// row's producer_name back to an alias.)
 
 // instTemplateScope returns the template-scope id sent to the store on
 // Open. Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-

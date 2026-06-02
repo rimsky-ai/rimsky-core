@@ -60,7 +60,7 @@ Owns: the lock-state ledger, claimant-guarded mutation predicates, the held-flag
 
 ### Held variant
 
-A **held** claim is a claim whose lifetime extends past its acquirer's terminal to cover the holding subgraph: the acquirer plus every directly-declared inheritor. Marked by the held flag on the handle row. Per-member state tracked in co-holder rows keyed by claim handle plus holder run, each carrying an active/completed/failed state.
+A **held** claim is a claim whose lifetime extends past its acquirer's terminal to cover the holding subgraph: the acquirer plus every directly-declared co-holder. Marked by the held flag on the handle row. Per-member state tracked in co-holder rows keyed by claim handle plus holder run, each carrying an active/completed/failed state.
 
 Post-2026-05-15 the holder key is the holder run (referencing the node-run ledger), not the legacy holder-node key. This reflects the run-tree extension: holders are runs, not nodes. The acquirer's own holder row is inserted at acquire-time; co-holder rows (declared via `holds:`) are inserted at the co-holder's own acquire-time.
 
@@ -74,7 +74,7 @@ Held-variant invariants:
 
 ### Authoring: held vs unheld
 
-A template declares co-holders on each node's `holds:` clause (legacy synonym: `inherits:`); the claim opened by a node becomes "held" implicitly when one or more downstream runs declare it as a co-held claim. The author does not flip a flag — the holding-subgraph membership is derived from the template's edges. Auto-terminal fires for the claim when every run in the holding subgraph (acquirer plus co-holders) has reached a non-active state.
+A template declares co-holders on each node's `holds:` clause; the claim opened by a node becomes "held" implicitly when one or more downstream runs declare it as a co-held claim. The author does not flip a flag — the holding-subgraph membership is derived from the template's edges. Auto-terminal fires for the claim when every run in the holding subgraph (acquirer plus co-holders) has reached a non-active state.
 
 ### Held-variant antipatterns
 
@@ -100,3 +100,4 @@ The legacy ledger name was the lock-holder table; Phase-5 consolidation renamed 
 - [2026-05-18] Folded residue from a former, now-retired holding-subgraph doc — the no-rollback / not-a-transactional-unit / no-partial-commits antipatterns added as a "Held-variant antipatterns" subsection under the Held variant. The bulk of that doc's content was already absorbed into the Held variant subsection; only the antipattern framing was unique.
 - 2026-05-22 — Updated for the ClaimScope rename per `spec:2026-05-22-fan-out-safety-scope-first-design`: the claim-scope lock-kind enum value, the claim-scope-data column, and the corresponding index were renamed.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-06-02 — Legacy `inherits:` directive deleted; `holds:` is the sole co-holdership directive. Scrubbed the `inherits:`-synonym note and the "inheritor" framing from the Held variant — co-holders are declared only via `holds:`. Per spec:2026-06-02-rimsky-core-remediation.

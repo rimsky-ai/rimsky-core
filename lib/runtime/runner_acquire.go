@@ -224,9 +224,9 @@ type acquisition struct {
 	SubClaims []SubClaim
 
 	// HeldClaims carries the per-alias claim addresses for upstream
-	// claims this run co-holds (`holds:`) or inherits (legacy
-	// `inherits:`). Populated at acquire-time alongside the
-	// `rimsky_claim_holders` INSERTs; consumed at dispatch-time by
+	// claims this run co-holds (`holds:`). Populated at acquire-time
+	// alongside the `rimsky_claim_holders` INSERTs; consumed at
+	// dispatch-time by
 	// `buildStoreHandles` so the leaf's `ExecuteRequest.stores` map
 	// presents co-held addresses under their local alias the same way
 	// as `claims:`-acquired addresses. Per `@blessed-invariant 20`
@@ -642,14 +642,25 @@ func tryAcquire(
 	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, heartbeatInterval); err != nil {
 		return acquisition{}, false, err
 	}
-	// E4b co-holder / inheritor row registration. For each `holds:`
-	// declaration on this node, find the upstream's claim handle and
-	// INSERT a `rimsky_claim_holders` row with `holder_run_id = this run`.
-	// Same pattern for legacy `inherits:` entries (the inheritor's
-	// dispatch-time INSERT replaces the eager acquire-time INSERTs the
-	// previous model used). Done inside the acquisition tx for atomicity
-	// per plan E4b step 2 — a co-holder run is either fully bound (own
-	// claims acquired AND co-held claims registered) or not bound at all.
+	// E4 leaf candidate-handle binding. A fan-out LEAF (a child run in a
+	// fanout_partition RunScope) Open's a fresh parent-selector claim of
+	// its own at acquisition above, but the candidate handle the producer
+	// minted for THIS partition lives on the linked sub-claim row (whose
+	// node_run_id was repointed to this leaf in
+	// `fanout_dispatch.go::CreateFanOutChildren`). Resolve it now and carry
+	// it onto the matching AcquiredLock so `makeClaimHandle` can stamp
+	// `StoreHandle.candidate_handle` at dispatch. Best-effort: a lookup
+	// failure logs and leaves the candidate empty (degrades to the
+	// pre-E4 behaviour) rather than failing the leaf dispatch.
+	bindLeafCandidateHandles(ctx, args, tx, &out, cand)
+	// E4b co-holder row registration. For each `holds:` declaration on
+	// this node, find the upstream's claim handle and INSERT a
+	// `rimsky_claim_holders` row with `holder_run_id = this run`. The
+	// co-holder's dispatch-time INSERT replaces the eager acquire-time
+	// INSERTs the previous model used. Done inside the acquisition tx
+	// for atomicity per plan E4b step 2 — a co-holder run is either
+	// fully bound (own claims acquired AND co-held claims registered) or
+	// not bound at all.
 	//
 	// @blessed-invariant 13: the holders set is the auto-terminal's input.
 	// @concept: claim-co-holdership
@@ -666,4 +677,68 @@ func tryAcquire(
 
 	loadResumeMetadataIfParked(ctx, args, tx, &out, cand)
 	return out, true, nil
+}
+
+// bindLeafCandidateHandles resolves a fan-out leaf's per-partition
+// candidate handle onto its matching AcquiredLock (E4).
+//
+// The candidate handle was minted at fan-out acquisition on the parent
+// run (`AcquireSubClaims` → `DataProcessing.BeginCandidate`) and persisted
+// on the sub-claim row; `CreateFanOutChildren` then repointed that row's
+// node_run_id to this leaf run. So the leaf finds its own candidate handle
+// by querying claim_handle rows where `node_run_id = this leaf's dispatch
+// id` and selecting the sub-claim (the one carrying both a non-empty
+// `producer_candidate_handle` and a set `parent_claim_handle_id`).
+//
+// A leaf may own more than one claim_handle row keyed by this node_run_id:
+// the fresh parent-selector claim it Open'd at acquisition (no candidate
+// handle, no parent) plus the linked sub-claim. We attach the sub-claim's
+// candidate handle to the leaf lock whose producer matches; on the typical
+// single-fan-out-claim leaf there is exactly one such lock.
+//
+// Best-effort: a lookup error logs and leaves the candidate empty — the
+// leaf still dispatches (degrading to the pre-E4 wire shape) rather than
+// failing on a non-load-bearing read.
+//
+// @concept: fan-out
+// @concept: data-processing
+func bindLeafCandidateHandles(ctx context.Context, args RunArgs, tx persistence.Tx, out *acquisition, cand persistence.Candidate) {
+	if out == nil || len(out.Locks) == 0 {
+		return
+	}
+	ch := args.ClaimHandles
+	if ch == nil {
+		return
+	}
+	rows, err := ch.ListByNodeRun(ctx, cand.DispatchID, tx)
+	if err != nil {
+		args.Logger.Warn("bindLeafCandidateHandles: ListByNodeRun failed; leaf candidate_handle left empty",
+			"run_id", cand.DispatchID.String(),
+			"error", err.Error())
+		return
+	}
+	for i := range rows {
+		row := rows[i]
+		// Only sub-claim rows (parent_claim_handle_id set) carry a leaf
+		// candidate handle. Skip the leaf's own freshly-Open'd
+		// parent-selector claim and any non-DataProcessing producer (empty
+		// handle).
+		if row.ParentClaimHandleID == nil || len(row.ProducerCandidateHandle) == 0 || row.ProducerName == nil {
+			continue
+		}
+		for j := range out.Locks {
+			sp, ok := out.Locks[j].Spec.(claimproducer.ClaimSpec)
+			if !ok || sp.ProducerName != *row.ProducerName {
+				continue
+			}
+			// Don't overwrite an already-bound handle (defensive against a
+			// future multi-fan-out-claim leaf; first match wins per
+			// claimed_at ordering).
+			if len(out.Locks[j].ProducerCandidateHandle) > 0 {
+				continue
+			}
+			out.Locks[j].ProducerCandidateHandle = row.ProducerCandidateHandle
+			break
+		}
+	}
 }

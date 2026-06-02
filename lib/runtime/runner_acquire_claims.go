@@ -20,6 +20,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	fspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
@@ -101,6 +102,12 @@ func acquireClaim(
 		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
 		FrameID:            &frameID,
 		IsHeld:             isHeld,
+		// Thread the template store-ref's lifetime hint onto the persisted
+		// row. spec.Lifetime is the rimsky-internal plain-string carried by
+		// the ClaimSpec (lib/protocols may not import lib/foundation/spec);
+		// convert at this persistence boundary. Empty → the persistence layer
+		// defaults to "subgraph". @concept: claim-lifetime
+		Lifetime: fspec.ClaimLifetime(spec.Lifetime),
 	}
 	if err := args.ClaimHandles.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Insert: %w", err)

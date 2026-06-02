@@ -89,8 +89,10 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 							Policy: []node.PolicyAction{{Action: "give_up"}},
 						},
 					},
+					Holds: map[string]node.HoldsBinding{
+						"held": {From: "a"},
+					},
 				},
-				scenario.WithInherits(scenario.Inherit("held")),
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{Node: "a", Type: "terminal/*"},
 					node.SubscriptionEntry{Node: "c", Type: "terminal/*"},

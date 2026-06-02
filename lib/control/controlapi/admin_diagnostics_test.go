@@ -405,7 +405,10 @@ func TestAdminInvalidateNode_Conflict409(t *testing.T) {
 		t.Fatalf("status: got %d, want 409", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "parked or fresh") {
+	// The conflict text describes the running-node rejection (the only
+	// state that refuses an invalidate). Pin a stable substring of the
+	// corrected ErrInvalidateConflict sentinel.
+	if !strings.Contains(string(body), "running node") {
 		t.Fatalf("body should describe conflict: %s", body)
 	}
 }

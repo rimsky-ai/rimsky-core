@@ -64,6 +64,12 @@ type SchedulerConfig struct {
 	// everywhere. Production wiring constructs an
 	// observability.RegistryHook from the per-process MetricsRegistry.
 	Metrics runtime.MetricsHook
+	// Retention is the parsed `retention:` block (rimsky.yml). Threaded
+	// into scheduler.Config.Retention so the tick's lineage / run-tree /
+	// claim-handle / message-idempotency retention sweeps fire (E10). Zero
+	// value disables every retention sweep; the loader applies the
+	// documented defaults so retention is on by default in production.
+	Retention runtime.RetentionConfig
 }
 
 // SchedulerHandle exposes graceful shutdown for a running scheduler
@@ -131,6 +137,7 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		BlobOrphans:             persistStore.BlobOrphans(),
 		OrphanBlobSweepInterval: cfg.OrphanBlobSweepInterval,
 		Metrics:                 cfg.Metrics,
+		Retention:               cfg.Retention,
 	}
 	// Auth-key rotation-grace sweep. Runs every minute; revokes
 	// keys whose `revoke_at` is in the past. Cheap, idempotent.

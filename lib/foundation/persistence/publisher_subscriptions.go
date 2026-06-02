@@ -7,7 +7,7 @@
 //
 // A publisher_subscription is one publisher peer's commitment to publish
 // messages for one instance. Lifecycle is managed by control-api's
-// instance-create / instance-terminate paths and reconciled at supervisor
+// instance-create / instance-terminate paths and reconciled at control-api
 // startup via runtime.ResyncPublisherSubscriptions.
 //
 // @concept: publisher-subscription

@@ -85,8 +85,10 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "inheritor",
 					Executor: "stub",
+					Holds: map[string]node.HoldsBinding{
+						"held": {From: "acquirer"},
+					},
 				},
-				scenario.WithInherits(scenario.Inherit("held")),
 				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
 			),
 		},

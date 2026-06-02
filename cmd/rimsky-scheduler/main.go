@@ -128,6 +128,7 @@ func main() {
 		Blob:                    blobBackend,
 		OrphanBlobSweepInterval: rimskyCfg.Blob.Retention.OrphanSweepInterval,
 		Metrics:                 observability.MetricsHookOf(mreg),
+		Retention:               rimskyCfg.Retention,
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())

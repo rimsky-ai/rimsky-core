@@ -946,13 +946,6 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 		nd["attributes"] = map[string]any{"schema": n.Attributes.Schema}
 	}
-	if len(n.Inherits) > 0 {
-		ihs := make([]map[string]any, 0, len(n.Inherits))
-		for _, ie := range n.Inherits {
-			ihs = append(ihs, map[string]any{"claim": ie.Claim})
-		}
-		nd["inherits"] = ihs
-	}
 	if len(n.ErrorTypes) > 0 {
 		ets := map[string]any{}
 		for cls, etp := range n.ErrorTypes {
@@ -1072,12 +1065,6 @@ func withAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 	}
 }
 
-func withInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
-	return func(n *node.TemplateNodeDef) {
-		n.Inherits = append(n.Inherits, refs...)
-	}
-}
-
 func withSubscribes(subs ...node.SubscriptionEntry) func(*node.TemplateNodeDef) {
 	return func(n *node.TemplateNodeDef) {
 		n.Subscribes = append(n.Subscribes, subs...)
@@ -1135,8 +1122,8 @@ func MakeNode(base node.TemplateNodeDef, opts ...func(*node.TemplateNodeDef)) no
 	return n
 }
 
-// WithStores / WithLocks / WithAttributes / WithInherits — exported
-// aliases for the option helpers above.
+// WithStores / WithLocks / WithAttributes — exported aliases for the
+// option helpers above.
 func WithStores(refs ...node.NodeStoreRef) func(*node.TemplateNodeDef) {
 	return withStores(refs...)
 }
@@ -1147,10 +1134,6 @@ func WithLocks(refs ...node.NodeLockRef) func(*node.TemplateNodeDef) {
 
 func WithAttributes(schema map[string]any) func(*node.TemplateNodeDef) {
 	return withAttributes(schema)
-}
-
-func WithInherits(refs ...node.InheritEntry) func(*node.TemplateNodeDef) {
-	return withInherits(refs...)
 }
 
 // WithSubscribes appends one or more SubscriptionEntry receivers to the

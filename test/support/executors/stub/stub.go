@@ -126,6 +126,14 @@ type ObservedRequest struct {
 	DispatchID               string
 	PriorDispatchID          string                         // empty when unset on the wire
 	PriorDispatchDisposition genv1.PriorDispatchDisposition // PRIOR_NONE when unset on the wire
+	// CandidateHandles records the per-store-alias candidate_handle bytes
+	// carried on each ExecuteRequest.StoreHandle. Empty for non-fan-out /
+	// non-DataProcessing dispatches; populated for fan-out leaf dispatches
+	// so tests can assert the supervisor threaded the sub-claim's
+	// `producer_candidate_handle` onto the wire (E4). Keyed by the
+	// StoreHandle map alias. Per @blessed-invariant 20 the bytes are inert
+	// in rimsky — recorded verbatim here for assertion only.
+	CandidateHandles map[string][]byte
 }
 
 // New constructs a Stub with no scripted node types registered.
@@ -260,6 +268,15 @@ func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 // If stub mode is enabled, short-circuits to an immediate StreamClose
 // with Success outcome keyed by node_type via StubAttributesFor.
 func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
+	var candidateHandles map[string][]byte
+	if len(req.GetStores()) > 0 {
+		candidateHandles = make(map[string][]byte, len(req.GetStores()))
+		for alias, sh := range req.GetStores() {
+			if ch := sh.GetCandidateHandle(); len(ch) > 0 {
+				candidateHandles[alias] = append([]byte(nil), ch...)
+			}
+		}
+	}
 	s.mu.Lock()
 	s.observed = append(s.observed, ObservedRequest{
 		NodeID:                   req.GetNodeId(),
@@ -271,6 +288,7 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 		DispatchID:               req.GetDispatchId(),
 		PriorDispatchID:          req.GetPriorDispatchId(),
 		PriorDispatchDisposition: req.GetPriorDispatchDisposition(),
+		CandidateHandles:         candidateHandles,
 	})
 	stubMode := s.stubMode
 	sc, ok := s.scripts[req.NodeType]

@@ -2,14 +2,19 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// rimsky-entrypoint is the unified-image PID-1 process supervisor. Runs
-// rimsky-migrate synchronously, then spawns the three runtime binaries
-// (rimsky-scheduler, rimsky-supervisor, rimsky-control-api) and forwards
-// SIGTERM/SIGINT. Exits when any child exits or all clean up. Per spec
-// §7.3.
+// rimsky-entrypoint is the unified-image PID-1 process supervisor. With no
+// command argument it runs rimsky-migrate synchronously, then spawns all
+// three runtime binaries (rimsky-scheduler, rimsky-supervisor,
+// rimsky-control-api) — the zero-config all-in-one stack. When given a single
+// role argument (e.g. `command: [rimsky-scheduler]`) it spawns ONLY that role,
+// so multi-container deploys run one role per container with correct
+// cross-container addressing. An unknown role argument is rejected loudly.
+// Either way it forwards SIGTERM/SIGINT and exits when any child exits or all
+// clean up. Per spec §7.3.
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -25,28 +30,81 @@ import (
 // budget without leaving the container hanging.
 const shutdownDeadline = 30 * time.Second
 
-// children is the spawn list. Order is informational only — processes
-// are started concurrently after migrate completes.
+// children is the full spawn list for the all-in-one (no-argument) path.
+// Order is informational only — processes are started concurrently after
+// migrate completes. It is also the set of valid single-role arguments.
 var children = []string{"rimsky-scheduler", "rimsky-supervisor", "rimsky-control-api"}
 
 // binaryDir is overridden in tests to point at a fixture-binary directory.
 var binaryDir = "/usr/local/bin"
 
-func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("binary", "entrypoint"))
-
-	// Step 1: migrate synchronously.
-	slog.Info("running migrations")
-	if err := runOnce("rimsky-migrate"); err != nil {
-		slog.Error("migrate failed", "err", err)
-		os.Exit(1)
+// selectChildren maps the entrypoint's command arguments (os.Args[1:]) to the
+// list of role binaries to spawn:
+//   - no args → all three roles (the zero-config all-in-one stack).
+//   - one arg naming a known runtime role → only that role.
+//   - anything else (unknown role, rimsky-migrate, or >1 arg) → an error.
+//
+// rimsky-migrate is deliberately NOT a selectable role: it is a one-shot init
+// step, not a long-running process, and the entrypoint runs it separately (see
+// shouldMigrate). Returning it here would leave the entrypoint supervising a
+// process that exits immediately.
+func selectChildren(args []string) ([]string, error) {
+	if len(args) == 0 {
+		return children, nil
 	}
-	slog.Info("migrations complete")
+	if len(args) > 1 {
+		return nil, fmt.Errorf("rimsky-entrypoint accepts at most one role argument; got %d (%v); valid roles: %s",
+			len(args), args, strings.Join(children, ", "))
+	}
+	role := args[0]
+	for _, known := range children {
+		if role == known {
+			return []string{role}, nil
+		}
+	}
+	return nil, fmt.Errorf("unknown role %q; valid roles: %s", role, strings.Join(children, ", "))
+}
 
-	// Step 2: spawn children.
-	cmds := make([]*exec.Cmd, 0, len(children))
-	exitCh := make(chan childExit, len(children))
-	for _, name := range children {
+// shouldMigrate decides whether this entrypoint invocation runs the
+// synchronous rimsky-migrate step. The rule, kept deliberately simple and
+// explicit:
+//
+//   - RIMSKY_ENTRYPOINT_MIGRATE=1 forces migrate; =0 skips it. This lets an
+//     operator run a dedicated one-shot migrate container, or suppress migrate
+//     in a role container that shares a store with one that already migrated.
+//   - With no override: the no-arg all-in-one path always migrates (one
+//     process owns the whole store). For single-role containers exactly one
+//     role — rimsky-control-api — owns schema init, so a three-container
+//     deploy migrates once rather than racing three concurrent migrations or
+//     never migrating at all.
+func shouldMigrate(selected []string) bool {
+	switch os.Getenv("RIMSKY_ENTRYPOINT_MIGRATE") {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
+	// No override: all-in-one (all three) migrates; single-role migrates only
+	// for the designated control-api role.
+	if len(selected) == len(children) {
+		return true
+	}
+	return len(selected) == 1 && selected[0] == "rimsky-control-api"
+}
+
+// spawnChildren starts each selected role binary, wiring a wait goroutine per
+// child onto the returned exit channel. main keeps the signal/exit select
+// loop; tests drive spawnChildren directly to observe which roles ran without
+// the full PID-1 lifecycle. The args→names mapping goes through selectChildren,
+// so an unknown role surfaces as an error here (and the caller exits non-zero).
+func spawnChildren(args []string) ([]*exec.Cmd, chan childExit, error) {
+	names, err := selectChildren(args)
+	if err != nil {
+		return nil, nil, err
+	}
+	cmds := make([]*exec.Cmd, 0, len(names))
+	exitCh := make(chan childExit, len(names))
+	for _, name := range names {
 		c := exec.Command(binaryDir + "/" + name)
 		// RIMSKY_PROCESS_ROLE=unified gates the in-process "memory"
 		// BlobBackend (D5 / blob_config.go::ValidateBlobConfig). Set
@@ -59,15 +117,48 @@ func main() {
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		if err := c.Start(); err != nil {
-			slog.Error("spawn failed", "binary", name, "err", err)
 			killAll(cmds)
-			os.Exit(1)
+			return nil, nil, fmt.Errorf("spawn %s: %w", name, err)
 		}
 		cmds = append(cmds, c)
 		go func(c *exec.Cmd, name string) {
 			err := c.Wait()
 			exitCh <- childExit{name: name, err: err}
 		}(c, name)
+	}
+	return cmds, exitCh, nil
+}
+
+func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("binary", "entrypoint"))
+
+	// Resolve the role argument first so an unknown role fails before we touch
+	// the store with a migrate run.
+	args := os.Args[1:]
+	selected, err := selectChildren(args)
+	if err != nil {
+		slog.Error("invalid role argument", "err", err)
+		os.Exit(2)
+	}
+	slog.Info("selected roles", "roles", selected)
+
+	// Step 1: migrate synchronously (only when this invocation owns migrate).
+	if shouldMigrate(selected) {
+		slog.Info("running migrations")
+		if err := runOnce("rimsky-migrate"); err != nil {
+			slog.Error("migrate failed", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("migrations complete")
+	} else {
+		slog.Info("skipping migrations for this role", "roles", selected)
+	}
+
+	// Step 2: spawn the selected children.
+	cmds, exitCh, err := spawnChildren(args)
+	if err != nil {
+		slog.Error("spawn failed", "err", err)
+		os.Exit(1)
 	}
 
 	// Step 3: forward signals; wait for first exit.

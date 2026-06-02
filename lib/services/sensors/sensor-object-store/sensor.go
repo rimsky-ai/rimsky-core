@@ -15,11 +15,14 @@
 //
 // Backends: the sensor is structured around a narrow `ObjectLister`
 // interface (List(prefix) -> []ObjectMeta) so a single poll loop drives
-// every backend. The reference implementation ships an in-memory lister
-// for tests; S3 / GCS / Azure listers are wired in production builds
-// via the `backend` config string. The in-memory backend is exposed
-// via SetBackend for fakes so callers can drive scenario tests without
-// LocalStack.
+// every backend. The default bundled image registers ONLY the in-memory
+// lister ("memory"), so it advertises and accepts only "memory" — it
+// rejects s3/gcs/azure at Subscribe rather than no-op'ing on them at
+// poll time. S3 / GCS / Azure are not implemented here (deliberately
+// cut to keep the cloud SDKs out of the default build); a production
+// build registers its own listers via SetBackend before Run, after
+// which Capabilities advertises and Subscribe accepts exactly the
+// registered set.
 //
 // Watermarking: per-subscription high-watermark is the maximum value
 // seen for the configured `watermark_field` (one of `name`,
@@ -66,7 +69,7 @@ type ObjectLister interface {
 type Watch struct {
 	SubscriptionID string
 	InstanceID     string
-	Backend        string // s3 | gcs | azure | memory
+	Backend        string // a registered backend name; "memory" in the default build
 	Bucket         string
 	Prefix         string
 	PollInterval   time.Duration
@@ -82,9 +85,11 @@ type Watch struct {
 // SensorService implements genv1.PublisherServer for object-store
 // polling.
 //
-// `lister` is keyed by backend name ("s3", "gcs", "azure", "memory").
-// Production code registers backends at startup; tests inject the
-// "memory" lister via SetBackend.
+// `listers` is keyed by backend name. The default build registers only
+// "memory"; production builds register additional backends (e.g. s3,
+// gcs, azure) at startup via SetBackend. Subscribe and Capabilities are
+// both driven off this map so the sensor only ever accepts/advertises
+// backends it can actually service.
 type SensorService struct {
 	genv1.UnimplementedPublisherServer
 	mu             sync.Mutex
@@ -127,31 +132,64 @@ func NewSensorService(rimskyEndpoint string, log logger) *SensorService {
 }
 
 // SetBackend registers an ObjectLister under the given backend name.
-// Used by tests (memory fake) and by main() at startup for production
-// backends.
+//
+// This is the sole extension point for object-store backends. The
+// default bundled image registers only the in-memory backend
+// ("memory"), so it advertises and accepts only "memory". A production
+// build that needs s3/gcs/azure constructs its own binary, registers
+// the corresponding listers via SetBackend before calling Run, and the
+// sensor then advertises (Capabilities) and accepts (Subscribe) exactly
+// the set of registered backends — keeping the cloud SDKs out of the
+// default build. Used by tests (memory fake) and by main() at startup.
 func (s *SensorService) SetBackend(name string, l ObjectLister) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.listers[name] = l
 }
 
-// Capabilities advertises the object-store kind.
+// registeredBackends returns the sorted set of backend names this build
+// can service. Callers must hold s.mu. Used by Subscribe (to name the
+// serviceable set in a rejection) and Capabilities (to advertise only
+// backends that are actually wired), so the sensor never accepts or
+// advertises a backend it could only no-op on at poll time.
+func (s *SensorService) registeredBackends() []string {
+	out := make([]string, 0, len(s.listers))
+	for name := range s.listers {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Capabilities advertises the object-store kind. The `backend` enum is
+// built from the listers actually registered on this build (J3) so the
+// sensor never advertises a backend it cannot service — the default
+// image advertises only ["memory"]; a production build that registered
+// s3/gcs/azure listers advertises those too.
 func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.PublisherCapabilities, error) {
+	s.mu.Lock()
+	backends := s.registeredBackends()
+	s.mu.Unlock()
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"backend":         map[string]any{"type": "string", "enum": backends},
+			"bucket":          map[string]any{"type": "string"},
+			"prefix":          map[string]any{"type": "string"},
+			"poll_interval":   map[string]any{"type": "string"},
+			"watermark_field": map[string]any{"type": "string", "enum": []string{"name", "last_modified"}},
+		},
+		"required": []string{"backend", "bucket"},
+	}
+	schemaBytes, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("marshal config schema: %w", err)
+	}
 	return &genv1.PublisherCapabilities{
 		SupportedKinds: []*genv1.PublisherKindCapability{
 			{
-				Kind: "object-store",
-				ConfigSchema: []byte(`{
-					"type": "object",
-					"properties": {
-						"backend": {"type": "string", "enum": ["s3", "gcs", "azure", "memory"]},
-						"bucket": {"type": "string"},
-						"prefix": {"type": "string"},
-						"poll_interval": {"type": "string"},
-						"watermark_field": {"type": "string", "enum": ["name", "last_modified"]}
-					},
-					"required": ["backend", "bucket"]
-				}`),
+				Kind:         "object-store",
+				ConfigSchema: schemaBytes,
 			},
 		},
 		Protocols: []string{"publisher"},
@@ -182,10 +220,18 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	if cfg.Bucket == "" {
 		return nil, fmt.Errorf("resolved_config.bucket required")
 	}
-	switch cfg.Backend {
-	case "s3", "gcs", "azure", "memory":
-	default:
-		return nil, fmt.Errorf("resolved_config.backend must be s3|gcs|azure|memory (got %q)", cfg.Backend)
+	// Validate the backend against the listers actually registered on this
+	// build (J3). The default image services only "memory"; a production
+	// build that wires s3/gcs/azure listers via SetBackend before Run
+	// auto-accepts them here. Rejecting unregistered backends keeps the
+	// sensor from accepting a subscription it could only no-op on at poll
+	// time.
+	s.mu.Lock()
+	_, backendRegistered := s.listers[cfg.Backend]
+	registered := s.registeredBackends()
+	s.mu.Unlock()
+	if !backendRegistered {
+		return nil, fmt.Errorf("resolved_config.backend %q is not serviceable by this build (registered backends: %s)", cfg.Backend, strings.Join(registered, "|"))
 	}
 	if cfg.WatermarkField == "" {
 		cfg.WatermarkField = "name"

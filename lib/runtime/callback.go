@@ -172,8 +172,15 @@ type CallbackServer struct {
 	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
 	LifecycleSubs         *locks.LifecycleRegistry
 	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
-	addr                  string
-	srv                   *http.Server
+	// DataProcessors is threaded into RunArgs at driveTerminal time so an
+	// async-callback-driven leaf terminal can Commit/Abandon the
+	// per-sub-claim candidate against the producer's DataProcessing
+	// surface, same as the synchronous RunNode path. Nil → candidate
+	// Commit/Abandon is a no-op (degrades to the pre-DataProcessing
+	// posture). @concept: data-processing
+	DataProcessors DataProcessingRegistry
+	addr           string
+	srv            *http.Server
 	// ackOutcomes records the per-dispatch ack status produced by
 	// driveTerminal's phase-check tx so handleCallback can write the
 	// structured response body. Keyed by dispatch_id; entries are
@@ -532,6 +539,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		Metrics:                          c.Metrics,
 		LifecycleSubs:                    c.LifecycleSubs,
 		LifecyclePeersForSpec:            c.LifecyclePeersForSpec,
+		DataProcessors:                   c.DataProcessors,
 	}
 	acq := &acquisition{
 		DispatchID: ac.DispatchID,

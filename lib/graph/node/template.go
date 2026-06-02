@@ -4,15 +4,14 @@
 
 // Template DSL types (spec §18). The graph-author's view of a node:
 // stores it interacts with, named locks it holds, attributes it
-// declares, and inheritance edges for held claims it consumes
-// downstream.
+// declares, and `holds:` edges for held claims it co-holds downstream.
 //
 // The persistable row-type primitives moved into foundation/spec so
 // foundation can be self-contained (foundation never imports graph).
 // This file re-exports those types as aliases so existing graph/node
 // consumers keep working unchanged. The algorithms that operate on
-// these types — ValidateInheritance, HoldingSubgraphsForTemplate,
-// RequiredStores, the template validator — remain in this package.
+// these types — HoldingSubgraphsForTemplate, RequiredStores, the
+// template validator — remain in this package.
 //
 // History (informational):
 //   - Stores-redesign-v2 dropped per-claim on_commit/on_give_up
@@ -26,8 +25,8 @@
 //     the success/failure binary (success → Commit; failure →
 //     Abandon).
 //   - NodeStoreRef carries selector + intent + alias.
-//   - TemplateNodeDef carries Inherits []InheritEntry for held-claim
-//     consumers downstream of an acquirer.
+//   - TemplateNodeDef carries Holds map[string]HoldsBinding for
+//     co-holders downstream of an acquirer (concept:claim-co-holdership).
 
 package node
 
@@ -47,7 +46,6 @@ type (
 	NodeStoreRef      = spec.NodeStoreRef
 	NodeLockRef       = spec.NodeLockRef
 	NodeAttributesDef = spec.NodeAttributesDef
-	InheritEntry      = spec.InheritEntry
 	SubscriptionEntry = spec.SubscriptionEntry
 
 	// 2026-05-15 data-platform extensions row-types re-exported here

@@ -51,9 +51,3 @@ func MutexLock(name string) node.NodeLockRef {
 func CountingLock(name string) node.NodeLockRef {
 	return node.NodeLockRef{Name: name}
 }
-
-// Inherit returns an InheritEntry referencing an upstream-acquirer
-// claim alias. Used alongside scenario.WithInherits.
-func Inherit(alias string) node.InheritEntry {
-	return node.InheritEntry{Claim: alias}
-}

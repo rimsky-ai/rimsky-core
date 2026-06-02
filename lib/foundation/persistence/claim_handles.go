@@ -188,6 +188,17 @@ type ClaimHandleTable interface {
 	UpdateAddress(ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx Tx) error
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHandleRow, error)
 	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
+
+	// ListByNodeRun returns claim_handle rows whose node_run_id equals
+	// nodeRunID. Used by the fan-out leaf-dispatch path
+	// (`runtime/runner_acquire.go`) to find the leaf's OWN sub-claim row
+	// (linked to the leaf run by `fanout_dispatch.go::CreateFanOutChildren`)
+	// so its persisted `producer_candidate_handle` rides onto the leaf's
+	// `ExecuteRequest.StoreHandle.candidate_handle` (E4). A leaf run may
+	// own more than one row here (its freshly-Open'd parent-selector claim
+	// plus the linked sub-claim); the caller filters by producer + the
+	// sub-claim marker (`parent_claim_handle_id` set).
+	ListByNodeRun(ctx context.Context, nodeRunID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
 	ListBySupervisor(ctx context.Context, supervisorID string, tx Tx) ([]ClaimHandleRow, error)
 	ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx Tx) error
 	ListExpired(ctx context.Context, tx Tx) ([]ClaimHandleRow, error)
@@ -221,6 +232,18 @@ type ClaimHandleTable interface {
 	// acquireClaim path when the store-chosen claim-scope differs from the
 	// substituted-selector claim-scope the supervisor wrote at INSERT time.
 	UpdateClaimScope(ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx Tx) error
+
+	// UpdateNodeRunID repoints a claim_handle row's node_run_id FK.
+	// Used by the fan-out dispatch path
+	// (`runtime/fanout_dispatch.go::CreateFanOutChildren`) to retarget a
+	// sub-claim from the parent fan-out run (its acquire-time owner) to its
+	// OWN child leaf run, so the leaf can resolve its sub-claim by
+	// `node_run_id = its own dispatch id` and carry the persisted
+	// `producer_candidate_handle` onto the wire (E4). NOT claimant-guarded:
+	// it runs inside the same acquisition/dispatch tx as the child-run
+	// INSERT, before any other supervisor can observe the row, and the FK
+	// target (the freshly-created child run) is guaranteed to exist in-tx.
+	UpdateNodeRunID(ctx context.Context, id shared.UUID, nodeRunID shared.UUID, tx Tx) error
 
 	// UpdateRealizedWriteSemantics writes the per-claim ClaimProducer-
 	// declared realized_write_semantics on a claim-scope-kind row,

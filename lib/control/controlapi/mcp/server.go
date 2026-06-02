@@ -5,19 +5,38 @@
 package mcp
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
-// Server is the in-process MCP handler. Mounted at POST /mcp inside
-// control-api's chi router by registerMCPRoute. Dispatches
-// initialize / tools/list / tools/call / resources/list / resources/read
-// by calling back into the control-api router (for tool invocations) or
-// directly into persistence (for resources). Push semantics
-// (resources/subscribe + notifications/resources/updated) are out of v1
-// scope per spec .ok-planner/specs/2026-05-24-instance-debugger-design.md §6.
+// Server is the in-process MCP handler. Mounted at GET+POST /mcp inside
+// control-api's chi router by registerMCPRoute. Speaks enough of the MCP
+// Streamable HTTP transport for the default `type: http` client to
+// connect and control:
+//
+//   - POST /mcp dispatches initialize / tools/list / tools/call /
+//     resources/list / resources/read (calling back into the control-api
+//     router for tool invocations, or directly into persistence for
+//     resources). initialize issues a fresh Mcp-Session-Id response
+//     header; any JSON-RPC notification (an id-less request, e.g.
+//     notifications/initialized) is consumed with a 202/empty body and
+//     never a JSON-RPC reply.
+//   - GET /mcp opens a valid (idle, keep-alive) text/event-stream so the
+//     client's server-to-client stream probe succeeds instead of 405.
+//
+// Server-initiated push (resources/subscribe +
+// notifications/resources/updated, live event streaming) is out of v1
+// scope per spec .ok-planner/specs/2026-05-24-instance-debugger-design.md
+// §6 and spec .ok-planner/specs/2026-06-02-rimsky-core-remediation-design.md
+// (#7: connect-and-control only; live push is V2). The GET stream
+// therefore stays idle — it exists so the probe succeeds, and pushes
+// nothing in v1.
 type Server struct {
 	Tools     ToolCatalog
 	Resources ResourceCatalog
@@ -77,8 +96,27 @@ type ResourceContents struct {
 	Text     string `json:"text"`
 }
 
-// ServeHTTP handles a single POST /mcp JSON-RPC request.
+// ServeHTTP routes a /mcp request by HTTP method. GET opens the
+// server-to-client SSE stream (idle in v1); POST carries one JSON-RPC
+// message (request or notification). Any other method is 405.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.serveStream(w, r)
+	case http.MethodPost:
+		s.servePost(w, r)
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// servePost handles a single POST /mcp JSON-RPC message. A notification
+// (an id-less JSON-RPC request, e.g. notifications/initialized) is
+// consumed with a 202/empty body and never receives a JSON-RPC reply —
+// replying to a notification is a JSON-RPC 2.0 violation and the default
+// `type: http` client treats the spurious reply as a handshake failure.
+func (s *Server) servePost(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeRPCError(w, nil, CodeParseError, "read body: "+err.Error())
@@ -91,6 +129,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.JSONRPC != "2.0" {
 		writeRPCError(w, req.ID, CodeInvalidRequest, "jsonrpc must be 2.0")
+		return
+	}
+	// A JSON-RPC notification carries no `id` (absent or JSON null). It
+	// must be consumed with no response body — 202 Accepted, empty. This
+	// covers notifications/initialized (the post-initialize handshake
+	// step) and any other notifications/* the client emits. We branch on
+	// the absence of an id rather than a method-name allowlist so an
+	// unknown notification is still silently consumed, never answered.
+	if isNotification(req.ID) {
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	switch req.Method {
@@ -109,7 +157,83 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// serveStream answers the client's GET /mcp server-to-client stream probe
+// with a valid text/event-stream. v1 has no server-initiated messages, so
+// the stream stays idle: it flushes the 200 + headers immediately (so the
+// client's probe succeeds), emits periodic SSE keep-alive comments to keep
+// intermediaries from reaping the idle connection, and returns when the
+// client disconnects (request context cancelled). No domain push is
+// performed — connect-and-control only; live push is V2.
+func (s *Server) serveStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	if sid := r.Header.Get(sessionHeader); sid != "" {
+		// Echo the session the client bound the stream to.
+		w.Header().Set(sessionHeader, sid)
+	}
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ticker := time.NewTicker(streamKeepAlive)
+	defer ticker.Stop()
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// SSE comment line — a no-op keep-alive that carries no MCP
+			// message (v1 pushes nothing). If the write fails the peer is
+			// gone; ctx.Done will also fire, so just return.
+			if _, err := io.WriteString(w, ": keep-alive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// sessionHeader is the MCP Streamable HTTP session-id header. initialize
+// issues one; the client echoes it on every subsequent request.
+const sessionHeader = "Mcp-Session-Id"
+
+// streamKeepAlive is the idle GET-stream keep-alive interval.
+const streamKeepAlive = 25 * time.Second
+
+// isNotification reports whether a JSON-RPC envelope is a notification
+// (no `id`). An absent id is empty RawMessage; an explicit `null` id also
+// denotes a notification per JSON-RPC 2.0.
+func isNotification(id json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(id)
+	return len(trimmed) == 0 || string(trimmed) == "null"
+}
+
+// newSessionID mints a fresh opaque MCP session id. v1 is stateless
+// beyond connect (there is no server-push state bound to a session), so
+// the id only needs to be unique and opaque, not persisted.
+func newSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failure is fatal-grade; fall back to a time-seed so
+		// the handshake still completes rather than handing the client an
+		// empty session id (which it would treat as no-session).
+		return fmt.Sprintf("mcp-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
 func (s *Server) handleInitialize(w http.ResponseWriter, req Request) {
+	// Issue a session id so the client can run as a session-aware
+	// Streamable-HTTP peer (echoing the header on subsequent requests and
+	// binding its GET stream to it). v1 holds no per-session state, so the
+	// id is opaque and unvalidated beyond connect.
+	w.Header().Set(sessionHeader, newSessionID())
 	writeRPCResult(w, req.ID, map[string]any{
 		"protocolVersion": "2025-06-18",
 		"capabilities": map[string]any{

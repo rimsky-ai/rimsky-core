@@ -20,20 +20,21 @@ import (
 )
 
 // insertHeldClaimHoldersAtAcquire inserts the acquirer's own
-// `rimsky_claim_holders` row when the alias is held. Post-stage-5 of
-// the run-row lifecycle cutover, holder rows are keyed by
-// `holder_run_id` (a `rimsky_node_runs.id`), so only the acquirer's
-// own row — whose run id is known at acquire-time — is inserted here.
-// Inheritor / co-holder rows are inserted at the inheritor's own
-// dispatch time (see
-// `runner_dispatch.go::insertCoHolderClaimHoldersAtDispatch`), where
-// the inheritor's run id is the in-flight dispatch row.
+// `rimsky_claim_holders` row when the alias is held. An alias is held
+// when its holding subgraph has at least one co-holder (declared via
+// `holds:`) beyond the acquirer — the `IsHeld()` gate below covers
+// that. Post-stage-5 of the run-row lifecycle cutover, holder rows are
+// keyed by `holder_run_id` (a `rimsky_node_runs.id`), so only the
+// acquirer's own row — whose run id is known at acquire-time — is
+// inserted here. Co-holder rows are inserted at the co-holder's own
+// acquire time (see `insertCoHolderClaimHoldersAtAcquire`), where the
+// co-holder's run id is its own in-flight acquire row.
 //
 // Inserting the acquirer's row at acquire prevents auto-terminal from
-// firing prematurely before any inheritor / co-holder gets a chance to
-// register: the row stays `active` until the acquirer's release path
-// marks it (the `releaseClaim` held branch calls `markClaimHolderForRun`
-// before `CheckAndFireResolution`).
+// firing prematurely before any co-holder gets a chance to register:
+// the row stays `active` until the acquirer's release path marks it
+// (the `releaseClaim` held branch calls `markClaimHolderForRun` before
+// `CheckAndFireResolution`).
 //
 // `@blessed-invariant 13`: held-claim resolution is auto-terminal,
 // single, and aggregate-outcome-driven. The holders set this function
@@ -60,12 +61,9 @@ func insertHeldClaimHoldersAtAcquire(
 }
 
 // insertCoHolderClaimHoldersAtAcquire inserts one `rimsky_claim_holders`
-// row per co-holdership declared by this node. Two sources:
-//
-//  1. `holds:` — explicit co-holdership (spec §Claim co-holdership).
-//     Each entry names an upstream node-alias whose claim is co-held.
-//  2. `inherits:` — legacy pre-co-holdership inheritance. The acquirer
-//     is resolved via the holding-subgraph computation.
+// row per `holds:` co-holdership declared by this node (spec §Claim
+// co-holdership). Each entry names an upstream node-alias whose claim
+// is co-held.
 //
 // The row's `holder_run_id` is this run's id (`cand.DispatchID`);
 // `state` is `'active'`. Idempotent — duplicate inserts in the same
@@ -83,7 +81,7 @@ func insertCoHolderClaimHoldersAtAcquire(
 	if nodeDef == nil || tmpl == nil {
 		return nil
 	}
-	if len(nodeDef.Holds) == 0 && len(nodeDef.Inherits) == 0 {
+	if len(nodeDef.Holds) == 0 {
 		return nil
 	}
 	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, tx)
@@ -131,51 +129,6 @@ func insertCoHolderClaimHoldersAtAcquire(
 			FrameID:       &frameID,
 		}, tx); err != nil {
 			return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: holds: %w", err)
-		}
-	}
-	// `inherits:` entries (legacy). Each names an alias; the acquirer is
-	// the unique upstream member that acquires the alias per the
-	// holding-subgraph computation.
-	if len(nodeDef.Inherits) > 0 {
-		subgraphs := node.HoldingSubgraphsForTemplate(tmpl)
-		for _, ie := range nodeDef.Inherits {
-			alias := ie.Claim
-			if alias == "" {
-				continue
-			}
-			var acquirerType string
-			for _, sg := range subgraphs {
-				if sg.Alias != alias {
-					continue
-				}
-				if !memberOf(sg, nodeDef.Type) {
-					continue
-				}
-				if sg.AcquirerType == nodeDef.Type {
-					continue
-				}
-				acquirerType = sg.AcquirerType
-				break
-			}
-			if acquirerType == "" {
-				continue
-			}
-			upstreamNode := findInstanceNodeByType(ctx, args, tx, nd.InstanceID, acquirerType)
-			if upstreamNode == nil {
-				continue
-			}
-			lh := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmpl, acquirerType, alias)
-			if lh == nil {
-				continue
-			}
-			if err := args.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
-				ID:            uuid.New(),
-				ClaimHandleID: lh.ID,
-				HolderRunID:   cand.DispatchID,
-				FrameID:       &frameID,
-			}, tx); err != nil {
-				return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: inherits: %w", err)
-			}
 		}
 	}
 	return nil

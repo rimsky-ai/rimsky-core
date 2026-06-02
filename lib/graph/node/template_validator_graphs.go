@@ -585,16 +585,16 @@ func detectDelegateCycles(spec *TemplateSpec, graphIndex map[string]int, res *Va
 	}
 }
 
-// validateGraphReachability runs BFS over the graph's internal edge set
-// (subscribes + inherits) to confirm every internal node is reachable
-// from entry AND can reach exit. Rejection class:
+// validateGraphReachability runs BFS over the graph's internal
+// subscribes edge set to confirm every internal node is reachable from
+// entry AND can reach exit. Rejection class:
 // subgraph_disconnected_internal_node.
 //
 // "Edges" approximation: a node B has an inbound edge from A if B
-// declares subscribes: with node: A, OR B declares inherits: { claim: ...}
-// where the upstream is A. The validator can't always resolve inherits:
-// upstream sender at this layer (held-claim resolution is downstream),
-// so we treat inherits: as a wildcard that doesn't block reachability.
+// declares subscribes: with node: A. `holds:` co-holdership edges are
+// not treated as reachability edges here (held-claim resolution is a
+// downstream concern), so they neither contribute nor block
+// reachability.
 func validateGraphReachability(g GraphSpec, res *ValidationResult) {
 	if g.Entry == "" || g.Exit == "" {
 		return
@@ -667,8 +667,8 @@ func validateGraphReachability(g GraphSpec, res *ValidationResult) {
 }
 
 // validateInternalRefsLocal rejects sub-graph internal nodes that
-// subscribe to / inherit-from / hold-from nodes not declared in their
-// own graph. Rejection class: subgraph_internal_references_outer.
+// subscribe to / hold-from nodes not declared in their own graph.
+// Rejection class: subgraph_internal_references_outer.
 func validateInternalRefsLocal(spec *TemplateSpec, res *ValidationResult) {
 	for _, g := range spec.Graphs {
 		if g.Name == MainGraphName {

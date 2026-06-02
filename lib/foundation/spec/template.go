@@ -4,12 +4,12 @@
 
 // Template DSL row-types — the persistable shape of a template. The
 // graph-author's view of a node: stores it interacts with, named locks
-// it holds, attributes it declares, and inheritance edges for held
-// claims it consumes downstream.
+// it holds, attributes it declares, and `holds:` edges for held claims
+// it co-holds downstream.
 //
 // Graph algorithms that consume these types (the template validator,
-// the holding-subgraph computation, inheritance resolution) live in
-// graph/node — this package defines only the data.
+// the holding-subgraph computation) live in graph/node — this package
+// defines only the data.
 
 package spec
 
@@ -130,7 +130,6 @@ type TemplateNodeDef struct {
 	Stores     []NodeStoreRef             `yaml:"stores,omitempty" json:"stores,omitempty"`
 	Locks      []NodeLockRef              `yaml:"locks,omitempty" json:"locks,omitempty"`
 	Attributes *NodeAttributesDef         `yaml:"attributes,omitempty" json:"attributes,omitempty"`
-	Inherits   []InheritEntry             `yaml:"inherits,omitempty" json:"inherits,omitempty"`
 	ErrorTypes map[string]ErrorTypePolicy `yaml:"error_types,omitempty" json:"error_types,omitempty"`
 
 	// Subscribes declares the node's reactive surface. Each entry names an
@@ -254,7 +253,7 @@ const (
 // decides what it means (scope access vs. configured pick policy).
 // Intent is "r" (read) or "rw" (read-write). Alias is the per-claim
 // name within the node, used in {{claim.<alias>.<...>}} substitution
-// paths and in inheritance references; defaults to Name (the
+// paths and in downstream `holds:` references; defaults to Name (the
 // producer name) when not set.
 //
 // Lifetime is "subgraph" (default) or "durable" (the claim survives
@@ -300,18 +299,4 @@ type NodeLockRef struct {
 // (claim payload, deps, params).
 type NodeAttributesDef struct {
 	Schema map[string]any `yaml:"schema,omitempty" json:"schema,omitempty"`
-}
-
-// InheritEntry declares that this node inherits a held claim from an
-// upstream acquirer. Per spec §14: inheritance is direct only (does
-// not propagate transitively through dep chains); each downstream
-// node that needs the live claim declares it explicitly. Each
-// inheritance edge extends the claim's lifetime over the inheriting
-// node's run.
-//
-// Claim is the per-claim alias declared on the upstream acquirer's
-// stores: entry. Validation at template deploy resolves the alias to
-// a specific acquirer reachable via deps.
-type InheritEntry struct {
-	Claim string `yaml:"claim" json:"claim"`
 }

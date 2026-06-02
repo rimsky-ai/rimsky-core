@@ -22,6 +22,7 @@
 package clitest
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -709,37 +710,79 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	instanceID := q.Get("instance_id")
-	cursor := q.Get("cursor")
-	var after int64
-	if cursor != "" {
-		v, err := strconv.ParseInt(cursor, 10, 64)
-		if err == nil {
-			after = v
-		}
-	}
-	events := s.State.EventsFor(instanceID, after)
 	limit := 100
 	if l := q.Get("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
 		}
 	}
-	// Mirror the live control-api (`foundation/persistence/postgres/events.go`):
-	// next_cursor is set only when the page is full (len == limit). A
-	// partial page returns next_cursor="" so clients know to wait
-	// rather than continue paging.
-	nextCursor := ""
-	full := len(events) >= limit
-	if len(events) > limit {
-		events = events[:limit]
+
+	// Decode the opaque keyset cursor exactly as the live persistence layer
+	// does (foundation/persistence/{sqlite,postgres}/events.go::decodeEventCursor):
+	// base64(JSON {"o":<occurred>,"i":<id>}). A non-base64 cursor (e.g. the
+	// CLI's old fmt.Sprintf("%d", lastSeenID) numeric seq) is rejected the
+	// same way the real server rejects it — `events.list: bad cursor` → an
+	// error status — so a CLI test can't silently pass against a numeric
+	// token the live server would 500 on.
+	cursor := q.Get("cursor")
+	var (
+		cursorOccurred time.Time
+		cursorID       int64
+		hasCursor      bool
+	)
+	if cursor != "" {
+		oc, id, err := decodeEventCursorFake(cursor)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"error": "events.list: bad cursor: " + err.Error(),
+			})
+			return
+		}
+		cursorOccurred, cursorID, hasCursor = oc, id, true
 	}
-	if full && len(events) > 0 {
-		nextCursor = fmt.Sprintf("%d", events[len(events)-1].ID)
+
+	events := s.State.EventsPage(instanceID, cursorOccurred, cursorID, hasCursor, limit)
+
+	// Mirror the live control-api (`foundation/persistence/{sqlite,postgres}/events.go`):
+	// next_cursor is the opaque keyset of the last (oldest) row on the page,
+	// set only when the page is full (len == limit). A partial page returns
+	// next_cursor="" so clients know to wait rather than continue paging.
+	nextCursor := ""
+	if len(events) == limit && len(events) > 0 {
+		last := events[len(events)-1]
+		nextCursor = encodeEventCursorFake(eventOccurredAt(last), last.ID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"events":      events,
 		"next_cursor": nextCursor,
 	})
+}
+
+// eventCursorFake mirrors the live persistence layer's cursor struct
+// (foundation/persistence/{sqlite,postgres}/events.go) byte-for-byte: the
+// keyset position is base64(JSON {"o":<occurred>,"i":<id>}). The fake
+// re-implements it (rather than importing the unexported persistence type)
+// so the CLI is driven against the real wire shape.
+type eventCursorFake struct {
+	O time.Time `json:"o"`
+	I int64     `json:"i"`
+}
+
+func encodeEventCursorFake(occurred time.Time, id int64) string {
+	b, _ := json.Marshal(eventCursorFake{O: occurred, I: id})
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func decodeEventCursorFake(s string) (time.Time, int64, error) {
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	var c eventCursorFake
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return time.Time{}, 0, err
+	}
+	return c.O, c.I, nil
 }
 
 func instanceToWire(inst *storedInstance) map[string]any {

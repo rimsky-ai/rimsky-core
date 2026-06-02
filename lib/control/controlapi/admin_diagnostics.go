@@ -333,6 +333,8 @@ type InvalidateHandler interface {
 }
 
 // ErrInvalidateConflict is the sentinel returned by InvalidateHandler
-// implementations when the node is in a state that does not accept
-// invalidates (running | failed). The HTTP layer maps this to 409.
-var ErrInvalidateConflict = errors.New("admin invalidate is valid only for parked or fresh states")
+// implementations when the node is `running` — the only state that does
+// not accept an invalidate (the in-flight work cannot be preempted).
+// parked / fresh / stale / failed nodes all accept the invalidate. The
+// HTTP layer maps this to 409.
+var ErrInvalidateConflict = errors.New("admin invalidate is rejected only for a running node; the work cannot be preempted")

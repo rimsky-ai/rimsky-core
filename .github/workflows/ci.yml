@@ -1,0 +1,104 @@
+name: ci
+
+# PR-gating CI for the public repo. Runs on every pull request and on pushes to
+# main. Three independent jobs: the Go build+test matrix across the four
+# workspace modules, golangci-lint across those modules, and the TypeScript
+# executor build+test. The Go job runs on a Docker-enabled ubuntu runner so the
+# testcontainers-backed scenario/storage tests (which require a working Docker
+# socket) actually execute instead of being silently skipped.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref so a force-push doesn't pile up.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Build + test all four Go modules tied together by go.work. We use the
+  # Makefile's build-all / test-all targets rather than a bare `go build ./...`
+  # because a root-only invocation under go.work silently skips the foundation,
+  # protocols, and services submodules — those targets cd into each module.
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Track the pin in go.mod (currently 1.25.0) so CI never drifts from
+          # the module's declared toolchain.
+          go-version-file: go.mod
+          cache: false
+      - name: Build all modules
+        run: make build-all
+      - name: Build images the services integration harness consumes
+        # The lib/services/test/... integration tests (harness, scenarios,
+        # smoke) run unconditionally under `go test ./...` and pull
+        # LOCALLY-BUILT image tags via testcontainers — nothing is fetched
+        # from a registry. `rimsky-all-in-one:latest` (the harness's rimsky
+        # stack, built FROM rimsky:latest so the rimsky image must build
+        # first) and `rimsky-store-filesystem:latest` (the filesystem-store
+        # peer) must exist locally or those tests fail at container start.
+        # See CLAUDE.md ("Services integration harness consumes locally-built
+        # images"). Build the minimal set the harness needs rather than the
+        # full 15-image `core-images`/`service-images` chain to keep CI lean.
+        run: |
+          docker build -f dockerfiles/Dockerfile.rimsky -t rimsky:latest .
+          docker build -f dockerfiles/Dockerfile.all-in-one --build-arg RIMSKY_BASE=rimsky:latest \
+            -t rimsky-all-in-one:latest .
+          docker build -f lib/services/stores/filesystem/Dockerfile.filesystem \
+            -t rimsky-store-filesystem:latest .
+      - name: Test all modules
+        # ubuntu-latest ships a running Docker daemon, so the testcontainers
+        # scenario/storage tests can spin up Postgres etc.
+        run: make test-all
+
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      # Pin golangci-lint to a v1 release: this repo's .golangci.yml is a
+      # v1-style config (top-level `issues:` / `linters-settings:`, no
+      # `version:` field), which golangci-lint v2 — what `@latest` now
+      # resolves to — rejects outright. Matches the developers' local v1.64.x.
+      GOLANGCI_LINT_VERSION: v1.64.8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install golangci-lint
+        # Official install script, pinned to the v1 tag above, dropping the
+        # binary on PATH so the Makefile's multi-module `make lint` (which
+        # shells `golangci-lint run` per module) drives the actual linting.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" "$GOLANGCI_LINT_VERSION"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Lint all modules
+        run: make lint
+
+  ts-executor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lib/services/executors/claude-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # No npm cache: package.json pulls in @rimsky-ai/protocols via a
+      # file: link to lib/protocols, which has no lockfile entry to key a cache on.
+      - name: Install dependencies
+        run: npm ci
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build

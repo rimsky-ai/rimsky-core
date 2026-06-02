@@ -11,13 +11,18 @@
 //
 //	@concept: sensor
 //
-// V1 ships the in-memory backend ("memory") wired by default for
-// smoke testing. Production deployments that need S3 / GCS / Azure
-// backends register the corresponding ObjectLister via SetBackend at
-// startup. Keeping the SDKs out of the bundled binary keeps the
-// `go.mod` budget tight and avoids LocalStack-only dev dependencies
-// in the default build (per the 2026-05-15 plan's pre-resolved
-// decision narrowing the S3 SDK to this binary's optional build path).
+// The default bundled image registers ONLY the in-memory backend
+// ("memory"), wired below. That is the sole serviceable backend: the
+// sensor advertises (Capabilities) and accepts (Subscribe) exactly the
+// registered set, so a subscription naming s3/gcs/azure is rejected at
+// Subscribe rather than silently no-op'ing at poll time. S3 / GCS /
+// Azure are deliberately NOT implemented in this binary — keeping the
+// cloud SDKs out of the default build keeps the `go.mod` budget tight
+// and avoids LocalStack-only dev dependencies. A deployment that needs
+// a cloud backend builds its own binary that constructs the desired
+// ObjectLister, registers it via svc.SetBackend("s3", …) before
+// svc.Run, and the sensor then advertises and accepts that backend
+// automatically.
 package main
 
 import (
@@ -53,9 +58,12 @@ func main() {
 
 	svc := NewSensorService(rimskyEndpoint, slogAdapter{l: slog.Default()})
 
-	// Register the in-memory backend by default — useful for smoke /
-	// integration tests that exercise the protocol without provisioning
-	// cloud credentials.
+	// Register the in-memory backend — the ONLY backend this default
+	// build services. After this call Capabilities advertises and
+	// Subscribe accepts exactly {"memory"}; s3/gcs/azure are rejected.
+	// A production build registers additional listers here (e.g.
+	// svc.SetBackend("s3", newS3Lister(...))) before svc.Run to make
+	// those backends serviceable.
 	svc.SetBackend("memory", NewMemoryLister())
 
 	ctx, cancel := context.WithCancel(context.Background())

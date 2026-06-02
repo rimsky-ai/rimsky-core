@@ -60,16 +60,22 @@ func RunWatch(ctx context.Context, args []string) int {
 	var lastSeenID int64 // event-log high-watermark
 	var sinceSeq int64   // breakpoint-hit seq watermark
 	for {
-		// 1. Drain new events. Reuse the events follow-loop cursor
-		// discipline: pass lastSeenID back as the cursor so the server
-		// trims everything already printed, and drain full pages without
-		// sleeping (NextCursor is set only on a full page).
-		cursor := ""
-		if lastSeenID > 0 {
-			cursor = fmt.Sprintf("%d", lastSeenID)
-		}
+		// 1. Drain new events. Mirror the events follow-loop cursor
+		// discipline (RunInstanceEvents): the live control-api reads the
+		// event log newest-first ((occurred_at, id) DESC) and NextCursor is
+		// an OPAQUE base64 keyset token — pass that exact token back to walk
+		// the backlog, never a fabricated numeric seq (which 500s with
+		// "events.list: bad cursor", issue #1). NextCursor is set only on a
+		// full page; "" signals the backlog is drained.
+		//
+		// lastSeenID is a purely-local dedup high-watermark, never sent as a
+		// cursor. Pages arrive newest-first, so the skip test compares
+		// against a per-poll snapshot (prevSeen): advancing the watermark
+		// mid-drain would suppress every older event on the following pages.
+		prevSeen := lastSeenID
+		nextCursor := ""
 		for {
-			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Cursor: cursor, Limit: 100})
+			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Cursor: nextCursor, Limit: 100})
 			if err != nil {
 				if signalCtx.Err() != nil {
 					return 0
@@ -77,16 +83,18 @@ func RunWatch(ctx context.Context, args []string) int {
 				return reportError(err)
 			}
 			for _, e := range page.Events {
-				if e.ID <= lastSeenID {
+				if e.ID <= prevSeen {
 					continue
 				}
-				lastSeenID = e.ID
+				if e.ID > lastSeenID {
+					lastSeenID = e.ID
+				}
 				printWatchEvent(common.Format, e)
 			}
 			if page.NextCursor == "" {
 				break
 			}
-			cursor = page.NextCursor
+			nextCursor = page.NextCursor
 		}
 
 		// 2. Drain new breakpoint hits past the seq watermark. Drain ALL

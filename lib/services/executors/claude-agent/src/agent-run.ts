@@ -925,6 +925,34 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           },
           "cli.exited",
         );
+        // #11: the resumed CLI's terminal report (`report_complete`)
+        // drives `onComplete`, which DEFERS teardown via setTimeout(0);
+        // teardown then sends SIGTERM (which is what just resolved
+        // `retryHandle.waitExit()` above) and only AFTERWARD runs the
+        // terminal `safeResolve(complete)`. So at this point the resumed
+        // report may have landed and accepted, yet `resolved` is not yet
+        // true because the deferred terminal resolution is still queued.
+        // Without a grace window the retry path races ahead and
+        // mis-classifies a completed dispatch as
+        // `agent/subprocess_exit/before_complete`. Mirror the main-exit
+        // path's `teardownDone`-vs-timer race so the in-flight terminal
+        // settles before we conclude failure. Property protected: a
+        // report_complete that landed on resume always wins over the
+        // before_complete fallback.
+        if (!resolved) {
+          let graceTimer: NodeJS.Timeout | null = null;
+          await Promise.race([
+            teardownDone,
+            new Promise<void>((r) => {
+              graceTimer = setTimeout(r, 2000);
+            }),
+          ]);
+          if (graceTimer) clearTimeout(graceTimer);
+          // Yield once more so the terminal `safeResolve` sequenced right
+          // after `teardownDone` inside the deferred teardown runs before
+          // we re-check `resolved`.
+          await new Promise<void>((r) => setImmediate(r));
+        }
         if (resolved) return; // retry's MCP callback fired — outcome already set
         safeResolve({
           kind: "errored",

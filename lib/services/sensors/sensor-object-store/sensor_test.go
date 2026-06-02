@@ -42,6 +42,7 @@ func TestCapabilities_AdvertisesObjectStore(t *testing.T) {
 
 func TestSubscribe_RegistersInMemory(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
+	s.SetBackend("memory", NewMemoryLister())
 	cfg := map[string]any{
 		"backend":       "memory",
 		"bucket":        "test-bucket",
@@ -79,8 +80,63 @@ func TestSubscribe_RejectsBadBackend(t *testing.T) {
 	}
 }
 
+// TestObjectStoreRejectsUnregisteredBackend pins J3: with the default
+// wiring (memory-only), the sensor must NOT accept or advertise backends
+// it cannot service. A Subscribe naming an unregistered backend (s3) is
+// rejected with an error that names s3, Capabilities advertises a
+// `backend` enum of exactly the registered set (["memory"]), and a
+// memory Subscribe still succeeds.
+func TestObjectStoreRejectsUnregisteredBackend(t *testing.T) {
+	s := NewSensorService("", noopLogger{})
+	s.SetBackend("memory", NewMemoryLister())
+
+	// 1. Unregistered backend (s3) is rejected, and the error names it.
+	s3cfg, _ := json.Marshal(map[string]any{"backend": "s3", "bucket": "b"})
+	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w-s3", Kind: "object-store", ResolvedConfig: s3cfg,
+	})
+	if err == nil {
+		t.Fatal("expected Subscribe to reject unregistered backend s3")
+	}
+	if !strings.Contains(err.Error(), "s3") {
+		t.Errorf("rejection error must name the unserviceable backend s3: %v", err)
+	}
+
+	// 2. Capabilities advertises a `backend` enum of exactly ["memory"].
+	caps, err := s.Capabilities(context.Background(), &emptypb.Empty{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(caps.SupportedKinds) != 1 {
+		t.Fatalf("kinds: %+v", caps.SupportedKinds)
+	}
+	var schema struct {
+		Properties struct {
+			Backend struct {
+				Enum []string `json:"enum"`
+			} `json:"backend"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(caps.SupportedKinds[0].ConfigSchema, &schema); err != nil {
+		t.Fatalf("decode config schema: %v", err)
+	}
+	got := append([]string(nil), schema.Properties.Backend.Enum...)
+	if len(got) != 1 || got[0] != "memory" {
+		t.Errorf("backend enum: %v (want exactly [memory])", got)
+	}
+
+	// 3. The registered backend (memory) still subscribes.
+	memcfg, _ := json.Marshal(map[string]any{"backend": "memory", "bucket": "b"})
+	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
+		PublisherSubscriptionId: "w-mem", Kind: "object-store", ResolvedConfig: memcfg,
+	}); err != nil {
+		t.Fatalf("memory Subscribe must succeed: %v", err)
+	}
+}
+
 func TestSubscribe_RejectsBadWatermark(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
+	s.SetBackend("memory", NewMemoryLister())
 	cfg := map[string]any{"backend": "memory", "bucket": "b", "watermark_field": "lol"}
 	raw, _ := json.Marshal(cfg)
 	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{

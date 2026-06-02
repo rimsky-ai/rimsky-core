@@ -42,8 +42,32 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
+
+// Documented retention defaults (mirroring the doc on
+// runtime.RetentionConfig). Applied by LoadRimskyConfigYAML when the
+// `retention:` block (or an individual key) is absent, so retention is on
+// by default — the scheduler tick reaps stale lineage / run-tree /
+// claim-handle / message-idempotency rows out of the box.
+const (
+	defaultRetentionRecentFramesKept             = 100
+	defaultRetentionLineageTrailing              = 30 * 24 * time.Hour
+	defaultRetentionClaimHandlesTrailing         = 30 * 24 * time.Hour
+	defaultRetentionMessageIdempotenciesTrailing = 24 * time.Hour
+)
+
+// yamlRetention is the `retention:` block shape. Pointer fields so the
+// loader can tell an absent key (→ apply the documented default) from an
+// explicit zero (→ disable that sweep). Keys mirror
+// runtime.RetentionConfig.
+type yamlRetention struct {
+	RecentFramesKept             *int           `yaml:"recent_frames_kept"`
+	LineageTrailing              *time.Duration `yaml:"lineage_trailing"`
+	ClaimHandlesTrailing         *time.Duration `yaml:"claim_handles_trailing"`
+	MessageIdempotenciesTrailing *time.Duration `yaml:"message_idempotencies_trailing"`
+}
 
 // capabilitiesHandshakeTimeout bounds the per-producer Capabilities() RPC
 // at startup. Without it a producer-service that accepts the connection
@@ -209,16 +233,22 @@ type RimskyConfig struct {
 	// ListSubscriptions / Capabilities).
 	Publishers RemotePublishersConfig
 	// MaxParkDuration is the per-reason max_park_duration cap map. The
-	// keys are ParkReason storage-form strings ("time_wait",
-	// "callback_wait", "retry_backoff", "other"); the values are
+	// keys are the stored ParkReason values ("await_callback",
+	// "snooze" — the closed two-value enum); the values are
 	// time.Duration caps. The per-row col:rimsky_node_runs.max_park_duration_seconds
 	// always takes priority — these are deployment-level fall-backs.
 	// Per spec
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Parked-state taxonomy / Per-reason `max_park_duration` config.
-	// Recommended defaults: time_wait: 1h, callback_wait: 7d,
-	// retry_backoff: 1h, other: 1h.
+	// Recommended defaults: await_callback: 7d, snooze: 1h.
 	MaxParkDuration map[string]time.Duration
+	// Retention is the parsed `retention:` block — the trailing-window
+	// retention parameters threaded into scheduler.Config.Retention so the
+	// scheduler tick's lineage / run-tree / claim-handle /
+	// message-idempotency sweeps fire. Documented defaults (retention on by
+	// default) are applied by LoadRimskyConfigYAML when the block or an
+	// individual key is absent.
+	Retention runtime.RetentionConfig
 	// LateBindServiceProxies maps protocol name → proxy service name.
 	// e.g., {"executor": "host-agent-proxy", "claim_producer": "host-agent-proxy"}.
 	// Consumed by LateBindResolver (executor) and *locks.Registry.GetWithContext
@@ -303,10 +333,13 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Executors  map[string]yamlExecutorEntry      `yaml:"executors"`
 		Publishers map[string]yamlPublisherEntry     `yaml:"publishers"`
 		// MaxParkDuration is the per-reason max_park_duration map. Keys
-		// are ParkReason storage-form strings ("time_wait" / "callback_wait"
-		// / "retry_backoff" / "other"); values are time.Duration. Spec
-		// §Parked-state taxonomy.
+		// are the stored ParkReason values ("await_callback" / "snooze");
+		// values are time.Duration. Spec §Parked-state taxonomy.
 		MaxParkDuration map[string]time.Duration `yaml:"max_park_duration"`
+		// Retention is the `retention:` block. Spec
+		// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+		// §Retention.
+		Retention *yamlRetention `yaml:"retention"`
 		// LateBindServiceProxies maps protocol name → proxy service name
 		// for late-bind dispatch resolution and fan-out subscription.
 		LateBindServiceProxies map[string]string `yaml:"late_bind_service_proxies"`
@@ -456,6 +489,11 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
 
+	retentionCfg, err := parseRetention(wrapper.Retention)
+	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+	}
+
 	return RimskyConfig{
 		Persistence:            pcfg,
 		Blob:                   bcfg,
@@ -464,23 +502,67 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		Executors:              executors,
 		Publishers:             publishersCfg,
 		MaxParkDuration:        wrapper.MaxParkDuration,
+		Retention:              retentionCfg,
 		LateBindServiceProxies: wrapper.LateBindServiceProxies,
 	}, nil
 }
 
-// validateMaxParkDurationKeys rejects unknown ParkReason storage-form
-// keys. Per spec §Parked-state taxonomy the four legal storage forms
-// are `time_wait`, `callback_wait`, `retry_backoff`, and `other`.
-// Pre-existing wider reason vocabulary (`signal_wait`, `awaiting_human`)
-// is accepted for backward compatibility with the proto's
-// ParkReason enum; the runner's storage form preserves all of them.
+// parseRetention resolves the `retention:` block into a
+// runtime.RetentionConfig, applying the documented defaults for any absent
+// key so retention is on by default. An explicit zero disables the
+// corresponding sweep (the pointer fields distinguish absent from zero); a
+// negative value is rejected.
+func parseRetention(in *yamlRetention) (runtime.RetentionConfig, error) {
+	out := runtime.RetentionConfig{
+		RecentFramesKept:             defaultRetentionRecentFramesKept,
+		LineageTrailing:              defaultRetentionLineageTrailing,
+		ClaimHandlesTrailing:         defaultRetentionClaimHandlesTrailing,
+		MessageIdempotenciesTrailing: defaultRetentionMessageIdempotenciesTrailing,
+	}
+	if in == nil {
+		return out, nil
+	}
+	if in.RecentFramesKept != nil {
+		if *in.RecentFramesKept < 0 {
+			return runtime.RetentionConfig{}, fmt.Errorf("retention.recent_frames_kept must be non-negative")
+		}
+		out.RecentFramesKept = *in.RecentFramesKept
+	}
+	if in.LineageTrailing != nil {
+		if *in.LineageTrailing < 0 {
+			return runtime.RetentionConfig{}, fmt.Errorf("retention.lineage_trailing must be non-negative")
+		}
+		out.LineageTrailing = *in.LineageTrailing
+	}
+	if in.ClaimHandlesTrailing != nil {
+		if *in.ClaimHandlesTrailing < 0 {
+			return runtime.RetentionConfig{}, fmt.Errorf("retention.claim_handles_trailing must be non-negative")
+		}
+		out.ClaimHandlesTrailing = *in.ClaimHandlesTrailing
+	}
+	if in.MessageIdempotenciesTrailing != nil {
+		if *in.MessageIdempotenciesTrailing < 0 {
+			return runtime.RetentionConfig{}, fmt.Errorf("retention.message_idempotencies_trailing must be non-negative")
+		}
+		out.MessageIdempotenciesTrailing = *in.MessageIdempotenciesTrailing
+	}
+	return out, nil
+}
+
+// validateMaxParkDurationKeys rejects keys that are not real stored
+// ParkReason values. The closed two-value enum stores exactly
+// `await_callback` and `snooze` (the runner persists nothing else), and
+// the per-reason sweep does exact-equality on the stored reason — so a
+// cap keyed by anything outside that set can never match a parked row.
+// Accepting the wider obsolete vocabulary (`time_wait`, `callback_wait`,
+// …) silently swallowed dead config; we reject it at load so an operator
+// gets a precise startup error instead of a cap that never fires.
 func validateMaxParkDurationKeys(m map[string]time.Duration) error {
 	for k, v := range m {
 		switch k {
-		case "time_wait", "callback_wait", "retry_backoff", "other",
-			"signal_wait", "awaiting_human", "unspecified":
+		case "await_callback", "snooze":
 		default:
-			return fmt.Errorf("max_park_duration: unknown reason key %q (one of: time_wait, callback_wait, retry_backoff, other)", k)
+			return fmt.Errorf("max_park_duration: unknown reason key %q (one of: await_callback, snooze)", k)
 		}
 		if v < 0 {
 			return fmt.Errorf("max_park_duration[%q]: duration must be non-negative", k)

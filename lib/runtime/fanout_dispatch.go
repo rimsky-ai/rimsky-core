@@ -259,6 +259,7 @@ func CreateFanOutChildren(
 	rt persistence.RunTreeTable,
 	scopes persistence.RunScopeTable,
 	queue persistence.Queue,
+	claimHandles persistence.ClaimHandleTable,
 	parentScope persistence.RunScopeRow,
 	parentRunID shared.UUID,
 	instanceID shared.UUID,
@@ -299,6 +300,22 @@ func CreateFanOutChildren(
 			p.Executor, p.RequiredStores, policy)
 		if err != nil {
 			return nil, fmt.Errorf("CreateFanOutChildren: child %q: %w", p.PartitionKey, err)
+		}
+		// Repoint the sub-claim's node_run_id from the parent fan-out run
+		// (set at acquire time in AcquireSubClaims) to its OWN child leaf
+		// run. This makes the sub-claim resolvable from the leaf by
+		// `node_run_id = its own dispatch id`, so the leaf-dispatch path can
+		// read back the persisted `producer_candidate_handle` and carry it
+		// onto the wire (E4). It also corrects the fanout_partition RunScope
+		// closure walk in `auto_terminal_chain.go::resolveParentClaimChain`,
+		// which loads each sub-claim's run by node_run_id to find the
+		// partition scope to close — with node_run_id pointed at the parent
+		// (main-scope) run, that walk matched no partition scope. Runs in
+		// the caller's tx, after CreateChildRun so the FK target exists.
+		if claimHandles != nil && p.SubClaimHandleID != (shared.UUID{}) {
+			if err := claimHandles.UpdateNodeRunID(ctx, p.SubClaimHandleID, runID, tx); err != nil {
+				return nil, fmt.Errorf("CreateFanOutChildren: link sub-claim %s to child run %q: %w", p.SubClaimHandleID, p.PartitionKey, err)
+			}
 		}
 		out = append(out, runID)
 	}
@@ -385,6 +402,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}
 		ids, err := CreateFanOutChildren(
 			ctx, tx, args.Persist.RunTree(), args.Persist.RunScopes(), args.Queue,
+			args.Persist.ClaimHandles(),
 			*parentScope, acq.DispatchID, acq.InstanceID, acq.GraphName,
 			plans, spec.AggregationPolicy{})
 		if err != nil {

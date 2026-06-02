@@ -5,9 +5,14 @@
 // ClaimHolderTable is the postgres accessor for `rimsky_claim_holders`.
 // One row per (lock_holder, holder_run) pair from the holding subgraph.
 // Rows transition `'active'` → `'completed'` (success) or `'failed'`
-// (give-up/failure) per `@blessed-invariant 13`. The claim_handle_id FK
-// cascades deletes when the parent rimsky_claim_handles row is removed
-// at auto-terminal. Post-stage-5 the holder is keyed by `holder_run_id`
+// (give-up/failure) per `@blessed-invariant 13`. At auto-terminal the
+// parent rimsky_claim_handles row is NOT deleted — it is promoted (its
+// state flips to committed/abandoned and the row is preserved past
+// terminal, reaped later by a retention sweep), so the holder rows
+// outlive the firing and are cleared by the same retention sweep rather
+// than by FK cascade. The claim_handle_id FK still cascades on a genuine
+// parent-row delete (e.g. the orphan reaper / retention sweep removing the
+// handle). Post-stage-5 the holder is keyed by `holder_run_id`
 // (a `rimsky_node_runs.id`); see the flattened baseline migration
 // `001-baseline.sql` (the run-level cutover was historically migration
 // 005, collapsed into the baseline pre-v1).

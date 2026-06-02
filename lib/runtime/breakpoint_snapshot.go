@@ -82,8 +82,8 @@ func heldClaimsSummaryForBreakpoint(acq *acquisition) []map[string]any {
 		out = append(out, entry)
 	}
 	for alias := range acq.HeldClaims {
-		// Co-held upstream claims (`holds:` / legacy `inherits:`)
-		// arrive via claimproducer.ClaimResult — we have no
+		// Co-held upstream claims (`holds:`) arrive via
+		// claimproducer.ClaimResult — we have no
 		// ClaimHandleID for them on the in-memory acquisition
 		// shape, so the summary records only the alias label and
 		// flags the source so the agent can distinguish co-held

@@ -13,10 +13,11 @@
 // @concept: publisher-subscription
 //
 // The control-api calls these helpers from the instance-create and
-// instance-terminate flows; the supervisor calls
-// `ResyncPublisherSubscriptions` at startup. Each helper is a thin
-// facade over a `PublisherRegistry` (operator-supplied) so the wire
-// dependency stays out of the controlapi package.
+// instance-terminate flows, and calls `ResyncPublisherSubscriptions` at
+// control-api startup (the publisher registry lives in the control-api,
+// not the supervisor). Each helper is a thin facade over a
+// `PublisherRegistry` (operator-supplied) so the wire dependency stays
+// out of the controlapi package.
 
 package runtime
 
@@ -221,8 +222,9 @@ func StopPublisherSubscriptionsForInstance(
 	return nil
 }
 
-// ResyncPublisherSubscriptions is invoked at supervisor startup. For
-// each configured publisher it:
+// ResyncPublisherSubscriptions is invoked at control-api startup (the
+// publisher registry lives in the control-api process, not the
+// supervisor). For each configured publisher it:
 //
 //  1. Calls `Publisher.ListSubscriptions()` to enumerate what the
 //     publisher sees.

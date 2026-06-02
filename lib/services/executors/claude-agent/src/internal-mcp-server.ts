@@ -93,6 +93,22 @@ export async function startInternalMcpServer(opts: {
    * lower in tests to exercise eviction.
    */
   sessionIdleMs?: number;
+  /**
+   * Test seam: force a per-socket inactivity timeout (ms) on the
+   * underlying `http.Server` (`httpServer.timeout`). PRODUCTION CODE NEVER
+   * SETS THIS — the timeout discipline applied below intentionally pins
+   * every per-connection/per-request cap to 0, because long-lived MCP SSE
+   * GET streams must never be destroyed by Node's socket-inactivity cap
+   * (#11: an idle SSE stream RSTs → ECONNRESET → the node terminal-errors
+   * `agent/subprocess_exit/before_complete` even though the agent did its
+   * work). `httpServer.timeout` — not `requestTimeout` — is the knob that
+   * actually destroys an idle SSE response with ECONNRESET; a test pins it
+   * to a small value to drive that real fault on a fast clock and PROVE
+   * the SSE stream survives anyway. Leaving this unset preserves the
+   * production default; setting it must NOT reintroduce the fault, which
+   * is exactly what the `httpServer.timeout = 0` line below guarantees.
+   */
+  socketTimeoutMs?: number;
 }): Promise<CallbackServerHandle> {
   const registry = new TokenRegistry();
   const log = opts.logger.child({ component: "internal-mcp" });
@@ -181,12 +197,55 @@ export async function startInternalMcpServer(opts: {
     }
   });
 
+  // Test seam (see `socketTimeoutMs` doc above). Applied BEFORE the
+  // production timeout discipline so the GREEN `httpServer.timeout = 0`
+  // line (below) deterministically overrides it.
+  if (opts.socketTimeoutMs !== undefined) {
+    httpServer.timeout = opts.socketTimeoutMs;
+  }
+
+  // HTTP timeout discipline (#11). A per-dispatch claude-agent run drives
+  // an MCP SSE GET stream that the CLI holds open for the entire dispatch
+  // — which can be many minutes of agent work with the stream sitting
+  // idle (no server-initiated notifications in V1). Node's per-connection
+  // / per-request caps destroy such an idle stream with ECONNRESET, which
+  // the SDK client surfaces as a transport error and the executor then
+  // mis-classifies as `agent/subprocess_exit/before_complete` — failing a
+  // dispatch the agent actually completed. Property protected: the
+  // internal-MCP SSE stream is indefinitely long-lived for the dispatch's
+  // duration. So we pin every cap that could reap a held stream to 0
+  // (disabled): `timeout` is the per-socket inactivity cap that actually
+  // RSTs an idle SSE response; `requestTimeout` is Node's per-request cap.
+  // `keepAliveTimeout` / `headersTimeout` only gate BETWEEN requests on a
+  // kept-alive socket, but we still raise them well past any plausible
+  // dispatch so a slow inter-request gap can never reap the connection.
+  httpServer.timeout = 0;
+  httpServer.requestTimeout = 0;
+  httpServer.keepAliveTimeout = 24 * 60 * 60 * 1000; // 24h
+  httpServer.headersTimeout = 24 * 60 * 60 * 1000; // 24h
+
   // Surface runtime HTTP faults that would otherwise vanish into an
   // unobservable error event. Without these, a malformed request line
   // or a peer-protocol violation can desocket without a log line.
+  //
+  // Hardened for #11: when a killed prior CLI's socket RSTs abruptly, the
+  // socket handed to this listener may already be destroyed, so writing
+  // the 400 line throws (ERR_STREAM_DESTROYED / EPIPE). Tolerate that —
+  // an unhandled throw out of a `clientError` listener would crash the
+  // executor. Never rethrow.
   httpServer.on("clientError", (err, socket) => {
     log.warn({ error: String(err) }, "mcp.client_error");
-    try { socket.end("HTTP/1.1 400 Bad Request\r\n\r\n"); } catch { /* ignore */ }
+    try {
+      if (!socket.destroyed && socket.writable) {
+        socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+      } else {
+        socket.destroy();
+      }
+    } catch (endErr) {
+      // Already-destroyed socket (abrupt RST from a killed prior CLI).
+      // Swallow; the connection is gone and there is nothing to flush.
+      log.debug({ error: String(endErr) }, "mcp.client_error_end_failed");
+    }
   });
   httpServer.on("error", (err) => {
     log.error({ error: String(err) }, "mcp.http_server_error");

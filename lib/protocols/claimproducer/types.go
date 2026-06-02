@@ -91,6 +91,18 @@ type ClaimSpec struct {
 	Alias        string // per-claim name within node; defaults to ProducerName
 	TemplateID   string // content hash (template-scope envelope)
 	InstanceID   string // instance UUID (instance-scope envelope)
+	// Lifetime is the rimsky-internal claim-lifetime hint carried from the
+	// template store-ref through the acquire path onto the persisted
+	// rimsky_claim_handles.lifetime column: "subgraph" (default) or
+	// "durable". It is a plain string, NOT spec.ClaimLifetime — lib/protocols
+	// may not import lib/foundation/spec (the protocols-purity lint rule);
+	// the acquire path converts to spec.ClaimLifetime at the persistence
+	// boundary. Producer-invisible: it is never sent on OpenRequest / the
+	// wire — only the address/scope/payload the producer returns matter to
+	// the store; lifetime is rimsky's own bookkeeping.
+	//
+	// @concept: claim-lifetime
+	Lifetime string
 }
 
 // ClaimResult bundles the four producer-supplied outputs of a claim

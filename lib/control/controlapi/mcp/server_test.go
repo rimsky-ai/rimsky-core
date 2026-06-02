@@ -7,10 +7,12 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi/mcp"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
@@ -82,6 +84,170 @@ func TestMCPToolsCall(t *testing.T) {
 	}
 	if catalog.called != "x" {
 		t.Fatalf("invoke not called; got %q", catalog.called)
+	}
+}
+
+// TestMCPStreamableHTTPHandshake drives the full connect-and-control
+// sequence the default Claude Code `type: http` MCP client performs over
+// the MCP Streamable HTTP transport: initialize (a session id must be
+// issued) → notifications/initialized (a notification — must get a 202 /
+// empty body and NEVER a JSON-RPC error reply) → tools/list → tools/call
+// (both succeed) → GET /mcp (must open a valid text/event-stream, 200,
+// not 405). Live push/subscriptions stay out of scope (V2); the GET
+// stream may be idle. See
+// .ok-planner/plans/2026-06-02-rimsky-core-remediation-notes.md.
+func TestMCPStreamableHTTPHandshake(t *testing.T) {
+	catalog := &fakeCatalog{tools: []mcp.Tool{
+		{Name: "x", Description: "x desc", InputSchema: json.RawMessage(`{"type":"object"}`)},
+	}}
+	server := &mcp.Server{Tools: catalog}
+
+	// Real HTTP server so the GET SSE stream exercises the actual
+	// flush/keep-alive path and request-context cancellation, not just a
+	// recorder.
+	hs := httptest.NewServer(http.HandlerFunc(server.ServeHTTP))
+	defer hs.Close()
+
+	// 1. initialize — must return a session id header.
+	status, hdr, _ := postRPC(t, hs.URL, "", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	if status != http.StatusOK {
+		t.Fatalf("initialize status: got %d want 200", status)
+	}
+	sessionID := hdr.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		t.Fatalf("initialize did not issue an Mcp-Session-Id header; headers=%v", hdr)
+	}
+
+	// 2. notifications/initialized — a JSON-RPC notification (no id). It
+	// MUST be consumed with a 202/empty body and NEVER a JSON-RPC error
+	// reply (a notification gets no response).
+	nStatus, _, nBody := postRPC(t, hs.URL, sessionID,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	if nStatus != http.StatusAccepted {
+		t.Fatalf("notifications/initialized status: got %d want 202; body=%q", nStatus, nBody)
+	}
+	if strings.TrimSpace(nBody) != "" {
+		t.Fatalf("notifications/initialized must return an empty body; got %q", nBody)
+	}
+	// Guard explicitly against the JSON-RPC violation: no error envelope.
+	if strings.Contains(nBody, "method not found") || strings.Contains(nBody, `"error"`) {
+		t.Fatalf("notifications/initialized returned a JSON-RPC error reply (violation): %q", nBody)
+	}
+
+	// 3. tools/list — succeeds, carrying the session header.
+	lStatus, _, lBody := postRPC(t, hs.URL, sessionID,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	if lStatus != http.StatusOK {
+		t.Fatalf("tools/list status: got %d want 200; body=%q", lStatus, lBody)
+	}
+	var lResp mcp.Response
+	if err := json.Unmarshal([]byte(lBody), &lResp); err != nil {
+		t.Fatalf("tools/list decode: %v\n%s", err, lBody)
+	}
+	if lResp.Error != nil {
+		t.Fatalf("tools/list error: %v", lResp.Error)
+	}
+
+	// 4. tools/call — succeeds.
+	cStatus, _, cBody := postRPC(t, hs.URL, sessionID,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"x","arguments":{"k":1}}}`)
+	if cStatus != http.StatusOK {
+		t.Fatalf("tools/call status: got %d want 200; body=%q", cStatus, cBody)
+	}
+	var cResp mcp.Response
+	if err := json.Unmarshal([]byte(cBody), &cResp); err != nil {
+		t.Fatalf("tools/call decode: %v\n%s", err, cBody)
+	}
+	if cResp.Error != nil {
+		t.Fatalf("tools/call error: %v", cResp.Error)
+	}
+	if catalog.called != "x" {
+		t.Fatalf("tools/call did not invoke tool x; got %q", catalog.called)
+	}
+
+	// 5. GET /mcp — the client's server-to-client stream probe. Must open
+	// a valid text/event-stream (200), not 405. The stream may stay idle;
+	// we read only the response headers, then cancel.
+	getMCPStream(t, hs.URL, sessionID)
+}
+
+// postRPC POSTs a JSON-RPC body to the MCP endpoint and returns the
+// status, response headers, and body string. When sessionID is non-empty
+// it is sent as the Mcp-Session-Id request header (echoing the
+// Streamable-HTTP client contract).
+func postRPC(t *testing.T, baseURL, sessionID, body string) (int, http.Header, string) {
+	t.Helper()
+	req, err := http.NewRequest("POST", baseURL+"/mcp", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", sessionID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", body, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read POST body: %v", err)
+	}
+	return resp.StatusCode, resp.Header, string(raw)
+}
+
+// getMCPStream opens GET /mcp, asserts a valid 200 text/event-stream is
+// returned (not 405), then cancels the request so the idle keep-alive
+// stream is torn down. It reads only the response headers.
+func getMCPStream(t *testing.T, baseURL, sessionID string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/mcp", nil)
+	if err != nil {
+		t.Fatalf("new GET request: %v", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	if sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", sessionID)
+	}
+	// A small client timeout is a safety net: the handler must answer
+	// headers immediately even though the stream body stays open.
+	type result struct {
+		status int
+		ctype  string
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		done <- result{status: resp.StatusCode, ctype: resp.Header.Get("Content-Type")}
+		// Cancel so the idle stream unblocks the server-side handler.
+		cancel()
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("GET /mcp: %v", r.err)
+		}
+		if r.status == http.StatusMethodNotAllowed {
+			t.Fatalf("GET /mcp returned 405 — no streamable GET handler registered")
+		}
+		if r.status != http.StatusOK {
+			t.Fatalf("GET /mcp status: got %d want 200", r.status)
+		}
+		if !strings.HasPrefix(r.ctype, "text/event-stream") {
+			t.Fatalf("GET /mcp Content-Type: got %q want text/event-stream", r.ctype)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("GET /mcp: response headers did not arrive within 5s (handler must flush 200 immediately)")
 	}
 }
 

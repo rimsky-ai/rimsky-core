@@ -2,9 +2,15 @@
 #
 # Multi-stage build of the `rimsky` image. Bundles all four role binaries
 # (scheduler, supervisor, control-api, migrate) plus rimsky-entrypoint under
-# a single PID-1 entrypoint. Run with no command for the all-in-one stack, or
-# override the command to run a single role (e.g. `rimsky-control-api`). The
-# persistence backend (postgres|sqlite) is selected by config; defaults to
+# a single PID-1 entrypoint. rimsky-entrypoint reads its command argument: with
+# NO command it spawns all three roles (scheduler + supervisor + control-api) —
+# the all-in-one stack; with a single role argument
+# (`rimsky-scheduler` | `rimsky-supervisor` | `rimsky-control-api`) it spawns
+# ONLY that role, for one-role-per-container deploys; an unknown argument exits
+# non-zero. Migrate runs synchronously before spawning when the invocation owns
+# it (the no-command path always; a single-role container only for
+# rimsky-control-api, or as forced/skipped by RIMSKY_ENTRYPOINT_MIGRATE=1/0).
+# The persistence backend (postgres|sqlite) is selected by config; defaults to
 # sqlite with state at /var/lib/rimsky/state.db (development only — use the
 # postgres driver for deployed instances).
 
@@ -44,7 +50,7 @@ RUN mkdir -p /staging/var/lib/rimsky && chown -R 65532:65532 /staging/var/lib/ri
 
 FROM gcr.io/distroless/static-debian12:nonroot
 LABEL org.opencontainers.image.title="rimsky"
-LABEL org.opencontainers.image.description="rimsky orchestrator — all role binaries under one image; role by command, backend (postgres|sqlite) by config. Defaults to SQLite (development only)."
+LABEL org.opencontainers.image.description="rimsky orchestrator — all role binaries under one image; no command spawns all three roles, a single role argument spawns only that role; backend (postgres|sqlite) by config. Defaults to SQLite (development only)."
 
 COPY --from=build /out/rimsky-scheduler   /usr/local/bin/rimsky-scheduler
 COPY --from=build /out/rimsky-supervisor  /usr/local/bin/rimsky-supervisor

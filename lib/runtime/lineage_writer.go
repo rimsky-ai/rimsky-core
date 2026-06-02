@@ -407,8 +407,8 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 // HeldClaimsForLineage walks the acquisition's per-claim locks and
 // returns a best-effort LeafRunHeldClaim slice for the lineage row.
 // Each entry's `Role` is "claim" (the alias was acquired by this run
-// directly) or "held:<alias>" (the alias was inherited via `holds:` /
-// legacy `inherits:`). Per @blessed-invariant 20 the bytes are inert;
+// directly) or "held:<alias>" (the alias was co-held via `holds:`).
+// Per @blessed-invariant 20 the bytes are inert;
 // only the hash + producer name + alias travel in the lineage row.
 func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {
 	if acq == nil {

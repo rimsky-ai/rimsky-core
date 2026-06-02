@@ -380,3 +380,282 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	require.Equal(t, dryBody.WouldHavePruned.Count, liveBody.Deleted,
 		"dry-run preview must equal the live delete count")
 }
+
+// seedLineageInstance deploys a template + instance and returns the
+// instance id and an enqueued frame id so seeded lineage rows satisfy the
+// instance_id FK. Shared by the TestLineageEndpoints_* characterization
+// tests below.
+func seedLineageInstance(t *testing.T, h *harness, prefix string) (instID uuid.UUID, frameID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+
+	tplBody := validTemplateBody(prefix + "-" + uuid.NewString())
+	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
+	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": prefix + "-ck-" + uuid.NewString(),
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instStr, _ := out["instance_id"].(string)
+	var err error
+	instID, err = uuid.Parse(instStr)
+	require.NoError(t, err)
+
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instID), tx)
+		if err != nil || len(nodes) == 0 {
+			return err
+		}
+		fid, err := h.persist.Frames().EnqueueSerialFrame(ctx, shared.UUID(instID), nodes[0].ID, 600000, tx)
+		if err != nil {
+			return err
+		}
+		frameID = uuid.UUID(fid)
+		return nil
+	}))
+	require.NotEqual(t, uuid.Nil, frameID)
+	return instID, frameID
+}
+
+// insertLineageRow is a thin direct-insert helper for the
+// TestLineageEndpoints_* tests. recordKind is leaf_run | claim_terminal;
+// record is the per-kind JSONB payload.
+func insertLineageRow(t *testing.T, h *harness, instID, frameID uuid.UUID, recordKind string, record map[string]any, observedAt time.Time, outcome string) {
+	t.Helper()
+	ctx := context.Background()
+	recBytes, err := json.Marshal(record)
+	require.NoError(t, err)
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.Lineage().Insert(ctx, tx, persistence.LineageRow{
+			ID:         shared.UUID(uuid.New()),
+			RecordKind: recordKind,
+			InstanceID: shared.UUID(instID),
+			FrameID:    shared.UUID(frameID),
+			ObservedAt: observedAt,
+			Record:     recBytes,
+			Outcome:    outcome,
+		})
+	}))
+}
+
+// TestLineageEndpoints_RunReturnsMostRecent seeds two leaf_run rows for the
+// same run_id and asserts GET /lineage/runs/{run_id} returns the most
+// recent (observed_at DESC) record; an unknown run_id returns 404.
+func TestLineageEndpoints_RunReturnsMostRecent(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID, frameID := seedLineageInstance(t, h, "lin-ep-run")
+	runID := uuid.New()
+	base := time.Now().UTC()
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{"run_id": runID.String(), "frame_id": frameID.String(), "state": "fresh", "attempt": 1}, base, "")
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{"run_id": runID.String(), "frame_id": frameID.String(), "state": "fresh", "attempt": 2}, base.Add(time.Second), "")
+
+	status, out := h.httpJSON(t, "GET", "/lineage/runs/"+runID.String(), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, "leaf_run", out["record_kind"])
+	record, _ := out["record"].(map[string]any)
+	require.Equal(t, runID.String(), record["run_id"])
+	require.EqualValues(t, 2, record["attempt"], "GET /lineage/runs returns the most recent (observed_at ASC, last) record")
+
+	// Unknown run → 404.
+	status, _ = h.httpJSON(t, "GET", "/lineage/runs/"+uuid.NewString(), nil)
+	require.Equal(t, http.StatusNotFound, status)
+
+	// Malformed run id → 400.
+	status, _ = h.httpJSON(t, "GET", "/lineage/runs/not-a-uuid", nil)
+	require.Equal(t, http.StatusBadRequest, status)
+}
+
+// TestLineageEndpoints_ClaimReturnsMostRecent seeds two claim_terminal rows
+// for the same claim_handle_id and asserts GET
+// /lineage/claims/{claim_handle_id} returns the most recent record.
+func TestLineageEndpoints_ClaimReturnsMostRecent(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID, frameID := seedLineageInstance(t, h, "lin-ep-claim")
+	claimID := uuid.New()
+	base := time.Now().UTC()
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{"claim_handle_id": claimID.String(), "version_id": "v-001"}, base, persistence.LineageOutcomeCommitted)
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{"claim_handle_id": claimID.String(), "version_id": "v-002"}, base.Add(time.Second), persistence.LineageOutcomeCommitted)
+
+	status, out := h.httpJSON(t, "GET", "/lineage/claims/"+claimID.String(), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, "claim_terminal", out["record_kind"])
+	record, _ := out["record"].(map[string]any)
+	require.Equal(t, "v-002", record["version_id"], "GET /lineage/claims returns the most recent record")
+
+	status, _ = h.httpJSON(t, "GET", "/lineage/claims/"+uuid.NewString(), nil)
+	require.Equal(t, http.StatusNotFound, status)
+}
+
+// TestLineageEndpoints_ClaimAncestorsWalksSubClaimChain seeds a parent
+// claim_terminal whose record cites two sub_claim_handle_ids, each of which
+// has its own claim_terminal row, and asserts GET
+// /lineage/claims/{parent}/ancestors walks the sub-claim chain.
+func TestLineageEndpoints_ClaimAncestorsWalksSubClaimChain(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID, frameID := seedLineageInstance(t, h, "lin-ep-claimanc")
+	parentClaim := uuid.New()
+	subA := uuid.New()
+	subB := uuid.New()
+	base := time.Now().UTC()
+
+	// Parent cites two sub-claims; each sub-claim has its own terminal row.
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{
+			"claim_handle_id":      parentClaim.String(),
+			"sub_claim_handle_ids": []string{subA.String(), subB.String()},
+		}, base, persistence.LineageOutcomeCommitted)
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{"claim_handle_id": subA.String(), "version_id": "sub-a"}, base.Add(time.Second), persistence.LineageOutcomeCommitted)
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{"claim_handle_id": subB.String(), "version_id": "sub-b"}, base.Add(2*time.Second), persistence.LineageOutcomeCommitted)
+
+	status, out := h.httpJSON(t, "GET", "/lineage/claims/"+parentClaim.String()+"/ancestors?depth=2", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	ancestors, _ := out["ancestors"].([]any)
+
+	// The walk includes the parent (level 0) plus both sub-claims (level 1).
+	gotClaims := map[string]bool{}
+	for _, a := range ancestors {
+		item := a.(map[string]any)
+		rec, _ := item["record"].(map[string]any)
+		if ch, ok := rec["claim_handle_id"].(string); ok {
+			gotClaims[ch] = true
+		}
+	}
+	require.True(t, gotClaims[parentClaim.String()], "parent claim_terminal present: %v", gotClaims)
+	require.True(t, gotClaims[subA.String()], "sub-claim A reached via sub_claim_handle_ids: %v", gotClaims)
+	require.True(t, gotClaims[subB.String()], "sub-claim B reached via sub_claim_handle_ids: %v", gotClaims)
+}
+
+// TestLineageEndpoints_BySourceReverseLookup seeds leaf_run rows whose
+// substitution_refs cite a given (source_kind, source_version_or_id), plus
+// a decoy row citing a different source, and asserts GET
+// /lineage/by-source/{kind}/{id} returns exactly the matching records. This
+// reverse lookup fails silently if the JSONB scan + Go filter is subtly
+// wrong (e.g. matches on kind OR id instead of kind AND id), so the decoy
+// row is load-bearing.
+func TestLineageEndpoints_BySourceReverseLookup(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID, frameID := seedLineageInstance(t, h, "lin-ep-bysrc")
+	base := time.Now().UTC()
+
+	wantRunA := uuid.New()
+	wantRunB := uuid.New()
+	decoyRun := uuid.New()
+	srcID := uuid.NewString()
+
+	// Two rows cite (run, srcID); the decoy cites a different id under the
+	// same kind, and another decoy cites the same id under a different kind.
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{
+			"run_id":            wantRunA.String(),
+			"substitution_refs": []map[string]any{{"source_kind": "run", "source_version_or_id": srcID}},
+		}, base, "")
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{
+			"run_id":            wantRunB.String(),
+			"substitution_refs": []map[string]any{{"source_kind": "run", "source_version_or_id": srcID}},
+		}, base.Add(time.Second), "")
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{
+			"run_id":            decoyRun.String(),
+			"substitution_refs": []map[string]any{{"source_kind": "run", "source_version_or_id": uuid.NewString()}},
+		}, base.Add(2*time.Second), "")
+	// Same id, different kind — must NOT match (kind AND id).
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
+		map[string]any{
+			"run_id":            uuid.NewString(),
+			"substitution_refs": []map[string]any{{"source_kind": "attribute", "source_version_or_id": srcID}},
+		}, base.Add(3*time.Second), "")
+
+	status, out := h.httpJSON(t, "GET", "/lineage/by-source/run/"+srcID, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	records, _ := out["records"].([]any)
+	require.Len(t, records, 2, "exactly the two (run, srcID)-citing rows must match — not the decoys")
+
+	gotRuns := map[string]bool{}
+	for _, r := range records {
+		item := r.(map[string]any)
+		rec, _ := item["record"].(map[string]any)
+		if rid, ok := rec["run_id"].(string); ok {
+			gotRuns[rid] = true
+		}
+	}
+	require.True(t, gotRuns[wantRunA.String()])
+	require.True(t, gotRuns[wantRunB.String()])
+	require.False(t, gotRuns[decoyRun.String()], "decoy (different source id) must not match")
+
+	// A source with no citing rows → empty record set, not 404.
+	status, out = h.httpJSON(t, "GET", "/lineage/by-source/run/"+uuid.NewString(), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	records, _ = out["records"].([]any)
+	require.Empty(t, records)
+}
+
+// TestLineageEndpoints_ByProducerReverseLookup seeds claim_terminal rows
+// emitted by a given producer (with and without a version_id) plus a decoy
+// from a different producer, and asserts GET
+// /lineage/by-producer/{name}[?version=] filters correctly.
+func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID, frameID := seedLineageInstance(t, h, "lin-ep-byprod")
+	base := time.Now().UTC()
+
+	// Two rows from producer "alpha-store" (versions v1, v2) + a decoy from
+	// "beta-store".
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{"claim_handle_id": uuid.NewString(), "producer_name": "alpha-store", "version_id": "v1"}, base, persistence.LineageOutcomeCommitted)
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{"claim_handle_id": uuid.NewString(), "producer_name": "alpha-store", "version_id": "v2"}, base.Add(time.Second), persistence.LineageOutcomeCommitted)
+	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
+		map[string]any{"claim_handle_id": uuid.NewString(), "producer_name": "beta-store", "version_id": "v1"}, base.Add(2*time.Second), persistence.LineageOutcomeCommitted)
+
+	// All alpha-store rows (no version filter).
+	status, out := h.httpJSON(t, "GET", "/lineage/by-producer/alpha-store", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	records, _ := out["records"].([]any)
+	require.Len(t, records, 2, "both alpha-store rows must match; beta-store must not")
+	for _, r := range records {
+		item := r.(map[string]any)
+		rec, _ := item["record"].(map[string]any)
+		require.Equal(t, "alpha-store", rec["producer_name"])
+	}
+
+	// Narrowed by version=v2 → exactly one.
+	status, out = h.httpJSON(t, "GET", "/lineage/by-producer/alpha-store?version=v2", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	records, _ = out["records"].([]any)
+	require.Len(t, records, 1, "version filter narrows to the single matching row")
+	item := records[0].(map[string]any)
+	rec, _ := item["record"].(map[string]any)
+	require.Equal(t, "v2", rec["version_id"])
+
+	// Unknown producer → empty set, not error.
+	status, out = h.httpJSON(t, "GET", "/lineage/by-producer/ghost-store", nil)
+	require.Equal(t, http.StatusOK, status, out)
+	records, _ = out["records"].([]any)
+	require.Empty(t, records)
+}

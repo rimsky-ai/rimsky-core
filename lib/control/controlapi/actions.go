@@ -443,19 +443,24 @@ var v1Actions = []ActionEntry{
 		MCPTools:    nil,
 		Description: "Read observability data via /v1/observability/*."},
 
-	// MCP umbrella action covering the JSON-RPC dispatch surface at
-	// `POST /mcp`. Gates `initialize` and `tools/list` (which run
-	// inside the MCP Server without ever reaching tools/call). Tool
-	// invocations (`tools/call`) re-enter the chi router through the
-	// catalog and pick up the per-tool action gate there.
+	// MCP umbrella action covering the MCP Streamable HTTP transport
+	// surface at `/mcp`. `POST /mcp` carries the JSON-RPC dispatch:
+	// gates `initialize` and `tools/list` (which run inside the MCP
+	// Server without ever reaching tools/call); tool invocations
+	// (`tools/call`) re-enter the chi router through the catalog and
+	// pick up the per-tool action gate there. `GET /mcp` opens the
+	// server-to-client SSE stream the default `type: http` client
+	// probes on connect (idle in v1 — connect-and-control only, no live
+	// push); it is gated under the same read umbrella so the probe lands
+	// in the audit log like every other authenticated request.
 	//
 	// Named `mcp:read` rather than `mcp:invoke` so the wildcard-
 	// `*:read` bundled `read-only` role automatically covers
-	// `tools/list`. The JSON-RPC dispatch surface is read-shaped at
-	// the umbrella level — `tools/call` mutations re-gate against
-	// the per-tool action and require those write permissions.
+	// `tools/list` and the GET stream. The JSON-RPC dispatch surface is
+	// read-shaped at the umbrella level — `tools/call` mutations re-gate
+	// against the per-tool action and require those write permissions.
 	{Action: "mcp:read", IsWrite: false,
-		Routes:      []Route{{"POST", "/mcp"}},
+		Routes:      []Route{{"POST", "/mcp"}, {"GET", "/mcp"}},
 		MCPTools:    nil,
-		Description: "Invoke the MCP JSON-RPC dispatch surface; per-tool actions still gate tools/call."},
+		Description: "Invoke the MCP JSON-RPC dispatch surface (POST) and open the server-to-client stream (GET); per-tool actions still gate tools/call."},
 }

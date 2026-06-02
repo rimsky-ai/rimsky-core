@@ -157,6 +157,27 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 	return nil
 }
 
+// UpdateNodeRunID repoints the node_run_id FK on an existing claim_handle
+// row. NOT claimant-guarded: the fan-out dispatch path calls it inside the
+// same tx as the child-run INSERT (before any other supervisor can observe
+// the sub-claim), retargeting the sub-claim from the parent fan-out run to
+// its own child leaf run so the leaf can resolve its candidate handle by
+// `node_run_id = its own dispatch id` (E4).
+func (s *claimHandlesImpl) UpdateNodeRunID(
+	ctx context.Context, id shared.UUID, nodeRunID shared.UUID, tx persistence.Tx,
+) error {
+	_, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET node_run_id = $1
+		  WHERE id = $2`,
+		nodeRunID, id,
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.UpdateNodeRunID: %w", err)
+	}
+	return nil
+}
+
 // Get returns the row identified by id, or (nil, nil) when no row exists.
 func (s *claimHandlesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRow(ctx,
@@ -198,6 +219,19 @@ func (s *claimHandlesImpl) ListByHolderNode(ctx context.Context, holderNodeID sh
 	)
 	if err != nil {
 		return nil, fmt.Errorf("lockholders.ListByHolderNode: %w", err)
+	}
+	defer rows.Close()
+	return collectClaimHandles(rows)
+}
+
+func (s *claimHandlesImpl) ListByNodeRun(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
+		 WHERE node_run_id = $1
+		 ORDER BY claimed_at ASC`, nodeRunID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("lockholders.ListByNodeRun: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)

@@ -137,6 +137,21 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 	return nil
 }
 
+func (s *claimHandlesImpl) UpdateNodeRunID(
+	ctx context.Context, id shared.UUID, nodeRunID shared.UUID, tx persistence.Tx,
+) error {
+	_, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET node_run_id = ?
+		  WHERE id = ?`,
+		nodeRunID.String(), id.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.UpdateNodeRunID: %w", err)
+	}
+	return nil
+}
+
 func (s *claimHandlesImpl) Get(ctx context.Context, id shared.UUID, tx persistence.Tx) (*persistence.ClaimHandleRow, error) {
 	row := s.q(tx).QueryRowContext(ctx,
 		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles WHERE id = ?`, id.String(),
@@ -175,6 +190,19 @@ func (s *claimHandlesImpl) ListByHolderNode(ctx context.Context, holderNodeID sh
 	)
 	if err != nil {
 		return nil, fmt.Errorf("lockholders.ListByHolderNode: %w", err)
+	}
+	defer rows.Close()
+	return collectClaimHandles(rows)
+}
+
+func (s *claimHandlesImpl) ListByNodeRun(ctx context.Context, nodeRunID shared.UUID, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
+	rows, err := s.q(tx).QueryContext(ctx,
+		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
+		 WHERE node_run_id = ?
+		 ORDER BY claimed_at ASC`, nodeRunID.String(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("lockholders.ListByNodeRun: %w", err)
 	}
 	defer rows.Close()
 	return collectClaimHandles(rows)

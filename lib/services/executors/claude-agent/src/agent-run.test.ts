@@ -7,12 +7,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { resolveCwd, runAgent } from "./agent-run.js";
 import {
   startInternalMcpServer,
   type CallbackServerHandle,
 } from "./internal-mcp-server.js";
-import type { CliRunner } from "./cli-runner.js";
+import type { CliHandle, CliRunner } from "./cli-runner.js";
 
 const logger = pino({ level: "silent" });
 
@@ -253,6 +255,160 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
       expect(outcome.errorClass).toBe("agent/subprocess_exit/before_complete");
       const payload = outcome.payload as { retry_attempted?: boolean };
       expect(payload.retry_attempted).toBe(true);
+    }
+  });
+});
+
+describe("runAgent resume path lands report_complete over a real MCP client (#11)", () => {
+  // #11 resume path: the CLI exits 0 WITHOUT calling report_complete, the
+  // executor resumes the same session, and the resumed CLI dials the
+  // SAME per-dispatch internal-MCP server (held alive across resume) and
+  // calls report_complete. The dispatch must resolve `complete`, NOT
+  // `agent/subprocess_exit/before_complete`. This drives the resume path
+  // against a REAL MCP client/server round-trip (not the no-op fake CLI),
+  // proving the per-dispatch MCP connection survives the spawn → exit →
+  // resume boundary and the terminal `report_complete` lands.
+  let tmpCwd: string;
+  let fakeCli: CliRunner;
+
+  beforeEach(() => {
+    delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
+    tmpCwd = mkdtempSync(join(tmpdir(), "agent-run-resume-"));
+    writeFileSync(join(tmpCwd, "marker.txt"), "ok");
+
+    // A fake CLI handle whose `waitExit` resolves only once teardown
+    // (sendSigterm) is invoked — mirrors a real subprocess that stays
+    // alive while doing work, then exits on the executor's terminal
+    // teardown. `dialAndReport` lets the resume handler perform a real
+    // MCP round-trip after the executor has wired its retry handle.
+    const makeControlledHandle = (
+      onSpawned: (h: CliHandle) => void,
+    ): CliHandle => {
+      const exitWaiters: Array<
+        (r: { exitCode: number | null; signal: NodeJS.Signals | null }) => void
+      > = [];
+      let exited = false;
+      const resolveExit = (): void => {
+        if (exited) return;
+        exited = true;
+        for (const w of exitWaiters) w({ exitCode: 0, signal: null });
+      };
+      const handle: CliHandle = {
+        pid: 4242,
+        onStdout: () => {},
+        onStderr: () => {},
+        onExit: () => {},
+        sendSigterm: () => resolveExit(),
+        sendSigkill: () => resolveExit(),
+        waitExit: () =>
+          exited
+            ? Promise.resolve({ exitCode: 0, signal: null })
+            : new Promise((resolve) => exitWaiters.push(resolve)),
+      };
+      onSpawned(handle);
+      return handle;
+    };
+
+    const dialAndReport = async (
+      url: string,
+      token: string,
+    ): Promise<void> => {
+      const transport = new StreamableHTTPClientTransport(new URL(url));
+      const client = new Client({
+        name: "rimsky-resume-test-cli",
+        version: "1.0.0",
+      });
+      try {
+        await client.connect(transport);
+        await client.callTool({
+          name: "report_complete",
+          arguments: { token, changed: true, change_summary: "resumed-done" },
+        });
+      } finally {
+        await client.close().catch(() => {});
+      }
+      // The resumed CLI does NOT self-exit: a real subprocess stays alive
+      // until the executor's terminal teardown (SIGTERM) after
+      // report_complete's response is flushed. Driving exit from teardown
+      // (sendSigterm → waitExit) mirrors that and avoids racing the
+      // deferred terminal resolution.
+    };
+
+    fakeCli = {
+      // First dispatch: a clean exit 0 with no report (triggers resume).
+      spawn: async () => {
+        const exitWaiters: Array<
+          (r: { exitCode: number | null; signal: NodeJS.Signals | null }) => void
+        > = [];
+        let result: { exitCode: number | null; signal: NodeJS.Signals | null } | null = null;
+        setTimeout(() => {
+          result = { exitCode: 0, signal: null };
+          for (const w of exitWaiters) w(result);
+        }, 5);
+        return {
+          pid: 1111,
+          onStdout: () => {},
+          onStderr: () => {},
+          onExit: () => {},
+          sendSigterm: () => {},
+          sendSigkill: () => {},
+          waitExit: () =>
+            result
+              ? Promise.resolve(result)
+              : new Promise((resolve) => exitWaiters.push(resolve)),
+        };
+      },
+      // Resume: dial the per-dispatch MCP and call report_complete. The
+      // MCP round-trip is scheduled AFTER this handler returns so the
+      // executor has wired its retry handle (handleRef) before teardown.
+      resume: async (req) => {
+        const url = req.env.RIMSKY_CALLBACK_URL;
+        const token = req.env.RIMSKY_CALLBACK_TOKEN;
+        let forceExit: () => void = () => {};
+        const handle = makeControlledHandle((h) => {
+          forceExit = () => h.sendSigterm();
+        });
+        setTimeout(() => {
+          void dialAndReport(url, token).catch(() => {
+            // On dial failure, let the handle exit so the test does not
+            // hang; the outcome assertion then catches the regression.
+            forceExit();
+          });
+        }, 0);
+        return handle;
+      },
+    };
+  });
+
+  afterEach(() => {
+    rmSync(tmpCwd, { recursive: true, force: true });
+  });
+
+  it("resolves complete (not subprocess_exit/before_complete) when report_complete lands on resume", async () => {
+    const runId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const outcome = await runAgent({
+      runId,
+      nodeId: "n-1",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "you are helpful",
+      userPrompt: "do it",
+      attributesSchema: {},
+      attributes: {},
+      cwdOverride: tmpCwd,
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: fakeCli,
+      // No `callback` handle passed: runAgent starts its OWN per-dispatch
+      // internal-MCP server, which is the connection under test.
+      callback: undefined as never,
+      silenceTimeoutMs: 60_000,
+      logger,
+    });
+    expect(outcome.kind).toBe("complete");
+    if (outcome.kind === "complete") {
+      expect(outcome.changed).toBe(true);
+      expect(outcome.changeSummary).toBe("resumed-done");
     }
   });
 });

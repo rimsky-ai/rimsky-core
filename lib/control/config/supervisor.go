@@ -147,21 +147,45 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		registry.Close()
 		return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
 	}
+	// Dial the supervisor's DataProcessing mix-in clients for any
+	// claim-producer / executor peer whose `protocols:` list declares
+	// `data_processing`. The supervisor needs these at fan-out acquisition
+	// (BeginCandidate per sub-claim) and at leaf terminal
+	// (CommitCandidate / AbandonCandidate). Without this the candidate
+	// handle is never minted and the fan-out leaf dispatches with an empty
+	// `StoreHandle.candidate_handle` (E4). Publishers don't live in the
+	// supervisor config, so the publishers arg is empty; only the
+	// DataProcessing registry is consumed here.
+	_, _, dataProcessors, dpClosers, err := DialPublisherAndValidationRegistries(
+		context.Background(), cfg.Stores, cfg.Executors, RemotePublishersConfig{})
+	if err != nil {
+		registry.Close()
+		lifecycleSubs.Close()
+		return nil, fmt.Errorf("StartSupervisor: dial data-processing registry: %w", err)
+	}
+	closeDataProcessors := func() {
+		for _, c := range dpClosers {
+			c()
+		}
+	}
 	if err := cfg.NamedLocks.Validate(); err != nil {
 		registry.Close()
 		lifecycleSubs.Close()
+		closeDataProcessors()
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
 	persistQueue := cfg.Driver.Queue()
 	if persistQueue == nil {
 		registry.Close()
 		lifecycleSubs.Close()
+		closeDataProcessors()
 		return nil, fmt.Errorf("StartSupervisor: Driver.Queue() returned nil")
 	}
 	coordinator := cfg.Driver.AdvisoryLocker()
 	if coordinator == nil {
 		registry.Close()
 		lifecycleSubs.Close()
+		closeDataProcessors()
 		return nil, fmt.Errorf("StartSupervisor: Driver.AdvisoryLocker() returned nil")
 	}
 	inner, err := runtime.Start(runtime.Config{
@@ -189,21 +213,30 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		LifecycleSubs:               lifecycleSubs,
 		LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
 		LateBindServiceProxies:      cfg.LateBindServiceProxies,
+		DataProcessors:              dataProcessors,
 	})
 	if err != nil {
 		registry.Close()
 		lifecycleSubs.Close()
+		closeDataProcessors()
 		return nil, err
 	}
-	return supervisorHandleWithRegistry{inner: inner, registry: registry, lifecycleSubs: lifecycleSubs}, nil
+	return supervisorHandleWithRegistry{
+		inner:               inner,
+		registry:            registry,
+		lifecycleSubs:       lifecycleSubs,
+		closeDataProcessors: closeDataProcessors,
+	}, nil
 }
 
 // supervisorHandleWithRegistry wraps runtime.Handle to release the
-// remote-store + lifecycle-subscriber gRPC connections at shutdown.
+// remote-store + lifecycle-subscriber + data-processing gRPC connections
+// at shutdown.
 type supervisorHandleWithRegistry struct {
-	inner         SupervisorHandle
-	registry      *locks.Registry
-	lifecycleSubs *locks.LifecycleRegistry
+	inner               SupervisorHandle
+	registry            *locks.Registry
+	lifecycleSubs       *locks.LifecycleRegistry
+	closeDataProcessors func()
 }
 
 func (h supervisorHandleWithRegistry) Shutdown(ctx context.Context) error {
@@ -211,6 +244,9 @@ func (h supervisorHandleWithRegistry) Shutdown(ctx context.Context) error {
 	h.registry.Close()
 	if h.lifecycleSubs != nil {
 		h.lifecycleSubs.Close()
+	}
+	if h.closeDataProcessors != nil {
+		h.closeDataProcessors()
 	}
 	return err
 }

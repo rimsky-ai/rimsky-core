@@ -495,20 +495,63 @@ func (s *InMemoryState) BreakpointHitsFor(instanceID string, since int64, limit 
 	return out
 }
 
-// EventsFor returns events filtered by instance ID; if cursor is non-
-// empty, returns events with ID > cursor (parsed as int64).
-func (s *InMemoryState) EventsFor(instanceID string, after int64) []cli.Event {
+// EventsPage mirrors the live control-api's keyset-paginated read of the
+// event log: results are ordered newest-first ((occurred_at, id) DESC) and
+// `cursor` is an opaque keyset position — the page returned is strictly
+// OLDER than the cursor ((occurred_at, id) < (cursor.occurred, cursor.id)).
+// This is byte-for-byte the contract the real persistence layer enforces
+// (foundation/persistence/{sqlite,postgres}/events.go); the fake mirrors it
+// so CLI tests can't pass against a numeric-cursor shortcut the live server
+// rejects.
+//
+// cursorOccurred/cursorID are the decoded keyset; pass the zero time and
+// 0 for the first (uncursored) page. limit bounds the page; the caller
+// (the HTTP handler) is responsible for emitting next_cursor only when the
+// page is full, matching the live server.
+func (s *InMemoryState) EventsPage(instanceID string, cursorOccurred time.Time, cursorID int64, hasCursor bool, limit int) []cli.Event {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := []cli.Event{}
+	filtered := []cli.Event{}
 	for _, e := range s.events {
 		if instanceID != "" && e.InstanceID != instanceID {
 			continue
 		}
-		if e.ID <= after {
-			continue
+		filtered = append(filtered, e)
+	}
+	// Newest-first: (occurred_at, id) DESC, matching the live ORDER BY.
+	sort.Slice(filtered, func(i, j int) bool {
+		oi := eventOccurredAt(filtered[i])
+		oj := eventOccurredAt(filtered[j])
+		if !oi.Equal(oj) {
+			return oi.After(oj)
+		}
+		return filtered[i].ID > filtered[j].ID
+	})
+	out := []cli.Event{}
+	for _, e := range filtered {
+		if hasCursor {
+			// Keyset predicate: strictly older than the cursor position.
+			oe := eventOccurredAt(e)
+			if !(oe.Before(cursorOccurred) || (oe.Equal(cursorOccurred) && e.ID < cursorID)) {
+				continue
+			}
 		}
 		out = append(out, e)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
 	}
 	return out
+}
+
+// eventOccurredAt parses an event's RFC3339 occurred_at string back to a
+// time for keyset comparison. A row whose timestamp fails to parse sorts as
+// the zero time (it never wins an ordering comparison) — the seeding helpers
+// always emit RFC3339, so this is defensive, not a live path.
+func eventOccurredAt(e cli.Event) time.Time {
+	t, err := time.Parse(time.RFC3339, e.OccurredAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }

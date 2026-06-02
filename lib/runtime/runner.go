@@ -46,8 +46,8 @@
 // `rimsky_claim_handles` row AND inserts all sub-claim handle rows for
 // opted-into partitioning (via `ClaimProducer.SplitScope`) AND records
 // the `ClaimProducer.Open`-returned addresses AND registers any co-holder
-// / inheritor `rimsky_claim_holders` rows declared by the node's template
-// (`holds:` / `inherits:`), or none of these. The producer's own state
+// `rimsky_claim_holders` rows declared by the node's template (`holds:`),
+// or none of these. The producer's own state
 // mutations run in a producer-internal transaction decoupled from
 // rimsky's — the v2 tx-sharing mechanism (`locks.WithTx`) is gone.
 // Single-writer-per-scope (invariant 4b) holds because rimsky's conflict
@@ -373,6 +373,16 @@ type AcquiredLock struct {
 	// active-terminal until the parent's recursive resolution walks
 	// them. Always false for NamedLockSpec.
 	IsHeld bool
+	// ProducerCandidateHandle carries the per-sub-claim candidate handle
+	// (returned by `DataProcessing.BeginCandidate`) for a fan-out LEAF's
+	// own sub-claim. Empty for the parent fan-out run, for non-fan-out
+	// runs, and for named locks. Populated at leaf acquisition by
+	// resolving the sub-claim row whose `node_run_id` equals this leaf's
+	// dispatch id (linked in `fanout_dispatch.go::CreateFanOutChildren`),
+	// then carried onto the wire by `makeClaimHandle` as
+	// `StoreHandle.candidate_handle` (E4). Inert in rimsky per
+	// @blessed-invariant 20.
+	ProducerCandidateHandle []byte
 }
 
 // RunNode runs one full claim-and-execute cycle. The eight-stage outline

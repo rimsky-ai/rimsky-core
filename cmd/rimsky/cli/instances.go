@@ -467,49 +467,58 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	// Track the highest event ID seen across iterations independent of
-	// the page-level NextCursor. The live control-api only sets
-	// NextCursor when a page is full (limit reached); on partial pages
-	// it returns NextCursor="". Without an iteration-spanning watermark
-	// the follow loop would re-fetch the same partial page every poll
-	// and re-emit duplicates. lastSeenID is the source of truth for
-	// "events after this point"; we pass it back as the cursor on each
-	// poll so the server-side filter trims everything we've already
-	// printed.
+	// Cursor discipline mirrors the live control-api's keyset pagination
+	// (foundation/persistence/{sqlite,postgres}/events.go): the event log
+	// is read newest-first ((occurred_at, id) DESC) and NextCursor is an
+	// OPAQUE base64 keyset token that walks backward through history. The
+	// CLI must pass that exact token back — fabricating a numeric cursor
+	// (the old fmt.Sprintf("%d", lastSeenID)) makes the server 500 with
+	// "events.list: bad cursor" on the first advance (issue #1). NextCursor
+	// is set only on a full page; a partial page returns "" to signal the
+	// backlog is drained.
+	//
+	// lastSeenID is a purely-local dedup high-watermark and is NEVER sent
+	// as a cursor. Because pages arrive newest-first, the skip test uses a
+	// per-poll snapshot (prevSeen) rather than the running max: the first
+	// event of a full backlog is the global newest, so updating the
+	// watermark mid-drain would suppress every older (lower-ID) event on
+	// the following pages. We compare each event against the watermark as
+	// it stood at the start of the poll and only advance the committed
+	// watermark after the whole backlog is drained.
 	var lastSeenID int64
-	cursor := ""
 	for {
-		page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Cursor: cursor, Limit: 100})
-		if err != nil {
-			if signalCtx.Err() != nil {
-				return 0
+		prevSeen := lastSeenID
+		nextCursor := "" // opaque server token; empty re-scans the newest page
+		for {
+			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Cursor: nextCursor, Limit: 100})
+			if err != nil {
+				if signalCtx.Err() != nil {
+					return 0
+				}
+				return reportError(err)
 			}
-			return reportError(err)
-		}
-		for _, e := range page.Events {
-			if e.ID <= lastSeenID {
-				continue
+			for _, e := range page.Events {
+				if e.ID <= prevSeen {
+					continue
+				}
+				if e.ID > lastSeenID {
+					lastSeenID = e.ID
+				}
+				if common.Format == FormatJSON {
+					_ = EmitJSON(os.Stdout, e)
+				} else {
+					fmt.Fprintf(os.Stdout, "%s\t%d\t%s\n", e.OccurredAt, e.ID, e.Kind)
+				}
 			}
-			lastSeenID = e.ID
-			if common.Format == FormatJSON {
-				_ = EmitJSON(os.Stdout, e)
-			} else {
-				fmt.Fprintf(os.Stdout, "%s\t%d\t%s\n", e.OccurredAt, e.ID, e.Kind)
+			if page.NextCursor == "" {
+				break // partial page: backlog drained for this poll
 			}
-		}
-		if page.NextCursor != "" {
-			// Full page: continue draining without sleeping.
-			cursor = page.NextCursor
-			continue
+			// Full page: continue draining older events via the opaque
+			// token, without sleeping.
+			nextCursor = page.NextCursor
 		}
 		if !follow {
 			return 0
-		}
-		// Partial page (or empty): wait, then resume from the
-		// last-seen ID rather than the empty NextCursor.
-		cursor = ""
-		if lastSeenID > 0 {
-			cursor = fmt.Sprintf("%d", lastSeenID)
 		}
 		select {
 		case <-signalCtx.Done():

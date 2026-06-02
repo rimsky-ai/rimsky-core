@@ -339,6 +339,38 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
+	// 6d. Lineage retention sweep (E10). Reaps rimsky_lineage rows past the
+	// configured trailing window whose corresponding run / claim_handle is
+	// gone. Default disabled — `Retention.LineageTrailing == 0` skips the
+	// sweep. Runs under the scheduler-tick advisory lock for cross-replica
+	// serialization; errors are logged at Warn and swallowed (matching the
+	// SweepClaimHandleRetention / SweepMessageIdempotencies discipline).
+	if cfg.Persist != nil && cfg.Retention.LineageTrailing > 0 {
+		now := time.Now()
+		if cfg.Clock != nil {
+			now = cfg.Clock.Now()
+		}
+		if _, err := runtime.SweepLineageRetention(ctx, cfg.Persist.Lineage(), cfg.Retention, now, log); err != nil {
+			log.Warn("tick: SweepLineageRetention failed", "error", err.Error())
+		}
+	}
+
+	// 6e. Run-tree retention sweep (E10). Prunes rimsky_node_runs rows
+	// belonging to all but the `Retention.RecentFramesKept` most-recent
+	// terminal frames per instance. Default disabled —
+	// `Retention.RecentFramesKept == 0` skips the sweep. The sweep ignores
+	// the now/Clock value (the prune predicate ranks by frame ended_at, not
+	// a cutoff), but we pass it for signature parity with the other sweeps.
+	if cfg.Persist != nil && cfg.Retention.RecentFramesKept > 0 {
+		now := time.Now()
+		if cfg.Clock != nil {
+			now = cfg.Clock.Now()
+		}
+		if _, err := runtime.SweepRunTreeRetention(ctx, cfg.Retention, cfg.Persist, now, log); err != nil {
+			log.Warn("tick: SweepRunTreeRetention failed", "error", err.Error())
+		}
+	}
+
 	// 7. Claim-holder GC is no longer needed:
 	// rimsky_claim_holders.claim_handle_id has ON DELETE CASCADE, so when
 	// the lock-holder row is deleted (at terminal or by orphan reap), the

@@ -21,9 +21,9 @@
 // Post-stage-5 of the run-row lifecycle cutover, claim-holders rows
 // are keyed by `holder_run_id` (a `rimsky_node_runs.id`). The acquirer's
 // own holder row is inserted at acquire-time
-// (`runner_acquire.go::insertHeldClaimHoldersAtAcquire`); co-holder /
+// (`runner_acquire_holders.go::insertHeldClaimHoldersAtAcquire`); co-holder /
 // inheritor rows are inserted at the inheritor's own acquire-time
-// (`runner_acquire.go::insertCoHolderClaimHoldersAtAcquire`).
+// (`runner_acquire_holders.go::insertCoHolderClaimHoldersAtAcquire`).
 //
 // **Pre-dispatch deferral.** Inheritor / co-holder rows are inserted at
 // the inheritor's own acquire, not at the acquirer's acquire. When the
@@ -257,7 +257,7 @@ func CheckAndFireResolution(
 }
 
 // expectedInheritorsMissing reports whether the holding subgraph for
-// this claim has expected inheritor / co-holder members that have not
+// this claim has expected co-holder / inheritor members that have not
 // yet inserted their `rimsky_claim_holders` row. Used by
 // `CheckAndFireResolution` to defer auto-terminal until every expected
 // member has acquired (and then terminated).
@@ -268,10 +268,13 @@ func CheckAndFireResolution(
 //   - Alias is resolved by matching the claim's `producer_name` against
 //     the acquirer's `claims:` declarations. (When the acquirer declares
 //     multiple aliases against the same producer, this defaults to the
-//     first match — same fallback as the inheritor's release path's
+//     first match — same fallback as the co-holder release path's
 //     `pickAliasForClaimHandle`.)
 //   - Subgraph members come from `node.HoldingSubgraphsForTemplate`
-//     filtered to the resolved (acquirer-type, alias) pair.
+//     filtered to the resolved (acquirer-type, alias) pair. That set is
+//     holds-aware: every node declaring `holds: {<alias>: {from:
+//     <acquirer>}}` is a member, so the guard waits for every declared
+//     co-holder.
 //
 // For each expected member node-type, the function checks whether ANY
 // row in `holders` corresponds to a run for a node of that type within

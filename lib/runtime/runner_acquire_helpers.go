@@ -22,6 +22,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -116,6 +117,11 @@ func acquireFanOutIfDeclared(
 		FrameID:             &frameID,
 		HeartbeatInterval:   heartbeatInterval,
 		PartitionRequest:    partitionRequest,
+		// Sub-claims inherit the parent claim's lifetime. parentClaimSpec.Lifetime
+		// is the rimsky-internal plain-string carried on the ClaimSpec (lib/protocols
+		// may not import lib/foundation/spec); convert to spec.ClaimLifetime here.
+		// AcquireSubClaims defaults an empty value to "subgraph". @concept: claim-lifetime
+		Lifetime: spec.ClaimLifetime(parentClaimSpec.Lifetime),
 		// Sub-claims inherit the parent's is_held so the rows survive
 		// the leaf's active terminal until the parent's recursive
 		// resolution walks them. Without this, non-held sub-claim

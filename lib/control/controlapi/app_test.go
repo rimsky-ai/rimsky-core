@@ -7,7 +7,7 @@
 // a throwaway Postgres container via pgtest.OpenDriver.
 //
 // Coverage targets the stores redesign template shape (stores with
-// selector + intent + alias, locks-by-name, attributes, inherits) plus
+// selector + intent + alias, locks-by-name, attributes, holds:) plus
 // the renamed admin/claim routes.
 package controlapi
 
@@ -224,8 +224,13 @@ func templateWithStoresAndLocks(name string) map[string]any {
 					"stores": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "r"},
 					},
-					"inherits": []map[string]any{
-						{"claim": "topics-ring"},
+					// Post-2026-06-02 `inherits:` deletion (spec
+					// 2026-06-02-rimsky-core-remediation): co-holdership is
+					// declared via `holds:`. The review node co-holds the
+					// upstream claim-topic node's `topics-ring` claim. Outer
+					// key is the local alias; `from` names the upstream node.
+					"holds": map[string]any{
+						"topics-ring": map[string]any{"from": "claim-topic"},
 					},
 				},
 			},

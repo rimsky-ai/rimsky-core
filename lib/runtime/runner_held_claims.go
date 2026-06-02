@@ -11,11 +11,9 @@
 //   - The acquirer's own holder row is inserted at acquire time when
 //     the claim is held (deploy-time computation via
 //     `HoldingSubgraphsForTemplate`).
-//   - Co-holders' rows are inserted at the co-holder's dispatch time
+//   - Co-holders' rows are inserted at the co-holder's own acquire time
 //     (per the `holds:` template directive, runtime entry point in
-//     `runner_dispatch.go::insertCoHolderClaimHoldersAtDispatch`).
-//   - Legacy `inherits:` rows are also inserted at the inheritor's
-//     dispatch time (same path, derived from the holding subgraph).
+//     `runner_acquire_holders.go::insertCoHolderClaimHoldersAtAcquire`).
 //
 // This file owns the per-acquired-claim release-path helpers used by
 // `runner_terminal.go`'s release loop.

@@ -478,6 +478,63 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
     await clientB.close();
   });
 
+  it("survives long SSE stream (no per-request timeout RST — #11)", async () => {
+    // #11 regression: a per-socket inactivity timeout destroys the
+    // long-lived standalone MCP SSE GET stream that the SDK client opens
+    // after `initialize`. The destroyed socket surfaces on the client as
+    // an ECONNRESET `onerror`, and the dispatch terminal-errors
+    // `agent/subprocess_exit/before_complete` even though the agent did
+    // its work. The fix pins every per-connection/per-request timeout to 0
+    // so the stream is indefinitely long-lived.
+    //
+    // This test drives the REAL server-side fault on a fast clock: we
+    // start a dedicated server with a tight per-socket inactivity window
+    // (`socketTimeoutMs` — the knob that actually RSTs an idle SSE
+    // response), open a real `StreamableHTTPClientTransport` (whose
+    // connect handshake opens the standalone GET SSE stream), then hold it
+    // open well past that window and assert NO error fires on the
+    // transport — i.e. the SSE stream stayed alive. The assertion is the
+    // observable outcome (stream survives), not the value of any timeout
+    // field.
+    const socketTimeoutMs = 250;
+    const sseHandle = await startInternalMcpServer({
+      logger,
+      socketTimeoutMs,
+    });
+    const transport = new StreamableHTTPClientTransport(new URL(sseHandle.url));
+    const errors: unknown[] = [];
+    transport.onerror = (err) => {
+      errors.push(err);
+    };
+    const client = new Client({
+      name: "rimsky-sse-test-client",
+      version: "1.0.0",
+    });
+    try {
+      // connect() runs initialize + notifications/initialized, which makes
+      // the SDK client open the standalone GET SSE stream we want to keep
+      // alive across the per-request window.
+      await client.connect(transport);
+      // Hold the stream open well past the inactivity window. Under the
+      // unfixed server, the idle GET SSE socket is destroyed at
+      // `socketTimeoutMs` and the client surfaces an ECONNRESET-class
+      // error here.
+      await new Promise((resolve) => setTimeout(resolve, socketTimeoutMs * 5));
+      // The stream must still be alive: a tool call over the same session
+      // round-trips, and no error has fired.
+      sseHandle.registry.register("tok-sse", makeRegistryEntry({}));
+      const res = await client.callTool({
+        name: "report_complete",
+        arguments: { token: "tok-sse", changed: false },
+      });
+      expect(parseToolText(res.content)).toEqual({ status: "accepted" });
+      expect(errors).toEqual([]);
+    } finally {
+      await client.close().catch(() => {});
+      await sseHandle.close();
+    }
+  });
+
   it("supports a fresh session after a prior one closes (sequential dispatch shape)", async () => {
     // This is the shape that wedged the 22-hour run: dispatch A finishes,
     // its CLI exits, then dispatch B starts later in the same executor
