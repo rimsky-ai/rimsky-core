@@ -13,7 +13,7 @@
 // 05-24 scenario / smoke test) is therefore unreachable from this repo.
 // Tests here drive rimsky from outside via testcontainers-go.
 //
-// Bring-up sequence:
+// Bring-up sequence (default, Postgres backend):
 //
 //  1. Spin up a Postgres testcontainer (postgres:15-alpine).
 //  2. Render an `rimsky.yml` that points rimsky at the testcontainer's
@@ -28,11 +28,17 @@
 //     returns 200.
 //  5. Register `t.Cleanup` for both containers + the docker network.
 //
+// SQLite backend (WithSQLite): no Postgres testcontainer is started; the
+// rendered config selects `driver: sqlite` at the image's baked,
+// nonroot-writable state path, so all three roles run against one SQLite
+// file (single-writer, WAL, busy-timeout). This exercises the image's
+// out-of-the-box default rather than reconfiguring it to Postgres.
+//
 // The harness reuses the locally-built `rimsky-all-in-one:latest` image
 // produced by `make core-images`; it does not pull from Docker Hub. The
 // all-in-one image bakes in its config and runs all rimsky processes under
 // one entrypoint; the harness still mounts a rendered `rimsky.yml` to point
-// it at the test Postgres + declared peers.
+// it at the test Postgres (or the baked SQLite default) + declared peers.
 package harness
 
 import (
@@ -73,7 +79,9 @@ const healthPollInterval = 500 * time.Millisecond
 // Postgres is the DSN of rimsky's state DB; both InternalDSN (for peer
 // containers on the same network) and HostDSN (for the test process)
 // are surfaced. Several tests connect directly with pgx to assert
-// against rimsky's tables or seed operator-owned tables.
+// against rimsky's tables or seed operator-owned tables. Both DSN fields
+// are empty when the stack is brought up on SQLite (WithSQLite) — there
+// is no Postgres in that mode.
 type RimskyEndpoint struct {
 	BaseURL     string // e.g. http://127.0.0.1:32678 — reach from the test process
 	InternalURL string // e.g. http://rimsky:8080 — reach from sibling containers on Network
@@ -93,7 +101,19 @@ type configBuilder struct {
 	namedLocks      map[string]int
 	hostAccessPorts []int
 	existingNetwork string
+	// sqlite selects the image's baked SQLite default instead of a
+	// Postgres testcontainer. When true BringUpRimsky brings up no
+	// Postgres and renders a `driver: sqlite` config pointing at the
+	// image's baked, nonroot-writable state path. See WithSQLite.
+	sqlite bool
 }
+
+// sqliteStatePath is the SQLite state-file path the rimsky-all-in-one
+// image bakes in (dockerfiles/all-in-one.rimsky.yml). It lives under the
+// image's nonroot-owned VOLUME (`/var/lib/rimsky`, chowned to 65532 in
+// dockerfiles/Dockerfile.rimsky), so the three roles can all open it
+// read-write without an extra mount.
+const sqliteStatePath = "/var/lib/rimsky/state.db"
 
 type producerCfg struct {
 	endpoint              string
@@ -142,6 +162,21 @@ func WithPublisher(name, endpoint string) Option {
 func WithNamedLock(name string, limit int) Option {
 	return func(cb *configBuilder) {
 		cb.namedLocks[name] = limit
+	}
+}
+
+// WithSQLite drives the rimsky-all-in-one container on its baked SQLite
+// default instead of a Postgres testcontainer. No Postgres container is
+// started and no postgres DSN is rendered; the three roles (scheduler +
+// supervisor + control-api) run against one SQLite file at
+// `/var/lib/rimsky/state.db` (single-writer, WAL, busy-timeout) — the
+// out-of-the-box `docker run rimsky-all-in-one` path. The returned
+// RimskyEndpoint's HostDSN / InternalDSN are empty in this mode (there
+// is no Postgres). Peer wiring (WithExecutor / WithClaimProducer /
+// WithNamedLock / WithPublisher) and network options still apply.
+func WithSQLite() Option {
+	return func(cb *configBuilder) {
+		cb.sqlite = true
 	}
 }
 
@@ -222,38 +257,51 @@ func BringUpRimsky(ctx context.Context, t testing.TB, opts ...Option) RimskyEndp
 		networkName = nw.Name
 	}
 
-	// 2. Postgres testcontainer for rimsky state.
-	pgContainer, err := pgmodule.Run(ctx,
-		"postgres:15-alpine",
-		pgmodule.WithDatabase("rimsky"),
-		pgmodule.WithUsername("rimsky"),
-		pgmodule.WithPassword("rimsky"),
-		testcontainers.WithWaitStrategy(
-			wait.ForAll(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).WithStartupTimeout(120*time.Second),
-				wait.ForListeningPort("5432/tcp").WithStartupTimeout(120*time.Second),
-			),
-		),
-		tcnet.WithNetworkName([]string{"rimsky-pg"}, networkName),
+	// 2. Persistence backend. In Postgres mode (default) bring up a
+	//    Postgres testcontainer on the shared network and point rimsky at
+	//    its in-network DSN. In SQLite mode (WithSQLite) skip Postgres
+	//    entirely — the all-in-one image runs all three roles against its
+	//    baked, nonroot-writable SQLite file.
+	var (
+		hostDSN     string
+		internalDSN string
+		yamlBytes   []byte
 	)
-	if err != nil {
-		t.Fatalf("harness: start postgres: %v", err)
-	}
-	t.Cleanup(func() {
-		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = pgContainer.Terminate(termCtx)
-	})
-	hostDSN, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("harness: postgres host DSN: %v", err)
-	}
-	// In-network DSN; siblings on the same network reach Postgres at hostname `rimsky-pg`.
-	internalDSN := "postgres://rimsky:rimsky@rimsky-pg:5432/rimsky?sslmode=disable"
+	if cb.sqlite {
+		yamlBytes = []byte(renderRimskyYAMLSQLite(cb))
+	} else {
+		pgContainer, err := pgmodule.Run(ctx,
+			"postgres:15-alpine",
+			pgmodule.WithDatabase("rimsky"),
+			pgmodule.WithUsername("rimsky"),
+			pgmodule.WithPassword("rimsky"),
+			testcontainers.WithWaitStrategy(
+				wait.ForAll(
+					wait.ForLog("database system is ready to accept connections").
+						WithOccurrence(2).WithStartupTimeout(120*time.Second),
+					wait.ForListeningPort("5432/tcp").WithStartupTimeout(120*time.Second),
+				),
+			),
+			tcnet.WithNetworkName([]string{"rimsky-pg"}, networkName),
+		)
+		if err != nil {
+			t.Fatalf("harness: start postgres: %v", err)
+		}
+		t.Cleanup(func() {
+			termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = pgContainer.Terminate(termCtx)
+		})
+		hostDSN, err = pgContainer.ConnectionString(ctx, "sslmode=disable")
+		if err != nil {
+			t.Fatalf("harness: postgres host DSN: %v", err)
+		}
+		// In-network DSN; siblings on the same network reach Postgres at hostname `rimsky-pg`.
+		internalDSN = "postgres://rimsky:rimsky@rimsky-pg:5432/rimsky?sslmode=disable"
 
-	// 3. Render rimsky.yml referencing the in-network DSN.
-	yamlBytes := []byte(renderRimskyYAML(internalDSN, cb))
+		// 3. Render rimsky.yml referencing the in-network DSN.
+		yamlBytes = []byte(renderRimskyYAML(internalDSN, cb))
+	}
 
 	// 4. Bring up rimsky/all. The unified entrypoint runs migrations
 	//    then spawns scheduler + supervisor + control-api.
@@ -414,14 +462,38 @@ func renderRimskyYAML(internalDSN string, cb *configBuilder) string {
 	b.WriteString("  driver: postgres\n")
 	b.WriteString("  postgres:\n")
 	fmt.Fprintf(&b, "    dsn: %q\n", internalDSN)
+	writePeerBlocks(&b, cb)
+	return b.String()
+}
 
+// renderRimskyYAMLSQLite builds the rimsky.yml content for the
+// `rimsky-all-in-one` container's baked SQLite default. It mirrors
+// dockerfiles/all-in-one.rimsky.yml's persistence block (driver: sqlite,
+// sqlite.path under the image's nonroot-writable VOLUME) and then layers
+// on the same peer declarations as the Postgres path so the SQLite stack
+// can be driven through a real executor/claim-producer orchestration.
+func renderRimskyYAMLSQLite(cb *configBuilder) string {
+	var b strings.Builder
+	b.WriteString("persistence:\n")
+	b.WriteString("  driver: sqlite\n")
+	b.WriteString("  sqlite:\n")
+	fmt.Fprintf(&b, "    path: %q\n", sqliteStatePath)
+	writePeerBlocks(&b, cb)
+	return b.String()
+}
+
+// writePeerBlocks appends the claim_producers / named_locks / executors /
+// publishers declarations to b. Shared by the Postgres and SQLite config
+// renderers so peer wiring (WithExecutor / WithClaimProducer / ...) is
+// identical regardless of the persistence backend.
+func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 	if len(cb.claimProducers) == 0 {
 		b.WriteString("claim_producers: {}\n")
 	} else {
 		b.WriteString("claim_producers:\n")
 		for name, p := range cb.claimProducers {
-			fmt.Fprintf(&b, "  %s:\n", name)
-			fmt.Fprintf(&b, "    endpoint: %q\n", p.endpoint)
+			fmt.Fprintf(b, "  %s:\n", name)
+			fmt.Fprintf(b, "    endpoint: %q\n", p.endpoint)
 			b.WriteString("    protocols: [claim_producer]\n")
 			b.WriteString("    write_semantics_allowed: [")
 			for i, ws := range p.writeSemanticsAllowed {
@@ -439,7 +511,7 @@ func renderRimskyYAML(internalDSN string, cb *configBuilder) string {
 	} else {
 		b.WriteString("named_locks:\n")
 		for name, limit := range cb.namedLocks {
-			fmt.Fprintf(&b, "  %q: { limit: %d }\n", name, limit)
+			fmt.Fprintf(b, "  %q: { limit: %d }\n", name, limit)
 		}
 	}
 
@@ -448,9 +520,9 @@ func renderRimskyYAML(internalDSN string, cb *configBuilder) string {
 	} else {
 		b.WriteString("executors:\n")
 		for name, e := range cb.executors {
-			fmt.Fprintf(&b, "  %s:\n", name)
-			fmt.Fprintf(&b, "    transport: %s\n", e.transport)
-			fmt.Fprintf(&b, "    endpoint: %q\n", e.endpoint)
+			fmt.Fprintf(b, "  %s:\n", name)
+			fmt.Fprintf(b, "    transport: %s\n", e.transport)
+			fmt.Fprintf(b, "    endpoint: %q\n", e.endpoint)
 			b.WriteString("    tls: off\n")
 			b.WriteString("    protocols: [executor]\n")
 		}
@@ -459,11 +531,9 @@ func renderRimskyYAML(internalDSN string, cb *configBuilder) string {
 	if len(cb.publishers) > 0 {
 		b.WriteString("publishers:\n")
 		for name, p := range cb.publishers {
-			fmt.Fprintf(&b, "  %s:\n", name)
-			fmt.Fprintf(&b, "    endpoint: %q\n", p.endpoint)
+			fmt.Fprintf(b, "  %s:\n", name)
+			fmt.Fprintf(b, "    endpoint: %q\n", p.endpoint)
 			b.WriteString("    protocols: [publisher]\n")
 		}
 	}
-
-	return b.String()
 }

@@ -8,10 +8,13 @@ code-complete, exercised by a test that drives the real system, and passing.
 **PASS.** Every documented concept (70 of 71) is exercised by a test that drives
 the real running system and asserts an observable outcome; the one exception
 (`module-layout`) is a build/lint-enforced layout rule with no runtime behavior.
-The complete test suite — all four Go modules plus the TypeScript executor — passes
-against real Postgres (testcontainers) and the locally-built service images, and
-the `-race` detector is **clean on every concurrent-sensitive path** (no data
-races). Closing the coverage gaps required **no implementation fixes**: the
+The complete test suite — all four Go modules plus the TypeScript executor —
+passes against **both persistence backends**: real Postgres (testcontainers) and
+real SQLite, the latter including the **all-in-one image running its default
+SQLite stack end to end** (scheduler + supervisor + control-api as three
+processes sharing one SQLite file, driving a real dispatch to terminal). It runs
+against the locally-built service images, and the `-race` detector is **clean on
+every concurrent-sensitive path** (no data races). Closing the coverage gaps required **no implementation fixes**: the
 behaviors were correctly wired, only unproven. The project is verified working
 end to end.
 
@@ -32,9 +35,11 @@ the real system (no shape tests, no sampling):
    behavior to test).
 2. **Full real suite.** Every test across all four Go modules (root,
    `lib/foundation`, `lib/protocols`, `lib/services`) plus the TypeScript executor
-   was run for real — testcontainers Postgres for the scenario/persistence/
-   integration tests, the bundled service images built and consumed by the
-   services harness. Plus a `-race` pass on the concurrent-sensitive paths.
+   was run for real — testcontainers Postgres **and real SQLite** (the
+   persistence conformance suite runs the full battery on both adapters, and the
+   all-in-one image is driven on its baked SQLite default), with the bundled
+   service images built and consumed by the services harness. Plus a `-race`
+   pass on the concurrent-sensitive paths.
 3. **Gap closure.** Every gap the trace found was closed with a real behavioral
    test (and the implementation fixed if the new test revealed a bug).
 
@@ -47,6 +52,13 @@ the real system (no shape tests, no sampling):
   `.golangci.yml` depguard block at `make lint` and by the `go.work` module graph
   at build time, not by any Go test.
 - **0 concepts shape-only or missing** after the closures below.
+- **Both persistence backends exercised.** The persistence layer runs the full
+  conformance suite on Postgres *and* SQLite (`TestConformancePostgres` +
+  `TestConformanceSQLite`); the control-api auth scenarios run over SQLite; and
+  the all-in-one image's default SQLite stack — scheduler + supervisor +
+  control-api as three processes sharing one SQLite file — is driven through a
+  real dispatch-to-terminal. The full-stack supervisor/scheduler scenarios under
+  `test/scenarios/` run on Postgres.
 
 ## Gaps closed in this verification pass
 
@@ -61,6 +73,7 @@ behaviors were correctly wired, only unproven):
 | `observability` | `expected_attributes_schema` (the former `userdata_schema`) validation seam — the resolver feeding registration + dispatch validators from the discovery cache — had zero coverage. | `lib/control/observability/expected_attributes_schema_resolver_test.go` — drives the real resolver + both enforcement points (registration `ValidateTemplate`, dispatch `attributes.Validate`) with conforming and violating inputs. |
 | `rimsky-yml` | Loader rejection of retired config aliases (`stores:`, `write_semantics:`, `write_semantics_envelope:`) had no test. | `lib/control/config/retired_aliases_test.go` — each retired alias is fed through the real loader and asserted rejected with a clear error; valid spelling still loads. |
 | `cascade-graph` | Concept doc claimed routes mount at "bare, unversioned paths"; they actually mount under the control API's versioned prefix. | Doc corrected (path-free) with a dated Notes entry. |
+| `persistence-database` (all-in-one, SQLite) | Full-stack orchestration on SQLite — the all-in-one's default (3 processes, one file) — was never driven end to end: the scenario harness is Postgres-only and the services harness reconfigured the all-in-one onto Postgres. | `lib/services/test/scenarios/sqlite_all_in_one_test.go` — boots `rimsky-all-in-one` on its baked SQLite default (new `harness.WithSQLite()`) and drives template→deploy→instance→dispatch→`fresh`, asserting a `work_started` event (real claim + dispatch, not the at-creation default) plus the terminal transition. No SQLite bug surfaced — WAL + `busy_timeout` + `_txlock=immediate` + `MaxOpenConns=1` already handle 3-process contention. |
 
 ## Documented non-coverage (intentional or inherent — not test gaps)
 
@@ -165,7 +178,7 @@ locally-built service images consumed by the services integration harness:
 | root module (`go test ./...`) | ✅ ok |
 | `lib/foundation` | ✅ ok |
 | `lib/protocols` | ✅ ok |
-| `lib/services` | ✅ ok |
+| `lib/services` (incl. all-in-one on **SQLite**, `TestAllInOneSQLite_DriveNodeToTerminal`) | ✅ ok |
 | TypeScript executor (`npm test && npm run build`) | ✅ ok |
 
 **Race detector** — `go test -race` on the concurrent-sensitive paths; **no data
