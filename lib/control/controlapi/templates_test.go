@@ -11,6 +11,7 @@ package controlapi
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -63,6 +64,80 @@ func TestTemplateRegister_RejectsUnknownExecutor(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/templates", body)
 	require.Equal(t, http.StatusBadRequest, status,
 		"unknown-executor template must be rejected at register time")
+}
+
+// TestTemplateRegister_RejectsDelegateCycleOverRoute confirms a
+// delegate-cycle template (main → g1 → g2 → g1) is rejected at the real
+// POST /templates route with HTTP 400 and a validation_errors entry
+// naming subgraph_recursion_unsupported. The in-memory validator's
+// detectDelegateCycles is unit-tested in package node
+// (TestCanonicalizeGraphs_RejectDelegateCycle); this test proves the
+// rejection survives the full route → ValidateTemplate → 400-body path,
+// not just the in-memory validator call. Each delegating node uses
+// `delegate:` (not `executor:`) so the executor-declared hook does not
+// fire first and mask the cycle.
+func TestTemplateRegister_RejectsDelegateCycleOverRoute(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	// graphs: main → g1 → g2 → g1, mirroring the struct cycle in
+	// node.TestCanonicalizeGraphs_RejectDelegateCycle. Each non-main
+	// graph declares entry/exit and its exit subscribes to its entry on
+	// terminal/*.
+	reqBody := map[string]any{
+		"spec": map[string]any{
+			"name":                  "delegate-cycle-" + uuid.NewString(),
+			"version":               "1",
+			"frame_resolution_mode": "coalesce",
+			"graphs": []map[string]any{
+				{
+					"name": "main",
+					"nodes": []map[string]any{
+						{"type": "m", "delegate": "g1"},
+					},
+				},
+				{
+					"name":  "g1",
+					"entry": "g1n",
+					"exit":  "g1x",
+					"nodes": []map[string]any{
+						{"type": "g1n", "delegate": "g2"},
+						{"type": "g1x", "subscribes": []map[string]any{{"node": "g1n", "type": "terminal/*"}}},
+					},
+				},
+				{
+					"name":  "g2",
+					"entry": "g2n",
+					"exit":  "g2x",
+					"nodes": []map[string]any{
+						{"type": "g2n", "delegate": "g1"}, // cycle: g1 → g2 → g1
+						{"type": "g2x", "subscribes": []map[string]any{{"node": "g2n", "type": "terminal/*"}}},
+					},
+				},
+			},
+		},
+	}
+
+	status, body := h.httpJSON(t, "POST", "/templates", reqBody)
+	require.Equal(t, http.StatusBadRequest, status,
+		"delegate-cycle template must be rejected at register time")
+
+	rawErrs, ok := body["validation_errors"].([]any)
+	require.True(t, ok, "response must carry a validation_errors array, got: %v", body)
+	found := false
+	for _, raw := range rawErrs {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if msg, _ := entry["msg"].(string); strings.Contains(msg, "subgraph_recursion_unsupported") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found,
+		"a validation_errors entry must name subgraph_recursion_unsupported, got: %v", rawErrs)
 }
 
 // TestTemplateValidate_RejectsButDoesNotPersist confirms POST

@@ -338,6 +338,14 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 		if !ok {
 			continue
 		}
+		// Test-only seam: deterministically inject behavior into the
+		// post-commit / pre-verify window so an integration test can force
+		// the cross-transaction ownership flip that @blessed-invariant 5's
+		// verify-before-run guard catches. Nil in production (no behavior
+		// change); see RunArgs.PostCommitHook.
+		if args.PostCommitHook != nil {
+			args.PostCommitHook(ctx)
+		}
 		if !verifyBeforeRun(ctx, args, acq) {
 			handleOrphanedClaim(ctx, args, acq)
 			return acquisition{}, false, nil

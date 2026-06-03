@@ -37,6 +37,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
@@ -238,7 +239,39 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				Target:     body.Target,
 				Payload:    body.Payload,
 			}
-			return runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq)
+			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq); err != nil {
+				return err
+			}
+			// Seed a frame so the message is actually delivered. Messages
+			// are delivered ONLY into a running frame
+			// (SweepDeliverMessagesForRunningFrames); a message POSTed to a
+			// quiescent instance (no running frame) would otherwise stay
+			// pending forever and never wake the subscribing node. The
+			// emit path therefore enqueues/coalesces a frame in the SAME tx
+			// as the message insert (atomic: a crash mid-flow can't leave a
+			// pending message with no frame to carry it, nor a frame with no
+			// message). The scheduler's frame engine promotes the queued
+			// frame to running on the next tick and the delivery sweep
+			// delivers the pending message into it, firing the cascade.
+			//
+			// Frame source: the target node (resolved by type). For a
+			// broadcast envelope (empty target) any node in the instance is
+			// a valid source — the frame source only identifies the
+			// triggering node; the delivery sweep delivers every pending
+			// message regardless of which node seeded the frame.
+			sourceNodeID, ok, srcErr := resolveMessageFrameSource(ctx, deps.Persist, tx, instUUID, body.Target)
+			if srcErr != nil {
+				return srcErr
+			}
+			if !ok {
+				// No node to source a frame on (instance has no nodes) —
+				// nothing to deliver to; leave the message pending. This
+				// is degenerate (a template with zero nodes) and not worth
+				// failing the emit over.
+				return nil
+			}
+			_, frErr := frame.EnqueueOrCoalesce(ctx, deps.Persist, tx, instUUID, sourceNodeID)
+			return frErr
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_sent", map[string]any{
@@ -279,6 +312,39 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 // errInstanceTerminated is the sentinel returned when the message
 // target instance has already terminated. Mapped to 409 Conflict.
 var errInstanceTerminated = errors.New("instance has terminated; no further messages accepted")
+
+// resolveMessageFrameSource picks the node to source a delivery frame on
+// for a just-enqueued message. When target names a node type, the
+// matching node is the source. For a broadcast envelope (empty target)
+// the first node in the instance is used — the frame source only marks
+// the triggering node; the delivery sweep delivers every pending message
+// into the running frame regardless of which node seeded it. Returns
+// (zero, false, nil) when the instance has no nodes.
+func resolveMessageFrameSource(
+	ctx context.Context, persist persistence.Tables, tx persistence.Tx,
+	instanceID shared.UUID, target string,
+) (shared.UUID, bool, error) {
+	nodes, err := persist.Nodes().ListByInstance(ctx, instanceID, tx)
+	if err != nil {
+		return shared.UUID{}, false, err
+	}
+	if len(nodes) == 0 {
+		return shared.UUID{}, false, nil
+	}
+	if target != "" {
+		for _, n := range nodes {
+			if n.NodeType == target {
+				return n.ID, true, nil
+			}
+		}
+		// Target names a node type that doesn't exist in this instance.
+		// Fall through to a broadcast-style source so the message still
+		// gets a frame to be delivered into (a subscriber matching by
+		// kind/sender_kind alone, e.g. `message/invalidate/*`, can still
+		// fire even when no node carries the literal target type).
+	}
+	return nodes[0].ID, true, nil
+}
 
 // handleListInstanceMessages is GET /instances/{id}/messages.
 //

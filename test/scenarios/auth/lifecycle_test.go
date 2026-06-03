@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +32,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/roles"
 	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
+	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -49,6 +54,26 @@ type authFixture struct {
 }
 
 func newAuthFixture(t *testing.T) *authFixture {
+	t.Helper()
+	return newAuthFixtureOpts(t, false)
+}
+
+// newAuthFixtureWithObservability builds the same control-api fixture as
+// newAuthFixture but wires the real /v1/observability/* mount. Gate 4
+// (spec 2026-06-02-acceptance-coverage-recovery) needs the production
+// gate block at controlapi.NewApp to actually mount — that block is
+// guarded by `deps.Observability != nil`, so without a non-nil
+// ObservabilityRouter the subtree is never registered and the routes
+// return 404 instead of traversing the real `observability:read` gate.
+// We mount the real observability.Routes over the fixture's persistence
+// so the dashboard reads project genuine seeded state, not an empty-DB
+// shape.
+func newAuthFixtureWithObservability(t *testing.T) *authFixture {
+	t.Helper()
+	return newAuthFixtureOpts(t, true)
+}
+
+func newAuthFixtureOpts(t *testing.T, withObservability bool) *authFixture {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -69,7 +94,7 @@ func newAuthFixture(t *testing.T) *authFixture {
 		Clock:    clock,
 		Logger:   shared.SilentLogger{},
 	}
-	app := controlapi.NewApp(controlapi.AppDeps{
+	deps := controlapi.AppDeps{
 		Persist: d.Tables(),
 		Queue:   d.Queue(),
 		Clock:   clock,
@@ -82,7 +107,25 @@ func newAuthFixture(t *testing.T) *authFixture {
 		// in this fixture; the engine never dispatches.
 		LifecycleSubs: locks.NewLifecycleRegistry(),
 		AuthState:     state,
-	})
+	}
+	if withObservability {
+		// Wire the real observability router so the production
+		// gate block (`obs.Method("GET", "/v1/observability/*",
+		// gateByAction("observability:read", ...))`) mounts. The
+		// closure receives the chi.Router the wrapper builds under
+		// /v1/observability and registers the real read handlers over
+		// the fixture's persistence. NewDiscovery with a nop prober is
+		// sufficient — the dashboard endpoints Gate 4 asserts
+		// (system/summary) read persisted rows, not live peer probes.
+		deps.Observability = func(r chi.Router) {
+			observability.Routes(r, observability.Deps{
+				Tables:    d.Tables(),
+				Queue:     d.Queue(),
+				Discovery: observability.NewDiscovery(&nopObsProber{}),
+			})
+		}
+	}
+	app := controlapi.NewApp(deps)
 	srv := httptest.NewServer(app)
 	return &authFixture{
 		srv:   srv,
@@ -97,6 +140,21 @@ func newAuthFixture(t *testing.T) *authFixture {
 }
 
 func (f *authFixture) Close() { f.teardown() }
+
+// nopObsProber satisfies observability.Prober for the Gate-4 fixture:
+// every probe reports unreachable. The dashboard reads Gate 4 asserts
+// project persisted runtime state, so no real peer probe is needed.
+type nopObsProber struct{}
+
+func (*nopObsProber) ProbeExecutor(context.Context, string) (*observability.ObservabilityCapabilities, error) {
+	return nil, errObsProbeUnreachable
+}
+
+func (*nopObsProber) ProbeStore(context.Context, string) (*observability.ObservabilityCapabilities, error) {
+	return nil, errObsProbeUnreachable
+}
+
+var errObsProbeUnreachable = errors.New("unreachable")
 
 // flushAudit is a no-op kept for call-site readability. Audit rows are
 // written synchronously in the request goroutine
@@ -304,6 +362,110 @@ func seedDeployedTemplate(t *testing.T, f *authFixture, adminKey, name string) s
 		t.Fatalf("seedDeployedTemplate deploy: %d %+v", code, depResp)
 	}
 	return hash
+}
+
+// TestObservabilityDashboard_GatedAndPopulated covers Gate 4 (spec
+// 2026-06-02-acceptance-coverage-recovery): the operator dashboard read
+// endpoints are gated behind `observability:read` and project real
+// counts over seeded runtime state. Prior coverage
+// (lib/control/observability/handler_test.go) mounts a bare router with
+// NO auth middleware and asserts shape against an empty DB — the
+// production gate is never exercised and no populated read is asserted.
+//
+// This drives the real controlapi.NewApp mount: the gate denies without
+// the grant (401 no-bearer, 403 wrong-grant) and, with the grant, the
+// summary's instances_active and a node_counts STATE bucket reflect a
+// real instance created over POST /instances. node_counts is keyed by
+// node STATE (fresh/stale/running/failed), not node type — see
+// observability.handleSystemSummary.
+func TestObservabilityDashboard_GatedAndPopulated(t *testing.T) {
+	f := newAuthFixtureWithObservability(t)
+	defer f.Close()
+
+	const summaryPath = "/v1/observability/system/summary"
+
+	// Bootstrap admin so the deployment leaves anonymous mode and the
+	// gate has identities to evaluate. (In anonymous mode every request
+	// is allowed; we need authenticated mode for the deny assertions to
+	// be meaningful.)
+	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+		"name":        "admin",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	adminKey, _ := adminBody["plaintext"].(string)
+	if adminKey == "" {
+		t.Fatalf("mint admin: %+v", adminBody)
+	}
+
+	// Gate (deny) — no bearer → 401 from the auth middleware. This also
+	// proves the observability subtree actually mounted: without the
+	// non-nil ObservabilityRouter the path would 404, not 401.
+	if code, body := f.request(t, "GET", summaryPath, "", nil); code != http.StatusUnauthorized {
+		t.Fatalf("no-bearer summary: got %d %+v; want 401", code, body)
+	}
+
+	// Gate (deny) — a key with an unrelated grant (no observability:read,
+	// no covering wildcard) → 403 from the real observability:read gate.
+	_, narrowBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+		"name":        "no-obs",
+		"permissions": []map[string]any{{"action": "instance:read"}},
+	})
+	narrowKey, _ := narrowBody["plaintext"].(string)
+	if narrowKey == "" {
+		t.Fatalf("mint no-obs: %+v", narrowBody)
+	}
+	if code, body := f.request(t, "GET", summaryPath, narrowKey, nil); code != http.StatusForbidden {
+		t.Fatalf("wrong-grant summary: got %d %+v; want 403", code, body)
+	}
+
+	// Seed a real active instance over the real POST /instances surface
+	// so the summary has non-empty runtime state to project. Use the
+	// admin key (action "*") for the seed; mint a separate reader key
+	// that holds ONLY observability:read for the allow assertion, so the
+	// 200 is attributable to that grant and not to admin's wildcard.
+	tplHash := seedDeployedTemplate(t, f, adminKey, "gate4-summary")
+	code, createResp := f.request(t, "POST", "/instances", adminKey, map[string]any{
+		"template": tplHash,
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create instance: got %d %+v; want 201", code, createResp)
+	}
+
+	_, readerBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+		"name":        "obs-reader",
+		"permissions": []map[string]any{{"action": "observability:read"}},
+	})
+	readerKey, _ := readerBody["plaintext"].(string)
+	if readerKey == "" {
+		t.Fatalf("mint obs-reader: %+v", readerBody)
+	}
+
+	// Gate (allow) + populated — observability:read traverses the gate
+	// (200) and the summary reflects the seeded state.
+	code, summary := f.request(t, "GET", summaryPath, readerKey, nil)
+	if code != http.StatusOK {
+		t.Fatalf("obs-reader summary: got %d %+v; want 200", code, summary)
+	}
+	if active, _ := summary["instances_active"].(float64); active < 1 {
+		t.Fatalf("instances_active = %v; want >= 1 (seeded one instance): %+v", summary["instances_active"], summary)
+	}
+	// node_counts is keyed by node STATE, not type. A freshly created
+	// instance's nodes land in fresh/stale; assert at least one state
+	// bucket is populated rather than pinning a specific bucket (which
+	// depends on the engine's initial-state policy).
+	nodeCounts, ok := summary["node_counts"].(map[string]any)
+	if !ok {
+		t.Fatalf("node_counts missing or wrong shape: %+v", summary["node_counts"])
+	}
+	var totalNodes float64
+	for _, v := range nodeCounts {
+		if n, ok := v.(float64); ok {
+			totalNodes += n
+		}
+	}
+	if totalNodes < 1 {
+		t.Fatalf("node_counts state buckets all zero (%+v); want >= 1 node from the seeded instance", nodeCounts)
+	}
 }
 
 func TestRotation_DualActiveAndSweep(t *testing.T) {
@@ -779,6 +941,423 @@ func TestMCPSkin_OperatorRoleKeyWorks(t *testing.T) {
 	})
 	if code != 200 {
 		t.Fatalf("expected 200 on POST /mcp with operator-shape key; got %d %+v", code, body)
+	}
+}
+
+// TestMCPSkin_ToolsCallParityCreatesInstance proves that
+// `tools/call instance_create` over POST /mcp reaches the SAME real
+// control-api handler the HTTP verb POST /instances reaches, and
+// creates an equivalent instance. Closes the gap where every prior
+// tools/call test used a fakeCatalog — here the fixture wires the real
+// catalog (NewApp's registerMCPRoute) whose Invoke re-enters the chi
+// router, so the MCP path runs handleCreateInstance for real.
+//
+// The parity bar is threefold: (1) the MCP result carries the
+// instance-create response envelope (instance_id), not a placeholder;
+// (2) both paths leave a persisted instance readable over GET
+// /instances/{id} with the same template hash and distinct
+// instance_keys; (3) the MCP-path call wrote an auth.access_attempted
+// audit row tagged protocol_skin=mcp for the instance:create action on
+// POST /instances — proving the re-entry carried the MCP skin through
+// to the canonical forensic record.
+func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
+	f := newAuthFixture(t)
+	defer f.Close()
+
+	// Anonymous bootstrap → admin bearer (action "*" covers both the
+	// mcp:read umbrella on POST /mcp and the per-tool instance:create
+	// gate the re-entry re-runs).
+	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+		"name":        "admin",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	adminKey, _ := adminBody["plaintext"].(string)
+	if adminKey == "" {
+		t.Fatalf("mint admin: %+v", adminBody)
+	}
+
+	// A real deployed template both paths can instantiate.
+	tplHash := seedDeployedTemplate(t, f, adminKey, "mcp-parity")
+
+	// HTTP path: POST /instances with a distinct instance_key.
+	httpKey := "ck-http"
+	code, httpResp := f.request(t, "POST", "/instances", adminKey, map[string]any{
+		"template":     tplHash,
+		"instance_key": httpKey,
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("HTTP create: expected 201; got %d %+v", code, httpResp)
+	}
+	httpInstanceID, _ := httpResp["instance_id"].(string)
+	if httpInstanceID == "" {
+		t.Fatalf("HTTP create: missing instance_id: %+v", httpResp)
+	}
+	if th, _ := httpResp["template_hash"].(string); th != tplHash {
+		t.Fatalf("HTTP create: template_hash %q != seeded %q", th, tplHash)
+	}
+
+	// MCP path: tools/call instance_create with a DIFFERENT instance_key
+	// so the idempotent (template_hash, instance_key) resolution does
+	// not collapse the two creates into one row.
+	mcpKey := "ck-mcp"
+	code, mcpResp := f.request(t, "POST", "/mcp", adminKey, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "instance_create",
+			"arguments": map[string]any{
+				"template":     tplHash,
+				"instance_key": mcpKey,
+			},
+		},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("MCP tools/call: expected 200; got %d %+v", code, mcpResp)
+	}
+
+	// The JSON-RPC result wraps the tool output in
+	// result.content[0].text as a JSON string (MCP convention). Decode
+	// it and assert it is the instance-create envelope — an
+	// instance_id and the seeded template_hash — NOT a fakeCatalog
+	// {"name": ...} placeholder.
+	mcpCreate := decodeMCPToolText(t, mcpResp)
+	if _, isPlaceholder := mcpCreate["name"]; isPlaceholder {
+		if _, hasID := mcpCreate["instance_id"]; !hasID {
+			t.Fatalf("MCP result is a {name:...} placeholder, not a real create envelope: %+v", mcpCreate)
+		}
+	}
+	mcpInstanceID, _ := mcpCreate["instance_id"].(string)
+	if mcpInstanceID == "" {
+		t.Fatalf("MCP create envelope missing instance_id: %+v", mcpCreate)
+	}
+	if th, _ := mcpCreate["template_hash"].(string); th != tplHash {
+		t.Fatalf("MCP create: template_hash %q != seeded %q", th, tplHash)
+	}
+	if mcpInstanceID == httpInstanceID {
+		t.Fatalf("MCP and HTTP creates collapsed to the same instance %q — distinct instance_keys should yield distinct rows", mcpInstanceID)
+	}
+
+	// Parity: both produced a persisted instance readable over the real
+	// GET /instances/{id} surface, with the same template hash and the
+	// distinct instance_keys each path supplied.
+	assertInstancePersisted(t, f, adminKey, httpInstanceID, tplHash, httpKey)
+	assertInstancePersisted(t, f, adminKey, mcpInstanceID, tplHash, mcpKey)
+
+	// Audit: the MCP-path call must have written an
+	// auth.access_attempted row for the instance:create action on POST
+	// /instances tagged protocol_skin=mcp. This proves the re-entry
+	// carried the MCP skin through to the event log — the WithProtocolSkin
+	// limb — and is not merely the HTTP path's row.
+	ctx := context.Background()
+	var foundMCPCreate bool
+	if err := f.db.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rl, err := f.db.Tables().Events().List(ctx, persistence.EventListFilter{Kind: auth.EventAccessAttempted}, persistence.ListPagination{Limit: 200}, tx)
+		if err != nil {
+			return err
+		}
+		for _, e := range rl.Events {
+			skin, _ := e.Payload["protocol_skin"].(string)
+			action, _ := e.Payload["action"].(string)
+			path, _ := e.Payload["request_path"].(string)
+			method, _ := e.Payload["request_method"].(string)
+			if skin == "mcp" && action == "instance:create" && path == "/instances" && method == "POST" {
+				foundMCPCreate = true
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("Events.List: %v", err)
+	}
+	if !foundMCPCreate {
+		t.Fatalf("expected an auth.access_attempted row tagged protocol_skin=mcp for instance:create on POST /instances (the WithProtocolSkin re-entry path)")
+	}
+}
+
+// decodeMCPToolText unwraps a JSON-RPC tools/call response into the
+// tool's actual output object. The MCP envelope nests the tool result
+// in result.content[0].text as a JSON-encoded string.
+func decodeMCPToolText(t *testing.T, resp map[string]any) map[string]any {
+	t.Helper()
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("MCP response has no result object: %+v", resp)
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("MCP result has no content array: %+v", result)
+	}
+	first, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("MCP content[0] not an object: %+v", content[0])
+	}
+	text, ok := first["text"].(string)
+	if !ok {
+		t.Fatalf("MCP content[0].text missing: %+v", first)
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("MCP content[0].text is not a JSON object (%q): %v", text, err)
+	}
+	return out
+}
+
+// assertInstancePersisted reads GET /instances/{id} over the real read
+// surface and asserts the row exists with the expected template hash
+// and instance_key.
+func assertInstancePersisted(t *testing.T, f *authFixture, key, instanceID, wantTemplateHash, wantInstanceKey string) {
+	t.Helper()
+	code, body := f.request(t, "GET", "/instances/"+instanceID, key, nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /instances/%s: expected 200; got %d %+v", instanceID, code, body)
+	}
+	if th, _ := body["template_hash"].(string); th != wantTemplateHash {
+		t.Fatalf("instance %s: template_hash %q != %q", instanceID, th, wantTemplateHash)
+	}
+	if ik, _ := body["instance_key"].(string); ik != wantInstanceKey {
+		t.Fatalf("instance %s: instance_key %q != %q", instanceID, ik, wantInstanceKey)
+	}
+}
+
+// roleEnforceCase declares one route to exercise with a role-minted
+// key. method/path/body name the request; an optional header (e.g.
+// Idempotency-Key on message:send) is set when headerKey != "".
+type roleEnforceCase struct {
+	action    string // the canonical action the route gates (documentation only)
+	method    string
+	path      string
+	body      any
+	headerKey string
+	headerVal string
+}
+
+// roleEnforceSpec is one bundled-role row in the mint-and-enforce
+// table: a representative action the role's grant covers (allowed) and
+// — for every role except admin, whose `*` covers everything — a
+// representative action the grant does NOT cover (denied).
+type roleEnforceSpec struct {
+	role    string
+	allowed roleEnforceCase
+	denied  *roleEnforceCase // nil for admin (no action is outside `*`)
+}
+
+// loadRolePermissions reads a bundled role JSON (the SAME embedded
+// bytes the CLI expands at `rimsky auth create-key` time) and returns
+// its `permissions` array as a slice of grant entries ready to POST as
+// the body of /auth/keys. Reading the real bundle — not a hardcoded
+// grant — is what couples this test to the role JSONs: corrupting a
+// role's JSON must turn the corresponding assertion red (Task 9).
+func loadRolePermissions(t *testing.T, role string) []map[string]any {
+	t.Helper()
+	data, ok := roles.Load(role)
+	if !ok {
+		t.Fatalf("bundled role %q not found", role)
+	}
+	var doc struct {
+		Permissions []map[string]any `json:"permissions"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("role %q: unmarshal permissions: %v", role, err)
+	}
+	if len(doc.Permissions) == 0 {
+		t.Fatalf("role %q: empty permissions array", role)
+	}
+	return doc.Permissions
+}
+
+// TestRoleTemplates_MintAndEnforce covers Gate 6 (spec
+// 2026-06-02-acceptance-coverage-recovery): each bundled role JSON
+// expands into a permission grant that, when minted as a real key over
+// POST /auth/keys, the real auth gate enforces exactly — a
+// representative action the role covers traverses the gate (non-403)
+// and a representative action the role does NOT cover is denied (403).
+//
+// Prior coverage was pure-function only
+// (cmd/rimsky/cli/roles/audit_read_coverage_test.go calls
+// auth.CheckGrant in-process; TestMCPSkin_OperatorRoleKeyWorks exercises
+// one operator-shaped grant incidentally). This drives the full path:
+// real role JSON → POST /auth/keys mint → real gateByAction enforcement
+// on a real route, systematically per bundled role.
+//
+// The grant is loaded from the SAME go:embed bundle the CLI uses
+// (roles.Load), not a hardcoded copy, so corrupting a role's JSON turns
+// its assertion red (the coupling-proof in Task 9). For the denied
+// action we deliberately pick one the role's grant does NOT cover and
+// assert exactly 403 — the gate's deny path; allowed actions assert
+// non-403 (the gate passed, regardless of the handler's own status).
+func TestRoleTemplates_MintAndEnforce(t *testing.T) {
+	f := newAuthFixture(t)
+	defer f.Close()
+
+	// Anonymous bootstrap → admin bearer. Minting a key leaves
+	// anonymous mode, so every subsequent request is evaluated against
+	// its own key's grant (in anonymous mode the gate allows all and
+	// the deny assertions would be meaningless).
+	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+		"name":        "admin-bootstrap",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	adminKey, _ := adminBody["plaintext"].(string)
+	if adminKey == "" {
+		t.Fatalf("mint admin: %+v", adminBody)
+	}
+
+	// A real deployed template so the operator role's representative
+	// allowed action (instance:create, exercised as a dry-run create so
+	// it mutates nothing) returns a clean 200 dry-run envelope rather
+	// than a 404-for-missing-template. Either way it is non-403 (the
+	// gate passed), but the clean 200 makes the allowed-path assertion
+	// unambiguous.
+	tplHash := seedDeployedTemplate(t, f, adminKey, "gate6-roles")
+
+	specs := []roleEnforceSpec{
+		{
+			// admin → `*`: covers every action; there is no
+			// representative denied action, so only the allowed leg runs.
+			role: "admin",
+			allowed: roleEnforceCase{
+				action: "template:register", method: "POST", path: "/templates?dry_run=true",
+				body: map[string]any{"spec": map[string]any{
+					"name": "gate6-admin-dryrun", "version": "1",
+					"frame_resolution_mode": "serial_queue",
+					"nodes":                 []map[string]any{{"type": "n1"}},
+				}},
+			},
+			denied: nil,
+		},
+		{
+			// read-only → `*:read`: covers instance:read; denies the
+			// instance:create write.
+			role: "read-only",
+			allowed: roleEnforceCase{
+				action: "instance:read", method: "GET", path: "/instances",
+			},
+			denied: &roleEnforceCase{
+				action: "instance:create", method: "POST", path: "/instances",
+				body: map[string]any{"template": tplHash},
+			},
+		},
+		{
+			// operator → instance:* (covers instance:create) but NOT
+			// auth:create (only auth:read). Exercise the allowed create
+			// as a dry-run so it mutates nothing.
+			role: "operator",
+			allowed: roleEnforceCase{
+				action: "instance:create", method: "POST", path: "/instances?dry_run=true",
+				body: map[string]any{"template": tplHash},
+			},
+			denied: &roleEnforceCase{
+				action: "auth:create", method: "POST", path: "/auth/keys",
+				body: map[string]any{
+					"name":        "operator-should-not-mint",
+					"permissions": []map[string]any{{"action": "instance:read"}},
+				},
+			},
+		},
+		{
+			// publisher-service → message:send only. Exercise the
+			// allowed send against a nonexistent instance: the gate
+			// passes (the role covers message:send), the handler then
+			// 404/400s — still non-403. instance:read is outside the
+			// grant → 403.
+			role: "publisher-service",
+			allowed: roleEnforceCase{
+				action: "message:send", method: "POST",
+				path: "/instances/00000000-0000-0000-0000-000000000000/messages",
+				body: map[string]any{
+					"kind":        "ping",
+					"sender_kind": "operator",
+					"sender":      "gate6-test",
+				},
+				headerKey: "Idempotency-Key", headerVal: "gate6-publisher-send",
+			},
+			denied: &roleEnforceCase{
+				action: "instance:read", method: "GET", path: "/instances",
+			},
+		},
+		{
+			// debug-operator → `*:read` + breakpoint/instance writes, but
+			// NOT instance:create. instance:read covered; instance:create
+			// denied.
+			role: "debug-operator",
+			allowed: roleEnforceCase{
+				action: "instance:read", method: "GET", path: "/instances",
+			},
+			denied: &roleEnforceCase{
+				action: "instance:create", method: "POST", path: "/instances",
+				body: map[string]any{"template": tplHash},
+			},
+		},
+		{
+			// agent-supervisor → `*:read` + node:invalidate/reset +
+			// message:send, but NOT instance:create. instance:read
+			// covered; instance:create denied.
+			role: "agent-supervisor",
+			allowed: roleEnforceCase{
+				action: "instance:read", method: "GET", path: "/instances",
+			},
+			denied: &roleEnforceCase{
+				action: "instance:create", method: "POST", path: "/instances",
+				body: map[string]any{"template": tplHash},
+			},
+		},
+	}
+
+	// Guard against the bundle drifting out from under the table: every
+	// bundled role must be covered by a spec above. If a new role JSON
+	// is added without a mint-and-enforce row, fail loudly rather than
+	// silently leaving it unproven.
+	covered := map[string]bool{}
+	for _, s := range specs {
+		covered[s.role] = true
+	}
+	for _, name := range roles.AllNames() {
+		if !covered[name] {
+			t.Fatalf("bundled role %q has no mint-and-enforce row; add one to the table", name)
+		}
+	}
+
+	for _, s := range specs {
+		s := s
+		t.Run(s.role, func(t *testing.T) {
+			// Mint a key whose permissions ARE the role's expanded grant,
+			// loaded from the real embedded bundle.
+			perms := loadRolePermissions(t, s.role)
+			code, mintResp := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+				"name":        s.role + "-key",
+				"permissions": perms,
+			})
+			if code != http.StatusCreated {
+				t.Fatalf("mint %s-key: got %d %+v; want 201", s.role, code, mintResp)
+			}
+			roleKey, _ := mintResp["plaintext"].(string)
+			if roleKey == "" {
+				t.Fatalf("mint %s-key: missing plaintext: %+v", s.role, mintResp)
+			}
+
+			// Allowed: the role's representative action must traverse the
+			// gate — assert non-403. (The handler's own status varies;
+			// 200/201/400/404 all prove the gate passed. A 403 here would
+			// mean the grant failed to cover the action it should.)
+			ac := s.allowed
+			code, body := f.requestWithHeader(t, ac.method, ac.path, roleKey, ac.body, ac.headerKey, ac.headerVal)
+			if code == http.StatusForbidden {
+				t.Fatalf("%s allowed action %q (%s %s): got 403; role grant should cover it. body=%+v",
+					s.role, ac.action, ac.method, ac.path, body)
+			}
+
+			// Denied: the representative non-role action must hit the
+			// gate's deny path — assert exactly 403.
+			if s.denied == nil {
+				return
+			}
+			dc := *s.denied
+			code, body = f.requestWithHeader(t, dc.method, dc.path, roleKey, dc.body, dc.headerKey, dc.headerVal)
+			if code != http.StatusForbidden {
+				t.Fatalf("%s denied action %q (%s %s): got %d; role grant must NOT cover it (want 403). body=%+v",
+					s.role, dc.action, dc.method, dc.path, code, body)
+			}
+		})
 	}
 }
 

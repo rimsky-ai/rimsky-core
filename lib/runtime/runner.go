@@ -235,6 +235,15 @@ type RunArgs struct {
 	// as a stand-in for late-bound executor / claim-producer references.
 	// Empty → the admit-list extension stays inert.
 	LateBindServiceProxies map[string]string
+
+	// PostCommitHook, if non-nil, runs after the acquisition tx commits
+	// and before verifyBeforeRun. Test-only seam (production passes nil).
+	// It exists solely so an integration test of @blessed-invariant 5's
+	// post-commit limb can deterministically force an ownership flip in
+	// the window between the acquisition commit and the verify-read —
+	// the rare cross-transaction handoff verifyBeforeRun catches. No
+	// production behavior change: the hook is invoked only when non-nil.
+	PostCommitHook func(ctx context.Context)
 }
 
 // MetricsHook is the metric-instrumentation surface foundation calls

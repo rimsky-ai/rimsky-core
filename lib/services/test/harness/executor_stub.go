@@ -27,6 +27,33 @@ import (
 // Cleanup is registered via t.Cleanup.
 func StartExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
 	t.Helper()
+	return startExecutorStub(ctx, t, networkName, alias, false)
+}
+
+// StartErroringExecutorStubOnNetwork is the error-only variant of
+// StartExecutorStubOnNetwork: it sets EXECUTOR_STUB_FORCE_ERROR=1 so the
+// stub emits a single terminal Error (error_class=stub/forced_error) for
+// every dispatch instead of Success. The Gate-10 held-subgraph e2e uses
+// it to drive the held co-holder set to aggregate-failure so auto-terminal
+// fires Abandon (drop staging) on the real filesystem producer. Same image
+// as the success stub — the env var alone selects the outcome.
+func StartErroringExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
+	t.Helper()
+	return startExecutorStub(ctx, t, networkName, alias, true)
+}
+
+// startExecutorStub builds (on first use) and starts the test-only stub
+// executor on the given docker network with the given alias. When
+// forceError is true the stub emits Error for every dispatch; otherwise
+// Success. Returns the in-network endpoint ("<alias>:9300").
+func startExecutorStub(ctx context.Context, t testing.TB, networkName, alias string, forceError bool) (endpoint string) {
+	t.Helper()
+	env := map[string]string{
+		"EXECUTOR_STUB_BIND": "0.0.0.0:9300",
+	}
+	if forceError {
+		env["EXECUTOR_STUB_FORCE_ERROR"] = "1"
+	}
 	c, err := testcontainers.Run(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
 			Context:    repoRoot(),
@@ -36,9 +63,7 @@ func StartExecutorStubOnNetwork(ctx context.Context, t testing.TB, networkName, 
 			KeepImage:  true,
 		}),
 		tcnet.WithNetworkName([]string{alias}, networkName),
-		testcontainers.WithEnv(map[string]string{
-			"EXECUTOR_STUB_BIND": "0.0.0.0:9300",
-		}),
+		testcontainers.WithEnv(env),
 		testcontainers.WithExposedPorts("9300/tcp"),
 		testcontainers.WithWaitStrategy(
 			wait.ForListeningPort("9300/tcp").WithStartupTimeout(120*time.Second),

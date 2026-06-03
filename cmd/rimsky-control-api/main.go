@@ -110,6 +110,14 @@ func main() {
 		Stores:     rimskyCfg.Stores,
 		NamedLocks: rimskyCfg.NamedLocks,
 		Executors:  rimskyCfg.Executors,
+		// Publishers is the parsed top-level `publishers:` block. Without
+		// it the publisher registry is empty and every publisher-
+		// subscription (sensors included) fails at instance-create with
+		// `unknown_publisher` — the entire sensor/publisher feature is
+		// dead in any multi-process deployment. The all-in-one and the
+		// three-container split both run the control-api through this
+		// binary, so the registry MUST be wired from the parsed config.
+		Publishers: rimskyCfg.Publishers,
 		Metrics:    observability.MetricsHookOf(mreg),
 
 		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,

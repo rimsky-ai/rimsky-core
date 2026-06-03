@@ -108,6 +108,14 @@ func (s *framesImpl) MarkRunningFrameTerminal(
 // in state IN ('stale','running') exists for any node in this
 // instance". Mirrors ListRunningFramesNoPendingNodes' predicate so
 // frame-end and instance-terminated agree.
+//
+// An instance with an ACTIVE publisher-subscription is never "done": the
+// subscription exists precisely so the instance keeps reacting to
+// external change (a sensor watching an endpoint, etc.). Auto-terminating
+// it the moment its nodes first settle would defeat concept:cascade's
+// reactive-to-external-change use case — the next sensor emit would hit a
+// terminated instance and be rejected. So the terminal predicate also
+// requires that no active publisher-subscription is bound to the instance.
 func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx, `
         UPDATE rimsky_instances i
@@ -124,6 +132,10 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
               WHERE n.instance_id = i.id
                 AND r.phase IN ('pending','active','held')
                 AND r.state IN ('stale','running')
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM rimsky_publisher_subscriptions ps
+              WHERE ps.instance_id = i.id AND ps.state = 'active'
           )
     `, instanceID)
 	if err != nil {

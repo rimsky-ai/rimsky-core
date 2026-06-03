@@ -37,6 +37,7 @@ lib/services/http-node
 lib/services/verifier-http
 lib/services/verifier-shape-checks
 lib/services/openlineage
+lib/services/stubexecutor
 
 # Local env / coverage
 .env

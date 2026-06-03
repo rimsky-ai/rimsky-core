@@ -8,10 +8,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
+	"github.com/rimsky-ai/rimsky-core/test/support/executors/stub/stubtest"
 )
 
 // fakeProber is a Prober stub for testing the handshake without dialing
@@ -124,4 +128,62 @@ func TestRefreshLoop_HealsUnreachable(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("RefreshLoop did not heal; final reachability = %s", got.Reachability)
+}
+
+// TestHandshake_RealProberCachesAndHeals drives the real NewGRPCProber
+// against a real loopback peer (no fakeProber), proving the production
+// probe→cache path actually dials, reads the peer's advertised
+// observability capabilities over the wire, and caches them — and that
+// RefreshLoop flips the entry to unreachable once the peer dies. This is
+// the coupling the gate closes: every other handshake test injects a
+// fakeProber, so without this one nothing exercises gRPCProber end to end.
+func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
+	srv, addr := stubtest.Listen(t, stub.New())
+
+	disc := RunHandshake(context.Background(), NewGRPCProber(),
+		[]PeerSpec{{Name: "x", Endpoint: addr}},
+		nil,
+		slog.Default(),
+	)
+
+	entry, ok := disc.GetExecutor("x")
+	if !ok {
+		t.Fatalf("executor not in discovery")
+	}
+	if entry.Reachability != ReachabilityReachable {
+		t.Fatalf("reachability = %s, want reachable (last error: %q)", entry.Reachability, entry.LastError)
+	}
+	if entry.Capabilities == nil {
+		t.Fatalf("capabilities nil — nothing was probed over the wire")
+	}
+	// Assert on the wire-advertised caps the real stub serves
+	// (observability.go Capabilities), NOT SupportsTraceGet — the stub
+	// advertises that false; only the fakeProber set it true. Matching
+	// DeclaredEvents/ExpectedAttributesSchema proves the real caps round-
+	// tripped the gRPC boundary into the cache.
+	wantEvents := []string{"ready", "signal", "checkpoint", "progress", "completed"}
+	if !reflect.DeepEqual(entry.Capabilities.DeclaredEvents, wantEvents) {
+		t.Fatalf("DeclaredEvents = %v, want %v", entry.Capabilities.DeclaredEvents, wantEvents)
+	}
+	if len(entry.Capabilities.ExpectedAttributesSchema) == 0 {
+		t.Fatalf("ExpectedAttributesSchema empty — caps not probed over the wire")
+	}
+
+	// Heal/flip: kill the peer, run one RefreshLoop interval against the
+	// real prober, and assert the entry flips to unreachable. Mirrors
+	// TestRefreshLoop_HealsUnreachable but exercises the real dial path.
+	srv.Stop()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go disc.RefreshLoop(ctx, 50*time.Millisecond, slog.Default())
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		entry, _ = disc.GetExecutor("x")
+		if entry.Reachability == ReachabilityUnreachable {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("RefreshLoop did not flip to unreachable; final reachability = %s", entry.Reachability)
 }

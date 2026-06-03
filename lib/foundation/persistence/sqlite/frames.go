@@ -147,6 +147,12 @@ func (s *framesImpl) PruneOldRunsForRetention(ctx context.Context, recentFramesK
 
 // MarkInstanceTerminatedIfDone — post-stage-3: predicate parity with
 // ListRunningFramesNoPendingNodes; state lives on rimsky_node_runs.
+//
+// An instance with an ACTIVE publisher-subscription is never "done": the
+// subscription keeps the instance reactive to external change (concept:
+// cascade). Auto-terminating it on first settle would reject the next
+// sensor emit, so the predicate also excludes instances with an active
+// publisher-subscription. Parity with the postgres driver.
 func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx, `
         UPDATE rimsky_instances
@@ -163,6 +169,10 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
               WHERE n.instance_id = rimsky_instances.id
                 AND r.phase IN ('pending','active','held')
                 AND r.state IN ('stale','running')
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM rimsky_publisher_subscriptions ps
+              WHERE ps.instance_id = rimsky_instances.id AND ps.state = 'active'
           )
     `, nowUTC(), instanceID.String())
 	if err != nil {
