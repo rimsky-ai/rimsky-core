@@ -23,9 +23,9 @@ A third-party `BlobBackend` implementer who wants to run the same checks under `
 
 ## Resolution candidates (do NOT pick)
 
-- Move the six blob-backend checks into a shared persistence-conformance fixture that both the conformance binary and the driver-internal tests consume, matching the pattern the persistence-driver fixtures already use (see `concept:conformance`).
-- Expose a blob-backend conformance run as a library function, paralleling the claim-producer conformance entry point so a third-party implementer can invoke it under `go test`.
-- Accept the inline-only arrangement as deliberate and record that decision at the blob-backend conformance binary, so the asymmetry with the other conformance suites is documented rather than incidental.
+- Make `concept:conformance` own a shared blob-backend conformance fixture that the blob-backend conformance run and the driver-internal validation both consume, matching the reuse pattern the persistence-driver fixtures already follow.
+- Extend `concept:conformance` so the blob-backend suite is reusable by a third-party `concept:blob-backend` implementer running it themselves, paralleling the reuse already afforded by the claim-producer conformance suite.
+- Record in `concept:conformance` that the blob-backend suite is intentionally inline-only, so the asymmetry with the other conformance suites is a documented decision rather than incidental.
 
 ## Evidence
 

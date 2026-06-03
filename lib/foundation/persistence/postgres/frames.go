@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,12 +25,17 @@ import (
 )
 
 // ListRunningFramesNoPendingNodes returns running frames whose nodes in
-// the same (instance_id, frame_id) scope have no in-flight run row in
-// state IN ('stale','running').
+// the same (instance_id, frame_id) scope have no unresolved run row.
 //
-// Post-stage-3: state lives on rimsky_node_runs only. `parked` and
-// `failed` terminal rows do not count toward the frame's pending set
-// (parked is held but not actively contributing; failed is terminal).
+// Post-stage-3: state lives on rimsky_node_runs only.
+//
+// unresolved-work: counts parked. A parked node_run holds its frame open
+// — it is suspended work awaiting a wake (deadline-elapsed or external
+// signal), not a terminal. Draining the frame to `completed` while a node
+// sits parked would discard the park's eventual resume, so a parked row
+// (either column, defensively) keeps the frame off the no-pending list
+// until it resolves to a true terminal. `failed` is genuinely terminal
+// and does not hold the frame.
 func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx persistence.Tx) ([]persistence.FramePending, error) {
 	rows, err := s.q(tx).Query(ctx, `
         SELECT f.frame_id, f.instance_id
@@ -38,8 +44,11 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_node_runs r
               WHERE r.frame_id = f.frame_id
-                AND r.phase IN ('pending','active','held')
-                AND r.state IN ('stale','running')
+                AND (
+                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running'))
+                  OR r.phase = 'parked'
+                  OR r.state = 'parked'
+                )
           )
     `)
 	if err != nil {
@@ -67,6 +76,10 @@ func (s *framesImpl) ListRunningFramesNoPendingNodes(ctx context.Context, tx per
 func (s *framesImpl) HasFailedNode(ctx context.Context, instanceID, frameID shared.UUID, tx persistence.Tx) (bool, error) {
 	var anyFailed bool
 	err := s.q(tx).QueryRow(ctx, `
+        -- failure-detection: not an unresolved-work predicate. Reads the
+        -- failed flavor to pick the frame's terminal state; parked is
+        -- irrelevant here (a parked run is neither failed nor a reason to
+        -- fail the frame).
         SELECT EXISTS (
             SELECT 1 FROM rimsky_node_runs r
             JOIN rimsky_nodes n ON n.id = r.node_id
@@ -101,41 +114,54 @@ func (s *framesImpl) MarkRunningFrameTerminal(
 	return cmd.RowsAffected() == 1, nil
 }
 
-// MarkInstanceTerminatedIfDone sets rimsky_instances.terminated_at=now()
-// when the terminal predicate holds. Idempotent set-once.
+// MarkInstanceTerminatedIfDone applies the durable-by-default terminal
+// predicate at frame-end, setting rimsky_instances.terminated_at=now()
+// when it holds. Idempotent set-once.
 //
-// Post-stage-3: the "still working" predicate is "an in-flight run row
-// in state IN ('stale','running') exists for any node in this
-// instance". Mirrors ListRunningFramesNoPendingNodes' predicate so
-// frame-end and instance-terminated agree.
+// Durable by default: an instance self-terminates ONLY when it was created
+// with terminate_after_run = true. A durable instance (the default, false)
+// is never touched here — it lives until force-terminate. This is the
+// reactive instance model: an instance resolves many frames over its life
+// and nothing terminates it on its own drain.
 //
-// An instance with an ACTIVE publisher-subscription is never "done": the
-// subscription exists precisely so the instance keeps reacting to
-// external change (a sensor watching an endpoint, etc.). Auto-terminating
-// it the moment its nodes first settle would defeat concept:cascade's
-// reactive-to-external-change use case — the next sensor emit would hit a
-// terminated instance and be rejected. So the terminal predicate also
-// requires that no active publisher-subscription is bound to the instance.
+// Strict "run at most once more" semantics: the predicate does NOT wait for
+// queued frames to drain. Because the engine calls this only at a real
+// frame-end (transitionFrameEnd, after MarkRunningFrameTerminal), a
+// terminate_after_run instance has by then completed exactly one frame, so
+// termination is correct by construction. That another frame may be queued
+// at that instant is arbitrary; the strict meaning is the useful one (see
+// concept:instance). Termination reads nothing about sensors or
+// publisher-subscriptions — that coupling is deliberately gone.
+//
+// Parked-aware guard: a defensive restatement at the instance level of the
+// frame-end invariant (parity with ListRunningFramesNoPendingNodes). A
+// parked node_run is suspended work awaiting a wake, not a terminal, so it
+// blocks termination — a later wake must never land on a terminated
+// instance. We protect this property even though, at a real frame-end, no
+// parked run can be present (a parked run holds the frame open, so the
+// frame would not have ended): the guard makes termination impossible while
+// any node_run is unresolved (stale, running, or parked) regardless of how
+// this is invoked.
 func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx, `
         UPDATE rimsky_instances i
         SET terminated_at = now()
         WHERE i.id = $1
           AND i.terminated_at IS NULL
+          AND i.terminate_after_run = true
           AND NOT EXISTS (
-              SELECT 1 FROM rimsky_frames f
-              WHERE f.instance_id = i.id AND f.state IN ('queued','running')
-          )
-          AND NOT EXISTS (
+              -- unresolved-work: counts parked. A parked run is suspended
+              -- work awaiting a wake, not a terminal, so it blocks instance
+              -- termination (a later wake must not land on a terminated
+              -- instance). Defensive restatement of the frame-end invariant.
               SELECT 1 FROM rimsky_node_runs r
               JOIN rimsky_nodes n ON n.id = r.node_id
               WHERE n.instance_id = i.id
-                AND r.phase IN ('pending','active','held')
-                AND r.state IN ('stale','running')
-          )
-          AND NOT EXISTS (
-              SELECT 1 FROM rimsky_publisher_subscriptions ps
-              WHERE ps.instance_id = i.id AND ps.state = 'active'
+                AND (
+                     (r.phase IN ('pending','active','held') AND r.state IN ('stale','running'))
+                  OR r.phase = 'parked'
+                  OR r.state = 'parked'
+                )
           )
     `, instanceID)
 	if err != nil {
@@ -146,13 +172,24 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
 
 // ListQueuedFramesReadyToStart returns at most one queued frame per
 // instance — the oldest queued — for instances that have no
-// currently-running frame.
+// currently-running frame AND are not terminated.
+//
+// Terminated-instance guard: under strict terminal semantics
+// (concept:instance), a terminate_after_run instance can reach terminal at
+// frame-end while a frame it never ran is still `queued` (a message arrived
+// mid-run). That orphaned queued frame must never be promoted — promoting
+// it would run work against a terminated instance. The frame row is cleaned
+// up by the instance's eventual delete (cascade) and by trace retention; it
+// simply never runs. We join rimsky_instances and require terminated_at IS
+// NULL to exclude it.
 func (s *framesImpl) ListQueuedFramesReadyToStart(ctx context.Context, tx persistence.Tx) ([]persistence.FrameQueuedReady, error) {
 	rows, err := s.q(tx).Query(ctx, `
         SELECT DISTINCT ON (f.instance_id)
             f.frame_id, f.instance_id, f.source_node_ids
         FROM rimsky_frames f
+        JOIN rimsky_instances i ON i.id = f.instance_id
         WHERE f.state = 'queued'
+          AND i.terminated_at IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM rimsky_frames r
               WHERE r.instance_id = f.instance_id AND r.state = 'running'
@@ -252,6 +289,10 @@ func (s *framesImpl) MarkSourceNodeStale(
          WHERE n.id = $2
            AND n.instance_id = $3
            AND NOT EXISTS (
+             -- in-flight guard: counts parked. A node with any in-flight
+             -- run (including parked) must not get a second stale run row;
+             -- the partial unique index enforces one in-flight row per
+             -- node, so parked belongs in this set.
              SELECT 1 FROM rimsky_node_runs r
               WHERE r.node_id = $2
                 AND r.phase IN ('pending','active','held','parked')
@@ -300,6 +341,11 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
               WHERE d.frame_id = f.frame_id AND d.claimed_by IS NOT NULL
           )
           AND EXISTS (
+              -- dispatch-eligible: excludes parked. A parked run is
+              -- intentionally suspended awaiting a wake, not stuck — the
+              -- no-progress soft warning fires only when there is
+              -- dispatchable work that has stalled, so parked rows are
+              -- deliberately omitted here.
               SELECT 1 FROM rimsky_node_runs r
               JOIN rimsky_nodes n ON n.id = r.node_id
               WHERE n.instance_id = f.instance_id
@@ -534,36 +580,58 @@ func (s *framesImpl) RefreshProgress(ctx context.Context, frameID shared.UUID, t
 	return nil
 }
 
-// PruneOldRunsForRetention deletes rimsky_node_runs rows whose owning
-// frame is older than the `recentFramesKept`-th most-recent terminal
-// frame for the same instance. Returns the number of rows deleted.
+// PruneTraceForRetention deletes terminal frame ROWS (cascading their
+// node_runs via the rimsky_node_runs.frame_id ON DELETE CASCADE) older
+// than `cutoff` OR beyond the `recentFramesKept` most-recent terminal
+// frames per instance — the lesser-of bound. Returns the number of frame
+// rows deleted.
 //
-// In-flight frames (queued/running) are exempt from retention — the
-// "keep N most-recent" cap counts only terminal frames so an
-// long-running instance can accumulate retention beyond N if many of
-// its frames are concurrently in flight (a degenerate case that the
-// retention warning surface — outside this method — picks up).
-func (s *framesImpl) PruneOldRunsForRetention(ctx context.Context, recentFramesKept int) (int, error) {
-	if recentFramesKept <= 0 {
+// This replaces the prior node-run-only prune: we now delete the frame
+// ROW itself and rely on the ON DELETE CASCADE from rimsky_frames to
+// rimsky_node_runs to remove its runs, so a long-lived durable instance's
+// frame backlog cannot grow without bound. In-flight frames
+// (queued/running, including parked-held) are exempt — only
+// state IN ('completed','failed') rows are candidates, so nothing live
+// is ever reaped.
+//
+// `recentFramesKept <= 0` disables the count bound; a zero `cutoff`
+// (time.Time{}) disables the time bound. Both disabled → no-op (returns
+// 0). When both are active a frame is reaped if EITHER predicate matches
+// (the lesser-of retention — whichever keeps fewer frames).
+func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKept int, cutoff time.Time) (int, error) {
+	countBound := recentFramesKept > 0
+	timeBound := !cutoff.IsZero()
+	if !countBound && !timeBound {
 		return 0, nil
 	}
+	// Sentinel binds let one SQL serve all three bound combinations:
+	// a disabled bound's predicate is made unsatisfiable (rk > a huge cap
+	// never matches; a NULL cutoff makes the time predicate NULL→false)
+	// so the active bound(s) drive the delete.
+	var countCap int = recentFramesKept
+	if !countBound {
+		// The platform max int — exceeds any possible per-instance frame
+		// rank, so the rank predicate never fires when the count bound is
+		// disabled. math.MaxInt (not a 1<<62 literal) keeps the constant in
+		// range of int on a 32-bit build target, where 1<<62 would overflow
+		// and fail to compile.
+		countCap = math.MaxInt
+	}
+	var cutoffArg any
+	if timeBound {
+		cutoffArg = cutoff
+	}
 	// PARTITION BY instance_id ORDER BY ended_at DESC gives each frame a
-	// per-instance rank (1 = most recent terminal). Anything with rank >
-	// recentFramesKept is a prune candidate. DELETE from rimsky_node_runs
-	// where frame_id matches the candidates. The ON DELETE CASCADE from
-	// rimsky_frames to rimsky_node_runs would also fire if we deleted
-	// the frames themselves — but the retention sweep keeps the frame
-	// row (so observability can still surface it) and deletes only the
-	// associated run rows.
-	// Standalone retention sweep — no caller-supplied tx. The single
-	// DELETE is atomic on its own, so run it directly against the pool
-	// (mirroring Lineage.DeleteOlderThan); calling s.q(nil) here would trip
-	// the no-nil-tx contract and panic the scheduler tick.
+	// per-instance rank (1 = most recent terminal). A frame is a candidate
+	// when its rank exceeds the count cap OR its ended_at precedes the
+	// cutoff. Standalone retention sweep — no caller-supplied tx; run
+	// directly against the pool (mirroring Lineage.DeleteOlderThan). The
+	// frame→node_run ON DELETE CASCADE removes each deleted frame's runs.
 	tag, err := (*tablesImpl)(s).pool.Exec(ctx, `
-        DELETE FROM rimsky_node_runs
+        DELETE FROM rimsky_frames
         WHERE frame_id IN (
             SELECT frame_id FROM (
-                SELECT f.frame_id,
+                SELECT f.frame_id, f.ended_at,
                        ROW_NUMBER() OVER (
                            PARTITION BY f.instance_id
                            ORDER BY COALESCE(f.ended_at, f.queued_at) DESC, f.frame_id DESC
@@ -572,10 +640,11 @@ func (s *framesImpl) PruneOldRunsForRetention(ctx context.Context, recentFramesK
                  WHERE f.state IN ('completed','failed')
             ) ranked
             WHERE ranked.rk > $1
+               OR ($2::timestamptz IS NOT NULL AND ranked.ended_at < $2)
         )
-    `, recentFramesKept)
+    `, countCap, cutoffArg)
 	if err != nil {
-		return 0, fmt.Errorf("frames.PruneOldRunsForRetention: %w", err)
+		return 0, fmt.Errorf("frames.PruneTraceForRetention: %w", err)
 	}
 	return int(tag.RowsAffected()), nil
 }
@@ -583,6 +652,10 @@ func (s *framesImpl) PruneOldRunsForRetention(ctx context.Context, recentFramesK
 // CountHeldFrames returns the number of running frames that have at
 // least one parked rimsky_node_runs row attached via frame_id.
 // Mirrors the predicate in /admin/diagnostics/held-frames.
+//
+// unresolved-work: counts parked (by definition — this query exists to
+// count frames a parked run is holding open; consistent with
+// ListRunningFramesNoPendingNodes treating parked as unresolved).
 func (s *framesImpl) CountHeldFrames(ctx context.Context, tx persistence.Tx) (int, error) {
 	var n int
 	err := s.q(tx).QueryRow(ctx,

@@ -36,8 +36,22 @@ import (
 // from `cfg:retention` in rimsky.yml.
 type RetentionConfig struct {
 	// RecentFramesKept caps the per-instance frame backlog kept on disk.
-	// Default 100; values <=0 disable the sweep.
+	// Default 100; values <=0 disable the sweep. This is the COUNT
+	// dimension of trace retention (the most-recent-N-terminal-frames
+	// cap); TraceTrailing is the TIME dimension. Reaping is the lesser of
+	// the two — a frame is reaped when it is older than TraceTrailing OR
+	// beyond the RecentFramesKept most-recent terminal frames.
 	RecentFramesKept int
+	// TraceTrailing is the trailing time window for the whole per-instance
+	// execution trace — frames, their node_runs (via ON DELETE CASCADE),
+	// and the time-keyed event logs (rimsky_events audit + rimsky_node_events
+	// named). Default 30 days; <=0 disables the time dimension (then only
+	// the RecentFramesKept count cap applies). The TIME dimension of trace
+	// retention; reaping is the lesser of TraceTrailing and RecentFramesKept.
+	//
+	// @concept: frame
+	// @concept: event-log
+	TraceTrailing time.Duration
 	// LineageTrailing is the trailing window for the lineage sweep.
 	// Default 30 days; zero disables the sweep.
 	LineageTrailing time.Duration
@@ -86,35 +100,98 @@ func SweepLineageRetention(
 	return n, nil
 }
 
-// SweepRunTreeRetention deletes rimsky_node_runs rows belonging to
-// frames older than the `RecentFramesKept`-th most-recent terminal
-// frame per instance. Spec §Run-tree retention. Returns the number of
-// rows deleted across all instances.
+// SweepRunTreeRetention reaps the whole per-instance execution trace —
+// terminal frame rows (cascading their node_runs) plus the time-keyed
+// event logs — under one coherent retention policy. Returns the number of
+// frame rows deleted across all instances.
+//
+// Three deletes run from one cutoff + count cap:
+//
+//   - Frames().PruneTraceForRetention reaps terminal frame rows older than
+//     `cutoff` OR beyond the `RecentFramesKept` most-recent terminal frames
+//     per instance (the lesser-of bound); their node_runs go via the
+//     frame→node_run ON DELETE CASCADE. In-flight frames (queued/running,
+//     including parked-held) are exempt — nothing live is reaped.
+//   - Events().DeleteOlderThan reaps rimsky_events (audit log) rows older
+//     than `cutoff`. Event logs are time-keyed (no frame FK), so the count
+//     cap does NOT apply to them — only the trailing time window.
+//   - NodeEvents().DeleteOlderThan reaps rimsky_node_events (named events)
+//     rows older than `cutoff`, likewise time-only.
+//
+// The event sweeps only run when TraceTrailing > 0 (a zero cutoff is the
+// "no time bound" sentinel; running an event delete against it would be a
+// no-op at best and a full-table scan at worst). The frame reaper always
+// runs when EITHER dimension is enabled — the count cap alone is a valid
+// retention policy for structural rows even with no time window.
 //
 // Post-stage-1 lifecycle flip: terminal run rows survive past active
-// terminal (RemoveForNodeInTx flips phase to a terminal value rather
-// than DELETEing the row), so the retention sweep has terminal rows to
-// prune. The actual delete predicate is owned by the persistence layer
-// (`FrameTable.PruneOldRunsForRetention`) so SQLite + Postgres can
-// implement the window query in their native dialect.
-//
-// Only terminal frames count toward the "keep N most-recent" cap —
-// in-flight frames (queued/running) are exempt so a long-running
-// instance can't have its in-flight work pruned out from under it.
+// terminal (RemoveForNodeInTx flips phase to a terminal value rather than
+// DELETEing the row), so the cascade has rows to remove when its frame
+// is reaped.
 func SweepRunTreeRetention(
 	ctx context.Context, cfg RetentionConfig, tables persistence.Tables,
-	_ time.Time, log shared.Logger,
+	now time.Time, log shared.Logger,
 ) (int, error) {
-	if cfg.RecentFramesKept <= 0 {
+	// Either retention dimension alone must reap. A config with only
+	// trace_trailing set (no count cap) passes the scheduler gate; if this
+	// guard required RecentFramesKept it would silently reap nothing —
+	// that is the load-bearing "either dimension alone reaps" property.
+	if cfg.RecentFramesKept <= 0 && cfg.TraceTrailing <= 0 {
 		return 0, nil
 	}
-	n, err := tables.Frames().PruneOldRunsForRetention(ctx, cfg.RecentFramesKept)
+	// A zero cutoff (time.Time{}) is the persistence layer's "no time
+	// bound" sentinel; compute a real cutoff only when the time dimension
+	// is enabled.
+	var cutoff time.Time
+	if cfg.TraceTrailing > 0 {
+		cutoff = now.Add(-cfg.TraceTrailing)
+	}
+	frames, err := tables.Frames().PruneTraceForRetention(ctx, cfg.RecentFramesKept, cutoff)
 	if err != nil {
-		return 0, fmt.Errorf("SweepRunTreeRetention: %w", err)
+		return 0, fmt.Errorf("SweepRunTreeRetention: frames: %w", err)
 	}
-	if log != nil && n > 0 {
-		log.Info("retention.run_tree.sweep",
-			"deleted", n, "recent_frames_kept", cfg.RecentFramesKept)
+	if log != nil && frames > 0 {
+		log.Info("retention.trace.frames.sweep",
+			"deleted", frames, "recent_frames_kept", cfg.RecentFramesKept,
+			"cutoff", cutoffLogValue(cutoff))
 	}
-	return n, nil
+	// Event logs age out by the time window alone (no count cap, no frame
+	// FK). Skip them entirely when the time dimension is disabled.
+	if cfg.TraceTrailing > 0 {
+		events, err := tables.Events().DeleteOlderThan(ctx, cutoff)
+		if err != nil {
+			return frames, fmt.Errorf("SweepRunTreeRetention: events: %w", err)
+		}
+		if log != nil && events > 0 {
+			log.Info("retention.trace.events.sweep",
+				"deleted", events, "cutoff", cutoff.Format(time.RFC3339))
+		}
+		// DeleteOlderThan reaps the rows AND queues any spilled-payload blob
+		// handles into rimsky_blob_orphans atomically (one transaction inside
+		// the driver) — a reaped named-event row is never deleted without its
+		// blob handle durably queued, so the bytes can't leak. For a durable
+		// instance this is the only reclamation path (the instance-delete
+		// cascade never runs). The returned orphans are surfaced here for
+		// observability only; they are already persisted.
+		nodeEvents, orphans, err := tables.NodeEvents().DeleteOlderThan(ctx, cutoff)
+		if err != nil {
+			return frames, fmt.Errorf("SweepRunTreeRetention: node_events: %w", err)
+		}
+		if log != nil && nodeEvents > 0 {
+			log.Info("retention.trace.node_events.sweep",
+				"deleted", nodeEvents, "orphans_queued", len(orphans),
+				"cutoff", cutoff.Format(time.RFC3339))
+		}
+	}
+	return frames, nil
+}
+
+// cutoffLogValue renders a cutoff for structured logging, surfacing the
+// count-only case (zero cutoff = no time bound) as "none" rather than the
+// 0001 zero-time string.
+func cutoffLogValue(cutoff time.Time) string {
+	if cutoff.IsZero() {
+		return "none"
+	}
+	return cutoff.Format(time.RFC3339)
 }

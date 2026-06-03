@@ -30,7 +30,12 @@ var _ persistence.NodeEventTable = (*nodeEventsImpl)(nil)
 
 // Insert appends a row and returns its auto-generated id.
 func (b *nodeEventsImpl) Insert(ctx context.Context, evt persistence.NodeEvent, tx persistence.Tx) (int64, error) {
-	now := time.Now().UTC()
+	// emitted_at is stored as RFC3339Nano TEXT — the same convention as the
+	// audit log's occurred_at and what DeleteOlderThan compares against — so
+	// the insert and the time-window reaper share one time format (a raw
+	// time.Time bind would store modernc's t.String() layout instead, which
+	// orders differently from the RFC3339Nano cutoff the reaper binds).
+	now := formatTime(time.Now().UTC())
 	res, err := b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_events
 		   (instance_id, emitter_node_id, event_name,
@@ -70,16 +75,16 @@ func (b *nodeEventsImpl) LatestByName(ctx context.Context, instanceID, emitterNo
 		instanceID, emitterNodeID, eventName,
 	)
 	var (
-		out    persistence.NodeEvent
-		inline []byte
-		hRaw   sql.NullString
-		hbRaw  sql.NullString
-		when   time.Time
-		fid    sql.NullString
+		out     persistence.NodeEvent
+		inline  []byte
+		hRaw    sql.NullString
+		hbRaw   sql.NullString
+		whenStr string
+		fid     sql.NullString
 	)
 	err := row.Scan(
 		&out.ID, &out.InstanceID, &out.EmitterNodeID, &out.EventName,
-		&inline, &hRaw, &hbRaw, &when, &fid,
+		&inline, &hRaw, &hbRaw, &whenStr, &fid,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -97,7 +102,14 @@ func (b *nodeEventsImpl) LatestByName(ctx context.Context, instanceID, emitterNo
 	if fid.Valid {
 		out.FrameID = fid.String
 	}
-	out.EmittedAt = when
+	// emitted_at is RFC3339Nano TEXT (same convention as the audit log's
+	// occurred_at); parse it back the way events.List does rather than
+	// scanning straight into a time.Time.
+	emittedAt, err := parseTime(whenStr)
+	if err != nil {
+		return nil, fmt.Errorf("node_events.LatestByName: parse emitted_at: %w", err)
+	}
+	out.EmittedAt = emittedAt
 	return &out, nil
 }
 
@@ -145,6 +157,91 @@ func (b *nodeEventsImpl) DeleteByInstance(ctx context.Context, instanceID string
 		return 0, nil, fmt.Errorf("node_events.DeleteByInstance: rows-affected: %w", err)
 	}
 	return deleted, orphans, nil
+}
+
+// DeleteOlderThan deletes rimsky_node_events rows whose emitted_at is
+// before cutoff. The named-event ledger is time-keyed (its frame_id is a
+// non-FK column), so the trailing trace-retention window alone bounds it.
+// For a durable instance this is the ONLY reclamation path for those bytes:
+// the instance never terminates, so the instance-delete cascade never runs.
+//
+// Spilled-payload handles are queued into rimsky_blob_orphans in the SAME
+// transaction as the DELETE so the queue-and-delete is atomic: a crash
+// after the queue but before the delete leaves the rows for the next tick to
+// re-find (Insert is idempotent on the handle PK), and the rows are never
+// deleted without their blob handle durably queued. Queueing BEFORE the
+// delete (not after) is what makes that hold — a post-delete queue that
+// failed would orphan the bytes with no row left to re-discover. The
+// returned orphan slice is for the caller's observability only; the handles
+// are already persisted when this returns.
+//
+// Collects orphan handles in a SELECT before the DELETE (mirroring
+// DeleteByInstance — modernc.org/sqlite does not support DELETE … RETURNING
+// cleanly on every version). Standalone sweep — no caller-supplied tx; the
+// method opens its own transaction so the scheduler tick can call it without
+// a surrounding Tables.Transaction.
+func (b *nodeEventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, []persistence.NodeEventOrphan, error) {
+	stx, err := (*tablesImpl)(b).db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, nil, fmt.Errorf("sqlite.NodeEvents.DeleteOlderThan: begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = stx.Rollback()
+		}
+	}()
+
+	rows, err := stx.QueryContext(ctx,
+		`SELECT payload_handle, payload_handle_backend
+		   FROM rimsky_node_events
+		  WHERE emitted_at < ?
+		    AND payload_handle IS NOT NULL`, formatTime(cutoff))
+	if err != nil {
+		return 0, nil, fmt.Errorf("sqlite.NodeEvents.DeleteOlderThan: select orphans: %w", err)
+	}
+	var orphans []persistence.NodeEventOrphan
+	for rows.Next() {
+		var h, hb sql.NullString
+		if err := rows.Scan(&h, &hb); err != nil {
+			_ = rows.Close()
+			return 0, nil, fmt.Errorf("sqlite.NodeEvents.DeleteOlderThan: scan: %w", err)
+		}
+		if h.Valid && h.String != "" && hb.Valid && hb.String != "" {
+			orphans = append(orphans, persistence.NodeEventOrphan{Handle: h.String, Backend: hb.String})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, nil, fmt.Errorf("sqlite.NodeEvents.DeleteOlderThan: rows.Err: %w", err)
+	}
+	_ = rows.Close()
+
+	// Queue spilled handles before the DELETE, inside the same tx.
+	pTx := &sqliteTx{tx: stx}
+	for _, o := range orphans {
+		if qerr := persistence.QueueBlobOrphan(
+			ctx, (*tablesImpl)(b).BlobOrphans(), pTx, o.Handle, o.Backend,
+			time.Now().UTC(), (*tablesImpl)(b).BlobRetention(),
+		); qerr != nil {
+			return 0, nil, fmt.Errorf("sqlite.NodeEvents.DeleteOlderThan: queue orphan: %w", qerr)
+		}
+	}
+
+	res, err := stx.ExecContext(ctx,
+		`DELETE FROM rimsky_node_events WHERE emitted_at < ?`, formatTime(cutoff))
+	if err != nil {
+		return 0, nil, fmt.Errorf("sqlite.NodeEvents.DeleteOlderThan: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, nil, fmt.Errorf("sqlite.NodeEvents.DeleteOlderThan: rows-affected: %w", err)
+	}
+	if err := stx.Commit(); err != nil {
+		return 0, nil, fmt.Errorf("sqlite.NodeEvents.DeleteOlderThan: commit: %w", err)
+	}
+	committed = true
+	return int(n), orphans, nil
 }
 
 // nilIfEmpty / nilIfEmptyStr — local helpers so callers can pass empty

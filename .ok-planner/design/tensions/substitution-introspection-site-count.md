@@ -25,9 +25,9 @@ A code-review discipline that grep-checks for "introspection-adjacent calls" nee
 
 ## Resolution candidates (do NOT pick)
 
-- Update the substitution module's docstring to lead with "three sanctioned sites" rather than "single."
-- Move all three sites under a uniformly-annotated helper package.
-- Add a per-site annotation block listing all three for cross-reference.
+- State in `concept:inertness` (and cross-reference from `concept:attribute`) that there are three sanctioned introspection sites, not one, so the documented count matches reality.
+- Record the three-site enumeration as a single authoritative list owned by `concept:inertness`, so the sanctioned set is stated once rather than scattered.
+- Have `concept:inertness` require each sanctioned site to carry a cross-referencing annotation that names all three, so the set stays mutually discoverable.
 
 ## Evidence
 

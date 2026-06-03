@@ -63,8 +63,12 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	// --- Seed terminal frames + run rows ---------------------------------
 	//
 	// Five completed frames per instance with distinct ended_at. With
-	// RecentFramesKept=2, PruneOldRunsForRetention keeps the run rows of the
-	// 2 most-recent terminal frames and deletes the other 3.
+	// RecentFramesKept=2 (no TraceTrailing here), PruneTraceForRetention
+	// keeps the 2 most-recent terminal frame rows and deletes the other 3;
+	// the deleted frames' run rows go via the frame→node_run ON DELETE
+	// CASCADE, so the surviving frames' runs survive and the pruned
+	// frames' runs are removed — the assertions below ride on the run
+	// rows, which hold under the frame-row-deleting reaper.
 	const totalFrames = 5
 	const keepFrames = 2
 	survivingRunIDs := make(map[string]bool)

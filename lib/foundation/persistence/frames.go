@@ -107,9 +107,13 @@ type FrameTable interface {
 	MarkRunningFrameTerminal(ctx context.Context, frameID shared.UUID, finalState FrameState, tx Tx) (transitioned bool, err error)
 
 	// MarkInstanceTerminatedIfDone sets rimsky_instances.terminated_at=now()
-	// when the terminal predicate holds (no queued/running frames, no
-	// stale/running nodes for the instance) and terminated_at IS NULL.
-	// Idempotent set-once.
+	// when the durable-by-default terminal predicate holds and terminated_at
+	// IS NULL. The predicate fires ONLY for an instance created with
+	// terminate_after_run = true (durable instances — the default — are never
+	// touched), and never while any node_run is unresolved (stale, running,
+	// or parked). Strict "run at most once more" semantics: it does NOT wait
+	// for queued frames to drain, and reads nothing about sensors or
+	// publisher-subscriptions. Idempotent set-once. Per concept:instance.
 	MarkInstanceTerminatedIfDone(ctx context.Context, instanceID shared.UUID, tx Tx) error
 
 	// ---- Advance queued (engine.runAdvanceQueued) ----
@@ -190,14 +194,26 @@ type FrameTable interface {
 	// refresher (`rimsky_held_frames`). Tx must be open.
 	CountHeldFrames(ctx context.Context, tx Tx) (int, error)
 
-	// PruneOldRunsForRetention deletes rimsky_node_runs rows belonging
-	// to frames older than the `recentFramesKept`-th most-recent
-	// terminal frame per instance. Only terminal frames (state IN
-	// ('completed','failed')) are eligible to be pruned-against;
-	// in-flight frames (queued/running) are never considered for
-	// retention. Returns the number of run rows deleted.
+	// PruneTraceForRetention deletes terminal frame ROWS (and, via the
+	// frame→node_run ON DELETE CASCADE, their node_runs) that are older
+	// than `cutoff` OR beyond the `recentFramesKept` most-recent terminal
+	// frames per instance — the lesser-of bound. Only terminal frames
+	// (state IN ('completed','failed')) are eligible; in-flight frames
+	// (queued/running, including parked-held) are never reaped. This
+	// subsumes the prior node-run-only prune: the frame row itself is
+	// deleted now, and the cascade removes its runs.
 	//
-	// Spec §Run-tree retention. Default `recentFramesKept` = 100 (via
-	// cfg:retention.recent_frames_kept).
-	PruneOldRunsForRetention(ctx context.Context, recentFramesKept int) (int, error)
+	// `recentFramesKept <= 0` disables the count bound; a zero `cutoff`
+	// (time.Time{}) disables the time bound. With both disabled the method
+	// is a no-op returning 0. Returns the number of frame rows deleted.
+	//
+	// This method touches frames + node_runs ONLY. The time-keyed event
+	// logs (rimsky_events, rimsky_node_events) are reaped separately by
+	// EventTable.DeleteOlderThan / NodeEventTable.DeleteOlderThan, since
+	// those are keyed by time, not by frame, and carry no frame FK.
+	//
+	// concept:frame trace retention. Default `recentFramesKept` = 100 (via
+	// cfg:retention.recent_frames_kept); default trailing window via
+	// cfg:retention.trace_trailing.
+	PruneTraceForRetention(ctx context.Context, recentFramesKept int, cutoff time.Time) (int, error)
 }

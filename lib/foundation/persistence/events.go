@@ -75,4 +75,14 @@ type EventTable interface {
 	// observability cascade-graph projection to avoid an N+1 List per
 	// node. Nodes with no matching event are absent from the map.
 	LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx Tx) (map[shared.UUID]EventRow, error)
+
+	// DeleteOlderThan deletes rimsky_events rows whose occurred_at is
+	// before cutoff. The audit log is time-keyed (no frame FK), so it is
+	// reaped by the trailing trace-retention window alone — the count cap
+	// applies only to structural frame/node_run rows. Standalone sweep:
+	// no caller-supplied tx, run directly against the db handle (mirrors
+	// LineageTable.DeleteOlderThan). Returns the number of rows deleted.
+	//
+	// concept:event-log trace retention.
+	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 }

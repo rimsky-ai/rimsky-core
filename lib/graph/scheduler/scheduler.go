@@ -355,13 +355,15 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 6e. Run-tree retention sweep (E10). Prunes rimsky_node_runs rows
-	// belonging to all but the `Retention.RecentFramesKept` most-recent
-	// terminal frames per instance. Default disabled —
-	// `Retention.RecentFramesKept == 0` skips the sweep. The sweep ignores
-	// the now/Clock value (the prune predicate ranks by frame ended_at, not
-	// a cutoff), but we pass it for signature parity with the other sweeps.
-	if cfg.Persist != nil && cfg.Retention.RecentFramesKept > 0 {
+	// 6e. Trace retention sweep (E10). Reaps the whole per-instance
+	// execution trace under one policy: terminal frame rows (cascading
+	// their node_runs) by the lesser of `Retention.RecentFramesKept` (the
+	// count cap) and `Retention.TraceTrailing` (the trailing time window),
+	// plus the time-keyed event logs by that same window. Fires when
+	// EITHER dimension is enabled — a config with only trace_trailing set
+	// (no count cap) must still reap, so we cannot gate on RecentFramesKept
+	// alone. `now` feeds the trailing-window cutoff inside the sweep.
+	if cfg.Persist != nil && (cfg.Retention.RecentFramesKept > 0 || cfg.Retention.TraceTrailing > 0) {
 		now := time.Now()
 		if cfg.Clock != nil {
 			now = cfg.Clock.Now()

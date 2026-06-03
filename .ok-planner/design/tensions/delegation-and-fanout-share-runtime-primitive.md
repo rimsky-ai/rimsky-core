@@ -48,8 +48,6 @@ Two emission sites (`applyTerminalCompleteSubgraphCaller`, `CreateFanOutChildren
 - Keep `concept:delegation` and `concept:fan-out` but reframe both as referencing a shared cross-cutting concept; do the runtime unification without the concept-doc reshape.
 - Leave the duplication; accept the cost.
 
-See `sketch:2026-05-23-unify-child-execution` for the unified shape and open questions (entry-absorption asymmetry, naming, refactor timing).
-
 ## Notes
 
 - 2026-05-23 — Captured during walkthrough of divergences from the 2026-05-22 fan-out-safety-scope-first plan. The user observed: "a single sub-graph call should be a fan-out of one. may be an opportunity to reduce code paths so fan-out isn't a separate case. it's just triggered by a partition, but otherwise the subgraph machinery is the same." Sketch produced alongside this entry.

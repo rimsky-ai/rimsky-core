@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -129,6 +130,76 @@ func (b *nodeEventsImpl) DeleteByInstance(ctx context.Context, instanceID string
 	if err := rows.Err(); err != nil {
 		return 0, nil, fmt.Errorf("node_events.DeleteByInstance: rows.Err: %w", err)
 	}
+	return deleted, orphans, nil
+}
+
+// DeleteOlderThan deletes rimsky_node_events rows whose emitted_at is
+// before cutoff. The named-event ledger is time-keyed (its frame_id is a
+// non-FK column), so the trailing trace-retention window alone bounds it.
+// For a durable instance this is the ONLY reclamation path for those bytes:
+// the instance never terminates, so the instance-delete cascade never runs.
+//
+// The DELETE … RETURNING and the rimsky_blob_orphans queueing run in ONE
+// transaction so they commit atomically: spilled-payload rows are never
+// deleted without their blob handle durably queued (and a rollback re-leaves
+// the rows for the next tick — Insert is idempotent on the handle PK). The
+// returned orphan slice is for the caller's observability only; the handles
+// are already persisted when this returns. Standalone sweep — no
+// caller-supplied tx; the method opens its own transaction so the scheduler
+// tick can call it without a surrounding Tables.Transaction.
+func (b *nodeEventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, []persistence.NodeEventOrphan, error) {
+	pgT, err := (*tablesImpl)(b).pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, nil, fmt.Errorf("postgres.NodeEvents.DeleteOlderThan: begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = pgT.Rollback(ctx)
+		}
+	}()
+
+	rows, err := pgT.Query(ctx,
+		`DELETE FROM rimsky_node_events
+		  WHERE emitted_at < $1
+		 RETURNING payload_handle, payload_handle_backend`, cutoff)
+	if err != nil {
+		return 0, nil, fmt.Errorf("postgres.NodeEvents.DeleteOlderThan: %w", err)
+	}
+	var deleted int
+	var orphans []persistence.NodeEventOrphan
+	for rows.Next() {
+		var h, hb sql.NullString
+		if err := rows.Scan(&h, &hb); err != nil {
+			rows.Close()
+			return 0, nil, fmt.Errorf("postgres.NodeEvents.DeleteOlderThan: scan: %w", err)
+		}
+		deleted++
+		if h.Valid && h.String != "" && hb.Valid && hb.String != "" {
+			orphans = append(orphans, persistence.NodeEventOrphan{Handle: h.String, Backend: hb.String})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, nil, fmt.Errorf("postgres.NodeEvents.DeleteOlderThan: rows.Err: %w", err)
+	}
+
+	// Queue spilled handles in the same tx as the DELETE so the reclamation
+	// record commits atomically with the row removal.
+	pTx := &pgTx{tx: pgT}
+	for _, o := range orphans {
+		if qerr := persistence.QueueBlobOrphan(
+			ctx, (*tablesImpl)(b).BlobOrphans(), pTx, o.Handle, o.Backend,
+			time.Now().UTC(), (*tablesImpl)(b).BlobRetention(),
+		); qerr != nil {
+			return 0, nil, fmt.Errorf("postgres.NodeEvents.DeleteOlderThan: queue orphan: %w", qerr)
+		}
+	}
+
+	if err := pgT.Commit(ctx); err != nil {
+		return 0, nil, fmt.Errorf("postgres.NodeEvents.DeleteOlderThan: commit: %w", err)
+	}
+	committed = true
 	return deleted, orphans, nil
 }
 

@@ -159,6 +159,140 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline)
 }
 
+// TestSensorHTTP_DurableAcrossFires is the durable-by-default headline
+// acceptance gate (spec scenario 1). It wires the SAME real
+// rimsky-sensor-http image / real host source / real cascade as
+// TestSensorHTTP_RealExternalChangeFiresDownstreamNode, but the behavior
+// under test is rimsky's OWN lifecycle: a sensor-driven instance created
+// with NO terminate_after_run flag must stay alive across MANY real
+// external changes, re-running its reactor on every fire and never being
+// reaped (terminated_at stays unset), with no publisher-subscription
+// coupling in the terminal predicate.
+//
+// Why this is the meaningful gate: under the pre-fix auto-terminate-on-
+// drain behavior the instance would terminate after its FIRST frame
+// drained, so the 2nd fire would land on a terminated instance and the
+// reactor would never re-run. Proving N≥3 fires each re-run the reactor
+// while terminated_at stays NULL is the durable-by-default property end to
+// end against the real assembled product.
+func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Host-side watched source — mutable body, same shape as the sibling
+	// test. Each distinct body is a fresh content-hash the sensor observes.
+	var (
+		bodyMu sync.RWMutex
+		body   = `{"state":"initial"}`
+	)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		bodyMu.RLock()
+		cur := body
+		bodyMu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(cur))
+	}))
+	t.Cleanup(upstream.Close)
+
+	hostPort := hostPortOf(t, upstream.URL)
+
+	netName := harness.NewNetwork(ctx, t)
+	sensorEP := harness.StartSensorHTTP(ctx, t, netName, "sensor-http", hostPort)
+	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
+
+	ep := harness.BringUpRimsky(ctx, t,
+		harness.WithExistingNetwork(netName),
+		harness.WithExecutor("stub", execEP),
+		harness.WithPublisher("watcher", sensorEP),
+	)
+
+	watchedURL := fmt.Sprintf("http://host.testcontainers.internal:%d/", hostPort)
+
+	templateID := deploySensorCascadeTemplate(t, ep, watchedURL)
+	// NO terminate_after_run flag — durable by default. createSensorCascadeInstance
+	// POSTs without the flag, exactly the default-instance path.
+	instanceID := createSensorCascadeInstance(t, ep, templateID, "ck-sensor-durable")
+
+	// Drive both root nodes to an initial fresh, then quiesce so later
+	// dispatch growth is attributable to the sensor fires alone.
+	waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 90*time.Second)
+	waitForSensorNodeState(t, ep, instanceID, "bystander", "fresh", 90*time.Second)
+	waitForDispatchQuiescent(t, ep, instanceID, reactorTargetNode, 60*time.Second)
+	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
+	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
+
+	// After the initial frame settled, the durable instance must already be
+	// un-terminated — this is the first place the old auto-terminate-on-drain
+	// would have stamped terminated_at.
+	requireInstanceNotTerminated(t, ep, instanceID)
+
+	// Fire the REAL external change N≥3 times. Each distinct body is a new
+	// content-hash; the sensor's next poll observes it and emits an
+	// invalidate message that re-runs the reactor through the cascade.
+	const fires = 3
+	for i := 1; i <= fires; i++ {
+		reactorBefore := workStartedCount(t, ep, instanceID, reactorTargetNode)
+
+		bodyMu.Lock()
+		body = fmt.Sprintf(`{"state":"changed-%d"}`, i)
+		bodyMu.Unlock()
+
+		// The reactor must re-run (work_started grows) on THIS fire …
+		requireWorkStartedGrew(t, ep, instanceID, reactorTargetNode, reactorBefore, 120*time.Second,
+			fmt.Sprintf("fire %d/%d", i, fires))
+		// … settle back to fresh …
+		waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 30*time.Second)
+		// … and the instance must STILL be un-terminated (the durable
+		// property after each drain — never reaped).
+		requireInstanceNotTerminated(t, ep, instanceID)
+	}
+
+	// Negative control: the bystander subscribes to a non-matching topic,
+	// so none of the N fires must have re-run it.
+	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline)
+}
+
+// requireInstanceNotTerminated asserts GET /instances/{id} shows
+// terminated_at unset — the durable-by-default property. The instances
+// projection omits terminated_at entirely when NULL
+// (json:"terminated_at,omitempty"), so a present, non-empty value is a
+// reap that must not have happened on a durable (no-flag) instance.
+func requireInstanceNotTerminated(t *testing.T, ep harness.RimskyEndpoint, instanceID string) {
+	t.Helper()
+	status, raw := ep.GetJSON(t, "/instances/"+instanceID, "")
+	if status != http.StatusOK {
+		t.Fatalf("GET /instances/%s: %d %s", instanceID, status, string(raw))
+	}
+	var resp struct {
+		TerminatedAt *string `json:"terminated_at"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode instance %s: %v: %s", instanceID, err, string(raw))
+	}
+	if resp.TerminatedAt != nil && *resp.TerminatedAt != "" {
+		t.Fatalf("durable instance %s was reaped (terminated_at=%q) — a no-flag "+
+			"instance must stay alive across fires; auto-terminate-on-drain must be gone",
+			instanceID, *resp.TerminatedAt)
+	}
+}
+
+// requireWorkStartedGrew asserts the node's work_started count grew past
+// `baseline` within the deadline — unambiguous proof the cascade re-ran
+// the node on this fire (a fresh dispatch). Fails hard on timeout.
+func requireWorkStartedGrew(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, baseline int, deadline time.Duration, label string) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	for time.Now().Before(end) {
+		if workStartedCount(t, ep, instanceID, nodeType) > baseline {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("reactor node %q did not re-run on %s (work_started stayed at %d) within %v — "+
+		"the durable instance stopped reacting; a reaped instance would explain this",
+		nodeType, label, baseline, deadline)
+}
+
 // deploySensorCascadeTemplate POSTs the sensor-cascade template and
 // deploys it. The template wires:
 //   - a publisher `watcher` (kind http) whose config points at the

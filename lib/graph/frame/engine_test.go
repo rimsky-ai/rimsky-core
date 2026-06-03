@@ -298,6 +298,69 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 		"stuck-frame warning must not terminate the instance")
 }
 
+// TestDurableByDefaultVsTerminateAfterRun pins the durable-by-default
+// instance lifecycle at the frame-engine level: at frame-end the engine
+// calls MarkInstanceTerminatedIfDone for every instance, but only an
+// instance created with terminate_after_run=true self-terminates. A
+// durable instance (the default) survives its own drain — terminated_at
+// stays NULL after its frame ends.
+//
+// Both instances run a single fresh-node frame to terminal via one
+// RunTick (frame-end detection flips the running frame to completed and
+// evaluates the terminal predicate in the same tx). Instance B's
+// terminate_after_run flag is set by a direct UPDATE after seeding (the
+// seed helper goes through InstanceCreateInput, which now carries the
+// flag, but the column is also settable here so the test reads as a
+// targeted lifecycle assertion).
+func TestDurableByDefaultVsTerminateAfterRun(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	d := pgtest.OpenDriver(ctx, t)
+
+	// Instance A: durable by default (no flag).
+	_, instanceA := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	srcA := uuid.New()
+	nowA := time.Now()
+	frameA := seedFrameRow(t, ctx, d, instanceA, "serial_queue", "running",
+		[]uuid.UUID{srcA}, &nowA, 600000)
+	seedNode(t, ctx, d, instanceA, srcA, "fresh", &frameA)
+
+	// Instance B: opt-in terminate_after_run.
+	_, instanceB := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	pgtest.ExecForTest(ctx, t, d,
+		`UPDATE rimsky_instances SET terminate_after_run = true WHERE id = $1`, instanceB)
+	srcB := uuid.New()
+	nowB := time.Now()
+	frameB := seedFrameRow(t, ctx, d, instanceB, "serial_queue", "running",
+		[]uuid.UUID{srcB}, &nowB, 600000)
+	seedNode(t, ctx, d, instanceB, srcB, "fresh", &frameB)
+
+	// One tick: both frames end (all-fresh → completed) and each
+	// instance's terminal predicate is evaluated at frame-end.
+	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
+
+	// Both frames must have ended.
+	var stateA, stateB string
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameA}, &stateA)
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{frameB}, &stateB)
+	require.Equal(t, "completed", stateA, "instance A's frame should end")
+	require.Equal(t, "completed", stateB, "instance B's frame should end")
+
+	var termA, termB *time.Time
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`, []any{instanceA}, &termA)
+	pgtest.QueryRowForTest(ctx, t, d,
+		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`, []any{instanceB}, &termB)
+
+	require.Nil(t, termA,
+		"durable-by-default instance A must survive its own drain; terminated_at must stay NULL")
+	require.NotNil(t, termB,
+		"terminate_after_run instance B must self-terminate after its frame ends")
+}
+
 func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

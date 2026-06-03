@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // frames_retention_test.go — regression guard for the FrameTable
-// retention sweep (E10). PruneOldRunsForRetention is a standalone sweep
+// retention sweep (E10). PruneTraceForRetention is a standalone sweep
 // with no caller-supplied tx; it must run directly against the db handle.
 // A prior bug had it call s.q(nil), which trips the no-nil-tx contract and
 // panics the scheduler tick the moment retention is enabled.
@@ -16,6 +16,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -23,12 +24,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// TestPruneOldRunsForRetention_NoTxPanic asserts the run-tree retention
-// sweep does not panic with a nil-tx error when invoked the way the
-// scheduler tick invokes it (no surrounding Tables.Transaction). Run
-// against an empty DB — the method must execute its DELETE and return 0,
-// not panic on s.q(nil).
-func TestPruneOldRunsForRetention_NoTxPanic(t *testing.T) {
+// TestPruneTraceForRetention_NoTxPanic asserts the trace retention sweep
+// does not panic with a nil-tx error when invoked the way the scheduler
+// tick invokes it (no surrounding Tables.Transaction). Run against an
+// empty DB — the method must execute its DELETE and return 0, not panic
+// on s.q(nil). The zero cutoff exercises the count-only bound (no time
+// dimension).
+func TestPruneTraceForRetention_NoTxPanic(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	d, err := persistence.Open(ctx, persistence.Config{
@@ -43,11 +45,11 @@ func TestPruneOldRunsForRetention_NoTxPanic(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	n, err := d.Tables().Frames().PruneOldRunsForRetention(ctx, 2)
+	n, err := d.Tables().Frames().PruneTraceForRetention(ctx, 2, time.Time{})
 	if err != nil {
-		t.Fatalf("PruneOldRunsForRetention: %v", err)
+		t.Fatalf("PruneTraceForRetention: %v", err)
 	}
 	if n != 0 {
-		t.Fatalf("PruneOldRunsForRetention on empty DB deleted %d rows, want 0", n)
+		t.Fatalf("PruneTraceForRetention on empty DB deleted %d rows, want 0", n)
 	}
 }

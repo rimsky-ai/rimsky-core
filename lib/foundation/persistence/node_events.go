@@ -63,6 +63,22 @@ type NodeEventTable interface {
 	Insert(ctx context.Context, evt NodeEvent, tx Tx) (int64, error)
 	LatestByName(ctx context.Context, instanceID, emitterNodeID, eventName string, tx Tx) (*NodeEvent, error)
 	DeleteByInstance(ctx context.Context, instanceID string, tx Tx) (deleted int64, orphans []NodeEventOrphan, err error)
+
+	// DeleteOlderThan deletes rimsky_node_events rows whose emitted_at is
+	// before cutoff. The named-event ledger is time-keyed (its frame_id is
+	// a non-FK column), so it is reaped by the trailing trace-retention
+	// window alone — the count cap applies only to structural
+	// frame/node_run rows. Standalone sweep: no caller-supplied tx, run
+	// directly against the db handle (mirrors LineageTable.DeleteOlderThan).
+	// Returns the number of rows deleted plus the (handle, backend) pairs of
+	// any reaped row whose payload had spilled to a blob backend — the
+	// caller MUST queue those into rimsky_blob_orphans (as DeleteByInstance's
+	// caller does) or the spilled bytes leak. This is the durable-instance
+	// path: a long-lived instance's node_events age out by time while the
+	// instance is alive, so the instance-delete cascade never reclaims them.
+	//
+	// concept:named-event trace retention.
+	DeleteOlderThan(ctx context.Context, cutoff time.Time) (deleted int, orphans []NodeEventOrphan, err error)
 }
 
 // NodeEventOrphan is the (handle, backend) pair returned by

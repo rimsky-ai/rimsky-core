@@ -63,6 +63,15 @@ type InstanceRow struct {
 	//
 	// @concept: breakpoint
 	Paused bool `json:"paused"`
+	// TerminateAfterRun projects rimsky_instances.terminate_after_run — the
+	// opt-in self-termination flag set at create-time via the
+	// `terminate_after_run: true` request flag. Instances are durable by
+	// default (false); a true value means the instance self-terminates after
+	// its next frame ends (strict "run at most once more" semantics, applied
+	// by the terminal predicate). Per concept:instance.
+	//
+	// @concept: instance
+	TerminateAfterRun bool `json:"terminate_after_run"`
 	// ServiceBindings is opaque JSONB carrying the per-instance late-bound
 	// service catalog. Empty for instances that don't use late-bound services.
 	ServiceBindings json.RawMessage `json:"service_bindings,omitempty"`
@@ -156,6 +165,13 @@ type InstanceCreateInput struct {
 	//
 	// @concept: breakpoint
 	Paused bool
+	// TerminateAfterRun is the create-time opt-in self-termination flag. When
+	// true, the row is inserted with rimsky_instances.terminate_after_run =
+	// true and the instance self-terminates after its next frame ends.
+	// Defaults to false (durable by default). Per concept:instance.
+	//
+	// @concept: instance
+	TerminateAfterRun bool
 	// ServiceBindings is opaque JSONB carrying the per-instance late-bound
 	// service catalog. Empty for instances that don't use late-bound services.
 	ServiceBindings json.RawMessage

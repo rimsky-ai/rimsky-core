@@ -122,6 +122,14 @@ type createInstanceRequest struct {
 	// existing row's paused value is unchanged. Operators wanting to
 	// pause an existing instance call POST /instances/{id}/pause.
 	Paused bool `json:"paused,omitempty"`
+	// TerminateAfterRun is the create-time opt-in self-termination flag.
+	// Instances are durable by default; when true, the instance is created
+	// with rimsky_instances.terminate_after_run = true and self-terminates
+	// after its next frame ends (strict "run at most once more" semantics).
+	// Per concept:instance. Idempotent re-create (same template_hash +
+	// instance_key) ignores the flag — the existing row's value is unchanged,
+	// exactly as Paused behaves.
+	TerminateAfterRun bool `json:"terminate_after_run,omitempty"`
 	// ServiceBindings carries the per-instance late-bound service catalog.
 	// Opaque JSON; shape per spec (`{<name>: {"path": "<binary-path>"}}`).
 	ServiceBindings json.RawMessage `json:"service_bindings,omitempty"`
@@ -143,6 +151,7 @@ type instanceItem struct {
 	AttributeOverridesMatchCounts []int64        `json:"attribute_overrides_match_counts,omitempty"`
 	FrameDeliveryMode             string         `json:"frame_delivery_mode"`
 	Paused                        bool           `json:"paused"`
+	TerminateAfterRun             bool           `json:"terminate_after_run"`
 	CreatedAt                     time.Time      `json:"created_at"`
 	TerminatedAt                  *time.Time     `json:"terminated_at,omitempty"`
 	// ServiceBindings and CreatedByAPIKeyID surface the per-instance
@@ -163,6 +172,7 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 		Params:            ApplyParamsRedact(r.Params, redact),
 		FrameDeliveryMode: r.FrameDeliveryMode,
 		Paused:            r.Paused,
+		TerminateAfterRun: r.TerminateAfterRun,
 		CreatedAt:         r.CreatedAt,
 		TerminatedAt:      r.TerminatedAt,
 	}
@@ -430,6 +440,7 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				AttributeOverridesMatchCounts: initialMatchCounts,
 				FrameDeliveryMode:             deliveryMode,
 				Paused:                        body.Paused,
+				TerminateAfterRun:             body.TerminateAfterRun,
 				ServiceBindings:               body.ServiceBindings,
 				CreatedByAPIKeyID:             ident.KeyID,
 			})
@@ -1105,6 +1116,10 @@ type provisionArgs struct {
 	// Paused is the create-time hold flag. Threaded through to the
 	// persistence layer's InstanceCreateInput.Paused. Per concept:breakpoint.
 	Paused bool
+	// TerminateAfterRun is the create-time opt-in self-termination flag.
+	// Threaded through to InstanceCreateInput.TerminateAfterRun. Per
+	// concept:instance.
+	TerminateAfterRun bool
 	// ServiceBindings is the per-instance late-bound service catalog
 	// (opaque JSON), threaded verbatim onto InstanceCreateInput.ServiceBindings.
 	ServiceBindings json.RawMessage
@@ -1170,6 +1185,7 @@ func provisionInstanceTx(
 		FrameDeliveryMode:             args.FrameDeliveryMode,
 		MainRunScopeID:                mainRunScopeID,
 		Paused:                        args.Paused,
+		TerminateAfterRun:             args.TerminateAfterRun,
 		ServiceBindings:               args.ServiceBindings,
 		CreatedByAPIKeyID:             args.CreatedByAPIKeyID,
 	}, tx)

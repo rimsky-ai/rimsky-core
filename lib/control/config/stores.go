@@ -53,6 +53,7 @@ import (
 // claim-handle / message-idempotency rows out of the box.
 const (
 	defaultRetentionRecentFramesKept             = 100
+	defaultRetentionTraceTrailing                = 30 * 24 * time.Hour
 	defaultRetentionLineageTrailing              = 30 * 24 * time.Hour
 	defaultRetentionClaimHandlesTrailing         = 30 * 24 * time.Hour
 	defaultRetentionMessageIdempotenciesTrailing = 24 * time.Hour
@@ -64,6 +65,7 @@ const (
 // runtime.RetentionConfig.
 type yamlRetention struct {
 	RecentFramesKept             *int           `yaml:"recent_frames_kept"`
+	TraceTrailing                *time.Duration `yaml:"trace_trailing"`
 	LineageTrailing              *time.Duration `yaml:"lineage_trailing"`
 	ClaimHandlesTrailing         *time.Duration `yaml:"claim_handles_trailing"`
 	MessageIdempotenciesTrailing *time.Duration `yaml:"message_idempotencies_trailing"`
@@ -515,6 +517,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 func parseRetention(in *yamlRetention) (runtime.RetentionConfig, error) {
 	out := runtime.RetentionConfig{
 		RecentFramesKept:             defaultRetentionRecentFramesKept,
+		TraceTrailing:                defaultRetentionTraceTrailing,
 		LineageTrailing:              defaultRetentionLineageTrailing,
 		ClaimHandlesTrailing:         defaultRetentionClaimHandlesTrailing,
 		MessageIdempotenciesTrailing: defaultRetentionMessageIdempotenciesTrailing,
@@ -527,6 +530,12 @@ func parseRetention(in *yamlRetention) (runtime.RetentionConfig, error) {
 			return runtime.RetentionConfig{}, fmt.Errorf("retention.recent_frames_kept must be non-negative")
 		}
 		out.RecentFramesKept = *in.RecentFramesKept
+	}
+	if in.TraceTrailing != nil {
+		if *in.TraceTrailing < 0 {
+			return runtime.RetentionConfig{}, fmt.Errorf("retention.trace_trailing must be non-negative")
+		}
+		out.TraceTrailing = *in.TraceTrailing
 	}
 	if in.LineageTrailing != nil {
 		if *in.LineageTrailing < 0 {

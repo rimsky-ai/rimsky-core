@@ -39,6 +39,10 @@ func (f *fakeEvents) LastTerminalByNodes(_ context.Context, _ []shared.UUID, _ p
 	return nil, nil
 }
 
+func (f *fakeEvents) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) {
+	return 0, nil
+}
+
 func TestEmitSignal_WritesCanonicalRow(t *testing.T) {
 	events := &fakeEvents{}
 	instanceID := uuid.New()

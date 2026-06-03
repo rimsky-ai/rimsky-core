@@ -1,0 +1,217 @@
+// Copyright © 2026 Fall Guy Consulting.
+// Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
+// license. See LICENSE.agpl and COPYRIGHT at the repo root.
+
+// retention_sweeps_test.go — focused gate for SweepRunTreeRetention's
+// trace_trailing-only path: a retention config with ONLY the trailing
+// time window set (no count cap) must still reap. This is the
+// "either retention dimension alone reaps" property — the internal
+// early-return guard must not require RecentFramesKept, and the sweep
+// must drive all three deletes (frames+cascade, audit events, named
+// events) off the computed cutoff.
+//
+// The sqlite driver is imported in this _test.go only; no import cycle —
+// the sqlite driver does not import lib/runtime.
+
+package runtime_test
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+)
+
+// TestSweepRunTreeRetention_TraceTrailingOnly seeds old + recent terminal
+// frames (each with a node_run) and old + recent audit/named event rows,
+// then calls SweepRunTreeRetention with ONLY TraceTrailing set (no count
+// cap). It asserts the old frames/node_runs/events are reaped and the
+// recent ones survive. Against the un-fixed guard (which returned early
+// unless RecentFramesKept > 0) the sweep reaps nothing and the "old gone"
+// assertions fail; with the guard fixed (either dimension reaps) and the
+// cutoff plumbed through, it passes.
+func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver: "sqlite",
+		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "state.db")},
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	tables := d.Tables()
+	rawDB := sqlitedrv.DBFromDatabase(d)
+
+	// --- Seed template → instance → run_scope ----------------------------
+	templateID := "sha256-" + uuid.NewString()
+	instanceID := uuid.New().String()
+	scopeID := uuid.New().String()
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_templates (id, spec, state, source) VALUES (?, '{}', 'registered', 'direct')`,
+		templateID,
+	); err != nil {
+		t.Fatalf("seed template: %v", err)
+	}
+	stx, err := rawDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = stx.Rollback() }()
+	if _, err := stx.ExecContext(ctx,
+		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id) VALUES (?, ?, ?)`,
+		instanceID, templateID, scopeID,
+	); err != nil {
+		t.Fatalf("seed instance: %v", err)
+	}
+	if _, err := stx.ExecContext(ctx,
+		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id) VALUES (?, 'main', '', ?)`,
+		scopeID, instanceID,
+	); err != nil {
+		t.Fatalf("seed run_scope: %v", err)
+	}
+	if err := stx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	now := time.Now().UTC()
+	oldTime := now.Add(-24 * time.Hour)
+	rfc := func(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+
+	seedTerminalFrame := func(endedAt time.Time) (string, string) {
+		frameID := uuid.New().String()
+		nodeID := uuid.New().String()
+		runID := uuid.New().String()
+		if _, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_frames
+			   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+			    queued_at, started_at, ended_at, frame_timeout_ms)
+			 VALUES (?, ?, 'serial_queue', 'completed', '[]', ?, ?, ?, 600000)`,
+			frameID, instanceID, rfc(endedAt), rfc(endedAt), rfc(endedAt),
+		); err != nil {
+			t.Fatalf("seed frame: %v", err)
+		}
+		if _, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id) VALUES (?, ?, 'fixture', ?)`,
+			nodeID, instanceID, frameID,
+		); err != nil {
+			t.Fatalf("seed node: %v", err)
+		}
+		if _, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_node_runs
+			   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+			 VALUES (?, ?, 'stub', '[]', ?, 'completed', 'failed', ?, ?)`,
+			runID, nodeID, rfc(endedAt), frameID, scopeID,
+		); err != nil {
+			t.Fatalf("seed node_run: %v", err)
+		}
+		return frameID, runID
+	}
+	oldFrame, oldRun := seedTerminalFrame(oldTime)
+	recentFrame, recentRun := seedTerminalFrame(now.Add(-time.Minute))
+
+	// Audit + named events, old and recent.
+	insertEvent := func(when time.Time) int64 {
+		res, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_events (instance_id, kind, payload, occurred_at) VALUES (?, 'work_started', '{}', ?)`,
+			instanceID, rfc(when),
+		)
+		if err != nil {
+			t.Fatalf("seed event: %v", err)
+		}
+		id, _ := res.LastInsertId()
+		return id
+	}
+	oldEventID := insertEvent(oldTime)
+	recentEventID := insertEvent(now.Add(-time.Minute))
+
+	insertNodeEvent := func(when time.Time) int64 {
+		res, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_node_events (instance_id, emitter_node_id, event_name, emitted_at) VALUES (?, ?, 'progress', ?)`,
+			instanceID, uuid.New().String(), rfc(when),
+		)
+		if err != nil {
+			t.Fatalf("seed node_event: %v", err)
+		}
+		id, _ := res.LastInsertId()
+		return id
+	}
+	oldNodeEventID := insertNodeEvent(oldTime)
+	recentNodeEventID := insertNodeEvent(now.Add(-time.Minute))
+
+	// An old named event whose payload spilled to a backend. The sweep must
+	// queue its (handle, backend) into rimsky_blob_orphans when it reaps the
+	// row — otherwise the spilled bytes leak (a durable instance never hits
+	// the instance-delete cascade that would otherwise reclaim them).
+	const spilledHandle = "blob-handle-sweep"
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_node_events
+		   (instance_id, emitter_node_id, event_name, payload_handle, payload_handle_backend, emitted_at)
+		 VALUES (?, ?, 'progress', ?, 'filesystem', ?)`,
+		instanceID, uuid.New().String(), spilledHandle, rfc(oldTime),
+	); err != nil {
+		t.Fatalf("seed spilled node_event: %v", err)
+	}
+
+	// --- Sweep with ONLY TraceTrailing set (RecentFramesKept unset) ------
+	// A 1h window puts the cutoff between the old rows (-24h) and the
+	// recent rows (-1m). With RecentFramesKept defaulting to 0, only the
+	// time dimension drives the reap.
+	if _, err := runtime.SweepRunTreeRetention(
+		ctx, runtime.RetentionConfig{TraceTrailing: time.Hour},
+		tables, now, shared.SilentLogger{},
+	); err != nil {
+		t.Fatalf("SweepRunTreeRetention: %v", err)
+	}
+
+	count := func(table, col string, val any) int {
+		var n int
+		if err := rawDB.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM "+table+" WHERE "+col+" = ?", val,
+		).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		return n
+	}
+
+	if count("rimsky_frames", "frame_id", oldFrame) != 0 {
+		t.Errorf("old terminal frame should be reaped by the trailing window")
+	}
+	if count("rimsky_node_runs", "id", oldRun) != 0 {
+		t.Errorf("old frame's node_run should be cascade-deleted")
+	}
+	if count("rimsky_frames", "frame_id", recentFrame) != 1 {
+		t.Errorf("recent terminal frame must survive")
+	}
+	if count("rimsky_node_runs", "id", recentRun) != 1 {
+		t.Errorf("recent frame's node_run must survive")
+	}
+	if count("rimsky_events", "id", oldEventID) != 0 {
+		t.Errorf("old audit event should be reaped by the trailing window")
+	}
+	if count("rimsky_events", "id", recentEventID) != 1 {
+		t.Errorf("recent audit event must survive")
+	}
+	if count("rimsky_node_events", "id", oldNodeEventID) != 0 {
+		t.Errorf("old named event should be reaped by the trailing window")
+	}
+	if count("rimsky_node_events", "id", recentNodeEventID) != 1 {
+		t.Errorf("recent named event must survive")
+	}
+	if count("rimsky_blob_orphans", "handle", spilledHandle) != 1 {
+		t.Errorf("the reaped spilled named-event's blob handle %q must be queued into "+
+			"rimsky_blob_orphans by the sweep; otherwise SweepOrphanedBlobs never reaps it and the "+
+			"bytes leak", spilledHandle)
+	}
+}

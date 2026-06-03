@@ -234,85 +234,28 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 // and proto3 dropped the unspecified zero value at the wire layer.
 // The "reject unspecified" runtime test is no longer expressible.
 
-// TestParkedLifecycleIntraGraphInvalidateAgainstParked covers E6 case (g).
-// Node A parks; later, an upstream cascade walk visits A and must
-// transition A parked → stale via `wakeParkedReceiverInTx` (in
-// `runtime/wake_parked.go`) rather than leaving A stranded.
+// TestParkedLifecycleIntraGraphInvalidateAgainstParked (E6 case (g))
+// retired per spec
+// .ok-planner/specs/2026-06-03-instance-lifecycle-durable-by-default-design.md.
 //
-// Post-2026-05-14 the cascade walk wakes parked receivers in the same
-// tx as the regular MarkStaleForCascade + wait-set insert; without
-// that wiring, A would stay parked indefinitely (the original wake
-// path required an explicit operator invalidate or deadline-elapsed
-// sweep).
-//
-// Graph shape: B is a root; A subscribes to B's state with `frame:
-// next` so A is a sibling root in the initial frame and an event-
-// driven receiver in the next frame. A parks in its initial run; the
-// follow-up invalidate of B fires the cascade walk over A's
-// subscription edge, hitting the parked-state path.
-func TestParkedLifecycleIntraGraphInvalidateAgainstParked(t *testing.T) {
-	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
-
-	// A parks indefinitely on first dispatch. B emits the "ready"
-	// event then completes successfully (the event is incidental;
-	// the cascade walk fires on B's state transition).
-	h.Stub.WhenType("a").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "await_signal", nil, time.Time{}, "session-A")
-	h.Stub.WhenType("b").EmitNamedEvent("ready", []byte(`{"go":true}`)).
-		Success(map[string]any{}, true, "b-done")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "parked-intra-invalidate", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		Nodes: []node.TemplateNodeDef{
-			// A: declares `frame: next` on its subscription to B. With
-			// `frame: next`, A is treated as a root for the initial
-			// frame (it dispatches alongside B) and only re-fires in a
-			// subsequent frame when B re-settles. This lets A park on
-			// initial dispatch while still having a subscription edge
-			// that the cascade walk can traverse later.
-			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "b", Type: "terminal/*", Frame: "next",
-				})),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"}),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-park-intra", map[string]any{})
-	a := h.FindNode(iid, "a")
-	b := h.FindNode(iid, "b")
-	require.NotNil(t, a)
-	require.NotNil(t, b)
-
-	// Wait for A to park (initial run).
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateParked, 30*time.Second),
-		"a should reach parked")
-	// Wait for B to complete its initial run.
-	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
-		"b should complete its initial run")
-
-	// Reschedule A's stub so its eventual resume produces a clean
-	// terminal.
-	h.Stub.WhenType("a").Success(map[string]any{}, true, "a-resumed")
-	// Reschedule B so its invalidate-then-settle below uses a clean
-	// script.
-	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-redo")
-
-	// Invalidate B. A subscribes to B (`frame: next`); the cascade
-	// walk at B's invalidation opens a new frame for A. But A is
-	// parked, so the walk must run wakeParkedReceiverInTx to
-	// transition A parked → stale + emit `parked_resume_started`.
-	resp, err := http.Post(h.ControlBase+"/nodes/"+b.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	_ = resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	require.True(t, h.WaitForEventKind(a.ID, "parked_resume_started", 30*time.Second),
-		"cascade-walk wake should have transitioned A parked → stale and emitted parked_resume_started")
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
-		"a should reach fresh after the cascade-driven resume")
-}
+// The case exercised the intra-graph cascade wake of a parked receiver
+// (wakeParkedReceiverInTx, resume_reason=cascade_wake) end to end by
+// re-invalidating an already-settled upstream B so the new frame's
+// settlement cascade would wake parked A. That only ever passed because
+// of the frame-end defect this spec fixes: pre-fix, a parked node_run did
+// NOT hold its frame open, so A's initial frame drained to `completed`
+// while A sat parked, freeing the serial queue to start the re-
+// invalidate's new frame. With the fix (a parked node_run holds its frame
+// open), A's frame stays running, so under serial-queue resolution the
+// re-invalidate's new frame cannot start ahead of it — and there is no
+// supported user operation that wakes a parked node by re-invalidating an
+// upstream: a user invalidate only ever creates (or coalesces into) a
+// frame, never re-fires a node inside an already-open frame. The
+// supported parked-wake paths remain covered — deadline (case (a)),
+// external admin invalidate (case (b)), and the durable-by-default gate
+// in parked_holds_frame_e2e_test.go — and the wakeParkedReceiverInTx
+// primitive stays covered by the runtime unit test
+// runtime/hard_dep_cascade_test.go::TestPullHardDepUpstreams_WakesParkedUpstream.
 
 // TestParkedLifecycleHeldClaimRetentionAcrossPark covers E6 case (e).
 // A node holds a claim, parks, then resumes. The claim handle row in

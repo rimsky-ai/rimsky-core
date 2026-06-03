@@ -302,6 +302,25 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 	return out, nil
 }
 
+// DeleteOlderThan deletes rimsky_events rows whose occurred_at is before
+// cutoff. The audit log is time-keyed (no frame FK), so the trailing
+// trace-retention window alone bounds it. Standalone sweep — no
+// caller-supplied tx; run directly against the db handle (mirroring
+// Lineage.DeleteOlderThan) so the scheduler tick can call it without a
+// surrounding Tables.Transaction.
+func (s *eventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
+	res, err := (*tablesImpl)(s).db.ExecContext(ctx,
+		`DELETE FROM rimsky_events WHERE occurred_at < ?`, formatTime(cutoff))
+	if err != nil {
+		return 0, fmt.Errorf("sqlite.Events.DeleteOlderThan: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // ---- cursor encoding ----
 
 type eventCursor struct {
