@@ -125,6 +125,17 @@ export interface CliResumeRequest {
   sessionId: string;
   prompt: string;
   tools: CliToolConfig[];
+  /**
+   * Per-template + host-server allow list, mirroring
+   * {@link CliSpawnRequest.allowedTools}. `--allowedTools` is process-local
+   * invocation config (NOT restored from session state by `--resume`), so a
+   * resumed dispatch that wants to reach host validator MCP servers must
+   * re-emit their tool names here — otherwise Claude Code's deferred-MCP
+   * permission gate blocks the very calls the resume exists to make. The
+   * required `rimsky-callback` tools are always folded in by
+   * {@link buildAllowedTools} regardless of this value.
+   */
+  allowedTools?: string[];
   env: Record<string, string>;
   cwd?: string;
 }
@@ -281,9 +292,12 @@ export function buildClaudeCliResumeArgs(
     // allowlisted here too — otherwise the deferred-MCP permission gate
     // blocks the very call we resumed to make. `--allowedTools` is NOT
     // restored from session state (it is process-local invocation config,
-    // like --mcp-config), so it must be re-emitted on every resume.
+    // like --mcp-config), so it must be re-emitted on every resume. Any
+    // host-server allow entries threaded in via `req.allowedTools` are
+    // unioned on top so a resumed dispatch can still reach the host
+    // validator MCP servers.
     "--allowedTools",
-    buildAllowedTools().join(" "),
+    buildAllowedTools(req.allowedTools).join(" "),
     "--mcp-config",
     paths.mcpConfigPath,
     "-p",

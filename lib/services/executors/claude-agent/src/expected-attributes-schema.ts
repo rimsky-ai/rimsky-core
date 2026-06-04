@@ -65,8 +65,12 @@ export const expectedAttributesSchema = {
         add_dirs: { type: "array", items: { type: "string" } },
         max_budget_usd: { type: "string" },
         permission_mode: {
+          // Real Claude CLI `--permission-mode` values. `bypassPermissions`
+          // is the executor's own default (cli-runner.ts). The prior
+          // ["default","ask","deny"] set was wrong: it rejected the
+          // executor's default and omitted every other real mode.
           type: "string",
-          enum: ["default", "ask", "deny"],
+          enum: ["default", "acceptEdits", "bypassPermissions", "plan"],
         },
         max_schema_corrections: {
           type: "integer",
@@ -76,6 +80,51 @@ export const expectedAttributesSchema = {
         handle_rate_limits: {
           type: "boolean",
           default: true,
+        },
+        // Sign-off gate (parsed by parseCliConfig as mcpServers /
+        // requiredSignoffs / maxSignoffAttempts). Host-wired validator
+        // MCP servers and the required (public_key, path) signature
+        // pairs. Kept in lock-step with the parser per the comment above.
+        mcp_servers: {
+          type: "array",
+          items: {
+            type: "object",
+            // name + url are mandatory and non-empty: a present-but-
+            // malformed host-server entry must be rejected by rimsky at
+            // registration/dispatch, not silently dropped (which would
+            // unwire a validator the host intended the agent to reach).
+            required: ["name", "url"],
+            properties: {
+              name: { type: "string", minLength: 1 },
+              url: { type: "string", minLength: 1 },
+              headers: {
+                type: "object",
+                additionalProperties: { type: "string" },
+              },
+              allowed_tools: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+        required_signoffs: {
+          type: "array",
+          items: {
+            type: "object",
+            // public_key is mandatory and non-empty: a present-but-
+            // malformed sign-off entry is a misconfigured security gate.
+            // Rejecting it here (and erroring in the parser) prevents the
+            // gate from silently disabling itself — a load-bearing safety
+            // property. A dropped entry would weaken enforcement.
+            required: ["public_key"],
+            properties: {
+              public_key: { type: "string", minLength: 1 },
+              path: { type: "string" },
+            },
+          },
+        },
+        max_signoff_attempts: {
+          type: "integer",
+          minimum: 0,
+          default: 3,
         },
       },
     },
@@ -132,6 +181,7 @@ export const declaredErrorClasses: string[] = [
   "agent/context_exceeded",
   "agent/tool_use_failed/*",
   "agent/refused",
+  "agent/signoff_unobtained",
 ];
 
 /**

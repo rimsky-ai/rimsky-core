@@ -14,7 +14,8 @@ import {
   startInternalMcpServer,
   type CallbackServerHandle,
 } from "./internal-mcp-server.js";
-import type { CliHandle, CliRunner } from "./cli-runner.js";
+import type { CliHandle, CliRunner, CliSpawnRequest } from "./cli-runner.js";
+import { makeTestSigner } from "./signoff-test-signer.js";
 
 const logger = pino({ level: "silent" });
 
@@ -453,6 +454,295 @@ describe("runAgent in stub mode", () => {
       expect(outcome.attributesDelta).toEqual({ stub: true });
       expect(outcome.changed).toBe(true);
       expect(outcome.changeSummary).toBe("stub");
+    }
+  });
+});
+
+// onComplete-layer coverage for the sign-off gate. These drive `runAgent`
+// with a fake CLI whose handle connects a REAL MCP client to the per-dispatch
+// rimsky-callback server and issues a terminal report (report_complete or
+// report_error). The gate runs inside `onComplete`; the assertion is the
+// resolved AgentOutcome. The fake handle stays alive until teardown
+// (sendSigterm) drives its exit, mirroring a real subprocess that lingers
+// until the executor's terminal teardown after the report lands — this avoids
+// racing the deferred terminal resolution.
+describe("runAgent sign-off gate (onComplete layer)", () => {
+  // Build a fake CLI whose handle dials the per-dispatch MCP and calls a tool.
+  // `drive(url, token)` performs the MCP round-trip; the handle resolves exit
+  // only when teardown sends SIGTERM (controlled-handle pattern from the #11
+  // resume test) so the deferred terminal `safeResolve` wins the race.
+  function makeDrivingCli(
+    drive: (url: string, token: string) => Promise<void>,
+  ): CliRunner {
+    return {
+      spawn: async (req: CliSpawnRequest) => {
+        const exitWaiters: Array<
+          (r: { exitCode: number | null; signal: NodeJS.Signals | null }) => void
+        > = [];
+        let exited = false;
+        const resolveExit = (): void => {
+          if (exited) return;
+          exited = true;
+          for (const w of exitWaiters) w({ exitCode: 0, signal: null });
+        };
+        const url = req.env.RIMSKY_CALLBACK_URL;
+        const token = req.env.RIMSKY_CALLBACK_TOKEN;
+        // Drive the MCP round-trip on the next tick so runAgent has wired the
+        // handle (handleRef) before teardown can fire.
+        setTimeout(() => {
+          void drive(url, token).catch(() => resolveExit());
+        }, 0);
+        return {
+          pid: 7777,
+          onStdout: () => {},
+          onStderr: () => {},
+          onExit: () => {},
+          sendSigterm: () => resolveExit(),
+          sendSigkill: () => resolveExit(),
+          waitExit: () =>
+            exited
+              ? Promise.resolve({ exitCode: 0, signal: null })
+              : new Promise((resolve) => exitWaiters.push(resolve)),
+        };
+      },
+    };
+  }
+
+  // report_complete with the given args, re-calling until the gate stops
+  // rejecting (accept, or budget-exhausted commit). A hard cap guards against
+  // an infinite loop. The CLI does NOT self-exit; teardown drives exit.
+  function completeDriver(
+    buildArgs: () => Record<string, unknown>,
+  ): (url: string, token: string) => Promise<void> {
+    return async (url, token) => {
+      const transport = new StreamableHTTPClientTransport(new URL(url));
+      const client = new Client({
+        name: "rimsky-signoff-unit-cli",
+        version: "1.0.0",
+      });
+      try {
+        await client.connect(transport);
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const res = await client.callTool({
+            name: "report_complete",
+            arguments: { token, ...buildArgs() },
+          });
+          const arr = res.content as Array<{ text?: string }>;
+          const status = JSON.parse(arr[0]!.text ?? "null") as {
+            status: string;
+          };
+          if (status.status !== "rejected") break;
+        }
+      } finally {
+        await client.close().catch(() => {});
+      }
+    };
+  }
+
+  const ENDPOINTS = [{ url: "x" }];
+  const DELTA = { endpoints: ENDPOINTS };
+
+  let signer: ReturnType<typeof makeTestSigner>;
+
+  beforeEach(() => {
+    delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
+    signer = makeTestSigner();
+  });
+
+  it("(a) missing signature ⇒ rejected then errored agent/signoff_unobtained after exhaustion", async () => {
+    const cli = makeDrivingCli(
+      completeDriver(() => ({ changed: true, attributes_delta: DELTA })),
+    );
+    const outcome = await runAgent({
+      runId: "gate-a-run",
+      nodeId: "n-a",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "sys",
+      userPrompt: "u",
+      attributesSchema: {},
+      attributes: {},
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: cli,
+      callback: undefined as never,
+      silenceTimeoutMs: 60_000,
+      logger,
+      dispatchId: "gate-a-run",
+      cliConfig: {
+        requiredSignoffs: [{ publicKey: signer.publicKeyPem, path: "endpoints" }],
+        maxSignoffAttempts: 1,
+      },
+    });
+    expect(outcome.kind).toBe("errored");
+    if (outcome.kind === "errored") {
+      expect(outcome.errorClass).toBe("agent/signoff_unobtained");
+    }
+  });
+
+  it("(b) valid signature ⇒ complete", async () => {
+    const cli = makeDrivingCli(
+      completeDriver(() => ({
+        changed: true,
+        attributes_delta: DELTA,
+        signoffs: [signer.sign("gate-b-run", ENDPOINTS)],
+      })),
+    );
+    const outcome = await runAgent({
+      runId: "gate-b-run",
+      nodeId: "n-b",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "sys",
+      userPrompt: "u",
+      attributesSchema: {},
+      attributes: {},
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: cli,
+      callback: undefined as never,
+      silenceTimeoutMs: 60_000,
+      logger,
+      dispatchId: "gate-b-run",
+      cliConfig: {
+        requiredSignoffs: [{ publicKey: signer.publicKeyPem, path: "endpoints" }],
+        maxSignoffAttempts: 1,
+      },
+    });
+    expect(outcome.kind).toBe("complete");
+    if (outcome.kind === "complete") {
+      expect(outcome.attributesDelta).toEqual(DELTA);
+    }
+  });
+
+  it("(c) required_signoffs set but dispatchId empty ⇒ errored agent/signoff_unobtained", async () => {
+    // Even a VALID signature cannot rescue an empty dispatch_id — the binding
+    // id is empty, so the gate refuses to verify and treats it as a usage
+    // error rather than letting (un-bindable) output through.
+    const cli = makeDrivingCli(
+      completeDriver(() => ({
+        changed: true,
+        attributes_delta: DELTA,
+        signoffs: [signer.sign("", ENDPOINTS)],
+      })),
+    );
+    const outcome = await runAgent({
+      runId: "gate-c-run", // runId is set; dispatchId is the empty one
+      nodeId: "n-c",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "sys",
+      userPrompt: "u",
+      attributesSchema: {},
+      attributes: {},
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: cli,
+      callback: undefined as never,
+      silenceTimeoutMs: 60_000,
+      logger,
+      dispatchId: "",
+      cliConfig: {
+        requiredSignoffs: [{ publicKey: signer.publicKeyPem, path: "endpoints" }],
+        maxSignoffAttempts: 1,
+      },
+    });
+    expect(outcome.kind).toBe("errored");
+    if (outcome.kind === "errored") {
+      expect(outcome.errorClass).toBe("agent/signoff_unobtained");
+      const payload = outcome.payload as { error?: string };
+      expect(payload.error).toMatch(/dispatch_id required/);
+    }
+  });
+
+  it("(d) anti-tamper: a cli.required_signoffs override in attributes_delta is ignored", async () => {
+    // The agent tries to disable its own gate by putting an empty
+    // `cli.required_signoffs` inside the delta. The gate reads the gate from
+    // DISPATCH-TIME cliConfig, not from the delta, so the otherwise-unsigned
+    // delta is still rejected and the run errors.
+    const tamperDelta = {
+      endpoints: ENDPOINTS,
+      cli: { required_signoffs: [] },
+    };
+    const cli = makeDrivingCli(
+      completeDriver(() => ({ changed: true, attributes_delta: tamperDelta })),
+    );
+    const outcome = await runAgent({
+      runId: "gate-d-run",
+      nodeId: "n-d",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "sys",
+      userPrompt: "u",
+      attributesSchema: {},
+      attributes: {},
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: cli,
+      callback: undefined as never,
+      silenceTimeoutMs: 60_000,
+      logger,
+      dispatchId: "gate-d-run",
+      cliConfig: {
+        requiredSignoffs: [{ publicKey: signer.publicKeyPem, path: "endpoints" }],
+        maxSignoffAttempts: 1,
+      },
+    });
+    expect(outcome.kind).toBe("errored");
+    if (outcome.kind === "errored") {
+      expect(outcome.errorClass).toBe("agent/signoff_unobtained");
+    }
+  });
+
+  it("(e) gate guards success only: report_error still terminal-errors with its own class", async () => {
+    // With the gate configured, an honest report_error is NOT gated — it
+    // resolves a terminal errored outcome carrying the agent-supplied class,
+    // never agent/signoff_unobtained.
+    const errorDriver = async (url: string, token: string): Promise<void> => {
+      const transport = new StreamableHTTPClientTransport(new URL(url));
+      const client = new Client({
+        name: "rimsky-signoff-unit-cli-err",
+        version: "1.0.0",
+      });
+      try {
+        await client.connect(transport);
+        await client.callTool({
+          name: "report_error",
+          arguments: {
+            token,
+            error_class: "agent/validator_rejected",
+            payload: { reason: "validator said no" },
+          },
+        });
+      } finally {
+        await client.close().catch(() => {});
+      }
+    };
+    const cli = makeDrivingCli(errorDriver);
+    const outcome = await runAgent({
+      runId: "gate-e-run",
+      nodeId: "n-e",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "sys",
+      userPrompt: "u",
+      attributesSchema: {},
+      attributes: {},
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: cli,
+      callback: undefined as never,
+      silenceTimeoutMs: 60_000,
+      logger,
+      dispatchId: "gate-e-run",
+      cliConfig: {
+        requiredSignoffs: [{ publicKey: signer.publicKeyPem, path: "endpoints" }],
+        maxSignoffAttempts: 1,
+      },
+    });
+    expect(outcome.kind).toBe("errored");
+    if (outcome.kind === "errored") {
+      expect(outcome.errorClass).toBe("agent/validator_rejected");
     }
   });
 });

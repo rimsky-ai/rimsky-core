@@ -85,6 +85,104 @@ describe("HTTP bridge stub-mode /execute", () => {
   });
 });
 
+// A present-but-malformed cli.required_signoffs (a host typo'd / forgot the
+// public_key) must NOT silently degrade to an ungated run. It must terminal-
+// ERROR with agent/attribute_invalid — the same fail-loud failure mode as the
+// empty-dispatch_id gate path in agent-run.ts — and never resolve to success.
+// parseCliConfig throws a CliConfigError in runAndCallback BEFORE runAgent is
+// invoked, so the malformed gate config cannot reach terminal success even in
+// stub mode (which would otherwise resolve a stub `success`).
+describe("HTTP bridge /execute rejects a malformed sign-off gate config (no silent ungating)", () => {
+  let cb: CallbackServerHandle;
+  let bridge: RunningHttpBridge;
+  const fakeCli: CliRunner = {
+    spawn: async () => {
+      throw new Error("spawn must not be reached when cli config is malformed");
+    },
+  };
+  const posts: Array<{ url: string; body: unknown }> = [];
+
+  beforeEach(async () => {
+    process.env.RIMSKY_EXECUTOR_STUB_MODE = "1";
+    posts.length = 0;
+    cb = await startInternalMcpServer({ logger });
+    bridge = await startHttpBridge({
+      host: "127.0.0.1",
+      port: 0,
+      callback: cb,
+      cliRunner: fakeCli,
+      silenceTimeoutMs: 5000,
+      logger,
+      postCallback: async (url, body) => {
+        posts.push({ url, body });
+      },
+    });
+  });
+
+  afterEach(async () => {
+    delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
+    await bridge.shutdown();
+    await cb.close();
+  });
+
+  it("POSTs a terminal agent/attribute_invalid error (not success) when a required_signoffs entry omits public_key", async () => {
+    const res = await fetch(`${bridge.address}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        node_id: "n-gate",
+        node_type: "stub-agent",
+        dispatch_id: "d-gate",
+        attributes: {
+          model: "sonnet",
+          // Host forgot/typo'd public_key — only `path` present. Silently
+          // dropping this entry would yield an empty (⇒ no) gate and let
+          // unsigned output through; the parser must reject it instead.
+          cli: { required_signoffs: [{ path: "endpoints" }] },
+        },
+        attributes_schema: {},
+        callback_url: "http://supervisor.invalid/cb",
+      }),
+    });
+    // The /execute handler still acks immediately (async handoff); the
+    // terminal verdict rides the callback POST.
+    expect(res.status).toBe(202);
+
+    await waitFor(() => posts.length > 0, 2000);
+    expect(posts).toHaveLength(1);
+    const body = posts[0]!.body as Record<string, unknown>;
+    // The dispatch must NOT have reached terminal success.
+    expect(body.success).toBeUndefined();
+    expect(body.error).toBeDefined();
+    const error = body.error as { error_class: string };
+    expect(error.error_class).toBe("agent/attribute_invalid");
+  });
+
+  it("still resolves to success when the gate config is well-formed (control)", async () => {
+    const res = await fetch(`${bridge.address}/execute`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        node_id: "n-ok",
+        node_type: "stub-agent",
+        dispatch_id: "d-ok",
+        attributes: {
+          model: "sonnet",
+          cli: { required_signoffs: [{ public_key: "PEM", path: "endpoints" }] },
+        },
+        attributes_schema: {},
+        callback_url: "http://supervisor.invalid/cb",
+      }),
+    });
+    expect(res.status).toBe(202);
+    await waitFor(() => posts.length > 0, 2000);
+    const body = posts[0]!.body as Record<string, unknown>;
+    // A well-formed gate config parses cleanly — stub run reaches success
+    // (the gate itself only enforces inside onComplete, not parsed here).
+    expect(body.success).toBeDefined();
+  });
+});
+
 async function waitFor(
   fn: () => boolean,
   timeoutMs: number,

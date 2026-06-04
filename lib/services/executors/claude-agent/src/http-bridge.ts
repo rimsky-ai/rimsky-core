@@ -16,6 +16,7 @@ import { defaultPostCallback } from "./server.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
 import type { Observability } from "./observability.js";
 import { mountObservability } from "./observability.js";
+import { CliConfigError, isCliConfigError } from "./cli-config-error.js";
 
 /**
  * HTTP+JSON bridge. Callers that can't speak gRPC POST to `/execute` with an
@@ -194,6 +195,10 @@ async function runAndCallback(
       cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
       cwdOverride: stringOrUndefined(attributes.cwd),
       cliConfig: parseCliConfig(attributes.cli),
+      // Raw dispatch_id (not runId): the sign-off gate binds to and
+      // enforces non-emptiness on this, distinct from the UUID-fallback
+      // runId above.
+      dispatchId: body.dispatch_id ?? "",
       callbackUrl: body.callback_url ?? "",
       cancelToken: body.cancel_token ?? "",
       cliRunner,
@@ -223,12 +228,21 @@ async function runAndCallback(
       logger.warn({ outcome: outcome.kind }, "no callback_url; outcome dropped");
     }
   } catch (e) {
-    logger.error({ error: String(e) }, "agent run failed unexpectedly");
+    // A CliConfigError means a present-but-malformed cli.* config (e.g. a
+    // required_signoffs entry missing public_key) — a host configuration
+    // error, not an executor fault. Surface it as the declared
+    // `agent/attribute_invalid` class so a misconfigured sign-off gate
+    // fails LOUDLY (same fail-loud mode as the empty-dispatch_id path in
+    // agent-run.ts) instead of silently degrading to an ungated run.
+    const errorClass = isCliConfigError(e)
+      ? e.errorClass
+      : "agent/internal_error";
+    logger.error({ error: String(e), error_class: errorClass }, "agent run failed");
     if (config.observability) {
       config.observability.recordEvent(traceId, {
         category: "error",
         severity: "ERROR",
-        attributes: { error: String(e) },
+        attributes: { error: String(e), error_class: errorClass },
       });
       config.observability.markComplete(traceId);
     }
@@ -241,7 +255,7 @@ async function runAndCallback(
         {
           async_ack_id: ackId,
           error: {
-            error_class: "agent/internal_error",
+            error_class: errorClass,
             payload: { error: String(e) },
           },
         },
@@ -451,7 +465,7 @@ function stringArrayOrUndefined(v: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-function parseCliConfig(v: unknown): {
+export function parseCliConfig(v: unknown): {
   bare?: boolean;
   permissionMode?: string;
   allowedTools?: string[];
@@ -460,6 +474,14 @@ function parseCliConfig(v: unknown): {
   maxBudgetUsd?: string;
   handleRateLimits?: boolean;
   maxSchemaCorrections?: number;
+  mcpServers?: {
+    name: string;
+    url: string;
+    headers?: Record<string, string>;
+    allowedTools?: string[];
+  }[];
+  requiredSignoffs?: { publicKey: string; path?: string }[];
+  maxSignoffAttempts?: number;
 } | undefined {
   const cli = toRecord(v);
   if (Object.keys(cli).length === 0) return undefined;
@@ -480,7 +502,108 @@ function parseCliConfig(v: unknown): {
   if (hr !== undefined) out!.handleRateLimits = hr;
   const msc = numberOrUndefined(cli.max_schema_corrections);
   if (msc !== undefined) out!.maxSchemaCorrections = msc;
+  // Sign-off gate: host-wired validator MCP servers and the required
+  // (public_key, path) signature pairs. Type-shape-only validation,
+  // like every other field here — rimsky never inspects the values.
+  const ms = parseMcpServers(cli.mcp_servers);
+  if (ms !== undefined) out!.mcpServers = ms;
+  const rs = parseRequiredSignoffs(cli.required_signoffs);
+  if (rs !== undefined) out!.requiredSignoffs = rs;
+  const msa = numberOrUndefined(cli.max_signoff_attempts);
+  if (msa !== undefined) out!.maxSignoffAttempts = msa;
   return Object.keys(out!).length > 0 ? out : undefined;
+}
+
+// @source: src/server.ts (parseMcpServers)
+// Each entry needs a non-empty string name + url; a present-but-malformed
+// entry throws CliConfigError rather than being silently dropped (mcp_servers
+// wires the validator servers the sign-off gate depends on). Field-absent
+// (`v` not an array) ⇒ undefined.
+function parseMcpServers(
+  v: unknown,
+): { name: string; url: string; headers?: Record<string, string>; allowedTools?: string[] }[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) {
+    throw new CliConfigError(
+      `cli.mcp_servers must be an array, got ${typeof v}`,
+    );
+  }
+  const out: {
+    name: string;
+    url: string;
+    headers?: Record<string, string>;
+    allowedTools?: string[];
+  }[] = [];
+  for (const [i, item] of v.entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new CliConfigError(`cli.mcp_servers[${i}] must be an object`);
+    }
+    const e = item as Record<string, unknown>;
+    if (typeof e.name !== "string" || e.name.length === 0) {
+      throw new CliConfigError(
+        `cli.mcp_servers[${i}].name must be a non-empty string`,
+      );
+    }
+    if (typeof e.url !== "string" || e.url.length === 0) {
+      throw new CliConfigError(
+        `cli.mcp_servers[${i}].url must be a non-empty string`,
+      );
+    }
+    const entry: {
+      name: string;
+      url: string;
+      headers?: Record<string, string>;
+      allowedTools?: string[];
+    } = { name: e.name, url: e.url };
+    const headers = parseStringRecord(e.headers);
+    if (headers !== undefined) entry.headers = headers;
+    const allowedTools = stringArrayOrUndefined(e.allowed_tools);
+    if (allowedTools !== undefined) entry.allowedTools = allowedTools;
+    out.push(entry);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+// @source: src/server.ts (parseRequiredSignoffs)
+// A present-but-malformed entry (missing / non-string / empty public_key)
+// throws CliConfigError rather than being silently dropped: required_signoffs
+// is a security gate, and a dropped entry would silently weaken (or disable)
+// enforcement. Field-absent (`v` not an array) ⇒ undefined (no gate).
+function parseRequiredSignoffs(
+  v: unknown,
+): { publicKey: string; path?: string }[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) {
+    throw new CliConfigError(
+      `cli.required_signoffs must be an array, got ${typeof v}`,
+    );
+  }
+  const out: { publicKey: string; path?: string }[] = [];
+  for (const [i, item] of v.entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new CliConfigError(`cli.required_signoffs[${i}] must be an object`);
+    }
+    const e = item as Record<string, unknown>;
+    if (typeof e.public_key !== "string" || e.public_key.length === 0) {
+      throw new CliConfigError(
+        `cli.required_signoffs[${i}].public_key must be a non-empty string`,
+      );
+    }
+    const entry: { publicKey: string; path?: string } = { publicKey: e.public_key };
+    if (typeof e.path === "string" && e.path.length > 0) entry.path = e.path;
+    out.push(entry);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+// @source: src/server.ts (parseStringRecord)
+function parseStringRecord(v: unknown): Record<string, string> | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val === "string") out[k] = val;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function numberOrUndefined(v: unknown): number | undefined {

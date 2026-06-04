@@ -342,6 +342,10 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
       attributes_delta: z.record(z.unknown()).optional(),
       changed: z.boolean(),
       change_summary: z.string().nullable().optional(),
+      // Base64 Ed25519 sign-off signatures, supplied when the node
+      // requires sign-offs (`cli.required_signoffs`). Forwarded to the
+      // gate via `onComplete`; ignored when no gate is configured.
+      signoffs: z.array(z.string()).optional(),
     },
     async (args) => {
       const entry = registry.lookup(args.token);
@@ -351,6 +355,7 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
         args.attributes_delta ?? null,
         args.changed,
         args.change_summary ?? null,
+        args.signoffs ?? null,
         deferTeardown,
       );
       return {

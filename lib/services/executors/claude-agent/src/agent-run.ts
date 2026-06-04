@@ -20,6 +20,7 @@ import {
 } from "./attributes-tools.js";
 import { detectRateLimit } from "./rate-limit.js";
 import { resolveDeclaredEvents } from "./expected-attributes-schema.js";
+import { verifyRequiredSignoffs } from "./signoff.js";
 import type { NamedEventEmission } from "./token-registry.js";
 
 /**
@@ -171,7 +172,39 @@ export interface AgentRunOptions {
      * outcome on the wire. Default 3.
      */
     maxSchemaCorrections?: number;
+    /**
+     * Host-wired validator MCP servers (`cli.mcp_servers`). Each entry is
+     * appended to the spawned CLI's `--mcp-config` and its tools are
+     * auto-allowed; the sign-off gate's signers (`requiredSignoffs`) are
+     * typically — but not necessarily — among these servers.
+     */
+    mcpServers?: {
+      name: string;
+      url: string;
+      headers?: Record<string, string>;
+      allowedTools?: string[];
+    }[];
+    /**
+     * The sign-off gate (`cli.required_signoffs`): each `{publicKey, path}`
+     * must be satisfied by a valid Ed25519 signature in `report_complete`'s
+     * `signoffs` bag before the dispatch can resolve to terminal success.
+     */
+    requiredSignoffs?: { publicKey: string; path?: string }[];
+    /**
+     * Maximum corrective `report_complete` retries when the sign-off gate
+     * is unmet, mirroring `maxSchemaCorrections`. On exhaustion the run
+     * terminal-errors with `agent/signoff_unobtained`. Default 3.
+     */
+    maxSignoffAttempts?: number;
   };
+  /**
+   * Raw `ExecuteRequest.dispatch_id`; the sign-off gate binds to this and
+   * requires it non-empty — distinct from `runId`, which falls back to a
+   * random UUID. Binding to the raw field (not `runId`) is what makes the
+   * empty-`dispatch_id` requirement enforceable and the per-dispatch
+   * anti-replay property hold.
+   */
+  dispatchId?: string;
   /**
    * Supervisor-issued URLs / tokens that flow through to the incremental
    * writeback path and the async-handoff callback.
@@ -306,6 +339,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     cwdFromStore,
     cwdOverride,
     cliConfig,
+    dispatchId,
     callbackUrl,
     cancelToken,
     cliRunner,
@@ -345,10 +379,16 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   const resumeReason = resumeContext?.resumeReason ?? "";
 
   const renderedSystem = systemPrompt;
+  // `binding_id` is the raw `ExecuteRequest.dispatch_id`. Validators sign
+  // `domain ‖ binding_id ‖ canonical(content)`; the agent relays this id to
+  // each validator so the signature it returns binds to this exact dispatch,
+  // letting the sign-off gate re-derive identical bytes. Empty when the
+  // dispatch carried no `dispatch_id` (an ungatable/usage-error case).
   const renderedUser =
     userPrompt +
     "\n\n---\n" +
     `callback_token: ${callbackToken}\n` +
+    `binding_id: ${dispatchId ?? ""}\n` +
     `resume_payload: ${resumePayload}\n` +
     `resume_reason: ${resumeReason}\n` +
     "---\n";
@@ -532,6 +572,51 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     };
   };
 
+  // Sign-off gate correction loop, mirroring `rejectWithCorrection`. The
+  // sign-off gate runs in `onComplete` AFTER schema validation passes: get
+  // the shape right (rejectWithCorrection), then get it signed (rejectSignoff).
+  // Each layer carries its own retry budget. On exhausting
+  // maxSignoffAttempts the run commits a terminal `errored` outcome with
+  // error_class "agent/signoff_unobtained" (parallel to the schema layer's
+  // "agent/schema_violation") and returns "accepted" so the agent's tool
+  // call resolves while the supervisor receives the StreamClose Error.
+  const maxSignoffAttempts =
+    typeof cliConfig?.maxSignoffAttempts === "number" && cliConfig.maxSignoffAttempts >= 0
+      ? cliConfig.maxSignoffAttempts
+      : 3;
+  let signoffFailures = 0;
+  const rejectSignoff = (
+    detail: string,
+    scheduleTeardown: (td: () => Promise<void>) => void,
+  ): { status: "accepted" } | { status: "rejected"; errors: Record<string, string[]> } => {
+    signoffFailures++;
+    if (signoffFailures > maxSignoffAttempts) {
+      logger.warn(
+        { runId, failures: signoffFailures, max: maxSignoffAttempts },
+        "report_complete: sign-offs unobtained; committing errored",
+      );
+      scheduleTeardown(async () => {
+        await teardownCli();
+        safeResolve({
+          kind: "errored",
+          errorClass: "agent/signoff_unobtained",
+          payload: {
+            attempts: signoffFailures,
+            max: maxSignoffAttempts,
+            last_error: detail,
+          },
+        });
+      });
+      return { status: "accepted" };
+    }
+    return {
+      status: "rejected",
+      errors: {
+        signoffs: [`${detail} (signoff ${signoffFailures}/${maxSignoffAttempts})`],
+      },
+    };
+  };
+
   // Per-dispatch named-event sink. The `emit_named_event` MCP tool
   // appends one `{name, payload}` per accepted emission; the buffer rides
   // the async-callback body's `events[]` array when the run resolves. The
@@ -555,6 +640,10 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       attributesDelta,
       changed,
       changeSummary,
+      // `signoffs` is the agent-presented Ed25519 signature bag. The sign-off
+      // gate below verifies it against the dispatch-time `required_signoffs`
+      // before the dispatch can resolve to terminal success.
+      signoffs,
       scheduleTeardown,
     ) => {
       // Validate any executor-supplied terminal-final delta before
@@ -593,6 +682,55 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       // Validation passed — reset the corrective-retry counter so a
       // future delta replacement starts fresh.
       schemaCorrectionFailures = 0;
+
+      // Sign-off gate (the second sequential layer, after schema validation).
+      // `required` and `dispatchId` come from DISPATCH-TIME inputs
+      // (`cliConfig.requiredSignoffs` resolved at spawn, and the raw
+      // `dispatch_id` plumbed onto the run options) — NEVER from
+      // `attributesDelta` or the merged bag. This is what makes the gate
+      // tamper-proof: a gated agent cannot weaken or edit its own gate by
+      // emitting a `cli.required_signoffs` override inside `attributes_delta`,
+      // and a signature can only bind to the one real dispatch (anti-replay).
+      const required = cliConfig?.requiredSignoffs ?? [];
+      if (required.length > 0) {
+        if (!dispatchId || dispatchId.length === 0) {
+          // A configured gate with no dispatch_id cannot be bound or verified
+          // (the binding id is empty, so no honest signature can re-derive the
+          // same bytes). Treat it as a configuration/usage error rather than a
+          // silently-ungated run that would let unsigned output through.
+          logger.warn(
+            { runId },
+            "report_complete: sign-off gate configured but dispatch_id empty; committing errored",
+          );
+          scheduleTeardown(async () => {
+            await teardownCli();
+            safeResolve({
+              kind: "errored",
+              errorClass: "agent/signoff_unobtained",
+              payload: {
+                error: "dispatch_id required for sign-off gate but was empty",
+              },
+            });
+          });
+          return { status: "accepted" };
+        }
+        const res = verifyRequiredSignoffs(
+          required,
+          attributesDelta,
+          dispatchId,
+          signoffs ?? [],
+        );
+        if (!res.ok) {
+          const detail = res.unmet
+            .map((u) => `${u.path}:${u.reason}`)
+            .join(", ");
+          return rejectSignoff(`unmet sign-offs: ${detail}`, scheduleTeardown);
+        }
+        // Gate satisfied — reset the sign-off retry counter so a future
+        // correction round (e.g. after a schema re-edit) starts fresh.
+        signoffFailures = 0;
+      }
+
       scheduleTeardown(async () => {
         await teardownCli();
         safeResolve({
@@ -645,6 +783,39 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     onAttributesSet,
   });
 
+  // Host-wired validator MCP servers (`cli.mcp_servers`). Each declared
+  // server is appended to the spawned CLI's `--mcp-config` (the per-spawn
+  // `tools` list) so the agent can actually dial it — a URL only mentioned
+  // in a prompt is unreachable; the Claude CLI only speaks MCP to servers
+  // it was configured with via `--mcp-config`. The same list is applied on
+  // both resume paths so a resumed dispatch can still reach the validators
+  // (the CLI does not carry `--mcp-config` across `--resume`).
+  const hostServers = (cliConfig?.mcpServers ?? []).map((s) => ({
+    kind: "mcp-http" as const,
+    name: s.name,
+    url: s.url,
+    headers: s.headers,
+  }));
+  // Auto-allow each host server's tools into `--allowedTools`. With no
+  // explicit per-server `allowedTools` the bare `mcp__<name>` server-prefix
+  // entry allows ALL of that server's tools (the spec's "auto-allow all" —
+  // the host wired the server intending the agent to use it); an explicit
+  // per-server `allowedTools` narrows it to the fully-qualified names.
+  const hostAllowed = (cliConfig?.mcpServers ?? []).flatMap((s) =>
+    s.allowedTools && s.allowedTools.length > 0
+      ? s.allowedTools.map((t) => `mcp__${s.name}__${t}`)
+      : [`mcp__${s.name}`],
+  );
+  // Union of per-template `allowedTools` and the host-server auto-allows.
+  // Pass `undefined` when both are empty so spawn/resume preserve the
+  // current behavior (the required callback tools are always added by
+  // `buildAllowedTools` regardless).
+  const templateAllowed = cliConfig?.allowedTools ?? [];
+  const allowedToolsUnion =
+    templateAllowed.length > 0 || hostAllowed.length > 0
+      ? [...templateAllowed, ...hostAllowed]
+      : undefined;
+
   let handle: CliHandle;
   try {
     // J10: When resumeContext.sessionToken is set we resume the same
@@ -665,7 +836,12 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         prompt: renderedUser,
         tools: [
           { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
+          ...hostServers,
         ],
+        // Resume must re-emit the host-server allowlist too: `--allowedTools`
+        // is process-local invocation config, not session state, so a resumed
+        // dispatch that omits it cannot call the host validators' tools.
+        allowedTools: allowedToolsUnion,
         env: {
           RIMSKY_CALLBACK_URL: effectiveCallback.url,
           RIMSKY_CALLBACK_TOKEN: callbackToken,
@@ -679,6 +855,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         userPrompt: renderedUser,
         tools: [
           { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
+          ...hostServers,
         ],
         env: {
           RIMSKY_CALLBACK_URL: effectiveCallback.url,
@@ -691,7 +868,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         sessionId: runId,
         bare: cliConfig?.bare,
         permissionMode: cliConfig?.permissionMode,
-        allowedTools: cliConfig?.allowedTools,
+        // Union of per-template allowed tools and the host-server
+        // auto-allows; `undefined` when both are empty (current behavior).
+        allowedTools: allowedToolsUnion,
         disallowedTools: cliConfig?.disallowedTools,
         addDirs: cliConfig?.addDirs,
         maxBudgetUsd: cliConfig?.maxBudgetUsd,
@@ -891,7 +1070,10 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           prompt: reminderPrompt,
           tools: [
             { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
+            ...hostServers,
           ],
+          // Re-emit the host-server allowlist on the recovery resume too.
+          allowedTools: allowedToolsUnion,
           env: {
             RIMSKY_CALLBACK_URL: effectiveCallback.url,
             RIMSKY_CALLBACK_TOKEN: callbackToken,

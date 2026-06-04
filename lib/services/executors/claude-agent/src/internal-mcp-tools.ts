@@ -40,6 +40,12 @@ export const ReportCompleteInput = z.object({
   attributes_delta: z.record(z.unknown()).optional(),
   changed: z.boolean(),
   change_summary: z.string().nullable().optional(),
+  /**
+   * Base64-encoded Ed25519 sign-off signatures, supplied when the node
+   * requires sign-offs (`cli.required_signoffs`). A flat bag — the
+   * executor matches each required `(public_key, path)` against it.
+   */
+  signoffs: z.array(z.string()).optional(),
 });
 
 export const ReportBlockedInput = z.object({
@@ -101,6 +107,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         attributes_delta: { type: "object" },
         changed: { type: "boolean" },
         change_summary: { type: ["string", "null"] },
+        signoffs: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "base64 Ed25519 sign-off signatures, when the node requires sign-offs",
+        },
       },
     },
   },
