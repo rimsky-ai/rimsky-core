@@ -28,7 +28,7 @@ The node owns: its dispatch / terminal lifecycle, its claim spec list, its `erro
 
 ## Aliases and historical names
 
-`graph-node` is an older spelling in early prose. The 4-state vocabulary (`fresh | stale | running | failed`) predates the addition of `parked` in migration 006 — older prose snippets sometimes still cite four states.
+`graph-node` is an older spelling in early prose. The 4-state vocabulary (`fresh | stale | running | failed`) predates the addition of `parked` (added under the platform-extensions design, `spec:2026-05-08-platform-extensions`) — older prose snippets sometimes still cite four states.
 
 ## Open within this concept
 

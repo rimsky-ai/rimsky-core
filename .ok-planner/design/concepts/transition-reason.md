@@ -45,7 +45,7 @@ Adjacent: `concept:signal`, `concept:cascade`, `concept:event-log`.
 
 ## Aliases and historical names
 
-None live. Pre-migration-004 code used a boolean changed flag for the cascade-fire decision and a smaller reason vocabulary for audit; both surfaces were sharpened under the reactive-loops design (`spec:2026-05-05-reactive-loops-and-lifecycle-handlers`), then further reshaped under the signal-taxonomy design (`spec:2026-05-23-signal-taxonomy-and-policy-decoupling`) which narrowed the audit-write role for signal-bearing transitions.
+None live. Earlier code used a boolean changed flag for the cascade-fire decision and a smaller reason vocabulary for audit; both surfaces were sharpened under the reactive-loops design (`spec:2026-05-05-reactive-loops-and-lifecycle-handlers`), then further reshaped under the signal-taxonomy design (`spec:2026-05-23-signal-taxonomy-and-policy-decoupling`) which narrowed the audit-write role for signal-bearing transitions.
 
 ## Notes
 

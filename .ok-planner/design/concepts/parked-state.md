@@ -47,7 +47,7 @@ Owns: the hold-state schema (the park fields on the node-run row), the three exi
 
 ## Aliases and historical names
 
-The state was added under the platform-extensions design (2026-05-08); migration 006 extends the `phase` CHECK constraint to include `'parked'`.
+The state was added under the platform-extensions design (2026-05-08); adding `parked` extended the node-run `phase` CHECK constraint to include `'parked'`.
 
 ## Open within this concept
 
