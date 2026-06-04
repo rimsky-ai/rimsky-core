@@ -475,6 +475,20 @@ func (c *capturingWriter) Write(b []byte) (int, error) {
 	return c.ResponseWriter.Write(b)
 }
 
+// Flush proxies through to the wrapped ResponseWriter so streaming
+// handlers (the GET /mcp SSE stream) can flush events to the client.
+// Without this passthrough capturingWriter masks the underlying
+// http.Flusher, and the stream handler's `w.(http.Flusher)` assertion
+// fails — every GET /mcp then 500s with "streaming unsupported". In
+// production the inner writer is chi's Flusher-capable WrapResponseWriter
+// (installed by accessLog), which reaches the real net/http connection;
+// the guard tolerates an inner writer that doesn't support flushing.
+func (c *capturingWriter) Flush() {
+	if f, ok := c.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (c *capturingWriter) status() int { return c.statusCode }
 
 // gate returns an http.HandlerFunc that gates the inner handler on

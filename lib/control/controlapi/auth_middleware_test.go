@@ -6,9 +6,11 @@ package controlapi
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,6 +139,62 @@ func TestGate_DryRunFlagSetsModeAndReadExecutes(t *testing.T) {
 	}
 	if executed, _ := payload["executed"].(bool); !executed {
 		t.Errorf("audit executed: got %v want true (read runs even under dry_run)", payload["executed"])
+	}
+}
+
+// TestGate_StreamingHandlerCanFlush is a regression guard for the GET /mcp
+// 500 "streaming unsupported" bug: gateByAction wraps the ResponseWriter in
+// a *capturingWriter to record the response status for the audit row, but
+// that wrapper must still expose http.Flusher so the downstream SSE stream
+// handler (lib/control/controlapi/mcp.serveStream) can flush events. Before
+// capturingWriter proxied Flush(), the handler's `w.(http.Flusher)`
+// assertion failed under the gate and every GET /mcp returned 500. This
+// drives the real action GET /mcp gates on (mcp:read) through the gate over
+// a live server — the exact path that previously had no coverage.
+func TestGate_StreamingHandlerCanFlush(t *testing.T) {
+	h := newAuthTestHarness(t)
+
+	// Probe mirrors the MCP SSE stream handler's contract: it requires an
+	// http.Flusher, then writes and flushes one SSE event. Under the gate's
+	// capturingWriter, the assertion must succeed.
+	probe := func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "data: hi\n\n")
+		flusher.Flush()
+	}
+	r := chi.NewRouter()
+	r.Use(h.state.IdentityResolver())
+	// mcp:read is a registered read action — the umbrella GET /mcp gates on.
+	r.Get("/mcp", h.state.gateByAction("mcp:read", probe))
+
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp", nil)
+	req.Header.Set("Authorization", "Bearer "+h.plaintext)
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d want 200 (capturingWriter masked http.Flusher?); body=%q",
+			resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("content-type: got %q want text/event-stream", ct)
+	}
+	if !strings.Contains(string(body), "data: hi") {
+		t.Fatalf("stream body: got %q want the flushed SSE event", body)
 	}
 }
 

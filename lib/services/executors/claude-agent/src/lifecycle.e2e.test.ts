@@ -348,7 +348,7 @@ describe("J11 e2e — happy-path stub MCP dispatch", () => {
     await cb.close();
   });
 
-  it("returns complete in stub mode (mcp catalog passes through unread)", async () => {
+  it("returns complete in stub mode without invoking the CLI", async () => {
     const fakeCli: CliRunner = {
       spawn: async () => {
         throw new Error("must not be called in stub mode");
@@ -362,11 +362,7 @@ describe("J11 e2e — happy-path stub MCP dispatch", () => {
       systemPrompt: "sys",
       userPrompt: "u",
       attributesSchema: {},
-      attributes: {
-        cli: {
-          mcpServers: [{ ref: "project-tracker" }],
-        },
-      },
+      attributes: {},
       callbackUrl: "",
       cancelToken: "",
       cliRunner: fakeCli,
