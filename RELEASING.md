@@ -34,7 +34,9 @@ walks:
    test-all → core-images → service-images → scan → push-images`
    chain), pushes the release branch and git tags, runs `make
    publish-protocols`, creates the GitHub Release via `gh release
-   create`.
+   create`, then fast-forwards `main` to the release commit and pushes
+   it (skipped when releasing from `main`; surfaced, not forced, when
+   `main` has diverged).
 
 If scan finds CVEs, the skill attempts mechanical patch-level base-
 image remediation (per `docker scout recommendations`); anything

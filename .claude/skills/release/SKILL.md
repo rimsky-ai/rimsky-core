@@ -218,6 +218,7 @@ Outward actions on confirmation:
 - Git push: current branch + tags vX.Y.Z, lib/protocols/vX.Y.Z to origin (atomic)
 - npm publish: @rimsky-ai/protocols@X.Y.Z to @latest (via make publish-protocols)
 - GitHub release: vX.Y.Z with releases/vX.Y.Z.md as notes
+- Fast-forward main: advance main to the release commit + push to origin (skipped when releasing from main; surfaced, never forced, if main has diverged)
 
 Questions for you:
 <any flagged questions; empty if none>
@@ -290,6 +291,29 @@ cleanup. No Hub push.
    ```
    gh release create vX.Y.Z --notes-file releases/vX.Y.Z.md
    ```
+7. Fast-forward `main` to the release. A formal release is the new
+   stable line, so `main` should always point at the most recent
+   release commit — but releases are cut from the current branch
+   (often `dev`), and sub-step 4 pushes only that branch, which leaves
+   `main` behind unless it is advanced explicitly. (This is exactly how
+   v0.5.0 shipped on `dev` while `main` sat at v0.4.1.) After the
+   release commit + tags are on origin and the publish steps have run:
+   - If the release was cut from `main` (`$branch` == `main`),
+     sub-step 4 already advanced `main`; skip and log "released from
+     main; no fast-forward needed".
+   - Otherwise advance `main` only when it is a clean fast-forward of
+     the release commit. A non-fast-forwardable `main` carries commits
+     the release branch does not — never force-push it; surface it for
+     manual reconciliation instead.
+     ```
+     git fetch origin main
+     if git merge-base --is-ancestor origin/main HEAD; then
+       git push origin HEAD:main   # FF-only; a non-FF update is rejected
+       git branch -f main HEAD     # advance the local ref too (main is not checked out)
+     else
+       echo "main has diverged from $branch; cannot fast-forward — reconcile manually"
+     fi
+     ```
 
 ### 7a. CVE remediation (when scan fails)
 
@@ -334,6 +358,7 @@ Released vX.Y.Z
 
 Hub: 15 images at docker.io/rimskyai/{rimsky, rimsky-all-in-one, ...}:vX.Y.Z (and :latest)
 Branch: <current-branch> (pushed to origin)
+main: fast-forwarded to vX.Y.Z and pushed (or: released from main / NOT advanced — main diverged, reconcile manually)
 Git tags: vX.Y.Z, lib/protocols/vX.Y.Z (pushed to origin)
 npm: @rimsky-ai/protocols@X.Y.Z (on @latest)
 GitHub Release: https://github.com/rimsky-ai/rimsky-core/releases/tag/vX.Y.Z
