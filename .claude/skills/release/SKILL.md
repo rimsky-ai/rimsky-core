@@ -314,6 +314,18 @@ cleanup. No Hub push.
        echo "main has diverged from $branch; cannot fast-forward — reconcile manually"
      fi
      ```
+   - **Expected on the direct push to `main`:** GitHub reports
+     `Bypassed rule violations for refs/heads/main: Required status
+     check "Rimsky-Cert sign-off" is expected.` This is normal, not a
+     failure. The contributor-cert workflow
+     (`.github/workflows/contributor-cert.yml`) triggers on
+     `pull_request` only, so a direct release push never produces that
+     check, yet `main`'s ruleset requires it — the maintainer's push
+     bypasses it. Release commits intentionally carry no `Rimsky-Cert`
+     trailer: the certificate is an external-contributor rights grant
+     to Fall Guy, and a maintainer self-certifying their own release
+     work is not its purpose. Do NOT "fix" the bypass by adding a
+     `Rimsky-Cert` trailer to the release commit.
 
 ### 7a. CVE remediation (when scan fails)
 
