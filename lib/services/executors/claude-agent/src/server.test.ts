@@ -391,6 +391,123 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
   });
 });
 
+// The malformed-gate-config fail-loud guarantee, proven on the gRPC transport
+// (the HTTP bridge proves the same in http-bridge.test.ts). A present-but-
+// malformed cli.required_signoffs (host omitted public_key) must terminal-
+// ERROR with agent/attribute_invalid, never silently degrade to an ungated
+// run. parseCliConfig throws a CliConfigError in the background runAndCallback
+// (server.ts ~415, BEFORE runAgent), so the stream still closes with the normal
+// async handoff and the verdict rides the callback. The nested cli Struct is
+// built with protobuf.js's canonical camelCase Value wrappers (structValue/
+// listValue/stringValue): @grpc/proto-loader serializes Value via those names
+// regardless of keepCase (which governs only decode), and the snake_case form
+// jsToProtoStruct emits silently drops a nested Struct on the client side.
+describe("gRPC server Execute rejects a malformed sign-off gate config (no silent ungating)", () => {
+  let cb: CallbackServerHandle;
+  let srv: RunningServer;
+  const fakeCli: CliRunner = {
+    spawn: async () => {
+      throw new Error("spawn must not be reached when cli config is malformed");
+    },
+  };
+  const callbackPosts: Array<{ url: string; body: unknown }> = [];
+  const fakeCallbackUrl = "http://supervisor.invalid/rimsky/callback";
+
+  beforeEach(async () => {
+    process.env.RIMSKY_EXECUTOR_STUB_MODE = "1";
+    callbackPosts.length = 0;
+    cb = await startInternalMcpServer({ logger });
+    srv = await startGrpcServer({
+      host: "127.0.0.1",
+      port: 0,
+      callback: cb,
+      cliRunner: fakeCli,
+      silenceTimeoutMs: 5000,
+      logger,
+      postCallback: async (url, body) => {
+        callbackPosts.push({ url, body });
+      },
+    });
+  });
+
+  afterEach(async () => {
+    delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
+    await srv.shutdown();
+    await cb.close();
+  });
+
+  it("POSTs a terminal agent/attribute_invalid error (not success) when a required_signoffs entry omits public_key", async () => {
+    const pkg = loadExecutorProto();
+    const Client = pkg.rimsky.v1.Executor as unknown as new (
+      addr: string,
+      creds: grpc.ChannelCredentials,
+    ) => grpc.Client;
+    const client = new Client(srv.address, grpc.credentials.createInsecure());
+    // Build the attributes Struct with protobuf.js's canonical camelCase Value
+    // wrappers (structValue/listValue/stringValue) — the form @grpc/proto-loader
+    // actually serializes nested Structs from on the client (see describe note).
+    const toValue = (v: unknown): unknown => {
+      if (v === null || v === undefined) return { nullValue: "NULL_VALUE" };
+      if (typeof v === "string") return { stringValue: v };
+      if (typeof v === "number") return { numberValue: v };
+      if (typeof v === "boolean") return { boolValue: v };
+      if (Array.isArray(v)) return { listValue: { values: v.map(toValue) } };
+      const nested: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        nested[k] = toValue(val);
+      }
+      return { structValue: { fields: nested } };
+    };
+    const toStruct = (o: Record<string, unknown>) => {
+      const fields: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(o)) fields[k] = toValue(val);
+      return { fields };
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const call = (client as any).Execute({
+      node_id: "n-gate",
+      node_type: "stub-agent",
+      dispatch_id: "d-grpc-gate",
+      // public_key omitted — only `path` present. The parser must reject this
+      // present-but-malformed gate rather than drop it to an ungated run.
+      attributes: toStruct({
+        model: "sonnet",
+        user_prompt: "go",
+        cli: { required_signoffs: [{ path: "endpoints" }] },
+      }),
+      attributes_schema: { fields: {} },
+      callback_url: fakeCallbackUrl,
+    });
+
+    const events: ExecuteEvent[] = [];
+    await new Promise<void>((resolve, reject) => {
+      call.on("data", (ev: ExecuteEvent) => events.push(ev));
+      call.on("error", reject);
+      call.on("end", resolve);
+    });
+
+    // The stream completes the async handoff; the verdict rides the callback.
+    const terminal = events[events.length - 1]!;
+    expect(terminal.stream_close?.await_async).toBeDefined();
+    const ackId = terminal.stream_close!.await_async!.async_ack_id;
+
+    await waitFor(() => callbackPosts.length > 0, 2000);
+    expect(callbackPosts).toHaveLength(1);
+    expect(callbackPosts[0]!.url).toBe(
+      `${fakeCallbackUrl}/v1/callback/${encodeURIComponent(ackId)}`,
+    );
+    const body = callbackPosts[0]!.body as Record<string, unknown>;
+    // Must NOT have reached terminal success.
+    expect(body.success).toBeUndefined();
+    expect(body.error).toBeDefined();
+    const error = body.error as { error_class: string };
+    expect(error.error_class).toBe("agent/attribute_invalid");
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).close?.();
+  });
+});
+
 // Round-trip the production gRPC wire shape through unwrapStruct.
 // proto-loader runs with `keepCase: true` + `oneofs: true` (see
 // proto-loader.ts) which produces `{kind: "string_value", string_value: "x"}`

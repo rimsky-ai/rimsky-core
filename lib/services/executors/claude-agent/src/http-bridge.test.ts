@@ -296,3 +296,56 @@ describe("http-bridge outcomeToCallbackBody named-event surfacing", () => {
     expect(body.error).toBeDefined();
   });
 });
+
+// Positive coverage for the third AsyncCallbackBody outcome branch. The
+// sign-off gate never emits `park` (it only resolves success/errored), so the
+// gate e2e can only assert park-ABSENT; the park wire mapping itself
+// (outcomeToCallbackBody's park_requested branch) otherwise had no test that a
+// park outcome serializes to a body carrying the `park` one-of key. These
+// assert exactly that, including the resume_at present/absent split.
+describe("http-bridge outcomeToCallbackBody park outcome", () => {
+  it("maps park_requested to AsyncCallbackBody.park with exactly one outcome key", () => {
+    const payload = Buffer.from(JSON.stringify({ snoozed: true }), "utf8");
+    const resumeAt = new Date("2026-06-04T12:00:00.000Z");
+    const outcome: AgentOutcome = {
+      kind: "park_requested",
+      reason: "snooze",
+      reasonNote: "rate-limited; retry after window",
+      payload,
+      resumeAt,
+      sessionToken: "sess-park-1",
+    };
+    const body = outcomeToCallbackBody(outcome, "ack-park");
+    expect(body.async_ack_id).toBe("ack-park");
+    // Exactly one outcome key, and it is `park` — not success/error.
+    expect(["success", "error", "park"].filter((k) => k in body)).toEqual([
+      "park",
+    ]);
+    const park = body.park as Record<string, unknown>;
+    expect(park.reason).toBe("snooze");
+    expect(park.reason_note).toBe("rate-limited; retry after window");
+    expect(park.session_token).toBe("sess-park-1");
+    // bytes ride as base64 per the proto-JSON convention.
+    expect(park.payload).toBe(payload.toString("base64"));
+    expect(park.resume_at).toBe(resumeAt.toISOString());
+  });
+
+  it("omits resume_at for an indefinite park (resumeAt null)", () => {
+    const outcome: AgentOutcome = {
+      kind: "park_requested",
+      reason: "await_callback",
+      reasonNote: "",
+      payload: Buffer.alloc(0),
+      resumeAt: null,
+      sessionToken: "sess-park-2",
+    };
+    const body = outcomeToCallbackBody(outcome, "ack-park-2");
+    expect(["success", "error", "park"].filter((k) => k in body)).toEqual([
+      "park",
+    ]);
+    const park = body.park as Record<string, unknown>;
+    expect("resume_at" in park).toBe(false);
+    expect(park.reason).toBe("await_callback");
+    expect(park.payload).toBe("");
+  });
+});

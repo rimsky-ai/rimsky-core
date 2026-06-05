@@ -154,10 +154,14 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     await cb.close();
   });
 
-  it("blocks unsigned output with agent/signoff_unobtained, completes signed output", async () => {
-    const signer = makeTestSigner();
+  // Two independent runs prove the gate. Each test starts its own bridge with
+  // its own cliRunner; the beforeEach (resets `posts`, starts `cb`) and
+  // afterEach (`bridge.shutdown()`) give each test framework-level isolation,
+  // so there is no shared-buffer / shared-bridge coupling between them. The
+  // shared DISPATCH_ID is safe precisely because the runs never overlap.
 
-    // ---- Unsigned case ----
+  it("blocks unsigned output with agent/signoff_unobtained", async () => {
+    const signer = makeTestSigner();
     const unsignedCli: CliRunner = {
       spawn: async (req: CliSpawnRequest) =>
         makeReportingHandle(req, () => ({
@@ -180,7 +184,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     });
 
     const callbackUrl = "http://supervisor.invalid/cb";
-    const unsignedRes = await fetch(`${bridge.address}/execute`, {
+    const res = await fetch(`${bridge.address}/execute`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -198,7 +202,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
         callback_url: callbackUrl,
       }),
     });
-    expect(unsignedRes.status).toBe(202);
+    expect(res.status).toBe(202);
 
     await waitFor(() => posts.length > 0, 5000);
     expect(posts[0]!.url).toBe(callbackUrl);
@@ -207,12 +211,15 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     const error = unsignedBody.error as Record<string, unknown> | undefined;
     expect(error).toBeDefined();
     expect(error!.error_class).toBe("agent/signoff_unobtained");
+    // AsyncCallbackBody is a one-of: the unsigned outcome must carry exactly
+    // the `error` key — never a stray `success` or `park` alongside it.
+    expect(
+      ["success", "error", "park"].filter((k) => k in unsignedBody),
+    ).toEqual(["error"]);
+  });
 
-    // Reset for the signed run on a fresh bridge.
-    await bridge.shutdown();
-    posts.length = 0;
-
-    // ---- Signed case ----
+  it("completes signed output", async () => {
+    const signer = makeTestSigner();
     const signedCli: CliRunner = {
       spawn: async (req: CliSpawnRequest) =>
         makeReportingHandle(req, () => ({
@@ -236,7 +243,8 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
       },
     });
 
-    const signedRes = await fetch(`${bridge.address}/execute`, {
+    const callbackUrl = "http://supervisor.invalid/cb";
+    const res = await fetch(`${bridge.address}/execute`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -254,7 +262,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
         callback_url: callbackUrl,
       }),
     });
-    expect(signedRes.status).toBe(202);
+    expect(res.status).toBe(202);
 
     await waitFor(() => posts.length > 0, 5000);
     const signedBody = posts[0]!.body as Record<string, unknown>;
@@ -262,5 +270,9 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     const success = signedBody.success as Record<string, unknown> | undefined;
     expect(success).toBeDefined();
     expect(success!.attributes_delta).toEqual(ATTRIBUTES_DELTA);
+    // Exactly one outcome key — `success`, never a stray `error`/`park`.
+    expect(
+      ["success", "error", "park"].filter((k) => k in signedBody),
+    ).toEqual(["success"]);
   });
 });
