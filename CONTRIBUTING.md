@@ -1,41 +1,92 @@
 # Contributing to Rimsky
 
-Thanks for your interest in contributing to Rimsky. This guide covers the
-two procedural requirements (CLA signature, DCO sign-off) and links the
-deeper technical conventions of the codebase.
+Thanks for your interest in contributing to Rimsky. Contributing takes
+one step beyond a normal pull request: **sign off each commit** with the
+Rimsky Contributor Certificate. That single sign-off replaces the
+separate CLA signature and DCO sign-off that earlier versions required —
+no separate agreement to sign, no signing bot, no click-through.
 
-## 1. Sign the CLA
+## 1. Sign off your commits (Rimsky Contributor Certificate)
 
-Rimsky is multi-licensed (Apache 2.0 + AGPL-3.0-or-later + a Fall Guy
-Consulting commercial license — see `COPYRIGHT` for the per-layer
-breakdown). To preserve the multi-license structure, every contributor
-must sign the [Contributor License Agreement](CLA.md) once.
+Every commit in a pull request must carry a `Rimsky-Cert` trailer:
 
-Signing is automated. The [cla-assistant.io](https://cla-assistant.io/)
-GitHub bot comments on your first pull request with a one-click signing
-link. Pull requests are blocked from merging until the bot records your
-signature. One signature per contributor (not per pull request); a future
-material change to the CLA text will prompt a fresh signature.
+```
+Rimsky-Cert: Your Name <you@example.com>
+```
 
-Read the CLA in full before signing. The two items that distinguish it
-from the upstream Apache ICLA are §4 (Relicensing Grant — lets Fall Guy
-Consulting offer the contributed code under the commercial license track)
-and §9 (Versioning).
+By adding it you certify the Rimsky Contributor Certificate (below):
+that you have the right to submit the contribution, and that you grant
+Fall Guy Consulting the licenses it needs to ship Rimsky under its
+multi-license structure (including the commercial track). It folds the
+old DCO provenance certification and the old CLA rights grant into one
+line.
 
-## 2. Sign each commit (DCO)
+### Adding the trailer
 
-Every commit must carry a `Signed-off-by:` trailer per the
-[Developer Certificate of Origin](https://developercertificate.org/).
-Add it automatically with `git commit -s`; configure your editor to do
-this by default if you contribute often. The DCO sign-off is enforced by
-a separate bot (`probot/dco`) and is independent of the CLA — both must
-pass before merge.
+- **New commit:** `git commit --trailer "Rimsky-Cert: Your Name <you@example.com>"`
+  (or just type the line at the end of the commit message).
+- **A whole existing branch** (backfill, then force-push):
+  ```
+  git rebase --exec 'git commit --amend --no-edit \
+    --trailer "Rimsky-Cert: Your Name <you@example.com>"' origin/main
+  ```
+- To make it automatic, add a `prepare-commit-msg` hook in your clone
+  that appends the trailer.
 
-If you forgot to sign off on a commit, amend it (`git commit --amend
---signoff`) or rebase the offending range. The DCO bot's check output
-includes the exact incantation.
+### Enforcement
 
-## 3. How to contribute
+A GitHub Action (`.github/workflows/contributor-cert.yml`) checks every
+non-merge commit in a pull request for a well-formed trailer and reports
+the **Rimsky-Cert sign-off** check. That check is required on the
+protected branch, so a pull request whose commits are not all signed off
+cannot be merged.
+
+### The certificate
+
+> **Provisional — pending legal review.** The grant wording below
+> (clauses e–f) is a working draft under review by counsel and may
+> change. It is published here so the sign-off has a referent. Treat the
+> text as final only once this notice is removed.
+
+```
+Rimsky Contributor Certificate — Version 1.0 (draft)
+
+By adding a `Rimsky-Cert` sign-off to a commit you submit to this
+project, you certify the following.
+
+Provenance (the standard DCO certification):
+
+  a. The contribution was created in whole or in part by you, and you
+     have the right to submit it under the licenses in this repository; or
+  b. It is based on previous work covered, to the best of your knowledge,
+     under an appropriate open source license, and you have the right
+     under that license to submit it, with or without modifications,
+     under the licenses in this repository; or
+  c. It was provided to you by someone who certified (a), (b), or (c),
+     and you have not modified it.
+  d. You understand this project and your contribution are public, and a
+     record of the contribution — including your sign-off and the
+     personal information in it — is kept indefinitely and may be
+     redistributed consistent with this project's licenses.
+
+Grant. In consideration of the project reviewing, accepting, and
+distributing your contribution (and of US$1.00 payable on demand if you
+ever request it), you also agree that:
+
+  e. You grant Fall Guy Consulting and all recipients of the project a
+     perpetual, worldwide, non-exclusive, royalty-free, irrevocable
+     copyright and patent license to your contribution, under the
+     project's licenses (see COPYRIGHT).
+  f. You grant Fall Guy Consulting a perpetual, worldwide, non-exclusive,
+     royalty-free, irrevocable, sublicensable right to relicense your
+     contribution under any terms, including Apache-2.0,
+     AGPL-3.0-or-later, and a Fall Guy Consulting commercial license.
+
+You keep ownership of your contribution. This is a license, not an
+assignment.
+```
+
+## 2. How to contribute
 
 - **Open an issue first** for non-trivial changes. A short note describing
   the problem and your proposed approach saves rework if the design or
@@ -61,14 +112,14 @@ includes the exact incantation.
   to an Apache package), update `licensing.yml` in the same PR and
   re-stamp headers (`make license-stamp`).
 
-## 4. Reporting security issues
+## 3. Reporting security issues
 
 Please do not file public issues for security vulnerabilities. Email
 `security@fallguyconsulting.com` with a description of the issue and steps
 to reproduce. We respond within five business days; coordinated
 disclosure is the norm.
 
-## 5. Questions
+## 4. Questions
 
 For licensing or trademark questions, contact
 `licensing@fallguyconsulting.com`. For technical questions, open an issue

@@ -1,5 +1,15 @@
 # Rimsky Contributor License Agreement (Version 1.0)
 
+> **Retired (pending finalization).** New contributions are no longer
+> collected under this CLA. It is superseded by the single-sign-off
+> **Rimsky Contributor Certificate** in `CONTRIBUTING.md`, which folds the
+> rights grant and provenance certification into one per-commit
+> `Rimsky-Cert` trailer. The certificate's grant wording is itself still
+> under legal review, so this CLA is retained for now — as the finalized
+> rights agreement during the transition, and as the governing agreement
+> for any contribution accepted under it before the switch (see §9). It
+> will be removed once the certificate is finalized.
+
 Thank you for your interest in contributing to Rimsky, a project of Fall Guy
 Consulting ("the Project"). This Contributor License Agreement ("Agreement")
 sets out the terms under which you ("You" or "Contributor") agree to
