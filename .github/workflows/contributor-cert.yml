@@ -1,0 +1,69 @@
+name: Contributor Certificate
+
+# Verifies that every non-merge commit in a pull request carries a
+# well-formed `Rimsky-Cert:` sign-off trailer — the single sign-off that
+# folds DCO-style provenance and the relicensing grant into one line.
+# See CONTRIBUTING.md for the certificate text the trailer attests to.
+#
+# This reports a pass/fail check run. To make it a hard merge gate, mark
+# "Rimsky-Cert sign-off" as a required status check in branch protection
+# (or a ruleset) on the protected branch.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  rimsky-cert:
+    name: Rimsky-Cert sign-off
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every commit carries a Rimsky-Cert trailer
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            const commits = await github.paginate(
+              github.rest.pulls.listCommits,
+              { owner, repo, pull_number, per_page: 100 }
+            );
+
+            // Well-formed trailer line: "Rimsky-Cert: Name <local@host>".
+            const trailer = /^Rimsky-Cert:\s+\S.*<[^@\s>]+@[^@\s>]+>\s*$/m;
+
+            const missing = [];
+            for (const c of commits) {
+              // Merge commits are not authored by the contributor — skip them.
+              if (c.parents && c.parents.length > 1) continue;
+              if (!trailer.test(c.commit.message)) {
+                const subject = c.commit.message.split("\n")[0];
+                missing.push(`${c.sha.slice(0, 8)}  ${subject}`);
+              }
+            }
+
+            if (missing.length === 0) {
+              core.info(`All ${commits.length} commit(s) carry a valid Rimsky-Cert sign-off.`);
+              return;
+            }
+
+            core.setFailed(
+              [
+                "These commit(s) are missing a valid `Rimsky-Cert:` sign-off:",
+                ...missing.map((m) => `  - ${m}`),
+                "",
+                "Add this one line to each commit message:",
+                "  Rimsky-Cert: Your Name <you@example.com>",
+                "",
+                "New commits:  git commit --trailer \"Rimsky-Cert: Your Name <you@example.com>\"",
+                "Existing branch (backfill, then force-push):",
+                "  git rebase --exec 'git commit --amend --no-edit --trailer \"Rimsky-Cert: Your Name <you@example.com>\"' origin/dev",
+                "",
+                "The certificate this attests to is in CONTRIBUTING.md.",
+              ].join("\n")
+            );
