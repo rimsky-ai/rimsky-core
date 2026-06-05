@@ -24,14 +24,14 @@ The specific service protocols are sibling concepts: `concept:executor`, `concep
 
 - How a binary declares its protocol membership in the unified config (the per-service-entry protocol-membership list; see `concept:rimsky-yml`).
 - The capabilities startup handshake (one handshake call per protocol; see `concept:observability` for the discovery-cache that consumes them).
-- Conformance-validation entry points (the per-protocol conformance binaries; see `concept:conformance`).
+- Conformance-validation entry points (the `rimsky conformance <protocol>` subcommand family in the single binary, not standalone per-protocol binaries; see `concept:conformance`).
 - The multi-protocol composition pattern: a binary implementing N rimsky protocols uses N distinct handlers, one per protocol. Method-name collisions across protocols (e.g., a capabilities query on both the claim-producer and the executor-observability protocol) are resolved at the composition site, not by collapsing the protocols into one. Each handler implements one protocol; the binary registers each separately at the gRPC server.
 
 ## Invariants
 
 - Services are declared in the unified config with an explicit protocol-membership list per service.
 - Protocol membership is advertised at startup via the per-protocol capabilities query.
-- Per-protocol conformance binaries validate compliance.
+- Conformance is validated by the per-protocol `rimsky conformance <protocol>` subcommands shipped in the single binary; there are no standalone per-protocol conformance binaries (see `concept:conformance`).
 - Multi-protocol binaries use a distinct handler per protocol; there is no shared capabilities-provider abstraction across protocols (per `spec:2026-05-12-nomenclature-resolution` E.4 — the response shapes are protocol-specific and the downstream code is already protocol-specific).
 
 ## Adjacent

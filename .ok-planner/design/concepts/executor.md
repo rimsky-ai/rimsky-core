@@ -23,7 +23,7 @@ The bundled SQL-based reference store registers this protocol alongside `concept
 ## Invariants
 
 - Exactly one stream-close event closes the stream; the executor MUST close the stream immediately after.
-- The await-async-callback outcome switches to expecting an async-callback POST keyed on the assigned ack id, with the body keyed `type` (not `kind`) — enforced by the supervisor's callback route.
+- The await-async-callback outcome switches to expecting an async-callback POST keyed on the assigned ack id; that POST body carries exactly one outcome key — `success`, `error`, or `park` — enforced by the supervisor's callback route, which rejects any other body shape. (The earlier single `type` discriminator was retired; see `tension:_resolved/async-callback-body-key`.)
 - Heartbeat events refresh the node-run's last-heartbeat timestamp; cadence is executor-defined.
 - The userdata schema reported via the observability capabilities call is the only place rimsky reads userdata-adjacent metadata (schema-only, not content).
 - The declared-events list reported via observability is the source of truth for subscription template validation.
