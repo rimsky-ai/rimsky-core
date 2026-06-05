@@ -43,13 +43,8 @@ cannot be merged.
 
 ### The certificate
 
-> **Provisional — pending legal review.** The grant wording below
-> (clauses e–f) is a working draft under review by counsel and may
-> change. It is published here so the sign-off has a referent. Treat the
-> text as final only once this notice is removed.
-
 ```
-Rimsky Contributor Certificate — Version 1.0 (draft)
+Rimsky Contributor Certificate — Version 1.0
 
 By adding a `Rimsky-Cert` sign-off to a commit you submit to this
 project, you certify the following.

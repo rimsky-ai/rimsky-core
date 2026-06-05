@@ -46,7 +46,6 @@ exempt:
   - COPYRIGHT
   - NOTICE
   - TRADEMARKS.md
-  - CLA.md
   - CONTRIBUTING.md
   - licensing.yml
   - go.mod

@@ -24,9 +24,9 @@ Rimsky is multi-licensed:
      The orchestrator layer is identified per-file by a "Dual-licensed under
      AGPL-3.0-or-later or a Fall Guy Consulting commercial license" header.
 
-Contributions are accepted under the terms of the Contributor License
-Agreement at CLA.md, which grants Fall Guy Consulting the rights necessary
-to maintain the multi-license structure.
+Contributions are accepted under the Rimsky Contributor Certificate in
+CONTRIBUTING.md — a single per-commit Rimsky-Cert sign-off that grants Fall Guy
+Consulting the rights necessary to maintain the multi-license structure.
 
 "Rimsky" and the Rimsky logo are trademarks of Fall Guy Consulting. See
 TRADEMARKS.md for the trademark usage policy.

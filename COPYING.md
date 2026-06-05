@@ -85,11 +85,11 @@ exists to catch it.
 
 ## Contributions
 
-Contributions are accepted under the Contributor License Agreement in `CLA.md`,
-which grants Fall Guy Consulting the rights necessary to maintain this
-multi-license structure. By contributing you agree your contribution may be
-distributed under both the Apache and AGPL/commercial terms as appropriate to
-where it lands.
+Contributions are accepted under the Rimsky Contributor Certificate in
+`CONTRIBUTING.md` — a single per-commit `Rimsky-Cert` sign-off that grants Fall
+Guy Consulting the rights necessary to maintain this multi-license structure. By
+contributing you agree your contribution may be distributed under both the
+Apache and AGPL/commercial terms as appropriate to where it lands.
 
 ## Trademarks
 
@@ -105,5 +105,5 @@ license is not a trademark license. See `TRADEMARKS.md` for the usage policy.
 | `COPYRIGHT`      | The formal per-layer copyright notice (referenced by file headers). |
 | `NOTICE`         | Apache §4(d) attribution notice.                                  |
 | `licensing.yml`  | Machine-readable boundary map enforced by `tools/license-check`. |
-| `CLA.md`         | Contributor License Agreement.                                    |
+| `CONTRIBUTING.md` | Contributor guide + the Rimsky Contributor Certificate.          |
 | `TRADEMARKS.md`  | Trademark usage policy.                                           |
