@@ -27,6 +27,7 @@ apache:
   - lib/services/executors/claude-agent/   # TS executor reference impl; independently Apache-licensed
   # Edge carve-outs — not the wire contract, but deliberately permissive:
   - cold-read/   # documentation (style guide); docs ship Apache
+  - examples/   # copy-and-modify protocol examples; permissive so consumers can build on them
 
 agpl:
   - lib/foundation/
