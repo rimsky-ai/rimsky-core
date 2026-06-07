@@ -24,7 +24,7 @@ Rimsky is a project-agnostic reactive node-graph orchestration platform. This fi
 
 **Recent changes** — `git log`. This repo keeps no CHANGELOG; design rationale lives in the concept catalog (above) and `.ok-planner/` history.
 
-**Workflow scratch (do not cite, do not refresh)** — `.ok-planner/{specs,plans,sketches,history}/`. Per `.ok-planner/CLAUDE.md` these are historical records of how work was planned, not living docs of the codebase. This includes dated `YYYY-MM-DD-*-contract.md` and `YYYY-MM-DD-*-design.md` files under `specs/` — they are archive material even if prior CLAUDE.md text framed them as authoritative.
+**Project records, out of context by default** — `.ok-planner/{specs,plans,sketches,history}/`. Committed, versioned parts of the project, but **not the source of truth** (the source code and `.ok-planner/design/concepts/` are) and **not to be pulled into context unprompted**. `history/` (archived specs and plans) is a past moment and `sketches/` a speculative or in-progress future; reading either without a directing goal is context pollution when reasoning about the project as it stands. Read them only when a specific goal directs it (e.g. `/brainstorm` consulting a relevant sketch or prior plan). This is a context-discipline rule, **not** a commit rule — the files are committed and part of the project; some sketches are temporary planning input removed after use, which is also fine.
 
 ## Cross-cutting gotchas
 
