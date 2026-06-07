@@ -166,20 +166,25 @@ func applyTerminalPark(
 	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
-	// Canonical signal emission per concept:signal. The two
-	// ParkReason values map to two leaves of the terminal/park
-	// subtree (closed two-value set; @blessed-invariant on
-	// proto:executor.proto::ParkReason). AwaitAsyncCallback is NOT
-	// a park (transient/await_async; emitted at runner_dispatch.go).
+	// Canonical signal emission per concept:signal — a BARE audit row, NOT
+	// through the emitSignalInTx chokepoint, because terminal/park does
+	// NOT cascade-fire subscribers. Park is a transient suspension, not a
+	// run settlement: the node resumes and only then emits a real terminal
+	// disposition. A `terminal/*` subscriber means "react when the
+	// upstream is DONE", so firing it on a park would pull the downstream
+	// into the frame prematurely (a held-claim inheritor would dispatch
+	// before its acquirer resumes and commits — see
+	// TestParkedLifecycleHeldClaimRetentionAcrossPark). The drain above
+	// only releases receivers ALREADY gated on this run; it does not
+	// affirm new ones. The two ParkReason values map to two leaves of the
+	// terminal/park subtree (closed two-value set; @blessed-invariant on
+	// proto:executor.proto::ParkReason). AwaitAsyncCallback is NOT a park
+	// (transient/await_async; emitted at runner_dispatch.go).
 	parkSig := parkTerminalSignal(t)
 	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
 		acq.InstanceID, acq.NodeID, parkSig, now, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: emit signal: %w", err)
 	}
-	// terminal/park/* signal above is the canonical audit row per
-	// concept:signal. The pre-Pass-5 fixed-string "park_requested"
-	// audit-row retired alongside spec
-	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 
 	// Post-commit: lineage emit, run-tree propagation.
 	dispatchID := acq.DispatchID

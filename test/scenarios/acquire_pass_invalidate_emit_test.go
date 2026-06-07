@@ -34,19 +34,6 @@ import (
 )
 
 func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
-	t.Skip("post-2026-05-23 (signal-taxonomy + policy-decoupling reshape): " +
-		"the pass branch of the unified error_types: chain (both " +
-		"runtime/on_error.go::OnError pass case and " +
-		"runtime/runner_error_policy.go::applyResolvedAction's " +
-		"DispositionEnd + ColorFresh branch) commits a fresh state " +
-		"transition + terminal/error/<class> audit signal but does NOT " +
-		"fire cascadeSubscribersStaleInTx — only the retry branch does. " +
-		"For a pass to wake a downstream subscriber, the pass branch " +
-		"would need to extend cascade-fan-out to include settle-on-fresh " +
-		"transitions (mirroring applyTerminalComplete's settlement-walk). " +
-		"That's a deliberate scope-out from the 2026-05-23 spec; " +
-		"unskipping requires a follow-up spec extending the cascade " +
-		"walk to the pass branch.")
 	t.Parallel()
 
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -95,7 +82,7 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 					Type:     "monitor",
 					Executor: "stub",
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", Type: "terminal/*", When: "fresh"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", Type: "terminal/*"}),
 			),
 		},
 	})

@@ -12,9 +12,11 @@
 // Asserts:
 //   - A passes (settles fresh with settling_signal_type=terminal/error/<class>)
 //     without invoking the executor.
-//   - B is not woken — the pass branch of the unified error_types: chain
-//     commits the state transition + signal but does NOT fire
-//     cascadeSubscribersStaleInTx; only the retry branch does.
+//   - B is not woken — it subscribes to A's terminal/success, which does
+//     not match A's terminal/error/<class> pass settlement. (A held-claim
+//     inheritor inherits only on the acquirer's success; on acquisition
+//     failure there is no claim to inherit and the held subgraph never
+//     registers.)
 //   - No rimsky_claim_handles rows exist for the never-acquired claim.
 //   - No rimsky_claim_holders rows — the held subgraph never registered.
 package scenarios
@@ -89,7 +91,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 						"held": {From: "acquirer"},
 					},
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/success"}),
 			),
 		},
 	})
@@ -105,9 +107,9 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/", 30*time.Second),
 		"acquirer should record settling_signal_type=terminal/error/<class> under error_types: { acquire/unavailable: [pass] }")
 
-	// Inheritor must NOT run — the pass branch of the unified error_types:
-	// chain does not fire cascadeSubscribersStaleInTx; only the retry
-	// branch does. Give the system a beat.
+	// Inheritor must NOT run — it subscribes to terminal/success, which
+	// does not match the acquirer's terminal/error/<class> pass
+	// settlement, so the cascade does not wake it. Give the system a beat.
 	time.Sleep(2 * time.Second)
 
 	var acqRow, inhRow *persistence.NodeRow

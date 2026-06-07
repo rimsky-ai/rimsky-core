@@ -69,12 +69,12 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 		},
 	})
 	// Acquirer's executor returns an executor-blocked error. Inheritor
-	// would succeed if it ran — it must not. Under the 2026-05-23
-	// signal-taxonomy reshape the pass-resolution path on the acquirer
-	// settles fresh with settling_signal_type=terminal/error/<class>
-	// but does NOT fire cascadeSubscribersStaleInTx (only the retry
-	// branch does); on top of that the held-subgraph abort means
-	// inheritors are explicitly failed in the claim_holders table.
+	// would succeed if it ran — it must not. It subscribes to the
+	// acquirer's terminal/success, which does not match the acquirer's
+	// terminal/error/<class> pass settlement, so the cascade does not
+	// wake it; on top of that the held-subgraph abort fails the
+	// inheritors' claim_holders rows when the acquirer fails to produce
+	// work.
 	h.Stub.WhenType("acquirer").Error("executor_blocked", map[string]any{
 		"reason": "blocked_class",
 		"why":    "stub-blocked",
@@ -105,7 +105,7 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 						"held": {From: "acquirer"},
 					},
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/success"}),
 			),
 		},
 	})
@@ -143,7 +143,9 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	require.Equal(t, 0, activeCount,
 		"every rimsky_claim_handles row for this instance must reach a terminal state — auto-terminal must fire when the held-claim acquirer takes resolve=pass; non-zero indicates the inheritor-rows-active leak has regressed")
 
-	// Inheritor must remain fresh — passed does not cascade.
+	// Inheritor must remain fresh — it subscribes to terminal/success,
+	// which does not match the acquirer's terminal/error/<class> pass
+	// settlement, so the cascade does not wake it.
 	var inhRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, inh.ID, tx)
@@ -151,5 +153,5 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 		return err
 	}))
 	require.Equal(t, cascade.NodeStateFresh, inhRow.State,
-		"inheritor should remain fresh — pass on the acquirer must not propagate")
+		"inheritor should remain fresh — terminal/success subscription must not match the acquirer's terminal/error pass settlement")
 }

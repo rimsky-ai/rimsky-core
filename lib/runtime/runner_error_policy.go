@@ -132,19 +132,13 @@ func applyErrorPolicy(
 			return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 		}
 	}
-	// Canonical signal emission per concept:signal — co-committed with
-	// the state transition that produced it. The audit row on
-	// rimsky_events and the rimsky_nodes state change land or roll back
-	// together — subscribers wildcard-matching `transient/retry/*` or
-	// `terminal/error/*` never see an audit row whose state column
-	// still contradicts the disposition. Matches the same-tx emit
-	// pattern in `code:runtime/on_error.go::OnError`. The pre-Pass-5
-	// fixed-string "error" audit-row retired alongside
-	// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
-	if err := signalaudit.EmitSignal(ctx, args.Persist.Events(),
-		acq.InstanceID, acq.NodeID, resolution.Signal, args.Clock.Now(), tx); err != nil {
-		return nil, fmt.Errorf("applyErrorPolicy: emit resolution signal: %w", err)
-	}
+	// The resolution signal's cascade AND its canonical audit row land
+	// together in the same tx inside applyResolvedAction, via the single
+	// emit chokepoint (emitSignalInTxOnce in signal_emit.go) — co-committed
+	// with the state transition that produced it, so subscribers
+	// wildcard-matching `transient/retry/*` or `terminal/error/*` never see
+	// an audit row whose state column still contradicts the disposition,
+	// and a settlement can no longer emit a signal without cascading it.
 
 	// Post-commit work: lineage emit (on give_up) + run-tree
 	// propagation (on give_up). Both must run AFTER the state
@@ -229,17 +223,18 @@ func applyResolvedAction(
 				cascade.NodeStateStale, cascade.ReasonPolicyRetry, nil, tx); err != nil {
 				return err
 			}
-			// Pessimistic-invalidate: running → stale is the sender's
-			// invalidation in this frame. Gate downstream subscribers
-			// so they don't race the retry. The retry's emitted signal
-			// (transient/retry/<n>/<class>) drives subscriber CEL
-			// matching per concept:signal; subscribers without a
-			// transient/retry/* subscription don't fire.
-			if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-				acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
-				resolution.Signal); err != nil {
-				return err
-			}
+		}
+		// Run-disposition signal: transient/retry/<n>/<class> — cascade
+		// AND audit via the single emit chokepoint (signal_emit.go),
+		// emitted UNCONDITIONALLY (outside the running guard) so the
+		// resolution always lands its audit row, matching the prior
+		// unconditional emit in applyErrorPolicy. Subscriber-driven per
+		// concept:signal: only nodes subscribing to a matching
+		// transient/retry/* (with a true CEL when:) fire.
+		if err := emitSignalInTxOnce(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+			resolution.Signal); err != nil {
+			return err
 		}
 		// Thread `runScopeID` so fan-out children's retirement lands
 		// on this specific run, not every sibling claimed by this
@@ -307,6 +302,21 @@ func applyResolvedAction(
 					return err
 				}
 			}
+		}
+		// Run-disposition signal: terminal/error/<class> — cascade AND
+		// audit via the single emit chokepoint (signal_emit.go), emitted
+		// UNCONDITIONALLY (outside the running guard) so the resolution
+		// always lands its audit row, matching the prior unconditional emit
+		// in applyErrorPolicy. It runs BEFORE the settled-state drain below
+		// so gated receivers are affirmed-then-released in the same tx
+		// (insert-then-drain).
+		//
+		//	@concept: cascade
+		//	@concept: signal
+		if err := emitSignalInTxOnce(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
+			resolution.Signal); err != nil {
+			return err
 		}
 		// Settled-state drain: any wait-set rows gating receivers on
 		// this sender's run release.

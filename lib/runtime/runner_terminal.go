@@ -353,36 +353,58 @@ func applyTerminalComplete(
 	// subscriber edge map independently; a shared visited set across
 	// the per-signal loop ensures receivers seeded by an earlier
 	// signal don't get re-seeded by a later one.
-	signals := []signalpkg.Signal{{
+	visited := map[foundationshared.UUID]struct{}{}
+	// Run-disposition signal: terminal/success — cascade AND audit in the
+	// same tx via the single emit chokepoint (signal_emit.go). This
+	// replaces the old split where the cascade fired here in-tx but the
+	// audit row was rebuilt and written in a post-commit closure: two
+	// constructions of the same signal that could drift, and the shape
+	// that let other settlement paths emit without cascading.
+	successSig := signalpkg.Signal{
 		Type: "terminal/success",
 		Payload: map[string]any{
 			"changed":          t.Changed,
 			"attributes_delta": orEmptyMap(t.AttributesDel),
 			"change_summary":   t.ChangeSummary,
 		},
-	}}
+	}
+	if err := emitSignalInTx(ctx, args, tx,
+		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, successSig, visited); err != nil {
+		return nil, err
+	}
+	// Data signals: attribute/<key>/changed (one per merged attribute)
+	// and event/<name> (one per named event) cascade here at terminal so
+	// subscribers gate, sharing the once-per-frame guard above so a
+	// receiver already seeded by terminal/success is not re-seeded. They
+	// are NOT routed through emitSignalInTx: their audit rows are written
+	// on their own schedule (attribute deltas in the post-commit closure
+	// below — keyed on the changed delta, not every merged key; named
+	// events at emission time in persistOneNamedEvent), so routing them
+	// through the chokepoint would double-write those rows. They are
+	// data-change signals, not run dispositions.
 	for key, value := range merged {
-		signals = append(signals, signalpkg.Signal{
+		attrSig := signalpkg.Signal{
 			Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
 			Payload: map[string]any{
 				"key":   key,
 				"value": value,
 			},
-		})
+		}
+		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, attrSig, visited); err != nil {
+			return nil, err
+		}
 	}
 	for _, evt := range t.NamedEvents {
-		signals = append(signals, signalpkg.Signal{
+		eventSig := signalpkg.Signal{
 			Type: signalpkg.TypePath("event/" + evt.Name),
 			Payload: map[string]any{
 				"name":          evt.Name,
 				"event_payload": eventPayloadAsMap(evt.PayloadInline),
 			},
-		})
-	}
-	visited := map[foundationshared.UUID]struct{}{}
-	for _, sig := range signals {
+		}
 		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, sig, visited); err != nil {
+			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, eventSig, visited); err != nil {
 			return nil, err
 		}
 	}
@@ -403,42 +425,17 @@ func applyTerminalComplete(
 	// the SQLite single-conn pool.
 	dispatchID := acq.DispatchID
 	post := func(ctx context.Context) {
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// Canonical signal-shaped audit row per concept:signal.
-			// The pre-Pass-5 fixed-string audit-rows ("attributes_committed"
-			// / "no_op_commit" / "work_completed") retired alongside spec
-			// 2026-05-23-signal-taxonomy-and-policy-decoupling-design;
-			// terminal/success is the canonical audit row. Named-event
-			// audit emission lives in `persistOneNamedEvent`
-			// (runner_named_events.go); only `terminal/success` and the
-			// per-key `attribute/<key>/changed` signals are emitted in
-			// this post-commit closure.
-			attrDelta := t.AttributesDel
-			if attrDelta == nil {
-				attrDelta = map[string]any{}
-			}
-			successSig := signalpkg.Signal{
-				Type: "terminal/success",
-				Payload: map[string]any{
-					"changed":          t.Changed,
-					"attributes_delta": attrDelta,
-					"change_summary":   t.ChangeSummary,
-				},
-			}
-			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
-				acq.InstanceID, acq.NodeID, successSig, args.Clock.Now(), tx)
-		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("runner_terminal: emit terminal/success signal failed",
-				"node_id", acq.NodeID.String(),
-				"changed", t.Changed,
-				"error", err.Error())
-		}
-		// Per-key attribute/<key>/changed signals (Task 12). Emitted
-		// best-effort after the terminal/success audit row above so
-		// subscribers on attribute deltas can observe the change.
-		// Old-value lookup is not available at this point; payload
-		// OldValue stays nil per the spec's "optional, when known"
-		// note.
+		// The terminal/success cascade AND its canonical audit row landed
+		// together in-tx above via emitSignalInTx — there is no separate
+		// post-commit audit write for it here (that duplicate retired with
+		// the single-emit-path refactor). This closure carries only the
+		// work that genuinely must run after the outer tx commits.
+		//
+		// Per-key attribute/<key>/changed audit rows (Task 12). Emitted
+		// best-effort post-commit, keyed on the changed delta (not every
+		// merged key, which is what the in-tx cascade walks). Old-value
+		// lookup is not available at this point; payload OldValue stays
+		// nil per the spec's "optional, when known" note.
 		if len(t.AttributesDel) > 0 {
 			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				for key, value := range t.AttributesDel {

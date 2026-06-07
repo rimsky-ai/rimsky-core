@@ -4,10 +4,13 @@
 
 // Spec §4.2 (on_error) + §7.3 (policy chain). Consults the node's
 // error_types policy chain, evaluates an occurrence, persists the resolved
-// EvaluatorState, emits the canonical `terminal/error/<class>` (or
-// `transient/retry/<n>/<class>`) signal via signalaudit.EmitSignal, and
-// applies the resolved action (pass | give_up | retry |
-// discard_claims_then_retry).
+// EvaluatorState, and applies the resolved action (pass | give_up | retry |
+// discard_claims_then_retry). Every branch emits its run-disposition signal
+// — `terminal/error/<class>` (give_up/pass) or `transient/retry/<n>/<class>`
+// (retry) — through the single emit chokepoint emitSignalInTxOnce
+// (signal_emit.go), which fires the subscription cascade and writes the
+// audit row together in one tx. There is no separate signalaudit.EmitSignal
+// call here.
 //
 // Routes every error class through one path. The attribute-pipeline
 // classes (`template_resolution_failed`, `template_validation_failed`,
@@ -41,7 +44,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
@@ -224,15 +226,29 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateStale, cascade.ReasonPolicyRetry, nil, tx); err != nil {
 					return err
 				}
-				// Pessimistic-invalidate: running → stale is this
-				// sender's invalidation in this frame. Gate downstream
-				// subscribers across the retry round-trip.
-				//
-				//	@concept: cascade
-				//	@concept: wait-set
-				if err := walkCascadeForInvalidatedNode(ctx, sb, args.Queue, tx, log, args.NodeID, cur.InstanceID, *cur.FrameID); err != nil {
-					return err
-				}
+			}
+			// Run-disposition signal: transient/retry/<n>/<class> via the
+			// single emit chokepoint (signal_emit.go) — subscriber-driven
+			// cascade on the real transient/retry signal + audit, matching
+			// applyResolvedAction's retry branch. This replaces the prior
+			// pessimistic walkCascadeForInvalidatedNode + bare
+			// signalaudit.EmitSignal: the cascade now fires the actual
+			// transient/retry/* subscribers rather than a synthetic
+			// invalidation signal. Emitted BEFORE the dispatch is retired so
+			// the cascade still sees the in-flight run; audits
+			// unconditionally and cascades when the run is resolvable.
+			//
+			//	@concept: cascade
+			//	@concept: signal
+			var senderRunID shared.UUID
+			if cur.InFlightRunID != nil {
+				senderRunID = *cur.InFlightRunID
+			}
+			runArgs := RunArgs{Persist: sb, Queue: args.Queue, Logger: log, Clock: args.Clock}
+			if err := emitSignalInTxOnce(ctx, runArgs, tx,
+				args.NodeID, cur.NodeType, senderRunID, args.InstanceID, *cur.FrameID,
+				resolutionSig); err != nil {
+				return err
 			}
 			// Recovery-aware fields: the in-flight run row at this
 			// point is the predecessor dispatch being retired by
@@ -267,14 +283,10 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				}
 				return err
 			}
-			// Co-commit the canonical signal with the state transition
-			// that produced it. The audit row on `rimsky_events` and the
-			// rimsky_nodes state change land or roll back together —
-			// subscribers never see a `transient/retry/*` (or
-			// `terminal/error/*`) row while the run row still contradicts
-			// the disposition.
-			return signalaudit.EmitSignal(ctx, sb.Events(),
-				args.InstanceID, args.NodeID, resolutionSig, args.Clock.Now(), tx)
+			// The transient/retry signal + cascade were emitted above via
+			// the chokepoint, co-committed with the running→stale
+			// transition; nothing further to emit here.
+			return nil
 		})
 
 	case "give_up":
@@ -296,34 +308,39 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &giveUpSig, tx); err != nil {
 				return err
 			}
-			// Settled-state drain on failed: any wait-set rows gating
-			// receivers on this sender's run release. Post-stage-5 the
-			// wait-set keys on sender_run_id; resolve via the queue
-			// helper.
+			// Settled-state cascade + drain on failed. The run-disposition
+			// signal (terminal/error/<class>) goes through the single emit
+			// chokepoint (signal_emit.go). The emit is UNCONDITIONAL so the
+			// failed resolution always lands its audit row; the chokepoint
+			// cascades only when a real in-flight run + frame resolve below
+			// (insert), after which the drain releases the gated receivers
+			// (insert-then-drain). The audit row co-commits with the failed
+			// transition. Post-stage-5 the wait-set keys on sender_run_id;
+			// resolve via the queue helper.
 			//
+			//	@concept: cascade
+			//	@concept: signal
 			//	@concept: wait-set
+			var senderRunID, senderFrameID shared.UUID
 			if cur.FrameID != nil {
-				runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, args.NodeID, args.RunScopeID)
-				if err != nil {
+				if runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, args.NodeID, args.RunScopeID); err != nil {
 					return err
-				}
-				if ok {
-					if err := sb.WaitSet().MarkDrainedBySender(ctx, *cur.FrameID, runID, tx); err != nil {
-						return err
-					}
+				} else if ok {
+					senderRunID, senderFrameID = runID, *cur.FrameID
 				}
 			}
-			if err := args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx); err != nil {
+			runArgs := RunArgs{Persist: sb, Queue: args.Queue, Logger: log, Clock: args.Clock}
+			if err := emitSignalInTxOnce(ctx, runArgs, tx,
+				args.NodeID, cur.NodeType, senderRunID, args.InstanceID, senderFrameID,
+				resolutionSig); err != nil {
 				return err
 			}
-			// Co-commit the canonical signal with the give_up state
-			// transition. The `terminal/error/<class>` audit row and
-			// the rimsky_nodes failed transition land together —
-			// subscribers wildcard-matching `terminal/error/*` never
-			// fire on an audit row whose state column still reads
-			// running.
-			return signalaudit.EmitSignal(ctx, sb.Events(),
-				args.InstanceID, args.NodeID, resolutionSig, args.Clock.Now(), tx)
+			if senderRunID != (shared.UUID{}) {
+				if err := sb.WaitSet().MarkDrainedBySender(ctx, senderFrameID, senderRunID, tx); err != nil {
+					return err
+				}
+			}
+			return args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx)
 		})
 
 	case "pass":
@@ -380,30 +397,38 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				return fmt.Errorf("OnError pass branch: unexpected node state %q for node %s (expected stale|running); a concurrent rotation moved the row out from under us between the policy-resolution tx and the action-apply tx",
 					cur.State, args.NodeID)
 			}
-			// Settled-state drain on fresh+pass: any wait-set rows
-			// gating receivers on this sender's run release.
+			// Settled-state cascade + drain on fresh+pass. The
+			// run-disposition signal (terminal/error/<class>, Color=fresh)
+			// goes through the single emit chokepoint (signal_emit.go). The
+			// emit is UNCONDITIONAL so the pass resolution always lands its
+			// audit row; the chokepoint cascades only when a real in-flight
+			// run + frame resolve below (insert), after which the drain
+			// releases the gated receivers (insert-then-drain). Mirrors the
+			// give_up branch and applyResolvedAction's DispositionEnd.
+			//
+			//	@concept: cascade
+			//	@concept: signal
+			//	@concept: wait-set
+			var senderRunID, senderFrameID shared.UUID
 			if cur.FrameID != nil {
-				runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, args.NodeID, args.RunScopeID)
-				if err != nil {
+				if runID, ok, err := args.Queue.GetInFlightRunForNode(ctx, tx, args.NodeID, args.RunScopeID); err != nil {
 					return err
-				}
-				if ok {
-					if err := sb.WaitSet().MarkDrainedBySender(ctx, *cur.FrameID, runID, tx); err != nil {
-						return err
-					}
+				} else if ok {
+					senderRunID, senderFrameID = runID, *cur.FrameID
 				}
 			}
-			if err := args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx); err != nil {
+			runArgs := RunArgs{Persist: sb, Queue: args.Queue, Logger: log, Clock: args.Clock}
+			if err := emitSignalInTxOnce(ctx, runArgs, tx,
+				args.NodeID, cur.NodeType, senderRunID, args.InstanceID, senderFrameID,
+				resolutionSig); err != nil {
 				return err
 			}
-			// Co-commit the canonical signal with the pass state
-			// transition. The `terminal/error/<class>` audit row
-			// (Color=fresh per Resolution.Color, carried by the
-			// settling_signal_type column rather than the signal
-			// payload) lands together with the rimsky_nodes fresh
-			// transition.
-			return signalaudit.EmitSignal(ctx, sb.Events(),
-				args.InstanceID, args.NodeID, resolutionSig, args.Clock.Now(), tx)
+			if senderRunID != (shared.UUID{}) {
+				if err := sb.WaitSet().MarkDrainedBySender(ctx, senderFrameID, senderRunID, tx); err != nil {
+					return err
+				}
+			}
+			return args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx)
 		})
 	}
 	// `invalidate` action retired under the 2026-05-14 subscription-
