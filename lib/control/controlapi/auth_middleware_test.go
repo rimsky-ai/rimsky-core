@@ -198,6 +198,99 @@ func TestGate_StreamingHandlerCanFlush(t *testing.T) {
 	}
 }
 
+// TestGate_ExecuteBeatsDryRun_MultiEntryGrant verifies the gate's
+// matched-entry resolution is order-independent across two grant entries
+// on the same action with different modes. A key holding both a dry_run
+// entry and an execute entry for `instance:read` must resolve to
+// ModeExecute regardless of the order the entries sit in. Before the
+// fix, the gate broke on the first allowed entry inside CheckGrant, so
+// flipping the entry order silently downgraded a legitimately execute-
+// eligible request to dry_run.
+func TestGate_ExecuteBeatsDryRun_MultiEntryGrant(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		permissions string
+	}{
+		{
+			name:        "dry-run-listed-first",
+			permissions: `[{"action":"instance:read","mode":"dry_run"},{"action":"instance:read","mode":"execute"}]`,
+		},
+		{
+			name:        "execute-listed-first",
+			permissions: `[{"action":"instance:read","mode":"execute"},{"action":"instance:read","mode":"dry_run"}]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Build a fresh harness per sub-test so audit rows don't bleed.
+			ctx := context.Background()
+			dir := t.TempDir()
+			d, err := persistence.Open(ctx, persistence.Config{
+				Driver: "sqlite",
+				SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "state.db")},
+			})
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+				t.Fatalf("migrate: %v", err)
+			}
+			t.Cleanup(func() { _ = d.Close() })
+			clock := shared.NewControllableClock(time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC))
+			state := &AuthState{
+				Tables:   d.Tables(),
+				Registry: BuildV1Registry(),
+				Clock:    clock,
+				Logger:   shared.SilentLogger{},
+			}
+			plaintext, hash, err := auth.Mint()
+			if err != nil {
+				t.Fatalf("mint: %v", err)
+			}
+			if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				return d.Tables().APIKeys().Insert(ctx, persistence.APIKey{
+					ID:          shared.UUID{1, 2, 3},
+					Name:        "multi-entry",
+					KeyHash:     hash[:],
+					Permissions: []byte(tc.permissions),
+					CreatedAt:   clock.Now(),
+				}, tx)
+			}); err != nil {
+				t.Fatalf("seed key: %v", err)
+			}
+
+			var observedMode auth.Mode
+			probe := func(w http.ResponseWriter, r *http.Request) {
+				observedMode = ModeFromContext(r.Context())
+				w.WriteHeader(http.StatusOK)
+			}
+			r := chi.NewRouter()
+			r.Use(state.IdentityResolver())
+			r.Get("/instances", state.gateByAction("instance:read", probe))
+
+			srv := httptest.NewServer(r)
+			t.Cleanup(srv.Close)
+
+			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/instances", nil)
+			req.Header.Set("Authorization", "Bearer "+plaintext)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request: %v", err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status: got %d want 200", resp.StatusCode)
+			}
+			if observedMode != auth.ModeExecute {
+				t.Fatalf("ModeFromContext: got %q want %q (execute must beat dry_run regardless of grant-entry order)", observedMode, auth.ModeExecute)
+			}
+			payload := lastAttemptedRow(t, d.Tables())
+			if payload["mode"] != string(auth.ModeExecute) {
+				t.Errorf("audit mode: got %v want %q", payload["mode"], auth.ModeExecute)
+			}
+		})
+	}
+}
+
 // TestGate_DefaultModeIsExecute verifies the absence of the flag resolves
 // to ModeExecute (the default), and a clean read records executed=true.
 func TestGate_DefaultModeIsExecute(t *testing.T) {

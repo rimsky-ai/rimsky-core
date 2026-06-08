@@ -70,6 +70,11 @@ import (
 // subscription. Sensor-internal vocabulary stays as "Watch" —
 // the operator-facing name is publisher-subscription, but inside the
 // sensor binary the per-tick fire-state is just a watch.
+//
+// Missed-fire backfill is intentionally NOT implemented (see the
+// package doc): a long outage produces a single post-outage fire,
+// not a backfilled herd. There is therefore no per-subscription
+// backfill knob on this struct.
 type Watch struct {
 	SubscriptionID string
 	InstanceID     string
@@ -79,7 +84,6 @@ type Watch struct {
 	NextFireAt     time.Time
 	StartedAt      time.Time
 	LastFireAt     *time.Time
-	MissedFires    bool // operator hint: when true, sensor backfills missed fires
 }
 
 // SensorService implements genv1.PublisherServer. There is no
@@ -131,7 +135,6 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			NextFireAt:     r.NextFireAt,
 			StartedAt:      r.StartedAt,
 			LastFireAt:     lastFire,
-			MissedFires:    r.MissedFires,
 		}
 		s.logger.Info("sensor-cron.state_recovered",
 			"publisher_subscription_id", r.SubscriptionID,
@@ -169,8 +172,7 @@ func (s *SensorService) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv
 				ConfigSchema: []byte(`{
 					"type": "object",
 					"properties": {
-						"cron": {"type": "string"},
-						"missed_fires": {"type": "boolean", "default": false}
+						"cron": {"type": "string"}
 					},
 					"required": ["cron"]
 				}`),
@@ -189,8 +191,7 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		return nil, fmt.Errorf("sensor-cron does not support kind %q", req.GetKind())
 	}
 	var cfg struct {
-		Cron        string `json:"cron"`
-		MissedFires bool   `json:"missed_fires"`
+		Cron string `json:"cron"`
 	}
 	if err := json.Unmarshal(req.GetResolvedConfig(), &cfg); err != nil {
 		return nil, fmt.Errorf("decode resolved_config: %w", err)
@@ -215,7 +216,6 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		MessageKind:    messageKind,
 		NextFireAt:     sched.Next(now),
 		StartedAt:      now,
-		MissedFires:    cfg.MissedFires,
 	}
 	s.mu.Lock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {

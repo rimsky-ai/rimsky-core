@@ -65,6 +65,142 @@ func TestActionRegistry_RejectsDuplicates(t *testing.T) {
 	}
 }
 
+// TestValidateGrantScope_RejectsUnknownDimension proves the mint-time
+// scope-dimension validator catches an unknown scope key on an action
+// whose ScopeDimensions list is non-empty. Regression target: a typo
+// like `{action: "template:register", scope: {"templet_tag": "x"}}`
+// (missing 'a' in templet) silently denied every request before this
+// validator existed.
+func TestValidateGrantScope_RejectsUnknownDimension(t *testing.T) {
+	r := NewActionRegistry()
+	if err := r.Register(ActionEntry{
+		Action:          "thing:register",
+		Routes:          []Route{{"POST", "/things"}},
+		ScopeDimensions: []string{"thing_tag"},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	r.Build()
+	err := r.ValidateGrantScope(auth.Grant{
+		{Action: "thing:register", Scope: map[string]string{"templet_tag": "x"}},
+	})
+	if err == nil {
+		t.Fatalf("ValidateGrantScope: want error for unknown scope dimension; got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown scope dimension") {
+		t.Fatalf("error %q must surface the unknown-dimension diagnostic", err.Error())
+	}
+}
+
+// TestValidateGrantScope_RejectsScopeOnNonscopeableAction proves the
+// validator rejects ANY non-empty scope on an action whose
+// ScopeDimensions list is empty (no scopeable dimension exists; the
+// grant author is mis-using scope). Example: `{action: "auth:read",
+// scope: {"foo": "bar"}}`.
+func TestValidateGrantScope_RejectsScopeOnNonscopeableAction(t *testing.T) {
+	r := NewActionRegistry()
+	if err := r.Register(ActionEntry{
+		Action: "thing:read",
+		Routes: []Route{{"GET", "/things"}},
+		// ScopeDimensions left nil — action has no scopeable dimension.
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	r.Build()
+	err := r.ValidateGrantScope(auth.Grant{
+		{Action: "thing:read", Scope: map[string]string{"foo": "bar"}},
+	})
+	if err == nil {
+		t.Fatalf("ValidateGrantScope: want error for scope on unscopeable action; got nil")
+	}
+	if !strings.Contains(err.Error(), "does not support scope") {
+		t.Fatalf("error %q must surface the does-not-support-scope diagnostic", err.Error())
+	}
+}
+
+// TestValidateGrantScope_AdmitsKnownDimension is the green-path
+// sanity check: an entry whose scope key matches the action's
+// ScopeDimensions passes validation.
+func TestValidateGrantScope_AdmitsKnownDimension(t *testing.T) {
+	r := NewActionRegistry()
+	if err := r.Register(ActionEntry{
+		Action:          "thing:register",
+		Routes:          []Route{{"POST", "/things"}},
+		ScopeDimensions: []string{"thing_tag"},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	r.Build()
+	err := r.ValidateGrantScope(auth.Grant{
+		{Action: "thing:register", Scope: map[string]string{"thing_tag": "x"}},
+	})
+	if err != nil {
+		t.Fatalf("ValidateGrantScope: want nil for in-dimension scope; got %v", err)
+	}
+}
+
+// TestValidateGrantScope_AdmitsEmptyScopeOnUnscopeable proves the
+// validator allows an unscoped entry against an unscopeable action —
+// no scope is the only legal shape there.
+func TestValidateGrantScope_AdmitsEmptyScopeOnUnscopeable(t *testing.T) {
+	r := NewActionRegistry()
+	if err := r.Register(ActionEntry{
+		Action: "thing:read",
+		Routes: []Route{{"GET", "/things"}},
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	r.Build()
+	if err := r.ValidateGrantScope(auth.Grant{{Action: "thing:read"}}); err != nil {
+		t.Fatalf("ValidateGrantScope: empty scope on unscopeable action must pass; got %v", err)
+	}
+}
+
+// TestValidateGrantScope_SkipsWildcards proves wildcard-action entries
+// (`*`, `<noun>:*`, `*:<verb>`) are NOT rejected at mint time even when
+// carrying a scope. The wildcard spans many actions with mixed
+// ScopeDimensions, so the validator cannot pick one "correct" set; the
+// scope is matched at request time against the routed action.
+func TestValidateGrantScope_SkipsWildcards(t *testing.T) {
+	r := NewActionRegistry()
+	r.Build()
+	for _, action := range []string{"*", "template:*", "*:read"} {
+		if err := r.ValidateGrantScope(auth.Grant{
+			{Action: action, Scope: map[string]string{"anything": "x"}},
+		}); err != nil {
+			t.Fatalf("wildcard %q with scope: want nil (skipped); got %v", action, err)
+		}
+	}
+}
+
+// TestV1Registry_TemplateTagDimensionPopulated pins the per-action
+// ScopeDimensions list against the auth_request_target.go switch — the
+// dimension annotations on the seven scopeable actions must stay in
+// lockstep with the resolver. If a future change adds a new
+// scopeable dimension to requestTargets, this test reds and forces a
+// matching update to ActionEntry.ScopeDimensions.
+func TestV1Registry_TemplateTagDimensionPopulated(t *testing.T) {
+	r := BuildV1Registry()
+	want := []string{
+		"template:register",
+		"template:deploy",
+		"template:undeploy",
+		"template:deregister",
+		"tag:set",
+		"tag:delete",
+		"instance:create",
+	}
+	for _, action := range want {
+		e, ok := r.Entry(action)
+		if !ok {
+			t.Fatalf("action %q missing from registry", action)
+		}
+		if len(e.ScopeDimensions) != 1 || e.ScopeDimensions[0] != "template_tag" {
+			t.Fatalf("action %q ScopeDimensions = %v; want [template_tag]", action, e.ScopeDimensions)
+		}
+	}
+}
+
 func TestActionRegistry_RejectsAfterBuild(t *testing.T) {
 	r := NewActionRegistry()
 	r.Build()
@@ -151,6 +287,13 @@ func TestV1Registry(t *testing.T) {
 		// Audit read surface (spec 2026-05-29-console-upstream-auth-audit-and-fixes):
 		// the auth.* slice of the event log, granted separately from event:read.
 		"audit:read": true,
+		// Compose-origin capability marker: gates the privileged
+		// `compose:<project>:<...>` reserved-prefix bypass on tag-create
+		// / instance-create. No route maps to this action; CheckGrant
+		// consults it server-side when the X-Rimsky-Compose-Origin
+		// header is stamped. Only the compose-CLI's privileged key
+		// carries it.
+		"compose:origin": true,
 	}
 	for _, a := range surplus {
 		if !allowed[a] {

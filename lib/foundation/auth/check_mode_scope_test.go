@@ -36,6 +36,56 @@ func TestCheckGrant_ModeFloor(t *testing.T) {
 	}
 }
 
+// TestCheckGrant_ExecuteBeatsDryRun_OrderIndependent: when a grant
+// carries two entries that BOTH match the same request — one pinned to
+// ModeDryRun and one to ModeExecute — the matcher must resolve to
+// ModeExecute regardless of the order the entries sit in. The fix
+// removes the previous first-match-wins behavior where flipping the
+// grant order silently downgraded an execute-eligible key to dry_run.
+func TestCheckGrant_ExecuteBeatsDryRun_OrderIndependent(t *testing.T) {
+	dryThenExec := Grant{
+		{Action: "instance:create", Mode: ModeDryRun},
+		{Action: "instance:create", Mode: ModeExecute},
+	}
+	execThenDry := Grant{
+		{Action: "instance:create", Mode: ModeExecute},
+		{Action: "instance:create", Mode: ModeDryRun},
+	}
+	for _, tc := range []struct {
+		name  string
+		grant Grant
+	}{
+		{"dry-run-listed-first", dryThenExec},
+		{"execute-listed-first", execThenDry},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := CheckGrant(tc.grant, "instance:create", nil)
+			if !res.Allowed {
+				t.Fatalf("both entries match; expected Allowed=true: %+v", res)
+			}
+			if res.Mode != ModeExecute {
+				t.Fatalf("Mode = %q, want %q (execute must beat dry_run regardless of order)", res.Mode, ModeExecute)
+			}
+		})
+	}
+
+	// Same shape but the two entries' Scopes both subset-satisfy a
+	// concrete target: a tag-scoped dry_run entry and an unscoped
+	// execute entry both match a request for that tag. Execute still
+	// wins; the entry indices are not significant.
+	scopedMix := Grant{
+		{Action: "template:deploy", Scope: map[string]string{"template_tag": "analytics"}, Mode: ModeDryRun},
+		{Action: "template:deploy", Mode: ModeExecute},
+	}
+	res := CheckGrant(scopedMix, "template:deploy", map[string]string{"template_tag": "analytics"})
+	if !res.Allowed {
+		t.Fatalf("scoped+unscoped mix should allow: %+v", res)
+	}
+	if res.Mode != ModeExecute {
+		t.Fatalf("scoped+unscoped mix Mode = %q, want %q (execute wins)", res.Mode, ModeExecute)
+	}
+}
+
 // TestCheckGrant_ScopeMatch: a scoped entry is honored by the matcher —
 // it allows an in-scope target, denies an out-of-scope target, and
 // denies a target missing the scoped key entirely.

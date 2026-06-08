@@ -31,24 +31,28 @@ func (b *messageIdempotenciesImpl) q(tx persistence.Tx) querier { return (*table
 
 // SQLite doesn't have postgres's xmax trick. We use two queries inside
 // the caller's tx: first try INSERT … ON CONFLICT DO NOTHING; if no row
-// was inserted, SELECT the existing row.
+// was inserted, SELECT the existing row. The dedup tuple includes BOTH
+// sender_kind (structural source-of-claim: operator/publisher/anonymous)
+// and sender_subject (per-caller discriminator within operator) so
+// neither (a) two distinct api-keys nor (b) a publisher named "operator"
+// can cross-collide with another caller on the same Idempotency-Key.
 const sqliteInsertMessageIdempotencySQL = `
 INSERT INTO rimsky_message_idempotencies (
-    instance_id, sender, idempotency_key, message_id, created_at
-) VALUES (?, ?, ?, ?, ?)
-ON CONFLICT (instance_id, sender, idempotency_key) DO NOTHING`
+    instance_id, sender_kind, sender, sender_subject, idempotency_key, message_id, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (instance_id, sender_kind, sender, sender_subject, idempotency_key) DO NOTHING`
 
 const sqliteSelectMessageIdempotencySQL = `
 SELECT message_id, created_at
   FROM rimsky_message_idempotencies
- WHERE instance_id = ? AND sender = ? AND idempotency_key = ?`
+ WHERE instance_id = ? AND sender_kind = ? AND sender = ? AND sender_subject = ? AND idempotency_key = ?`
 
 func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persistence.Tx, row persistence.MessageIdempotencyRow) (persistence.MessageIdempotencyRow, bool, error) {
 	if row.CreatedAt.IsZero() {
 		row.CreatedAt = time.Now().UTC()
 	}
 	res, err := b.q(tx).ExecContext(ctx, sqliteInsertMessageIdempotencySQL,
-		row.InstanceID.String(), row.Sender, row.IdempotencyKey,
+		row.InstanceID.String(), row.SenderKind, row.Sender, row.SenderSubject, row.IdempotencyKey,
 		row.MessageID.String(), row.CreatedAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return persistence.MessageIdempotencyRow{}, false, fmt.Errorf("sqlite.MessageIdempotencies.Insert: %w", err)
@@ -63,7 +67,7 @@ func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persis
 	// Conflict — fetch the previously-recorded row.
 	var msgIDStr, createdAtStr string
 	err = b.q(tx).QueryRowContext(ctx, sqliteSelectMessageIdempotencySQL,
-		row.InstanceID.String(), row.Sender, row.IdempotencyKey,
+		row.InstanceID.String(), row.SenderKind, row.Sender, row.SenderSubject, row.IdempotencyKey,
 	).Scan(&msgIDStr, &createdAtStr)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -81,7 +85,9 @@ func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persis
 	}
 	return persistence.MessageIdempotencyRow{
 		InstanceID:     row.InstanceID,
+		SenderKind:     row.SenderKind,
 		Sender:         row.Sender,
+		SenderSubject:  row.SenderSubject,
 		IdempotencyKey: row.IdempotencyKey,
 		MessageID:      msgID,
 		CreatedAt:      t,

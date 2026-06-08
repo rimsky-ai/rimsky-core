@@ -28,6 +28,7 @@ func seedIdempotencyRow(ctx context.Context, t *testing.T, d persistence.Databas
 	require.NoError(t, d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, _, err := d.Tables().MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
 			InstanceID:     instanceID,
+			SenderKind:     "operator",
 			Sender:         "operator",
 			IdempotencyKey: msgID.String(),
 			MessageID:      msgID,

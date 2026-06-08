@@ -108,6 +108,20 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
+		// Reject any grant whose scope map carries a key the action
+		// doesn't declare. The action-grammar check above only verifies
+		// the action STRING; a typo like `{action:"template:register",
+		// scope:{"templet_tag":"analytics"}}` (note the missing 'a')
+		// passes the grammar check but silently denies every request
+		// because `templet_tag` is never emitted by requestTargets. The
+		// per-action ScopeDimensions registry catches these at mint
+		// time. Wildcard entries are skipped (they span multiple
+		// actions; their scope is matched at request time against the
+		// routed action's dimension).
+		if err := deps.AuthState.Registry.ValidateGrantScope(body.Permissions); err != nil {
+			badRequest(w, err.Error())
+			return
+		}
 		// Dry-run: grant validation passed; skip the mint + insert. Mint
 		// NO plaintext (a previewed key must never surface a usable
 		// credential) and persist no row — return a placeholder id

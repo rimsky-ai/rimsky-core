@@ -267,24 +267,55 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 		skin := protocolSkinFromContext(r.Context())
 		// Capture the body before the permission check: scope evaluation
 		// needs the request's scopeable dimension (e.g. the template tag),
-		// which requestTarget reads out of the captured JSON body.
-		// captureBody re-attaches the bytes to r.Body, so the handler
-		// still reads the same body the client sent.
-		body, rejected := captureBody(r, w, s.Logger)
+		// which requestTargets reads out of the captured JSON body and
+		// the URL path. captureBody re-attaches the bytes to r.Body, so
+		// the handler still reads the same body the client sent. It also
+		// hands back two views — the FULL body for target resolution
+		// (must not be the truncated marker, otherwise a >4 MB JSON
+		// request with a scoped grant 403s when the marker hides the
+		// real `template_tag`) and a possibly-truncated audit copy.
+		handlerBody, auditBody, rejected := captureBody(r, w, s.Logger)
 		if rejected {
 			// 413 already written; do not dispatch the handler.
 			return
 		}
-		// target is the request's resource selector for scope evaluation.
-		// requestTarget extracts the per-action scopeable dimension from
-		// the captured body; an empty target means only unscoped grant
-		// entries match, which preserves today's behavior for the unscoped
-		// grants in use. CheckGrant rejects a request whose action matches
-		// a scoped entry but whose target falls outside that entry's Scope,
-		// so an out-of-scope write lands a 403 + auth.access_denied below.
+		// targets is the request's resource-selector candidate list for
+		// scope evaluation. requestTargets extracts the per-action
+		// scopeable dimension from the URL path / captured JSON body
+		// (the full handlerBody, never the audit-truncated marker) and
+		// returns one candidate per concretely-named tag — covering the
+		// full template lifecycle, not just register. The gate is
+		// satisfied if ANY candidate satisfies the matched entry's Scope;
+		// an empty candidate (lone `{}`) matches only unscoped grant
+		// entries (preserving today's behavior for actions without a
+		// scopeable dimension). CheckGrant rejects an out-of-scope write
+		// with 403 + auth.access_denied below.
 		// @concept: permission
-		target := requestTarget(action, body, r)
-		res := auth.CheckGrant(ident.Permissions, action, target)
+		targets := requestTargets(r.Context(), s.Tables, action, handlerBody, r)
+		// Resolve the matched entry deterministically across ALL
+		// candidate targets — execute beats dry_run regardless of
+		// iteration order. A grant with one scoped execute entry and a
+		// separate dry_run entry on the same action must always resolve
+		// to execute, no matter which target the gate checks first.
+		// `auth.CheckGrant` itself is now order-independent within a
+		// single target (see CheckGrant doc); this loop extends that
+		// rule across the per-target candidate set.
+		// @concept: permission
+		// @concept: dry-run
+		var res auth.CheckResult
+		for _, target := range targets {
+			cand := auth.CheckGrant(ident.Permissions, action, target)
+			if !cand.Allowed {
+				continue
+			}
+			if !res.Allowed {
+				res = cand
+				continue
+			}
+			if res.Mode == auth.ModeDryRun && cand.Mode == auth.ModeExecute {
+				res = cand
+			}
+		}
 		// Validate that the captured body is JSON before wrapping it
 		// as `request_params`. The audit-row insert path Unmarshals the
 		// typed payload back into map[string]any (see audit.go::
@@ -294,13 +325,15 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 		// of body shape — so when the body is non-empty but not JSON
 		// (e.g. multipart upload, malformed payload) we land the row
 		// with `request_params_invalid: true` and a nil params field.
+		// The audit copy may be a synthetic truncation marker (well-
+		// formed JSON) when the body exceeds auditBodyCapBytes.
 		var (
 			params        json.RawMessage
 			paramsInvalid bool
 		)
-		if len(body) > 0 {
-			if json.Valid(body) {
-				params = json.RawMessage(body)
+		if len(auditBody) > 0 {
+			if json.Valid(auditBody) {
+				params = json.RawMessage(auditBody)
 			} else {
 				paramsInvalid = true
 			}
@@ -387,28 +420,33 @@ const auditBodyHandlerMaxBytes = 64 * 1024 * 1024
 
 // captureBody reads the request body up to the handler ceiling and
 // re-attaches the FULL captured bytes via NopCloser so the handler can
-// re-read them. The audit copy is a separate slice: when the body
-// exceeds auditBodyCapBytes the returned audit bytes are a synthetic
-// JSON marker recording the truncation; the handler's view of the
-// body is never silently corrupted. Bodies above auditBodyHandlerMaxBytes
-// trigger a 413 (writing to w directly) — callers must check the
-// returned handlerRejected flag and stop dispatch.
+// re-read them. It returns TWO views of those bytes — the full body for
+// permission-target resolution (which must read the un-truncated JSON,
+// e.g. `template_tag` on a >4 MB POST /instances) and a possibly-
+// truncated audit copy that the audit row records verbatim. Bodies
+// above auditBodyHandlerMaxBytes trigger a 413 (writing to w directly);
+// callers MUST check the returned handlerRejected flag and stop
+// dispatch.
 //
 // Returns:
-//   - auditBytes: the bytes to record in the audit row. May be a
-//     synthetic JSON marker when truncated; may be nil on empty body.
+//   - handlerBody: the FULL captured request body. Passed to
+//     requestTargets so scope evaluation reads the same bytes the
+//     handler will see. Empty on an empty/missing body.
+//   - auditBytes: the bytes to record in the audit row. Identical to
+//     handlerBody when ≤ auditBodyCapBytes; a synthetic JSON marker when
+//     the body exceeds the cap (the handler's view is never corrupted).
 //   - handlerRejected: true iff the function wrote a 413 response.
 //     Callers MUST stop dispatch when true.
-func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared.Logger) (auditBytes []byte, handlerRejected bool) {
+func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared.Logger) (handlerBody, auditBytes []byte, handlerRejected bool) {
 	if r.Body == nil || r.ContentLength == 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	// Limit to handlerCap+1 so we can detect "too large" without
 	// buffering an arbitrary client-controlled payload.
 	limited := io.LimitReader(r.Body, auditBodyHandlerMaxBytes+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	if len(body) > auditBodyHandlerMaxBytes {
 		// Drain the rest so the underlying connection can be reused,
@@ -423,7 +461,7 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 			"max_bytes":         auditBodyHandlerMaxBytes,
 			"observed_at_least": len(body),
 		})
-		return nil, true
+		return nil, nil, true
 	}
 	// Always re-attach the full body so the handler reads the same
 	// bytes the client sent. Audit truncation is a record-side concern
@@ -437,12 +475,15 @@ func captureBody(r *http.Request, w http.ResponseWriter, logger foundationshared
 		}
 		// Build a synthetic JSON marker so the audit row records the
 		// truncation explicitly. Callers consume `requestParams` as
-		// json.RawMessage; the marker is well-formed JSON.
+		// json.RawMessage; the marker is well-formed JSON. The handler
+		// body still carries the full bytes so scope evaluation reads
+		// the real `template_tag` / `template` / etc., not a synthetic
+		// marker that would falsely deny a legitimately-scoped grant.
 		marker := []byte(`{"_audit_truncated":true,"_audit_observed_bytes":` +
 			intToString(len(body)) + `}`)
-		return marker, false
+		return body, marker, false
 	}
-	return body, false
+	return body, body, false
 }
 
 // intToString avoids strconv import bloat in this file; small helper.

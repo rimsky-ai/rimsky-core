@@ -26,7 +26,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -219,15 +221,53 @@ func capabilitiesForProtocol(ctx context.Context, conn *grpc.ClientConn, protoco
 		// Capabilities RPC. A multi-protocol binary advertises that it fronts
 		// validation through its claim-producer/multi-protocol Capabilities
 		// surface (CapabilitiesResponse.protocols), which the handshake reads
-		// via that protocol's own case. A standalone validation-only binary has
-		// no capability surface to read, so validation is a no-capability
-		// forwarder: there is nothing to handshake, and the spawn must NOT fail
-		// for the absence of a Validation.Capabilities RPC. Return an empty
-		// capability blob and forward Validate dispatches unconditionally.
-		return nil, nil
+		// via that protocol's own case. A standalone validation-only binary
+		// has no capability surface to read, so validation is a no-capability
+		// forwarder: there is nothing to read back. But the spawn MUST still
+		// probe that the Validation server is actually registered on the
+		// spawned child — otherwise a binding that opens a TCP port but
+		// exposes no Validation server would pass the handshake and the
+		// first real Validate dispatch would surface as an opaque gRPC
+		// error (codes.Unimplemented). One sentinel Validate call here
+		// turns that "deferred opaque failure" into a clear "validation
+		// service not registered on spawned binary" handshake error.
+		return probeValidationRegistered(callCtx, conn)
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", protocol)
 	}
+}
+
+// validationHandshakeProbeRole is the sentinel role the agent sends in
+// the handshake-time Validate probe. It is the empty string so a real
+// validator sees a vacuous request and a synthetic role can't be
+// confused with anything an operator would author. The probe only
+// checks the RPC dispatches at all (i.e. the Validation server IS
+// registered on the spawned child); the response value is discarded.
+const validationHandshakeProbeRole = ""
+
+// probeValidationRegistered fires one Validate RPC at the child and
+// returns nil capabilities on any non-Unimplemented response. The
+// PURPOSE of the probe is to fail the handshake with a clear error
+// when the spawned binary doesn't register a Validation server (so a
+// later Validate dispatch can't surface as an opaque gRPC error). It
+// does NOT validate the validator's verdict — a Validate that returns
+// valid=false on the empty request is fine; the only failure case is
+// gRPC codes.Unimplemented (or a network error tearing down the
+// connection before the server can answer).
+func probeValidationRegistered(ctx context.Context, conn *grpc.ClientConn) ([]byte, error) {
+	_, err := genv1.NewValidationClient(conn).Validate(ctx, &genv1.ValidateRequest{Role: validationHandshakeProbeRole})
+	if err == nil {
+		// Server registered and answered cleanly.
+		return nil, nil
+	}
+	if status.Code(err) == codes.Unimplemented {
+		return nil, fmt.Errorf("validation service not registered on spawned binary: %w", err)
+	}
+	// Any other RPC failure means the child accepted the call (the
+	// server IS registered) and returned an error for this particular
+	// request shape. The probe's only contract is "server present";
+	// treat the call as successful for handshake purposes.
+	return nil, nil
 }
 
 // runReap handles a Reap frame and sends the resulting Reaped.

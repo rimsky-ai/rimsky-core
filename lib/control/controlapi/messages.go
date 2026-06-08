@@ -36,11 +36,58 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
+
+// senderSubjectAnonymous is the sentinel `sender_subject` value for an
+// operator-side request served under anonymous-mode (no api-key). Pinned
+// here rather than at the call site so a future plumbing change can't
+// accidentally drift the column value (a drift would silently revive
+// the cross-tenant collision the SenderSubject column exists to
+// prevent).
+const senderSubjectAnonymous = "anonymous"
+
+// operatorSenderSubject computes the `sender_subject` column value for
+// an operator-side message-create — the per-caller discriminator that
+// makes the idempotency dedup tuple resistant to cross-tenant collisions.
+// Returns the api-key UUID string for an authenticated request, the
+// anonymous sentinel for an anonymous-mode request, and the empty
+// string when no identity is on context (route-only test harness; the
+// production gate always installs an identity).
+func operatorSenderSubject(ident auth.Identity) string {
+	if ident.KeyID != nil {
+		return ident.KeyID.String()
+	}
+	if ident.Kind == auth.IdentityAnonymous {
+		return senderSubjectAnonymous
+	}
+	return ""
+}
+
+// dedupSenderKind computes the `sender_kind` column value for the
+// idempotency dedup tuple — the structural source-of-claim
+// discriminator that namespaces the `sender` string so a publisher
+// whose operator-chosen publisher_name happens to be the literal
+// `"operator"` cannot collide with operator-side emits on the same
+// instance + Idempotency-Key. The wire-level senderKind ("operator" /
+// "publisher") is the primary signal; an operator-side request in
+// implicit anonymous mode is bucketed separately as "anonymous" so
+// rotating anonymous → authenticated also rolls dedup tuples (the
+// anonymous floor and a future bootstrap admin should not share a
+// dedup tuple).
+func dedupSenderKind(wireSenderKind string, ident auth.Identity) string {
+	if wireSenderKind == "publisher" {
+		return "publisher"
+	}
+	if ident.Kind == auth.IdentityAnonymous {
+		return "anonymous"
+	}
+	return "operator"
+}
 
 // registerMessagesRoutes wires the message endpoints.
 func registerMessagesRoutes(r chi.Router, deps AppDeps) {
@@ -183,6 +230,19 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		msgID := shared.UUID(uuid.New())
 		instUUID := shared.UUID(instanceID)
+		// senderSubject discriminates the dedup tuple by requester so two
+		// distinct api-keys posting to the same instance with the same
+		// Idempotency-Key can no longer cross-collide (the second caller
+		// would otherwise receive the first caller's message_id back as
+		// a "replay" even though their payloads differ; the second caller
+		// could also probe whether the first used a given key by sending
+		// it). Operator with api-key → the api-key UUID; operator
+		// anonymous-mode → "anonymous"; publisher → "" (the `sender`
+		// column already carries the per-publisher publisher_name and
+		// provides isolation). senderSubject is rewritten alongside
+		// `sender` for the publisher capability path below.
+		ident, _ := IdentityFromContextOK(req.Context())
+		senderSubject := operatorSenderSubject(ident)
 		var finalMessageID = msgID
 		var replayed bool
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -213,6 +273,10 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 					return errPublisherSubscriptionNotActive
 				}
 				sender = row.PublisherName
+				// Publisher path: `sender = publisher_name` already gives
+				// per-publisher isolation, so the senderSubject column
+				// stays empty.
+				senderSubject = ""
 			}
 			// Dry-run: every validation step a real call would run
 			// has now completed (instance exists, not terminated,
@@ -231,7 +295,9 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			// never-inserted message.
 			dedupRow, inserted, err := deps.Persist.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
 				InstanceID:     instUUID,
+				SenderKind:     dedupSenderKind(senderKind, ident),
 				Sender:         sender,
+				SenderSubject:  senderSubject,
 				IdempotencyKey: idempotencyKey,
 				MessageID:      msgID,
 			})
@@ -308,6 +374,10 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
 				return
 			}
+			if errors.Is(err, errMessageTargetUnknown) {
+				badRequest(w, err.Error())
+				return
+			}
 			writeError(w, err)
 			return
 		}
@@ -326,13 +396,24 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 // target instance has already terminated. Mapped to 409 Conflict.
 var errInstanceTerminated = errors.New("instance has terminated; no further messages accepted")
 
+// errMessageTargetUnknown is the sentinel returned when the message's
+// `target` names a node type that doesn't exist in the instance. Mapped
+// to 400 Bad Request: an operator typo MUST surface as a precise error
+// rather than silently fanning out broadcast-style (which would consume
+// frame slots and risk starving other deliveries to nodes that have no
+// subscription to the message). Empty target stays broadcast.
+var errMessageTargetUnknown = errors.New("target names no node type in this instance")
+
 // resolveMessageFrameSource picks the node to source a delivery frame on
 // for a just-enqueued message. When target names a node type, the
 // matching node is the source. For a broadcast envelope (empty target)
 // the first node in the instance is used — the frame source only marks
 // the triggering node; the delivery sweep delivers every pending message
 // into the running frame regardless of which node seeded it. Returns
-// (zero, false, nil) when the instance has no nodes.
+// (zero, false, nil) when the instance has no nodes. A non-empty target
+// that names no existing node type returns errMessageTargetUnknown so
+// the handler can surface a 400 — distinguishing "intended broadcast"
+// (empty target) from "typo target" (non-empty but missing).
 func resolveMessageFrameSource(
 	ctx context.Context, persist persistence.Tables, tx persistence.Tx,
 	instanceID shared.UUID, target string,
@@ -350,11 +431,12 @@ func resolveMessageFrameSource(
 				return n.ID, true, nil
 			}
 		}
-		// Target names a node type that doesn't exist in this instance.
-		// Fall through to a broadcast-style source so the message still
-		// gets a frame to be delivered into (a subscriber matching by
-		// kind/sender_kind alone, e.g. `message/invalidate/*`, can still
-		// fire even when no node carries the literal target type).
+		// Target names a node type that doesn't exist in this instance —
+		// surface as a 400 rather than silently broadcasting. An operator
+		// typo must NOT fan out to nodes that have no subscription to the
+		// message (which would consume frame slots and risk starving other
+		// deliveries). Empty target stays broadcast.
+		return shared.UUID{}, false, errMessageTargetUnknown
 	}
 	return nodes[0].ID, true, nil
 }

@@ -190,6 +190,228 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	}
 }
 
+// TestControlAPIComposePrefixGuard_PermissionGated_E2E proves the
+// header-alone rejection path that the parent test cannot reach: it
+// switches the stack out of anonymous mode by minting an admin key, then
+// mints a NON-admin api-key whose grant carries `tag:create` and
+// `instance:create` but NOT `compose:origin`. With that key as Bearer,
+// a raw POST to /tags / /instances with the X-Rimsky-Compose-Origin
+// marker header MUST be rejected with the same reserved-prefix
+// diagnostic the no-header anonymous path returns — proving the header
+// is a CLAIM, not a trust boundary, and that the `compose:origin`
+// permission is the load-bearing check.
+//
+// Why this needs its own scenario: the parent test runs against an
+// anonymous-mode stack (`AnonymousIdentity` carries `Grant{{Action:
+// "*"}}` so its CheckGrant of `compose:origin` is automatically
+// satisfied). Until a real api-key without `compose:origin` is on the
+// wire we cannot prove the header-only rejection path exists.
+func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	netName := harness.NewNetwork(ctx, t)
+	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
+
+	ep := harness.BringUpRimsky(ctx, t,
+		harness.WithSQLite(),
+		harness.WithExistingNetwork(netName),
+		harness.WithExecutor("stub", "executor-stub:9300"),
+	)
+
+	// Mint admin via anonymous mode (zero keys → anonymous identity is
+	// the only caller, and it holds `{"action": "*"}`). Future requests
+	// must carry a Bearer.
+	adminKey := mintAPIKey(t, ep, "", "compose-guard-admin", []map[string]any{
+		{"action": "*"},
+	})
+
+	// Mint a non-admin api-key carrying ONLY the actions a `compose:`
+	// write requires — explicitly NOT `compose:origin`. This is the key
+	// whose header-stamped POST must be rejected.
+	nonAdminKey := mintAPIKey(t, ep, adminKey, "compose-guard-nonadmin", []map[string]any{
+		{"action": "tag:create"},
+		{"action": "tag:read"},
+		{"action": "instance:create"},
+		{"action": "instance:read"},
+		{"action": "template:register"},
+		{"action": "template:deploy"},
+		{"action": "template:read"},
+	})
+
+	// Need a deployed template the foreign /tags POST can name.
+	templateHash := deploySQLiteTemplateAuth(t, ep, adminKey, map[string]any{
+		"spec": map[string]any{
+			"name":                  "compose-prefix-perm-guard",
+			"version":               "1",
+			"frame_resolution_mode": "serial_queue",
+			"nodes": []map[string]any{
+				{"type": "worker", "executor": "stub"},
+			},
+		},
+	})
+
+	// ---- (1) Non-admin key + compose-origin header → 400, no row created.
+	const foreignTag = "compose:project-alpha:perm-v1"
+	status, raw := ep.PostJSONWithHeaders(t, "/tags", map[string]any{
+		"tag":      foreignTag,
+		"template": templateHash,
+	}, map[string]string{
+		"Authorization":           "Bearer " + nonAdminKey,
+		"X-Rimsky-Compose-Origin": "1",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST /tags %q with non-admin key + header returned %d, want 400 — `compose:origin` permission is missing so the header must NOT bypass the reserved-prefix guard\nbody: %s",
+			foreignTag, status, string(raw))
+	}
+	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
+		t.Fatalf("POST /tags 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
+	}
+	// And it must persist nothing: GET /tags omits it.
+	if tagListedAuth(t, ep, adminKey, foreignTag) {
+		t.Fatalf("after a rejected non-admin POST /tags, GET /tags still lists %q — the rejected create must persist nothing", foreignTag)
+	}
+
+	// ---- (2) Non-admin key + compose-origin header on /instances → 400, not created.
+	const foreignInstanceKey = "compose:project-alpha:perm-inst"
+	status, raw = ep.PostJSONWithHeaders(t, "/instances", map[string]any{
+		"template":     templateHash,
+		"instance_key": foreignInstanceKey,
+		"params":       map[string]any{},
+	}, map[string]string{
+		"Authorization":           "Bearer " + nonAdminKey,
+		"X-Rimsky-Compose-Origin": "1",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST /instances with instance_key %q + non-admin key + header returned %d, want 400 — `compose:origin` permission is missing so the header must NOT bypass the reserved-prefix guard\nbody: %s",
+			foreignInstanceKey, status, string(raw))
+	}
+	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
+		t.Fatalf("POST /instances 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
+	}
+	// And the instance must not exist.
+	if got := instanceGetStatusAuth(t, ep, adminKey, foreignInstanceKey); got != http.StatusNotFound {
+		t.Fatalf("after a rejected non-admin POST /instances, GET /instances/%s returned %d, want 404",
+			foreignInstanceKey, got)
+	}
+
+	// ---- (3) Sanity: same key WITHOUT the header lands on the same rejection
+	// — proving the header-only branch matches the header-absent branch when
+	// the permission is missing. Belt-and-suspenders against a regression
+	// that decoupled the two branches.
+	status, raw = ep.PostJSONWithHeaders(t, "/tags", map[string]any{
+		"tag":      foreignTag,
+		"template": templateHash,
+	}, map[string]string{
+		"Authorization": "Bearer " + nonAdminKey,
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("POST /tags %q with non-admin key + NO header returned %d, want 400 — reserved-prefix guard must reject unmarked foreign writes too\nbody: %s",
+			foreignTag, status, string(raw))
+	}
+	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
+		t.Fatalf("POST /tags (no-header) 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
+	}
+}
+
+// mintAPIKey POSTs /auth/keys with the supplied name + grant entries and
+// returns the resulting plaintext token. callerKey is the Bearer used to
+// authenticate the mint (empty string for the anonymous-mode bootstrap
+// admin create).
+func mintAPIKey(t *testing.T, ep harness.RimskyEndpoint, callerKey, name string, perms []map[string]any) string {
+	t.Helper()
+	headers := map[string]string{}
+	if callerKey != "" {
+		headers["Authorization"] = "Bearer " + callerKey
+	}
+	status, raw := ep.PostJSONWithHeaders(t, "/auth/keys", map[string]any{
+		"name":        name,
+		"permissions": perms,
+	}, headers)
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("POST /auth/keys (mint %q): %d %s", name, status, string(raw))
+	}
+	var resp struct {
+		Plaintext string `json:"plaintext"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode mint %q response: %v: %s", name, err, string(raw))
+	}
+	if resp.Plaintext == "" {
+		t.Fatalf("mint %q: plaintext empty: %s", name, string(raw))
+	}
+	return resp.Plaintext
+}
+
+// deploySQLiteTemplateAuth is deploySQLiteTemplate but authenticated.
+// Authenticated mode is required once a key has been minted (no more
+// anonymous floor).
+func deploySQLiteTemplateAuth(t *testing.T, ep harness.RimskyEndpoint, bearer string, body map[string]any) string {
+	t.Helper()
+	authHeader := map[string]string{"Authorization": "Bearer " + bearer}
+	status, raw := ep.PostJSONWithHeaders(t, "/templates", body, authHeader)
+	if status != http.StatusCreated {
+		t.Fatalf("POST /templates: %d %s", status, string(raw))
+	}
+	var resp struct {
+		TemplateID string `json:"template_id"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode template response: %v: %s", err, string(raw))
+	}
+	if resp.TemplateID == "" {
+		t.Fatalf("template_id empty: %s", string(raw))
+	}
+	deployStatus, deployRaw := ep.PostJSONWithHeaders(t,
+		"/templates/"+resp.TemplateID+"/deploy", map[string]any{}, authHeader)
+	if deployStatus != http.StatusOK {
+		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
+	}
+	return resp.TemplateID
+}
+
+// tagListedAuth walks /tags as bearer to check whether a tag exists. The
+// auth variant of tagListed for permission-gated scenarios.
+func tagListedAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, name string) bool {
+	t.Helper()
+	cursor := ""
+	for {
+		path := "/tags"
+		if cursor != "" {
+			path += "?cursor=" + cursor
+		}
+		status, raw := ep.GetJSON(t, path, bearer)
+		if status != http.StatusOK {
+			t.Fatalf("GET %s returned %d, want 200\nbody: %s", path, status, string(raw))
+		}
+		var resp struct {
+			Tags []struct {
+				Tag string `json:"tag"`
+			} `json:"tags"`
+			NextCursor string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			t.Fatalf("decode GET %s response: %v\nbody: %s", path, err, string(raw))
+		}
+		for _, tg := range resp.Tags {
+			if tg.Tag == name {
+				return true
+			}
+		}
+		if resp.NextCursor == "" {
+			return false
+		}
+		cursor = resp.NextCursor
+	}
+}
+
+// instanceGetStatusAuth is instanceGetStatus authenticated.
+func instanceGetStatusAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, key string) int {
+	t.Helper()
+	status, _ := ep.GetJSON(t, "/instances/"+key, bearer)
+	return status
+}
+
 // writeGuardComposeManifest writes a rimsky-compose.yml plus its referenced
 // template spec into a fresh temp dir and returns the manifest path. The
 // engine namespaces the declared tag/instance under

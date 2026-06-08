@@ -152,6 +152,46 @@ func TestIdempotencyMatrix(t *testing.T) {
 			"distinct-sender same-key yields two envelopes")
 	})
 
+	// publisher-named-"operator" same key → no collision with the
+	// operator-side emit. The dedup tuple now carries a structural
+	// sender_kind discriminator ("operator" vs "publisher") so a
+	// publisher whose operator-chosen publisher_name happens to be the
+	// literal `"operator"` cannot share a dedup tuple with operator-side
+	// emits — the `sender` column alone is no longer load-bearing for
+	// cross-source isolation.
+	t.Run("publisher_named_operator_no_collision", func(t *testing.T) {
+		instID := newInstanceForMessages(t, h, "pub-op")
+		// Operator-chosen publisher_name == "operator" — the exact
+		// collision shape sender_kind exists to prevent.
+		subID := insertPublisherSubscription(t, h, instID, "operator", persistence.PublisherSubscriptionStateActive)
+		key := "pub-op-" + uuid.NewString()
+
+		operator := h.httpJSONWithHeaders(t, "POST",
+			fmt.Sprintf("/instances/%s/messages", instID),
+			map[string]any{"kind": "invalidate", "target": "root"},
+			map[string]string{"Idempotency-Key": key})
+		require.Equal(t, http.StatusCreated, operator.status, operator.body)
+		operatorID, _ := operator.body["message_id"].(string)
+
+		publisher := h.httpJSONWithHeaders(t, "POST",
+			fmt.Sprintf("/instances/%s/messages", instID),
+			map[string]any{
+				"kind":                      "invalidate",
+				"target":                    "root",
+				"sender_kind":               "publisher",
+				"publisher_subscription_id": subID,
+			},
+			map[string]string{"Idempotency-Key": key})
+		require.Equal(t, http.StatusCreated, publisher.status,
+			"publisher named \"operator\" + same key must NOT replay the operator emit — sender_kind discriminator must hold")
+		publisherID, _ := publisher.body["message_id"].(string)
+		require.NotEqual(t, operatorID, publisherID,
+			"distinct sender_kind → distinct message ids; publisher named \"operator\" must not inherit the operator's dedup row")
+
+		require.Equal(t, 2, messageCount(t, instID),
+			"publisher-named-operator + same key as operator yields two envelopes (no false-replay collision)")
+	})
+
 	// active publisher subscription → 201. The capability check passes
 	// when the sub is active and bound to this instance.
 	t.Run("active_sub_success", func(t *testing.T) {

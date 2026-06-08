@@ -23,18 +23,22 @@ type CheckResult struct {
 // CheckGrant evaluates the grant for the given requestAction and request
 // resource target by set membership: the request is allowed iff any
 // entry both action-matches (wildcard grammar unchanged) AND
-// scope-matches the target (subset-satisfaction, see ScopeMatches). On
-// the first such entry it returns Allowed=true with that entry's index
-// and Mode (defaulted to ModeExecute when the entry pins no mode).
-// Returns Allowed=false when no entry matches. Order is not significant
-// for the allow/deny decision; the first matching entry supplies the
-// reported Mode.
+// scope-matches the target (subset-satisfaction, see ScopeMatches).
+// Order is not significant: the function scans ALL matching entries and
+// picks the most-permissive Mode (ModeExecute beats ModeDryRun), so a
+// key that holds both an `execute` entry and a `dry_run` entry for the
+// same action always resolves to execute regardless of where the entries
+// sit in the grant. MatchedIdx is the index of the entry whose Mode is
+// reported (the first execute-mode match if any, else the first
+// dry_run-mode match). Returns Allowed=false when no entry matches.
 //
 // target carries the request's resource selector (e.g.
 // {"template_tag": "analytics"}) for scope evaluation. An entry with no
 // scope is unscoped and matches any target, so a nil/empty target only
 // satisfies unscoped entries.
 func CheckGrant(grant Grant, requestAction string, target map[string]string) CheckResult {
+	bestIdx := -1
+	bestMode := Mode("")
 	for i, e := range grant {
 		if !ActionMatches(e.Action, requestAction) {
 			continue
@@ -46,9 +50,23 @@ func CheckGrant(grant Grant, requestAction string, target map[string]string) Che
 		if mode == "" {
 			mode = ModeExecute
 		}
-		return CheckResult{Allowed: true, MatchedIdx: i, Mode: mode}
+		if bestIdx == -1 {
+			bestIdx = i
+			bestMode = mode
+			continue
+		}
+		// Execute beats dry_run regardless of iteration order: a key
+		// with one execute entry and one dry_run entry on the same
+		// action resolves to execute.
+		if bestMode == ModeDryRun && mode == ModeExecute {
+			bestIdx = i
+			bestMode = mode
+		}
 	}
-	return CheckResult{Allowed: false, MatchedIdx: -1}
+	if bestIdx == -1 {
+		return CheckResult{Allowed: false, MatchedIdx: -1}
+	}
+	return CheckResult{Allowed: true, MatchedIdx: bestIdx, Mode: bestMode}
 }
 
 // ValidateGrant runs ValidateActionString over every entry. Used at

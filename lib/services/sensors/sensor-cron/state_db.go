@@ -73,8 +73,13 @@ func openStateDB(ctx context.Context) (*stateDB, error) {
 	return s, nil
 }
 
-// bootstrap creates the sensor_cron_state table if absent. Idempotent
-// across restarts; safe to run as part of openStateDB.
+// bootstrap creates the sensor_cron_state table if absent and prunes
+// the obsolete `missed_fires` column from any pre-existing dev table.
+// Missed-fire backfill was never implemented (see the sensor package
+// doc); the column persisted an operator hint that no code path
+// consumed, so it is dropped at bootstrap rather than carried forward
+// as dead schema. Idempotent across restarts; safe to run as part of
+// openStateDB. Pre-v1 there is no production data to migrate.
 func (s *stateDB) bootstrap(ctx context.Context) error {
 	const schema = `
 		CREATE TABLE IF NOT EXISTS sensor_cron_state (
@@ -85,11 +90,16 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    message_kind              TEXT NOT NULL,
 		    next_fire_at              TIMESTAMPTZ NOT NULL,
 		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-		    last_fire_at              TIMESTAMPTZ,
-		    missed_fires              BOOLEAN NOT NULL DEFAULT FALSE
+		    last_fire_at              TIMESTAMPTZ
 		);
 	`
-	_, err := s.db.ExecContext(ctx, schema)
+	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+		return err
+	}
+	// Drop the obsolete missed_fires column from any pre-existing dev
+	// table. IF EXISTS makes this idempotent and a no-op on fresh installs.
+	_, err := s.db.ExecContext(ctx,
+		`ALTER TABLE sensor_cron_state DROP COLUMN IF EXISTS missed_fires`)
 	return err
 }
 
@@ -112,20 +122,19 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 		INSERT INTO sensor_cron_state (
 		    publisher_subscription_id, instance_id, cron_expr,
 		    target_node, message_kind, next_fire_at, started_at,
-		    last_fire_at, missed_fires
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		    last_fire_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (publisher_subscription_id) DO UPDATE SET
 		    instance_id   = EXCLUDED.instance_id,
 		    cron_expr     = EXCLUDED.cron_expr,
 		    target_node   = EXCLUDED.target_node,
 		    message_kind  = EXCLUDED.message_kind,
-		    next_fire_at  = EXCLUDED.next_fire_at,
-		    missed_fires  = EXCLUDED.missed_fires
+		    next_fire_at  = EXCLUDED.next_fire_at
 	`
 	_, err := s.db.ExecContext(ctx, q,
 		w.SubscriptionID, w.InstanceID, w.CronExpr,
 		w.TargetNode, w.MessageKind, w.NextFireAt, w.StartedAt,
-		w.LastFireAt, w.MissedFires)
+		w.LastFireAt)
 	return err
 }
 
@@ -166,7 +175,6 @@ type SubscriptionState struct {
 	NextFireAt     time.Time
 	StartedAt      time.Time
 	LastFireAt     *time.Time
-	MissedFires    bool
 }
 
 // ListAll returns every persisted subscription. Used at startup to rebuild
@@ -178,7 +186,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT publisher_subscription_id, instance_id, cron_expr,
 		        target_node, message_kind, next_fire_at, started_at,
-		        last_fire_at, missed_fires
+		        last_fire_at
 		   FROM sensor_cron_state`)
 	if err != nil {
 		return nil, err
@@ -189,7 +197,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 		var st SubscriptionState
 		if err := rows.Scan(&st.SubscriptionID, &st.InstanceID, &st.CronExpr,
 			&st.TargetNode, &st.MessageKind, &st.NextFireAt, &st.StartedAt,
-			&st.LastFireAt, &st.MissedFires); err != nil {
+			&st.LastFireAt); err != nil {
 			return nil, err
 		}
 		out = append(out, st)

@@ -27,10 +27,12 @@ import (
 //
 //	@concept: wait-set
 type WaitSetRow struct {
-	FrameID           shared.UUID
-	ReceiverRunID     shared.UUID
-	SenderRunID       shared.UUID
-	TopicKind         string          // "terminal" | "transient" | "attribute" | "event" | "message" | "state" (legacy/fallback)
+	FrameID       shared.UUID
+	ReceiverRunID shared.UUID
+	SenderRunID   shared.UUID
+	// TopicKind is one of: "terminal" | "transient" | "attribute" | "event" | "message"
+	// (the 5-value taxonomy), with "state" tolerated as a legacy/fallback value.
+	TopicKind         string
 	SubscriptionScope string          // "direct" | "instance"
 	TopicFilter       json.RawMessage // nullable; carried for observability
 	DrainedAt         *time.Time      // nil means not yet drained

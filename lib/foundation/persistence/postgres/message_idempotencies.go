@@ -30,12 +30,17 @@ func (b *messageIdempotenciesImpl) q(tx persistence.Tx) querier { return (*table
 // unique-key conflict, returns the previously-recorded message_id +
 // created_at and inserted=false. The `xmax = 0` predicate is the
 // postgres-idiomatic way to distinguish "fresh insert" from
-// "conflict-replay" from a single RETURNING clause.
+// "conflict-replay" from a single RETURNING clause. The dedup tuple
+// includes BOTH sender_kind (structural source-of-claim:
+// operator/publisher/anonymous) and sender_subject (per-caller
+// discriminator within operator) so neither (a) two distinct api-keys
+// nor (b) a publisher named "operator" can cross-collide with another
+// caller on the same Idempotency-Key.
 const upsertMessageIdempotencySQL = `
 INSERT INTO rimsky_message_idempotencies (
-    instance_id, sender, idempotency_key, message_id, created_at
-) VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (instance_id, sender, idempotency_key) DO UPDATE
+    instance_id, sender_kind, sender, sender_subject, idempotency_key, message_id, created_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (instance_id, sender_kind, sender, sender_subject, idempotency_key) DO UPDATE
    SET message_id = rimsky_message_idempotencies.message_id
 RETURNING message_id, created_at, (xmax = 0) AS inserted`
 
@@ -47,14 +52,16 @@ func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persis
 	var outCreatedAt = row.CreatedAt
 	var inserted bool
 	err := b.q(tx).QueryRow(ctx, upsertMessageIdempotencySQL,
-		row.InstanceID, row.Sender, row.IdempotencyKey, row.MessageID, row.CreatedAt,
+		row.InstanceID, row.SenderKind, row.Sender, row.SenderSubject, row.IdempotencyKey, row.MessageID, row.CreatedAt,
 	).Scan(&outMessageID, &outCreatedAt, &inserted)
 	if err != nil {
 		return persistence.MessageIdempotencyRow{}, false, fmt.Errorf("postgres.MessageIdempotencies.InsertOrLookup: %w", err)
 	}
 	return persistence.MessageIdempotencyRow{
 		InstanceID:     row.InstanceID,
+		SenderKind:     row.SenderKind,
 		Sender:         row.Sender,
+		SenderSubject:  row.SenderSubject,
 		IdempotencyKey: row.IdempotencyKey,
 		MessageID:      outMessageID,
 		CreatedAt:      outCreatedAt,

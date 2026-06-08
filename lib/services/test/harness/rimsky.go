@@ -370,6 +370,15 @@ func BringUpRimsky(ctx context.Context, t testing.TB, opts ...Option) RimskyEndp
 // for tests that don't want to wire a full SDK client.
 func (e RimskyEndpoint) PostJSON(t testing.TB, path string, body any) (int, []byte) {
 	t.Helper()
+	return e.PostJSONWithHeaders(t, path, body, nil)
+}
+
+// PostJSONWithHeaders is PostJSON plus arbitrary request headers (e.g.
+// Authorization, X-Rimsky-Compose-Origin). Empty / nil headers are
+// skipped. Used by tests that need to assert auth-gated paths without
+// wiring a full SDK client.
+func (e RimskyEndpoint) PostJSONWithHeaders(t testing.TB, path string, body any, headers map[string]string) (int, []byte) {
+	t.Helper()
 	var raw []byte
 	if body != nil {
 		var err error
@@ -384,6 +393,12 @@ func (e RimskyEndpoint) PostJSON(t testing.TB, path string, body any) (int, []by
 	}
 	if raw != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		if k == "" || v == "" {
+			continue
+		}
+		req.Header.Set(k, v)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
