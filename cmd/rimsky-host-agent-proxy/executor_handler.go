@@ -53,6 +53,7 @@ func (h *executorHandler) Execute(req *genv1.ExecuteRequest, stream genv1.Execut
 		ctx, h.state, h.fetch,
 		[]string{protocolExecutor},
 		req.GetInstanceId(),
+		req.GetRunScopeId(),
 		req.GetCallbackUrl(),
 		h.spawnTimeout,
 	)

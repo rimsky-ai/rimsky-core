@@ -42,7 +42,8 @@ type Compiled struct {
 // interpreter. Schema and table names are validated as SQL identifiers
 // (lowercase letters, digits, underscores; not starting with a digit).
 //
-// Supported kinds (v1): no_nulls, row_count_absolute, pk_unique.
+// Supported kinds (v1): no_nulls, row_count_absolute, row_count_ratio,
+// pk_unique.
 //
 // Per spec
 // .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
@@ -63,6 +64,8 @@ func Compile(spec CheckSpec, schema, table string) (Compiled, error) {
 		out, err = compileNoNulls(spec.Config, schema, table)
 	case "row_count_absolute":
 		out, err = compileRowCountAbsolute(spec.Config, schema, table)
+	case "row_count_ratio":
+		out, err = compileRowCountRatio(spec.Config, schema, table)
 	case "pk_unique":
 		out, err = compilePKUnique(spec.Config, schema, table)
 	default:
@@ -166,6 +169,60 @@ func compileRowCountAbsolute(cfg map[string]any, schema, table string) (Compiled
 			}
 			if hasMax && n > maxVal {
 				res.Message = fmt.Sprintf("row_count_absolute: %g rows > max %g", n, maxVal)
+				return res
+			}
+			res.Pass = true
+			return res
+		},
+	}, nil
+}
+
+// compileRowCountRatio emits `SELECT count(*) FROM s.t` and an
+// interpreter that computes `ratio = row_count / baseline` and fails
+// when the ratio falls outside `[low, high]`. The SQL-side mirror of the
+// in-process shape's runRowCountRatio: same config vocabulary
+// (`baseline` required and > 0; `low` default 0.5; `high` default 2.0)
+// so an operator can move a check between the two substrates without
+// retranslating its config. The query is aggregate-only and
+// SELECT-prefixed — count(*) only, no row scan — to hold the
+// side-effect-free / SELECT-only discipline the compiler enforces.
+func compileRowCountRatio(cfg map[string]any, schema, table string) (Compiled, error) {
+	baselineRaw, hasBaseline := cfg["baseline"]
+	if !hasBaseline {
+		return Compiled{}, fmt.Errorf("row_count_ratio: config.baseline required (numeric)")
+	}
+	baseline, ok := numeric(baselineRaw)
+	if !ok || baseline <= 0 {
+		return Compiled{}, fmt.Errorf("row_count_ratio: config.baseline must be a positive number")
+	}
+	low, _ := numericDefault(cfg["low"], 0.5)
+	high, _ := numericDefault(cfg["high"], 2.0)
+	sql := fmt.Sprintf("SELECT count(*) FROM %s.%s", schema, table)
+	return Compiled{
+		Kind: "row_count_ratio",
+		SQL:  sql,
+		Interpret: func(scanned ...any) Result {
+			if len(scanned) == 0 {
+				return Result{Kind: "row_count_ratio", Message: "scan produced no values"}
+			}
+			n, ok := numeric(scanned[0])
+			if !ok {
+				return Result{Kind: "row_count_ratio", Message: fmt.Sprintf("scan produced non-numeric value %v", scanned[0])}
+			}
+			ratio := n / baseline
+			res := Result{
+				Kind: "row_count_ratio",
+				Counts: map[string]any{
+					"row_count": n,
+					"baseline":  baseline,
+					"low":       low,
+					"high":      high,
+					"ratio":     ratio,
+				},
+			}
+			if ratio < low || ratio > high {
+				res.Message = fmt.Sprintf("row_count_ratio: ratio=%.2f outside [%g, %g] (rows=%g, baseline=%g)",
+					ratio, low, high, n, baseline)
 				return res
 			}
 			res.Pass = true

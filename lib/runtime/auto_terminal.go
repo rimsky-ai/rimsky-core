@@ -237,7 +237,7 @@ func CheckAndFireResolution(
 	// parent must Abandon to match — partial success leaks bytes the
 	// caller's aggregator wasn't expecting. resolveParentClaimChain
 	// honors `seedOutcome` to carry the aggregate-failed verdict up.
-	if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+	td := TerminalDecision{
 		ClaimHandleID:       claimHandleID,
 		SupervisorID:        args.SupervisorID,
 		Source:              HeldTerminal,
@@ -250,8 +250,84 @@ func CheckAndFireResolution(
 		ProducerName:        producerName,
 		LineageHint:         hint,
 		ParentClaimHandleID: row.ParentClaimHandleID,
-	}); err != nil {
+	}
+	if err := ResolveClaimHandleTerminal(ctx, args, tx, td); err != nil {
+		// A producer-verb fault carrying a rimsky error_class (e.g. the
+		// atomic-staging `pg/swap_failed` collision the postgres store
+		// returns from Commit) is NOT a tx-fatal error: letting it bubble
+		// would roll back the holder's terminal and wedge the run with no
+		// settled disposition (the claim never resolves, the run retries
+		// forever). Instead route it as a claim-terminal error signal —
+		// `terminal/error/<class>` for the holder node — co-committed in
+		// this same tx, and resolve the claim handle so the held subgraph
+		// settles cleanly. This is what gives the producer's declared
+		// `pg/swap_failed` class a real signal at the subscriber surface.
+		if cls := producerErrorClassOf(err); cls != "" {
+			if rerr := routeHeldClaimVerbError(ctx, args, tx, row, td, cls); rerr != nil {
+				return fmt.Errorf("CheckAndFireResolution: route verb error: %w", rerr)
+			}
+			return nil
+		}
 		return fmt.Errorf("CheckAndFireResolution: %w", err)
+	}
+	return nil
+}
+
+// routeHeldClaimVerbError handles a held-claim auto-terminal whose
+// producer Commit/Abandon RPC faulted with a rimsky error_class. It
+// emits the canonical `terminal/error/<class>` signal for the holder
+// node (co-committed in the caller's terminal tx so a subscriber on
+// `terminal/error/<class>` — or the wildcard `terminal/error/*` — fires)
+// and promotes the claim handle to a terminal state so the held subgraph
+// settles rather than wedging on the faulted verb.
+//
+// The producer verb is NOT re-fired here: the store already attempted the
+// cutover and left its own state consistent (a `pg/swap_failed` collision
+// leaves the staging intact for the operator to inspect). Promoting the
+// rimsky_claim_handles row to `abandoned` records that the held resolution
+// did not commit, without driving a second producer RPC that would
+// discard the store-side state the operator may want to examine.
+//
+//	@concept: error-policy
+//	@concept: signal
+func routeHeldClaimVerbError(
+	ctx context.Context, args RunArgs, tx persistence.Tx,
+	row *persistence.ClaimHandleRow, td TerminalDecision, errorClass string,
+) error {
+	// Emit the claim-terminal error signal for the holder node. senderRunID
+	// / senderFrameID come from the claim-handle row when present; a zero
+	// pair degrades to the audit-only edge (the disposition row still lands
+	// on the event log, which is the operator-visible surface a subscriber /
+	// `error_types:` chain routes to).
+	var senderRunID, senderFrameID shared.UUID
+	if row.NodeRunID != nil {
+		senderRunID = *row.NodeRunID
+	}
+	if row.FrameID != nil {
+		senderFrameID = *row.FrameID
+	}
+	holderNodeType := ""
+	if nd, err := args.Persist.Nodes().Get(ctx, row.HolderNodeID, tx); err == nil && nd != nil {
+		holderNodeType = nd.NodeType
+	}
+	sig := errorPolicySignal(errorClass, map[string]any{
+		"source":          "claim_terminal_verb",
+		"producer":        td.ProducerName,
+		"claim_handle_id": td.ClaimHandleID.String(),
+	}, "give_up", 0, 0)
+	if err := emitSignalInTxOnce(ctx, args, tx,
+		row.HolderNodeID, holderNodeType, senderRunID, td.LineageHint.InstanceID,
+		senderFrameID, sig); err != nil {
+		return fmt.Errorf("emit claim-terminal error signal: %w", err)
+	}
+	// Promote the claim handle to abandoned (state-column flip,
+	// claimant-guarded) WITHOUT re-firing the producer verb — the faulted
+	// cutover already ran store-side. Reuse promoteHandleState by flagging
+	// the decision as Abandon.
+	abandonTD := td
+	abandonTD.Outcome = AggregateAbandon
+	if err := promoteHandleState(ctx, args, tx, abandonTD); err != nil {
+		return fmt.Errorf("promote handle after verb error: %w", err)
 	}
 	return nil
 }

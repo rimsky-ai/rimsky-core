@@ -636,6 +636,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 	terminalSig := signalForTerminal(t)
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
+		NodeID:           acq.NodeID,
 		DispatchID:       acq.DispatchID,
 		FrameID:          acq.FrameID,
 		Executor:         acq.Executor,

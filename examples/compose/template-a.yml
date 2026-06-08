@@ -1,0 +1,12 @@
+# template-a.yml — a minimal rimsky TemplateSpec for the compose example.
+#
+# One worker node dispatched to the `stub` executor. Illustrative only:
+# `stub` stands in for whatever executor your deployment provides. The
+# spec round-trips through rimsky's template validator and is registered
+# + deployed by `rimsky compose up` (see ./rimsky-compose.yml).
+name: template-a
+version: "1"
+frame_resolution_mode: serial_queue
+nodes:
+  - type: worker
+    executor: stub

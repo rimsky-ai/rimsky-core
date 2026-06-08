@@ -50,7 +50,7 @@ func TestRolesCoverAuditRead(t *testing.T) {
 		c := c
 		t.Run(c.role, func(t *testing.T) {
 			grant := roleGrant(t, c.role)
-			got := auth.CheckGrant(grant, "audit:read").Allowed
+			got := auth.CheckGrant(grant, "audit:read", nil).Allowed
 			if got != c.want {
 				t.Fatalf("role %q audit:read coverage = %v, want %v (grant: %+v)",
 					c.role, got, c.want, grant)

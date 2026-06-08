@@ -781,10 +781,19 @@ func (x *Spawn) GetReadyTimeoutSeconds() int32 {
 }
 
 type Binding struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // future-extensible: args, env, per-binding cwd, etc.
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Path  string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	// Per-binding exec() overrides. All four fields are additive and
+	// backward-compatible: an absent field means today's default behavior,
+	// so a binding declared with none of them spawns exactly as before
+	// (no extra args, inherited env, the instance-level cwd, and the global
+	// Spawn ready-timeout).
+	Args                []string          `protobuf:"bytes,2,rep,name=args,proto3" json:"args,omitempty"`                                                                         // additive: extra argv passed to the child; absent → no extra args
+	Env                 map[string]string `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // additive: env vars layered onto the inherited environment; absent → inherited env only
+	Cwd                 string            `protobuf:"bytes,4,opt,name=cwd,proto3" json:"cwd,omitempty"`                                                                           // additive: per-binding working-directory override; absent → falls back to the instance-level cwd
+	ReadyTimeoutSeconds int32             `protobuf:"varint,5,opt,name=ready_timeout_seconds,json=readyTimeoutSeconds,proto3" json:"ready_timeout_seconds,omitempty"`             // additive: per-binding spawn-readiness timeout override; absent (0) → the global Spawn ready_timeout_seconds
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Binding) Reset() {
@@ -822,6 +831,34 @@ func (x *Binding) GetPath() string {
 		return x.Path
 	}
 	return ""
+}
+
+func (x *Binding) GetArgs() []string {
+	if x != nil {
+		return x.Args
+	}
+	return nil
+}
+
+func (x *Binding) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *Binding) GetCwd() string {
+	if x != nil {
+		return x.Cwd
+	}
+	return ""
+}
+
+func (x *Binding) GetReadyTimeoutSeconds() int32 {
+	if x != nil {
+		return x.ReadyTimeoutSeconds
+	}
+	return 0
 }
 
 type SpawnAck struct {
@@ -1017,8 +1054,22 @@ type DispatchFrame struct {
 	StreamId          string                          `protobuf:"bytes,4,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
 	Kind              DispatchFrame_DispatchFrameKind `protobuf:"varint,5,opt,name=kind,proto3,enum=rimsky.v1.DispatchFrame_DispatchFrameKind" json:"kind,omitempty"`
 	ClaimProducerVerb DispatchFrame_ClaimProducerVerb `protobuf:"varint,6,opt,name=claim_producer_verb,json=claimProducerVerb,proto3,enum=rimsky.v1.DispatchFrame_ClaimProducerVerb" json:"claim_producer_verb,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// rpc_method names the unary RPC the agent must invoke on the child for
+	// the non-executor, non-claim-producer fronted protocols — e.g. "Subscribe"
+	// (publisher), "Validate" (validation), "BeginCandidate" (data-processing).
+	// It is the generic analogue of claim_producer_verb: those protocols expose
+	// multiple unary RPCs whose request messages are distinct types, so — exactly
+	// as Commit/Abandon/Release are byte-identical at claim_id and force
+	// claim_producer_verb to carry the verb — the agent cannot reliably infer the
+	// target RPC from the payload shape alone. rpc_method is therefore
+	// authoritative for publisher / validation / data-processing dispatch, just as
+	// claim_producer_verb is authoritative for the claim-producer path. The value
+	// is the short or fully-qualified RPC name (the agent matches it against the
+	// child service descriptor). Empty on executor dispatch and on the
+	// claim-producer path (which uses claim_producer_verb instead).
+	RpcMethod     string `protobuf:"bytes,7,opt,name=rpc_method,json=rpcMethod,proto3" json:"rpc_method,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DispatchFrame) Reset() {
@@ -1091,6 +1142,13 @@ func (x *DispatchFrame) GetClaimProducerVerb() DispatchFrame_ClaimProducerVerb {
 		return x.ClaimProducerVerb
 	}
 	return DispatchFrame_CLAIM_PRODUCER_VERB_UNSPECIFIED
+}
+
+func (x *DispatchFrame) GetRpcMethod() string {
+	if x != nil {
+		return x.RpcMethod
+	}
+	return ""
 }
 
 type LocalHttpForward struct {
@@ -1342,9 +1400,16 @@ const file_host_agent_proto_rawDesc = "" +
 	"\frun_scope_id\x18\x04 \x01(\tR\n" +
 	"runScopeId\x12-\n" +
 	"\x12expected_protocols\x18\x05 \x03(\tR\x11expectedProtocols\x122\n" +
-	"\x15ready_timeout_seconds\x18\x06 \x01(\x05R\x13readyTimeoutSeconds\"\x1d\n" +
+	"\x15ready_timeout_seconds\x18\x06 \x01(\x05R\x13readyTimeoutSeconds\"\xde\x01\n" +
 	"\aBinding\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"\xf9\x02\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
+	"\x04args\x18\x02 \x03(\tR\x04args\x12-\n" +
+	"\x03env\x18\x03 \x03(\v2\x1b.rimsky.v1.Binding.EnvEntryR\x03env\x12\x10\n" +
+	"\x03cwd\x18\x04 \x01(\tR\x03cwd\x122\n" +
+	"\x15ready_timeout_seconds\x18\x05 \x01(\x05R\x13readyTimeoutSeconds\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf9\x02\n" +
 	"\bSpawnAck\x12\x19\n" +
 	"\bspawn_id\x18\x01 \x01(\tR\aspawnId\x127\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x1f.rimsky.v1.SpawnAck.SpawnStatusR\x06status\x12I\n" +
@@ -1363,14 +1428,16 @@ const file_host_agent_proto_rawDesc = "" +
 	"\x06Reaped\x12\x19\n" +
 	"\bspawn_id\x18\x01 \x01(\tR\aspawnId\x12\x14\n" +
 	"\x05clean\x18\x02 \x01(\bR\x05clean\x12/\n" +
-	"\x05error\x18\x03 \x01(\v2\x19.rimsky.v1.HostAgentErrorR\x05error\"\xf1\x04\n" +
+	"\x05error\x18\x03 \x01(\v2\x19.rimsky.v1.HostAgentErrorR\x05error\"\x90\x05\n" +
 	"\rDispatchFrame\x12\x19\n" +
 	"\bspawn_id\x18\x01 \x01(\tR\aspawnId\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12\x18\n" +
 	"\apayload\x18\x03 \x01(\fR\apayload\x12\x1b\n" +
 	"\tstream_id\x18\x04 \x01(\tR\bstreamId\x12>\n" +
 	"\x04kind\x18\x05 \x01(\x0e2*.rimsky.v1.DispatchFrame.DispatchFrameKindR\x04kind\x12Z\n" +
-	"\x13claim_producer_verb\x18\x06 \x01(\x0e2*.rimsky.v1.DispatchFrame.ClaimProducerVerbR\x11claimProducerVerb\"\x9a\x01\n" +
+	"\x13claim_producer_verb\x18\x06 \x01(\x0e2*.rimsky.v1.DispatchFrame.ClaimProducerVerbR\x11claimProducerVerb\x12\x1d\n" +
+	"\n" +
+	"rpc_method\x18\a \x01(\tR\trpcMethod\"\x9a\x01\n" +
 	"\x11DispatchFrameKind\x12#\n" +
 	"\x1fDISPATCH_FRAME_KIND_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18DISPATCH_FRAME_KIND_DATA\x10\x01\x12\"\n" +
@@ -1421,7 +1488,7 @@ func file_host_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_host_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_host_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_host_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_host_agent_proto_goTypes = []any{
 	(SpawnAck_SpawnStatus)(0),            // 0: rimsky.v1.SpawnAck.SpawnStatus
 	(DispatchFrame_DispatchFrameKind)(0), // 1: rimsky.v1.DispatchFrame.DispatchFrameKind
@@ -1441,9 +1508,10 @@ var file_host_agent_proto_goTypes = []any{
 	(*LocalHttpForward)(nil),             // 15: rimsky.v1.LocalHttpForward
 	(*LocalHttpResponse)(nil),            // 16: rimsky.v1.LocalHttpResponse
 	(*HostAgentError)(nil),               // 17: rimsky.v1.HostAgentError
-	nil,                                  // 18: rimsky.v1.SpawnAck.CapabilitiesEntry
-	nil,                                  // 19: rimsky.v1.LocalHttpForward.HeadersEntry
-	nil,                                  // 20: rimsky.v1.LocalHttpResponse.HeadersEntry
+	nil,                                  // 18: rimsky.v1.Binding.EnvEntry
+	nil,                                  // 19: rimsky.v1.SpawnAck.CapabilitiesEntry
+	nil,                                  // 20: rimsky.v1.LocalHttpForward.HeadersEntry
+	nil,                                  // 21: rimsky.v1.LocalHttpResponse.HeadersEntry
 }
 var file_host_agent_proto_depIdxs = []int32{
 	5,  // 0: rimsky.v1.ClientFrame.register:type_name -> rimsky.v1.Register
@@ -1459,21 +1527,22 @@ var file_host_agent_proto_depIdxs = []int32{
 	14, // 10: rimsky.v1.ServerFrame.dispatch_frame:type_name -> rimsky.v1.DispatchFrame
 	16, // 11: rimsky.v1.ServerFrame.http_response:type_name -> rimsky.v1.LocalHttpResponse
 	10, // 12: rimsky.v1.Spawn.binding:type_name -> rimsky.v1.Binding
-	0,  // 13: rimsky.v1.SpawnAck.status:type_name -> rimsky.v1.SpawnAck.SpawnStatus
-	18, // 14: rimsky.v1.SpawnAck.capabilities:type_name -> rimsky.v1.SpawnAck.CapabilitiesEntry
-	17, // 15: rimsky.v1.SpawnAck.error:type_name -> rimsky.v1.HostAgentError
-	17, // 16: rimsky.v1.Reaped.error:type_name -> rimsky.v1.HostAgentError
-	1,  // 17: rimsky.v1.DispatchFrame.kind:type_name -> rimsky.v1.DispatchFrame.DispatchFrameKind
-	2,  // 18: rimsky.v1.DispatchFrame.claim_producer_verb:type_name -> rimsky.v1.DispatchFrame.ClaimProducerVerb
-	19, // 19: rimsky.v1.LocalHttpForward.headers:type_name -> rimsky.v1.LocalHttpForward.HeadersEntry
-	20, // 20: rimsky.v1.LocalHttpResponse.headers:type_name -> rimsky.v1.LocalHttpResponse.HeadersEntry
-	3,  // 21: rimsky.v1.HostAgent.Connect:input_type -> rimsky.v1.ClientFrame
-	4,  // 22: rimsky.v1.HostAgent.Connect:output_type -> rimsky.v1.ServerFrame
-	22, // [22:23] is the sub-list for method output_type
-	21, // [21:22] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	18, // 13: rimsky.v1.Binding.env:type_name -> rimsky.v1.Binding.EnvEntry
+	0,  // 14: rimsky.v1.SpawnAck.status:type_name -> rimsky.v1.SpawnAck.SpawnStatus
+	19, // 15: rimsky.v1.SpawnAck.capabilities:type_name -> rimsky.v1.SpawnAck.CapabilitiesEntry
+	17, // 16: rimsky.v1.SpawnAck.error:type_name -> rimsky.v1.HostAgentError
+	17, // 17: rimsky.v1.Reaped.error:type_name -> rimsky.v1.HostAgentError
+	1,  // 18: rimsky.v1.DispatchFrame.kind:type_name -> rimsky.v1.DispatchFrame.DispatchFrameKind
+	2,  // 19: rimsky.v1.DispatchFrame.claim_producer_verb:type_name -> rimsky.v1.DispatchFrame.ClaimProducerVerb
+	20, // 20: rimsky.v1.LocalHttpForward.headers:type_name -> rimsky.v1.LocalHttpForward.HeadersEntry
+	21, // 21: rimsky.v1.LocalHttpResponse.headers:type_name -> rimsky.v1.LocalHttpResponse.HeadersEntry
+	3,  // 22: rimsky.v1.HostAgent.Connect:input_type -> rimsky.v1.ClientFrame
+	4,  // 23: rimsky.v1.HostAgent.Connect:output_type -> rimsky.v1.ServerFrame
+	23, // [23:24] is the sub-list for method output_type
+	22, // [22:23] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_host_agent_proto_init() }
@@ -1503,7 +1572,7 @@ func file_host_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_host_agent_proto_rawDesc), len(file_host_agent_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   18,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

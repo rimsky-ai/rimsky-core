@@ -11,14 +11,21 @@ import * as AjvNs from "ajv";
 type AjvCtor = new (opts?: object) => { compile: (schema: object) => (v: unknown) => boolean };
 const Ajv: AjvCtor = (((AjvNs as unknown) as { default?: AjvCtor }).default ??
   ((AjvNs as unknown) as AjvCtor));
-import type { CliRunner, CliHandle } from "./cli-runner.js";
+import type { CliRunner, CliHandle, CliToolConfig } from "./cli-runner.js";
 import { startInternalMcpServer, type CallbackServerHandle } from "./internal-mcp-server.js";
+import {
+  type McpCatalog,
+  resolveCatalogServer,
+} from "./mcp-catalog.js";
+import { CliConfigError } from "./cli-config-error.js";
+import { resolveHeaderEnvRefs } from "./env-refs.js";
 import {
   buildAttributesWritebackUrl,
   defaultPostAttributes,
   type PostAttributesFn,
 } from "./attributes-tools.js";
 import { detectRateLimit } from "./rate-limit.js";
+import { classifyAgentError } from "./error-classify.js";
 import { resolveDeclaredEvents } from "./expected-attributes-schema.js";
 import { verifyRequiredSignoffs } from "./signoff.js";
 import type { NamedEventEmission } from "./token-registry.js";
@@ -84,6 +91,21 @@ export type AgentOutcome = AgentOutcomeBase &
       sessionToken: string;
     }
   );
+
+/**
+ * One entry in a node's `cli.mcp_servers`. Either an inline server declared
+ * directly on the node (`{ name, url, … }`) or a catalog reference
+ * (`{ ref: <name> }`) resolved at dispatch against the startup catalog.
+ * S-executors-mcp-catalog-transports.
+ */
+export type HostMcpServerInput =
+  | {
+      name: string;
+      url: string;
+      headers?: Record<string, string>;
+      allowedTools?: string[];
+    }
+  | { ref: string };
 
 export interface AgentRunOptions {
   runId: string;
@@ -173,17 +195,20 @@ export interface AgentRunOptions {
      */
     maxSchemaCorrections?: number;
     /**
-     * Host-wired validator MCP servers (`cli.mcp_servers`). Each entry is
-     * appended to the spawned CLI's `--mcp-config` and its tools are
-     * auto-allowed; the sign-off gate's signers (`requiredSignoffs`) are
-     * typically — but not necessarily — among these servers.
+     * Host-wired MCP servers (`cli.mcp_servers`). Each entry is appended to
+     * the spawned CLI's `--mcp-config` and its tools are auto-allowed; the
+     * sign-off gate's signers (`requiredSignoffs`) are typically — but not
+     * necessarily — among these servers.
+     *
+     * Two entry shapes (S-executors-mcp-catalog-transports):
+     *   - inline `{ name, url, headers, allowedTools }` — a server declared
+     *     directly on the node. Permitted only when `mcpAllowInline` is true;
+     *     rejected with a config error otherwise.
+     *   - `{ ref: <name> }` — a reference resolved at dispatch against the
+     *     startup `mcpCatalog`. The catalog entry's transport (http / stdio /
+     *     module / http-loopback) determines the emitted `--mcp-config` leaf.
      */
-    mcpServers?: {
-      name: string;
-      url: string;
-      headers?: Record<string, string>;
-      allowedTools?: string[];
-    }[];
+    mcpServers?: HostMcpServerInput[];
     /**
      * The sign-off gate (`cli.required_signoffs`): each `{publicKey, path}`
      * must be satisfied by a valid Ed25519 signature in `report_complete`'s
@@ -197,6 +222,21 @@ export interface AgentRunOptions {
      */
     maxSignoffAttempts?: number;
   };
+  /**
+   * Startup MCP-server catalog (S-executors-mcp-catalog-transports). A
+   * node's `cli.mcp_servers` entry of the form `{ ref: <name> }` resolves
+   * against this map at the `hostServers` build site. Parsed once at startup
+   * and threaded through unchanged. Absent ⇒ no catalog (a `{ ref: }` then
+   * fails to resolve with a config error).
+   */
+  mcpCatalog?: McpCatalog;
+  /**
+   * `allow_inline` policy (default false). When false, an inline
+   * `cli.mcp_servers` entry (`{ name, url }`, not a `{ ref: }`) is rejected
+   * at dispatch with a config error — the catalog is the authoritative
+   * server source. When true, inline servers are permitted alongside refs.
+   */
+  mcpAllowInline?: boolean;
   /**
    * Raw `ExecuteRequest.dispatch_id`; the sign-off gate binds to this and
    * requires it non-empty — distinct from `runId`, which falls back to a
@@ -339,6 +379,8 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     cwdFromStore,
     cwdOverride,
     cliConfig,
+    mcpCatalog,
+    mcpAllowInline,
     dispatchId,
     callbackUrl,
     cancelToken,
@@ -413,6 +455,27 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       await dispatchMcp.close();
     } catch (err) {
       logger.warn({ runId, error: String(err) }, "dispatch MCP close failed");
+    }
+  };
+
+  // Per-dispatch teardowns for any catalog transport stood up at the
+  // `hostServers` build site (module / http-loopback loopback listeners).
+  // Wired into the dispatch-end cleanup so a long-lived loopback HTTP
+  // listener never leaks past its dispatch.
+  const catalogTeardowns: Array<() => Promise<void>> = [];
+  let catalogToreDown = false;
+  const tearDownCatalogServers = async (): Promise<void> => {
+    if (catalogToreDown) return;
+    catalogToreDown = true;
+    for (const td of catalogTeardowns) {
+      try {
+        await td();
+      } catch (err) {
+        logger.warn(
+          { runId, error: String(err) },
+          "catalog server teardown failed",
+        );
+      }
     }
   };
   // Effective callback handle for THIS dispatch. The passed-in `callback`
@@ -503,6 +566,16 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   const writebackUrl = callbackUrl
     ? buildAttributesWritebackUrl(callbackUrl, runId)
     : "";
+  // Run-local mirror of the incremental `attributes_set` writeback state the
+  // supervisor accumulates. Each accepted (non-error POST) `delta` is shallow-
+  // merged here, last-write-wins — mirroring the supervisor's own merge — so
+  // that at sign-off-gate time the executor can reconstruct the EFFECTIVE bound
+  // bag the supervisor will commit. On the incremental path `report_complete`
+  // omits the terminal-final `attributes_delta`, so this accumulator is the only
+  // place the run's real bound output lives; binding the gate to it (rather than
+  // to the absent terminal delta) is the load-bearing correctness property for
+  // S-executors-signoff-binds-real-output.
+  const accumulatedWriteback: Record<string, unknown> = {};
   const onAttributesSet = async (
     delta: Record<string, unknown>,
   ): Promise<{ status: number }> => {
@@ -511,7 +584,15 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       return { status: 503 };
     }
     try {
-      return await post(writebackUrl, { delta }, cancelToken);
+      const result = await post(writebackUrl, { delta }, cancelToken);
+      // Accumulate only on a supervisor-accepted writeback (2xx). A rejected
+      // POST never reaches the supervisor's committed state, so it must not
+      // enter the bag the gate binds — otherwise the gate would bind output the
+      // supervisor never persisted.
+      if (result.status >= 200 && result.status < 300) {
+        Object.assign(accumulatedWriteback, delta);
+      }
+      return result;
     } catch (e) {
       logger.error(
         { runId, error: String(e) },
@@ -683,14 +764,30 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       // future delta replacement starts fresh.
       schemaCorrectionFailures = 0;
 
+      // The EFFECTIVE bound bag = the accumulated incremental `attributes_set`
+      // writebacks with the terminal-final `report_complete` delta layered on
+      // top (last-write-wins). This is exactly the bag the supervisor will
+      // commit: on the terminal-delta path the accumulator is empty so the merge
+      // is identity (`effectiveBag === attributesDelta`); on the incremental path
+      // `attributesDelta` is null so the bag is the accumulated writeback. The
+      // sign-off gate binds — and the run commits — THIS value, so an unsigned or
+      // stale-signed incremental run cannot pass the gate over the absent
+      // terminal delta (S-executors-signoff-binds-real-output).
+      const effectiveBag: Record<string, unknown> = {
+        ...accumulatedWriteback,
+        ...(attributesDelta ?? {}),
+      };
+
       // Sign-off gate (the second sequential layer, after schema validation).
       // `required` and `dispatchId` come from DISPATCH-TIME inputs
       // (`cliConfig.requiredSignoffs` resolved at spawn, and the raw
       // `dispatch_id` plumbed onto the run options) — NEVER from
-      // `attributesDelta` or the merged bag. This is what makes the gate
-      // tamper-proof: a gated agent cannot weaken or edit its own gate by
-      // emitting a `cli.required_signoffs` override inside `attributes_delta`,
-      // and a signature can only bind to the one real dispatch (anti-replay).
+      // `attributesDelta`, the accumulated writeback, or the effective bag. This
+      // is what makes the gate tamper-proof: a gated agent cannot weaken or edit
+      // its own gate by emitting a `cli.required_signoffs` override inside its
+      // output, and a signature can only bind to the one real dispatch
+      // (anti-replay). Only the VALUE the gate binds (the effective bag) flows
+      // from agent-supplied output; `required`/`dispatchId` do not.
       const required = cliConfig?.requiredSignoffs ?? [];
       if (required.length > 0) {
         if (!dispatchId || dispatchId.length === 0) {
@@ -716,7 +813,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         }
         const res = verifyRequiredSignoffs(
           required,
-          attributesDelta,
+          effectiveBag,
           dispatchId,
           signoffs ?? [],
         );
@@ -731,11 +828,22 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         signoffFailures = 0;
       }
 
+      // Commit the EFFECTIVE bound bag, not the raw terminal-final delta. The
+      // gate verified its signature over this exact value, so the committed
+      // output is the one bound. On the incremental path the bag is the
+      // accumulated writeback (which the agent omitted from `report_complete`);
+      // re-sending it in the terminal delta is idempotent against the
+      // supervisor's last-write-wins merge of the already-POSTed writebacks, so
+      // the supervisor's committed state equals the bound value. An empty bag
+      // (no writeback, no terminal delta) collapses back to `null` to preserve
+      // the existing "no delta" wire shape.
+      const committedDelta =
+        Object.keys(effectiveBag).length > 0 ? effectiveBag : null;
       scheduleTeardown(async () => {
         await teardownCli();
         safeResolve({
           kind: "complete",
-          attributesDelta,
+          attributesDelta: committedDelta,
           changed,
           changeSummary,
         });
@@ -783,29 +891,67 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     onAttributesSet,
   });
 
-  // Host-wired validator MCP servers (`cli.mcp_servers`). Each declared
-  // server is appended to the spawned CLI's `--mcp-config` (the per-spawn
-  // `tools` list) so the agent can actually dial it — a URL only mentioned
-  // in a prompt is unreachable; the Claude CLI only speaks MCP to servers
-  // it was configured with via `--mcp-config`. The same list is applied on
-  // both resume paths so a resumed dispatch can still reach the validators
-  // (the CLI does not carry `--mcp-config` across `--resume`).
-  const hostServers = (cliConfig?.mcpServers ?? []).map((s) => ({
-    kind: "mcp-http" as const,
-    name: s.name,
-    url: s.url,
-    headers: s.headers,
-  }));
-  // Auto-allow each host server's tools into `--allowedTools`. With no
-  // explicit per-server `allowedTools` the bare `mcp__<name>` server-prefix
-  // entry allows ALL of that server's tools (the spec's "auto-allow all" —
-  // the host wired the server intending the agent to use it); an explicit
-  // per-server `allowedTools` narrows it to the fully-qualified names.
-  const hostAllowed = (cliConfig?.mcpServers ?? []).flatMap((s) =>
-    s.allowedTools && s.allowedTools.length > 0
-      ? s.allowedTools.map((t) => `mcp__${s.name}__${t}`)
-      : [`mcp__${s.name}`],
-  );
+  // Host-wired MCP servers (`cli.mcp_servers`). Each declared server is
+  // appended to the spawned CLI's `--mcp-config` (the per-spawn `tools`
+  // list) so the agent can actually dial it — a URL only mentioned in a
+  // prompt is unreachable; the Claude CLI only speaks MCP to servers it was
+  // configured with via `--mcp-config`. The same list is applied on both
+  // resume paths so a resumed dispatch can still reach the servers (the CLI
+  // does not carry `--mcp-config` across `--resume`).
+  //
+  // This is the SINGLE resolution site (per the plan's grounding): the
+  // `hostServers` list is built once here and spread into the one
+  // `cliRunner.spawn` and the two `cliRunner.resume` call sites below, so
+  // resolving `{ ref: }` catalog references and standing up module /
+  // http-loopback transports here covers spawn AND every resume path.
+  //
+  // Each entry is either an inline `{ name, url }` server or a catalog
+  // reference `{ ref: <name> }`. Inline servers are rejected when
+  // `allow_inline` is false (catalog is the authoritative source); refs
+  // resolve against `mcpCatalog`, with module / http-loopback transports
+  // stood up on a per-dispatch loopback HTTP listener whose teardown is
+  // registered for dispatch-end cleanup.
+  let hostServers: CliToolConfig[];
+  let hostAllowed: string[];
+  try {
+    const resolved = await resolveHostServers(
+      cliConfig?.mcpServers ?? [],
+      mcpCatalog ?? {},
+      mcpAllowInline,
+      catalogTeardowns,
+      logger,
+    );
+    // Resolve `${env:VAR}` references in host-server connection headers at
+    // this single spawn-boundary site (S-executors-validator-header-secret-refs).
+    // `resolveHeaderEnvRefs` returns a FRESH header map, so the persisted/traced
+    // `cliConfig.mcpServers` form (read from the parsed node attributes, never
+    // touched here) keeps its `${env:...}` reference and the resolved secret
+    // lives only in this transient `--mcp-config`-bound `tools` list. Covers
+    // both inline and catalog `http` transports uniformly; non-http (stdio)
+    // leaves carry no headers and pass through unchanged.
+    hostServers = resolved.tools.map((tool) =>
+      tool.kind === "mcp-http"
+        ? { ...tool, headers: resolveHeaderEnvRefs(tool.headers) }
+        : tool,
+    );
+    hostAllowed = resolved.allowedTools;
+  } catch (e) {
+    await tearDownCatalogServers();
+    effectiveCallback.registry.release(callbackToken);
+    await closeDispatchMcp();
+    if (e instanceof CliConfigError) {
+      return {
+        kind: "errored",
+        errorClass: e.errorClass,
+        payload: { reason: e.message },
+      };
+    }
+    return {
+      kind: "errored",
+      errorClass: "agent/attribute_invalid",
+      payload: { reason: String(e) },
+    };
+  }
   // Union of per-template `allowedTools` and the host-server auto-allows.
   // Pass `undefined` when both are empty so spawn/resume preserve the
   // current behavior (the required callback tools are always added by
@@ -891,6 +1037,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   } catch (e) {
     effectiveCallback.registry.release(callbackToken);
     void closeDispatchMcp();
+    // Spawn failed after catalog transports were stood up; tear them down so
+    // a loopback listener doesn't leak past the aborted dispatch.
+    await tearDownCatalogServers();
     return {
       kind: "errored",
       errorClass: "agent/cli_spawn_failed",
@@ -996,13 +1145,38 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     // external invalidate) fires.
     const handleRateLimits = cliConfig?.handleRateLimits !== false;
     if (
-      handleRateLimits &&
       exitCode !== 0 &&
       exitCode !== null &&
       stderrBuf.length > 0
     ) {
       const signalRL = detectRateLimit(stderrBuf, new Date());
-      if (signalRL.detected) {
+      // When the operator has opted OUT of auto-park (handle_rate_limits=false),
+      // a detected rate-limit surfaces as the declared `agent/rate_limited`
+      // Error class instead of a Park — so a subscriber/policy keyed on that
+      // class actually fires (S-executors-claude-agent-error-classes). The
+      // default (handle_rate_limits=true) auto-park behavior below is left
+      // intact: only the false branch diverts to an Error.
+      if (signalRL.detected && !handleRateLimits) {
+        logger.warn(
+          {
+            runId,
+            exit_code: exitCode,
+            signal,
+          },
+          "cli.rate_limit_detected; handle_rate_limits=false → emitting agent/rate_limited Error",
+        );
+        safeResolve({
+          kind: "errored",
+          errorClass: "agent/rate_limited",
+          payload: {
+            exitCode,
+            signal,
+            resume_at: signalRL.resumeAt?.toISOString() ?? null,
+          },
+        });
+        return;
+      }
+      if (signalRL.detected && handleRateLimits) {
         logger.warn(
           {
             runId,
@@ -1160,9 +1334,16 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       }
     }
 
+    // Classify the subprocess failure to the precise declared leaf
+    // (agent/context_exceeded, agent/refused, agent/tool_use_failed/<tool>)
+    // when the stderr carries a recognized signature, so a subscriber/policy
+    // keyed on one of those classes fires (S-executors-claude-agent-error-
+    // classes). An unrecognized non-zero exit keeps the generic
+    // `agent/subprocess_exit/before_complete` leaf (unchanged behavior).
+    const classified = classifyAgentError(stderrBuf, exitCode);
     safeResolve({
       kind: "errored",
-      errorClass: "agent/subprocess_exit/before_complete",
+      errorClass: classified?.errorClass ?? "agent/subprocess_exit/before_complete",
       payload: { exitCode, signal },
     });
   })();
@@ -1183,7 +1364,92 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     await silenceLoop.catch(() => {});
     effectiveCallback.registry.release(callbackToken);
     void closeDispatchMcp();
+    // Tear down any per-dispatch catalog transport listener (module /
+    // http-loopback). Awaited so a fast follow-on dispatch doesn't race a
+    // still-listening loopback server on a leaked port.
+    await tearDownCatalogServers();
   }
+}
+
+/**
+ * Resolves a node's `cli.mcp_servers` list into the concrete
+ * `CliToolConfig` leaves to wire into `--mcp-config`, plus the host-server
+ * auto-allow entries for `--allowedTools`. S-executors-mcp-catalog-transports.
+ *
+ * Per entry:
+ *   - `{ ref: <name> }` — looked up in `catalog`. Unknown ref → config
+ *     error (the host named a server that does not exist). The catalog
+ *     entry's transport determines the emitted leaf: http / stdio resolve
+ *     directly; module / http-loopback stand up a per-dispatch loopback HTTP
+ *     listener whose teardown is pushed onto `teardowns`.
+ *   - inline `{ name, url }` — permitted only when `allowInline` is true;
+ *     rejected with a config error citing `allow_inline` otherwise.
+ *
+ * Auto-allow rule (unchanged from the prior inline-only path): with no
+ * explicit per-server `allowedTools` the bare `mcp__<name>` server-prefix
+ * entry allows ALL of that server's tools; an explicit list narrows it to
+ * fully-qualified names.
+ *
+ * Throws `CliConfigError` on any unresolvable/forbidden entry so the caller
+ * surfaces a fail-loud `agent/attribute_invalid` terminal rather than
+ * silently dropping a server (which could unwire a validator the gate
+ * depends on). Any listeners already stood up before the throw are still
+ * registered in `teardowns` for the caller to clean up.
+ */
+async function resolveHostServers(
+  servers: HostMcpServerInput[],
+  catalog: McpCatalog,
+  allowInline: boolean | undefined,
+  teardowns: Array<() => Promise<void>>,
+  logger: Logger,
+): Promise<{ tools: CliToolConfig[]; allowedTools: string[] }> {
+  const tools: CliToolConfig[] = [];
+  const allowedTools: string[] = [];
+  for (const s of servers) {
+    if ("ref" in s) {
+      const entry = catalog[s.ref];
+      if (entry === undefined) {
+        throw new CliConfigError(
+          `cli.mcp_servers references unknown catalog server "${s.ref}" ` +
+            `(no such entry in the startup MCP catalog)`,
+        );
+      }
+      const resolved = await resolveCatalogServer(s.ref, entry, logger);
+      teardowns.push(resolved.teardown);
+      tools.push(resolved.tool);
+      allowedTools.push(...autoAllow(s.ref, resolved.allowedTools));
+      continue;
+    }
+    // Inline server: rejected only when the policy is EXPLICITLY off
+    // (`allow_inline === false`). An unset policy (`undefined`) is the
+    // legacy no-catalog deployment where inline is the only mechanism, so
+    // it stays permissive. A real deployment always sets the policy via
+    // `main.ts` (`parsePolicy` → default false), so an operator-configured
+    // catalog deployment rejects inline by default, per the spec.
+    if (allowInline === false) {
+      throw new CliConfigError(
+        `cli.mcp_servers declares an inline server "${s.name}" but ` +
+          `allow_inline is false — reference a catalog server via { ref: <name> } ` +
+          `or enable RIMSKY_EXECUTOR_MCP_ALLOW_INLINE`,
+      );
+    }
+    tools.push({
+      kind: "mcp-http",
+      name: s.name,
+      url: s.url,
+      headers: s.headers,
+    });
+    allowedTools.push(...autoAllow(s.name, s.allowedTools));
+  }
+  return { tools, allowedTools };
+}
+
+/** Auto-allow a host server's tools: explicit per-server list → fully-
+ *  qualified names; absent → the bare server-prefix entry (all tools). */
+function autoAllow(name: string, allowedTools?: string[]): string[] {
+  return allowedTools && allowedTools.length > 0
+    ? allowedTools.map((t) => `mcp__${name}__${t}`)
+    : [`mcp__${name}`];
 }
 
 type CwdResolution =

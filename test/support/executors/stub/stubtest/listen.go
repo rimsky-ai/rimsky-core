@@ -19,9 +19,19 @@ import (
 
 // Listen starts a gRPC server on an OS-assigned port and registers s as
 // the Executor handler plus the capabilities-only
-// ExecutorObservability surface. Registers cleanup via t.Cleanup to stop
+// ExecutorObservability surface advertising the permissive
+// `{"type":"object"}` schema. Registers cleanup via t.Cleanup to stop
 // the server. Returns the server and its listening address.
 func Listen(t testing.TB, s *stub.Stub) (*grpc.Server, string) {
+	return ListenWithSchema(t, s, nil)
+}
+
+// ListenWithSchema is Listen but advertises the supplied
+// expected_attributes_schema bytes via the observability Capabilities
+// surface (empty/nil → permissive default). Used to stand up a
+// constraint-advertising stub executor whose schema declares a
+// property a reference can violate.
+func ListenWithSchema(t testing.TB, s *stub.Stub, schema []byte) (*grpc.Server, string) {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -29,7 +39,7 @@ func Listen(t testing.TB, s *stub.Stub) (*grpc.Server, string) {
 	}
 	srv := grpc.NewServer()
 	genv1.RegisterExecutorServer(srv, s)
-	stub.RegisterObservability(srv)
+	stub.RegisterObservabilityWithSchema(srv, schema)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
 	return srv, lis.Addr().String()

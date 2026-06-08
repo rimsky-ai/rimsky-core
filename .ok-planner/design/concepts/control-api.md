@@ -27,7 +27,7 @@ Owns: the route mounts, the per-route handlers, the lifecycle-subscriber fan-out
 
 - Bare paths only; v1 does not version the wire format. Rolling upgrades are operator-managed.
 - Lifecycle events fire from control-api (not the supervisor) synchronously at state transitions. A slow subscriber holds up the response.
-- The compose tag/instance-key prefix is reserved for the compose command but enforcement is client-side only; the server accepts any string.
+- The compose tag/instance-key prefix is server-enforced: tag-create and instance-create reject the reserved prefix from non-compose origins.
 - **Every route is auth-gated** except the health and readiness probes (infrastructure paths predating control-plane semantics). The action registry is the canonical route → action mapping; an unmapped route is a wiring bug.
 - **MCP shares the auth gate.** Tool invocations re-enter the routing pipeline via the catalog's invoke path, so the same action-gating middleware runs. The audit row records the MCP protocol skin.
 
@@ -45,7 +45,7 @@ None live.
 
 ## Open within this concept
 
-- The compose prefix reservation is client-side only — see `tension:compose-prefix-client-side`.
+- The compose prefix reservation is server-enforced (see the Invariant above).
 - Bare-paths vs eventual v1 versioning commitment is acknowledged but unresolved — see `tension:control-api-version-prefix`.
 
 ## Notes
@@ -53,4 +53,5 @@ None live.
 - [2026-05-15] `spec:2026-05-15-control-plane-mcp-and-auth-design` adds the auth surface, makes MCP a first-class protocol skin hosted in-process at a dedicated MCP endpoint, and retires the standalone MCP-server framing.
 - 2026-05-24 — MCP capability extends from tools-only to tools + read-only resources per `spec:2026-05-24-instance-debugger-design`. Resource list and read added to the dispatch switch; push (resource-subscribe + resource-update notifications) deferred to a future transport-upgrade spec. New per-instance pause and resume routes added. New per-instance breakpoint routes added.
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- 2026-06-07 — compose-prefix reservation moved from client-side convention to server-enforced invariant per spec:2026-06-06-comprehensive-gap-closure.
 

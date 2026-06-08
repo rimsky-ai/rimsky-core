@@ -76,38 +76,47 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 	if err != nil {
 		return sendErrored(send, "verifier/attribute_invalid", err.Error())
 	}
-	results := make([]checks.Result, 0, len(specs))
-	failed := 0
-	firstFailedKind := ""
+	// Run each check and pair its Result with the declared Severity so the
+	// aggregator can partition failures: only error-severity failures block
+	// the commit; warning-severity failures are non-blocking soft findings.
+	results := make([]scoredResult, 0, len(specs))
+	blockingFailures := 0
+	firstBlockingKind := ""
 	for _, spec := range specs {
 		r := checks.Run(spec, rows)
-		results = append(results, r)
-		if !r.Pass {
-			failed++
-			if firstFailedKind == "" {
-				// Prefer the spec's declared kind; fall back to the
-				// runner-reported kind (which is what the "unknown"
-				// dispatcher sets when spec.Kind isn't a registered
-				// check name).
-				firstFailedKind = spec.Kind
-				if firstFailedKind == "" {
-					firstFailedKind = r.Kind
-				}
+		results = append(results, scoredResult{Result: r, Severity: spec.Severity})
+		if r.Pass || spec.Severity != checks.SeverityError {
+			continue
+		}
+		blockingFailures++
+		if firstBlockingKind == "" {
+			// Prefer the spec's declared kind; fall back to the
+			// runner-reported kind (which is what the "unknown"
+			// dispatcher sets when spec.Kind isn't a registered
+			// check name).
+			firstBlockingKind = spec.Kind
+			if firstBlockingKind == "" {
+				firstBlockingKind = r.Kind
 			}
 		}
 	}
-	if failed > 0 {
+	if blockingFailures > 0 {
 		// Aggregate failure messages in a Struct payload; the
 		// rimsky-side error_class policy fires on the hierarchical
-		// `verifier/check_failed/<kind>` leaf per `concept:signal`.
+		// `verifier/check_failed/<kind>` leaf per `concept:signal`. The
+		// payload also carries any warning-severity failures so the
+		// operator sees the full picture even when an error blocks.
 		payload := buildErrorPayload(results)
 		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: "verifier/check_failed/" + firstFailedKind,
+				ErrorClass: "verifier/check_failed/" + firstBlockingKind,
 				Payload:    payload,
 			}}},
 		}})
 	}
+	// No blocking failure: the dispatch succeeds. Any warning-severity
+	// failure is surfaced as a non-blocking finding in the Success delta so
+	// the operator still sees the soft signal.
 	delta := buildSuccessDelta(results, len(rows))
 	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
@@ -136,9 +145,33 @@ func parseChecks(ud map[string]any) ([]checks.CheckSpec, error) {
 			return nil, fmt.Errorf("checks[%d].kind required", i)
 		}
 		cfg, _ := obj["config"].(map[string]any)
-		out = append(out, checks.CheckSpec{Kind: kind, Config: cfg})
+		severity, err := parseSeverity(obj["severity"], i)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, checks.CheckSpec{Kind: kind, Config: cfg, Severity: severity})
 	}
 	return out, nil
+}
+
+// parseSeverity reads a `checks[i].severity` value into the services-local
+// checks.Severity. An absent / empty value defaults to checks.SeverityError
+// (a failing check blocks unless the author explicitly downgrades it). An
+// unknown string is rejected with an attribute error rather than silently
+// coerced — protecting against a typo'd "warn"/"err" quietly flipping a
+// check's blocking behavior the operator did not intend.
+func parseSeverity(raw any, i int) (checks.Severity, error) {
+	s, _ := raw.(string)
+	switch checks.Severity(s) {
+	case "":
+		return checks.SeverityError, nil
+	case checks.SeverityError:
+		return checks.SeverityError, nil
+	case checks.SeverityWarning:
+		return checks.SeverityWarning, nil
+	}
+	return "", fmt.Errorf("checks[%d].severity %q invalid (want %q or %q)",
+		i, s, checks.SeverityError, checks.SeverityWarning)
 }
 
 // parseRows reads `attributes.rows` and normalizes each entry into a
@@ -160,46 +193,87 @@ func parseRows(ud map[string]any) ([]checks.Row, error) {
 	return out, nil
 }
 
+// scoredResult pairs a check Result with the declared Severity that
+// governs whether its failure blocks the commit. The aggregation,
+// payload-building, and delta-building paths all read severity off this
+// pair so a warning-severity failure is never miscounted as blocking.
+type scoredResult struct {
+	checks.Result
+	Severity checks.Severity
+}
+
+// failureEntry renders one failed check (blocking or warning) into the
+// Struct-shaped finding surfaced in both the error payload and the
+// success-delta warnings list.
+func failureEntry(sr scoredResult) map[string]any {
+	return map[string]any{
+		"kind":     sr.Kind,
+		"severity": string(sr.Severity),
+		"message":  sr.Message,
+		"rows":     float64(sr.Counts.Rows),
+		"failed":   float64(sr.Counts.Failed),
+	}
+}
+
 // buildErrorPayload turns failed results into the
-// `Error.payload` Struct surfaced upstream.
-func buildErrorPayload(results []checks.Result) *structpb.Struct {
+// `Error.payload` Struct surfaced upstream. Blocking (error-severity)
+// failures populate `failures`; warning-severity failures are split into
+// `warnings` so the consumer can tell the soft findings from the blocking
+// ones even on the error path.
+func buildErrorPayload(results []scoredResult) *structpb.Struct {
 	failures := make([]any, 0, len(results))
-	for _, r := range results {
-		if r.Pass {
+	warnings := make([]any, 0)
+	for _, sr := range results {
+		if sr.Pass {
 			continue
 		}
-		entry := map[string]any{
-			"kind":    r.Kind,
-			"message": r.Message,
-			"rows":    float64(r.Counts.Rows),
-			"failed":  float64(r.Counts.Failed),
+		if sr.Severity == checks.SeverityWarning {
+			warnings = append(warnings, failureEntry(sr))
+			continue
 		}
-		failures = append(failures, entry)
+		failures = append(failures, failureEntry(sr))
 	}
 	st, _ := structpb.NewStruct(map[string]any{
 		"failures": failures,
+		"warnings": warnings,
 		"summary":  summarize(results),
 	})
 	return st
 }
 
-func buildSuccessDelta(results []checks.Result, rowsLen int) *structpb.Struct {
-	out, _ := structpb.NewStruct(map[string]any{
-		"verifier_pass":   true,
-		"verifier_checks": float64(len(results)),
-		"verifier_rows":   float64(rowsLen),
-	})
+// buildSuccessDelta builds the Success attributes_delta. When no blocking
+// failure occurred but one or more warning-severity checks failed, those
+// soft findings are surfaced under `verifier_warnings` (with a count) so
+// the non-blocking signal is observable to the operator.
+func buildSuccessDelta(results []scoredResult, rowsLen int) *structpb.Struct {
+	warnings := make([]any, 0)
+	for _, sr := range results {
+		if !sr.Pass && sr.Severity == checks.SeverityWarning {
+			warnings = append(warnings, failureEntry(sr))
+		}
+	}
+	fields := map[string]any{
+		"verifier_pass":          true,
+		"verifier_checks":        float64(len(results)),
+		"verifier_rows":          float64(rowsLen),
+		"verifier_warning_count": float64(len(warnings)),
+		"verifier_warnings":      warnings,
+	}
+	out, _ := structpb.NewStruct(fields)
 	return out
 }
 
-func summarize(results []checks.Result) string {
+func summarize(results []scoredResult) string {
 	parts := make([]string, 0, len(results))
-	for _, r := range results {
+	for _, sr := range results {
 		mark := "OK"
-		if !r.Pass {
+		if !sr.Pass {
 			mark = "FAIL"
+			if sr.Severity == checks.SeverityWarning {
+				mark = "WARN"
+			}
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s", r.Kind, mark))
+		parts = append(parts, fmt.Sprintf("%s=%s", sr.Kind, mark))
 	}
 	return strings.Join(parts, ", ")
 }

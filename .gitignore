@@ -39,6 +39,22 @@ lib/services/verifier-shape-checks
 lib/services/openlineage
 lib/services/stubexecutor
 
+# Same stray-binary hazard at the REPO ROOT: building a service package by
+# path from the root module (e.g. `go build ./lib/services/sensors/sensor-cron`)
+# leaves the binary at ./<name>. Anchored to the repo root so it never shadows
+# a same-named source directory deeper in the tree.
+/sensor-cron
+/sensor-http
+/sensor-object-store
+/sensor-webhook
+/store-filesystem
+/store-postgres
+/http-node
+/verifier-http
+/verifier-shape-checks
+/openlineage
+/stubexecutor
+
 # Local env / coverage
 .env
 *.env.local

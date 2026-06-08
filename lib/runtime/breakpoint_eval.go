@@ -97,7 +97,14 @@ func (e *BreakpointInfraError) Unwrap() error { return e.Cause }
 //
 // @concept: breakpoint
 type CheckpointContext struct {
-	InstanceID       shared.UUID
+	InstanceID shared.UUID
+	// NodeID is the owning graph node (rimsky_nodes.id) for the dispatch
+	// — distinct from DispatchID (the rimsky_node_runs.id run row). It is
+	// the node-scoped key for the co-transactional breakpoint.hit
+	// event-log row (concept:event-log): events scope to the owning node,
+	// not the run. All three call sites already hold acq.NodeID, so this
+	// is threaded in directly rather than re-read from the node-run row.
+	NodeID           shared.UUID // rimsky_nodes.id
 	DispatchID       shared.UUID // rimsky_node_runs.id
 	FrameID          shared.UUID
 	Executor         string
@@ -241,6 +248,18 @@ func EvaluateBreakpoints(
 			id := cc.FrameID
 			frameIDPt = &id
 		}
+		// Co-transactional hit + event-log row. The breakpoint.hit
+		// event is appended inside the SAME tx that creates the ledger
+		// hit row, so a recorded hit is ALWAYS reflected on /events —
+		// the two are atomic (both commit or both roll back). An Append
+		// failure rolls the hit back with it and routes through the
+		// debugger-infra path (Phase:"create_hit"), never leaving an
+		// orphaned hit with no event or vice-versa.
+		//
+		// @concept: event-log (the breakpoint.hit row and its ledger
+		// hit are co-transactional; the event scopes to the owning
+		// NodeID, not the node-run).
+		nodeIDPt := nodeIDPtr(cc.NodeID)
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
 			hitID, _, err = args.Persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
@@ -252,7 +271,22 @@ func EvaluateBreakpoints(
 				Mode:         bp.Mode,
 				Snapshot:     buildSnapshot(cc),
 			}, tx)
-			return err
+			if err != nil {
+				return err
+			}
+			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+				InstanceID: &cc.InstanceID,
+				NodeID:     nodeIDPt,
+				Kind:       "breakpoint.hit",
+				Payload: map[string]any{
+					"instance_id":   cc.InstanceID.String(),
+					"node_id":       cc.NodeID.String(),
+					"breakpoint_id": bp.ID.String(),
+					"hit_id":        hitID.String(),
+					"checkpoint":    string(cc.Checkpoint),
+					"mode":          string(bp.Mode),
+				},
+			}, tx)
 		}); err != nil {
 			return result, &BreakpointInfraError{Phase: "create_hit", Cause: err}
 		}
@@ -388,6 +422,20 @@ func waitForResume(ctx context.Context, args RunArgs, hitID shared.UUID) (*persi
 		case <-time.After(breakpointResumePollInterval):
 		}
 	}
+}
+
+// nodeIDPtr returns a heap pointer to id, or nil when id is the zero
+// UUID. rimsky_events.node_id is nullable; passing nil for a missing
+// owning node honors that nullability rather than persisting an
+// all-zero placeholder (mirrors the nodeRunIDPt / frameIDPt handling at
+// the hit-create site). The dispatch call site always populates NodeID;
+// only degenerate after_terminal contexts could be zero here.
+func nodeIDPtr(id shared.UUID) *shared.UUID {
+	if id == (shared.UUID{}) {
+		return nil
+	}
+	out := id
+	return &out
 }
 
 // buildSnapshot constructs the JSONB snapshot payload per spec §4.6.

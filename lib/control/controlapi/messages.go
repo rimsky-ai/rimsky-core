@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -116,10 +117,11 @@ var errPublisherSubscriptionNotActive = errors.New("publisher-subscription not a
 
 // handleCreateMessage is POST /instances/{id}/messages.
 //
-// Validates the body, ensures the instance exists and is not
-// terminated, enforces the sender-kind capability check for publisher
-// requests, applies idempotency dedup if Idempotency-Key is set, then
-// enqueues via runtime.EnqueueMessage. Returns the message id.
+// Validates the body, requires the mandatory Idempotency-Key header,
+// ensures the instance exists and is not terminated, enforces the
+// sender-kind capability check for publisher requests, applies
+// idempotency dedup, then enqueues via runtime.EnqueueMessage. Returns
+// the message id (201 on first insert, 200 on replay).
 func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idStr := chi.URLParam(req, "id")
@@ -164,7 +166,19 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 		// V1 supplies "operator" because cross-instance senders are V2;
 		// the body's `sender` is ignored for trust until then.
 		sender := "operator"
-		idempotencyKey := req.Header.Get("Idempotency-Key")
+		// Idempotency-Key is MANDATORY on every emit: replay-dedup is a
+		// platform guarantee, not an opt-in. A missing key can never
+		// silently bypass dedup, so reject keyless requests at the
+		// boundary (request-level 400, pre-tx — alongside the other
+		// request-level validations). This guard runs ahead of BOTH the
+		// dry-run branch and the dedup INSERT below: a dry-run preview of
+		// an emit must still carry the key it would dedup on, so a keyless
+		// dry-run is rejected too.
+		idempotencyKey := strings.TrimSpace(req.Header.Get("Idempotency-Key"))
+		if idempotencyKey == "" {
+			badRequest(w, "Idempotency-Key header is required")
+			return
+		}
 
 		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		msgID := shared.UUID(uuid.New())
@@ -208,27 +222,26 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			if isDryRun {
 				return errDryRunOK
 			}
-			// Idempotency dedup: when Idempotency-Key is present, INSERT
-			// or lookup the dedup tuple BEFORE inserting the message
-			// envelope. On conflict, return the previously-recorded
-			// message_id and skip the envelope insert. Wrap in the same
-			// tx so a crash mid-flow doesn't leave a dedup row pointing
-			// at a never-inserted message.
-			if idempotencyKey != "" {
-				dedupRow, inserted, err := deps.Persist.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
-					InstanceID:     instUUID,
-					Sender:         sender,
-					IdempotencyKey: idempotencyKey,
-					MessageID:      msgID,
-				})
-				if err != nil {
-					return err
-				}
-				if !inserted {
-					finalMessageID = dedupRow.MessageID
-					replayed = true
-					return nil
-				}
+			// Idempotency dedup: INSERT or lookup the dedup tuple BEFORE
+			// inserting the message envelope. The Idempotency-Key is
+			// mandatory (guarded request-level above), so this always
+			// runs. On conflict, return the previously-recorded message_id
+			// and skip the envelope insert. Wrap in the same tx so a crash
+			// mid-flow doesn't leave a dedup row pointing at a
+			// never-inserted message.
+			dedupRow, inserted, err := deps.Persist.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
+				InstanceID:     instUUID,
+				Sender:         sender,
+				IdempotencyKey: idempotencyKey,
+				MessageID:      msgID,
+			})
+			if err != nil {
+				return err
+			}
+			if !inserted {
+				finalMessageID = dedupRow.MessageID
+				replayed = true
+				return nil
 			}
 			enqueueReq := persistence.EnqueueMessageRequest{
 				ID:         msgID,

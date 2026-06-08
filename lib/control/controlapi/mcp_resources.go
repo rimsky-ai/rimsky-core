@@ -71,7 +71,7 @@ func (c *breakpointResourceCatalog) List(r *http.Request) ([]mcp.Resource, error
 	// `breakpoint:read` covers both URI families per spec §6.7. If the
 	// requesting identity can't read any breakpoint at all (no `*:read`,
 	// no `breakpoint:*`, no `breakpoint:read`), return an empty list.
-	if !auth.CheckGrant(ident.Permissions, "breakpoint:read").Allowed {
+	if !auth.CheckGrant(ident.Permissions, "breakpoint:read", nil).Allowed {
 		return []mcp.Resource{}, nil
 	}
 	// Enumerate active instances. The list is paginated by persistence;
@@ -124,7 +124,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 	}
 
 	ident, _ := IdentityFromContextOK(r.Context())
-	if !auth.CheckGrant(ident.Permissions, "breakpoint:read").Allowed {
+	if !auth.CheckGrant(ident.Permissions, "breakpoint:read", nil).Allowed {
 		// Mirror the HTTP gateByAction shape — denials are 403 with
 		// `permission_denied`; map to JSON-RPC -32603 with the same
 		// message so the agent has a clear signal.

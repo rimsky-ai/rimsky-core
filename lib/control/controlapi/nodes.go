@@ -30,11 +30,17 @@ import (
 )
 
 type nodeResponse struct {
-	ID                   string     `json:"id"`
-	InstanceID           string     `json:"instance_id"`
-	NodeType             string     `json:"node_type"`
-	Executor             string     `json:"executor,omitempty"`
-	State                string     `json:"state"`
+	ID         string `json:"id"`
+	InstanceID string `json:"instance_id"`
+	NodeType   string `json:"node_type"`
+	Executor   string `json:"executor,omitempty"`
+	State      string `json:"state"`
+	// SettlingSignalType is the canonical signal type-path of the node's
+	// settling resolution (concept:signal), projected from the persisted
+	// rimsky_node_runs.settling_signal_type column via NodeRow. Empty (and
+	// dropped by omitempty) while the node is unsettled / in-flight, where
+	// the projected column is NULL. Mirrors backfills.go::backfillPartitionRow.
+	SettlingSignalType   string     `json:"settling_signal_type,omitempty"`
 	CurrentErrorClass    string     `json:"current_error_class,omitempty"`
 	RetryCounter         int        `json:"retry_counter"`
 	ActionIndex          int        `json:"action_index"`
@@ -47,6 +53,14 @@ type nodeResponse struct {
 	Tags      []string  `json:"tags"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// LatestAttributes is the node's most-recent resolved attribute bag —
+	// its forensic last-attribute snapshot, the Data map of the row the
+	// persistence primitive NodeAttributes().GetLatestByNode returns for
+	// (node, main run scope). omitempty drops the key when no attribute
+	// row exists yet (a never-executed node), so it is absent rather than
+	// an empty object. Populated only on the GET /nodes/{id} detail read,
+	// not on the list surface.
+	LatestAttributes map[string]any `json:"latest_attributes,omitempty"`
 }
 
 func toNodeResponse(n persistence.NodeRow) nodeResponse {
@@ -58,12 +72,20 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 	if tags == nil {
 		tags = []string{}
 	}
+	// Deref the *string settling signal type, leaving "" when nil so
+	// omitempty drops the key for an unsettled node. Mirrors the
+	// projection in backfills.go::backfillPartitionRow.
+	settlingSig := ""
+	if n.SettlingSignalType != nil {
+		settlingSig = *n.SettlingSignalType
+	}
 	return nodeResponse{
 		ID:                   n.ID.String(),
 		InstanceID:           n.InstanceID.String(),
 		NodeType:             n.NodeType,
 		Executor:             n.Executor,
 		State:                string(n.State),
+		SettlingSignalType:   settlingSig,
 		CurrentErrorClass:    n.CurrentErrorClass,
 		RetryCounter:         n.RetryCounter,
 		ActionIndex:          n.ActionIndex,
@@ -104,10 +126,38 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		var row *persistence.NodeRow
+		// latestBag is the node's most-recent resolved attribute bag,
+		// resolved in the SAME read tx as the node row so the detail and
+		// its forensic snapshot are read atomically from one consistent
+		// snapshot. nil → the node has never executed (or its row was not
+		// yet committed); omitempty drops the key on the response.
+		var latestBag map[string]any
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.Nodes().Get(ctx, id, tx)
+			if err != nil {
+				return err
+			}
 			row = r
-			return err
+			if row == nil {
+				return nil
+			}
+			// Resolve the node's instance to its main run scope, then read
+			// the latest per-run attribute bag for (node, main run scope).
+			inst, err := deps.Persist.Instances().Get(ctx, row.InstanceID, tx)
+			if err != nil {
+				return err
+			}
+			if inst == nil {
+				return nil
+			}
+			attrs, err := deps.Persist.NodeAttributes().GetLatestByNode(ctx, row.ID, inst.MainRunScopeID, tx)
+			if err != nil {
+				return err
+			}
+			if attrs != nil {
+				latestBag = attrs.Data
+			}
+			return nil
 		}); err != nil {
 			writeError(w, err)
 			return
@@ -116,7 +166,9 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrNodeNotFound.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, toNodeResponse(*row))
+		resp := toNodeResponse(*row)
+		resp.LatestAttributes = latestBag
+		writeJSON(w, http.StatusOK, resp)
 	}
 }
 
@@ -174,15 +226,37 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 				"reason", body.Reason,
 				"error", err.Error())
 		}
+		// Operator-sourced `frame: in` (concept:cascade / concept:invalidate):
+		// resolve the target instance's currently-running cascade frame and
+		// thread it as SourceFrameID so invalidateInFrame joins THAT frame
+		// (the open drain) rather than falling back to next-frame. The
+		// operator invalidate has no source node, so SourceFrameID is the
+		// authoritative input — invalidateInFrame's resolution order prefers
+		// it and skips the source-node re-read when the caller supplies the
+		// frame. When no frame is currently running, sourceFrameID stays nil
+		// and invalidateInFrame takes its documented deterministic next-frame
+		// fallback (the story's required behavior for an idle instance).
+		var sourceFrameID *shared.UUID
+		if body.Frame == "in" {
+			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
+				fid, err := deps.Persist.Frames().GetRunningFrameID(ctx, row.InstanceID, tx)
+				sourceFrameID = fid
+				return err
+			}); err != nil {
+				writeError(w, err)
+				return
+			}
+		}
 		if err := runtime.InvalidateNode(req.Context(), runtime.InvalidateArgs{
-			Persist:      deps.Persist,
-			Queue:        deps.Queue,
-			Clock:        deps.Clock,
-			Logger:       deps.Logger,
-			TargetNodeID: id,
-			Reason:       "operator_override",
-			Frame:        body.Frame,
-			Metrics:      deps.Metrics,
+			Persist:       deps.Persist,
+			Queue:         deps.Queue,
+			Clock:         deps.Clock,
+			Logger:        deps.Logger,
+			TargetNodeID:  id,
+			SourceFrameID: sourceFrameID,
+			Reason:        "operator_override",
+			Frame:         body.Frame,
+			Metrics:       deps.Metrics,
 		}); err != nil {
 			writeError(w, err)
 			return

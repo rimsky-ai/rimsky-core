@@ -7,7 +7,7 @@ package auth
 import "testing"
 
 func TestCheckGrantEmpty(t *testing.T) {
-	res := CheckGrant(Grant{}, "node:read")
+	res := CheckGrant(Grant{}, "node:read", nil)
 	if res.Allowed {
 		t.Fatalf("empty grant must deny")
 	}
@@ -18,7 +18,7 @@ func TestCheckGrantEmpty(t *testing.T) {
 
 func TestCheckGrantWildcardStar(t *testing.T) {
 	g := Grant{{Action: "*"}}
-	res := CheckGrant(g, "instance:create")
+	res := CheckGrant(g, "instance:create", nil)
 	if !res.Allowed {
 		t.Fatalf("star grant should allow: %+v", res)
 	}
@@ -26,10 +26,10 @@ func TestCheckGrantWildcardStar(t *testing.T) {
 
 func TestCheckGrantVerbSuffix(t *testing.T) {
 	g := Grant{{Action: "*:read"}}
-	if !CheckGrant(g, "node:read").Allowed {
+	if !CheckGrant(g, "node:read", nil).Allowed {
 		t.Fatalf("*:read should allow node:read")
 	}
-	if CheckGrant(g, "node:write").Allowed {
+	if CheckGrant(g, "node:write", nil).Allowed {
 		t.Fatalf("*:read should not allow node:write")
 	}
 }
@@ -42,13 +42,13 @@ func TestCheckGrantSetMembership_AnyMatchAllows(t *testing.T) {
 		{Action: "instance:create"},
 		{Action: "*:read"},
 	}
-	if !CheckGrant(g, "instance:create").Allowed {
+	if !CheckGrant(g, "instance:create", nil).Allowed {
 		t.Fatalf("specific entry should allow instance:create")
 	}
-	if !CheckGrant(g, "node:read").Allowed {
+	if !CheckGrant(g, "node:read", nil).Allowed {
 		t.Fatalf("wildcard entry should allow node:read")
 	}
-	if CheckGrant(g, "node:invalidate").Allowed {
+	if CheckGrant(g, "node:invalidate", nil).Allowed {
 		t.Fatalf("no entry matches node:invalidate; must deny")
 	}
 }
@@ -59,10 +59,10 @@ func TestCheckGrantSetMembership_OrderIrrelevant(t *testing.T) {
 	specificFirst := Grant{{Action: "instance:create"}, {Action: "*"}}
 	wildcardFirst := Grant{{Action: "*"}, {Action: "instance:create"}}
 	for _, action := range []string{"instance:create", "node:read"} {
-		if CheckGrant(specificFirst, action).Allowed != CheckGrant(wildcardFirst, action).Allowed {
+		if CheckGrant(specificFirst, action, nil).Allowed != CheckGrant(wildcardFirst, action, nil).Allowed {
 			t.Fatalf("order changed the decision for %q", action)
 		}
-		if !CheckGrant(specificFirst, action).Allowed {
+		if !CheckGrant(specificFirst, action, nil).Allowed {
 			t.Fatalf("wildcard grant should allow %q", action)
 		}
 	}

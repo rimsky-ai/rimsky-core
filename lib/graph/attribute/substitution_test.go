@@ -6,6 +6,12 @@ package attributes
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -665,4 +671,299 @@ func TestReferencesTriggerMessage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSubstitute_ClaimScope pins the runtime resolver boundary of the
+// scope→claim_scope rename to a single canonical spelling (story
+// S-template-validation-claim-scope-end-to-end). The resolver MUST
+// resolve `{{claim.<alias>.claim_scope}}` to the live claim's
+// claim-scope bytes (stringified) and MUST reject the legacy
+// `{{claim.<alias>.scope}}` spelling as an *ErrMissingSource — `scope`
+// is not a recognized second segment. The registration boundary of the
+// same rename is pinned by TestValidateTemplate_ClaimScopeSpelling in
+// lib/graph/node.
+//
+// The canonical-acceptance leg is already green (the resolver admits
+// `claim_scope`); the load-bearing NEW assertion is the rejection leg —
+// the legacy `scope` spelling MUST surface a concrete *ErrMissingSource
+// (the resolver's default-arm error class), not silently resolve.
+func TestSubstitute_ClaimScope(t *testing.T) {
+	t.Parallel()
+
+	ctx := ResolveContext{
+		Claim: map[string]claimproducer.ClaimResult{
+			"a": {ClaimScope: json.RawMessage([]byte("\"/scope-A\""))},
+		},
+	}
+
+	// Canonical spelling resolves to the stringified scope bytes.
+	got, err := Substitute("{{claim.a.claim_scope}}", ctx)
+	if err != nil {
+		t.Fatalf("{{claim.a.claim_scope}}: unexpected error: %v", err)
+	}
+	if got != "/scope-A" {
+		t.Fatalf("{{claim.a.claim_scope}}: want %q, got %q", "/scope-A", got)
+	}
+
+	// Legacy spelling is rejected as a concrete *ErrMissingSource — the
+	// second segment `scope` is not recognized.
+	_, legacyErr := Substitute("{{claim.a.scope}}", ctx)
+	if legacyErr == nil {
+		t.Fatalf("{{claim.a.scope}}: expected *ErrMissingSource, got nil error")
+	}
+	var missing *ErrMissingSource
+	if !errors.As(legacyErr, &missing) {
+		t.Fatalf("{{claim.a.scope}}: expected *ErrMissingSource, got %T: %v", legacyErr, legacyErr)
+	}
+}
+
+// headerCountWords maps the English count word the module header uses
+// ("Five recognized source kinds:") to its integer value. Only the small
+// range the enumeration could plausibly use is needed.
+var headerCountWords = map[string]int{
+	"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+	"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+// headerCountLinePattern matches the module header's count declaration,
+// e.g. "// Five recognized source kinds:". Capture group 1 is the count
+// word.
+var headerCountLinePattern = regexp.MustCompile(`(?i)^//\s*([A-Za-z]+)\s+recognized source kinds:`)
+
+// headerBulletPattern matches a header enumeration bullet and captures the
+// source-kind prefix — the token before the first `.` inside the leading
+// `{{...}}` example, e.g. `nodes` from
+// "//   - {{nodes.<node>.attribute.<field>}} — ...". Only bullets whose
+// example opens with `{{<kind>.` are admitted; a `deps`-retirement
+// paragraph or any prose line is not a bullet.
+var headerBulletPattern = regexp.MustCompile(`^//\s*-\s*\{\{([a-z_]+)\.`)
+
+// liveResolverKinds is the set of source-kind prefixes
+// resolveDirectiveValueRaw actually dispatches on, EXCLUDING the retired
+// `deps` arm (which the resolver keeps only to return a migration-pointer
+// rejection — it is not a live source kind). This is the ground truth the
+// module header must enumerate. The probe loop below proves each member is
+// a real resolver arm (not the unknown-kind default arm) and that `deps`
+// is the rejected/retired form, so this list cannot silently drift from
+// the resolver's switch.
+var liveResolverKinds = []string{"claim", "params", "nodes", "trigger", "child"}
+
+// TestSubstitutionDocstringMatchesResolver guards against doc-drift in the
+// substitution module header (substitution.go#7-14): the header's
+// "<N> recognized source kinds:" enumeration must (a) declare a count that
+// matches its own bullet count and (b) enumerate exactly the set of source
+// kinds the live resolver dispatches on — {claim, params, nodes, trigger,
+// child}, the arms resolveDirectiveValueRaw switches on excluding the
+// retired `deps` rejection arm.
+//
+// Story S-template-validation-source-kinds-docstring-accuracy. This is a
+// RED gate authored before the header is corrected: today the header says
+// "Five recognized source kinds:" over six bullets that omit `trigger` and
+// `child`, so both the count assertion and the membership assertion fail.
+func TestSubstitutionDocstringMatchesResolver(t *testing.T) {
+	t.Parallel()
+
+	// (0) Prove liveResolverKinds reflects the resolver's actual dispatch
+	// arms, so the membership target below is coupled to the code rather
+	// than a free-floating literal. Each declared live kind must NOT route
+	// to the unknown-source-kind default arm; the retired `deps` form MUST
+	// be rejected (and therefore is correctly excluded from the live set).
+	assertResolverArms(t)
+
+	// (1) Locate and read the substitution.go source relative to this test
+	// file (same package directory) — the real header is the artifact under
+	// test, parsed from source rather than re-typed into the test.
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed; cannot locate substitution.go")
+	}
+	srcPath := filepath.Join(filepath.Dir(thisFile), "substitution.go")
+	srcBytes, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", srcPath, err)
+	}
+
+	declaredCount, bulletKinds := parseHeaderSourceKinds(t, string(srcBytes))
+
+	// (2a) Declared count word must match the bullet count.
+	if declaredCount != len(bulletKinds) {
+		t.Errorf("header declares %d recognized source kinds but lists %d bullets (%v): the count word and the bullet list disagree",
+			declaredCount, len(bulletKinds), bulletKinds)
+	}
+
+	// (2b) The distinct kind-prefixes the header enumerates must equal the
+	// live resolver kind set exactly — no recognized kind omitted
+	// (trigger/child today), no listed kind the resolver does not handle.
+	gotSet := distinctSorted(bulletKinds)
+	wantSet := distinctSorted(liveResolverKinds)
+	if !equalStringSlices(gotSet, wantSet) {
+		t.Errorf("header source-kind set %v does not equal live resolver kind set %v\n  missing from header: %v\n  not handled by resolver: %v",
+			gotSet, wantSet, setDifference(wantSet, gotSet), setDifference(gotSet, wantSet))
+	}
+}
+
+// assertResolverArms probes resolveDirectiveValueRaw to confirm
+// liveResolverKinds names exactly the live dispatch arms: every declared
+// live kind resolves to something other than the unknown-source-kind
+// default arm, and the retired `deps` arm is rejected (so its exclusion
+// from the live set is correct). A directive that is well-formed for the
+// kind but unresolvable surfaces a kind-specific ErrMissingSource Reason —
+// never the "unknown source kind" Reason the default arm emits — so a
+// removed arm would flip its kind into the default arm and trip this probe.
+func assertResolverArms(t *testing.T) {
+	t.Helper()
+
+	// Well-formed-but-unresolvable directive per kind: each exercises the
+	// kind's own resolver arm against an empty context, so the error Reason
+	// is the arm's own missing-source reason, not the default arm's
+	// "unknown source kind" reason.
+	probes := map[string]string{
+		"claim":   "claim.a.payload",
+		"params":  "params.k",
+		"nodes":   "nodes.n.attribute.f",
+		"trigger": "trigger.message.payload",
+		"child":   "child.partition_key",
+	}
+	for _, kind := range liveResolverKinds {
+		probe, ok := probes[kind]
+		if !ok {
+			t.Fatalf("no resolver probe defined for declared live kind %q", kind)
+		}
+		_, err := resolveDirectiveValueRaw(probe, ResolveContext{})
+		if err == nil {
+			// An empty context cannot resolve any of these probes; a nil
+			// error would mean the probe is wrong, not that the arm is gone.
+			t.Fatalf("probe %q for kind %q resolved against an empty context; tighten the probe", probe, kind)
+		}
+		var missing *ErrMissingSource
+		if !errors.As(err, &missing) {
+			t.Fatalf("probe %q for kind %q: want *ErrMissingSource, got %T: %v", probe, kind, err, err)
+		}
+		if strings.Contains(missing.Reason, "unknown source kind") {
+			t.Fatalf("kind %q routed to the unknown-source-kind default arm (reason %q); it is not a live resolver arm — fix liveResolverKinds or restore the arm",
+				kind, missing.Reason)
+		}
+	}
+
+	// The retired `deps` form must be rejected by its own migration-pointer
+	// arm (NOT the unknown-source-kind default arm), confirming it is a
+	// recognized-but-retired form correctly excluded from the live set.
+	_, depsErr := resolveDirectiveValueRaw("deps.x.y", ResolveContext{})
+	var depsMissing *ErrMissingSource
+	if !errors.As(depsErr, &depsMissing) {
+		t.Fatalf("`deps.x.y`: want *ErrMissingSource migration-pointer, got %T: %v", depsErr, depsErr)
+	}
+	if strings.Contains(depsMissing.Reason, "unknown source kind") {
+		t.Fatalf("`deps` routed to the unknown-source-kind default arm; expected its dedicated retired-form rejection arm")
+	}
+}
+
+// parseHeaderSourceKinds parses the module header's
+// "<word> recognized source kinds:" block out of substitution.go's source
+// text. It returns the declared integer count (from the English count
+// word) and the ordered list of kind-prefixes extracted from the
+// enumeration bullets. The block runs from the count line through the
+// contiguous run of bullet lines that follow it; the first non-bullet,
+// non-blank comment line ends the enumeration (e.g. the `deps`-retirement
+// paragraph).
+func parseHeaderSourceKinds(t *testing.T, src string) (declaredCount int, bulletKinds []string) {
+	t.Helper()
+
+	lines := strings.Split(src, "\n")
+	countIdx := -1
+	for i, line := range lines {
+		m := headerCountLinePattern.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		word := strings.ToLower(m[1])
+		n, known := headerCountWords[word]
+		if !known {
+			t.Fatalf("header count word %q is not a recognized number word (line %d: %q)", m[1], i+1, line)
+		}
+		countIdx = i
+		declaredCount = n
+		break
+	}
+	if countIdx < 0 {
+		t.Fatal(`could not find the "<word> recognized source kinds:" declaration in substitution.go header`)
+	}
+
+	sawBullet := false
+	for _, line := range lines[countIdx+1:] {
+		trimmed := strings.TrimSpace(line)
+		if m := headerBulletPattern.FindStringSubmatch(line); m != nil {
+			bulletKinds = append(bulletKinds, m[1])
+			sawBullet = true
+			continue
+		}
+		// A blank comment line ("//") inside the block (between the count
+		// line and the bullets, or as a trailing spacer) is not a
+		// terminator on its own; only end the enumeration once at least one
+		// bullet has been seen and a non-bullet content line appears.
+		if trimmed == "//" || trimmed == "" {
+			if sawBullet {
+				break
+			}
+			continue
+		}
+		// A non-bullet comment line after the bullets (e.g. the
+		// `deps`-retirement paragraph) ends the enumeration.
+		if sawBullet {
+			break
+		}
+		// Non-blank, non-bullet content before any bullet means the header
+		// shape is not what this parser expects — fail loudly rather than
+		// silently parse an empty enumeration.
+		t.Fatalf("unexpected line inside source-kind header before any bullet: %q", line)
+	}
+
+	if len(bulletKinds) == 0 {
+		t.Fatal("parsed zero enumeration bullets from the source-kind header block")
+	}
+	return declaredCount, bulletKinds
+}
+
+// distinctSorted returns the sorted set of distinct values in in.
+func distinctSorted(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// equalStringSlices reports whether two already-sorted slices are equal.
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// setDifference returns the members of a not present in b (both treated as
+// sets). Used only for diagnostic output.
+func setDifference(a, b []string) []string {
+	inB := make(map[string]struct{}, len(b))
+	for _, v := range b {
+		inB[v] = struct{}{}
+	}
+	var out []string
+	for _, v := range a {
+		if _, ok := inB[v]; !ok {
+			out = append(out, v)
+		}
+	}
+	return out
 }

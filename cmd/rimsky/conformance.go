@@ -160,8 +160,15 @@ func splitConformanceCSV(s string) []string {
 // runConformanceClaimProducer runs the ClaimProducer conformance suite
 // against a remote producer-service endpoint. Checks include the Capabilities
 // handshake, write-semantics envelope conformance, the uniformity invariant
-// (byte-equal Scope ⇒ identical RealizedWriteSemantics), and the four runtime
-// verbs.
+// (byte-equal Scope ⇒ identical RealizedWriteSemantics), the terminal verbs
+// Commit / Abandon / Release driven against real claims the suite itself
+// Open'd, a TerminalIdempotency probe asserting a retried (re-issued) terminal
+// verb is accepted without error, the optional SplitScope / ScopesConflict
+// probes (gated on the producer's advertised capabilities), and — for
+// producers advertising staged_async — the Serialization9b probe, which fails
+// a producer that internally serializes a reader Open behind an open writer on
+// the byte-equal scope (the reader-lease pattern @blessed-invariant 9b
+// forbids).
 func runConformanceClaimProducer(args []string) int {
 	fs := flag.NewFlagSet("rimsky conformance claim-producer", flag.ContinueOnError)
 	endpoint := fs.String("endpoint", "", "claim-producer-service gRPC endpoint (e.g. grpc://localhost:9101)")

@@ -244,14 +244,18 @@ func (x *CapabilitiesResponse) GetValidationSupportedRoles() []string {
 // template lookup, available to the producer for namespace routing or
 // trace correlation.
 type OpenRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClaimId       string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
-	ProducerName  string                 `protobuf:"bytes,2,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
-	Selector      string                 `protobuf:"bytes,3,opt,name=selector,proto3" json:"selector,omitempty"`
-	Intent        string                 `protobuf:"bytes,4,opt,name=intent,proto3" json:"intent,omitempty"`                           // "r" | "rw"
-	Alias         string                 `protobuf:"bytes,5,opt,name=alias,proto3" json:"alias,omitempty"`                             // template-side identifier; producer ignores
-	TemplateId    string                 `protobuf:"bytes,6,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"` // content hash; opaque to rimsky.
-	InstanceId    string                 `protobuf:"bytes,7,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // instance UUID; opaque to rimsky.
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ClaimId      string                 `protobuf:"bytes,1,opt,name=claim_id,json=claimId,proto3" json:"claim_id,omitempty"`
+	ProducerName string                 `protobuf:"bytes,2,opt,name=producer_name,json=producerName,proto3" json:"producer_name,omitempty"`
+	Selector     string                 `protobuf:"bytes,3,opt,name=selector,proto3" json:"selector,omitempty"`
+	Intent       string                 `protobuf:"bytes,4,opt,name=intent,proto3" json:"intent,omitempty"`                           // "r" | "rw"
+	Alias        string                 `protobuf:"bytes,5,opt,name=alias,proto3" json:"alias,omitempty"`                             // template-side identifier; producer ignores
+	TemplateId   string                 `protobuf:"bytes,6,opt,name=template_id,json=templateId,proto3" json:"template_id,omitempty"` // content hash; opaque to rimsky.
+	InstanceId   string                 `protobuf:"bytes,7,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // instance UUID; opaque to rimsky.
+	// run_scope_id is the RunScope this claim lives in; used by the
+	// host-agent-proxy to key per-run-scope spawn isolation on the
+	// claim-producer path. Opaque to rimsky.
+	RunScopeId    string `protobuf:"bytes,8,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -331,6 +335,13 @@ func (x *OpenRequest) GetTemplateId() string {
 func (x *OpenRequest) GetInstanceId() string {
 	if x != nil {
 		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *OpenRequest) GetRunScopeId() string {
+	if x != nil {
+		return x.RunScopeId
 	}
 	return ""
 }
@@ -498,9 +509,19 @@ func (x *Acquired) GetRealizedWriteSemantics() WriteSemantics {
 	return WriteSemantics_WRITE_SEMANTICS_UNKNOWN
 }
 
-// Unavailable signals "no claim available right now." No fields.
+// Unavailable signals "no claim available right now." The optional
+// error_class names the producer-declared acquisition-failure class
+// (a member of the producer's declared error vocabulary, e.g.
+// "pg/claim_unavailable") rimsky's acquisition-failure routing keys the
+// operator's `error_types:` chain on. Leaving it empty preserves the
+// historical behavior: rimsky routes the unavailability under the
+// synthetic class "acquire/unavailable". The Available=false wire shape
+// (this Unavailable arm of the oneof) is unchanged; the class is an
+// out-of-band hint consumed on the rimsky routing side, not a new
+// acquisition outcome.
 type Unavailable struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	ErrorClass    string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -533,6 +554,13 @@ func (x *Unavailable) ProtoReflect() protoreflect.Message {
 // Deprecated: Use Unavailable.ProtoReflect.Descriptor instead.
 func (*Unavailable) Descriptor() ([]byte, []int) {
 	return file_claim_producer_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *Unavailable) GetErrorClass() string {
+	if x != nil {
+		return x.ErrorClass
+	}
+	return ""
 }
 
 type CommitRequest struct {
@@ -1124,7 +1152,7 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\x14supports_split_scope\x18\x02 \x01(\bR\x12supportsSplitScope\x128\n" +
 	"\x18supports_scopes_conflict\x18\x03 \x01(\bR\x16supportsScopesConflict\x12\x1c\n" +
 	"\tprotocols\x18\x04 \x03(\tR\tprotocols\x12<\n" +
-	"\x1avalidation_supported_roles\x18\x05 \x03(\tR\x18validationSupportedRoles\"\xd9\x01\n" +
+	"\x1avalidation_supported_roles\x18\x05 \x03(\tR\x18validationSupportedRoles\"\xfb\x01\n" +
 	"\vOpenRequest\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12#\n" +
 	"\rproducer_name\x18\x02 \x01(\tR\fproducerName\x12\x1a\n" +
@@ -1134,7 +1162,9 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\vtemplate_id\x18\x06 \x01(\tR\n" +
 	"templateId\x12\x1f\n" +
 	"\vinstance_id\x18\a \x01(\tR\n" +
-	"instanceId\"\x87\x01\n" +
+	"instanceId\x12 \n" +
+	"\frun_scope_id\x18\b \x01(\tR\n" +
+	"runScopeId\"\x87\x01\n" +
 	"\fOpenResponse\x121\n" +
 	"\bacquired\x18\x01 \x01(\v2\x13.rimsky.v1.AcquiredH\x00R\bacquired\x12:\n" +
 	"\vunavailable\x18\x02 \x01(\v2\x16.rimsky.v1.UnavailableH\x00R\vunavailableB\b\n" +
@@ -1144,8 +1174,10 @@ const file_claim_producer_proto_rawDesc = "" +
 	"\apayload\x18\x02 \x01(\fR\apayload\x12\x1f\n" +
 	"\vclaim_scope\x18\x03 \x01(\fR\n" +
 	"claimScope\x12S\n" +
-	"\x18realized_write_semantics\x18\x04 \x01(\x0e2\x19.rimsky.v1.WriteSemanticsR\x16realizedWriteSemantics\"\r\n" +
-	"\vUnavailable\"e\n" +
+	"\x18realized_write_semantics\x18\x04 \x01(\x0e2\x19.rimsky.v1.WriteSemanticsR\x16realizedWriteSemantics\".\n" +
+	"\vUnavailable\x12\x1f\n" +
+	"\verror_class\x18\x01 \x01(\tR\n" +
+	"errorClass\"e\n" +
 	"\rCommitRequest\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12\x1f\n" +
 	"\vclaim_scope\x18\x02 \x01(\fR\n" +

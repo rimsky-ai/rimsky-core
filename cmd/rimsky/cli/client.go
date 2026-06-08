@@ -39,6 +39,13 @@ type Client struct {
 	httpClient *http.Client
 	userAgent  string
 	apiKey     string
+	// composeOrigin, when set, stamps the trusted compose-origin marker
+	// (`X-Rimsky-Compose-Origin: 1`) on every request. The compose engine
+	// sets this on the client it builds so its writes — which legitimately
+	// own the reserved `compose:` tag / instance_key prefix — pass the
+	// control-api's server-side reserved-prefix guard. Off by default: a
+	// plain CLI client never claims compose origin.
+	composeOrigin bool
 }
 
 // NewClient constructs a Client targeting the given endpoint URL (e.g.
@@ -55,6 +62,13 @@ func NewClient(endpoint string) *Client {
 // SetAPIKey installs the Bearer token forwarded on every request as
 // `Authorization: Bearer <key>`. Empty string clears the header.
 func (c *Client) SetAPIKey(key string) { c.apiKey = key }
+
+// SetComposeOrigin toggles the trusted compose-origin marker stamped on
+// every request. The compose engine calls this with true on the client
+// it builds so its reserved-prefix (`compose:`) tag / instance_key writes
+// pass the control-api's server-side reserved-prefix guard. Off by
+// default.
+func (c *Client) SetComposeOrigin(v bool) { c.composeOrigin = v }
 
 // NewClientWithKey is a convenience constructor that installs the
 // Bearer token in one call. Equivalent to NewClient(endpoint) +
@@ -127,6 +141,9 @@ func (c *Client) doStatus(req *http.Request, out any) (int, error) {
 	}
 	if c.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	if c.composeOrigin {
+		req.Header.Set("X-Rimsky-Compose-Origin", "1")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -670,6 +687,7 @@ type Node struct {
 	NodeType             string  `json:"node_type"`
 	Executor             string  `json:"executor,omitempty"`
 	State                string  `json:"state"`
+	SettlingSignalType   string  `json:"settling_signal_type,omitempty"`
 	CurrentErrorClass    string  `json:"current_error_class,omitempty"`
 	RetryCounter         int     `json:"retry_counter"`
 	ActionIndex          int     `json:"action_index"`

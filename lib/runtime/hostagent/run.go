@@ -35,6 +35,17 @@ import (
 // agentVersion is reported to the proxy on Register.
 const agentVersion = "v1"
 
+// AnonymousRoutingIdentity is the well-known routing key an agent registers
+// under when it runs against an anonymous-mode (unauthenticated bootstrap)
+// rimsky deployment, where there is no api-key owner to register against.
+// Anonymous instances persist with an empty owner api-key, so the proxy
+// cannot match them to an owner-keyed agent; this sentinel is the agreed
+// fallback the agent and proxy share so an anonymous-mode instance can still
+// resolve to a connected agent. The proxy carries the same literal as
+// anonymousRoutingIdentity (cmd/rimsky-host-agent-proxy); the two MUST stay
+// in lockstep. @concept: host-agent-proxy
+const AnonymousRoutingIdentity = "anonymous"
+
 // reconnect backoff bounds.
 const (
 	reconnectMinBackoff = 250 * time.Millisecond
@@ -136,8 +147,15 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.RimskyURL == "" {
 		return errors.New("hostagent: RIMSKY_URL is required")
 	}
+	// Anonymous-mode deployment: an empty api-key is no longer a hard error.
+	// The agent substitutes the well-known anonymous routing identity so the
+	// existing non-empty-key invariant holds end to end — the proxy's Register
+	// handler still rejects a truly empty api_key, and the substituted sentinel
+	// is what the proxy resolves an anonymous-owner instance against. The
+	// authenticated path is unchanged: a non-empty api-key registers under
+	// itself exactly as before.
 	if cfg.APIKey == "" {
-		return errors.New("hostagent: RIMSKY_API_KEY is required")
+		cfg.APIKey = AnonymousRoutingIdentity
 	}
 
 	// 1. Bind the local HTTP listener (Task 48). The handler is set per

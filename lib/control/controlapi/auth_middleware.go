@@ -264,13 +264,27 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "no identity"})
 			return
 		}
-		res := auth.CheckGrant(ident.Permissions, action)
 		skin := protocolSkinFromContext(r.Context())
+		// Capture the body before the permission check: scope evaluation
+		// needs the request's scopeable dimension (e.g. the template tag),
+		// which requestTarget reads out of the captured JSON body.
+		// captureBody re-attaches the bytes to r.Body, so the handler
+		// still reads the same body the client sent.
 		body, rejected := captureBody(r, w, s.Logger)
 		if rejected {
 			// 413 already written; do not dispatch the handler.
 			return
 		}
+		// target is the request's resource selector for scope evaluation.
+		// requestTarget extracts the per-action scopeable dimension from
+		// the captured body; an empty target means only unscoped grant
+		// entries match, which preserves today's behavior for the unscoped
+		// grants in use. CheckGrant rejects a request whose action matches
+		// a scoped entry but whose target falls outside that entry's Scope,
+		// so an out-of-scope write lands a 403 + auth.access_denied below.
+		// @concept: permission
+		target := requestTarget(action, body, r)
+		res := auth.CheckGrant(ident.Permissions, action, target)
 		// Validate that the captured body is JSON before wrapping it
 		// as `request_params`. The audit-row insert path Unmarshals the
 		// typed payload back into map[string]any (see audit.go::
@@ -296,11 +310,20 @@ func (s *AuthState) gateByAction(action string, inner http.HandlerFunc) http.Han
 			writeJSON(w, http.StatusForbidden, map[string]any{"error": "permission denied"})
 			return
 		}
-		// Permission is binary (set membership); the request mode is the
-		// per-request `?dry_run=true` flag, not a grant-entry modifier.
+		// Effective mode is the FLOOR of two sources: the matched grant
+		// entry's identity-bound write floor (res.Mode, restored as a
+		// first-class @concept: permission `mode` field — defaulted to
+		// ModeExecute when the entry pins no mode) and the per-request
+		// `?dry_run=true` flag. Dry-run is sticky downward: once either
+		// source says dry_run the request can never be lifted back to
+		// execute, so an attempt-only key (grant pinned to ModeDryRun)
+		// previews-but-never-commits regardless of the flag, and a flag
+		// of true forces dry-run on an otherwise-execute grant. Net rule:
+		// mode == ModeDryRun iff res.Mode == ModeDryRun || flag == true.
 		// @concept: dry-run
+		// @concept: permission
 		mode := auth.ModeExecute
-		if r.URL.Query().Get("dry_run") == "true" {
+		if res.Mode == auth.ModeDryRun || r.URL.Query().Get("dry_run") == "true" {
 			mode = auth.ModeDryRun
 		}
 		ctx := context.WithValue(r.Context(), ctxKeyMode{}, mode)

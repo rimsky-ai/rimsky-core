@@ -1,0 +1,29 @@
+# rimsky-compose.yml — declarative reconcile manifest for `rimsky compose`.
+#
+# Compose is purely application-layer: it reconciles the templates, tags,
+# and instances declared below against an ALREADY-RUNNING rimsky. It never
+# starts rimsky, invokes no docker/terraform/kubectl, and materializes no
+# rimsky config. Run it against a stack you have already brought up:
+#
+#   rimsky compose up   -f examples/compose/rimsky-compose.yml
+#   rimsky compose plan -f examples/compose/rimsky-compose.yml
+#   rimsky compose down -f examples/compose/rimsky-compose.yml
+#
+# Every template and instance compose manages is namespaced under the
+# reserved `compose:<project>:` tag prefix, so compose-owned resources
+# stay disjoint from anything you create by hand.
+project: project-alpha
+
+templates:
+  - path: ./template-a.yml
+    tag: tpl-a@1
+    state: deployed
+  - path: ./template-b.yml
+    tag: tpl-b@1
+    state: deployed
+
+instances:
+  - template: tpl-a@1
+    name: inst-a
+  - template: tpl-b@1
+    name: inst-b

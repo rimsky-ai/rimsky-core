@@ -64,10 +64,15 @@ func TestSubstituteAttributesSchema_EmbeddedSource(t *testing.T) {
 	}
 }
 
-// TestSubstituteAttributesSchema_LenientNullEmit — `?` marker on a
-// missing source emits JSON null, not an error. The property is
-// expected to land in the bag with a nil value.
-func TestSubstituteAttributesSchema_LenientNullEmit(t *testing.T) {
+// TestSubstituteAttributesSchema_LenientEmptyRecovery — `?` marker on a
+// missing source recovers to the property's type-appropriate empty
+// value (here "" for a string-typed property), not an error and not a
+// raw JSON null. Landing a null would fail the downstream PhaseDispatch
+// type check for `type: string`, turning the lenient recovery back into
+// a hard dispatch failure (story S-template-validation-lenient-marker-
+// recovery-e2e). The property lands in the bag with the empty string so
+// the executor receives the directive "resolved to empty".
+func TestSubstituteAttributesSchema_LenientEmptyRecovery(t *testing.T) {
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -81,8 +86,53 @@ func TestSubstituteAttributesSchema_LenientNullEmit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
-	if v, ok := out["warnings"]; !ok || v != nil {
-		t.Fatalf("warnings: want present nil, got (present=%v, value=%v)", ok, v)
+	if v, ok := out["warnings"]; !ok || v != "" {
+		t.Fatalf("warnings: want present empty string, got (present=%v, value=%#v)", ok, v)
+	}
+}
+
+// TestSubstituteAttributesSchema_LenientEmptyRecoveryTyped — the
+// lenient-recovery empty value matches the property's declared JSON
+// type so the PhaseDispatch validation gate admits it for any type, not
+// only strings. A bare-string `type`, the union form (`["T","null"]`),
+// and an absent `type` all map to a schema-valid empty value.
+func TestSubstituteAttributesSchema_LenientEmptyRecoveryTyped(t *testing.T) {
+	cases := []struct {
+		name      string
+		typeField any
+		want      any
+	}{
+		{"string", "string", ""},
+		{"number", "number", float64(0)},
+		{"integer", "integer", float64(0)},
+		{"boolean", "boolean", false},
+		{"array", "array", []any{}},
+		{"object", "object", map[string]any{}},
+		{"union with null", []any{"null", "number"}, float64(0)},
+		{"absent type defaults to empty string", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prop := map[string]any{"source": "{{params.absent?}}"}
+			if tc.typeField != nil {
+				prop["type"] = tc.typeField
+			}
+			schema := map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"v": prop},
+			}
+			out, err := substituteAttributesSchema(schema, attributes.ResolveContext{})
+			if err != nil {
+				t.Fatalf("lenient miss (%s): want nil error, got %v", tc.name, err)
+			}
+			v, ok := out["v"]
+			if !ok {
+				t.Fatalf("lenient miss (%s): property absent from bag", tc.name)
+			}
+			if !reflect.DeepEqual(v, tc.want) {
+				t.Fatalf("lenient miss (%s): want %#v, got %#v", tc.name, tc.want, v)
+			}
+		})
 	}
 }
 
@@ -156,7 +206,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 		}
 	})
 
-	t.Run("lenient marker on the same property passes (returns nil)", func(t *testing.T) {
+	t.Run("lenient marker on the same property recovers to empty", func(t *testing.T) {
 		schema := map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -170,8 +220,11 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("lenient miss: want nil error, got %v", err)
 		}
-		if v, ok := out["prompt"]; !ok || v != nil {
-			t.Fatalf("lenient miss: want present nil, got (present=%v, value=%v)", ok, v)
+		// The `?` marker recovers to the property's type-appropriate empty
+		// value ("" for a string) so the dispatch type check admits it —
+		// not a raw null (which would fail `type: string` validation).
+		if v, ok := out["prompt"]; !ok || v != "" {
+			t.Fatalf("lenient miss: want present empty string, got (present=%v, value=%#v)", ok, v)
 		}
 	})
 }

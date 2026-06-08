@@ -17,8 +17,8 @@ Run **every** check that could be affected by the change. This is mandatory, not
 - **Proto changes (`lib/protocols/proto/v1/*.proto`):** `make proto-gen` first, then the Go checks above.
 - **Scenario or storage changes:** `go test ./test/scenarios/... ./lib/foundation/persistence/... -count=1` (these spin up real Postgres via testcontainers — Docker must be running).
 - **Race-sensitive paths (queue, supervisor, scheduler):** add `-race`, e.g. `go test ./lib/foundation/persistence/postgres/... ./lib/runtime/... ./lib/graph/scheduler/... -race -count=3`.
-- **Reference-binary or deploy changes:** rebuild the Docker images touched by the change (`deploy/build-images.sh`) and bring up `deploy/docker-compose.yml` to verify the stack still reaches `/health`.
-- **TypeScript executor (`executors/claude-agent/`):** `cd executors/claude-agent && npm install && npm test && npm run build`.
+- **Reference-binary or deploy changes:** rebuild the touched core images with `make core-images` (and `make service-images` for bundled-service changes), then verify the stack via the testcontainers-based services harness under `lib/services/test/` (e.g. `go test ./lib/services/test/scenarios/... -count=1`), which boots `rimsky-all-in-one:latest` and drives a node to terminal.
+- **TypeScript executor (`lib/services/executors/claude-agent/`):** `cd lib/services/executors/claude-agent && npm install && npm test && npm run build`.
 - **Conformance-relevant changes (protocol, executor surface):** `go run ./cmd/rimsky conformance executor --endpoint <executor> --transport grpc` against the executors you touched.
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.
 
@@ -43,10 +43,10 @@ All new code must follow cold-read conventions (see `cold-read-cheatsheet.md` an
 The Go-specific lint set is enforced by `.golangci.yml` (`make lint`): gofmt, goimports, govet, staticcheck, unused, ineffassign, errcheck, revive (without the `exported` rule). Logging is stdlib `log/slog` only — no Zap, no Zerolog. HTTP routing is `go-chi/chi`. Postgres is `jackc/pgx/v5`. Cron parsing is `robfig/cron/v3`. Resist adding heavier alternatives (Viper, Cobra, Gin, Echo).
 
 ## Search Scoping
-Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `lib/protocols/proto/v1/gen/` (generated), `executors/claude-agent/node_modules/`, `executors/claude-agent/dist/`, `coverage.out`, `coverage.html`.
+Exclude from file searches:`.ok-planner`, `.git/`, `vendor/`, `bin/`, `tmp/`, `lib/protocols/proto/v1/gen/` (generated), `lib/services/executors/claude-agent/node_modules/`, `lib/services/executors/claude-agent/dist/`, `coverage.out`, `coverage.html`.
 
 ## Writing & Analysis
 - Save project-specific notes to project-local paths (e.g. `./CLAUDE.md`), not external memory.
 - When writing analysis or design documents, cross-check the written output against your findings before finishing — don't omit sections discussed verbally.
-- Design proposals go in `.ok-planner/sketches/` with a YYYY-MM-DD prefix (e.g. `docs/2026-04-25-stores-redesign.md`).
+- Design proposals go in `.ok-planner/sketches/` with a YYYY-MM-DD prefix.
 - When writing prose to a human in an interactive session — status updates, review findings, items surfaced into notes files — use the citation grammar in `.claude/rules/citation-grammar.md` to make artifact kinds explicit (code, tables, protos, concepts, invariants, etc.). The grammar applies to live agent ↔ user prose only; it is **not** a convention for source code, repo docs, or commit messages.

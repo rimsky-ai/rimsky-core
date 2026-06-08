@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -68,6 +69,14 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 		}
 		if !validTag(body.Tag) {
 			badRequest(w, "invalid tag identifier")
+			return
+		}
+		// Server-side reservation of the compose: prefix. Placed ahead of
+		// any persistence write so a rejected create persists nothing.
+		// Only the privileged compose path (which stamps the trusted
+		// compose-origin marker) may create reserved-prefix tags.
+		if strings.HasPrefix(body.Tag, composeReservedPrefix) && !isComposeOrigin(req) {
+			badRequest(w, "tag uses reserved prefix \"compose:\" (managed by the compose command)")
 			return
 		}
 		hash, err := resolveTagOrHash(req.Context(), deps, body.Template)

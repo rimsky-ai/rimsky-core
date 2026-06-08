@@ -52,6 +52,7 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 		Alias:        spec.Alias,
 		TemplateId:   spec.TemplateID,
 		InstanceId:   spec.InstanceID,
+		RunScopeId:   spec.RunScopeID,
 	})
 	if err != nil {
 		return claimproducer.OpenOutcome{}, &ProducerCallError{
@@ -62,7 +63,11 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 		}
 	}
 	if u := resp.GetUnavailable(); u != nil {
-		return claimproducer.OpenOutcome{Available: false}, nil
+		// Carry the producer-declared acquisition-failure class (when the
+		// producer named one) so the rimsky-side routing keys the operator's
+		// `error_types:` chain on it rather than only the synthetic
+		// "acquire/unavailable". Empty when the producer named no class.
+		return claimproducer.OpenOutcome{Available: false, UnavailableClass: u.GetErrorClass()}, nil
 	}
 	acq := resp.GetAcquired()
 	if acq == nil {

@@ -136,6 +136,10 @@ message OpenRequest {
   string alias = 5;   // template-side identifier; producer ignores
   string template_id = 6;  // content hash; opaque to rimsky.
   string instance_id = 7;  // instance UUID; opaque to rimsky.
+  // run_scope_id is the RunScope this claim lives in; used by the
+  // host-agent-proxy to key per-run-scope spawn isolation on the
+  // claim-producer path. Opaque to rimsky.
+  string run_scope_id = 8;
 }
 
 // OpenResponse signals acquisition outcome. Producers that always
@@ -165,8 +169,19 @@ message Acquired {
   WriteSemantics realized_write_semantics = 4;
 }
 
-// Unavailable signals "no claim available right now." No fields.
-message Unavailable {}
+// Unavailable signals "no claim available right now." The optional
+// error_class names the producer-declared acquisition-failure class
+// (a member of the producer's declared error vocabulary, e.g.
+// "pg/claim_unavailable") rimsky's acquisition-failure routing keys the
+// operator's `error_types:` chain on. Leaving it empty preserves the
+// historical behavior: rimsky routes the unavailability under the
+// synthetic class "acquire/unavailable". The Available=false wire shape
+// (this Unavailable arm of the oneof) is unchanged; the class is an
+// out-of-band hint consumed on the rimsky routing side, not a new
+// acquisition outcome.
+message Unavailable {
+  string error_class = 1;
+}
 
 message CommitRequest {
   string claim_id = 1;

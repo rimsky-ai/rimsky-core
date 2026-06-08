@@ -245,6 +245,80 @@ func TestValidateTemplate_ExecutorDeclared_Missing(t *testing.T) {
 	require.Contains(t, msg, "claude-agent")
 }
 
+// TestValidateTemplate_ClaimScopeSpelling pins the single canonical
+// spelling of the claim-scope directive end to end (story
+// S-template-validation-claim-scope-end-to-end). The validator MUST
+// accept `{{claim.<alias>.claim_scope}}` at registration and REJECT the
+// legacy `{{claim.<alias>.scope}}` spelling, with the rejection message
+// naming the canonical `claim_scope` segment so the operator is steered
+// to the correct spelling. This is the registration boundary of the
+// scope→claim_scope rename; the resolver boundary is pinned by
+// TestSubstitute_ClaimScope in lib/graph/attribute.
+//
+// RED today: the validator's claim-directive second-segment switch
+// (template_validator.go) admits only `scope` and rejects `claim_scope`,
+// so the canonical-spelling sub-assertion fails. A later GREEN pass
+// flips the switch to `claim_scope`.
+func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
+	// makeSpec builds a single-node template that acquires a claim under
+	// alias `a` (stores: content, rw, selector /scope-A) and binds the
+	// `region` attribute to the given claim directive. Reused across both
+	// spellings so the ONLY difference under test is the second segment.
+	makeSpec := func(directive string) *TemplateSpec {
+		return &TemplateSpec{
+			Name:                "demo",
+			Version:             "1.0.0",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes: []TemplateNodeDef{{
+				Type:     "worker",
+				Executor: "handler.worker",
+				Stores: []NodeStoreRef{
+					{Name: "content", Alias: "a", Intent: "rw", Selector: "/scope-A"},
+				},
+				Attributes: &NodeAttributesDef{
+					Schema: map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"region": map[string]any{
+								"type":   "string",
+								"source": directive,
+							},
+						},
+					},
+				},
+			}},
+		}
+	}
+
+	// Canonical spelling validates.
+	resCanonical := ValidateTemplate(
+		makeSpec("{{claim.a.claim_scope}}"),
+		RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)},
+	)
+	assert.True(t, resCanonical.Ok(),
+		"canonical {{claim.a.claim_scope}} must validate; errors: %+v", resCanonical.Errors)
+
+	// Legacy spelling is rejected, and the error names the canonical
+	// `claim_scope` segment (steering the author to the right spelling).
+	resLegacy := ValidateTemplate(
+		makeSpec("{{claim.a.scope}}"),
+		RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)},
+	)
+	require.False(t, resLegacy.Ok(),
+		"legacy {{claim.a.scope}} must be rejected at registration")
+	hasErrorAt(t, resLegacy, "nodes[0].attributes.schema.properties.region.source")
+
+	var legacyMsg string
+	for _, e := range resLegacy.Errors {
+		if strings.HasPrefix(e.Path, "nodes[0].attributes.schema.properties.region.source") {
+			legacyMsg = e.Msg
+			break
+		}
+	}
+	require.Contains(t, legacyMsg, "claim_scope",
+		"the legacy-spelling rejection must name the canonical claim_scope segment; got %q", legacyMsg)
+}
+
 // --- Lifecycle-handler validator tests retired 2026-05-23 ---
 //
 // The three lifecycle-handler slots (`on_acquire_unavailable`,
@@ -1908,4 +1982,164 @@ func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, hooks)
 	assert.True(t, res.Ok(), "open executor schema should admit extra L2 props; errors: %+v", res.Errors)
+}
+
+// TestValidateTemplate_RefMode pins the operator-set registration-time
+// reference-validation MODE (story S-template-validation-ref-validation-
+// mode) at the validator boundary. ValidateTemplate honors a
+// RefValidationMode carried on RegistryHooks governing ALL
+// registration-time reference validation over the reference legs
+// (executor-declared + executor-schema; the store/lock legs follow the
+// same switch in the GREEN pass):
+//
+//   - RefValidateAll (default, zero value): hard-fail any reference
+//     that cannot be validated — including a not-yet-provisioned
+//     executor (ExecutorDeclared=false) whose schema is not visible
+//     (ExecutorExpectedAttributesSchema returns (nil,false)).
+//   - RefValidateAvailable: skip refs whose target is not provisioned
+//     (the previously-implicit always-on readOnly soft-fail, now made
+//     explicit and uniform) BUT still validate provisioned refs — a
+//     genuinely-invalid ref to a PROVISIONED executor (schema visible,
+//     a default violates the schema) still errors.
+//   - RefValidateNone: no registration-time reference validation at
+//     all (no reference errors regardless of provisioning state).
+//
+// The not-provisioned executor "missing" leg and the readOnly-fallback
+// skip both collapse into the single mode switch: mode `available`
+// reproduces today's soft-fail behavior exactly (not a fourth hidden
+// behavior), mode `all` turns it into a hard error, mode `none` drops
+// it entirely.
+//
+// RED today: RegistryHooks has no RefValidationMode field and the
+// RefValidationMode type / constants do not exist, so this test does
+// not compile against the current package — the gate command's `!`
+// inverts that build failure to a pass. A later GREEN pass adds the
+// field + constants and threads them through the reference legs.
+func TestValidateTemplate_RefMode(t *testing.T) {
+	// notProvisioned models a not-yet-provisioned executor: declared
+	// false (not in the operator's executors: block) and its
+	// expected_attributes_schema is not visible (discovery-cache miss).
+	const notProvisioned = "ghost-executor"
+	// provisionedConstrained models a provisioned executor whose
+	// advertised schema constrains an attribute: `count` must be
+	// `minimum: 0`. A node defaulting `count: -1` is a genuinely-invalid
+	// reference to a provisioned service.
+	const provisionedConstrained = "constrained-executor"
+	const constrainedSchema = `{"type":"object","properties":{"count":{"type":"integer","minimum":0}}}`
+
+	// hooksFor builds the registry hooks for the given mode. The
+	// ExecutorDeclared / ExecutorExpectedAttributesSchema hooks honor the
+	// two executors above: the ghost is undeclared + schema-invisible;
+	// the constrained one is declared + advertises the constraining
+	// schema.
+	hooksFor := func(mode RefValidationMode) RegistryHooks {
+		return RegistryHooks{
+			StoreDeclared:     storeDeclaredLookup(knownStores),
+			RefValidationMode: mode,
+			ExecutorDeclared: func(name string) bool {
+				return name == provisionedConstrained
+			},
+			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
+				if name == provisionedConstrained {
+					return []byte(constrainedSchema), true
+				}
+				// Ghost executor: schema not visible.
+				return nil, false
+			},
+		}
+	}
+
+	// notProvisionedNode references the ghost executor. It carries no
+	// attribute defaults, so the only thing the validator can flag is the
+	// reference itself (undeclared executor / schema not visible).
+	notProvisionedNode := func() TemplateNodeDef {
+		return TemplateNodeDef{Type: "ghost", Executor: notProvisioned}
+	}
+
+	// invalidProvisionedNode references the provisioned constrained
+	// executor with a default that violates its schema (`count: -1`
+	// against `minimum: 0`). The reference is provisioned, so a
+	// genuinely-invalid value must be caught whenever provisioned refs
+	// are validated (modes all + available).
+	invalidProvisionedNode := func() TemplateNodeDef {
+		return TemplateNodeDef{
+			Type:     "constrained",
+			Executor: provisionedConstrained,
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"count": map[string]any{
+						"type":    "integer",
+						"default": -1,
+					},
+				},
+			}},
+		}
+	}
+
+	specWith := func(nodes ...TemplateNodeDef) *TemplateSpec {
+		return &TemplateSpec{
+			Name:                "ref-mode-demo",
+			Version:             "1",
+			FrameResolutionMode: FrameResolutionSerialQueue,
+			Nodes:               nodes,
+		}
+	}
+
+	t.Run("all: not-provisioned ref hard-fails with a missing-reference error", func(t *testing.T) {
+		spec := specWith(notProvisionedNode())
+		res := ValidateTemplate(spec, hooksFor(RefValidateAll))
+		require.False(t, res.Ok(),
+			"mode all must reject a reference to a not-yet-provisioned executor; errors: %+v", res.Errors)
+		hasErrorAt(t, res, "nodes[0].executor")
+	})
+
+	t.Run("available: not-provisioned ref skipped, provisioned-invalid ref still errors", func(t *testing.T) {
+		// Node 0 is the not-provisioned ref (must be skipped, no error);
+		// node 1 is the genuinely-invalid provisioned ref (must error on
+		// the value-constraint violation).
+		spec := specWith(notProvisionedNode(), invalidProvisionedNode())
+		res := ValidateTemplate(spec, hooksFor(RefValidateAvailable))
+
+		// The not-provisioned ref produces NO error under `available`.
+		for _, e := range res.Errors {
+			require.False(t, strings.HasPrefix(e.Path, "nodes[0]"),
+				"mode available must skip the not-yet-provisioned ref at node 0, got error: %+v", e)
+		}
+		// The provisioned-but-invalid ref (count: -1 vs minimum: 0) still
+		// errors — the value-constraint violation surfaces on the
+		// composed-defaults leg.
+		require.False(t, res.Ok(),
+			"mode available must still reject a genuinely-invalid provisioned ref; errors: %+v", res.Errors)
+		hasErrorAt(t, res, "nodes[1].attributes")
+	})
+
+	t.Run("none: no reference errors at all", func(t *testing.T) {
+		// Both the not-provisioned ref AND the provisioned-invalid ref are
+		// present; mode none drops every registration-time reference check,
+		// so the template validates clean.
+		spec := specWith(notProvisionedNode(), invalidProvisionedNode())
+		res := ValidateTemplate(spec, hooksFor(RefValidateNone))
+		require.True(t, res.Ok(),
+			"mode none must perform no registration-time reference validation; errors: %+v", res.Errors)
+	})
+
+	t.Run("default zero-value mode is all (strict)", func(t *testing.T) {
+		// A RegistryHooks left at its zero value (RefValidationMode unset)
+		// behaves as RefValidateAll: the not-provisioned ref hard-fails.
+		spec := specWith(notProvisionedNode())
+		hooks := RegistryHooks{
+			StoreDeclared: storeDeclaredLookup(knownStores),
+			ExecutorDeclared: func(name string) bool {
+				return name == provisionedConstrained
+			},
+			ExecutorExpectedAttributesSchema: func(string) ([]byte, bool) {
+				return nil, false
+			},
+		}
+		res := ValidateTemplate(spec, hooks)
+		require.False(t, res.Ok(),
+			"default (zero-value) mode must be strict `all`; errors: %+v", res.Errors)
+		hasErrorAt(t, res, "nodes[0].executor")
+	})
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/matcher"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
@@ -75,6 +76,18 @@ type AppDeps struct {
 	// executor (e.g. peer is unreachable). Plan F6 + F7 + 2026-05-23
 	// signal-taxonomy Pass 6.
 	ExecutorCapabilities func(executorName string) (declaredEvents []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool)
+
+	// RefValidationMode is the operator-set registration-time
+	// reference-validation mode (all / available / none), sourced from
+	// cfg:templates.ref_validation_mode and env:RIMSKY_REF_VALIDATION_MODE
+	// by config.StartControlAPI. The zero value (node.RefValidateAll) is
+	// the strict default — every referenced service is validated at
+	// registration and registration hard-fails on any unvalidatable
+	// reference. Stamped onto node.RegistryHooks.RefValidationMode by
+	// validatorHooksFor so the registration + POST /templates/validate
+	// paths share one operator-chosen strictness. Story
+	// S-template-validation-ref-validation-mode.
+	RefValidationMode node.RefValidationMode
 
 	// InvalidateHandler is the operator-supplied unified invalidate
 	// dispatch. Used by POST /admin/instances/{i}/nodes/{n}/invalidate

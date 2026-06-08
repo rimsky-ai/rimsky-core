@@ -31,6 +31,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
@@ -45,6 +46,17 @@ const proxyExecutorName = "codegen-proxy"
 // lateBindServiceName is the late-bound service the codegen node references
 // and the key in the instance's service_bindings catalog.
 const lateBindServiceName = "codegen"
+
+// anonRoutingIdentity is the well-known routing key an agent registers under
+// when the deployment runs in anonymous mode (no api-key owner). Anonymous
+// instances persist with an empty created_by_api_key_id, so the proxy cannot
+// match them to an owner-keyed agent; the anonymous routing identity is the
+// agreed fallback the agent and proxy share so an anonymous-mode instance can
+// still resolve to a connected agent. The GREEN pass that closes
+// S-hostagent-anonymous-mode-latebind teaches the proxy to fall back to this
+// identity when the instance owner is empty; the RED test registers the agent
+// under it.
+const anonRoutingIdentity = "anonymous"
 
 // hostAgentFixture bundles the running proxy + agent + stub binary path for
 // one scenario.
@@ -144,6 +156,22 @@ type fixtureOpts struct {
 	// routes the dispatch, but the proxy can't find the binding in its empty
 	// cache.
 	blindProxy bool
+	// stores threads an operator-facing remote-stores config into the
+	// harness. The per-run-scope isolation scenario needs a real claim
+	// producer that advertises supports_split_scope so a fan-out node can
+	// split into multiple concurrent run-scopes; the zero value leaves the
+	// store catalog empty (today's behavior for the other host-agent
+	// scenarios, which late-bind only an executor).
+	stores config.RemoteStoresConfig
+	// anonymous runs the fixture in anonymous mode: it skips minting an owner
+	// api-key (MintAdminKey flips the deployment OUT of anonymous mode, so an
+	// anonymous fixture must never call it), leaving the control-api in its
+	// zero-key bootstrap state where every request is admitted as the synthetic
+	// admin identity. Templates and instances are created via the anonymous
+	// path (no bearer), so the instance row's created_by_api_key_id is empty;
+	// the connected agent registers under anonRoutingIdentity instead of an
+	// owner key id. Drives S-hostagent-anonymous-mode-latebind.
+	anonymous bool
 }
 
 // newHostAgentFixture wires the host-agent stack: an authenticated
@@ -169,13 +197,28 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		},
 		LateBindServiceProxies: map[string]string{"executor": proxyExecutorName},
 		ExecutorProtocols:      map[string][]string{proxyExecutorName: execProtocols},
+		Stores:                 opts.stores,
 	})
 
 	// Mint the owner key (also flips the deployment to authenticated mode).
-	adminKey, ownerKeyID := h.MintAdminKey("scenario-admin")
+	// In anonymous mode we must NOT mint — MintAdminKey creates the first
+	// active key and flips the deployment out of anonymous mode, defeating the
+	// scenario. The admin/owner key stay empty: templates + instances are then
+	// created via the anonymous (no-bearer) path, and the agent registers under
+	// the anonymous routing identity rather than an owner key id.
+	var adminKey, ownerKeyID, agentRoutingKey string
+	if opts.anonymous {
+		agentRoutingKey = anonRoutingIdentity
+	} else {
+		adminKey, ownerKeyID = h.MintAdminKey("scenario-admin")
+		agentRoutingKey = ownerKeyID
+	}
 
 	// Start the proxy. A blind proxy gets no control-api URL so its
-	// GET-fallback can't populate the cache either.
+	// GET-fallback can't populate the cache either. In anonymous mode the
+	// control-api needs no bearer (synthetic admin identity), so the token is
+	// empty but the URL is still wired so the GET-fallback can read the
+	// anonymous instance's bindings.
 	controlURL, controlToken := h.ControlBase, adminKey
 	if opts.blindProxy {
 		controlURL, controlToken = "", ""
@@ -192,7 +235,7 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		ownerKeyID: ownerKeyID,
 	}
 	if opts.withAgent {
-		fx.cancelAgent, fx.agentDone = startAgent(t, proxyAddr, ownerKeyID)
+		fx.cancelAgent, fx.agentDone = startAgent(t, proxyAddr, agentRoutingKey)
 		// Give the agent a moment to register with the proxy.
 		time.Sleep(300 * time.Millisecond)
 	}

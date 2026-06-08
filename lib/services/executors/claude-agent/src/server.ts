@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import * as grpc from "@grpc/grpc-js";
 import type { Logger } from "pino";
 import { loadExecutorProto } from "./proto-loader.js";
-import { runAgent, type AgentOutcome } from "./agent-run.js";
+import { runAgent, type AgentOutcome, type HostMcpServerInput } from "./agent-run.js";
 import type { CallbackServerHandle } from "./internal-mcp-server.js";
 import type { CliRunner } from "./cli-runner.js";
 import { createClaudeCliRunner } from "./cli-runner.js";
@@ -15,6 +15,7 @@ import type { PostAttributesFn } from "./attributes-tools.js";
 import type { Observability, TraceEvent } from "./observability.js";
 import { expectedAttributesSchemaBytes, resolveDeclaredEvents, declaredErrorClasses } from "./expected-attributes-schema.js";
 import { CliConfigError, isCliConfigError } from "./cli-config-error.js";
+import type { McpCatalog } from "./mcp-catalog.js";
 
 /**
  * gRPC Executor implementation. Always responds with the async-handoff
@@ -36,6 +37,17 @@ export interface GrpcServerConfig {
   cliAuth?: CliAuthConfig;
   silenceTimeoutMs: number;
   logger: Logger;
+  /**
+   * Startup MCP-server catalog (S-executors-mcp-catalog-transports). Parsed
+   * once at startup and threaded into every dispatch's `runAgent` so a node's
+   * `cli.mcp_servers` `{ ref: }` resolves against the catalog.
+   */
+  mcpCatalog?: McpCatalog;
+  /**
+   * `allow_inline` policy (default false) gating whether inline
+   * `cli.mcp_servers` entries are permitted at dispatch.
+   */
+  mcpAllowInline?: boolean;
   /**
    * Optional override of the HTTP POST function used to deliver the final
    * callback. Tests swap this out to avoid real network calls.
@@ -413,6 +425,10 @@ async function runAndCallback(
       cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
       cwdOverride: stringOrUndefined(attributes.cwd),
       cliConfig: parseCliConfig(attributes.cli),
+      // Startup MCP catalog + allow_inline policy thread through so a node's
+      // `cli.mcp_servers` `{ ref: }` resolves against the catalog at dispatch.
+      mcpCatalog: config.mcpCatalog,
+      mcpAllowInline: config.mcpAllowInline,
       // Raw dispatch_id (not runId): the sign-off gate binds to and
       // enforces non-emptiness on this, distinct from the UUID-fallback
       // runId above.
@@ -715,12 +731,7 @@ export function parseCliConfig(v: unknown): {
   maxBudgetUsd?: string;
   handleRateLimits?: boolean;
   maxSchemaCorrections?: number;
-  mcpServers?: {
-    name: string;
-    url: string;
-    headers?: Record<string, string>;
-    allowedTools?: string[];
-  }[];
+  mcpServers?: HostMcpServerInput[];
   requiredSignoffs?: { publicKey: string; path?: string }[];
   maxSignoffAttempts?: number;
 } | undefined {
@@ -758,33 +769,43 @@ export function parseCliConfig(v: unknown): {
 }
 
 // @source: src/server.ts (parseMcpServers) — mirrored in http-bridge.ts.
-// Parses cli.mcp_servers into the executor's host-server shape. Each
-// entry needs a non-empty string name + url; headers / allowed_tools pass
-// through when present. A present-but-malformed entry throws CliConfigError
-// rather than being silently dropped: mcp_servers wires the validator
-// servers the sign-off gate depends on, so a dropped entry could unwire a
-// validator the host intended the agent to reach. Field-absent (`v` not an
-// array) ⇒ undefined (no servers).
-function parseMcpServers(
-  v: unknown,
-): { name: string; url: string; headers?: Record<string, string>; allowedTools?: string[] }[] | undefined {
+// Parses cli.mcp_servers into the executor's host-server shape. Two entry
+// shapes (S-executors-mcp-catalog-transports):
+//   - `{ ref: <name> }` — a catalog reference resolved at dispatch against
+//     the startup catalog. Only the non-empty string `ref` is validated
+//     here; the referenced transport (http/stdio/module/http-loopback) is
+//     resolved in agent-run.ts.
+//   - inline `{ name, url, headers, allowed_tools }` — a server declared on
+//     the node. Permitted only when the `allow_inline` policy is true
+//     (enforced in agent-run.ts); the shape is still validated here.
+// A present-but-malformed entry throws CliConfigError rather than being
+// silently dropped: mcp_servers wires the validator servers the sign-off
+// gate depends on, so a dropped entry could unwire a validator the host
+// intended the agent to reach. Field-absent (`v` not an array) ⇒ undefined.
+function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v)) {
     throw new CliConfigError(
       `cli.mcp_servers must be an array, got ${typeof v}`,
     );
   }
-  const out: {
-    name: string;
-    url: string;
-    headers?: Record<string, string>;
-    allowedTools?: string[];
-  }[] = [];
+  const out: HostMcpServerInput[] = [];
   for (const [i, item] of v.entries()) {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new CliConfigError(`cli.mcp_servers[${i}] must be an object`);
     }
     const e = item as Record<string, unknown>;
+    // Catalog reference shape.
+    if ("ref" in e) {
+      if (typeof e.ref !== "string" || e.ref.length === 0) {
+        throw new CliConfigError(
+          `cli.mcp_servers[${i}].ref must be a non-empty string`,
+        );
+      }
+      out.push({ ref: e.ref });
+      continue;
+    }
+    // Inline server shape.
     if (typeof e.name !== "string" || e.name.length === 0) {
       throw new CliConfigError(
         `cli.mcp_servers[${i}].name must be a non-empty string`,

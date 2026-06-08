@@ -73,7 +73,7 @@ func (c *Catalog) Filtered(r *http.Request) []Tool {
 		if !ok {
 			continue
 		}
-		if !auth.CheckGrant(ident.Permissions, entry.Action).Allowed {
+		if !auth.CheckGrant(ident.Permissions, entry.Action, nil).Allowed {
 			continue
 		}
 		schema := c.Schemas[name]

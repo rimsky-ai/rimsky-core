@@ -59,6 +59,47 @@ var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 // known source kinds.
 var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|trigger|child)\.(.+)$`)
 
+// RefValidationMode is the operator-set, startup-level mode governing
+// ALL registration-time reference validation across service types
+// (executors, stores/claim-producers, named locks, executor schemas).
+// It is set once by the operator, not per-template, and decides whether
+// a reference whose target cannot be validated at registration is a hard
+// error, a silent skip, or whether reference validation runs at all.
+//
+// The zero value is RefValidateAll (strict): a RegistryHooks left
+// without an explicit mode validates every reference and hard-fails on
+// any it cannot validate. This keeps unit tests and any caller that
+// forgets to set the mode on the strictest, safest footing.
+//
+// Whatever a relaxed mode (available/none) skips at registration is not
+// skipped forever — it is mandatory at instantiation (concept:instance),
+// where all referenced services exist.
+//
+//	@concept: template
+type RefValidationMode int
+
+const (
+	// RefValidateAll (default, zero value) validates every referenced
+	// service and hard-fails registration if any reference cannot be
+	// validated — including a not-yet-provisioned executor/store/lock
+	// (declared=false) and an executor whose expected_attributes_schema
+	// is not visible (the readOnly leg becomes a hard error instead of a
+	// silent skip).
+	RefValidateAll RefValidationMode = iota
+	// RefValidateAvailable validates references to provisioned services
+	// (declared=true / schema visible) and skips references whose target
+	// is not yet provisioned. This is exactly the previously-implicit
+	// always-on soft-fail heuristic, made explicit and uniform across the
+	// executor / store / lock / schema legs. A genuinely-invalid
+	// reference to a PROVISIONED service is still rejected.
+	RefValidateAvailable
+	// RefValidateNone performs no registration-time reference validation
+	// at all: the four reference legs (executor-declared, store-declared,
+	// lock-declared, executor-schema) are skipped entirely regardless of
+	// provisioning state.
+	RefValidateNone
+)
+
 // RegistryHooks bundles the registry-dependent lookups the validator
 // uses. All fields may be nil; a nil hook short-circuits to "skip the
 // corresponding check," which is useful for unit tests that don't wire
@@ -69,6 +110,13 @@ var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|trigger|child)\.(
 // IsPickPolicySelector hook (and the "pick-policy claims must be intent:
 // rw" check it drove) was deleted as part of the inertness cleanup.
 type RegistryHooks struct {
+	// RefValidationMode is the operator-set registration-time reference-
+	// validation mode (all / available / none). Zero value =
+	// RefValidateAll (strict). Governs validateExecutorDeclared,
+	// validateStores' StoreDeclared leg, validateLocks' NamedLockDeclared
+	// leg, and the executor-schema legs in validateAttributesSchema.
+	RefValidationMode RefValidationMode
+
 	// StoreDeclared returns true when `name` is declared in the
 	// operator's stores: block. Used by validateStores to reject
 	// references to unknown stores.
@@ -687,7 +735,17 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 	if n.Executor == "" || hooks.ExecutorDeclared == nil {
 		return
 	}
+	// Mode none drops the reference leg entirely.
+	if hooks.RefValidationMode == RefValidateNone {
+		return
+	}
 	if hooks.ExecutorDeclared(n.Executor) {
+		return
+	}
+	// The executor is not provisioned. Mode available skips the
+	// not-yet-provisioned reference (deferring it to the mandatory
+	// instantiation gate); mode all hard-fails.
+	if hooks.RefValidationMode == RefValidateAvailable {
 		return
 	}
 	res.Errors = append(res.Errors, ValidationError{
@@ -713,8 +771,13 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 			})
 			continue
 		}
-		if hooks.StoreDeclared != nil {
-			if !hooks.StoreDeclared(name) {
+		// Store-declared reference leg. Governed by the operator-set
+		// reference-validation mode: none skips it; available skips a
+		// not-yet-provisioned store (falling through to the structural
+		// intent/selector checks, which apply regardless); all hard-fails
+		// on an undeclared store.
+		if hooks.StoreDeclared != nil && hooks.RefValidationMode != RefValidateNone {
+			if !hooks.StoreDeclared(name) && hooks.RefValidationMode != RefValidateAvailable {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: sbase + ".name",
 					Msg:  fmt.Sprintf("unknown store %q", name),
@@ -817,11 +880,15 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 			continue
 		}
 		seen[name] = j
-		if hooks.NamedLockDeclared != nil {
+		// Named-lock-declared reference leg. Governed by the operator-set
+		// reference-validation mode: none skips it; available skips a
+		// not-yet-provisioned (undeclared) lock; all hard-fails.
+		if hooks.NamedLockDeclared != nil && hooks.RefValidationMode != RefValidateNone {
 			// Skip the check when the name carries an unresolved
 			// substitution placeholder (e.g. "model-{params.tier}");
 			// the resolved name is unknown until dispatch.
-			if !strings.ContainsAny(name, "{") && !hooks.NamedLockDeclared(name) {
+			if !strings.ContainsAny(name, "{") && !hooks.NamedLockDeclared(name) &&
+				hooks.RefValidationMode != RefValidateAvailable {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: lbase + ".name",
 					Msg:  fmt.Sprintf("named lock %q is not declared in the operator's named_locks: block", name),
@@ -948,17 +1015,34 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 	// runtime recomputes at dispatch (recompute-rather-than-persist;
 	// see runtime/runner_dispatch.go::substituteAttributesSchema).
 	//
-	// When the executor's expected_attributes_schema is not visible
-	// (no hook wired, hook returns ok=false, or empty bytes), the
-	// "executor-write-back" leg of the unified-surface check cannot be
-	// evaluated — we can't tell whether a sourceless+defaultless
-	// property is one the executor produces. In that case the
-	// readOnly-fallback check is skipped; the validator still enforces
-	// "at most one of source/default" and the L2 readOnly authorship
-	// rule. The runtime dispatch path's effective-schema computation
-	// applies the same recompute under the same lookup; when the
-	// executor's schema lands at dispatch the readOnly properties flow
-	// through correctly.
+	// The executor-schema reference legs (readOnly-fallback,
+	// L2-readOnly-authorship, and validateCompositionAgainstExecutor)
+	// are governed by the operator-set reference-validation mode:
+	//
+	//   - none: the executor-schema legs are skipped entirely. The
+	//     schema is not even looked up; the unified-surface check runs
+	//     with execSchemaVisible=false so only the mode-independent
+	//     "at most one of source/default" rule fires.
+	//   - available: validate against the executor's schema when it is
+	//     visible; soft-skip when it is not (the previously-implicit
+	//     always-on heuristic, now explicit). A not-yet-provisioned
+	//     executor whose schema is invisible is deferred to the
+	//     mandatory instantiation gate.
+	//   - all: validate against the executor's schema when visible;
+	//     HARD-FAIL when the executor has a schema reference that is not
+	//     visible (no discovery hook resolves it / executor not yet
+	//     handshaked) — the readOnly leg becomes a hard error instead of
+	//     a silent skip, so a reference whose schema cannot be validated
+	//     at registration is rejected.
+	if hooks.RefValidationMode == RefValidateNone {
+		// Mode none: no registration-time executor-schema reference
+		// validation. Run only the executor-independent unified-surface
+		// rule ("at most one of source/default") over the L2 schema.
+		effective := MergeAttributeDefaults(nil, nil, n.Attributes.Schema)
+		checkAttributesSchema(effective, n.Attributes.Schema, nil, map[string]bool{}, false, sbase, res)
+		return
+	}
+
 	var execSchema map[string]any
 	var execReadOnlyProps map[string]bool
 	execSchemaVisible := false
@@ -977,6 +1061,22 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 	}
 	if execReadOnlyProps == nil {
 		execReadOnlyProps = map[string]bool{}
+	}
+
+	// Mode all hard-fails when the node references an executor whose
+	// expected_attributes_schema cannot be validated at registration
+	// (the executor is named but its schema is not visible). This is the
+	// strict counterpart of the available-mode soft-skip below: under
+	// `all`, an unvalidatable schema reference is a missing-reference
+	// error rather than a deferral.
+	if !execSchemaVisible && hooks.RefValidationMode == RefValidateAll &&
+		n.Executor != "" && hooks.ExecutorExpectedAttributesSchema != nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".attributes",
+			Msg: fmt.Sprintf(
+				"executor %q expected_attributes_schema is not visible at registration; under reference-validation mode `all` an executor schema reference must be validatable (provision the executor, or set the operator reference-validation mode to `available`/`none`)",
+				n.Executor),
+		})
 	}
 
 	var l1Defaults map[string]any
@@ -1332,7 +1432,7 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 	parts := strings.Split(rest, ".")
 	switch kind {
 	case "claim":
-		// Valid forms: claim.<alias>.address, claim.<alias>.scope,
+		// Valid forms: claim.<alias>.address, claim.<alias>.claim_scope,
 		// claim.<alias>.payload(.<field-path>?). The bare-form
 		// `claim.<alias>.payload` (no trailing field path) resolves to
 		// the whole payload object per spec §Item 3 "Empty trailing
@@ -1340,13 +1440,13 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.{address|scope|payload[.<field>]}", body),
+				Msg:  fmt.Sprintf("claim directive %q must be claim.<alias>.{address|claim_scope|payload[.<field>]}", body),
 			})
 			return
 		}
 		alias := parts[0]
 		switch parts[1] {
-		case "address", "scope":
+		case "address", "claim_scope":
 			if len(parts) != 2 {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
@@ -1366,7 +1466,7 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 		default:
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("claim directive %q second segment must be address|scope|payload", body),
+				Msg:  fmt.Sprintf("claim directive %q second segment must be address|claim_scope|payload", body),
 			})
 		}
 		// Alias must be acquired here (stores:) or co-held (holds:).
@@ -1525,7 +1625,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], nodes.<n>.event.<name>[.<path>], trigger.message.payload[.<f>], or child.partition_key)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], nodes.<n>.event.<name>[.<path>], trigger.message.payload[.<f>], or child.partition_key)", body),
 			})
 		}
 	}

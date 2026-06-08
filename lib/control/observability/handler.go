@@ -461,10 +461,38 @@ func handleGetNode(deps Deps) http.HandlerFunc {
 			eventRes = e
 			return err
 		})
+		// latestBag is the node's most-recent resolved attribute bag — its
+		// forensic last-attribute snapshot, the Data map of the row
+		// NodeAttributes().GetLatestByNode returns for (node, main run
+		// scope). nil → the node has never executed; the key is then an
+		// empty object so the surface is stable across executed/unexecuted
+		// nodes (the test treats absent and empty-object identically).
+		var latestBag map[string]any
+		_ = inTx(r.Context(), deps.Tables, func(ctx context.Context, tx persistence.Tx) error {
+			inst, err := deps.Tables.Instances().Get(ctx, id, tx)
+			if err != nil {
+				return err
+			}
+			if inst == nil {
+				return nil
+			}
+			attrs, err := deps.Tables.NodeAttributes().GetLatestByNode(ctx, match.ID, inst.MainRunScopeID, tx)
+			if err != nil {
+				return err
+			}
+			if attrs != nil {
+				latestBag = attrs.Data
+			}
+			return nil
+		})
+		if latestBag == nil {
+			latestBag = map[string]any{}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"node":     match,
-			"events":   eventRes.Events,
-			"holdings": holdings,
+			"node":              match,
+			"events":            eventRes.Events,
+			"holdings":          holdings,
+			"latest_attributes": latestBag,
 		})
 	}
 }

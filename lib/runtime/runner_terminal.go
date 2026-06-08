@@ -1202,25 +1202,38 @@ func orEmptyMap(m map[string]any) map[string]any {
 	return m
 }
 
-// waitSetTopicKindFor maps a signal.TypePath to the legacy
-// rimsky_wait_set.topic_kind enum (state | attribute | event). The DB
-// CHECK constraint pre-dates the 2026-05-23 signal-taxonomy reshape;
-// until a follow-up migration broadens the enum to include
-// "transient" and "message", we collapse the new signal top-level
-// kinds onto the legacy buckets:
+// waitSetTopicKindFor maps a signal.TypePath to the
+// rimsky_wait_set.topic_kind discriminator. As of the
+// 006-waitset-topic-kind-taxonomy migration (postgres + sqlite) the DB
+// CHECK admits the full 5-value signal taxonomy, so the mapping is now a
+// faithful projection of the signal top-level kind: each of the five
+// canonical kinds maps to its own value, with no two distinct signal
+// classes collapsed onto a shared bucket.
 //
+//   - terminal/*              → "terminal"
+//   - transient/*             → "transient"
 //   - attribute/<key>/changed → "attribute"
 //   - event/<name>            → "event"
-//   - everything else         → "state"
+//   - message/*               → "message"
+//   - empty/unrecognized      → "state" (fallback only)
 //
-// The mapping is a runtime detail for the wait-set ledger only; the
-// audit-log `kind` field stays the full canonical signal path.
+// "state" survives solely as the empty/unrecognized fallback (and for
+// back-compat with any legacy 'state' rows / conformance fixtures); the
+// canonical kinds no longer fold onto it. The mapping is a runtime detail
+// for the wait-set ledger only; the audit-log `kind` field stays the full
+// canonical signal path.
 func waitSetTopicKindFor(pattern signalpkg.TypePath) string {
 	switch pattern.TopLevel() {
+	case signalpkg.KindTerminal:
+		return "terminal"
+	case signalpkg.KindTransient:
+		return "transient"
 	case signalpkg.KindAttribute:
 		return "attribute"
 	case signalpkg.KindEvent:
 		return "event"
+	case signalpkg.KindMessage:
+		return "message"
 	default:
 		return "state"
 	}

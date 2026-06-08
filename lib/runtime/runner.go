@@ -392,6 +392,15 @@ type AcquiredLock struct {
 	// `StoreHandle.candidate_handle` (E4). Inert in rimsky per
 	// @blessed-invariant 20.
 	ProducerCandidateHandle []byte
+	// UnavailableClass is the producer-declared acquisition-failure class
+	// carried out of the openResultUnavailable branch (the producer's
+	// OpenOutcome.UnavailableClass). The lock itself is otherwise zero on
+	// that branch; this field is the channel that carries the class up to
+	// `tryAcquire`, which stamps it onto the acquisition so
+	// `handleAcquireUnavailable` can key the operator's `error_types:`
+	// chain on the producer-declared leaf rather than only the synthetic
+	// "acquire/unavailable". Empty when the producer named no class.
+	UnavailableClass string
 }
 
 // RunNode runs one full claim-and-execute cycle. The eight-stage outline
@@ -540,6 +549,7 @@ func RunNode(
 	terminalSig := signalForTerminal(terminal)
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
 		InstanceID:       acq.InstanceID,
+		NodeID:           acq.NodeID,
 		DispatchID:       acq.DispatchID,
 		FrameID:          acq.FrameID,
 		Executor:         acq.Executor,

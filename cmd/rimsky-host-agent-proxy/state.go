@@ -240,11 +240,22 @@ type instanceCacheEntry struct {
 	lastUpdated     time.Time
 }
 
-// bindingSpec is the v1 binding shape: a path the agent exec()s. Other
-// fields (args, env, per-binding cwd) are additive; unknown JSON fields
-// are ignored on parse.
+// bindingSpec is the v1 binding shape: a path the agent exec()s plus the
+// optional per-binding exec() overrides. Args/Env/Cwd are applied by the
+// agent at exec() (carried verbatim on the Binding wire message);
+// TimeoutSeconds is folded into the Spawn's ReadyTimeoutSeconds by the proxy
+// so a per-binding timeout bounds BOTH the agent's readiness wait and the
+// proxy's own SpawnAck wait. All four are additive and backward-compatible:
+// an absent field means today's default behavior (no extra args, inherited
+// env, the instance-level cwd, and the proxy's configured spawn timeout), so
+// a binding declared with only `path` spawns exactly as before. Unknown JSON
+// fields are ignored on parse.
 type bindingSpec struct {
-	Path string `json:"path"`
+	Path           string            `json:"path"`
+	Args           []string          `json:"args,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	Cwd            string            `json:"cwd,omitempty"`
+	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 }
 
 // registerAgent installs a new connection for apiKeyID, displacing any
@@ -420,6 +431,34 @@ func (s *proxyState) lookupInstance(instanceID string) (*instanceCacheEntry, boo
 	defer s.mu.RUnlock()
 	entry, ok := s.instances[instanceID]
 	return entry, ok
+}
+
+// lookupInstanceByBinding finds the cached instance whose binding catalog
+// contains bindingName. It exists for the fronted protocols whose request
+// messages carry no instance_id (data-processing's BeginCandidate/
+// CommitCandidate/AbandonCandidate), so a dispatch resolved only by the
+// x-rimsky-service-name header can still find its owner + binding + spawn
+// scope. Returns the instance_id, the entry, and whether exactly one match
+// was found — ambiguity (the same late-bound service name bound across two
+// distinct instances) is reported as no match so the caller surfaces a
+// clean binding_not_found rather than routing to an arbitrary owner.
+func (s *proxyState) lookupInstanceByBinding(bindingName string) (string, *instanceCacheEntry, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var foundID string
+	var foundEntry *instanceCacheEntry
+	matches := 0
+	for instanceID, entry := range s.instances {
+		if _, ok := entry.serviceBindings[bindingName]; ok {
+			foundID = instanceID
+			foundEntry = entry
+			matches++
+		}
+	}
+	if matches != 1 {
+		return "", nil, false
+	}
+	return foundID, foundEntry, true
 }
 
 // recordClaimRoute remembers which (agent, spawn) holds a claim so the

@@ -212,8 +212,15 @@ type ExecuteRequest struct {
 	// so the executor can route its recovery / handoff logic. Unset
 	// (== PRIOR_NONE) on the initial dispatch. Per spec.
 	PriorDispatchDisposition *PriorDispatchDisposition `protobuf:"varint,15,opt,name=prior_dispatch_disposition,json=priorDispatchDisposition,proto3,enum=rimsky.v1.PriorDispatchDisposition,oneof" json:"prior_dispatch_disposition,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// run_scope_id is the RunScope this dispatch lives in; used by the
+	// host-agent-proxy to key per-run-scope spawn isolation (one spawned
+	// late-bound child per (run_scope_id, binding), reaped at run-scope
+	// termination). Opaque to in-process executors.
+	//
+	// @concept: run-scope
+	RunScopeId    string `protobuf:"bytes,16,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExecuteRequest) Reset() {
@@ -328,6 +335,13 @@ func (x *ExecuteRequest) GetPriorDispatchDisposition() PriorDispatchDisposition 
 		return *x.PriorDispatchDisposition
 	}
 	return PriorDispatchDisposition_PRIOR_NONE
+}
+
+func (x *ExecuteRequest) GetRunScopeId() string {
+	if x != nil {
+		return x.RunScopeId
+	}
+	return ""
 }
 
 // ResumeContext is rimsky's way of handing back to the executor the
@@ -1227,7 +1241,7 @@ var File_executor_proto protoreflect.FileDescriptor
 
 const file_executor_proto_rawDesc = "" +
 	"\n" +
-	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa0\x06\n" +
+	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc2\x06\n" +
 	"\x0eExecuteRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -1244,7 +1258,9 @@ const file_executor_proto_rawDesc = "" +
 	"dispatchId\x12?\n" +
 	"\x0eresume_context\x18\r \x01(\v2\x18.rimsky.v1.ResumeContextR\rresumeContext\x12/\n" +
 	"\x11prior_dispatch_id\x18\x0e \x01(\tH\x00R\x0fpriorDispatchId\x88\x01\x01\x12f\n" +
-	"\x1aprior_dispatch_disposition\x18\x0f \x01(\x0e2#.rimsky.v1.PriorDispatchDispositionH\x01R\x18priorDispatchDisposition\x88\x01\x01\x1aQ\n" +
+	"\x1aprior_dispatch_disposition\x18\x0f \x01(\x0e2#.rimsky.v1.PriorDispatchDispositionH\x01R\x18priorDispatchDisposition\x88\x01\x01\x12 \n" +
+	"\frun_scope_id\x18\x10 \x01(\tR\n" +
+	"runScopeId\x1aQ\n" +
 	"\vStoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
 	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01B\x14\n" +

@@ -138,14 +138,28 @@ func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 	return results
 }
 
-// runOptionalChecks runs the SplitScope + ScopesConflict probes. Each
-// is gated on the producer's advertised Capabilities flag; when the
-// producer does not advertise, the check surfaces a SKIP marker
-// (CheckResult.Name=`<verb>Skipped` with Err=nil).
+// runOptionalChecks runs the terminal-lifecycle probes (Commit / Abandon /
+// Release + TerminalIdempotency) plus the SplitScope + ScopesConflict +
+// Serialization9b probes. The optional probes are gated on the producer's
+// advertised Capabilities; when the producer does not advertise the relevant
+// capability, the check surfaces a SKIP marker (CheckResult.Name=`<verb>Skipped`
+// with Err=nil). The terminal probes are not capability-gated — every
+// ClaimProducer implements Commit / Abandon / Release — and only SKIP when the
+// synthetic Open returns Unavailable (a drained pick-policy queue).
+//
+// runOptionalChecks is the universal funnel: Run appends it on EVERY
+// return path (including the drain carve-out and the OpenFirst/OpenSecond
+// error returns that precede the Uniformity block), so the terminal + 9b
+// probes fire even for a drain / pick-policy producer that returns before
+// reaching the Uniformity block. The terminal rows therefore always appear,
+// matching S-conformance-claimproducer-terminals' contract that the suite
+// REPORT each terminal verb rather than silently skip it.
 func runOptionalChecks(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) []CheckResult {
-	out := make([]CheckResult, 0, 2)
+	out := make([]CheckResult, 0, 7)
+	out = append(out, checkTerminals(ctx, c)...)
 	out = append(out, checkSplitScope(ctx, c, caps))
 	out = append(out, checkScopesConflict(ctx, c, caps))
+	out = append(out, checkSerialization9b(ctx, c, caps))
 	return out
 }
 

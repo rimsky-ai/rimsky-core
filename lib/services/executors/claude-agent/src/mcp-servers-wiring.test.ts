@@ -122,6 +122,142 @@ describe("host MCP servers wired into the spawned CLI", () => {
     expect(req.allowedTools).toContain("mcp__validator");
   });
 
+  // S-executors-mcp-catalog-transports / EXECUTORS-2.1 (RED).
+  //
+  // The executor is started with a startup MCP-server catalog and an
+  // `allow_inline=false` policy. A node references a catalog entry via
+  // `{ ref: <name> }` rather than declaring an inline `{name,url}` server.
+  //
+  // Two observable behaviors the current tree does NOT deliver:
+  //
+  //   (1) A `{ ref: "shape-validator" }` reference must resolve against the
+  //       catalog to its STDIO-transport definition. The captured spawn's
+  //       `--mcp-config` entry for `shape-validator` must therefore be a
+  //       stdio leaf carrying the catalog's `command`/`args` — NOT an
+  //       `mcp-http` entry — and its tools must be folded into
+  //       `--allowedTools`. Today `CliToolConfig` has only the `mcp-http`
+  //       leaf and `parseMcpServers` has no `{ref:}` branch, so a `{ref:}`
+  //       entry is rejected as a malformed inline server (missing name/url),
+  //       the dispatch errors out, and no spawn is captured.
+  //
+  //   (2) An INLINE server (`{name,url}` with no ref), under
+  //       `allow_inline=false`, must be REJECTED at dispatch with a config
+  //       error citing `allow_inline`. Today there is no `allow_inline`
+  //       policy at all, so inline servers are always accepted and the
+  //       dispatch is never rejected.
+  //
+  // The catalog + policy thread into `AgentRunOptions` (the carrier for
+  // `cliConfig`) as `mcpCatalog` + `mcpAllowInline`, mirroring how the
+  // startup catalog/policy reach a real dispatch.
+  it("resolves a stdio catalog ref to a stdio --mcp-config entry and rejects inline servers when allow_inline is false", async () => {
+    const catalog = {
+      "shape-validator": {
+        transport: "stdio" as const,
+        command: "shape-validator",
+        args: ["--mode", "strict"],
+      },
+    };
+
+    // (1) A `{ ref: "shape-validator" }` reference resolves to the catalog's
+    //     stdio definition. Capture the spawn and inspect the resolved tool.
+    let captured: CliSpawnRequest | null = null;
+    const fakeCli: CliRunner = {
+      spawn: async (req: CliSpawnRequest) => {
+        captured = req;
+        return makeQuickExitHandle();
+      },
+    };
+
+    await runAgent({
+      runId: "wiring-catalog-ref",
+      nodeId: "n-wiring",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "system",
+      userPrompt: "go",
+      attributesSchema: {},
+      attributes: {},
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: fakeCli,
+      callback: cb,
+      silenceTimeoutMs: 5_000,
+      logger,
+      mcpCatalog: catalog,
+      mcpAllowInline: false,
+      cliConfig: {
+        mcpServers: [{ ref: "shape-validator" }],
+      },
+    });
+
+    expect(captured).not.toBeNull();
+    const req = captured! as CliSpawnRequest;
+
+    // The resolved tool is the catalog's stdio definition, NOT an http leaf.
+    const resolved = req.tools.find((t) => t.name === "shape-validator");
+    expect(resolved).toBeDefined();
+    // The stdio leaf carries the catalog's command/args; the http leaf would
+    // be `kind: "mcp-http"` with a `url` — that is exactly what must NOT
+    // happen for a stdio catalog entry.
+    expect(resolved!.kind).not.toBe("mcp-http");
+    const stdioTool = resolved! as unknown as {
+      kind: string;
+      command?: string;
+      args?: string[];
+    };
+    expect(stdioTool.kind).toBe("mcp-stdio");
+    expect(stdioTool.command).toBe("shape-validator");
+    expect(stdioTool.args).toEqual(["--mode", "strict"]);
+
+    // The resolved server's tools are auto-allowed (bare server-prefix entry,
+    // no per-server allowed_tools declared on the catalog ref).
+    expect(req.allowedTools).toBeDefined();
+    expect(req.allowedTools).toContain("mcp__shape-validator");
+
+    // (2) An inline server (name+url, no ref) under allow_inline=false is
+    //     rejected at dispatch with a config error citing `allow_inline`.
+    let inlineSpawned = false;
+    const inlineCli: CliRunner = {
+      spawn: async () => {
+        inlineSpawned = true;
+        return makeQuickExitHandle();
+      },
+    };
+
+    const outcome = await runAgent({
+      runId: "wiring-catalog-inline",
+      nodeId: "n-wiring",
+      nodeType: "agent",
+      model: "sonnet",
+      systemPrompt: "system",
+      userPrompt: "go",
+      attributesSchema: {},
+      attributes: {},
+      callbackUrl: "",
+      cancelToken: "",
+      cliRunner: inlineCli,
+      callback: cb,
+      silenceTimeoutMs: 5_000,
+      logger,
+      mcpCatalog: catalog,
+      mcpAllowInline: false,
+      cliConfig: {
+        mcpServers: [{ name: "x", url: "http://x" }],
+      },
+    });
+
+    // The inline server must be rejected BEFORE the CLI is spawned, and the
+    // rejection must surface as a config error (agent/attribute_invalid)
+    // whose reason names the `allow_inline` policy.
+    expect(inlineSpawned).toBe(false);
+    expect(outcome.kind).toBe("errored");
+    if (outcome.kind === "errored") {
+      expect(outcome.errorClass).toBe("agent/attribute_invalid");
+      const reason = JSON.stringify(outcome.payload ?? {});
+      expect(reason).toContain("allow_inline");
+    }
+  });
+
   it("narrows the allowlist when a host server declares allowed_tools", async () => {
     let captured: CliSpawnRequest | null = null;
     const fakeCli: CliRunner = {

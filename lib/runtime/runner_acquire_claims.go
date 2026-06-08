@@ -28,9 +28,13 @@ import (
 
 // acquireClaim runs the claim-acquisition steps per spec §7.3 step 4.
 //
-// Conflict detection uses byte-equal comparison on scope bytes (per
-// spec §7.7); the candidate's pre-Open scope is the substituted-
-// selector bytes. For pick-policy claims the store's
+// Conflict detection is producer-aware per @blessed-invariant 4b: when
+// the resolved producer advertises SupportsScopesConflict, rimsky
+// consults the producer's own ScopesConflict predicate (which may treat
+// non-byte-equal scopes — e.g. prefix-overlapping ones — as conflicting);
+// when it does not, rimsky falls back to byte-equal comparison on scope
+// bytes (per spec §7.7). The candidate's pre-Open scope is the
+// substituted-selector bytes. For pick-policy claims the store's
 // FOR UPDATE SKIP LOCKED prevents two supervisors picking the same
 // item independently of rimsky's predicate. For scoped claims
 // rimsky's predicate is the source of truth for invariant 4b.
@@ -66,12 +70,14 @@ func acquireClaim(
 	if err := args.AdvisoryLocker.TakeClaimScopeLockInTx(ctx, tx, spec.ProducerName, scopeInitial); err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: TakeClaimScopeLockInTx: %w", err)
 	}
-	// Pre-Open conflict check: any existing claim-scope-byte-equal holder
-	// must permit our intent under its own RealizedWriteSemantics. Per the
-	// uniformity invariant (spec §2.5), all byte-equal-claim-scope claims
-	// share identical semantics, so the candidate's effective semantics on a
+	// Pre-Open conflict check: any existing conflicting holder must permit
+	// our intent under its own RealizedWriteSemantics. The conflict
+	// predicate is producer-aware (@blessed-invariant 4b) — byte-equal by
+	// default, or the producer's own ScopesConflict when advertised. Per
+	// the uniformity invariant (spec §2.5), all conflicting claims share
+	// identical semantics, so the candidate's effective semantics on a
 	// match equals the holder's recorded value.
-	conflicted, err := evaluateClaimScopeConflict(ctx, args, tx, spec, cand)
+	conflicted, err := evaluateClaimScopeConflict(ctx, args, tx, s, spec, cand)
 	if err != nil {
 		return AcquiredLock{}, openResultBail, err
 	}
@@ -142,7 +148,12 @@ func acquireClaim(
 		// acquisition outcome with intent="unavailable".
 		metricsOf(args).IncClaimAcquisition(spec.ProducerName, "unavailable")
 		metricsOf(args).ObserveClaimAcquisitionLatency(spec.ProducerName, args.Clock.Now().Sub(acquireStart).Seconds())
-		return AcquiredLock{}, openResultUnavailable, nil
+		// Carry the producer-declared acquisition-failure class (when the
+		// producer named one) out of this branch so tryAcquire can stamp it
+		// onto the acquisition and handleAcquireUnavailable keys the
+		// operator's `error_types:` chain on it. Empty → synthetic
+		// "acquire/unavailable" routing, unchanged.
+		return AcquiredLock{UnavailableClass: outcome.UnavailableClass}, openResultUnavailable, nil
 	}
 	cr := outcome.Result
 
@@ -184,23 +195,27 @@ func acquireClaim(
 }
 
 // evaluateClaimScopeConflict re-loads existing claim-scope holders for the
-// store and runs ClaimScopesByteEqual ∧ ModeCoexists against the candidate
-// spec. Skips own-node rows. Returns true if any holder conflicts AND
-// the modes don't coexist.
+// store and runs scopesConflict ∧ ModeCoexists against the candidate spec.
+// Skips own-node rows. Returns true if any holder conflicts AND the modes
+// don't coexist.
 //
-// Per spec §7.7: byte-equal comparison; the producer canonicalizes its
-// claim-scope bytes such that two claims that should conflict produce
-// byte-equal claim-scopes. The candidate's pre-Open claim-scope is the
-// substituted-selector bytes (scoped claims) — for pick-policy
-// claims the actual collision check happens in the producer's own
-// internal serialization.
+// @blessed-invariant 4b: single-writer-per-scope, producer-aware overlap.
+// The scope-overlap predicate is byte-equal by default (spec §7.7 — the
+// producer canonicalizes its claim-scope bytes so two claims that should
+// conflict produce byte-equal claim-scopes), but a producer advertising
+// SupportsScopesConflict defines overlap non-trivially: rimsky consults
+// the producer's ScopesConflict so two writers whose scopes overlap (e.g.
+// prefix-containment) but are NOT byte-equal still conflict. The
+// candidate's pre-Open claim-scope is the substituted-selector bytes
+// (scoped claims) — for pick-policy claims the actual collision check
+// happens in the producer's own internal serialization.
 //
-// Per the uniformity invariant (spec §2.5) all byte-equal-ClaimScope
-// claims share identical RealizedWriteSemantics. The conflict check
-// uses the holder's recorded RealizedWriteSemantics for both sides.
+// Per the uniformity invariant (spec §2.5) all conflicting claims share
+// identical RealizedWriteSemantics. The conflict check uses the holder's
+// recorded RealizedWriteSemantics for both sides.
 func evaluateClaimScopeConflict(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	spec claimproducer.ClaimSpec, cand persistence.Candidate,
+	s claimproducer.ClaimProducer, spec claimproducer.ClaimSpec, cand persistence.Candidate,
 ) (bool, error) {
 	holders, err := args.ClaimHandles.ListByProducerClaimScope(ctx, spec.ProducerName, tx)
 	if err != nil {
@@ -209,6 +224,14 @@ func evaluateClaimScopeConflict(
 	candidateScope, err := json.Marshal(spec.Selector)
 	if err != nil {
 		return false, err
+	}
+	// Resolve the producer's conflict capability ONCE per evaluation. When
+	// advertised, each holder comparison routes through the producer's own
+	// ScopesConflict; otherwise byte-equal is the trivial default
+	// (@blessed-invariant 4b).
+	caps, err := s.Capabilities(ctx)
+	if err != nil {
+		return false, fmt.Errorf("evaluateClaimScopeConflict: Capabilities(%s): %w", spec.ProducerName, err)
 	}
 	for _, h := range holders {
 		// Same-node-skip note: this branch only takes effect on still-
@@ -228,7 +251,16 @@ func evaluateClaimScopeConflict(
 		if h.HolderNodeID == cand.NodeID && h.HolderSupervisorID != nil && *h.HolderSupervisorID == args.SupervisorID {
 			continue
 		}
-		if !locks.ClaimScopesByteEqual(candidateScope, h.ClaimScopeData) {
+		// @blessed-invariant 4b: producer-aware scope-overlap. A producer
+		// advertising SupportsScopesConflict owns the overlap predicate
+		// (e.g. prefix-containment), so a non-byte-equal-but-overlapping
+		// holder still conflicts; otherwise byte-equal is the trivial
+		// default.
+		conflicts, cErr := scopesConflict(ctx, s, caps, candidateScope, h.ClaimScopeData)
+		if cErr != nil {
+			return false, fmt.Errorf("evaluateClaimScopeConflict: ScopesConflict(%s): %w", spec.ProducerName, cErr)
+		}
+		if !conflicts {
 			continue
 		}
 		var holderIntent claimproducer.Intent
@@ -244,4 +276,24 @@ func evaluateClaimScopeConflict(
 		}
 	}
 	return false, nil
+}
+
+// scopesConflict reports whether two claim-scope byte strings conflict
+// under @blessed-invariant 4b. The predicate is producer-aware: a producer
+// that advertises SupportsScopesConflict owns the overlap definition (it
+// may treat non-byte-equal scopes — e.g. prefix-overlapping ones — as
+// conflicting), so rimsky delegates to its ScopesConflict; a producer that
+// does not advertise keeps the trivial byte-equal default (spec §7.7).
+//
+// caps is resolved once by the caller and passed in so a tight conflict
+// loop does not re-fetch capabilities per holder. Shared by the top-level
+// acquisition path (evaluateClaimScopeConflict) and the fan-out sub-claim
+// path (AcquireSubClaims).
+func scopesConflict(
+	ctx context.Context, s claimproducer.ClaimProducer, caps claimproducer.Capabilities, a, b []byte,
+) (bool, error) {
+	if !caps.SupportsScopesConflict {
+		return locks.ClaimScopesByteEqual(a, b), nil
+	}
+	return s.ScopesConflict(ctx, a, b)
 }

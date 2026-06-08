@@ -193,6 +193,26 @@ func (s *Store) Open(ctx context.Context, claimID, selector string) (claimproduc
 		}
 		return out, err
 	}
+	// Staged_async scope-bytes claim: reserve a per-claim staging schema
+	// (atomic-staging substrate). Address names the staging schema the
+	// executor writes into; ClaimScope stays the canonical selector so
+	// byte-equality / conflict detection is unchanged. See staging.go.
+	if s.stagedScopeBytes(selector) {
+		addr, scope, err := s.openStaging(ctx, claimID, selector)
+		if err != nil {
+			return claimproducer.OpenOutcome{}, err
+		}
+		s.ledger.RecordOpen(claimID, selector, addr, scope)
+		return claimproducer.OpenOutcome{
+			Available: true,
+			Result: claimproducer.ClaimResult{
+				Address:                addr,
+				ClaimScope:             scope,
+				RealizedWriteSemantics: s.writeSemantics,
+			},
+		}, nil
+	}
+
 	addr, err := json.Marshal(selector)
 	if err != nil {
 		return claimproducer.OpenOutcome{}, fmt.Errorf("postgres store: marshal selector: %w", err)
@@ -235,8 +255,13 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 	)
 	if err := row.Scan(&itemID, &rawJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Items table empty; signal to rimsky as Unavailable.
-			return claimproducer.OpenOutcome{Available: false}, nil
+			// Items table empty (or every row in-flight). Signal to rimsky as
+			// Unavailable, but name the producer-declared class so rimsky's
+			// acquisition-failure routing keys the operator's `error_types:`
+			// chain on `pg/claim_unavailable` rather than only the synthetic
+			// `acquire/unavailable`. The Available=false wire shape is
+			// unchanged; the class is an out-of-band routing hint.
+			return claimproducer.OpenOutcome{Available: false, UnavailableClass: ClaimUnavailableClass}, nil
 		}
 		return claimproducer.OpenOutcome{}, fmt.Errorf("postgres store: pick: %w", err)
 	}
@@ -271,7 +296,24 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 // into showing a state the store never actually entered. Failures
 // surface as a non-terminal `claim_commit_failed` event, leaving the
 // claim's recorded state OPEN.
-func (s *Store) Commit(ctx context.Context, claimID string, _ []byte, _ []byte) error {
+func (s *Store) Commit(ctx context.Context, claimID string, claimScope []byte, address []byte) error {
+	swap, canonical, staging, err := s.stagedSwapTarget(claimScope, address)
+	if err != nil {
+		s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
+		return err
+	}
+	if swap {
+		// Atomic-staging cutover: swap the staging schema into the
+		// canonical view in one tx. A collision (populated/depended-upon
+		// canonical) surfaces a pg/swap_failed-classed error and leaves the
+		// staging intact, so the claim's recorded state stays OPEN.
+		if err := s.commitStagingSwap(ctx, canonical, staging); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
+		s.ledger.RecordTerminal(claimID, "claim_committed", nil)
+		return nil
+	}
 	if err := s.applyPickAction(ctx, claimID, true); err != nil {
 		s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
 		return err
@@ -286,7 +328,22 @@ func (s *Store) Commit(ctx context.Context, claimID string, _ []byte, _ []byte) 
 // ignored. Lookup is claim_token-based (= rimsky claim_id) per §7.8
 // obligation #3. Ledger records terminal only on success; failures
 // surface as a non-terminal `claim_abandon_failed` event.
-func (s *Store) Abandon(ctx context.Context, claimID string, _ []byte, _ []byte) error {
+func (s *Store) Abandon(ctx context.Context, claimID string, claimScope []byte, address []byte) error {
+	swap, _, staging, err := s.stagedSwapTarget(claimScope, address)
+	if err != nil {
+		s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
+		return err
+	}
+	if swap {
+		// Atomic-staging discard: drop the staging schema, leaving the
+		// canonical untouched. Ledger records terminal only on success.
+		if err := s.dropStaging(ctx, staging); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
+		s.ledger.RecordTerminal(claimID, "claim_abandoned", nil)
+		return nil
+	}
 	if err := s.applyPickAction(ctx, claimID, false); err != nil {
 		s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
 		return err
@@ -295,12 +352,69 @@ func (s *Store) Abandon(ctx context.Context, claimID string, _ []byte, _ []byte)
 	return nil
 }
 
-// Release tears down store-side read state. v3 standard postgres
-// registers no read state at Open; always a no-op. scope/address are
-// accepted for signature uniformity and ignored.
-func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) error {
+// Release tears down store-side read state. For pick-policy and sync
+// scope-bytes claims the v3 standard postgres registers no read state at
+// Open, so Release is a no-op. For a staged_async scope-bytes claim it
+// drops any RESIDUAL staging schema — a claim that was Open'd but never
+// reached Commit/Abandon (e.g. an interrupted run) would otherwise leak a
+// reserved schema. DROP ... IF EXISTS makes this safe to call after a
+// Commit/Abandon that already consumed/dropped the staging.
+func (s *Store) Release(ctx context.Context, claimID string, claimScope []byte, address []byte) error {
+	swap, _, staging, err := s.stagedSwapTarget(claimScope, address)
+	if err != nil {
+		s.ledger.RecordEvent(claimID, "claim_release_failed", "ERROR", map[string]any{"error": err.Error()})
+		return err
+	}
+	if swap {
+		if err := s.dropStaging(ctx, staging); err != nil {
+			s.ledger.RecordEvent(claimID, "claim_release_failed", "ERROR", map[string]any{"error": err.Error()})
+			return err
+		}
+	}
 	s.ledger.RecordTerminal(claimID, "claim_released", nil)
 	return nil
+}
+
+// stagedSwapTarget decides whether a terminal verb should take the
+// atomic-staging branch and, if so, returns the canonical and staging
+// schema names decoded from the claim's ClaimScope (canonical selector)
+// and Address (per-claim staging schema). The branch fires only for a
+// staged_async store on a scope-bytes claim whose Address differs from
+// its ClaimScope — i.e. a claim for which Open actually reserved a
+// distinct staging schema. Pick-policy claims and sync/read_only
+// scope-bytes claims (Address == ClaimScope) take the unchanged
+// pick-action / no-op path.
+func (s *Store) stagedSwapTarget(claimScope, address []byte) (swap bool, canonical, staging string, err error) {
+	if s.writeSemantics != claimproducer.WriteSemanticsStagedAsync {
+		return false, "", "", nil
+	}
+	canonical, err = decodeSchemaName(claimScope)
+	if err != nil {
+		return false, "", "", err
+	}
+	staging, err = decodeSchemaName(address)
+	if err != nil {
+		return false, "", "", err
+	}
+	// A staged scope-bytes claim reserved a staging schema distinct from
+	// the canonical selector. Equal (or either empty) means no staging was
+	// reserved — a pick-policy or sync claim — so do not swap.
+	if canonical == "" || staging == "" || canonical == staging {
+		return false, "", "", nil
+	}
+	// The canonical must not itself be a pick-policy selector: pick-policy
+	// terminal handling owns those.
+	if _, ok := s.pickPolicies[canonical]; ok {
+		return false, "", "", nil
+	}
+	// Mirror Open's gate: only a schema-shaped canonical is a swap
+	// target. A non-schema (path-shaped) ClaimScope is an opaque
+	// scope-bytes claim Open never reserved a staging schema for, so its
+	// terminal is a no-op — never a swap.
+	if !schemaIdentRegex.MatchString(canonical) {
+		return false, "", "", nil
+	}
+	return true, canonical, staging, nil
 }
 
 // applyPickAction looks up the in-flight item by claim_token (=

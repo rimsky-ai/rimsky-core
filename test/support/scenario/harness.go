@@ -123,6 +123,16 @@ type HarnessOpts struct {
 	// supervisor dial it for OnInstanceCreated / OnRunScopeTerminal
 	// fan-out. Keys must also appear in ExtraExecutors.
 	ExecutorProtocols map[string][]string
+
+	// RefValidationMode is the operator-set registration-time
+	// reference-validation mode (all / available / none), threaded into
+	// the in-process control-api's ControlAPIConfig.RefValidationMode →
+	// AppDeps.RefValidationMode → the registration validator hooks. The
+	// zero value (node.RefValidateAll) is the strict default — exactly
+	// the production default — so existing scenario tests that leave this
+	// unset keep the strict behavior. Story
+	// S-template-validation-ref-validation-mode.
+	RefValidationMode node.RefValidationMode
 }
 
 // Start spins up a full-stack harness against a fresh Postgres
@@ -334,6 +344,10 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		NamedLocks:             opts.NamedLocks,
 		Executors:              executorsCfg,
 		LateBindServiceProxies: opts.LateBindServiceProxies,
+		// Operator-set registration-time reference-validation mode
+		// (all / available / none). Zero value = node.RefValidateAll
+		// (strict default), so unset opts keep today's strict behavior.
+		RefValidationMode: opts.RefValidationMode,
 	})
 	if err != nil {
 		t.Fatalf("scenario: start controlapi: %v", err)

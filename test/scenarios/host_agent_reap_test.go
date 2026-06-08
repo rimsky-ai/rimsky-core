@@ -6,11 +6,14 @@
 // host-agent-proxy stack. A late-bound executor spawns the stubchild via the
 // proxy; deleting the instance closes its main run-scope and fires
 // OnRunScopeTerminal to the proxy (the registered lifecycle peer). The proxy
-// looks up the spawn keyed to the instance and sends a Reap to the agent,
-// which SIGTERMs the child. This is the spec-mandated primary reap path that
-// the OnRunScopeTerminal divergence had silently broken (it matched on
-// run_scope_id while spawns are keyed by instance id) — the test fires the
-// real DELETE so production's run-scope-id ≠ instance-id is exercised.
+// looks up the spawn keyed to the run-scope and sends a Reap to the agent,
+// which SIGTERMs the child. Under per-run-scope spawn isolation the proxy
+// keys spawns by run_scope_id (the supervisor stamps ExecuteRequest.run_scope_id
+// = the run-tree row's RunScopeID; for this non-fanned-out worker that is the
+// instance's main run-scope id), and the DELETE fires OnRunScopeTerminal for
+// that same main run-scope id — so the run-scope-keyed reap matches end to end.
+// The test fires the real DELETE so production's run-scope-id ≠ instance-id is
+// exercised.
 package scenarios
 
 import (

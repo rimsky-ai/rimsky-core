@@ -18,17 +18,54 @@ import (
 )
 
 // AdminHandler returns an http.Handler for the fs store's admin
-// surface. v1 ships a single endpoint:
+// surface. v1 ships two endpoints:
 //
 //	POST /admin/bump-to-head/{selector}
 //	  body: {"folder": "<folder-name>"}
 //	  responses: 204 | 400 | 404 | 409 | 500
+//
+//	POST /admin/sync/{selector}
+//	  body: none (reconciles available/ against the policy root on disk)
+//	  responses: 204 | 400 | 500
 //
 // Selector path-param accepts the raw "@policy-name" form or its
 // percent-encoded "%40policy-name" form. Mirrors pg's URL-shape
 // convention (stores/postgres/store/admin.go).
 func (s *Store) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
+	// POST /admin/sync/{selector}: operator-triggered queue refresh. For
+	// sync_strategy: explicit|never policies, Open never auto-syncs, so a
+	// folder that lands on disk after the queue drains is invisible until
+	// an operator re-primes the queue here. runSync reconciles available/
+	// against the policy root; it is idempotent and concurrency-safe via
+	// pp.syncMu, so a redundant POST is harmless. Mirrors the bump-to-head
+	// handler's method guard and selector decoding; takes no body.
+	mux.HandleFunc("/admin/sync/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		rawSelector := strings.TrimPrefix(r.URL.Path, "/admin/sync/")
+		selector, err := url.PathUnescape(rawSelector)
+		if err != nil {
+			http.Error(w, "selector not valid percent-encoding: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if selector == "" {
+			http.Error(w, "selector is required", http.StatusBadRequest)
+			return
+		}
+		pp, ok := s.pickPolicies[selector]
+		if !ok {
+			http.Error(w, fmt.Sprintf("unknown selector %q", selector), http.StatusBadRequest)
+			return
+		}
+		if err := s.runSync(selector, pp); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	mux.HandleFunc("/admin/bump-to-head/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

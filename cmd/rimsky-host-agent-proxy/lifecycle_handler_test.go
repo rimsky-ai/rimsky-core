@@ -49,27 +49,36 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 	fa := connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
-	// Drive one Execute to spawn the child (scope == instance id).
+	// Drive one Execute carrying a real run_scope_id distinct from the
+	// instance id — exactly what production stamps (supervisor sets
+	// ExecuteRequest.run_scope_id to the run-tree row's RunScopeID, which is
+	// the partition run-scope for a fanned-out node and ≠ the instance id).
+	// The proxy keys the spawn by that run_scope_id, so a per-run-scope
+	// terminal reaps only that scope's child.
+	const runScopeID = "run-scope-xyz"
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
 	defer cancel()
-	_ = collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	_ = collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1", RunScopeId: runScopeID})
 
-	spawnID, ok := ts.state.lookupSpawnByRunScopeBinding("inst-1", "codegen")
+	// The spawn is keyed by run_scope_id, NOT instance id.
+	spawnID, ok := ts.state.lookupSpawnByRunScopeBinding(runScopeID, "codegen")
 	if !ok {
-		t.Fatalf("expected a spawn before reap")
+		t.Fatalf("expected a spawn keyed by run_scope_id before reap")
+	}
+	if _, instKeyed := ts.state.lookupSpawnByRunScopeBinding("inst-1", "codegen"); instKeyed {
+		t.Fatalf("spawn must be keyed by run_scope_id, not instance id")
 	}
 
-	// Fire the run-scope-terminal lifecycle event with a real run-scope id
-	// distinct from the instance id. The proxy keys spawns by instance id
-	// (its v1 dispatch-observable scope), so the reap must match on
-	// instance_id — NOT run_scope_id. Passing a run-scope id that differs
-	// from the instance id is exactly what production does (control-api and
-	// the supervisor both pass a real run-scope id ≠ instance id), so this
-	// guards against the divergence where the reap silently matched nothing.
+	// Fire the run-scope-terminal lifecycle event for that run-scope. The
+	// proxy now keys spawns by run_scope_id, so the reap must match on
+	// run_scope_id — NOT instance_id. Production passes a real run-scope id
+	// ≠ instance id, so this guards run-scope-keyed reap end to end (and the
+	// per-run-scope isolation invariant: a single run-scope's terminal reaps
+	// only that run-scope's child).
 	lc := genv1.NewLifecycleSubscriberClient(ts.supConn)
 	if _, err := lc.OnRunScopeTerminal(context.Background(), &genv1.OnRunScopeTerminalRequest{
-		RunScopeId: "run-scope-xyz",
+		RunScopeId: runScopeID,
 		InstanceId: "inst-1",
 	}); err != nil {
 		t.Fatalf("OnRunScopeTerminal: %v", err)
@@ -220,19 +229,4 @@ func TestLocalHttpForwardNoSpawn(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatalf("no response for unknown spawn")
 	}
-}
-
-func TestUnimplementedHandlers(t *testing.T) {
-	ctx := context.Background()
-	if _, err := newUnimplementedValidation().Validate(ctx, &genv1.ValidateRequest{}); status_(err) == "" {
-		t.Fatalf("validation should be unimplemented")
-	}
-}
-
-// status_ returns the gRPC code string of err, or "" if OK.
-func status_(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,19 @@ import (
 	tcnet "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+// stubBuildMu serializes the testcontainers build of the stub-executor
+// image so two parallel sub-tests starting a stub at the same time do not
+// race on creating the same fixed `rimsky-test/stubexecutor:latest` tag.
+// testcontainers.Run with WithDockerfile rebuilds on every call (KeepImage
+// governs only cleanup, not a build-skip), and two concurrent identical
+// builds collide on the image tag with an "already exists, but accessing
+// it also failed" error. Holding this mutex across the build+start call
+// makes the first build single-flight; every later call rebuilds from the
+// docker layer cache quickly under the same lock. The start step is fast
+// and each test starts its own distinct container, so serializing here
+// costs only the cached-build latency, not test parallelism in general.
+var stubBuildMu sync.Mutex
 
 // StartExecutorStubOnNetwork builds (on first use) and starts the test-only
 // stub executor on the given docker network with the given alias. The stub
@@ -54,6 +68,9 @@ func startExecutorStub(ctx context.Context, t testing.TB, networkName, alias str
 	if forceError {
 		env["EXECUTOR_STUB_FORCE_ERROR"] = "1"
 	}
+	// Serialize the dockerfile build so parallel sub-tests don't race on
+	// the fixed image tag (see stubBuildMu).
+	stubBuildMu.Lock()
 	c, err := testcontainers.Run(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{
 			Context:    repoRoot(),
@@ -69,6 +86,7 @@ func startExecutorStub(ctx context.Context, t testing.TB, networkName, alias str
 			wait.ForListeningPort("9300/tcp").WithStartupTimeout(120*time.Second),
 		),
 	)
+	stubBuildMu.Unlock()
 	if err != nil {
 		t.Fatalf("harness: start executor-stub: %v", err)
 	}

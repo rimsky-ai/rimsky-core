@@ -13,25 +13,28 @@
 //
 //	@concept: sensor
 //
-// State persistence is in-memory only — a deliberate divergence from
-// the spec's Stage-3 prescription to plumb an env var
-// (`RIMSKY_SENSOR_CRON_STATE_DSN`). The plumbing is skipped because
-// sensor-cron's `next_fire_at` is fully reconstructible from the
-// cron expression and the current wall clock via `sched.Next(now)`;
-// there is no observation watermark that would otherwise be lost.
-// Subscriptions are dropped on process restart; rimsky's
-// `runtime/publishers.go::ResyncPublisherSubscriptions` re-issues
-// `Subscribe` for each active row in `rimsky_publisher_subscriptions`
-// at control-api startup, so subscriptions return to active state with
-// `next_fire_at = sched.Next(now)`. This produces at most one MISSED
-// fire per restart per publisher-subscription, which the spec accepts
-// (see concept:sensor invariants — persist only when state is
-// non-reconstructible).
+// State persistence is DSN-gated. When env
+// RIMSKY_SENSOR_CRON_STATE_DSN is set, active cron publisher-
+// subscriptions and their `next_fire_at` watermarks persist to a real
+// Postgres state DB (see state_db.go) and survive a process restart:
+// on restart the binary rebuilds its in-memory watches from the durable
+// rows, recovering each subscription's ORIGINALLY-scheduled
+// `next_fire_at` rather than recomputing `sched.Next(now)`. That
+// recovery — restore the watermark, do not recompute it — is what lets a
+// restarted binary fire on the in-flight window instead of silently
+// skipping it.
 //
-// Operators who later need true cron-firing durability can add a
-// state_db.go alongside the other sensors, modeled on
-// sensors/sensor-http/state_db.go; the in-memory tick loop is already
-// keyed by publisher_subscription_id for that future migration.
+// When the env var is empty/unset, the binary runs in-memory only
+// (today's default): subscriptions are dropped on process restart and
+// rimsky's `runtime/publishers.go::ResyncPublisherSubscriptions`
+// re-issues `Subscribe` for each active row in
+// `rimsky_publisher_subscriptions` at control-api startup, so
+// subscriptions return to active state with
+// `next_fire_at = sched.Next(now)`. This in-memory path produces at most
+// one MISSED fire per restart per publisher-subscription, which the spec
+// accepts (see concept:sensor invariants — persist only when state is
+// non-reconstructible); the DSN-gated path closes that window when
+// durability is required.
 //
 // Multi-replica deployments are not the v1 contract per
 // `concept:replica`. Operators run a single replica per sensor-cron
@@ -79,10 +82,10 @@ type Watch struct {
 	MissedFires    bool // operator hint: when true, sensor backfills missed fires
 }
 
-// SensorService implements genv1.PublisherServer. State is in-memory
-// only; there is no per-subscription advisory-lock or persistence
-// layer in V1 (see the package doc comment for the single-replica
-// posture).
+// SensorService implements genv1.PublisherServer. There is no
+// per-subscription advisory-lock or cross-replica coordination in V1
+// (see the package doc comment for the single-replica posture).
+// Persistence is optional and DSN-gated via the attached stateDB.
 type SensorService struct {
 	genv1.UnimplementedPublisherServer
 	mu             sync.Mutex
@@ -92,6 +95,48 @@ type SensorService struct {
 	clock          func() time.Time
 	logger         logger
 	tickInterval   time.Duration
+	// state is the optional persistence layer. nil → in-memory mode.
+	state *stateDB
+}
+
+// AttachStateDB binds an optional persistence layer for subscriptions +
+// next-fire watermarks. Pass nil to run in pure in-memory mode.
+//
+// When non-nil, it also rebuilds s.watches from state.ListAll so a
+// restarted binary resumes the durable subscriptions with their
+// ORIGINALLY-scheduled next_fire_at (the recovered watermark), rather
+// than waiting for a Subscribe replay. Recovery is by watermark, never
+// by recompute: the rebuilt Watch keeps the persisted NextFireAt so the
+// in-flight window still fires.
+func (s *SensorService) AttachStateDB(state *stateDB) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = state
+	if state == nil {
+		return
+	}
+	rows, err := state.ListAll(context.Background())
+	if err != nil {
+		s.logger.Warn("sensor-cron.attach_state_db.list_failed", "error", err.Error())
+		return
+	}
+	for _, r := range rows {
+		lastFire := r.LastFireAt
+		s.watches[r.SubscriptionID] = &Watch{
+			SubscriptionID: r.SubscriptionID,
+			InstanceID:     r.InstanceID,
+			CronExpr:       r.CronExpr,
+			TargetNode:     r.TargetNode,
+			MessageKind:    r.MessageKind,
+			NextFireAt:     r.NextFireAt,
+			StartedAt:      r.StartedAt,
+			LastFireAt:     lastFire,
+			MissedFires:    r.MissedFires,
+		}
+		s.logger.Info("sensor-cron.state_recovered",
+			"publisher_subscription_id", r.SubscriptionID,
+			"next_fire_at", r.NextFireAt.Format(time.RFC3339))
+	}
 }
 
 // logger is the narrow interface we use; the embedding binary passes
@@ -173,17 +218,26 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 		MissedFires:    cfg.MissedFires,
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
-		// Already active; idempotent.
+		// Already active; idempotent. The state-DB row is already present
+		// from the prior call, so we skip the UpsertSubscription below.
+		s.mu.Unlock()
 		return &genv1.SubscribeResponse{}, nil
 	}
 	s.watches[w.SubscriptionID] = w
+	state := s.state
+	s.mu.Unlock()
 	s.logger.Info("sensor-cron.subscribe",
 		"publisher_subscription_id", w.SubscriptionID,
 		"instance_id", w.InstanceID,
 		"cron", cfg.Cron,
 		"next_fire_at", w.NextFireAt.Format(time.RFC3339))
+	if state != nil {
+		if err := state.UpsertSubscription(context.Background(), w); err != nil {
+			s.logger.Warn("sensor-cron.subscribe.state_upsert_failed",
+				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+		}
+	}
 	return &genv1.SubscribeResponse{}, nil
 }
 
@@ -194,6 +248,12 @@ func (s *SensorService) Unsubscribe(_ context.Context, req *genv1.UnsubscribeReq
 	if _, ok := s.watches[req.GetPublisherSubscriptionId()]; ok {
 		delete(s.watches, req.GetPublisherSubscriptionId())
 		s.logger.Info("sensor-cron.unsubscribe", "publisher_subscription_id", req.GetPublisherSubscriptionId())
+		if s.state != nil {
+			if err := s.state.DeleteSubscription(context.Background(), req.GetPublisherSubscriptionId()); err != nil {
+				s.logger.Warn("sensor-cron.unsubscribe.state_delete_failed",
+					"publisher_subscription_id", req.GetPublisherSubscriptionId(), "error", err.Error())
+			}
+		}
 	}
 	return &genv1.UnsubscribeResponse{}, nil
 }
@@ -263,15 +323,28 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	// Re-find to defend against concurrent Unsubscribe.
 	cur, ok := s.watches[w.SubscriptionID]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	t := now
 	cur.LastFireAt = &t
 	cur.NextFireAt = sched.Next(cur.NextFireAt) // advance from prior, not now
+	// Snapshot the advanced watermark under the lock, then persist it
+	// off-lock: the durable next_fire_at must advance with each fire so a
+	// restart resumes from the next un-fired window, never a re-fire.
+	nextFireAt := cur.NextFireAt
+	lastFireAt := cur.LastFireAt
+	state := s.state
+	s.mu.Unlock()
+	if state != nil {
+		if err := state.UpdateNextFire(ctx, w.SubscriptionID, nextFireAt, lastFireAt); err != nil {
+			s.logger.Warn("sensor-cron.fire.state_update_failed",
+				"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
+		}
+	}
 }
 
 // postMessage sends one message envelope to rimsky's generic messages

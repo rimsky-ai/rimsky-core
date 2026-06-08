@@ -2,19 +2,24 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// N9 scenario — partition_selector_override.
+// N9 scenario — partition_selector_override input validation.
 //
 // CreateBackfill carries a `partition_request_override` byte slice
 // that is opaque to rimsky; the fan-out node's substitution layer
-// reads named fields by walkPath only. The scenario pins the
-// payload-threading shape end-to-end: the override goes in,
-// CreateBackfill enqueues a message whose payload carries it
-// verbatim.
+// reads named fields by walkPath only. The payload round-trip proof
+// that once lived here (TestPartitionSelectorOverride_RoundTripsThroughPayload)
+// is superseded by the full-stack scenario
+// TestBackfillPartitionOverrideFullStack
+// (test/scenarios/backfill_partition_override_fullstack_test.go), which
+// drives the override through the REAL backfill → message-delivery →
+// fan-out SplitScope acquisition path against a testcontainers Postgres
+// rather than a fake message bus — the end-to-end materialization is now
+// the real proof (spec S-lifecycle-fullstack-terminate-backfill). What
+// remains here is the orthogonal, cheap input-validation of CreateBackfill.
 package backfill
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -23,44 +28,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
-
-func TestPartitionSelectorOverride_RoundTripsThroughPayload(t *testing.T) {
-	t.Parallel()
-	m := newFakeMessages()
-	ctx := context.Background()
-	override := json.RawMessage(`{"partition_keys":["region-x","region-y"]}`)
-	created, err := runtime.CreateBackfill(ctx, nil, m, time.Now().UTC(), runtime.BackfillCreateRequest{
-		InstanceID:               shared.UUID(uuid.New()),
-		TargetNode:               "ingest_results",
-		PartitionRequestOverride: override,
-		Reason:                   "operator backfill from scenario",
-		Sender:                   "operator/scenario",
-	})
-	if err != nil {
-		t.Fatalf("CreateBackfill: %v", err)
-	}
-	row, err := m.Get(ctx, created.MessageID)
-	if err != nil || row == nil {
-		t.Fatalf("Get message: %v", err)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(row.Payload, &payload); err != nil {
-		t.Fatalf("payload not JSON: %v", err)
-	}
-	if payload["backfill_operation_id"] != created.BackfillOperationID.String() {
-		t.Errorf("payload.backfill_operation_id mismatch: %v vs %s",
-			payload["backfill_operation_id"], created.BackfillOperationID)
-	}
-	if payload["reason"] != "operator backfill from scenario" {
-		t.Errorf("payload.reason mismatch: %v", payload["reason"])
-	}
-	// The override field round-trips verbatim — opaque to rimsky per
-	// @blessed-invariant 21.
-	got, _ := json.Marshal(payload["partition_request_override"])
-	if string(got) != string(override) {
-		t.Errorf("partition_request_override round-trip mismatch: got %s want %s", got, override)
-	}
-}
 
 func TestPartitionSelectorOverride_ValidatesInput(t *testing.T) {
 	t.Parallel()

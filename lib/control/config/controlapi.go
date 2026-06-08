@@ -22,6 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
@@ -103,6 +104,12 @@ type ControlAPIConfig struct {
 	// controlapi.AppDeps. Consulted by LifecyclePeersForSpec to add the
 	// proxy peer to the fan-out when a template declares late_bind_services.
 	LateBindServiceProxies map[string]string
+	// RefValidationMode is the operator-set registration-time reference-
+	// validation mode (all / available / none), passed verbatim from
+	// rimsky.yml's templates.ref_validation_mode (env-overridable) into
+	// controlapi.AppDeps. Zero value (node.RefValidateAll) is the strict
+	// default. Story S-template-validation-ref-validation-mode.
+	RefValidationMode node.RefValidationMode
 }
 
 type ControlAPIHandle interface {
@@ -323,6 +330,10 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		// Plan: late-bind proxy fan-out. Threaded so LifecyclePeersForSpec
 		// can add the proxy peer when a template declares late_bind_services.
 		LateBindServiceProxies: cfg.LateBindServiceProxies,
+		// Operator-set registration-time reference-validation mode
+		// (all / available / none). Stamped onto the validator hooks so
+		// registration + POST /templates/validate share one strictness.
+		RefValidationMode: cfg.RefValidationMode,
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))

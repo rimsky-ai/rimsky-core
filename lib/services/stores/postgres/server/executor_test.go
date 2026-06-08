@@ -221,6 +221,134 @@ func TestExecutor_NoNullsFails(t *testing.T) {
 	}
 }
 
+// TestExecutor_RowCountRatio drives the SQL-store verifier with a
+// `row_count_ratio` check — the check kind the in-process verifier
+// (verifier-shape-checks) already ships but the SQL substrate does not
+// yet compile. The store must run it as an aggregate-only count query,
+// compute ratio = row_count / baseline, and partition the terminal:
+// Success when the ratio is within [low, high], Error
+// (`pg/verifier_check_failed/row_count_ratio`) when it is not, carrying
+// the computed ratio in the failure payload so an operator subscribing
+// on that class can read the offending number.
+//
+// RED today: `sqlchecks.Compile` has no `row_count_ratio` arm, so the
+// kind falls through to `unknown check kind` → mapped to
+// `pg/attribute_invalid` at executor.go. The in-bounds subtest below
+// therefore observes an Error (pg/attribute_invalid) where it asserts
+// Success, and the out-of-bounds subtest observes pg/attribute_invalid
+// where it asserts pg/verifier_check_failed/row_count_ratio with a
+// ratio. Both fail until AUTHSTORES-18 adds the compiler arm.
+func TestExecutor_RowCountRatio(t *testing.T) {
+	pool, ex := bootExecutor(t)
+
+	// In-bounds: 4 rows against baseline 4 → ratio 1.0, inside [0.5, 2.0]
+	// → Success.
+	t.Run("in_bounds_success", func(t *testing.T) {
+		seedStagingTable(t, pool, "staging_ratio_ok", "items", []map[string]any{
+			{"id": "a", "payload": "x"},
+			{"id": "b", "payload": "y"},
+			{"id": "c", "payload": "z"},
+			{"id": "d", "payload": "w"},
+		})
+		ud, _ := structpb.NewStruct(map[string]any{
+			"schema": "staging_ratio_ok",
+			"table":  "items",
+			"checks": []any{
+				map[string]any{"kind": "row_count_ratio", "config": map[string]any{
+					"baseline": 4, "low": 0.5, "high": 2.0,
+				}},
+			},
+		})
+		send, out := captureSend()
+		if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
+			t.Fatalf("executeCore: %v", err)
+		}
+		if len(*out) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(*out))
+		}
+		sc := (*out)[0].GetStreamClose()
+		if sc == nil {
+			t.Fatal("expected StreamClose")
+		}
+		if sc.GetSuccess() == nil {
+			t.Fatalf("expected Success for in-bounds row_count_ratio, got %+v", sc.GetOutcome())
+		}
+	})
+
+	// Out-of-bounds: 4 rows against baseline 1 → ratio 4.0, above
+	// high=2.0 → Error with the computed ratio in the failure payload.
+	t.Run("out_of_bounds_error", func(t *testing.T) {
+		seedStagingTable(t, pool, "staging_ratio_high", "items", []map[string]any{
+			{"id": "a", "payload": "x"},
+			{"id": "b", "payload": "y"},
+			{"id": "c", "payload": "z"},
+			{"id": "d", "payload": "w"},
+		})
+		ud, _ := structpb.NewStruct(map[string]any{
+			"schema": "staging_ratio_high",
+			"table":  "items",
+			"checks": []any{
+				map[string]any{"kind": "row_count_ratio", "config": map[string]any{
+					"baseline": 1, "low": 0.5, "high": 2.0,
+				}},
+			},
+		})
+		send, out := captureSend()
+		if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
+			t.Fatalf("executeCore: %v", err)
+		}
+		if len(*out) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(*out))
+		}
+		sc := (*out)[0].GetStreamClose()
+		errOutcome := sc.GetError()
+		if errOutcome == nil {
+			t.Fatalf("expected Error for out-of-bounds row_count_ratio, got %+v", sc.GetOutcome())
+		}
+		if got := errOutcome.GetErrorClass(); got != "pg/verifier_check_failed/row_count_ratio" {
+			t.Fatalf("error_class: %q want pg/verifier_check_failed/row_count_ratio", got)
+		}
+		// The computed ratio (4.0) must be present in the failure payload
+		// so a subscriber on this class can read the offending number.
+		ratio, ok := ratioFromFailurePayload(errOutcome.GetPayload())
+		if !ok {
+			t.Fatalf("computed ratio not present in failure payload: %v", errOutcome.GetPayload().AsMap())
+		}
+		if ratio != 4.0 {
+			t.Errorf("ratio = %v, want 4.0", ratio)
+		}
+	})
+}
+
+// ratioFromFailurePayload digs the computed `ratio` out of the verifier
+// failure payload shape built by buildVerifierFailurePayload: a top-level
+// `failures` array whose entries each carry a `counts` map. Returns the
+// first ratio found and whether one was present.
+func ratioFromFailurePayload(payload *structpb.Struct) (float64, bool) {
+	if payload == nil {
+		return 0, false
+	}
+	m := payload.AsMap()
+	failures, ok := m["failures"].([]any)
+	if !ok {
+		return 0, false
+	}
+	for _, f := range failures {
+		entry, ok := f.(map[string]any)
+		if !ok {
+			continue
+		}
+		counts, ok := entry["counts"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if r, ok := counts["ratio"].(float64); ok {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
 func TestExecutor_InvalidAttributes(t *testing.T) {
 	_, ex := bootExecutor(t)
 	tests := map[string]map[string]any{

@@ -19,128 +19,30 @@
 package controlapi
 
 import (
-	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// seedRunningNodeRun replaces any in-flight runs for `node` with a single
-// active/running run row keyed to the instance's main run-scope and an
-// existing frame, mimicking a node mid-dispatch. Returns the run-scope id
-// the row was seeded under.
-func seedRunningNodeRun(t *testing.T, h *harness, inst persistence.InstanceRow, node persistence.NodeRow) {
-	t.Helper()
-	ctx := context.Background()
-
-	// Drop any in-flight rows the create flow may have allocated so the
-	// uq_node_runs_in_flight_per_run_scope unique index doesn't reject
-	// the seeded running row.
-	pgtest.ExecForTest(ctx, t, h.driver,
-		`DELETE FROM rimsky_node_runs WHERE node_id=$1 AND phase IN ('pending','active','held','parked')`,
-		node.ID)
-
-	var frameID uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 ORDER BY queued_at DESC LIMIT 1`,
-		[]any{inst.ID}, &frameID)
-
-	pgtest.ExecForTest(ctx, t, h.driver, `
-        INSERT INTO rimsky_node_runs
-            (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, phase, state, frame_id, run_scope_id)
-        VALUES (gen_random_uuid(), $1, 'worker', ARRAY[]::text[], now(), 'sup-1', now(), now(), 'active', 'running', $2, $3)
-    `, node.ID, frameID, inst.MainRunScopeID)
-}
-
-// loadNodeState reads a node's projected state back through the
-// persistence layer (the LATERAL/CASE projection over its in-flight or
-// most-recent run row).
-func loadNodeState(t *testing.T, h *harness, nodeID persistence.NodeRow) cascade.NodeState {
-	t.Helper()
-	ctx := context.Background()
-	var loaded *persistence.NodeRow
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.persist.Nodes().Get(ctx, nodeID.ID, tx)
-		loaded = r
-		return err
-	}))
-	require.NotNil(t, loaded)
-	return loaded.State
-}
-
-// loadRunScopeClosed reports whether the given run-scope's closed_at is
-// set, reading it back through the persistence layer.
-func loadRunScopeClosed(t *testing.T, h *harness, id foundationshared.UUID) bool {
-	t.Helper()
-	ctx := context.Background()
-	var loaded *persistence.RunScopeRow
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.persist.RunScopes().GetByID(ctx, tx, id)
-		loaded = r
-		return err
-	}))
-	require.NotNil(t, loaded, "run-scope %s must exist", id)
-	return loaded.ClosedAt != nil
-}
-
-// TestTerminateInstance_ForceFailsRunningNode is the Feature 2 happy
-// path: terminate sets terminated_at, force-fails a running node-run to
-// failed, records an instance_terminated event with the reason, and a
-// subsequent DELETE now succeeds (the 409 terminal guard passes).
-func TestTerminateInstance_ForceFailsRunningNode(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	inst := seedInstance(t, h, "term-run-"+uuid.NewString())
-	node := firstNode(t, h, inst)
-	seedRunningNodeRun(t, h, inst, node)
-	require.Equal(t, cascade.NodeStateRunning, loadNodeState(t, h, node),
-		"precondition: node-run must be running before terminate")
-
-	// Terminate with a reason.
-	status, out := h.httpJSON(t, "POST", "/instances/"+inst.ID.String()+"/terminate", map[string]any{
-		"reason": "stuck-on-async-callback",
-	})
-	require.Equal(t, http.StatusOK, status, out)
-	require.NotEmpty(t, out["terminated_at"], "terminate must set terminated_at")
-
-	// The running node-run is force-failed.
-	require.Equal(t, cascade.NodeStateFailed, loadNodeState(t, h, node),
-		"running node-run must be force-failed by terminate")
-
-	// The instance's main run-scope is closed by terminate itself — not
-	// left to the instance_terminator worker (whose sweep skips instances
-	// with no lifecycle-subscriber rows, like this one).
-	require.True(t, loadRunScopeClosed(t, h, inst.MainRunScopeID),
-		"terminate must close the instance's main run-scope")
-
-	// An instance_terminated event with the reason was recorded.
-	status, out = h.httpJSON(t, "GET",
-		fmt.Sprintf("/events?instance_id=%s&kind=instance_terminated", inst.ID.String()), nil)
-	require.Equal(t, http.StatusOK, status, out)
-	events, _ := out["events"].([]any)
-	require.Len(t, events, 1, "exactly one instance_terminated event expected")
-	ev, _ := events[0].(map[string]any)
-	payload, _ := ev["payload"].(map[string]any)
-	require.Equal(t, "stuck-on-async-callback", payload["reason"])
-
-	// DELETE now succeeds: the 409 terminal guard passes for a
-	// terminated instance.
-	status, _ = h.httpJSON(t, "DELETE", "/instances/"+inst.ID.String(), nil)
-	require.Equal(t, http.StatusOK, status)
-
-	status, _ = h.httpJSON(t, "GET", "/instances/"+inst.ID.String(), nil)
-	require.Equal(t, http.StatusNotFound, status)
-}
+// The await-async-stuck terminate proof (a running node-run force-failed
+// to instance_killed, then DELETE'd) is no longer exercised at this
+// handler altitude. Per spec S-lifecycle-fullstack-terminate-backfill —
+// "FULL-STACK scenario tests, NOT handler-altitude unit tests with
+// fakes" — that path is now covered end to end by
+// TestForceTerminateAwaitAsyncStuckFullStack in test/scenarios/, which
+// drives a REAL running run-row through the real dispatch path instead of
+// a hand-INSERTed one. The superseded TestTerminateInstance_ForceFailsRunningNode
+// and its raw-SQL seedRunningNodeRun / loadNodeState / loadRunScopeClosed
+// helpers were removed here (pre-v1 "delete superseded code" rule). The
+// remaining terminate tests below cover orthogonal surfaces (no-reason
+// body, idempotent re-terminate, not-found) that the full-stack scenario
+// does not, so they stay.
 
 // TestTerminateInstance_NoReasonEmptyBody confirms terminate tolerates an
 // absent body (reason defaults to empty) and still marks terminal.
@@ -205,4 +107,150 @@ func TestTerminateInstance_NotFound(t *testing.T) {
 
 	status, _ := h.httpJSON(t, "POST", "/instances/"+uuid.NewString()+"/terminate", nil)
 	require.Equal(t, http.StatusNotFound, status)
+}
+
+// refModeTemplateProvisionedValid returns a wrapped POST /templates body
+// for a template whose node references the PROVISIONED constrained
+// executor (advertising `count` with `minimum: 0` via the
+// newRefModeHarness ExecutorCapabilities) with a schema-compliant static
+// default (`count: 1`). It is the well-formed twin of
+// refModeTemplateProvisionedInvalid (in templates_test.go) — same
+// executor, same schema shape, but a default that satisfies the
+// executor's `minimum: 0` constraint. The companion sub-case of
+// TestCreateInstance_StaticConfigValidationGate instantiates this body
+// and asserts a clean 201 + persisted row, proving the gate rejects only
+// the genuinely-misconfigured static default, not every instance of a
+// constrained executor.
+func refModeTemplateProvisionedValid(name string) map[string]any {
+	return map[string]any{
+		"spec": map[string]any{
+			"name":                  name,
+			"version":               "v1",
+			"frame_resolution_mode": "serial_queue",
+			"nodes": []map[string]any{
+				{
+					"type":     "root",
+					"executor": "constrained",
+					"attributes": map[string]any{
+						"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"count": map[string]any{
+									"type":    "integer",
+									"default": 1,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// registerAndDeployBody registers a specific wrapped POST /templates body
+// and transitions register → deployed, returning the template hash. Both
+// steps must succeed; instance creation requires state='deployed' per
+// spec §2.2. (The sibling registerAndDeploy in compose_prefix_test.go
+// always registers validTemplateBody; this variant takes an arbitrary
+// body so the ref-mode constrained-executor templates can be deployed.)
+// Registration runs under whatever reference-validation mode the harness
+// was booted with — under `none` it skips the executor-schema cross-check
+// entirely, so a static-default violation slips past registration and
+// must be caught at instantiation.
+func registerAndDeployBody(t *testing.T, h *harness, body map[string]any) string {
+	t.Helper()
+	status, out := h.httpJSON(t, "POST", "/templates", body)
+	require.Equal(t, http.StatusCreated, status, "register must succeed under the harness ref-mode; body: %v", out)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+	deployStatus, deployOut := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus, "deploy must succeed; body: %v", deployOut)
+	return tplID
+}
+
+// instanceCountForTemplate reads GET /instances filtered to the given
+// template hash and returns how many instance rows are persisted for it.
+// Used to prove the static-config gate persists NOTHING on a rejected
+// create (the no-data-loss / no-partial-write property the gate must
+// hold: a 400 instance-create leaves zero rows behind).
+func instanceCountForTemplate(t *testing.T, h *harness, templateHash string) int {
+	t.Helper()
+	status, out := h.httpJSON(t, "GET", "/instances?template_hash="+templateHash, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	rows, _ := out["instances"].([]any)
+	return len(rows)
+}
+
+// TestCreateInstance_StaticConfigValidationGate is the mandatory
+// instantiation-time static-config validation gate
+// (story S-template-validation-instantiation-mandatory, plan
+// TEMPLCASCADE-4). It drives POST /instances through the real
+// handleCreateInstance against a real Postgres-backed control-api.
+//
+// Setup mirrors the spec's claude-agent example
+// (`cli.max_signoff_attempts: -1` vs an executor schema declaring
+// `minimum: 0`): the constrained executor in newRefModeHarness advertises
+// `count` with `minimum: 0`, and refModeTemplateProvisionedInvalid sets
+// the node's static default to `count: -1`. The harness boots under
+// reference-validation mode `none`, so REGISTRATION skips the executor-
+// schema cross-check and the misconfigured template registers + deploys
+// clean. Instantiation is then the gate that must catch the static
+// misconfiguration.
+//
+// RED today: handleCreateInstance runs NO schema validation
+// (validateAttributeOverrides checks only override keys/shapes, not
+// node-attribute VALUES against the executor schema), so the rejected
+// sub-case's POST /instances returns 201 with a persisted row instead of
+// the demanded 400 — the value-constraint violation surfaces only at
+// dispatch today, not at create-time. A later GREEN pass adds the
+// instantiation-time validation gate. The verification command inverts
+// this test's expected failure (`! go test ...`) to a pass.
+func TestCreateInstance_StaticConfigValidationGate(t *testing.T) {
+	t.Run("rejects: static count:-1 violates the executor schema's minimum:0", func(t *testing.T) {
+		h, teardown := newRefModeHarness(t, node.RefValidateNone)
+		t.Cleanup(teardown)
+
+		// Registration succeeds under mode `none` (it skips the executor-
+		// schema cross-check) even though count:-1 violates minimum:0.
+		tplID := registerAndDeployBody(t, h, refModeTemplateProvisionedInvalid("static-gate-bad-"+uuid.NewString()))
+
+		// Instantiation is the mandatory gate: it MUST reject the create
+		// with a 400 that names the offending attribute (`count`) AND cites
+		// the `minimum` value-constraint violation — a genuine value check,
+		// not a missing/extra-attribute surface error.
+		status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+			"template":     tplID,
+			"instance_key": "ck-" + uuid.NewString(),
+		})
+		require.Equal(t, http.StatusBadRequest, status,
+			"instantiation must reject a static-config violation at create-time; body: %v", out)
+		errText := strings.ToLower(fmt.Sprint(out["error"]) + " " + fmt.Sprint(out["validation_errors"]))
+		require.Contains(t, errText, "count",
+			"rejection must name the offending attribute `count`; body: %v", out)
+		require.Contains(t, errText, "minimum",
+			"rejection must cite the `minimum` value-constraint violation (a genuine value check, not a missing/extra-attribute surface error); body: %v", out)
+
+		// No instance row was persisted for the rejected template.
+		require.Equal(t, 0, instanceCountForTemplate(t, h, tplID),
+			"a rejected static-config create must persist no instance row")
+	})
+
+	t.Run("admits: a well-formed instance of the same executor returns 201 and persists", func(t *testing.T) {
+		h, teardown := newRefModeHarness(t, node.RefValidateNone)
+		t.Cleanup(teardown)
+
+		tplID := registerAndDeployBody(t, h, refModeTemplateProvisionedValid("static-gate-ok-"+uuid.NewString()))
+
+		status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+			"template":     tplID,
+			"instance_key": "ck-" + uuid.NewString(),
+		})
+		require.Equal(t, http.StatusCreated, status,
+			"a schema-compliant static default (count:1 ≥ minimum:0) must instantiate cleanly; body: %v", out)
+		require.NotEmpty(t, out["instance_id"])
+
+		require.Equal(t, 1, instanceCountForTemplate(t, h, tplID),
+			"a well-formed create must persist exactly one instance row")
+	})
 }

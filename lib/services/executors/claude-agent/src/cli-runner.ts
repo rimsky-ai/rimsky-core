@@ -56,12 +56,34 @@ export function buildAllowedTools(templateAllowed?: string[]): string[] {
  *     prompt via stdin.
  *   - Fake runners for tests construct their own {@link CliHandle}.
  */
-export interface CliToolConfig {
-  kind: "mcp-http";
-  name: string;
-  url: string;
-  headers?: Record<string, string>;
-}
+/**
+ * A single MCP server wired into the spawned CLI's `--mcp-config`.
+ *
+ * Two leaf shapes, discriminated by `kind`:
+ *   - `mcp-http`  : a remote (or loopback) streamable-HTTP MCP server the
+ *                   CLI dials by URL. The internal rimsky-callback server,
+ *                   host `cli.mcp_servers` http servers, and the
+ *                   per-dispatch loopback listeners that front `module` /
+ *                   `http-loopback` catalog servers all resolve to this leaf.
+ *   - `mcp-stdio` : a local MCP server the CLI spawns as a subprocess
+ *                   (`command` + `args`, optional `env`). Catalog `stdio`
+ *                   servers resolve to this leaf; `mcpConfigJson` emits a
+ *                   `type: "stdio"` entry rather than `type: "http"`.
+ */
+export type CliToolConfig =
+  | {
+      kind: "mcp-http";
+      name: string;
+      url: string;
+      headers?: Record<string, string>;
+    }
+  | {
+      kind: "mcp-stdio";
+      name: string;
+      command: string;
+      args?: string[];
+      env?: Record<string, string>;
+    };
 
 export interface CliSpawnRequest {
   model: string;
@@ -320,6 +342,17 @@ function mcpConfigJson(tools: CliToolConfig[]): string {
         type: "http",
         url: t.url,
         headers: t.headers ?? {},
+      };
+    } else if (t.kind === "mcp-stdio") {
+      // Claude CLI's `--mcp-config` stdio leaf: a local server the CLI
+      // spawns as a subprocess. `env` is omitted entirely when unset so
+      // the child inherits the CLI's environment (matching the CLI's own
+      // default).
+      mcpServers[t.name] = {
+        type: "stdio",
+        command: t.command,
+        ...(t.args && t.args.length > 0 ? { args: t.args } : {}),
+        ...(t.env ? { env: t.env } : {}),
       };
     }
   }

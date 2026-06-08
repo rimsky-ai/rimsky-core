@@ -10,20 +10,43 @@ import "fmt"
 type CheckResult struct {
 	Allowed    bool
 	MatchedIdx int // index into the grant of a matching entry; -1 if not allowed
+
+	// Mode is the matched entry's identity-bound write floor, defaulted
+	// to ModeExecute when the entry pins no mode (and zero-valued when
+	// the request is denied). The caller composes this with any
+	// per-request dry-run flag — the effective mode is the stricter of
+	// the two, so a grant pinned to ModeDryRun is never escalated to
+	// execute by the request.
+	Mode Mode
 }
 
-// CheckGrant evaluates the grant for the given requestAction by set
-// membership: the request is allowed iff any entry's action matches
-// (wildcard grammar unchanged). Returns Allowed=false when no entry
-// matches. Order is not significant — any match allows.
+// CheckGrant evaluates the grant for the given requestAction and request
+// resource target by set membership: the request is allowed iff any
+// entry both action-matches (wildcard grammar unchanged) AND
+// scope-matches the target (subset-satisfaction, see ScopeMatches). On
+// the first such entry it returns Allowed=true with that entry's index
+// and Mode (defaulted to ModeExecute when the entry pins no mode).
+// Returns Allowed=false when no entry matches. Order is not significant
+// for the allow/deny decision; the first matching entry supplies the
+// reported Mode.
 //
-// Permission is binary (allow/deny only); the request mode (execute vs
-// dry_run) is resolved from the request flag, not the grant.
-func CheckGrant(grant Grant, requestAction string) CheckResult {
+// target carries the request's resource selector (e.g.
+// {"template_tag": "analytics"}) for scope evaluation. An entry with no
+// scope is unscoped and matches any target, so a nil/empty target only
+// satisfies unscoped entries.
+func CheckGrant(grant Grant, requestAction string, target map[string]string) CheckResult {
 	for i, e := range grant {
-		if ActionMatches(e.Action, requestAction) {
-			return CheckResult{Allowed: true, MatchedIdx: i}
+		if !ActionMatches(e.Action, requestAction) {
+			continue
 		}
+		if !ScopeMatches(e.Scope, target) {
+			continue
+		}
+		mode := e.Mode
+		if mode == "" {
+			mode = ModeExecute
+		}
+		return CheckResult{Allowed: true, MatchedIdx: i, Mode: mode}
 	}
 	return CheckResult{Allowed: false, MatchedIdx: -1}
 }

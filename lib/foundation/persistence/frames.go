@@ -128,6 +128,20 @@ type FrameTable interface {
 	// row moved.
 	PromoteQueuedFrameToRunning(ctx context.Context, frameID shared.UUID, tx Tx) (transitioned bool, err error)
 
+	// GetRunningFrameID returns the frame_id of the instance's currently-
+	// running frame, or (nil, nil) when no frame is running. This is the
+	// same source-of-truth the frame engine advances (rimsky_frames.state
+	// = 'running'); the serial-queue model guarantees at most one running
+	// frame per instance (ListQueuedFramesReadyToStart will not promote a
+	// queued frame while a running one exists), so a deterministic single
+	// running row is returned. Used by the operator-sourced `frame: in`
+	// invalidate to resolve the open cascade frame to join.
+	//
+	// Defensive ordering: should two running rows ever coexist (they must
+	// not under the invariant), the most-recently-started one is returned,
+	// matching "the frame currently draining."
+	GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx Tx) (*shared.UUID, error)
+
 	// MarkSourceNodeStale flips a frame's source node to stale-with-frame_id.
 	// Accepts the in-bounds states only: fresh, failed, or stale-with-NULL-
 	// frame_id. Returns matched=true when exactly one row moved; false when

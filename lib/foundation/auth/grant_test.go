@@ -37,10 +37,11 @@ func TestGrantRoundTrip(t *testing.T) {
 	}
 }
 
-// TestGrantLegacyModeFallsIntoExtras: a legacy `mode` key on a persisted
-// grant is no longer a recognized field — it survives in Extras (no
-// error) and is ignored by the matcher (pre-v1; no compat shim).
-func TestGrantLegacyModeFallsIntoExtras(t *testing.T) {
+// TestGrantModeFirstClass: `mode` is now a recognized first-class field
+// (lifted out of Extras). A valid mode decodes onto GrantEntry.Mode and
+// does NOT survive in Extras; an invalid mode is rejected as
+// ErrInvalidGrant.
+func TestGrantModeFirstClass(t *testing.T) {
 	var e GrantEntry
 	if err := json.Unmarshal([]byte(`{"action":"instance:create","mode":"dry_run"}`), &e); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -48,24 +49,39 @@ func TestGrantLegacyModeFallsIntoExtras(t *testing.T) {
 	if e.Action != "instance:create" {
 		t.Fatalf("action: %q", e.Action)
 	}
-	if _, ok := e.Extras["mode"]; !ok {
-		t.Fatalf("legacy mode key should land in Extras: %+v", e.Extras)
+	if e.Mode != ModeDryRun {
+		t.Fatalf("Mode = %q, want %q", e.Mode, ModeDryRun)
+	}
+	if _, ok := e.Extras["mode"]; ok {
+		t.Fatalf("mode should be lifted out of Extras: %+v", e.Extras)
+	}
+
+	var bad GrantEntry
+	if err := json.Unmarshal([]byte(`{"action":"instance:create","mode":"sometimes"}`), &bad); !errors.Is(err, ErrInvalidGrant) {
+		t.Fatalf("invalid mode: expected ErrInvalidGrant, got %v", err)
 	}
 }
 
-func TestGrantExtrasRoundTrip(t *testing.T) {
+// TestGrantScopeFirstClass: `scope` is now a recognized first-class
+// field (lifted out of Extras) decoding onto GrantEntry.Scope; genuinely
+// unknown keys (e.g. `rate_limit`) still land in Extras and round-trip.
+func TestGrantScopeFirstClass(t *testing.T) {
 	src := `{"action":"x","scope":{"template_tag":"y"},"rate_limit":"1/s"}`
 	var e GrantEntry
 	if err := json.Unmarshal([]byte(src), &e); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if _, ok := e.Extras["scope"]; !ok {
-		t.Fatalf("Extras missing 'scope'")
+	if e.Scope["template_tag"] != "y" {
+		t.Fatalf("Scope = %+v, want template_tag=y", e.Scope)
+	}
+	if _, ok := e.Extras["scope"]; ok {
+		t.Fatalf("scope should be lifted out of Extras: %+v", e.Extras)
 	}
 	if _, ok := e.Extras["rate_limit"]; !ok {
-		t.Fatalf("Extras missing 'rate_limit'")
+		t.Fatalf("Extras missing genuinely-unknown 'rate_limit'")
 	}
-	// Re-marshal; the extras should round-trip.
+	// Re-marshal; both scope (first-class) and rate_limit (extra)
+	// should round-trip.
 	out, err := json.Marshal(e)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -76,6 +92,40 @@ func TestGrantExtrasRoundTrip(t *testing.T) {
 	}
 	if _, ok := roundTrip["scope"]; !ok {
 		t.Fatalf("re-marshaled output missing scope: %s", out)
+	}
+	if _, ok := roundTrip["rate_limit"]; !ok {
+		t.Fatalf("re-marshaled output missing rate_limit: %s", out)
+	}
+}
+
+// TestGrantModeScopeByteStableRoundTrip: a fully-specified entry
+// marshals to a byte-stable canonical form (deterministic key order:
+// action, mode, scope sorted, extras sorted) and round-trips unchanged,
+// so the audit hash-key over the persisted grant is stable.
+func TestGrantModeScopeByteStableRoundTrip(t *testing.T) {
+	e := GrantEntry{
+		Action: "template:register",
+		Mode:   ModeDryRun,
+		Scope:  map[string]string{"zeta": "1", "alpha": "2"},
+	}
+	out, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	want := `{"action":"template:register","mode":"dry_run","scope":{"alpha":"2","zeta":"1"}}`
+	if string(out) != want {
+		t.Fatalf("canonical form:\n got %s\nwant %s", out, want)
+	}
+	var e2 GrantEntry
+	if err := json.Unmarshal(out, &e2); err != nil {
+		t.Fatalf("re-unmarshal: %v", err)
+	}
+	out2, err := json.Marshal(e2)
+	if err != nil {
+		t.Fatalf("re-marshal: %v", err)
+	}
+	if string(out) != string(out2) {
+		t.Fatalf("not byte-stable: %s vs %s", out, out2)
 	}
 }
 

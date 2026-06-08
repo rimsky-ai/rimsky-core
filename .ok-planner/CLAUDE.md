@@ -1,12 +1,17 @@
-# .ok-planner — mostly workflow folder, with one durable subdirectory
+# .ok-planner — project records (out of context by default), with one durable source-of-truth subdirectory
 
 This directory holds two kinds of content with different lifecycles
 and different rules for how agents should treat them.
 
-**Workflow scratch** (`specs/`, `plans/`, `sketches/`, `history/`):
-point-in-time records of how a piece of work was conceived and
-executed. Not living documentation of the codebase. Drift between
-these files and the current code is expected.
+**Project records, out of context by default** (`specs/`, `plans/`,
+`sketches/`, `history/`): committed, versioned parts of the project —
+but not the source of truth, and not to be pulled into context
+unprompted. Reading `history/` (a past moment) or `sketches/` (a
+speculative or in-progress future) without a directing goal is context
+pollution when reasoning about the project as it is now. This is a
+context-discipline rule, not a commit rule — these are committed; some
+are temporary planning input removed after use; all stay out of
+context until a goal directs you to them.
 
 **Durable design docs** (`design/`): the project's canonical
 noun catalog — load-bearing concepts with definitions, purposes,
@@ -16,15 +21,15 @@ or equivalent annotations at points of enforcement), not the
 other way around. The design docs are **a source of truth with
 the same weight as code**: they describe the project as it
 stands. Like code, they change only through plan execution —
-`execute-plan` is the one skill that mutates them. NOT scratch.
+`execute-plan` is the one skill that mutates them. Source-of-truth, read freely — NOT an out-of-context record.
 
 ## Default behavior for agents
 
-### Workflow scratch (`specs/`, `plans/`, `sketches/`, `history/`)
+### Project records, out of context by default (`specs/`, `plans/`, `sketches/`, `history/`)
 
 Unless the user or an active skill (e.g. `/brainstorm`,
 `/write-plan`, `/execute-plan`, `/review-plan`, `/sketch`)
-explicitly directs you here, ignore these subdirectories:
+explicitly directs you here, keep these subdirectories out of context:
 
 - **Do not consult these files to understand the project.** They
   reflect what someone was thinking at a moment in time. The
@@ -40,7 +45,7 @@ explicitly directs you here, ignore these subdirectories:
 - **Do not edit, rename, move, or delete files here on your own
   initiative**, even if they look stale, redundant, or wrong.
 
-#### When it is OK to touch the workflow scratch
+#### When it is OK to read or touch these records
 
 - The user explicitly asks (e.g. "update the spec at
   .ok-planner/specs/foo.md", "what did we decide about X — check
@@ -238,17 +243,16 @@ through `execute-plan` runs.
 ## Layout
 
 - `specs/` — active specs from `/brainstorm` and
-  `/refine-design` (workflow scratch)
+  `/refine-design` (out of context by default)
 - `plans/` — active plans from `/write-plan`, plus their
   `-divergences.md` reports written by `/execute-plan`'s
-  divergence auditor (workflow scratch)
-- `sketches/` — design sketches from `/sketch` (workflow scratch)
+  divergence auditor (out of context by default)
+- `sketches/` — design sketches from `/sketch` (out of context by default)
 - `design/` — durable design docs (concepts + tensions; mutated
   only by `/execute-plan` via spec-directed plan tasks;
   bootstrapped by `/discover-design`)
 - `history/specs/` and `history/plans/` — specs and plans
   archived here automatically when an execute-* skill finishes
-  a plan (workflow scratch)
+  a plan (out of context by default)
 - `history/sketches/` — sketches archived here automatically by
-  `/brainstorm` when it produces a spec from them (workflow
-  scratch)
+  `/brainstorm` when it produces a spec from them (out of context by default)

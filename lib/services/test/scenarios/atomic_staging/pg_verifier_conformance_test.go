@@ -43,7 +43,8 @@ import (
 // the SDK's harness-internal adapter and asserts every standard
 // claim-producer conformance check passes. Pins the Capabilities
 // handshake, the write-semantics envelope, the uniformity invariant,
-// and the four runtime verbs (Open / Commit / Abandon / Release)
+// the terminal verbs (Commit / Abandon / Release) driven against real
+// claims the suite Open'd, and the retried-terminal idempotency probe
 // against the live wire endpoint.
 func TestPGFusedStore_ClaimProducerConformance(t *testing.T) {
 	t.Parallel()
@@ -75,6 +76,44 @@ func TestPGFusedStore_ClaimProducerConformance(t *testing.T) {
 	if failed > 0 {
 		t.Fatalf("%d/%d claim-producer conformance checks failed", failed, len(results))
 	}
+
+	// Per S-conformance-claimproducer-terminals: the suite MUST drive the
+	// full claim lifecycle — Commit, Abandon, Release on real claims it
+	// Open'd — plus a retried-terminal idempotency check, each reported as
+	// its own pass/fail row. Against the real fused postgres producer
+	// (whose terminal verbs are idempotent in claim_id, store.go §Commit),
+	// every one of these rows MUST be present AND passing (Err == nil).
+	for _, name := range []string{"Commit", "Abandon", "Release", "TerminalIdempotency"} {
+		assertResultPassing(t, results, name)
+	}
+}
+
+// assertResultPassing fails the test unless the named conformance row is
+// present in results with a nil Err. A missing row is as much a failure
+// as a failing one: the suite is contracted to REPORT each terminal verb,
+// not silently skip it.
+func assertResultPassing(t *testing.T, results []cpconf.CheckResult, name string) {
+	t.Helper()
+	for _, r := range results {
+		if r.Name != name {
+			continue
+		}
+		if r.Err != nil {
+			t.Errorf("claim-producer conformance row %q present but FAILED: %v", name, r.Err)
+		}
+		return
+	}
+	t.Errorf("claim-producer conformance result set is missing the %q row (have: %s)",
+		name, resultRowNames(results))
+}
+
+// resultRowNames condenses the result row names for diagnostic output.
+func resultRowNames(results []cpconf.CheckResult) string {
+	out := make([]string, 0, len(results))
+	for _, r := range results {
+		out = append(out, r.Name)
+	}
+	return "[" + strings.Join(out, ", ") + "]"
 }
 
 // TestPGFusedStore_ExecutorConformance dials the fused store's

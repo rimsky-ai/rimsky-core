@@ -91,6 +91,15 @@ type ClaimSpec struct {
 	Alias        string // per-claim name within node; defaults to ProducerName
 	TemplateID   string // content hash (template-scope envelope)
 	InstanceID   string // instance UUID (instance-scope envelope)
+	// RunScopeID is the RunScope this Open lives in (string form of the
+	// run-scope UUID, empty for the degenerate non-fanned-out path). It is
+	// sent on OpenRequest.run_scope_id so the host-agent-proxy can key
+	// per-run-scope spawn isolation on the claim-producer path the same way
+	// the executor path does: two concurrent run-scopes of one instance get
+	// distinct late-bound child processes, never a shared one.
+	//
+	// @concept: host-agent-proxy
+	RunScopeID string
 	// Lifetime is the rimsky-internal claim-lifetime hint carried from the
 	// template store-ref through the acquire path onto the persisted
 	// rimsky_claim_handles.lifetime column: "subgraph" (default) or
@@ -124,9 +133,20 @@ type ClaimResult struct {
 // Available == false means Unavailable{}. Result is populated only
 // when Available is true; its fields remain opaque json.RawMessage
 // bytes per blessed invariant 20.
+//
+// UnavailableClass is the producer-declared acquisition-failure class
+// (a member of the producer's declared error vocabulary, e.g.
+// "pg/claim_unavailable") carried on the Unavailable arm. Populated only
+// when Available is false and the producer named a class; empty otherwise.
+// rimsky's acquisition-failure routing keys the operator's `error_types:`
+// chain on this class when present, falling back to the synthetic
+// "acquire/unavailable" when empty. The Available=false wire shape is
+// unchanged — the class is an out-of-band routing hint, not a distinct
+// acquisition outcome.
 type OpenOutcome struct {
-	Available bool
-	Result    ClaimResult
+	Available        bool
+	Result           ClaimResult
+	UnavailableClass string
 }
 
 // Capabilities describes what a ClaimProducer advertises.

@@ -30,7 +30,7 @@ type WaitSetRow struct {
 	FrameID           shared.UUID
 	ReceiverRunID     shared.UUID
 	SenderRunID       shared.UUID
-	TopicKind         string          // "state" | "attribute" | "event"
+	TopicKind         string          // "terminal" | "transient" | "attribute" | "event" | "message" | "state" (legacy/fallback)
 	SubscriptionScope string          // "direct" | "instance"
 	TopicFilter       json.RawMessage // nullable; carried for observability
 	DrainedAt         *time.Time      // nil means not yet drained

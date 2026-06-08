@@ -414,12 +414,33 @@ func readExecutorStream(
 // carries source-resolved values, static-default values, and post-
 // merge L3 + L4 instance overrides.
 func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
+	// Attribute-less / schema-less dispatch still passes through the
+	// before_dispatch breakpoint checkpoint. The breakpoint matcher keys on
+	// node_type / executor / graph / child_key — none of which require a
+	// resolved attribute bag — so a breakpoint installed on a bare node MUST
+	// still fire (and a pause-mode breakpoint MUST still block) here. Running
+	// the checkpoint on these early-return paths (rather than only after a
+	// real attribute resolve) is what makes the before_dispatch breakpoint
+	// universal across node shapes; skipping it for attribute-less nodes was a
+	// silent debugger gap. The empty bag is the correct MergedAttributes for a
+	// node carrying no attributes, and a resume overlay against such a node is
+	// a no-op merge.
 	if acq.NodeDef == nil || acq.NodeDef.Attributes == nil {
-		return map[string]any{}, nil, nil
+		empty := map[string]any{}
+		bp, err := evaluateBeforeDispatchBreakpoints(ctx, args, acq, "", empty, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		return bp, nil, nil
 	}
 	schema, execSchema, execSchemaVisible := computeEffectiveAttributeSchema(args, acq)
 	if schema == nil {
-		return map[string]any{}, nil, nil
+		empty := map[string]any{}
+		bp, err := evaluateBeforeDispatchBreakpoints(ctx, args, acq, "", empty, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		return bp, nil, nil
 	}
 	// Reapply the unified-attribute-surface check at dispatch. The
 	// registration-time validator soft-fails the readOnly leg when the
@@ -502,38 +523,12 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	// surface as `template_resolution_failed` to operators, which is
 	// the wrong diagnostic class. The dispatch proceeds with the
 	// pre-breakpoint resolved bag.
-	bpResolved, bpErr := EvaluateBreakpoints(ctx, args, CheckpointContext{
-		InstanceID:       acq.InstanceID,
-		DispatchID:       acq.DispatchID,
-		FrameID:          acq.FrameID,
-		Executor:         acq.Executor,
-		NodeType:         acq.NodeType,
-		Graph:            acq.GraphName,
-		ChildKey:         scope.PartitionKey,
-		MergedAttributes: resolved,
-		Checkpoint:       persistence.CheckpointBeforeDispatch,
-		EffectiveSchema:  schema,
-		NodeRunSnapshot:  nodeRunSnapshotForBreakpoint(acq),
-		HeldClaims:       heldClaimsSummaryForBreakpoint(acq),
-		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, acq),
-	})
+	bpResolved, bpErr := evaluateBeforeDispatchBreakpoints(ctx, args, acq, scope.PartitionKey, resolved, schema)
 	if bpErr != nil {
-		var infraErr *BreakpointInfraError
-		if errors.As(bpErr, &infraErr) {
-			if args.Logger != nil {
-				args.Logger.Warn("runner_dispatch: breakpoint infra failure; dispatching with pre-breakpoint bag",
-					"node_id", acq.NodeID.String(),
-					"dispatch_id", acq.DispatchID.String(),
-					"phase", infraErr.Phase,
-					"error", bpErr.Error())
-			}
-		} else {
-			return nil, schema, bpErr
-		}
-	} else {
-		resolved = bpResolved
-		acq.MergedAttributes = resolved
+		return nil, schema, bpErr
 	}
+	resolved = bpResolved
+	acq.MergedAttributes = resolved
 
 	dispatchSchema := relaxRequiredToSourceDriven(schema)
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
@@ -580,6 +575,70 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 			"error", err.Error())
 	}
 	return resolved, schema, nil
+}
+
+// evaluateBeforeDispatchBreakpoints runs the before_dispatch breakpoint
+// checkpoint for one dispatch and returns the (possibly overlay-mutated)
+// merged-attribute bag. It centralizes the EvaluateBreakpoints call + error
+// classification so EVERY resolveAttributes exit path runs the checkpoint —
+// the full-resolve path AND the attribute-less / schema-less early-return
+// paths — rather than only the full-resolve path. A before_dispatch
+// breakpoint must fire (and a pause-mode one must block) regardless of whether
+// the node carries attributes.
+//
+// partitionKey is the acquisition's RunScope partition key (empty for the
+// early-return callers, which resolve no scope); merged is the pre-breakpoint
+// attribute bag (empty for attribute-less nodes); schema is the effective
+// schema threaded onto the hit snapshot (nil for attribute-less nodes).
+//
+// Error contract: infrastructure failures (DB blip, context cancellation
+// during a pause/overflow wait — wrapped as *BreakpointInfraError) are
+// Warn-logged and swallowed; the dispatch proceeds with the pre-breakpoint
+// bag, never surfacing a debugger-side fault through the attribute-failure
+// policy chain. A non-infra error (e.g. an overlay that fails validation) is
+// returned to the caller to route through the existing failure paths.
+//
+// @concept: breakpoint
+func evaluateBeforeDispatchBreakpoints(
+	ctx context.Context,
+	args RunArgs,
+	acq *acquisition,
+	partitionKey string,
+	merged map[string]any,
+	schema map[string]any,
+) (map[string]any, error) {
+	bpResolved, bpErr := EvaluateBreakpoints(ctx, args, CheckpointContext{
+		InstanceID:       acq.InstanceID,
+		NodeID:           acq.NodeID,
+		DispatchID:       acq.DispatchID,
+		FrameID:          acq.FrameID,
+		Executor:         acq.Executor,
+		NodeType:         acq.NodeType,
+		Graph:            acq.GraphName,
+		ChildKey:         partitionKey,
+		MergedAttributes: merged,
+		Checkpoint:       persistence.CheckpointBeforeDispatch,
+		EffectiveSchema:  schema,
+		NodeRunSnapshot:  nodeRunSnapshotForBreakpoint(acq),
+		HeldClaims:       heldClaimsSummaryForBreakpoint(acq),
+		OpenWaitSet:      openWaitSetSummaryForBreakpoint(ctx, args, acq),
+	})
+	if bpErr != nil {
+		var infraErr *BreakpointInfraError
+		if errors.As(bpErr, &infraErr) {
+			if args.Logger != nil {
+				args.Logger.Warn("runner_dispatch: breakpoint infra failure; dispatching with pre-breakpoint bag",
+					"node_id", acq.NodeID.String(),
+					"dispatch_id", acq.DispatchID.String(),
+					"phase", infraErr.Phase,
+					"error", bpErr.Error())
+			}
+			// Infra failure swallowed: proceed with the pre-breakpoint bag.
+			return merged, nil
+		}
+		return nil, bpErr
+	}
+	return bpResolved, nil
 }
 
 // buildResolveContextForDispatch assembles the substitution context
@@ -827,6 +886,22 @@ func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveCo
 				// SubstituteValue and never raise ErrMissingSource.
 				return nil, err
 			}
+			if val == nil {
+				// Lenient-recovery path: a whole-directive `source:` carrying
+				// the `?` marker over a genuinely-absent source is the ONLY
+				// way SubstituteValue returns (nil, nil) — a strict miss
+				// returns an error above, and a present value is non-nil
+				// (resolved JSON null is itself treated as ErrMissingSource by
+				// the resolver). Landing a raw JSON null in the dispatch bag
+				// would fail the PhaseDispatch type check for a typed property
+				// (e.g. `type: string` rejects null), turning the lenient
+				// recovery the operator asked for back into a hard dispatch
+				// failure. Coerce to the property's type-appropriate empty
+				// value so the executor receives the directive "resolved to
+				// empty" — the documented lenient-marker contract — instead.
+				out[name] = emptyValueForSchemaProperty(prop)
+				continue
+			}
 			out[name] = val
 		case hasDefault:
 			// Static-default property — the default value flows into the
@@ -840,6 +915,63 @@ func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveCo
 		// them; nothing to do at dispatch.
 	}
 	return out, nil
+}
+
+// emptyValueForSchemaProperty returns the type-appropriate empty value
+// for a JSON-Schema property, used to fill a lenient (`?`-marked)
+// directive whose source was absent at dispatch. The value MUST satisfy
+// the property's declared `type` so the PhaseDispatch validation gate
+// admits it (a raw JSON null would be rejected for any non-null type).
+//
+// The mapping is the JSON zero-value per declared type: string → "",
+// number/integer → 0, boolean → false, array → [], object → {}. A
+// `type` declared as an array (e.g. `["string","null"]`) keys off its
+// first concrete (non-"null") member. When no usable `type` is
+// declared, the empty string is the safe default — it matches the
+// overwhelmingly common string-typed substitution target and the
+// spec's documented "resolved to empty string" lenient contract.
+//
+// @concept: attribute
+func emptyValueForSchemaProperty(prop map[string]any) any {
+	return emptyValueForSchemaType(firstConcreteSchemaType(prop["type"]))
+}
+
+// firstConcreteSchemaType extracts a single concrete JSON-Schema type
+// name from a `type` field that may be a bare string or a string array
+// (the JSON-Schema union form). "null" members are skipped — they carry
+// no shape for an empty value. Returns "" when no concrete type is
+// found.
+func firstConcreteSchemaType(typeField any) string {
+	switch t := typeField.(type) {
+	case string:
+		return t
+	case []any:
+		for _, item := range t {
+			if s, ok := item.(string); ok && s != "null" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+// emptyValueForSchemaType maps a JSON-Schema type name to its zero value.
+func emptyValueForSchemaType(typeName string) any {
+	switch typeName {
+	case "number", "integer":
+		return float64(0)
+	case "boolean":
+		return false
+	case "array":
+		return []any{}
+	case "object":
+		return map[string]any{}
+	default:
+		// "string" and any unrecognized / absent type fall through to the
+		// empty string — the spec's documented lenient-recovery value and
+		// the dominant substitution-target shape.
+		return ""
+	}
 }
 
 // relaxRequiredToSourceDriven returns a shallow copy of the supplied
@@ -1011,6 +1143,19 @@ func priorDispositionFromStorageForm(s string) genv1.PriorDispatchDisposition {
 	return genv1.PriorDispatchDisposition_PRIOR_NONE
 }
 
+// runScopeIDString renders a RunScope UUID for the wire as its canonical
+// string, EXCEPT the zero value, which renders as the empty string. The
+// host-agent-proxy keys spawns on run_scope_id and falls back to instance
+// id only when it is empty; emitting the zero-UUID string instead would
+// key every non-fanned-out dispatch on one shared sentinel and collapse
+// all instances onto a single late-bound child. @concept: host-agent-proxy
+func runScopeIDString(id shared.UUID) string {
+	if id == (shared.UUID{}) {
+		return ""
+	}
+	return id.String()
+}
+
 func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.ExecuteRequest, error) {
 	acq := dctx.Acquired
 	attrStruct := &structpb.Struct{Fields: map[string]*structpb.Value{}}
@@ -1043,8 +1188,17 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 
 	cancelToken := dctx.Args.SupervisorID + ":" + acq.DispatchID.String()
 	req := &genv1.ExecuteRequest{
-		NodeId:           acq.NodeID.String(),
-		InstanceId:       acq.InstanceID.String(),
+		NodeId:     acq.NodeID.String(),
+		InstanceId: acq.InstanceID.String(),
+		// RunScopeId keys per-run-scope spawn isolation in the
+		// host-agent-proxy: two concurrent run-scopes of one instance
+		// must land on distinct late-bound child processes. Opaque to
+		// in-process executors. Empty (not the zero-UUID string) when the
+		// run-scope is unset, so the proxy's empty→instance-id fallback
+		// keeps the non-fanned-out happy path keyed per instance rather
+		// than collapsing every instance onto one shared zero-UUID child.
+		// @concept: host-agent-proxy
+		RunScopeId:       runScopeIDString(acq.RunScopeID),
 		NodeType:         acq.NodeType,
 		Attributes:       attrStruct,
 		AttributesSchema: schemaStruct,

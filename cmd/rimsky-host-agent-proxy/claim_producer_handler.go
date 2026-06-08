@@ -72,6 +72,7 @@ func (h *claimProducerHandler) Open(ctx context.Context, req *genv1.OpenRequest)
 		ctx, h.state, h.fetch,
 		[]string{protocolClaimProducer},
 		req.GetInstanceId(),
+		req.GetRunScopeId(),
 		"", // claim-producer has no callback URL to rewrite
 		h.spawnTimeout,
 	)

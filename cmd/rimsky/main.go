@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
+	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/compose"
 )
 
 func main() {
@@ -75,11 +76,21 @@ func main() {
 		os.Exit(cli.RunAuth(os.Args[2:]))
 	case "conformance":
 		os.Exit(dispatchConformance(os.Args[2:]))
+	case "compose":
+		os.Exit(dispatchCompose(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "rimsky: unknown command %q\n\n", os.Args[1])
 		printRootUsage(os.Stderr)
 		os.Exit(2)
 	}
+}
+
+// dispatchCompose routes `rimsky compose <up|down|plan|status>` to the
+// app-layer compose engine. Compose reconciles a rimsky-compose.yml
+// against an already-running rimsky; it starts nothing and invokes no
+// infra command.
+func dispatchCompose(args []string) int {
+	return compose.Dispatch(context.Background(), args)
 }
 
 func dispatchTemplate(args []string) int {
@@ -380,6 +391,10 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Context:")
 	fmt.Fprintln(w, "  ctx list | use | add | rm | current")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "Compose:")
+	fmt.Fprintln(w, "  compose up | down | plan | status   Reconcile a rimsky-compose.yml")
+	fmt.Fprintln(w, "                                      against an already-running rimsky")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Host agent:")
 	fmt.Fprintln(w, "  agent start | status | stop      Manage the local host-agent daemon")

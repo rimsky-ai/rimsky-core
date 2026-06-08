@@ -78,7 +78,7 @@ func producerNameForSpec(sp any) string {
 // buildLockSpecs translates the template's per-node-type Stores+Locks
 // declarations into concrete spec values. Substitutes `{{params.x}}`,
 // `{{nodes.<n>.attribute.<f>}}`, and
-// `{{claim.<alias>.{address|scope|payload.<f>}}}` (when the alias has
+// `{{claim.<alias>.{address|claim_scope|payload.<f>}}}` (when the alias has
 // a live co-held claim) into the selector and named-lock name per
 // the substitution grammar.
 //
@@ -86,10 +86,16 @@ func producerNameForSpec(sp any) string {
 // self-deadlock against the SQLite driver's single-connection pool
 // (the tx holds the only conn; a nil-tx auto-commit would block
 // forever). See foundation/persistence/sqlite/deadlock_guard_test.go.
+// runScopeID is the RunScope this acquisition lives in (computed at the
+// acquire site from the run-tree row — it is NOT in scope here otherwise,
+// unlike InstanceID which derives from inst). It is stamped onto each
+// ClaimSpec.RunScopeID so the claim-producer Open path can carry it to the
+// host-agent-proxy for per-run-scope spawn isolation. Zero-valued for the
+// degenerate / non-fanned-out path; the proxy falls back to instance keying.
 func buildLockSpecs(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	nd *persistence.NodeRow, def *node.TemplateNodeDef, inst *persistence.InstanceRow,
-	dispatchID, frameID shared.UUID,
+	dispatchID, frameID, runScopeID shared.UUID,
 ) ([]any, error) {
 	if def == nil {
 		return nil, nil
@@ -137,6 +143,12 @@ func buildLockSpecs(
 			Alias:        sref.AliasOf(),
 			TemplateID:   instTemplateScope(inst),
 			InstanceID:   instInstanceScope(inst),
+			// Carry the run-scope onto the OpenRequest so the
+			// host-agent-proxy keys per-run-scope spawn isolation on the
+			// claim-producer path too. Empty for the zero/degenerate
+			// run-scope (proxy falls back to instance keying).
+			// @concept: host-agent-proxy
+			RunScopeID: runScopeIDString(runScopeID),
 			// Carry the template store-ref's lifetime hint ("subgraph" /
 			// "durable") through to the persistence boundary. NodeStoreRef.Lifetime
 			// is a plain string; acquireClaim converts it to spec.ClaimLifetime

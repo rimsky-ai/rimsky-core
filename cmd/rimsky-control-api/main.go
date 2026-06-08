@@ -121,6 +121,10 @@ func main() {
 		Metrics:    observability.MetricsHookOf(mreg),
 
 		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
+		// Operator-set registration-time reference-validation mode parsed
+		// from cfg:templates.ref_validation_mode (env-overridable via
+		// env:RIMSKY_REF_VALIDATION_MODE). Default strict `all`.
+		RefValidationMode: rimskyCfg.RefValidationMode,
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())

@@ -150,14 +150,24 @@ linters-settings:
       # paths when linting the lib/services module (module-relative vs.
       # workspace-relative vs. absolute), one form or the other is the one
       # that matches. Listing both keeps the rule effective in every case.
+      #
+      # The lib/services/test/ tree is out-of-tree test machinery, NOT
+      # shipped image code: the CLICTRL acceptance scenarios there boot the
+      # real assembled product and drive real CLI entrypoints (cmd/rimsky/cli)
+      # in-process against it. That test scaffolding is exempt from the
+      # isolation rule (the negated `**/test/**` globs below) — the boundary
+      # exists to keep the SHIPPED bundled-service packages (stores/, sensors/,
+      # subscribers/, executors/) isolated, not the harness/scenario tree.
       consumption-side-isolation:
         list-mode: lax
         files:
           - "**/lib/services/**"
+          - "!**/lib/services/test/**"
           - "stores/**"
           - "sensors/**"
           - "subscribers/**"
           - "executors/**"
+          - "!**/test/**"
         deny:
           - pkg: "github.com/rimsky-ai/rimsky-core/lib/foundation"
             desc: "Consumption-side binaries implement against protocols/ only. foundation/ is rimsky-internal."

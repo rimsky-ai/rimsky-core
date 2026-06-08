@@ -27,6 +27,7 @@ Owns: the active-key-count predicate over the API-key ledger, the synthetic-iden
 - **Loud startup banner.** Control-api logs at WARN once at startup and every 5 minutes thereafter while in anonymous mode, telling operators that no keys are provisioned, all requests are treated as admin, and that running the auth-init command enables authentication. The banner stops once any active key exists.
 - **Predicate caching.** Each control-api replica caches the result for one second. The cache is invalidated on every mutation (create / revoke / rotate / sweep) so the same replica's next request sees the fresh value immediately; cross-replica freshness is bounded by the TTL.
 - **Revoke-the-last-key guard.** The key-revoke endpoint refuses if the operation would leave zero active keys unless an explicit force-leave-anonymous flag is supplied. Operators returning the deployment to anonymous mode must do so explicitly.
+- **Late-bound services are reachable in anonymous mode.** An instance created in anonymous mode (owner-less, no creating api-key) may still register and dispatch to late-bound services. Routing to the connected dev-machine agent goes through a well-known anonymous routing identity under which an anonymous-mode agent registers, so the dispatch resolves to that agent rather than failing for want of an owner api-key. Anonymous mode and late-binding (`concept:host-agent-proxy`) are not mutually exclusive.
 
 ## Bootstrap sequence
 
@@ -45,3 +46,4 @@ If all keys are lost: the operator connects to the database directly and either 
 
 - [2026-05-15] Concept introduced by spec:2026-05-15-control-plane-mcp-and-auth-design ("Implicit anonymous mode").
 - 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
+- [2026-06-06] Anonymous-mode instances are no longer locked out of late-bound services: an owner-less instance may dispatch to late-bound services via a well-known anonymous routing identity (the anonymous-mode agent registers under it), removing the prior mutual exclusion. Per spec:2026-06-06-comprehensive-gap-closure; resolves the former `anonymous-mode-locks-out-late-bind` tension.

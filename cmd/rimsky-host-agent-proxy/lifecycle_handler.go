@@ -49,15 +49,18 @@ func (h *lifecycleHandler) OnInstanceCreated(_ context.Context, req *genv1.OnIns
 const reapGraceSeconds = 30
 
 // OnRunScopeTerminal reaps every spawn keyed to the terminating scope.
-// The proxy keys lazily-spawned children by instance id (its v1
-// dispatch-observable scope — see resolveAndSpawn's scopeID), so the reap
-// matches on instance_id, not run_scope_id. A pre-field caller that left
-// instance_id empty falls back to run_scope_id so the reap still has a
-// chance to match the (degenerate) main-scope-equals-instance case.
+// The proxy keys lazily-spawned children by run_scope_id (its
+// dispatch-observable spawn-isolation scope — see resolveAndSpawn's
+// scopeID), so the reap matches on run_scope_id first and reaps ONLY that
+// run-scope's child: a per-run-scope terminal of a fanned-out instance must
+// not tear down a sibling run-scope's still-serving child. It falls back to
+// instance_id only when run_scope_id is empty — the degenerate / pre-field
+// caller, where the spawn was instance-keyed too, so the reap still matches
+// the main-scope-equals-instance case.
 func (h *lifecycleHandler) OnRunScopeTerminal(_ context.Context, req *genv1.OnRunScopeTerminalRequest) (*genv1.LifecycleAck, error) {
-	scopeID := req.GetInstanceId()
+	scopeID := req.GetRunScopeId()
 	if scopeID == "" {
-		scopeID = req.GetRunScopeId()
+		scopeID = req.GetInstanceId()
 	}
 	dropped := h.state.dropSpawnsForRunScope(scopeID)
 	for i := range dropped {

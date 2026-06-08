@@ -75,7 +75,15 @@ message Spawn {
 
 message Binding {
   string path               = 1;
-  // future-extensible: args, env, per-binding cwd, etc.
+  // Per-binding exec() overrides. All four fields are additive and
+  // backward-compatible: an absent field means today's default behavior,
+  // so a binding declared with none of them spawns exactly as before
+  // (no extra args, inherited env, the instance-level cwd, and the global
+  // Spawn ready-timeout).
+  repeated string args      = 2;  // additive: extra argv passed to the child; absent → no extra args
+  map<string, string> env   = 3;  // additive: env vars layered onto the inherited environment; absent → inherited env only
+  string cwd                = 4;  // additive: per-binding working-directory override; absent → falls back to the instance-level cwd
+  int32 ready_timeout_seconds = 5; // additive: per-binding spawn-readiness timeout override; absent (0) → the global Spawn ready_timeout_seconds
 }
 
 message SpawnAck {
@@ -125,6 +133,20 @@ message DispatchFrame {
     CLAIM_PRODUCER_VERB_RELEASE     = 4;
   }
   ClaimProducerVerb claim_producer_verb = 6;
+  // rpc_method names the unary RPC the agent must invoke on the child for
+  // the non-executor, non-claim-producer fronted protocols — e.g. "Subscribe"
+  // (publisher), "Validate" (validation), "BeginCandidate" (data-processing).
+  // It is the generic analogue of claim_producer_verb: those protocols expose
+  // multiple unary RPCs whose request messages are distinct types, so — exactly
+  // as Commit/Abandon/Release are byte-identical at claim_id and force
+  // claim_producer_verb to carry the verb — the agent cannot reliably infer the
+  // target RPC from the payload shape alone. rpc_method is therefore
+  // authoritative for publisher / validation / data-processing dispatch, just as
+  // claim_producer_verb is authoritative for the claim-producer path. The value
+  // is the short or fully-qualified RPC name (the agent matches it against the
+  // child service descriptor). Empty on executor dispatch and on the
+  // claim-producer path (which uses claim_producer_verb instead).
+  string rpc_method = 7;
 }
 
 message LocalHttpForward {

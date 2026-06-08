@@ -48,6 +48,19 @@ func main() {
 	// Start the tick loop in the background.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Optional state-DB persistence. Empty env → in-memory mode.
+	state, err := openStateDB(ctx)
+	if err != nil {
+		slog.Error("open state db", "error", err.Error())
+		os.Exit(1)
+	}
+	if state != nil {
+		svc.AttachStateDB(state)
+		defer func() { _ = state.Close() }()
+		slog.Info("sensor-cron state db attached")
+	}
+
 	go svc.Run(ctx)
 
 	lis, err := serverkit.Listen(host, port)

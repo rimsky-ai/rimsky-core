@@ -19,17 +19,24 @@
 //  1. Boot a fused-store gRPC server (lib/services
 //     `stores/postgres/server.Run` directly, ClaimProducer + Executor
 //     on one endpoint) against a real testcontainers Postgres.
-//  2. Pre-seed a staging schema + production schema directly via SQL.
-//  3. Open the claim against the staging selector.
-//  4. Drive the verifier role against the staging data with
-//     `ExecuteRequest`; assert Success on all-checks-pass and
-//     Error on any-check-fail with error_class=verifier_failed.
-//  5. Drive the producer-side Commit / Abandon. Today both verbs are
-//     no-ops for scope-bytes claims (producer-side staging-schema
-//     lifecycle is not yet shipped — see concept:atomic-staging Notes
-//     append). The test pins that the verbs return cleanly across the
-//     wire so the supervisor's terminal-routing contract holds
-//     end-to-end.
+//  2. Pre-create the CANONICAL schema named by the claim selector (the
+//     operator's target view). It starts empty — the atomic swap renames
+//     the per-claim staging schema into it.
+//  3. Open the claim against the canonical selector. The staged_async
+//     producer reserves a PER-CLAIM staging schema and returns it as the
+//     claim Address (distinct from the canonical ClaimScope).
+//  4. Write the produced rows into the staging schema (the Address) and
+//     drive the verifier role against that staging data with
+//     `ExecuteRequest`; assert Success on all-checks-pass and Error on
+//     any-check-fail (hierarchical `pg/verifier_check_failed/<kind>`).
+//  5. Drive the producer-side Commit / Abandon. Commit performs the
+//     atomic schema swap (canonical reflects the staged rows; staging
+//     gone); Abandon discards the staging schema and leaves the canonical
+//     untouched — the producer-side staging-schema lifecycle shipped by
+//     spec:2026-06-06-comprehensive-gap-closure (story
+//     S-pgstore-atomic-staging-substrate). The test pins the swap end to
+//     end across the wire so the supervisor's terminal-routing contract
+//     holds.
 //
 // The pre-2026-05-24 version of this test imported
 // `pkg:foundation/persistence`, `pkg:internal/pgtest`, and the
@@ -44,6 +51,7 @@ package atomicstaging
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net"
 	"testing"
@@ -125,30 +133,33 @@ func startPgStore(t *testing.T, dsn string, enableExecutor bool) (grpcAddr strin
 	}
 }
 
-// seedStagingAndProduction creates staging + production schemas and
-// seeds the staging table with the given rows.
-func (h *fusedHarness) seedStagingAndProduction(t *testing.T, stagingSchema, productionSchema, table string, rows []map[string]any) {
+// createCanonicalSchema creates the empty canonical schema the claim
+// selector names — the operator's target view the atomic swap renames
+// the staging schema into. Empty at cutover time is the substrate's
+// contract (the swap's RESTRICT drop of the canonical refuses to
+// silently clobber a populated/depended-upon canonical).
+func (h *fusedHarness) createCanonicalSchema(t *testing.T, canonical string) {
+	t.Helper()
+	if _, err := h.pool.Exec(context.Background(),
+		"CREATE SCHEMA IF NOT EXISTS "+canonical); err != nil {
+		t.Fatalf("CREATE SCHEMA %s: %v", canonical, err)
+	}
+}
+
+// writeStagedRows materializes the executor's produced rows into the
+// per-claim staging schema (the claim Address). This stands in for the
+// real executor's data-path writes against the address it was handed.
+func (h *fusedHarness) writeStagedRows(t *testing.T, staging, table string, rows []map[string]any) {
 	t.Helper()
 	ctx := context.Background()
-	for _, schema := range []string{stagingSchema, productionSchema} {
-		_, err := h.pool.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+schema)
-		if err != nil {
-			t.Fatalf("CREATE SCHEMA %s: %v", schema, err)
-		}
-	}
 	if _, err := h.pool.Exec(ctx,
-		"CREATE TABLE "+stagingSchema+"."+table+" (id TEXT, payload TEXT)",
+		"CREATE TABLE "+staging+"."+table+" (id TEXT, payload TEXT)",
 	); err != nil {
 		t.Fatalf("CREATE TABLE staging: %v", err)
 	}
-	if _, err := h.pool.Exec(ctx,
-		"CREATE TABLE "+productionSchema+"."+table+" (id TEXT, payload TEXT)",
-	); err != nil {
-		t.Fatalf("CREATE TABLE production: %v", err)
-	}
 	for _, r := range rows {
 		if _, err := h.pool.Exec(ctx,
-			"INSERT INTO "+stagingSchema+"."+table+" (id, payload) VALUES ($1, $2)",
+			"INSERT INTO "+staging+"."+table+" (id, payload) VALUES ($1, $2)",
 			r["id"], r["payload"],
 		); err != nil {
 			t.Fatalf("INSERT staging: %v", err)
@@ -156,7 +167,7 @@ func (h *fusedHarness) seedStagingAndProduction(t *testing.T, stagingSchema, pro
 	}
 }
 
-func (h *fusedHarness) productionRowCount(t *testing.T, schema, table string) int {
+func (h *fusedHarness) schemaRowCount(t *testing.T, schema, table string) int {
 	t.Helper()
 	var n int
 	if err := h.pool.QueryRow(context.Background(),
@@ -165,6 +176,21 @@ func (h *fusedHarness) productionRowCount(t *testing.T, schema, table string) in
 		t.Fatalf("count %s.%s: %v", schema, table, err)
 	}
 	return n
+}
+
+// decodeAddressSchema decodes the Acquired.Address (a JSON-string of the
+// per-claim staging schema name) the staged_async producer returns at
+// Open.
+func decodeAddressSchema(t *testing.T, addr []byte) string {
+	t.Helper()
+	var s string
+	if err := json.Unmarshal(addr, &s); err != nil {
+		t.Fatalf("decode Address %q as schema name: %v", string(addr), err)
+	}
+	if s == "" {
+		t.Fatalf("Open returned an empty Address")
+	}
+	return s
 }
 
 func (h *fusedHarness) stagingSchemaExists(t *testing.T, schema string) bool {
@@ -215,19 +241,16 @@ func (h *fusedHarness) runVerifier(t *testing.T, schema, table string, checks []
 }
 
 // TestAtomicStaging_VerifierSuccess_DrivesCommit pins the success path
-// end-to-end. Verifier emits StreamClose.Success → the supervisor's
-// terminal-routing contract would call Commit on the producer claim.
-// Commit returns cleanly; the production-side state is untouched
-// (per the concept:atomic-staging caveat).
+// end-to-end. The staged_async producer reserves a per-claim staging
+// schema at Open; the verifier passes on the staged rows; the
+// supervisor's terminal-routing contract calls Commit, which performs
+// the atomic schema swap — the canonical (selector) schema reflects the
+// staged rows and the staging schema is gone.
 func TestAtomicStaging_VerifierSuccess_DrivesCommit(t *testing.T) {
 	t.Parallel()
 	h := bootFusedStore(t)
-	const stagingSchema, productionSchema, table = "staging_ok_e2e", "production_e2e_ok", "items"
-	h.seedStagingAndProduction(t, stagingSchema, productionSchema, table, []map[string]any{
-		{"id": "a", "payload": "x"},
-		{"id": "b", "payload": "y"},
-		{"id": "c", "payload": "z"},
-	})
+	const canonicalSchema, table = "production_e2e_ok", "items"
+	h.createCanonicalSchema(t, canonicalSchema)
 
 	producer := genv1.NewClaimProducerClient(h.conn)
 	openCtx, openCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -235,7 +258,7 @@ func TestAtomicStaging_VerifierSuccess_DrivesCommit(t *testing.T) {
 	claimID := "scenario-success-" + table
 	openResp, err := producer.Open(openCtx, &genv1.OpenRequest{
 		ClaimId:  claimID,
-		Selector: stagingSchema,
+		Selector: canonicalSchema,
 		Intent:   "rw",
 	})
 	if err != nil {
@@ -245,8 +268,22 @@ func TestAtomicStaging_VerifierSuccess_DrivesCommit(t *testing.T) {
 	if acquired == nil {
 		t.Fatalf("expected Acquired, got %+v", openResp.GetResult())
 	}
+	staging := decodeAddressSchema(t, acquired.GetAddress())
+	if staging == canonicalSchema {
+		t.Fatalf("Open returned the canonical schema as the write target; expected a distinct staging schema")
+	}
+	if !h.stagingSchemaExists(t, staging) {
+		t.Fatalf("Open did not reserve staging schema %q", staging)
+	}
 
-	sc := h.runVerifier(t, stagingSchema, table, []any{
+	// The executor writes its produced rows into the staging schema.
+	h.writeStagedRows(t, staging, table, []map[string]any{
+		{"id": "a", "payload": "x"},
+		{"id": "b", "payload": "y"},
+		{"id": "c", "payload": "z"},
+	})
+
+	sc := h.runVerifier(t, staging, table, []any{
 		map[string]any{"kind": "row_count_absolute", "config": map[string]any{"min": 1}},
 		map[string]any{"kind": "no_nulls", "config": map[string]any{"fields": []any{"id", "payload"}}},
 		map[string]any{"kind": "pk_unique", "config": map[string]any{"fields": []any{"id"}}},
@@ -265,25 +302,34 @@ func TestAtomicStaging_VerifierSuccess_DrivesCommit(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	if got := h.productionRowCount(t, productionSchema, table); got != 0 {
-		t.Errorf("production rows post-Commit: got %d want 0 (producer-side schema swap not shipped)", got)
+	// Atomic swap landed the staged rows into the canonical view...
+	if got := h.schemaRowCount(t, canonicalSchema, table); got != 3 {
+		t.Errorf("canonical rows post-Commit: got %d want 3 (atomic swap did not land staged rows)", got)
 	}
-	if !h.stagingSchemaExists(t, stagingSchema) {
-		t.Errorf("staging schema unexpectedly dropped after Commit on scope-bytes claim")
+	// ...and consumed the staging schema (no orphaned staging).
+	if h.stagingSchemaExists(t, staging) {
+		t.Errorf("staging schema %q still exists after Commit; the swap must consume it", staging)
 	}
 }
 
 // TestAtomicStaging_VerifierFailure_DrivesAbandon pins the failure
-// path. Any check fails → verifier emits Error with
-// error_class=verifier_failed → supervisor calls Abandon.
+// path. Any check fails → verifier emits Error with a hierarchical
+// `pg/verifier_check_failed/<kind>` class → supervisor calls Abandon,
+// which discards the staging schema and leaves the canonical untouched.
 func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 	t.Parallel()
 	h := bootFusedStore(t)
-	const stagingSchema, productionSchema, table = "staging_fail_e2e", "production_e2e_fail", "items"
-	h.seedStagingAndProduction(t, stagingSchema, productionSchema, table, []map[string]any{
-		{"id": "a", "payload": "x"},
-		{"id": "b", "payload": "y"},
-	})
+	const canonicalSchema, table = "production_e2e_fail", "items"
+	h.createCanonicalSchema(t, canonicalSchema)
+	// Pre-seed a canonical row the Abandon must NOT touch.
+	if _, err := h.pool.Exec(context.Background(),
+		"CREATE TABLE "+canonicalSchema+"."+table+" (id TEXT, payload TEXT)"); err != nil {
+		t.Fatalf("CREATE TABLE canonical: %v", err)
+	}
+	if _, err := h.pool.Exec(context.Background(),
+		"INSERT INTO "+canonicalSchema+"."+table+" (id, payload) VALUES ('keep','me')"); err != nil {
+		t.Fatalf("seed canonical row: %v", err)
+	}
 
 	producer := genv1.NewClaimProducerClient(h.conn)
 	openCtx, openCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -291,7 +337,7 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 	claimID := "scenario-failure-" + table
 	openResp, err := producer.Open(openCtx, &genv1.OpenRequest{
 		ClaimId:  claimID,
-		Selector: stagingSchema,
+		Selector: canonicalSchema,
 		Intent:   "rw",
 	})
 	if err != nil {
@@ -301,8 +347,13 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 	if acquired == nil {
 		t.Fatalf("expected Acquired, got %+v", openResp.GetResult())
 	}
+	staging := decodeAddressSchema(t, acquired.GetAddress())
+	h.writeStagedRows(t, staging, table, []map[string]any{
+		{"id": "a", "payload": "x"},
+		{"id": "b", "payload": "y"},
+	})
 
-	sc := h.runVerifier(t, stagingSchema, table, []any{
+	sc := h.runVerifier(t, staging, table, []any{
 		map[string]any{"kind": "row_count_absolute", "config": map[string]any{"min": 100}},
 	})
 	errOutcome := sc.GetError()
@@ -330,8 +381,12 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 		t.Fatalf("Abandon: %v", err)
 	}
 
-	if got := h.productionRowCount(t, productionSchema, table); got != 0 {
-		t.Errorf("production rows post-Abandon: got %d want 0", got)
+	// Staging discarded; canonical untouched (still the one pre-seeded row).
+	if h.stagingSchemaExists(t, staging) {
+		t.Errorf("staging schema %q still exists after Abandon; it must be dropped", staging)
+	}
+	if got := h.schemaRowCount(t, canonicalSchema, table); got != 1 {
+		t.Errorf("canonical rows post-Abandon: got %d want 1 (canonical must be unchanged)", got)
 	}
 }
 

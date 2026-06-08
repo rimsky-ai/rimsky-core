@@ -51,10 +51,21 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 	// rows; the store-side Abandon undoes any producer-side state.
 	abandonPartialLocks(ctx, args, acq.PartialLocks)
 
-	// Route through the operator's error_types: chain via synthetic
-	// class "acquire/unavailable". Absent policy → OnError resolves to
+	// Route through the operator's error_types: chain. Key on the
+	// producer-declared acquisition-failure class (e.g.
+	// "pg/claim_unavailable") when the producer named one on its
+	// Unavailable response; otherwise fall back to the synthetic
+	// "acquire/unavailable". Threading the producer-declared leaf is what
+	// makes an operator's `error_types: { pg/claim_unavailable: ... }`
+	// policy match — and what lands the canonical
+	// `terminal/error/pg/claim_unavailable` signal on the event log a
+	// subscriber routes to. Absent policy → OnError resolves to
 	// give_up("unknown_error_class") (intentional fail-fast; operators
 	// that want retry declare it explicitly).
+	errorClass := acquireUnavailableSyntheticClass
+	if acq.UnavailableClass != "" {
+		errorClass = acq.UnavailableClass
+	}
 	if err := OnError(ctx, OnErrorArgs{
 		Persist:      args.Persist,
 		Queue:        args.Queue,
@@ -64,7 +75,7 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 		RunScopeID:   acq.RunScopeID,
 		InstanceID:   acq.InstanceID,
 		SupervisorID: args.SupervisorID,
-		ErrorClass:   "acquire/unavailable",
+		ErrorClass:   errorClass,
 		Payload: map[string]any{
 			"source":        "acquire_unavailable",
 			"unavailable":   producerNameForSpec(acq.UnavailableSpec),
@@ -81,6 +92,14 @@ func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition
 			"error", err.Error())
 	}
 }
+
+// acquireUnavailableSyntheticClass is the default synthetic error_class
+// rimsky keys the operator's `error_types:` chain on when a producer
+// returned Unavailable WITHOUT naming a producer-declared class. A
+// producer that names a class on its Unavailable response (e.g. the
+// postgres store's "pg/claim_unavailable") overrides this so the
+// operator's chain matches the declared leaf.
+const acquireUnavailableSyntheticClass = "acquire/unavailable"
 
 // producerAcquireErrorFallbackClass is the synthetic error_class used
 // when a faulted claim-producer Open RPC attached no

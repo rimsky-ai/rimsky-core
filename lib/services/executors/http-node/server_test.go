@@ -484,6 +484,182 @@ func TestExecute_NonObjectJSONResponse_ReturnsParseFailed(t *testing.T) {
 	}
 }
 
+// TestHttpNode_429ParksWithResumeAtAndAutoWakes pins the
+// S-executors-http-node-429-park-resume contract: when an upstream returns
+// 429 with a Retry-After header, the http-node MUST resolve the dispatch with
+// a StreamClose Park outcome carrying ParkReason PARK_REASON_SNOOZE and a
+// resume_at computed from Retry-After (≈ now + Retry-After seconds), NOT a
+// hard StreamClose Error. A subsequent re-dispatch (simulating the
+// supervisor's auto-wake at resume_at) against an upstream that now returns
+// 200 with a JSON object body MUST reach StreamClose Success.
+//
+// This reuses rimsky's existing Park-outcome + resume_at auto-wake mechanism
+// (the same PARK_REASON_SNOOZE + ResumeAt shape claude-agent's rate-limit
+// path already emits) rather than new park machinery; the supervisor wake
+// path itself is exercised by the full-stack acceptance gate.
+func TestHttpNode_429ParksWithResumeAtAndAutoWakes(t *testing.T) {
+	const retryAfterSeconds = 7
+
+	// The upstream returns 429 + Retry-After on the first call and 200 with a
+	// JSON object body on every subsequent call, modeling a rate-limited
+	// upstream that recovers by the time the supervisor re-dispatches at
+	// resume_at.
+	var mu sync.Mutex
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"detail":"rate limited"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer ts.Close()
+
+	s := testServer(t, false)
+
+	// First dispatch: upstream 429 → must Park (SNOOZE) with resume_at, not Error.
+	c1 := &collector{}
+	req1 := newRequest(t, map[string]any{"url": ts.URL, "method": "GET"})
+	before := time.Now()
+	if err := s.executeCore(context.Background(), req1, c1.send); err != nil {
+		t.Fatalf("executeCore (first dispatch): %v", err)
+	}
+	after := time.Now()
+
+	sc := c1.terminal().GetStreamClose()
+	if sc == nil {
+		t.Fatalf("expected a StreamClose terminal, got %+v", c1.terminal().GetEvent())
+	}
+	if errd := sc.GetError(); errd != nil {
+		t.Fatalf("429 must Park, not Error; got error_class=%q", errd.GetErrorClass())
+	}
+	park := sc.GetPark()
+	if park == nil {
+		t.Fatalf("expected StreamClose Park on 429, got %+v", c1.terminal().GetEvent())
+	}
+	if park.GetReason() != genv1.ParkReason_PARK_REASON_SNOOZE {
+		t.Errorf("park reason=%v, want PARK_REASON_SNOOZE", park.GetReason())
+	}
+	if park.GetResumeAt() == nil {
+		t.Fatalf("expected Park.ResumeAt computed from Retry-After, got nil")
+	}
+	resumeAt := park.GetResumeAt().AsTime()
+	// resume_at ≈ now + Retry-After seconds. Allow a generous tolerance window
+	// bounded by the wall-clock instants straddling the dispatch.
+	lo := before.Add(retryAfterSeconds*time.Second - 2*time.Second)
+	hi := after.Add(retryAfterSeconds*time.Second + 2*time.Second)
+	if resumeAt.Before(lo) || resumeAt.After(hi) {
+		t.Errorf("resume_at=%v out of expected window [%v, %v] (now + %ds)", resumeAt, lo, hi, retryAfterSeconds)
+	}
+
+	// Second dispatch: the supervisor's auto-wake re-dispatches at resume_at;
+	// the upstream now returns 200 → must reach Success.
+	c2 := &collector{}
+	req2 := newRequest(t, map[string]any{"url": ts.URL, "method": "GET"})
+	if err := s.executeCore(context.Background(), req2, c2.send); err != nil {
+		t.Fatalf("executeCore (re-dispatch): %v", err)
+	}
+	resumed := c2.terminal().GetStreamClose()
+	if resumed.GetSuccess() == nil {
+		t.Fatalf("expected Success on auto-wake re-dispatch, got %+v", c2.terminal().GetEvent())
+	}
+	if resumed.GetSuccess().GetAttributesDelta().AsMap()["ok"] != true {
+		t.Errorf("expected attributes_delta to mirror upstream JSON, got %+v",
+			resumed.GetSuccess().GetAttributesDelta().AsMap())
+	}
+}
+
+// TestHttpNode_ConfigurableErrorClassFieldAndUnspecifiedFallback pins the
+// S-executors-http-node-error-class-field contract:
+//
+//	(1) A template author can configure WHICH JSON field in an upstream error
+//	    body carries the upstream's own error-class token (here `code` instead of
+//	    the default `error_class`), via the per-node `error_class_field`
+//	    attribute. When the upstream returns an unexpected 4xx whose body names
+//	    the class in the configured field, the terminal Error.error_class is
+//	    `http/request_invalid/<that-token>` — read from the CONFIGURED field, not
+//	    a hardcoded `error_class` key.
+//	(2) When an unexpected 4xx body parses but carries NO error-class field at
+//	    all, the http-node emits a stable, subscribable `/_unspecified` leaf
+//	    (`http/request_invalid/_unspecified`) rather than collapsing to the
+//	    catch-all `http/expectation_mismatch` — so subscribers/policies can
+//	    pattern-match `http/request_invalid/*` even for taxonomy-less upstreams.
+//
+// Both cases drive the real executeCore against real httptest upstreams. The
+// value-delivering component is the real http-node executor classifying real
+// upstream 4xx bodies. A 400 status is used (outside the default expect_status
+// 2xx set and distinct from the 429-park / 5xx-server_error branches) so the
+// dispatch resolves through classifyUnexpectedStatus's 4xx arm.
+func TestHttpNode_ConfigurableErrorClassFieldAndUnspecifiedFallback(t *testing.T) {
+	t.Run("ConfiguredFieldRead", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			// The upstream names its error class in `code`, NOT in the default
+			// `error_class` field. Note there is deliberately no `error_class`
+			// key, so a hardcoded-`error_class` reader finds nothing and the
+			// configured field is the only source of the token.
+			_, _ = w.Write([]byte(`{"code":"quota_exhausted","message":"over quota"}`))
+		}))
+		defer ts.Close()
+
+		s := testServer(t, false)
+		c := &collector{}
+		// Configure the error-class field per-node via the `error_class_field`
+		// attribute (the per-node form the fix threads through executeCore).
+		req := newRequest(t, map[string]any{
+			"url":               ts.URL,
+			"method":            "GET",
+			"error_class_field": "code",
+		})
+		_ = s.executeCore(context.Background(), req, c.send)
+
+		errd := c.terminal().GetStreamClose().GetError()
+		if errd == nil {
+			t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
+		}
+		if got, want := errd.GetErrorClass(), "http/request_invalid/quota_exhausted"; got != want {
+			t.Errorf("error_class=%q, want %q (read from the configured `code` field)", got, want)
+		}
+	})
+
+	t.Run("AbsentFieldUnspecifiedFallback", func(t *testing.T) {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			// A parseable 4xx JSON body with NO error-class field at all (neither
+			// the default `error_class` nor any configured one). This must yield
+			// the stable `/_unspecified` leaf, not the generic catch-all.
+			_, _ = w.Write([]byte(`{"message":"bad request","detail":"missing param"}`))
+		}))
+		defer ts.Close()
+
+		s := testServer(t, false)
+		c := &collector{}
+		req := newRequest(t, map[string]any{"url": ts.URL, "method": "GET"})
+		_ = s.executeCore(context.Background(), req, c.send)
+
+		errd := c.terminal().GetStreamClose().GetError()
+		if errd == nil {
+			t.Fatalf("expected Error terminal, got %+v", c.terminal().GetEvent())
+		}
+		got := errd.GetErrorClass()
+		if !strings.HasSuffix(got, "/_unspecified") {
+			t.Errorf("error_class=%q, want a leaf ending in /_unspecified (e.g. http/request_invalid/_unspecified), NOT http/expectation_mismatch", got)
+		}
+		if got == "http/expectation_mismatch" {
+			t.Errorf("error_class=%q: an absent error-class field must fall back to a stable /_unspecified leaf, not the catch-all expectation_mismatch", got)
+		}
+	})
+}
+
 // TestStubMode_RejectsNonObjectStubResponse covers the new spec §12.2
 // constraint that attributes_delta is a JSON object — non-object
 // stub_response values must be rejected as http/attribute_invalid.

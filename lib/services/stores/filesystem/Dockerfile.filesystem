@@ -10,6 +10,9 @@ COPY go.mod go.sum ./
 COPY lib/foundation/go.mod lib/foundation/go.sum ./lib/foundation/
 COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
 COPY lib/services/go.mod lib/services/go.sum ./lib/services/
+# go.work lists ./examples, so its go.mod/go.sum must be present or
+# `go mod download` aborts loading the workspace.
+COPY examples/go.mod examples/go.sum ./examples/
 RUN cd lib/services && go mod download
 COPY . .
 RUN cd lib/services && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ./stores/filesystem/cmd

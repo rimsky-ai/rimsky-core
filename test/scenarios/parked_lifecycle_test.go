@@ -43,22 +43,20 @@ import (
 func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// resumeAt must be far enough in the future that the entire setup-
-	// through-parked-state-probe sequence — testcontainers cold-start,
-	// template deploy, instance create, the parked-state SQL probes
-	// below — completes BEFORE `SweepParkedNodes` can pick the parked
-	// row up. Otherwise the sweep dispatches under the still-Park script
-	// (the resume's Success script is registered below, AFTER the parked
-	// probes), the node re-parks (Park scripts overwrite-then-stay until
-	// `WhenType` replaces them), and the test times out on
-	// `WaitForNodeState(..., Fresh)`. Observed parallel-setup latency on
-	// a loaded host can exceed 2s; 10s gives clear buffer while keeping
-	// the resume comfortably inside the post-resume 30s
-	// `WaitForNodeState` windows. The historical 2s budget was the
-	// documented flake source flagged in cycles 4, 6, 7 (mirrors the
-	// 1s→10s tightening already applied to
-	// `TestParkedLifecycleHeldClaimRetentionAcrossPark`).
-	resumeAt := time.Now().Add(10 * time.Second)
+	// resumeAt is the wall-clock deadline at which SweepParkedNodes wakes
+	// the parked node. It must outlast deploy → create → reach-parked plus
+	// the two parked-window probes (phase/resume_at and the leaf-run
+	// lineage), since those read the row while it is still parked. The race
+	// that flaked this test under full-suite load was an *accumulated*-
+	// latency one: the phase probe used to run dead last — after the
+	// park-signal wait and the lineage probe — so their combined latency
+	// could push it past the deadline, the sweep having already woken the
+	// node (phase then observed `completed`). The fix below reorders the
+	// two deadline-sensitive probes to run immediately after the parked
+	// transition; 15s then leaves clear buffer even on a heavily loaded
+	// host while keeping the resume comfortably inside the post-resume 30s
+	// `WaitForNodeState` windows.
+	resumeAt := time.Now().Add(15 * time.Second)
 	h.Stub.WhenType("worker").
 		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "rate_limit", []byte(`{"hint":"backoff"}`), resumeAt, "session-abc")
 
@@ -78,45 +76,19 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
-	// Verify the canonical terminal/park/* signal event was emitted
-	// (Pass 5 retired the legacy `park_requested` fixed-string row in
-	// favor of the signal type-path). The test uses the snooze flavor
-	// per its `resumeAt` deadline; the executor stub maps a Park with
-	// `resume_at` to ParkReason_SNOOZE.
-	require.True(t, h.WaitForEventKind(worker.ID, "terminal/park/snooze", 5*time.Second),
-		"terminal/park/snooze signal event should be recorded")
-
-	// Lineage assertion: the leaf-run lineage row for the parked
-	// terminal MUST carry settling_signal_type=terminal/park/snooze.
-	// EmitLeafRunLineage in `runner_terminal_park.go::applyTerminalPark`
-	// threads `parkSigType` through; an empty field on a park terminal
-	// row indicates the writer is dropping the value (per Pass-5
-	// reshape — the lineage row's settling_signal_type replaces the
-	// retired LastOutcome projection).
-	var parkSettlingSignal string
-	h.QueryRowSQL(
-		`SELECT record->>'settling_signal_type' FROM rimsky_lineage
-		 WHERE record_kind = 'leaf_run' AND record->>'node_id' = $1
-		 ORDER BY observed_at DESC LIMIT 1`,
-		[]any{worker.ID.String()},
-		&parkSettlingSignal,
-	)
-	require.Equal(t, "terminal/park/snooze", parkSettlingSignal,
-		"park leaf-run lineage row should carry settling_signal_type=terminal/park/snooze")
-
-	// Reschedule the worker for the resume dispatch BEFORE the parked-
-	// state SQL probes run. `WhenType` replaces the entire script in the
-	// stub's per-type map; once swapped, the next Execute call on
-	// "worker" returns a Success terminal. Pairing the swap with the
-	// generous `resumeAt` above closes the time-based wake race: even
-	// under heavy testcontainer load the Success script is in place long
-	// before `SweepParkedNodes` can fire the wake (mirrors the same
-	// ordering applied to
-	// `TestParkedLifecycleHeldClaimRetentionAcrossPark`).
+	// Two things must happen immediately after the parked transition,
+	// before any further wait can let the resume_at deadline elapse:
+	//  (a) swap the worker to its resume Success script, so the deadline
+	//      wake dispatches cleanly instead of re-running the Park script
+	//      (`WhenType` replaces the entire per-type script in the stub);
+	//  (b) capture the parked phase + persisted resume_at while the row is
+	//      still parked.
+	// Running both here — rather than dead last, after the park-signal and
+	// lineage probes — removes the accumulated-latency race that flaked
+	// this test under full-suite load: the phase read now runs ~ms after
+	// the parked transition instead of seconds later.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "resumed")
 
-	// Verify the node-run row is in phase='parked' with the
-	// resume_at set as we requested.
 	var phase string
 	var resumeAtStored *time.Time
 	h.QueryRowSQL(
@@ -128,6 +100,33 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.NotNil(t, resumeAtStored, "resume_at should be persisted")
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
+
+	// Verify the canonical terminal/park/* signal event was emitted
+	// (Pass 5 retired the legacy `park_requested` fixed-string row in
+	// favor of the signal type-path). The test uses the snooze flavor
+	// per its `resumeAt` deadline; the executor stub maps a Park with
+	// `resume_at` to ParkReason_SNOOZE. WaitForEventKind matches the
+	// historical event, so it is race-free against the resume.
+	require.True(t, h.WaitForEventKind(worker.ID, "terminal/park/snooze", 5*time.Second),
+		"terminal/park/snooze signal event should be recorded")
+
+	// Lineage assertion: the leaf-run lineage row for the parked terminal
+	// MUST carry settling_signal_type=terminal/park/snooze. EmitLeafRunLineage
+	// in `runner_terminal_park.go::applyTerminalPark` threads `parkSigType`
+	// through; an empty field would mean the writer dropped the value. This
+	// query is LIMIT 1 ORDER BY observed_at DESC, so it must still run inside
+	// the parked window (the 15s budget covers it) — once the resume lands a
+	// newer leaf-run row, it would return that instead.
+	var parkSettlingSignal string
+	h.QueryRowSQL(
+		`SELECT record->>'settling_signal_type' FROM rimsky_lineage
+		 WHERE record_kind = 'leaf_run' AND record->>'node_id' = $1
+		 ORDER BY observed_at DESC LIMIT 1`,
+		[]any{worker.ID.String()},
+		&parkSettlingSignal,
+	)
+	require.Equal(t, "terminal/park/snooze", parkSettlingSignal,
+		"park leaf-run lineage row should carry settling_signal_type=terminal/park/snooze")
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked node when resume_at elapses")

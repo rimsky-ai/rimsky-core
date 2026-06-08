@@ -11,13 +11,18 @@ package controlapi
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
@@ -473,4 +478,180 @@ func TestInstanceCreate_RequiresDeployedTemplate(t *testing.T) {
 	})
 	require.Equal(t, http.StatusConflict, status,
 		"instance creation against state='undeployed' must be refused")
+}
+
+// newRefModeHarness boots a control-api harness with the registration-
+// time reference-validation MODE set to `mode`, and wires
+// ExecutorCapabilities so a CONSTRAINED provisioned executor advertises
+// a schema declaring `count` with `minimum: 0`. Used by
+// TestRegisterTemplate_RefMode to drive POST /templates through the real
+// handleDeployTemplate under each mode.
+//
+// Two executors are modeled:
+//   - "constrained" — declared in AppDeps.Executors (provisioned) and
+//     advertising the constraining schema via ExecutorCapabilities, so a
+//     node default of `count: -1` is a genuinely-invalid provisioned ref.
+//   - the not-provisioned executor referenced by the test template is
+//     absent from both Executors and ExecutorCapabilities (ok=false).
+func newRefModeHarness(t *testing.T, mode node.RefValidationMode) (*harness, func()) {
+	t.Helper()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+
+	reg := locks.NewRegistry()
+	contentFake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
+	reg.Add("content", contentFake)
+	lcReg := locks.NewLifecycleRegistry()
+	lcReg.Add("content", contentFake)
+
+	const constrainedSchema = `{"type":"object","properties":{"count":{"type":"integer","minimum":0}}}`
+
+	capLog := shared.NewCapturingLogger()
+	app := NewApp(AppDeps{
+		Persist:       d.Tables(),
+		Queue:         d.Queue(),
+		Clock:         shared.SystemClock{},
+		Logger:        capLog,
+		Stores:        reg,
+		LifecycleSubs: lcReg,
+		// Only "constrained" is provisioned. The not-yet-provisioned
+		// executor referenced by the test template is intentionally absent.
+		Executors: map[string]ExecutorEntry{
+			"constrained": {Transport: "grpc", Endpoint: "localhost:0"},
+		},
+		// The constrained executor's schema is visible; everything else
+		// reports ok=false (schema not visible / not provisioned).
+		ExecutorCapabilities: func(name string) ([]string, []string, []byte, bool) {
+			if name == "constrained" {
+				return nil, nil, []byte(constrainedSchema), true
+			}
+			return nil, nil, nil, false
+		},
+		// The operator-set registration-time reference-validation mode.
+		RefValidationMode: mode,
+	})
+	srv := httptest.NewServer(app)
+	h := &harness{srv: srv, driver: d, persist: d.Tables(), stores: reg, logger: capLog}
+	return h, func() { srv.Close() }
+}
+
+// refModeTemplateNotProvisioned returns a wrapped POST /templates body
+// for a single-node template referencing a not-yet-provisioned executor
+// ("ghost-executor", absent from AppDeps.Executors / ExecutorCapabilities).
+func refModeTemplateNotProvisioned(name string) map[string]any {
+	return map[string]any{
+		"spec": map[string]any{
+			"name":                  name,
+			"version":               "v1",
+			"frame_resolution_mode": "serial_queue",
+			"nodes": []map[string]any{
+				{"type": "root", "executor": "ghost-executor"},
+			},
+		},
+	}
+}
+
+// refModeTemplateProvisionedInvalid returns a wrapped POST /templates
+// body for a template whose node references the PROVISIONED constrained
+// executor with a default (`count: -1`) that violates its advertised
+// schema (`minimum: 0`) — a genuinely-invalid provisioned reference.
+func refModeTemplateProvisionedInvalid(name string) map[string]any {
+	return map[string]any{
+		"spec": map[string]any{
+			"name":                  name,
+			"version":               "v1",
+			"frame_resolution_mode": "serial_queue",
+			"nodes": []map[string]any{
+				{
+					"type":     "root",
+					"executor": "constrained",
+					"attributes": map[string]any{
+						"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"count": map[string]any{
+									"type":    "integer",
+									"default": -1,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestRegisterTemplate_RefMode pins the operator-set registration-time
+// reference-validation MODE read from control-api config (story
+// S-template-validation-ref-validation-mode), driven through the real
+// POST /templates → handleDeployTemplate → node.ValidateTemplate path.
+//
+//   - mode all (default): a template referencing a not-yet-provisioned
+//     executor is rejected with HTTP 400 carrying a missing-reference
+//     validation_errors entry.
+//   - mode available: that same registration SUCCEEDS (200/201) for the
+//     not-provisioned ref, while a genuinely-invalid ref to a PROVISIONED
+//     executor (a default below the executor schema's minimum) still 400s.
+//   - mode none: registration SUCCEEDS (200/201) with no registration-time
+//     reference validation, even for the provisioned-invalid ref.
+//
+// RED today: AppDeps has no RefValidationMode field and node has no
+// RefValidationMode type, so this test does not compile against the
+// current package — the gate command's `!` inverts that build failure to
+// a pass. A later GREEN pass adds the field, the node-level mode, and
+// stamps it onto RegistryHooks in validatorHooksFor + the config/env
+// plumbing.
+func TestRegisterTemplate_RefMode(t *testing.T) {
+	t.Run("all: not-provisioned ref rejected with 400 missing-reference", func(t *testing.T) {
+		h, teardown := newRefModeHarness(t, node.RefValidateAll)
+		t.Cleanup(teardown)
+
+		body := refModeTemplateNotProvisioned("refmode-all-" + uuid.NewString())
+		status, out := h.httpJSON(t, "POST", "/templates", body)
+		require.Equal(t, http.StatusBadRequest, status,
+			"mode all must reject a not-yet-provisioned executor reference; body: %v", out)
+		errs, ok := out["validation_errors"].([]any)
+		require.True(t, ok, "response must carry validation_errors, got: %v", out)
+		require.NotEmpty(t, errs, "validation_errors must name the missing reference")
+	})
+
+	t.Run("available: not-provisioned ref succeeds; provisioned-invalid ref still 400s", func(t *testing.T) {
+		h, teardown := newRefModeHarness(t, node.RefValidateAvailable)
+		t.Cleanup(teardown)
+
+		// Not-provisioned ref: registration succeeds under `available`.
+		okBody := refModeTemplateNotProvisioned("refmode-avail-ok-" + uuid.NewString())
+		okStatus, okOut := h.httpJSON(t, "POST", "/templates", okBody)
+		require.Equal(t, http.StatusCreated, okStatus,
+			"mode available must accept a not-yet-provisioned executor reference; body: %v", okOut)
+
+		// Genuinely-invalid provisioned ref: still rejected (count: -1 vs
+		// the executor schema's minimum: 0).
+		badBody := refModeTemplateProvisionedInvalid("refmode-avail-bad-" + uuid.NewString())
+		badStatus, badOut := h.httpJSON(t, "POST", "/templates", badBody)
+		require.Equal(t, http.StatusBadRequest, badStatus,
+			"mode available must still reject a genuinely-invalid provisioned ref; body: %v", badOut)
+		errs, ok := badOut["validation_errors"].([]any)
+		require.True(t, ok, "response must carry validation_errors, got: %v", badOut)
+		require.NotEmpty(t, errs, "validation_errors must name the schema violation")
+	})
+
+	t.Run("none: no registration-time reference validation", func(t *testing.T) {
+		h, teardown := newRefModeHarness(t, node.RefValidateNone)
+		t.Cleanup(teardown)
+
+		// Not-provisioned ref succeeds.
+		okBody := refModeTemplateNotProvisioned("refmode-none-ghost-" + uuid.NewString())
+		okStatus, okOut := h.httpJSON(t, "POST", "/templates", okBody)
+		require.Equal(t, http.StatusCreated, okStatus,
+			"mode none must accept a not-yet-provisioned executor reference; body: %v", okOut)
+
+		// Even the provisioned-invalid ref registers clean under `none`:
+		// registration-time reference validation is off entirely.
+		invalidBody := refModeTemplateProvisionedInvalid("refmode-none-invalid-" + uuid.NewString())
+		invalidStatus, invalidOut := h.httpJSON(t, "POST", "/templates", invalidBody)
+		require.Equal(t, http.StatusCreated, invalidStatus,
+			"mode none must perform no registration-time reference validation; body: %v", invalidOut)
+	})
 }

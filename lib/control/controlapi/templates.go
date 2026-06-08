@@ -120,7 +120,14 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		}
 		return false
 	}
-	hooks := node.RegistryHooks{}
+	hooks := node.RegistryHooks{
+		// Stamp the operator-set registration-time reference-validation
+		// mode onto the hooks so the registration path AND the
+		// POST /templates/validate path (both route through
+		// validatorHooksFor) share one operator-chosen strictness. The
+		// zero value is node.RefValidateAll — strict by default.
+		RefValidationMode: deps.RefValidationMode,
+	}
 	if deps.Stores != nil {
 		hooks.StoreDeclared = func(name string) bool {
 			if isLateBind(name) {

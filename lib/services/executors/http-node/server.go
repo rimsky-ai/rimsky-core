@@ -13,10 +13,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -70,15 +72,23 @@ func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_Execut
 //	         Post-userdata-collapse, the executor reads its full input from
 //	         the unified `attributes` bag. A fixed set of attribute keys
 //	         (`url`, `method`, `headers`, `body`, `expect_status`,
-//	         `stub_probe`, `stub_response` — see `configAttributeKeys`)
-//	         drives the transport; every other attribute key is serialised
+//	         `stub_probe`, `stub_response`, `error_class_field` — see
+//	         `configAttributeKeys`) drives the transport (`error_class_field`
+//	         names the JSON field read from an upstream 4xx error body to
+//	         derive the `http/request_invalid/<token>` leaf, defaulting to
+//	         `error_class`); every other attribute key is serialised
 //	         as the implicit JSON request body via `buildRequestBody`'s
 //	         configAttributeKeys subtraction. An explicit `attributes.body`
 //	         overrides the implicit body. Rimsky validates the substituted
 //	         attribute bag against the executor's expected attribute
 //	         schema; the executor sees the resolved values verbatim.
-//	does not: retry, paginate, stream response bodies, or honor redirects
-//	          beyond Go stdlib defaults.
+//	does not: paginate, stream response bodies, or honor redirects beyond Go
+//	          stdlib defaults. It does NOT itself retry; instead an unexpected
+//	          429 resolves to a StreamClose Park (PARK_REASON_SNOOZE) with a
+//	          resume_at computed from Retry-After, so the supervisor's
+//	          SweepParkedNodes auto-wakes and re-dispatches the node — reusing
+//	          rimsky's existing parked-node auto-wake mechanism, not new park
+//	          machinery.
 //	thread-safety: reentrant; the http.Client is safe for concurrent use.
 func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, send sendFunc) error {
 	// Always emit an opening heartbeat so observers see liveness.
@@ -222,8 +232,36 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		return sendErrored(send, classifyTransportErr(err), "read body: "+err.Error())
 	}
 
+	// 429 Too Many Requests is a transient rate-limit signal, not a hard
+	// terminal: park (SNOOZE) with a resume_at computed from Retry-After so
+	// the supervisor's existing SweepParkedNodes wakes the node and
+	// re-dispatches, rather than terminating the run. We reuse rimsky's
+	// Park-outcome + resume_at auto-wake mechanism (the same PARK_REASON_SNOOZE
+	// + ResumeAt shape claude-agent's rate-limit path emits) — no new park
+	// machinery. This precedes the generic !statusOK error branch so a 429 is
+	// never collapsed into an http/expectation_mismatch hard Error.
+	//
+	// A 429 that the template's expect_status explicitly accepts is treated as
+	// a normal success per the operator's declared contract — only an
+	// unexpected 429 parks.
+	if resp.StatusCode == http.StatusTooManyRequests && !statusOK(resp.StatusCode, expectStatus) {
+		resumeAt := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now)
+		return sendParked(send, resumeAt,
+			fmt.Sprintf("upstream returned 429; parked until %s (Retry-After=%q)", resumeAt.Format(time.RFC3339), resp.Header.Get("Retry-After")))
+	}
+
 	if !statusOK(resp.StatusCode, expectStatus) {
-		return sendErrored(send, classifyUnexpectedStatus(resp.StatusCode, body), fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512)))
+		// Resolve the upstream error-class field name: a per-node
+		// `attributes.error_class_field` wins, else the executor's
+		// configured default (`error_class` unless overridden by env).
+		errorClassField := s.cfg.ErrorClassField
+		if ecf, ok := ud["error_class_field"].(string); ok && ecf != "" {
+			errorClassField = ecf
+		}
+		if errorClassField == "" {
+			errorClassField = DefaultErrorClassField
+		}
+		return sendErrored(send, classifyUnexpectedStatus(resp.StatusCode, body, errorClassField), fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512)))
 	}
 
 	// Response → attributes_delta. The target's response body must be a
@@ -252,13 +290,14 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 // the attribute bag, these keys are subtracted so transport config
 // never leaks into the upstream payload.
 var configAttributeKeys = map[string]struct{}{
-	"url":           {},
-	"method":        {},
-	"headers":       {},
-	"body":          {},
-	"expect_status": {},
-	"stub_probe":    {},
-	"stub_response": {},
+	"url":               {},
+	"method":            {},
+	"headers":           {},
+	"body":              {},
+	"expect_status":     {},
+	"stub_probe":        {},
+	"stub_response":     {},
+	"error_class_field": {},
 }
 
 // buildRequestBody picks the upstream request body. `attributes.body`
@@ -377,22 +416,96 @@ func classifyTransportErr(err error) string {
 // hierarchical error class per `concept:signal`:
 //   - 5xx → `http/server_error/<status>` (upstream may recover; subscribers
 //     can pattern-match `http/server_error/*` for transient flavors).
-//   - 4xx with a JSON body containing `error_class` → `http/request_invalid/<body_class>`
-//     (the upstream named a specific request defect).
-//   - otherwise → `http/expectation_mismatch`.
-func classifyUnexpectedStatus(status int, body []byte) string {
+//   - 4xx with a parseable JSON object body whose configured error-class
+//     field (`errorClassField`, default `error_class`, overridable per-node
+//     via `attributes.error_class_field` or by env) holds a non-empty token →
+//     `http/request_invalid/<body_class>` (the upstream named a specific
+//     request defect).
+//   - 4xx with a parseable JSON object body that does NOT carry the configured
+//     field → `http/request_invalid/_unspecified` (a stable, subscribable leaf
+//     so `http/request_invalid/*` policies still match taxonomy-less upstreams,
+//     rather than collapsing to the catch-all `http/expectation_mismatch`).
+//   - otherwise (non-4xx/5xx, empty body, or unparseable body) →
+//     `http/expectation_mismatch`.
+func classifyUnexpectedStatus(status int, body []byte, errorClassField string) string {
 	if status >= 500 && status <= 599 {
 		return fmt.Sprintf("http/server_error/%d", status)
+	}
+	if errorClassField == "" {
+		errorClassField = DefaultErrorClassField
 	}
 	if status >= 400 && status <= 499 && len(body) > 0 {
 		var decoded map[string]any
 		if json.Unmarshal(body, &decoded) == nil {
-			if cls, ok := decoded["error_class"].(string); ok && cls != "" {
+			if cls, ok := decoded[errorClassField].(string); ok && cls != "" {
 				return "http/request_invalid/" + cls
 			}
+			// The 4xx body parsed as a JSON object but the configured
+			// error-class field is absent/empty: emit the stable
+			// `_unspecified` leaf so the request-invalid subtree stays
+			// subscribable even for upstreams that publish no taxonomy.
+			return "http/request_invalid/_unspecified"
 		}
 	}
 	return "http/expectation_mismatch"
+}
+
+// defaultRetryAfter is the snooze window used when a 429 carries no
+// Retry-After header (or an unparseable one). RFC 9110 makes Retry-After
+// optional on 429, so we still need a finite resume_at so the supervisor's
+// SweepParkedNodes auto-wakes the node rather than leaving it parked forever.
+const defaultRetryAfter = 30 * time.Second
+
+// parseRetryAfter computes the wall-clock resume time from a Retry-After
+// header value per RFC 9110 §10.2.3, which permits two forms:
+//   - delta-seconds: a non-negative integer count of seconds to wait
+//     (e.g. "7") → now + 7s.
+//   - HTTP-date: an absolute IMF-fixdate timestamp (e.g.
+//     "Wed, 21 Oct 2026 07:28:00 GMT") → that instant.
+//
+// `now` is injected (rather than calling time.Now directly) so the
+// delta-seconds branch is deterministically testable. An empty, malformed,
+// or past-dated header falls back to now + defaultRetryAfter — a finite,
+// future resume_at is required for the supervisor's auto-wake sweep to fire.
+func parseRetryAfter(header string, now func() time.Time) time.Time {
+	header = strings.TrimSpace(header)
+	base := now()
+	if header == "" {
+		return base.Add(defaultRetryAfter)
+	}
+	// delta-seconds form: a bare non-negative integer.
+	if secs, err := strconv.Atoi(header); err == nil {
+		if secs < 0 {
+			return base.Add(defaultRetryAfter)
+		}
+		return base.Add(time.Duration(secs) * time.Second)
+	}
+	// HTTP-date form: try the standard date formats RFC 9110 allows.
+	for _, layout := range []string{http.TimeFormat, time.RFC1123, time.RFC1123Z, time.RFC850, time.ANSIC} {
+		if t, err := time.Parse(layout, header); err == nil {
+			if t.After(base) {
+				return t
+			}
+			// A non-future date is treated as "retry now" rather than the
+			// generic default — the upstream is explicitly clearing the wait.
+			return base
+		}
+	}
+	return base.Add(defaultRetryAfter)
+}
+
+// sendParked emits a terminal StreamClose Park with PARK_REASON_SNOOZE and the
+// computed resume_at, reusing rimsky's existing parked-node auto-wake
+// mechanism. The supervisor's SweepParkedNodes wakes the node at resume_at and
+// re-dispatches it (resume_reason = "deadline_elapsed").
+func sendParked(send sendFunc, resumeAt time.Time, note string) error {
+	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: &genv1.Park{
+			Reason:     genv1.ParkReason_PARK_REASON_SNOOZE,
+			ResumeAt:   timestamppb.New(resumeAt),
+			ReasonNote: note,
+		}}},
+	}})
 }
 
 func sendErrored(send sendFunc, class, msg string) error {

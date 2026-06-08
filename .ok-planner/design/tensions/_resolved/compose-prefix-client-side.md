@@ -1,7 +1,7 @@
 ---
 tension: compose-prefix-client-side
 category: inconsistent
-status: open
+status: resolved
 affects:
   - rimsky
   - template
@@ -38,4 +38,8 @@ The `rimsky-cli compose` workflow relies on the prefix being predictable to scan
 - `_discover/rimsky-cli-compose-prefix-reservation.md` Description.
 - `_discover/2026-05-10-rimsky-cli-thin-client.md` "compose prefix" para.
 - CLAUDE.md "Non-obvious gotchas".
+
+## Resolution
+
+Resolved per spec:2026-06-06-comprehensive-gap-closure. The reservation is now a server-enforced invariant rather than a client-side convention: tag-create and instance-create at the control-api reject a `compose:`-prefixed name from any caller except the privileged compose path. The compose path identifies itself with a trusted compose-origin marker on its requests, which the guard checks before allowing a reserved-prefix write; the marker discriminates compose-originated writes from foreign ones rather than blocking the prefix unconditionally. The reservation now holds at the source of truth, so a non-CLI tool can no longer silently collide with the compose namespace. See the new server-enforced Invariant on `concept:control-api` and `concept:tag`.
 

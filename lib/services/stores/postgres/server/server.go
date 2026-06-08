@@ -8,13 +8,17 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	claimproducer "github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
@@ -151,8 +155,14 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 		return nil, err
 	}
 	if !outcome.Available {
+		// Carry the producer-declared acquisition-failure class (e.g.
+		// pg/claim_unavailable) on the Unavailable arm so rimsky keys the
+		// operator's `error_types:` chain on it. Empty when the store named
+		// no class — preserving the synthetic `acquire/unavailable` routing.
 		return &genv1.OpenResponse{
-			Result: &genv1.OpenResponse_Unavailable{Unavailable: &genv1.Unavailable{}},
+			Result: &genv1.OpenResponse_Unavailable{Unavailable: &genv1.Unavailable{
+				ErrorClass: outcome.UnavailableClass,
+			}},
 		}, nil
 	}
 	return &genv1.OpenResponse{
@@ -165,10 +175,15 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	}, nil
 }
 
-// Commit delegates.
+// Commit delegates. A store-side failure carrying a rimsky error_class
+// (e.g. the atomic-staging `pg/swap_failed` collision) is translated into
+// a gRPC status with a google.rpc.ErrorInfo detail so rimsky's
+// claim-producer client recovers the class and routes it through the
+// holder's `error_types:` chain — giving the declared `pg/swap_failed`
+// class a real signal at the subscriber surface.
 func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
 	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
-		return nil, err
+		return nil, classedStatus(err)
 	}
 	return &genv1.CommitResponse{}, nil
 }
@@ -176,7 +191,7 @@ func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.C
 // Abandon delegates.
 func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
 	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
-		return nil, err
+		return nil, classedStatus(err)
 	}
 	return &genv1.AbandonResponse{}, nil
 }
@@ -184,7 +199,33 @@ func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1
 // Release delegates.
 func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
 	if err := s.store.Release(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
-		return nil, err
+		return nil, classedStatus(err)
 	}
 	return &genv1.ReleaseResponse{}, nil
+}
+
+// classedStatus maps a store-side error into a gRPC status. When the
+// error carries a rimsky error_class (a *store.ClassedError, e.g. the
+// `pg/swap_failed` atomic-staging collision), the class is stamped into a
+// google.rpc.ErrorInfo detail (Reason = class) — the exact shape
+// `lib/runtime/peer.extractErrorClass` decodes — so the supervisor routes
+// the producer-verb fault through the operator's `error_types:` chain.
+// An unclassed error passes through as a bare Internal status.
+func classedStatus(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *pgsstore.ClassedError
+	if !errors.As(err, &ce) || ce.Class == "" {
+		return err
+	}
+	st := status.New(codes.Internal, ce.Error())
+	withInfo, derr := st.WithDetails(&errdetails.ErrorInfo{
+		Reason: ce.Class,
+		Domain: "rimsky.store-postgres",
+	})
+	if derr != nil {
+		return st.Err()
+	}
+	return withInfo.Err()
 }

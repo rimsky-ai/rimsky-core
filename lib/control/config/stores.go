@@ -34,6 +34,7 @@ import (
 	"io/fs"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,6 +42,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
@@ -257,6 +259,33 @@ type RimskyConfig struct {
 	// (claim-producer) for late-bind dispatch resolution; consumed by
 	// LifecyclePeersForSpec for late-bind-proxy fan-out subscription.
 	LateBindServiceProxies map[string]string
+	// RefValidationMode is the operator-set registration-time reference-
+	// validation mode parsed from cfg:templates.ref_validation_mode
+	// (overridable via env:RIMSKY_REF_VALIDATION_MODE). Default
+	// node.RefValidateAll (strict). Threaded into
+	// ControlAPIConfig.RefValidationMode → AppDeps.RefValidationMode so
+	// the registration validator and POST /templates/validate honor the
+	// operator's chosen strictness. Story
+	// S-template-validation-ref-validation-mode.
+	RefValidationMode node.RefValidationMode
+}
+
+// ParseRefValidationMode resolves the operator-set registration-time
+// reference-validation mode from a string value (one of "all",
+// "available", "none"; empty → the strict "all" default). Unknown values
+// are rejected so an operator gets a precise startup error rather than a
+// silently-ignored mode. Case-insensitive.
+func ParseRefValidationMode(raw string) (node.RefValidationMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "all":
+		return node.RefValidateAll, nil
+	case "available":
+		return node.RefValidateAvailable, nil
+	case "none":
+		return node.RefValidateNone, nil
+	default:
+		return node.RefValidateAll, fmt.Errorf("ref_validation_mode: unknown value %q (one of: all, available, none)", raw)
+	}
 }
 
 // LoadRimskyConfigYAML reads rimsky.yml: the unified deployment-shape
@@ -345,6 +374,12 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		// LateBindServiceProxies maps protocol name → proxy service name
 		// for late-bind dispatch resolution and fan-out subscription.
 		LateBindServiceProxies map[string]string `yaml:"late_bind_service_proxies"`
+		// Templates is the `templates:` block. Carries the operator-set
+		// registration-time reference-validation mode. Story
+		// S-template-validation-ref-validation-mode.
+		Templates struct {
+			RefValidationMode string `yaml:"ref_validation_mode"`
+		} `yaml:"templates"`
 	}
 	if err := yaml.Unmarshal([]byte(expanded), &wrapper); err != nil {
 		return RimskyConfig{}, fmt.Errorf("parse rimsky config %q: %w", path, err)
@@ -496,6 +531,21 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
 
+	// Registration-time reference-validation mode: env:RIMSKY_REF_VALIDATION_MODE
+	// overrides cfg:templates.ref_validation_mode; both empty → strict `all`
+	// default. Unknown values reject at startup (precise error, never a
+	// silently-ignored mode). The env-expansion at the top of this loader
+	// (os.ExpandEnv) does not cover a fresh env-only override, so read it
+	// explicitly here.
+	refModeRaw := wrapper.Templates.RefValidationMode
+	if envMode := os.Getenv("RIMSKY_REF_VALIDATION_MODE"); envMode != "" {
+		refModeRaw = envMode
+	}
+	refMode, err := ParseRefValidationMode(refModeRaw)
+	if err != nil {
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: templates.%w", path, err)
+	}
+
 	return RimskyConfig{
 		Persistence:            pcfg,
 		Blob:                   bcfg,
@@ -506,6 +556,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		MaxParkDuration:        wrapper.MaxParkDuration,
 		Retention:              retentionCfg,
 		LateBindServiceProxies: wrapper.LateBindServiceProxies,
+		RefValidationMode:      refMode,
 	}, nil
 }
 

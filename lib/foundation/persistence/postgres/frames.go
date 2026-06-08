@@ -225,6 +225,29 @@ func (s *framesImpl) PromoteQueuedFrameToRunning(ctx context.Context, frameID sh
 	return cmd.RowsAffected() == 1, nil
 }
 
+// GetRunningFrameID returns the frame_id of the instance's currently-
+// running frame, or (nil, nil) when none is running. Under the
+// serial-queue model at most one running frame exists per instance; the
+// ORDER BY started_at DESC LIMIT 1 is a defensive tiebreak that picks the
+// most-recently-started row should two ever coexist (they must not).
+func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (*shared.UUID, error) {
+	var frameID shared.UUID
+	err := s.q(tx).QueryRow(ctx, `
+        SELECT frame_id
+          FROM rimsky_frames
+         WHERE instance_id = $1 AND state = 'running'
+         ORDER BY started_at DESC
+         LIMIT 1
+    `, instanceID).Scan(&frameID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("frames.GetRunningFrameID: %w", err)
+	}
+	return &frameID, nil
+}
+
 // MarkSourceNodeStale binds a frame's source node to the frame. Post-
 // stage-3 cutover: state lives on rimsky_node_runs only, so this helper:
 //   - binds rimsky_nodes.frame_id = $1 (idempotent re-bind for sources

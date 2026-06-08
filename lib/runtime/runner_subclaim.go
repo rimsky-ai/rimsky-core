@@ -158,12 +158,28 @@ func AcquireSubClaims(
 			dpClient = c
 		}
 	}
+	// Resolve the producer's conflict capability ONCE per fan-out wave so
+	// the per-sub-claim overlap check (below) does not re-fetch
+	// capabilities per descriptor (@blessed-invariant 4b).
+	caps, err := producer.Capabilities(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("AcquireSubClaims: Capabilities(%s): %w", in.ProducerName, err)
+	}
 	out := make([]SubClaim, 0, len(resp.SubClaimScopes))
 	parentID := in.ParentClaimHandleID
 	lifetime := in.Lifetime
 	if lifetime == "" {
 		lifetime = spec.ClaimLifetimeSubgraph
 	}
+	// acceptedScopes accumulates the canonical claim_scope_data of every
+	// sub-claim already accepted in THIS wave. Each new sub-scope is
+	// conflict-checked against these siblings before its row is INSERTed —
+	// @blessed-invariant 4b at the sub-claim level. A SplitScope that
+	// emits two overlapping sub-scopes (byte-equal, or producer-defined
+	// overlap when advertised) must not commit both rows: the conflicting
+	// sub-claim aborts the whole acquisition tx (@blessed-invariant 10),
+	// so NO sibling sub-claim row commits.
+	acceptedScopes := make([][]byte, 0, len(resp.SubClaimScopes))
 	// Persist the parent's aggregation policy snapshot ONCE per fan-out
 	// acquisition. The recursive walker reads it at parent resolution
 	// time to compute the true aggregate outcome over all children
@@ -184,6 +200,25 @@ func AcquireSubClaims(
 		}
 	}
 	for _, desc := range resp.SubClaimScopes {
+		// @blessed-invariant 4b at the sub-claim level: conflict-check this
+		// sub-scope against every sibling already accepted in this wave
+		// BEFORE any producer-side side effect (BeginCandidate) or row
+		// INSERT, so a conflicting descriptor short-circuits cleanly and
+		// aborts the whole acquisition tx (@blessed-invariant 10). The
+		// predicate is producer-aware — byte-equal by default, the
+		// producer's own ScopesConflict when advertised.
+		subScope := json.RawMessage(desc.ClaimScopeData)
+		for _, prior := range acceptedScopes {
+			conflicts, cErr := scopesConflict(ctx, producer, caps, subScope, prior)
+			if cErr != nil {
+				return nil, fmt.Errorf("AcquireSubClaims: ScopesConflict(%s): %w", in.ProducerName, cErr)
+			}
+			if conflicts {
+				return nil, fmt.Errorf("AcquireSubClaims: overlapping sub-claim scopes for producer %q "+
+					"(partition_key %q conflicts with an already-acquired sibling) — rejecting the whole "+
+					"fan-out acquisition per @blessed-invariant 4b/10", in.ProducerName, desc.PartitionKey)
+			}
+		}
 		subID := shared.UUID(uuid.New())
 		// BeginCandidate runs BEFORE the row INSERT so the
 		// `producer_candidate_handle` column carries the producer's
@@ -248,6 +283,9 @@ func AcquireSubClaims(
 		if err := args.ClaimHandles.BumpExpectedChildrenCount(ctx, parentID, in.HolderSupervisorID, 1, tx); err != nil {
 			return nil, fmt.Errorf("AcquireSubClaims: BumpExpectedChildrenCount on parent: %w", err)
 		}
+		// Record the accepted sub-scope so subsequent descriptors in this
+		// wave conflict-check against it (@blessed-invariant 4b).
+		acceptedScopes = append(acceptedScopes, desc.ClaimScopeData)
 		out = append(out, SubClaim{
 			ClaimHandleID:           subID,
 			PartitionKey:            desc.PartitionKey,

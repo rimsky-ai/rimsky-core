@@ -197,12 +197,22 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		var frameStr sql.NullString
 		var deliveredAt sql.NullTime
 		var cancelled int
+		// payload may be NULL (e.g. an invalidate envelope with no body).
+		// The database/sql driver cannot store a NULL driver.Value into a
+		// *json.RawMessage directly, so scan through a nullable []byte and
+		// leave m.Payload nil when the column is NULL. (pgx tolerates NULL
+		// into *json.RawMessage; database/sql does not — this is the SQLite
+		// analogue of the postgres collectMessages nullable-payload handling.)
+		var payload []byte
 		if err := rows.Scan(
 			&idStr, &instanceStr, &m.Kind, &m.Sender, &m.SenderKind,
-			&target, &m.Payload, &backfillStr, &m.ReceivedAt, &deliveredAt,
+			&target, &payload, &backfillStr, &m.ReceivedAt, &deliveredAt,
 			&frameStr, &cancelled,
 		); err != nil {
 			return nil, err
+		}
+		if payload != nil {
+			m.Payload = payload
 		}
 		if u, err := uuid.Parse(idStr); err == nil {
 			m.ID = u

@@ -331,6 +331,32 @@ func (s *framesImpl) PromoteQueuedFrameToRunning(ctx context.Context, frameID sh
 	return n == 1, nil
 }
 
+// GetRunningFrameID returns the frame_id of the instance's currently-
+// running frame, or (nil, nil) when none is running. See the postgres
+// mirror for rationale; the ORDER BY started_at DESC LIMIT 1 is the same
+// defensive single-row tiebreak.
+func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (*shared.UUID, error) {
+	var frameIDStr string
+	err := s.q(tx).QueryRowContext(ctx, `
+        SELECT frame_id
+          FROM rimsky_frames
+         WHERE instance_id = ? AND state = 'running'
+         ORDER BY started_at DESC
+         LIMIT 1
+    `, instanceID.String()).Scan(&frameIDStr)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("frames.GetRunningFrameID: %w", err)
+	}
+	fid, err := uuid.Parse(frameIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("frames.GetRunningFrameID: parse frame_id: %w", err)
+	}
+	return &fid, nil
+}
+
 // MarkSourceNodeStale — post-stage-3 cutover. See postgres mirror for
 // rationale. Binds rimsky_nodes.frame_id then INSERTs a fresh pending
 // stale run row when no in-flight row exists; falls back to the

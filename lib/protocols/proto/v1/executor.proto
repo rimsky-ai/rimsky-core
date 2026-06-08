@@ -114,6 +114,14 @@ message ExecuteRequest {
   // so the executor can route its recovery / handoff logic. Unset
   // (== PRIOR_NONE) on the initial dispatch. Per spec.
   optional PriorDispatchDisposition prior_dispatch_disposition = 15;
+
+  // run_scope_id is the RunScope this dispatch lives in; used by the
+  // host-agent-proxy to key per-run-scope spawn isolation (one spawned
+  // late-bound child per (run_scope_id, binding), reaped at run-scope
+  // termination). Opaque to in-process executors.
+  //
+  // @concept: run-scope
+  string run_scope_id = 16;
 }
 
 // PriorDispatchDisposition is the classifier accompanying

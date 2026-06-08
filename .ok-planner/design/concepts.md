@@ -29,7 +29,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `data-processing` — Optional mix-in protocol on a claim producer, advertised in the capabilities handshake alongside the claim-producer protocol, for the typed-data version lifecycle.
 - `delegation` — Delegation is the relationship between a calling node and a sub-graph: a node carries `delegate: <graph-name>` instead of `executor:`, and dispatches the named sub-graph as its execution unit.
 - `discovery-cache` (aliases: capabilities cache) — An in-memory per-service capabilities cache populated by the observability handshake at startup.
-- `dry-run` — A per-request flag (`?dry_run=true`) that runs a write's validation but skips its mutation, returning a synthetic would-have envelope; a no-op on reads.
+- `dry-run` — A request mode (preview-without-commit) that runs a write's validation but skips its mutation, returning a synthetic would-have envelope; resolves from the `?dry_run=true` request flag OR an identity-bound grant `mode` floor, and is a no-op on reads.
 - `error-policy` (aliases: error-types policy chain) — The template-level error-types block maps per-error-class strings to one of four runtime actions: pass, give_up, retry, discard_claims_then_retry.
 - `event-log` (aliases: audit log) — Rimsky's internal append-only audit-log ledger.
 - `executor` — An executor is an out-of-process service that implements the gRPC executor's server-streaming execute method plus an optional executor-observability protocol.
@@ -37,7 +37,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `frame` (aliases: cascade-frame) — A frame is one cascade resolution.
 - `graph` — A graph is rimsky's unit of node connectivity.
 - `host-agent` — Long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary, that authenticates outbound to a host-agent-proxy and serves spawn / dispatch / reap / local-HTTP-forward requests against locally-running binaries.
-- `host-agent-proxy` — Rimsky-stack `concept:service` implementing the multi-protocol composition pattern; presents the executor, claim-producer, and lifecycle-subscriber protocols on the supervisor-facing side and maintains agent connections on the dev-facing side via a long-lived bidi-stream protocol.
+- `host-agent-proxy` — Rimsky-stack `concept:service` implementing the multi-protocol composition pattern; a transparent forwarder presenting every fronted rimsky service protocol (executor, claim-producer, publisher, validation, data-processing) on the supervisor-facing side and maintaining agent connections on the dev-facing side via a long-lived bidi-stream protocol.
 - `inertness` (aliases: opacity (legacy), inert bytes) — A uniform discipline applied across two overlapping lists of carrier byte streams.
 - `instance` — An instance is one live deployment of a template, identified by a rimsky-generated UUID.
 - `invalidate` — `invalidate` is the sole graph-level message that the scheduler / control-api emits to mark a node `stale`.
@@ -54,7 +54,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `observability` — The service-facing optional observability protocols and the startup handshake that probes them.
 - `orphan-reaper` — A periodic sweep that hard-deletes stale rows from the node-run ledger and the claim-handle ledger.
 - `parked-state` (aliases: park, parked node) — `parked` is the fifth legal node state, entered from `running` when the executor emits a park outcome.
-- `permission` (aliases: grant, action) — The per-key authorization grant attached to a `concept:api-key`: a set of action-string entries evaluated by set-membership, with no per-entry mode modifier.
+- `permission` (aliases: grant, action) — The per-key authorization grant attached to a `concept:api-key`: a set of `{action, mode?, scope?}` entries evaluated by set-membership-with-scope — an action string plus an optional identity-bound dry-run `mode` floor and an optional resource `scope` selector.
 - `persistence-database` (aliases: persistence-driver) — The top-level database interface is the umbrella over the rimsky persistence layer.
 - `publisher` — A publisher is a peer service that publishes messages into rimsky.
 - `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, kind) triple.

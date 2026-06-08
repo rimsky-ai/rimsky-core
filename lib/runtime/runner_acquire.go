@@ -202,6 +202,13 @@ type acquisition struct {
 	// rollback so the unavailable-handler dispatch can log / route on
 	// it.
 	UnavailableSpec claimproducer.ClaimSpec
+	// UnavailableClass is the producer-declared acquisition-failure class
+	// (OpenOutcome.UnavailableClass) carried out of the Unavailable
+	// branch. handleAcquireUnavailable keys the operator's `error_types:`
+	// chain on this producer-declared leaf (e.g. "pg/claim_unavailable")
+	// when non-empty, falling back to the synthetic "acquire/unavailable"
+	// when empty.
+	UnavailableClass string
 
 	// ErroredSpec is the spec whose Open RPC faulted, when the
 	// acquisition took the producer-errored branch
@@ -528,7 +535,7 @@ func tryAcquire(
 			runScopeID = row.RunScopeID
 		}
 	}
-	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.DispatchID, cand.FrameID)
+	specs, err := buildLockSpecs(ctx, args, tx, nd, nodeDef, inst, cand.DispatchID, cand.FrameID, runScopeID)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: lock-spec substitution failed",
 			"node_id", cand.NodeID.String(), "error", err.Error())
@@ -613,6 +620,7 @@ func tryAcquire(
 				HeldSubgraphs:             heldSubgraphs,
 				PartialLocks:              acquiredLocks,
 				UnavailableSpec:           unavailableSpec,
+				UnavailableClass:          al.UnavailableClass,
 				TemplateAttributeDefaults: templateAttributeDefaults,
 			}
 			if inst != nil {

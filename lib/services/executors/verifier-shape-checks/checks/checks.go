@@ -48,13 +48,37 @@ type Counters struct {
 	Threshold float64 // populated by checks that compare against a ratio
 }
 
+// Severity classifies how a failed check is treated at run time. An
+// `error`-severity failure blocks the commit (drives the Error terminal);
+// a `warning`-severity failure is non-blocking and surfaced as a soft
+// finding while the dispatch still succeeds.
+//
+// This is a services-local copy of the platform's spec.Severity enum.
+// It is duplicated rather than imported because the consumption-side
+// services module (lib/services) is forbidden from importing lib/foundation
+// (the `consumption-side-isolation` depguard rule); the type is small,
+// stable, and the wire-string values match spec.Severity exactly.
+//
+//	@source: lib/foundation/spec/enums.go::Severity
+type Severity string
+
+const (
+	// SeverityError marks a check whose failure blocks the commit.
+	SeverityError Severity = "error"
+	// SeverityWarning marks a check whose failure is non-blocking.
+	SeverityWarning Severity = "warning"
+)
+
 // CheckSpec is the discriminated-union shape callers serialize from
 // the verifier executor's `attributes.checks`. The verifier deserializes
 // `attributes.checks[*]` into this shape and dispatches to the per-kind
-// runner.
+// runner. Severity defaults to SeverityError when unset by the caller —
+// a failing check blocks unless the author explicitly downgrades it to
+// a warning.
 type CheckSpec struct {
-	Kind   string         `json:"kind"`
-	Config map[string]any `json:"config"`
+	Kind     string         `json:"kind"`
+	Config   map[string]any `json:"config"`
+	Severity Severity       `json:"severity"`
 }
 
 // Run dispatches a single check against rows. Returns a Result; the

@@ -4,18 +4,23 @@
 
 // Substitution: single-pass `{{...}}` resolution per spec §16.
 //
+// One canonical bullet per live source kind, enumerating exactly the arms
+// resolveDirectiveValueRaw dispatches on (the retired `deps` form below is
+// a rejected migration-pointer arm, not a live kind).
+//
 // Five recognized source kinds:
 //
-//   - {{nodes.<node>.attribute.<field>}} — upstream node's persisted attributes
-//   - {{nodes.<node>.event.<event_name>.<field>}} — upstream node's most recent named-event payload
-//   - {{claim.<alias>.address}} — live claim's address bytes
-//   - {{claim.<alias>.payload.<field>}} — live claim's payload at named path
-//   - {{claim.<alias>.claim_scope}} — live claim's claim-scope bytes
+//   - {{nodes.<node>.attribute.<field>}} — upstream node's persisted attributes (also `{{nodes.<node>.event.<event_name>.<field>}}` for a named-event payload)
+//   - {{claim.<alias>.claim_scope}} — live claim's claim-scope bytes (also `.address` and `.payload.<field>`)
 //   - {{params.<key>}} — instance-level config params
+//   - {{trigger.message.payload.<field>}} — the bound trigger message's payload at named path
+//   - {{child.partition_key}} — the per-child-run partition key (fan-out leaf dispatch context only)
 //
 // The post-2026-05-14 `nodes.X.attribute.Y` form replaces the legacy
 // `deps.X.Y` form: per the subscription-cascade resolution, substitution
 // refs auto-subscribe the receiver to (sender=X, topic=attribute, name=Y).
+// `deps.X.Y` is now rejected with a migration-pointer error — a retired
+// form, not one of the five live source kinds above.
 //
 // @blessed-invariant 20 — Claim content is inert in Rimsky.
 //
@@ -294,7 +299,7 @@ func SubstituteValue(rawValue string, ctx ResolveContext) (any, error) {
 //
 //	nodes.<X>.attribute.<key>...   — upstream attribute walk
 //	nodes.<X>.event.<name>.<path>  — upstream named-event walk
-//	claim.<alias>.{address|scope|payload.<key>...}
+//	claim.<alias>.{address|claim_scope|payload.<key>...}
 //	params.<key>...
 //
 // The legacy `deps.<X>.<key>` form is retired; callers receive a

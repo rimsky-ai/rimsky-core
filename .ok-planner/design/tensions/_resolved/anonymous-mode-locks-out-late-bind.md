@@ -1,7 +1,7 @@
 ---
 tension: anonymous-mode-locks-out-late-bind
 category: unclear
-status: open
+status: resolved
 affects:
   - anonymous-mode
   - host-agent-proxy
@@ -27,3 +27,7 @@ Anonymous-mode is the documented bootstrap path for unauthenticated rimsky deplo
 ## Evidence
 
 - This spec: `.ok-planner/specs/2026-05-24-host-agent-and-proxy-design.md` §"Per-instance service bindings — Owner identity".
+
+## Resolution
+
+Resolved per spec:2026-06-06-comprehensive-gap-closure. The mutual exclusion between `concept:anonymous-mode` and late-bound services is removed. An anonymous-mode agent registers under a well-known anonymous routing identity rather than under an owner api-key. The proxy's dispatch routing resolves the serving agent by the owning api-key for ordinary instances OR, for owner-less (anonymous-mode) instances, by that anonymous routing identity — so an owner-less-instance dispatch routes to the connected anonymous agent rather than hard-failing with `host_agent_not_connected`. Anonymous-mode instances can now both register and dispatch to late-bound services. See the routing Invariant on `concept:host-agent-proxy` and the late-bind allowance on `concept:anonymous-mode`.

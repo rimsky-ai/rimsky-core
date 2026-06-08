@@ -303,6 +303,15 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 		if body.InstanceKey != nil && *body.InstanceKey == "" {
 			body.InstanceKey = nil
 		}
+		// Server-side reservation of the compose: instance_key prefix.
+		// Placed ahead of the template lookup and any persistence write so
+		// a rejected create persists nothing. Only the privileged compose
+		// path (which stamps the trusted compose-origin marker) may create
+		// reserved-prefix instance keys.
+		if body.InstanceKey != nil && strings.HasPrefix(*body.InstanceKey, composeReservedPrefix) && !isComposeOrigin(req) {
+			badRequest(w, "instance_key uses reserved prefix \"compose:\" (managed by the compose command)")
+			return
+		}
 		if strings.TrimSpace(body.Template) == "" {
 			badRequest(w, "template is required (tag or hash)")
 			return
@@ -385,6 +394,23 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			// against.
 			if vErr := validateAttributeOverrides(body.AttributeOverrides, row.Spec.Nodes, row.Spec.Graphs, deps.Executors); vErr != nil {
 				return vErr
+			}
+			// Mandatory instantiation-time static-config validation gate
+			// (story S-template-validation-instantiation-mandatory). Runs
+			// inside the FOR UPDATE tx, after the override-shape check and
+			// BEFORE the dry-run gate (so a dry-run create surfaces the
+			// rejection too) and before any insert (so a rejected create
+			// persists nothing). The gate is mandatory regardless of the
+			// registration-time reference-validation mode: whatever a
+			// relaxed mode (`available`/`none`) skipped at registration is
+			// enforced here, where the template is deployed and all
+			// referenced executors exist + have handshaked. row.Spec.Nodes
+			// is the canonicalized flat node list (graphs flattened at
+			// registration), so this covers both template shapes. Only the
+			// statically-knowable subset is validated — substitution-sourced
+			// values stay dispatch-validated (@blessed-invariant 12).
+			if sErr := validateStaticConfigAgainstExecutorSchemas(row.Spec.Nodes, row.Spec.Defaults, deps.ExecutorCapabilities); sErr != nil {
+				return sErr
 			}
 			// Dry-run gate: every validation step above has succeeded
 			// (template found, state==deployed, overrides accepted).
@@ -469,6 +495,20 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			}
 			if errors.Is(err, errAttributeOverridesInvalid) {
 				badRequest(w, err.Error())
+				return
+			}
+			// Static-config gate rejection → 400 with a structured
+			// validation_errors body naming the offending node + attribute
+			// path and the violated constraint. Checked BEFORE the generic
+			// ErrTemplateValidation branch below: a *staticConfigGateError
+			// is-a ErrTemplateValidation (typed-error semantics) but must
+			// surface as 400, not the 409 that the conflict branch assigns.
+			var gateErr *staticConfigGateError
+			if errors.As(err, &gateErr) {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error":             foundationshared.ErrTemplateValidation.Error(),
+					"validation_errors": []map[string]string{gateErr.validationErrorEntry()},
+				})
 				return
 			}
 			if errors.Is(err, foundationshared.ErrTemplateValidation) {

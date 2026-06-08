@@ -15,6 +15,7 @@ import type { CliAuthConfig } from "./cli-env.js";
 import { stubModeEnabled } from "./agent-run.js";
 import { Observability } from "./observability.js";
 import { registerCrashHandlers } from "./crash-handlers.js";
+import { loadCatalogFromEnv, parsePolicy } from "./mcp-catalog.js";
 
 /**
  * Executable entry point for the claude-agent executor.
@@ -72,6 +73,25 @@ async function main(): Promise<void> {
     "cli auth resolved",
   );
 
+  // Startup MCP-server catalog + allow_inline policy
+  // (S-executors-mcp-catalog-transports). Parsed ONCE here and threaded into
+  // both transports so every dispatch's `cli.mcp_servers` `{ ref: }` resolves
+  // against the same catalog. A malformed catalog throws and fails startup
+  // loudly (a dropped catalog server is a silently-unwired reference).
+  const mcpCatalog = loadCatalogFromEnv(
+    process.env.RIMSKY_EXECUTOR_MCP_CATALOG,
+  );
+  const mcpAllowInline = parsePolicy(
+    process.env.RIMSKY_EXECUTOR_MCP_ALLOW_INLINE,
+  );
+  logger.info(
+    {
+      catalog_servers: Object.keys(mcpCatalog).length,
+      allow_inline: mcpAllowInline,
+    },
+    "mcp catalog loaded",
+  );
+
   const callback = await startInternalMcpServer({
     host: callbackHost,
     port: 0,
@@ -95,6 +115,8 @@ async function main(): Promise<void> {
     logger,
     observability,
     observabilityHttpBridgeUrl,
+    mcpCatalog,
+    mcpAllowInline,
   });
 
   const http = await startHttpBridge({
@@ -106,6 +128,8 @@ async function main(): Promise<void> {
     logger,
     observability,
     observabilityHttpBridgeUrl,
+    mcpCatalog,
+    mcpAllowInline,
   });
 
   const shutdown = async (): Promise<void> => {

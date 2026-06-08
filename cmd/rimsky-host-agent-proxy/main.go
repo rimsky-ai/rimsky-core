@@ -3,14 +3,15 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // rimsky-host-agent-proxy is the rimsky-stack service that fronts a fleet
-// of dev-machine host-agent daemons. It implements every rimsky service
-// protocol on the supervisor-facing side (Executor + ClaimProducer with
-// full proxy logic; LifecycleSubscriber in consumer role;
-// Publisher/Validation/DataProcessing UNIMPLEMENTED) and maintains
-// long-lived bidi agent connections on the dev-machine-facing side via
-// the HostAgent.Connect stream. A dispatched call from a supervisor is
-// resolved to an owner's connected agent, which lazily spawns the named
-// local binary and tunnels the call to it.
+// of dev-machine host-agent daemons. It is a transparent forwarder for
+// EVERY rimsky service protocol on the supervisor-facing side (Executor,
+// ClaimProducer, Publisher, Validation, DataProcessing — all forwarded by
+// one uniform resolve→spawn→tunnel mechanism; LifecycleSubscriber in
+// consumer role) and maintains long-lived bidi agent connections on the
+// dev-machine-facing side via the HostAgent.Connect stream. A dispatched
+// call from a supervisor is resolved to an owner's connected agent, which
+// lazily spawns the named local binary and tunnels the call to it. No
+// fronted protocol ships as a registered-but-Unimplemented stub.
 //
 // The proxy is a normal multi-protocol service from rimsky's
 // perspective: no tunnel-awareness leaks into the supervisor, the
@@ -67,13 +68,14 @@ func main() {
 	// populate the binding cache and OnRunScopeTerminal to drive reap.
 	genv1.RegisterLifecycleSubscriberServer(grpcSrv, newLifecycleHandler(state, cfg))
 
-	// UNIMPLEMENTED registrations — these protocols are reserved for the
-	// future generalization where the proxy fronts dev-machine bindings
-	// for them too. They return codes.Unimplemented until wired in a
-	// follow-up spec.
-	genv1.RegisterPublisherServer(grpcSrv, newUnimplementedPublisher())
-	genv1.RegisterValidationServer(grpcSrv, newUnimplementedValidation())
-	genv1.RegisterDataProcessingServer(grpcSrv, newUnimplementedDataProcessing())
+	// Publisher / Validation / DataProcessing: real transparent-forwarding
+	// handlers. The proxy fronts every rimsky service protocol by one
+	// uniform resolve→spawn→tunnel mechanism — none ships as an
+	// Unimplemented stub. Each presents exactly the fronted service's
+	// protocol and forwards the dispatch to the spawned local binary.
+	genv1.RegisterPublisherServer(grpcSrv, newPublisherHandler(state, cfg))
+	genv1.RegisterValidationServer(grpcSrv, newValidationHandler(state, cfg))
+	genv1.RegisterDataProcessingServer(grpcSrv, newDataProcessingHandler(state, cfg))
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
 	if err != nil {

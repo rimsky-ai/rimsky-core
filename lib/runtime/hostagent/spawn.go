@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -69,11 +70,32 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		return spawnFailed(sp.GetSpawnId(), "allocate port: "+err.Error())
 	}
 
-	cmd := exec.Command(path) //nolint:gosec // path trust is the agent's documented posture (allow-paths is the knob)
-	if cwd := sp.GetCwd(); cwd != "" {
+	// Per-binding exec() overrides (story S-hostagent-per-binding-exec-overrides):
+	// argv, working directory, and env are carried on the Binding wire message.
+	// A binding that declares none of them spawns exactly as before (no extra
+	// args, the instance-level cwd, inherited env), so this stays backward
+	// compatible.
+	cmd := exec.Command(path, sp.GetBinding().GetArgs()...) //nolint:gosec // path trust is the agent's documented posture (allow-paths is the knob)
+
+	// Per-binding cwd overrides the instance-level cwd only when set; otherwise
+	// fall back to the Spawn frame's instance-level cwd (today's behavior).
+	if bindingCwd := sp.GetBinding().GetCwd(); bindingCwd != "" {
+		cmd.Dir = bindingCwd
+	} else if cwd := sp.GetCwd(); cwd != "" {
 		cmd.Dir = cwd
 	}
-	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%d", agentPortEnvVar, port))
+
+	// Env layering: inherited environment first, then each per-binding env
+	// entry (so a binding key overrides the inherited value on collision —
+	// exec uses the LAST occurrence of a duplicated key), then RIMSKY_AGENT_PORT
+	// last so it always wins (the child MUST bind the agent-allocated port and
+	// a binding must never be able to shadow it).
+	env := os.Environ()
+	for k, v := range sp.GetBinding().GetEnv() {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+	env = append(env, fmt.Sprintf("%s=%d", agentPortEnvVar, port))
+	cmd.Env = env
 	cmd.Stdout = os.Stderr // surface child logs without polluting the agent's stdout
 	cmd.Stderr = os.Stderr
 
@@ -180,6 +202,29 @@ func capabilitiesForProtocol(ctx context.Context, conn *grpc.ClientConn, protoco
 			return nil, err
 		}
 		return proto.Marshal(resp)
+	case protocolPublisher:
+		resp, err := genv1.NewPublisherClient(conn).Capabilities(callCtx, &emptypb.Empty{})
+		if err != nil {
+			return nil, err
+		}
+		return proto.Marshal(resp)
+	case protocolDataProcessing:
+		resp, err := genv1.NewDataProcessingClient(conn).Capabilities(callCtx, &emptypb.Empty{})
+		if err != nil {
+			return nil, err
+		}
+		return proto.Marshal(resp)
+	case protocolValidation:
+		// The Validation service exposes ONLY Validate — it has no
+		// Capabilities RPC. A multi-protocol binary advertises that it fronts
+		// validation through its claim-producer/multi-protocol Capabilities
+		// surface (CapabilitiesResponse.protocols), which the handshake reads
+		// via that protocol's own case. A standalone validation-only binary has
+		// no capability surface to read, so validation is a no-capability
+		// forwarder: there is nothing to handshake, and the spawn must NOT fail
+		// for the absence of a Validation.Capabilities RPC. Return an empty
+		// capability blob and forward Validate dispatches unconditionally.
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", protocol)
 	}

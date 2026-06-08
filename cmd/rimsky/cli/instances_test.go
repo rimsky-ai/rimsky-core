@@ -178,7 +178,9 @@ func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_started", Payload: map[string]any{}})
-	srv.State.AddBreakpointHit(inst.ID, map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"})
+	// breakpoint.hit is on the unified /events stream now, not a separate
+	// pending-hits read; seed it as an event row.
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "breakpoint.hit", OccurredAt: "2026-06-07T00:00:01Z", Payload: map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"}})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)
 
@@ -211,17 +213,21 @@ func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 	}
 }
 
-// TestRunWatch_DrainsAllHitsBeforeTerminal: a terminating instance with a
-// hit backlog larger than one page (>100) must surface every pending hit
-// before the terminal line. watch drains all hit pages each cycle, so the
-// tail (seq 101, on the second page) is not lost when the instance is
-// already terminal.
-func TestRunWatch_DrainsAllHitsBeforeTerminal(t *testing.T) {
+// TestRunWatch_DrainsAllEventsBeforeTerminal: a terminating instance with an
+// event backlog larger than one page (>100) must surface every event —
+// breakpoint.hit rows included, since they live on /events — before the
+// terminal line. watch drains all /events pages each cycle, so the tail (on
+// the last page) is not lost when the instance is already terminal.
+func TestRunWatch_DrainsAllEventsBeforeTerminal(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	for i := 0; i < 101; i++ {
-		srv.State.AddBreakpointHit(inst.ID, map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"})
+	// Seed the tail marker FIRST so it is the OLDEST row: /events pages are
+	// drained newest-first, so the oldest row lands on the last page and is
+	// only printed if the loop drains past the first 100-row page.
+	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "breakpoint.hit", OccurredAt: "2026-06-07T00:00:01Z", Payload: map[string]any{"checkpoint": "tail_marker", "mode": "stop"}})
+	for i := 0; i < 100; i++ {
+		srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "filler", Payload: map[string]any{}})
 	}
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)
@@ -241,10 +247,10 @@ func TestRunWatch_DrainsAllHitsBeforeTerminal(t *testing.T) {
 	if exit != 0 {
 		t.Errorf("exit %d, want 0", exit)
 	}
-	// seq 101 lives on the second page; its presence proves the loop
+	// The tail marker lives on the last page; its presence proves the loop
 	// drained past the first 100-row page before exiting on terminal.
-	if !strings.Contains(out, "seq=101") {
-		t.Errorf("watch dropped the hit-backlog tail (no seq=101); output:\n%s", out)
+	if !strings.Contains(out, "checkpoint=tail_marker") {
+		t.Errorf("watch dropped the event-backlog tail (no checkpoint=tail_marker); output:\n%s", out)
 	}
 }
 
