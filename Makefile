@@ -237,19 +237,29 @@ push-images: check-clean buildx-builder
 # Order:
 #   lint           — golangci-lint across all four modules (cheap, host-side)
 #   license-lint   — go run ./tools/license-check (cheap, host-side)
-#   test-all       — full Go test suite, including testcontainer scenarios
-#                    (requires Docker daemon for the testcontainer tests)
 #   core-images    — build the 4 core images locally
 #   service-images — build the 11 bundled-service images locally
+#   test-all       — full Go test suite, including testcontainer scenarios
+#                    (requires Docker daemon for the testcontainer tests)
 #   scan           — docker scout cves against every locally-built image
 #   push-images    — buildx build + push with SBOM + provenance attestations
+#
+# Image builds come BEFORE test-all on purpose: the services scenarios under
+# lib/services/test/ pull rimsky-all-in-one:latest (and the bundled-service
+# :latest tags) from the LOCAL docker daemon — nothing is fetched from a
+# registry. If test-all ran first, the services scenarios would exercise
+# whatever image happened to be on disk from a prior build, not the source
+# tree we're about to release. That silently lets a regression in the live
+# code slip through the gate (or, if no prior image exists, fails the test
+# for a wholly unrelated reason). Building first means test-all always
+# exercises the same binaries that scan + push-images later ship.
 #
 # Both `/release` (the skill, formal releases) and `make dev-release`
 # (mechanical dev channel) invoke this chain; dev-release overrides
 # LATEST_TAG=dev so the floating tag pushed alongside :$(VERSION) is :dev
 # instead of :latest. If scan finds vulnerabilities, the chain stops before
 # push.
-release: lint license-lint test-all core-images service-images scan push-images
+release: lint license-lint core-images service-images test-all scan push-images
 
 # Mechanical pre-release / dev channel. Derives a SemVer-2.0 pre-release
 # version (v<next-minor>.0-dev.<YYYYMMDD>.g<sha>) from the latest stable
