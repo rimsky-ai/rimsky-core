@@ -1,6 +1,6 @@
 {
   "name": "@rimsky-ai/protocols",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Rimsky v1 wire-protocol .proto definitions for @grpc/proto-loader (and other protobuf toolchain) consumers.",
   "license": "Apache-2.0",
   "type": "module",
