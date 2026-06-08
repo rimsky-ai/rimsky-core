@@ -14,14 +14,23 @@ are temporary planning input removed after use; all stay out of
 context until a goal directs you to them.
 
 **Durable design docs** (`design/`): the project's canonical
-noun catalog — load-bearing concepts with definitions, purposes,
-boundaries, and invariants — plus a tensions catalog tracking
-what is unresolved. Code references the design (via `@concept:`
-or equivalent annotations at points of enforcement), not the
+durable model — four catalogs, each self-contained:
+- **concepts** — load-bearing nouns with definitions, purposes,
+  boundaries, and invariants
+- **stories** — durable user-outcome stories (role, capability,
+  acceptance, falsifier, proof) describing what the product does
+- **decisions** — durable technical decisions (choice, rationale,
+  alternatives) describing the architectural choices the project
+  has made
+- **tensions** — open ambiguities and unresolved tradeoffs
+
+Code references the design (via `@concept:`, `@story:`,
+`@decision:` annotations at points of enforcement), not the
 other way around. The design docs are **a source of truth with
 the same weight as code**: they describe the project as it
 stands. Like code, they change only through plan execution —
-`execute-plan` is the one skill that mutates them. Source-of-truth, read freely — NOT an out-of-context record.
+`execute-plan` is the one skill that mutates them.
+Source-of-truth, read freely — NOT an out-of-context record.
 
 ## Default behavior for agents
 
@@ -59,9 +68,17 @@ Do not expand the scope to "while I'm in here, I'll also fix..."
 ### Durable design docs (`design/`)
 
 The `design/` subdirectory is **the exception**. It holds the
-project's canonical concept catalog — load-bearing nouns with
-definitions, purposes, boundaries, and invariants — plus a
-tensions catalog tracking what's still muddy.
+project's canonical durable model in four catalogs:
+- **`concepts/`** — load-bearing nouns with definitions,
+  purposes, boundaries, and invariants.
+- **`stories/`** — durable user-outcome stories that describe
+  what the product does (role, capability, business value,
+  acceptance, falsifier, proof form).
+- **`decisions/`** — durable technical decisions (choice,
+  rationale, alternatives) capturing the architectural choices
+  the project has made.
+- **`tensions/`** — open ambiguities and unresolved tradeoffs
+  awaiting resolution via `/refine-design`.
 
 **Design docs change only through plan execution, like code.**
 The reason: if the design docs and the code can change
@@ -111,6 +128,12 @@ Layout (created by `/discover-design`):
 - `concepts/` — one concept per file. Mutated in place by
   `execute-plan` per the spec's `## Design changes` section;
   Notes section is append-only.
+- `stories/` — one story per file. Mutated in place by
+  `execute-plan` per the spec's `## Design changes` section;
+  Notes section is append-only.
+- `decisions/` — one decision per file. Mutated in place by
+  `execute-plan` per the spec's `## Design changes` section;
+  Notes section is append-only.
 - `tensions/` — one tension per file. Tensions move to
   `tensions/_resolved/` when `execute-plan` carries out a
   resolution-bearing spec.
@@ -119,36 +142,36 @@ Layout (created by `/discover-design`):
   unresolved fix-loop issues). Consumed by `/refine-design`;
   not durable.
 
-- **`review-holistic` consults `design/concepts/`** when forming
-  judgments — a finding that contradicts a documented boundary
-  or invariant needs an explicit "the documented concept is
-  wrong because..." rather than a flag against the code.
-  `brainstorm` and `refine-design` consult to understand current
-  state; the spec captures any needed changes. Other skills do
-  not consult as oracle.
-- **Concept files (`concepts/<slug>.md`) are MUTABLE during
-  `execute-plan`.** Editing Definition / Purpose / Boundaries /
-  Invariants in place is the normal mode — this is the
-  prescriptive design, not an ADR journal. The Notes section is
-  the append-only audit trail. Mutations ride alongside the
-  code changes that conform to them and stay reversible until
-  the plan executes.
-- **DO NOT delete concept files on your own initiative**, even
-  if they look stale. Use `/merge` to surface drift; resolution
-  goes through the spec pipeline.
+- **`review-holistic` consults `design/`** when forming
+  judgments — a finding that contradicts a documented boundary,
+  invariant, story acceptance, or decision needs an explicit
+  "the documented design is wrong because..." rather than a flag
+  against the code. `brainstorm` and `refine-design` consult to
+  understand current state; the spec captures any needed
+  changes. Other skills do not consult as oracle.
+- **Concept, story, and decision files are MUTABLE during
+  `execute-plan`.** Editing the body in place is the normal mode
+  — this is the prescriptive design, not an ADR journal. The
+  Notes section on each artifact is the append-only audit trail.
+  Mutations ride alongside the code changes that conform to them
+  and stay reversible until the plan executes.
+- **DO NOT delete concept, story, or decision files on your own
+  initiative**, even if they look stale. Use `/merge` to surface
+  drift; resolution goes through the spec pipeline.
 - **DO NOT mutate `tensions/` entries outside the spec
   pipeline** — those entries record what the project considers
   unresolved.
 
-#### Concept self-containment rule
+#### Self-containment rule
 
-Concept body is **self-contained**. The design owns the
-definition; code references the design via `@concept:`
-annotations, not the other way around. A refactor that moves
-files around does not invalidate a concept, and an external
-doc that moves to another repo does not orphan one. To make
-that durable, citations in concept body are restricted to
-forms that survive the codebase moving.
+Concept, story, and decision bodies are **self-contained**.
+The design owns the definition; code references the design
+via `@concept:`, `@story:`, and `@decision:` annotations, not
+the other way around. A refactor that moves files around does
+not invalidate an artifact, and an external doc that moves to
+another repo does not orphan one. To make that durable,
+citations in artifact body are restricted to forms that
+survive the codebase moving.
 
 **The rule applies to frontmatter as well as body.** A
 `references:` frontmatter field that lists `_discover/...`
@@ -156,19 +179,20 @@ artifacts, spec paths, sketch paths, or any other file-form
 citation is the same durability problem the rule exists to
 prevent — those paths rot when the scaffolding is retired,
 when specs are archived, or when the repo is reorganized.
-Once a concept is baked, the lineage that produced it lives
-in the `_discover/` scaffolding (as history) and in the
-body's dated Notes entries (which cite specs by slug);
-frontmatter is restricted to slug-form metadata only:
-`concept:` / `tension:`, `status:`, `aliases:` (list of
-names), and for tensions `category:` and `affects:` (list
-of concept slugs). Path-form `references:` does not belong
-in concept or tension frontmatter; if a `discover-design`
-or earlier-version run wrote one, strip it.
+Once an artifact is baked, the lineage that produced it lives
+in the `_discover/` scaffolding (as history) and in the body's
+dated Notes entries (which cite specs by slug); frontmatter
+is restricted to slug-form metadata only: `concept:` /
+`story:` / `decision:` / `tension:`, `status:`, `aliases:`
+(list of names), and for tensions `category:` and `affects:`
+(list of slugs). Path-form `references:` does not belong in
+any artifact's frontmatter; if a `discover-design` or
+earlier-version run wrote one, strip it.
 
-**Allowed in concept body:**
-- Other concept slugs (`see also: claim-handle`,
-  `concept:claim-handle`).
+**Allowed in artifact body** (concepts / stories / decisions):
+- Other artifact slugs across catalogs (`see also:
+  claim-handle`, `concept:claim-handle`, `story:claim-co-holder`,
+  `decision:persistence`).
 - Annotation IDs the codebase uses (`@blessed-invariant: N`,
   `@agent-contract: X`) — IDs are stable across file moves;
   paths are not.
@@ -176,7 +200,8 @@ or earlier-version run wrote one, strip it.
   (`spec:YYYY-MM-DD-<topic>`).
 - Dates.
 
-**Disallowed in concept body:**
+**Disallowed in artifact body** (concepts / stories /
+decisions):
 - File or directory paths in any form (`foo/bar.go`,
   `services/widget/`, `pkg:github.com/...`, bare URLs,
   `code:foo.go::Symbol`, "the code at X" pointers).
@@ -185,8 +210,8 @@ or earlier-version run wrote one, strip it.
 - Quoted code, quoted lint-config allowlists, quoted external
   prose.
 - "Owns / Does NOT own" sections that name code paths.
-  Boundaries is the in-vs-out section; it names neighbor
-  concepts by slug.
+  Concept Boundaries is the in-vs-out section; it names
+  neighbor concepts by slug.
 
 **For tensions:** the same self-containment rule applies to
 `## Resolution candidates` — resolutions become spec
@@ -195,10 +220,10 @@ path-free. `## What is muddy` and `## Evidence` are
 point-in-time snapshots and may cite code as evidence.
 
 The canonical statement of the rule lives in
-`ok-planner:discover-design`'s SKILL.md ("Concept
-self-containment rule" and "Tension surface rule"). The
-`review-work` skill's design-doc compliance cycle audits the
-live design docs against this rule on every review.
+`ok-planner:discover-design`'s SKILL.md ("Self-containment
+rule" and "Tension surface rule"). The `review-work` skill's
+design-doc compliance cycle audits the live design docs
+against this rule on every review.
 
 #### Consulting the design docs: read `concepts.md` first
 
@@ -209,33 +234,47 @@ reading the design docs, the lookup pattern is:
    auto-generated TOC of every concept with a one-sentence
    definition. It is the single artifact you can read in one
    shot to know what concepts the project traffics in.
-2. **Grep for `@concept:` annotations in the code under
-   consideration** — these are inline citations that say "this
-   site implements concept X." Use `rg '@concept:' <path>` to
-   find them locally; use `rg '@concept: <slug>'` to find every
-   enforcement site for a specific concept.
-3. **Read `concepts/<slug>.md`** for the full definition
-   (purpose, boundaries, invariants) for any concept surfaced
-   by step 1 or 2 that's load-bearing for the work at hand.
+2. **Grep for `@concept:`, `@story:`, and `@decision:`
+   annotations in the code under consideration** — inline
+   citations that say "this site implements concept / story /
+   decision X." Use `rg '@(concept|story|decision):' <path>` to
+   find them locally; use `rg '@story: <slug>'` (or analogous)
+   to find every site load-bearing for a specific artifact.
+3. **Read `concepts/<slug>.md`, `stories/<slug>.md`, and
+   `decisions/<slug>.md`** for the full body of any artifact
+   surfaced by step 1 or 2 that is load-bearing for the work
+   at hand.
 
-#### `@concept:` annotations
+#### `@concept:`, `@story:`, `@decision:` annotations
 
-`@concept: <slug>` annotations in source code are inline
-citations marking sites where a concept is enforced. They
-make the next agent's lookup cheap. Same granularity
-discipline as `@blessed-invariant`: annotate where the concept
-is enforced or expressed, not every file that happens to touch
-it. No carpet-bombing.
+Source-code annotations cite the design model at the points
+the code is load-bearing for it:
+
+- `@concept: <slug>` — this site is where a concept is
+  enforced or expressed (an invariant guarded, a boundary
+  drawn).
+- `@story: <slug>` — this site is load-bearing for delivering
+  the story's user-observable outcome (the wired entry point,
+  the handler that produces the observable effect, the
+  value-delivering component).
+- `@decision: <slug>` — this site embodies a technical
+  decision (the persistence call, the handler-registration
+  mechanism, the chosen retry cadence).
+
+Same granularity discipline as `@blessed-invariant`: annotate
+where the design is enforced or expressed, not every file
+that happens to touch it. No carpet-bombing.
 
 - **`execute-plan`** adds or modifies annotations when a plan
   task explicitly directs (the spec usually surfaces this when
-  a concept is being introduced or changed).
+  a concept, story, or decision is being introduced or
+  changed).
 - **`discover-design`** can seed initial annotations on
   bootstrap.
-- **`review-holistic`** notes "consulted concept: X
-  (annotation missing at <site>)" in its findings; a
-  subsequent `execute-plan` run leaves the annotation when
-  applying the fix.
+- **`review-holistic`** notes "consulted <slug> (annotation
+  missing at <site>)" in its findings; a subsequent
+  `execute-plan` run leaves the annotation when applying the
+  fix.
 
 No other skill annotates on its own. Annotations accrete
 through `execute-plan` runs.
@@ -245,12 +284,12 @@ through `execute-plan` runs.
 - `specs/` — active specs from `/brainstorm` and
   `/refine-design` (out of context by default)
 - `plans/` — active plans from `/write-plan`, plus their
-  `-divergences.md` reports written by `/execute-plan`'s
-  divergence auditor (out of context by default)
+  `-completion-report.md` reports written by `/execute-plan`'s
+  completion auditor (out of context by default)
 - `sketches/` — design sketches from `/sketch` (out of context by default)
-- `design/` — durable design docs (concepts + tensions; mutated
-  only by `/execute-plan` via spec-directed plan tasks;
-  bootstrapped by `/discover-design`)
+- `design/` — durable design docs (concepts + stories +
+  decisions + tensions; mutated only by `/execute-plan` via
+  spec-directed plan tasks; bootstrapped by `/discover-design`)
 - `history/specs/` and `history/plans/` — specs and plans
   archived here automatically when an execute-* skill finishes
   a plan (out of context by default)
