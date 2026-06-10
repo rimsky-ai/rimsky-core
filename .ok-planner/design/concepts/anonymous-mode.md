@@ -41,9 +41,3 @@ Owns: the active-key-count predicate over the API-key ledger, the synthetic-iden
 ## Break-glass: lost admin key
 
 If all keys are lost: the operator connects to the database directly and either deletes the key rows or marks them all revoked. With no active key remaining, anonymous mode resumes and the auth-init command works again. Documented as operator-recoverable; no CLI verb required (by definition the operator has DB access).
-
-## Notes
-
-- [2026-05-15] Concept introduced by spec:2026-05-15-control-plane-mcp-and-auth-design ("Implicit anonymous mode").
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- [2026-06-06] Anonymous-mode instances are no longer locked out of late-bound services: an owner-less instance may dispatch to late-bound services via a well-known anonymous routing identity (the anonymous-mode agent registers under it), removing the prior mutual exclusion. Per spec:2026-06-06-comprehensive-gap-closure; resolves the former `anonymous-mode-locks-out-late-bind` tension.

@@ -37,7 +37,7 @@ func RunAuthList(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	path := "/auth/keys"
+	path := "/v1/auth/keys"
 	q := ""
 	if nameFilter != "" {
 		q += "name_filter=" + authQueryEscape(nameFilter)

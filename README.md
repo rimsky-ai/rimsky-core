@@ -311,7 +311,46 @@ When a primitive starts to look like it would solve a problem on one of
 these lines, the resolution is to push the problem into a consumer-side
 service or an adjacent system, not to grow the primitive.
 
-## 6. Where to learn more
+## 6. First-steps walkthrough
+
+A new operator on a freshly-pulled checkout exercises the dev loop end
+to end without writing a template from scratch by running the shipped
+onboarding demo against a local all-in-one stack.
+
+1. Bring up the stack and the bundled verifier-shape-checks executor.
+   The simplest path is `make core-images && make service-images` to
+   build the local images, then `docker run` the all-in-one image with
+   `verifier-shape-checks` declared in its `rimsky.yml` (see
+   `examples/README.md` for the wiring). For an automated bring-up,
+   the driver test under
+   `lib/services/test/scenarios/onboarding_demo_e2e_test.go` wires both
+   via testcontainers and runs the demo end-to-end — it is the
+   load-bearing gate that this walkthrough actually works.
+2. Run the demo against the live endpoint:
+
+   ```sh
+   rimsky run examples/onboarding-template.yaml
+   ```
+
+   This is the headline dev-loop verb: register + deploy + create in
+   one shot against the shipped TemplateSpec. On success it prints
+   `instance_id=<uuid>` and exits 0.
+3. Watch the instance progress to a terminal state:
+
+   ```sh
+   rimsky watch <instance_id>
+   ```
+
+   The shipped `examples/onboarding-demo.sh` script wraps both verbs
+   and exits 0 once the instance terminates; the same script is what
+   the driver test runs as a subprocess to gate the dev loop.
+
+The shipped TemplateSpec references the bundled verifier-shape-checks
+executor and embeds an inline three-row dataset, so the dispatch runs
+real verification work (`no_nulls` + `pk_unique`) and reaches a
+terminal Success without the operator editing anything.
+
+## 7. Where to learn more
 
 For agents: point your coding agent at this repo and ask. The source,
 the protocol definitions under `lib/protocols/proto/v1/`, and the concept
@@ -329,7 +368,7 @@ For protocols: the wire definitions live in this repo under
 
 Point your coding agent at this repo and ask.
 
-## 7. License
+## 8. License
 
 Rimsky is multi-licensed. The `lib/protocols/` module — the wire contract a
 consumer implements or links against — is Apache 2.0. Everything else Rimsky

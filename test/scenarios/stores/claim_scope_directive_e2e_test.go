@@ -134,7 +134,7 @@ func TestAcceptance_ClaimScopeEndToEnd(t *testing.T) {
 		"spec": claimScopeTemplateJSON("claim-scope-e2e-legacy", "{{claim.a.scope}}"),
 	})
 	require.NoError(t, err)
-	resp, err := http.Post(h.ControlBase+"/templates", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(h.ControlBase+"/v1/templates", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)

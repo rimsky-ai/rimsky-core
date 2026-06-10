@@ -60,7 +60,7 @@ func newStubServer(t *testing.T, handler http.HandlerFunc) *stubServer {
 
 func TestAuthCreate_HappyPath(t *testing.T) {
 	stub := newStubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/auth/keys" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/auth/keys" {
 			http.Error(w, "unexpected route", http.StatusNotFound)
 			return
 		}
@@ -92,7 +92,7 @@ func TestAuthCreate_FlagParseError(t *testing.T) {
 
 func TestAuthList_HappyPath(t *testing.T) {
 	stub := newStubServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/auth/keys") {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/auth/keys") {
 			http.Error(w, "unexpected route", http.StatusNotFound)
 			return
 		}

@@ -36,7 +36,7 @@ func RunAuthRevoke(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	path := "/auth/keys/" + url.PathEscape(rest[0])
+	path := "/v1/auth/keys/" + url.PathEscape(rest[0])
 	if force {
 		path += "?force_leave_anonymous=true"
 	}

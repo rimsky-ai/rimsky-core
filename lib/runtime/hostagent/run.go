@@ -16,13 +16,16 @@ package hostagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -191,6 +194,13 @@ func Run(ctx context.Context, cfg Config) error {
 
 	slog.Info("hostagent starting", "rimsky_url", cfg.RimskyURL, "agent_label", cfg.AgentLabel, "local_base_url", baseURL)
 
+	// Ensure a stale status file from a crash is cleared before we start
+	// publishing fresh state, and is removed on shutdown so a `status`
+	// readers can't see a phantom `connected:true` after the daemon is
+	// gone. @story: host-agent-control-plane (status truthfulness).
+	clearStatusFile(cfg.StatusFile)
+	defer clearStatusFile(cfg.StatusFile)
+
 	backoff := reconnectMinBackoff
 	for {
 		if ctx.Err() != nil {
@@ -214,11 +224,25 @@ func Run(ctx context.Context, cfg Config) error {
 		cur = a
 		curMu.Unlock()
 
+		// Publish "connected" — only AFTER the RegisterAck handshake
+		// succeeded (connectOnce returned non-nil). A `status` call
+		// that wins this race sees the live state.
+		writeStatusFile(cfg.StatusFile, statusSnapshot{
+			Connected: true,
+			Proxy:     cfg.RimskyURL,
+			Since:     time.Now().UTC().Format(time.RFC3339),
+		})
+
 		a.serve(ctx)
 
 		curMu.Lock()
 		cur = nil
 		curMu.Unlock()
+
+		// The stream just tore down — clear the connected sentinel
+		// BEFORE reaping so a `status` call mid-reap doesn't observe
+		// `connected:true` against a dead stream.
+		clearStatusFile(cfg.StatusFile)
 
 		// Stream closed: orphan all live children, give them ReapGracePeriod
 		// to exit, then SIGKILL the stragglers.
@@ -232,6 +256,55 @@ func Run(ctx context.Context, cfg Config) error {
 			return nil
 		}
 		backoff = nextBackoff(backoff)
+	}
+}
+
+// statusSnapshot is the JSON shape the daemon writes to Config.StatusFile.
+// The shape is part of the `rimsky agent` CLI contract: `agent status`
+// reads it and `agent start --proxy` poll-waits for `connected:true` to
+// gate the daemonize handshake. Field changes propagate to:
+//   - cmd/rimsky/cli/agent.go::readAgentStatus
+//   - examples/host-agent-control-plane-demo.sh (output assertions)
+type statusSnapshot struct {
+	Connected bool   `json:"connected"`
+	Proxy     string `json:"proxy"`
+	Since     string `json:"since"`
+}
+
+// writeStatusFile atomically writes a JSON snapshot to path. Atomicity
+// matters because a `status` reader can race the writer — a partial JSON
+// would read as "disconnected" by mistake. Empty path is a no-op.
+func writeStatusFile(path string, snap statusSnapshot) {
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		slog.Warn("hostagent: status file mkdir failed", "path", path, "error", err)
+		return
+	}
+	body, err := json.Marshal(snap)
+	if err != nil {
+		slog.Warn("hostagent: status file marshal failed", "error", err)
+		return
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, body, 0o600); err != nil {
+		slog.Warn("hostagent: status file write failed", "path", path, "error", err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		slog.Warn("hostagent: status file rename failed", "path", path, "error", err)
+	}
+}
+
+// clearStatusFile removes the status sentinel, ignoring a missing file.
+// Empty path is a no-op.
+func clearStatusFile(path string) {
+	if path == "" {
+		return
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Warn("hostagent: status file remove failed", "path", path, "error", err)
 	}
 }
 

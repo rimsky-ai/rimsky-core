@@ -1,7 +1,7 @@
 ---
 concept: claim-scope
 status: as-is
-aliases: [scope (pre-2026-05-22, retired)]
+aliases: []
 ---
 
 # Claim Scope
@@ -40,24 +40,8 @@ Owns: the conflict-check comparison, the schema column, inertness discipline at 
 - The standard filesystem producer is concrete-paths only (canonicalizes by requiring absolute paths so byte-equality holds).
 - Claim scope content is inert in rimsky (`@blessed-invariant 20`).
 
-## Aliases and historical names
-
-The pre-v3 codebase used "region" as a synonym; that term is fully retired (per `spec:2026-05-12-nomenclature-resolution` Group A baseline rebase + Group B.8 in-code comment cleanup). Resolves `tension:_resolved/region-vs-scope-legacy`.
-
-Renamed from `scope` to `claim-scope` per `spec:2026-05-22-fan-out-safety-scope-first-design`, to disambiguate from `concept:run-scope` (the execution-context concept). The legacy bare-`scope` term is fully retired.
-
-## Open within this concept
-
-(none live; the `region` legacy-synonym tension was resolved by the schema rebase and the in-code comment removal in the conflict predicate.)
-
 ## Common pitfalls
 
 - Confusing selector with claim scope. The selector is what the template author writes (and may contain unresolved substitution directives); the claim scope is the canonical-byte form returned by the producer post-acquisition.
 - Implementing a producer that doesn't canonicalize claim scope bytes. Two claims that should conflict but produce different claim scope bytes will NOT be detected as conflicting; the producer is responsible for normalizing.
 - Confusing **ClaimScope** (this concept; claim-identity bytes) with **RunScope** (`concept:run-scope`; execution-context). The two share the "Scope" suffix but name entirely different things — ClaimScope is for claim conflict detection; RunScope is for "which graph instantiation does this run belong to." Both carry qualifying prefixes; bare `Scope` is never used.
-
-## Notes
-
-- [2026-05-18] Folded content from a former, now-retired scope doc — selector-vs-scope authoring distinction added as a subsection under "What it is"; JS-scope / AWS-scope / OAuth-scope disambiguation + producer-canonicalization-discipline pitfalls added as a Common-pitfalls section.
-- [2026-05-22] Renamed from the now-retired bare `scope` concept to `concept:claim-scope` per `spec:2026-05-22-fan-out-safety-scope-first-design` to make room for `concept:run-scope`.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

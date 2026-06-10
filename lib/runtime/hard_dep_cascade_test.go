@@ -156,7 +156,7 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	}))
 	wokeUp := false
 	for _, e := range events.Events {
-		if e.Kind == "parked_resume_started" {
+		if e.KindRaw == "parked_resume_started" {
 			wokeUp = true
 			break
 		}

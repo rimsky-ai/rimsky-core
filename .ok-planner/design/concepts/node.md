@@ -22,20 +22,6 @@ The node owns: its dispatch / terminal lifecycle, its claim spec list, its `erro
 ## Invariants
 
 - The set of legal `state` values is exactly `{fresh, stale, running, failed, parked}`; transitions follow the foundation state-machine's next-state function. Same-state transitions are rejected under `dispatch_claimed` (`@blessed-invariant 1`, also numbered §17).
-- Eligibility for dispatch reads only `state`. Cascade propagation is subscriber-driven via `concept:signal`: a subscription edge fires iff its signal type-path pattern matches the emitted signal AND its compiled CEL `when:` predicate evaluates true against the signal payload (the pre-2026-05-23 sender-side `last_outcome` gate retired with the canonical signal taxonomy).
+- Eligibility for dispatch reads only `state`. Cascade propagation is subscriber-driven via `concept:signal`: a subscription edge fires iff its signal type-path pattern matches the emitted signal AND its compiled CEL `when:` predicate evaluates true against the signal payload.
 - A non-fresh node row always carries a `frame_id`.
 - Tag values admit `{{params.<key>}}` substitution at materialization time (instance creation); no other substitution source kinds are available at that phase. Tag substitution failures are fatal at instance creation, matching the dispatch-time discipline for required-attribute substitution. Tags do not gate dispatch, cascade, or validation — they are operator-facing metadata.
-
-## Aliases and historical names
-
-`graph-node` is an older spelling in early prose. The 4-state vocabulary (`fresh | stale | running | failed`) predates the addition of `parked` (added under the platform-extensions design, `spec:2026-05-08-platform-extensions`) — older prose snippets sometimes still cite four states.
-
-## Open within this concept
-
-- The 4-vs-5 states vocabulary drift between older prose (which still cites four states) and the current five-state set (see `tension:state-count-drift`).
-
-## Notes
-
-- 2026-05-14: `dependencies:` retires; `subscribes:` introduced (see `concept:node-subscription`); substitution refs auto-subscribe. The `on_event:` map retires; the former on-event-handler concept is retired. Lifecycle handlers lose their `invalidate.targets:` clauses. Per `spec:2026-05-14-subscription-cascade-and-quality-of-life-design`.
-- 2026-05-19 — Tags added per `spec:2026-05-19-multi-instance-template-ergonomics-design`. Pre-existing drift cleaned up in same pass: dropped retired `on_event`/`quality_rules` from "What it is", dropped `its quality-rule evaluations` from Boundaries, dropped the retired node-state/on-event-handler entries from the Adjacent list.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

@@ -1,0 +1,68 @@
+# onboarding-template.yaml — the shipped runnable TemplateSpec the
+# README's first-steps walkthrough points at.
+#
+# A new operator copies this file as-is and runs
+#
+#   rimsky run examples/onboarding-template.yaml
+#
+# against a running all-in-one stack. The stack registers the template,
+# deploys it, creates an instance, and prints the instance_id. The
+# operator can then `rimsky watch <id>` and observe the instance progress
+# to a terminal state.
+#
+# It is NOT illustrative-only — unlike the compose/template-*.yml files
+# that reference the placeholder `stub` executor, this template
+# references the bundled `verifier-shape-checks` executor and embeds a
+# real inline dataset + check list as JSON-schema `default:` values, so
+# the dispatch runs real verification work (no_nulls + pk_unique against
+# three rows) and reaches a terminal Success without the operator
+# editing anything.
+#
+# Falsifier guard: the all-in-one stack the operator runs MUST declare
+# the `verifier-shape-checks` executor in its rimsky.yml (see
+# `examples/README.md` — section "Onboarding walkthrough" — for the
+# wiring). Without that declaration, the executor reference fails at
+# template-deploy time; with it, the dispatch runs end-to-end.
+name: onboarding
+version: "1"
+description: |
+  First-steps walkthrough template. References the bundled
+  verifier-shape-checks executor and embeds a real inline dataset; the
+  dispatch runs real verification work and settles to a terminal
+  Success.
+frame_resolution_mode: serial_queue
+nodes:
+  - type: verifier
+    executor: verifier-shape-checks
+    description: |
+      Runs no_nulls + pk_unique checks against an inline three-row
+      dataset. Default values on the JSON schema bake the inputs into
+      the template so `rimsky run` is a single-verb dispatch with no
+      params required.
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            description: shape checks to run against the rows payload
+            default:
+              - kind: no_nulls
+                config:
+                  field: id
+              - kind: pk_unique
+                config:
+                  field: id
+          rows:
+            type: array
+            description: tabular payload to verify
+            default:
+              - id: alpha
+                value: 1
+              - id: beta
+                value: 2
+              - id: gamma
+                value: 3
+        required:
+          - checks
+          - rows

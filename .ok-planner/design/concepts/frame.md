@@ -11,7 +11,7 @@ aliases:
 
 A frame is one cascade resolution. It is a persisted frame row carrying a resolution mode (`coalesce` or `serial_queue`) and a lifecycle state (`queued`, `running`, `completed`, or `failed`). Every dispatched run carries the frame it belongs to (the run row's frame reference is non-null). A frame *begins* only when a node is invalidated — a direct operator/user invalidation, or message delivery (see Message delivery below). Resuming a parked node — park-wake, via async callback or snooze timer — does not begin a frame; it resumes the still-running frame the parked node belongs to. 'Begins a frame' is distinct from 'causes a frame to execute.' It ends only when every node_run in the frame is resolved — no node_run remains `stale`, `running`, or `parked`. A `parked` node_run holds its frame open; the frame does not end while any node is parked.
 
-**Message delivery as a frame-creation site** (post-2026-05-15). Boundary-crossing messages (operator-API enqueues, publisher-origin messages with `sender_kind: "publisher"`) persist in the message ledger on receipt. At each frame boundary, undelivered messages for the instance are bundled per the per-instance `frame_delivery_mode` (`serial_queue` default, `coalesce` opt-in — owned by `concept:message`; distinct from this concept's own `frame_resolution_mode`): rimsky walks subscriptions matching the envelope fields and stale-marks matching receivers within the new frame. The message's delivered-at and frame reference are populated. See `concept:message`.
+**Message delivery as a frame-creation site.** Boundary-crossing messages (operator-API enqueues, publisher-origin messages with `sender_kind: "publisher"`) persist in the message ledger on receipt. At each frame boundary, undelivered messages for the instance are bundled per the per-instance `frame_delivery_mode` (`serial_queue` default, `coalesce` opt-in — owned by `concept:message`; distinct from this concept's own `frame_resolution_mode`): rimsky walks subscriptions matching the envelope fields and stale-marks matching receivers within the new frame. The message's delivered-at and frame reference are populated. See `concept:message`.
 
 **Template-author surface.** The frame-resolution-mode is a required top-level string field on the template, with two valid values (`coalesce` / `serial_queue`); the template validator rejects empty or unknown values at registration. A companion frame-timeout field is optional with default 600000 ms (10 min) and a hard floor of 60000 ms (60 s), enforced by the same validator.
 
@@ -47,18 +47,6 @@ Owns: the per-instance concurrency rule (≤1 running frame), the coalesce/seria
 - Frame mode is template-hash-stable per instance: the instance's template hash is fixed at creation and the spec is content-addressed, so an instance's frame-resolution-mode cannot drift.
 - The frame timeout is purely advisory: when the last-progress timestamp falls outside the window, the scheduler emits a single `frame.stuck.observed` warning and takes no destructive action. Hard floor 60s; default 600s.
 
-## Aliases and historical names
-
-`cascade-frame` is occasionally used in older sketches. Both the template-author surface (`frame_resolution_mode:`) and the persisted frame-row column now share the same name — the post-2026-05-12 nomenclature resolution converged the two.
-
-## Open within this concept
-
-- The "advisory frame_timeout" vs "destructive park-timeout" sibling timeout asymmetry — see `tension:timeout-policy-asymmetry`.
-- Per-instance scope of `serial_queue` ordering may surprise readers expecting template-wide ordering — see `tension:serial-queue-per-instance`.
-- Template-author `frame_resolution:` vs runtime-column `mode` vocabulary mismatch — resolved; see `tension:_resolved/frame-resolution-vs-mode-vocabulary`.
-- The frame producer's mode lookup joins on every enqueue rather than denormalizing once per instance — see `tension:frame-lookup-on-every-enqueue`.
-
-
 ## Common pitfalls
 
 - **Rimsky's frame is not a stack frame, video frame, or UI frame.** A Rimsky frame is the unit of cascade resolution for an instance; nothing to do with call stacks, animation, or screen rendering.
@@ -66,12 +54,3 @@ Owns: the per-instance concurrency rule (≤1 running frame), the coalesce/seria
 - Assuming frames span instances. A frame is per-instance; two instances of the same template have entirely separate frame populations.
 - Treating `coalesce` as a debouncer. Coalesce merges all pending invalidates into one frame regardless of timing; it does not delay dispatch waiting for a quiet period.
 - Expecting `serial_queue` to give strong ordering across instances. The ordering guarantee is per-instance.
-
-## Notes
-
-- 2026-05-14: wait-set rows are cascade-deleted on frame close (the wait-set is foreign-keyed to the frame). See `concept:wait-set`. Per `spec:2026-05-14-subscription-cascade-and-quality-of-life`.
-- [2026-05-18] Folded content from a former public-docs frame page (now retired) — held-frames exposition + serial-queue-vs-coalesce illustrative framing added to Purpose; stack-frame disambiguation + frame-ID / cross-instance pitfalls added as a Common-pitfalls subsection.
-- 2026-05-22 — Clarified orthogonality with `concept:run-scope` per `spec:2026-05-22-fan-out-safety-scope-first`. Frames and RunScopes are orthogonal: a single cascade frame can span multiple RunScopes (cascade propagation across sub-graph entry-success or fan-out parent settlement); a single RunScope can host multiple frames (the same graph firing across multiple cascade resolutions).
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: corrected the cross-reference parenthetical that named `coalesce` as the `frame_delivery_mode` default — the delivery default flips to `serial_queue` (owned by `concept:message`). This concept's own `frame_resolution_mode` knob is unchanged.
-- 2026-06-03 — Frame-end definition corrected to include parked node_runs as unresolved (a parked node holds its frame open), resolving the prior What-it-is vs Held-frames contradiction; clarified that park-wake resumes rather than begins a frame, and that a RunScope is *contained* within its frame (read the 2026-05-22 note's "span multiple RunScopes" as "contain"). Per spec:2026-06-03-instance-lifecycle-durable-by-default.

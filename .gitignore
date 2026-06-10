@@ -55,6 +55,18 @@ lib/services/stubexecutor
 /openlineage
 /stubexecutor
 
+# Same stray-binary hazard for the `examples/` module: building a package by
+# path from the repo root (e.g. `go build ./examples/publisher`) or running
+# `go build` inside an examples subdirectory leaves a binary named for the
+# directory at the repo root. Anchored to the repo root so they never shadow
+# a same-named source directory deeper in the tree.
+/publisher
+/claimproducer
+/executor
+/validation
+/lifecyclesubscriber
+/data-processing
+
 # Local env / coverage
 .env
 *.env.local

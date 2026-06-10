@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
@@ -210,11 +211,19 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 		}) {
 			return
 		}
-		// Record the operator action in the audit log.
+		// Record the operator action in the audit log. The event row
+		// carries the owning instance_id (resolved from the loaded node
+		// row above) so the operator's instance-scoped /v1/events query
+		// surfaces this audit row on the unified feed — without
+		// InstanceID set, the row would be dropped by the events read
+		// path's instance filter, silently hiding a real audit trail
+		// behind the node-only filter dimension.
+		instanceID := row.InstanceID
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &id,
-				Kind:   "operator_override",
+				InstanceID: &instanceID,
+				NodeID:     &id,
+				Kind:       events.KindOperatorOverride(),
 				Payload: map[string]any{
 					"action": "invalidate",
 					"reason": body.Reason,
@@ -352,10 +361,17 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
+		// The reset audit event carries the owning instance_id so it
+		// surfaces on the instance-scoped /v1/events feed (parity with
+		// handleInvalidateNode above); without it, the row is dropped
+		// by the events read filter and the operator's instance-scoped
+		// audit trail loses the reset action.
+		resetInstanceID := row.InstanceID
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &id,
-				Kind:   "operator_override",
+				InstanceID: &resetInstanceID,
+				NodeID:     &id,
+				Kind:       events.KindOperatorOverride(),
 				Payload: map[string]any{
 					"action": "reset",
 				},

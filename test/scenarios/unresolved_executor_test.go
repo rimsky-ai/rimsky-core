@@ -134,7 +134,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 		sawTerminalErrorSignal bool
 	)
 	for _, e := range evs.Events {
-		switch e.Kind {
+		switch e.KindRaw {
 		case "unresolved_executor":
 			sawUnresolved = true
 		case "terminal/error/unresolved_executor":

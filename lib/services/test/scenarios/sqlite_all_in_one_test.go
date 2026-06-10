@@ -102,7 +102,7 @@ var sqliteTerminalStates = map[string]bool{
 // helper because that helper lives in `package stores` and is unexported.
 func deploySQLiteTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/templates", body)
+	status, raw := ep.PostJSON(t, "/v1/templates", body)
 	if status != http.StatusCreated {
 		t.Fatalf("POST /templates: %d %s", status, string(raw))
 	}
@@ -116,7 +116,7 @@ func deploySQLiteTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[stri
 		t.Fatalf("template_id empty: %s", string(raw))
 	}
 	deployStatus, deployRaw := ep.PostJSON(t,
-		"/templates/"+resp.TemplateID+"/deploy", map[string]any{})
+		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
 	if deployStatus != http.StatusOK {
 		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
 	}
@@ -126,7 +126,7 @@ func deploySQLiteTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[stri
 // createSQLiteInstance POSTs a new instance and returns its instance_id.
 func createSQLiteInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},

@@ -83,16 +83,17 @@ func TestPublisherConformance_FixtureCron(t *testing.T) {
 }
 
 // startReceiver spawns the message receiver HTTP server. Path shape
-// is /instances/{instance_id}/messages.
+// is /v1/instances/{instance_id}/messages.
 func startReceiver(t *testing.T, r *pubconformance.MessageReceiver) (endpoint string, teardown func()) {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/instances/", func(w http.ResponseWriter, req *http.Request) {
+	mux.HandleFunc("/v1/instances/", func(w http.ResponseWriter, req *http.Request) {
 		u, _ := url.Parse(req.URL.Path)
 		parts := splitNonEmpty(u.Path, '/')
 		var instanceID string
-		if len(parts) >= 3 && parts[0] == "instances" && parts[2] == "messages" {
-			instanceID = parts[1]
+		// parts: ["v1", "instances", "{id}", "messages"]
+		if len(parts) >= 4 && parts[0] == "v1" && parts[1] == "instances" && parts[3] == "messages" {
+			instanceID = parts[2]
 		}
 		_, _ = io.Copy(io.Discard, req.Body)
 		_ = req.Body.Close()
@@ -235,7 +236,7 @@ func (s *fixturePublisher) tick(ctx context.Context, sub *fixtureSub) {
 			}
 			raw, _ := json.Marshal(envelope)
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-				s.rimskyEndpoint+"/instances/"+sub.instanceID+"/messages", bytes.NewReader(raw))
+				s.rimskyEndpoint+"/v1/instances/"+sub.instanceID+"/messages", bytes.NewReader(raw))
 			if err != nil {
 				continue
 			}

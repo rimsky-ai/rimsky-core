@@ -19,6 +19,7 @@ import (
 	"context"
 	"time"
 
+	eventskinds "github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	shared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
@@ -50,9 +51,13 @@ func EmitSignal(
 	if payload == nil {
 		payload = map[string]any{}
 	}
+	// Signal-class kinds carry the canonical type-path as the
+	// event-log discriminator (per decision:event-log-kind-enum).
+	// Taxonomy validation has happened at the signal emit site via
+	// signal.ValidateTypePath; here we wrap the path opaquely.
 	in := persistence.EventAppendInput{
 		InstanceID: &instanceID,
-		Kind:       string(sig.Type),
+		Kind:       eventskinds.SignalKind(string(sig.Type)),
 		Payload:    payload,
 	}
 	// NodeID is optional — message signals arrive at the instance

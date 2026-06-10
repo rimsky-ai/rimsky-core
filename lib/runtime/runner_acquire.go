@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -372,7 +373,7 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 			}
 			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "work_started", Payload: map[string]any{
+				Kind: events.KindWorkStarted(), Payload: map[string]any{
 					"supervisor_id": args.SupervisorID,
 					"dispatch_id":   acq.DispatchID.String(),
 				},

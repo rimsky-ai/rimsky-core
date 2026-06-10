@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
@@ -291,10 +292,32 @@ func SweepOrphanedNodeRuns(ctx context.Context, args ConductorArgs) error {
 		if o.LastHeartbeatAt != nil {
 			hb = *o.LastHeartbeatAt
 		}
+		// Resolve the owning instance_id by fetching the node row, so the
+		// orphaned_claim_released event surfaces on the instance-scoped
+		// /v1/events feed (STORY-event-log-read: operator filters by
+		// instance_id). Without InstanceID set, the row is dropped by the
+		// events read filter and the orphan-recovery audit trail is
+		// silently invisible. A lookup failure here is non-fatal: we still
+		// append the event with NodeID alone rather than skipping it, so
+		// the global feed retains the orphan record.
+		var instancePtr *shared.UUID
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			n, err := args.Persist.Nodes().Get(ctx, nodeID, tx)
+			if err != nil || n == nil {
+				return err
+			}
+			instID := n.InstanceID
+			instancePtr = &instID
+			return nil
+		}); err != nil {
+			log.Warn("tick: orphan node lookup failed; emit without instance_id",
+				"node_id", nodeID.String(), "error", err.Error())
+		}
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				NodeID: &nodeID,
-				Kind:   "orphaned_claim_released",
+				InstanceID: instancePtr,
+				NodeID:     &nodeID,
+				Kind:       events.KindOrphanedClaimReleased(),
 				Payload: map[string]any{
 					"dispatch_id":       o.ID.String(),
 					"prior_claimed_by":  prior,

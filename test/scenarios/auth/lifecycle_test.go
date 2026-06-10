@@ -209,13 +209,13 @@ func TestBootstrap_AnonymousToAuthenticated(t *testing.T) {
 	defer f.Close()
 
 	// /auth/status — anonymous mode.
-	code, body := f.request(t, "GET", "/auth/status", "", nil)
+	code, body := f.request(t, "GET", "/v1/auth/status", "", nil)
 	if code != 200 || body["mode"] != "anonymous" {
 		t.Fatalf("initial status: %d %+v", code, body)
 	}
 
 	// Mint admin without Bearer.
-	code, body = f.request(t, "POST", "/auth/keys", "", map[string]any{
+	code, body = f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -228,13 +228,13 @@ func TestBootstrap_AnonymousToAuthenticated(t *testing.T) {
 	}
 
 	// Now status is authenticated.
-	code, body = f.request(t, "GET", "/auth/status", adminKey, nil)
+	code, body = f.request(t, "GET", "/v1/auth/status", adminKey, nil)
 	if code != 200 || body["mode"] != "authenticated" {
 		t.Fatalf("post-init status: %d %+v", code, body)
 	}
 
 	// Unauth request → 401.
-	code, body = f.request(t, "GET", "/auth/keys", "", nil)
+	code, body = f.request(t, "GET", "/v1/auth/keys", "", nil)
 	if code != 401 {
 		t.Fatalf("expected 401 with no key; got %d %+v", code, body)
 	}
@@ -245,14 +245,14 @@ func TestPermissionGrants_ReadOnlyDenyOnWrite(t *testing.T) {
 	defer f.Close()
 
 	// Mint admin via anonymous.
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := adminBody["plaintext"].(string)
 
 	// Mint read-only.
-	code, body := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	code, body := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "readonly",
 		"permissions": []map[string]any{{"action": "*:read"}},
 	})
@@ -262,12 +262,12 @@ func TestPermissionGrants_ReadOnlyDenyOnWrite(t *testing.T) {
 	roKey := body["plaintext"].(string)
 
 	// GET /auth/keys works.
-	code, _ = f.request(t, "GET", "/auth/keys", roKey, nil)
+	code, _ = f.request(t, "GET", "/v1/auth/keys", roKey, nil)
 	if code != 200 {
 		t.Fatalf("read-only GET: got %d, want 200", code)
 	}
 	// POST /auth/keys denied.
-	code, body = f.request(t, "POST", "/auth/keys", roKey, map[string]any{
+	code, body = f.request(t, "POST", "/v1/auth/keys", roKey, map[string]any{
 		"name":        "another",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -285,7 +285,7 @@ func TestPermissionGrants_ReadOnlyDenyOnWrite(t *testing.T) {
 func TestPermissionGrants_DryRunFlagPreviewsWrite(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -300,7 +300,7 @@ func TestPermissionGrants_DryRunFlagPreviewsWrite(t *testing.T) {
 	tplHash := seedDeployedTemplate(t, f, adminKey, "dry-run-flag")
 
 	// Mint an ordinary execute-capable key (no mode in the grant).
-	code, body := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	code, body := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "creator",
 		"permissions": []map[string]any{{"action": "instance:create"}, {"action": "instance:read"}},
 	})
@@ -314,7 +314,7 @@ func TestPermissionGrants_DryRunFlagPreviewsWrite(t *testing.T) {
 
 	// With ?dry_run=true the SAME key previews — 200 dry-run envelope,
 	// no instance created.
-	code, body = f.request(t, "POST", "/instances?dry_run=true", creatorKey, map[string]any{
+	code, body = f.request(t, "POST", "/v1/instances?dry_run=true", creatorKey, map[string]any{
 		"template": tplHash,
 	})
 	if code != http.StatusOK {
@@ -325,7 +325,7 @@ func TestPermissionGrants_DryRunFlagPreviewsWrite(t *testing.T) {
 	}
 
 	// Without the flag the SAME key executes — a real 201 Created.
-	code, body = f.request(t, "POST", "/instances", creatorKey, map[string]any{
+	code, body = f.request(t, "POST", "/v1/instances", creatorKey, map[string]any{
 		"template": tplHash,
 	})
 	if code != http.StatusCreated {
@@ -349,7 +349,7 @@ func seedDeployedTemplate(t *testing.T, f *authFixture, adminKey, name string) s
 			"nodes":                 []map[string]any{{"type": "n1"}},
 		},
 	}
-	code, regResp := f.request(t, "POST", "/templates", adminKey, tplBody)
+	code, regResp := f.request(t, "POST", "/v1/templates", adminKey, tplBody)
 	if code != 201 && code != 200 {
 		t.Fatalf("seedDeployedTemplate register: %d %+v", code, regResp)
 	}
@@ -357,7 +357,7 @@ func seedDeployedTemplate(t *testing.T, f *authFixture, adminKey, name string) s
 	if hash == "" {
 		t.Fatalf("seedDeployedTemplate register missing template_id: %+v", regResp)
 	}
-	code, depResp := f.request(t, "POST", "/templates/"+hash+"/deploy", adminKey, map[string]any{})
+	code, depResp := f.request(t, "POST", "/v1/templates/"+hash+"/deploy", adminKey, map[string]any{})
 	if code != 200 {
 		t.Fatalf("seedDeployedTemplate deploy: %d %+v", code, depResp)
 	}
@@ -388,7 +388,7 @@ func TestObservabilityDashboard_GatedAndPopulated(t *testing.T) {
 	// gate has identities to evaluate. (In anonymous mode every request
 	// is allowed; we need authenticated mode for the deny assertions to
 	// be meaningful.)
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -406,7 +406,7 @@ func TestObservabilityDashboard_GatedAndPopulated(t *testing.T) {
 
 	// Gate (deny) — a key with an unrelated grant (no observability:read,
 	// no covering wildcard) → 403 from the real observability:read gate.
-	_, narrowBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, narrowBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "no-obs",
 		"permissions": []map[string]any{{"action": "instance:read"}},
 	})
@@ -424,14 +424,14 @@ func TestObservabilityDashboard_GatedAndPopulated(t *testing.T) {
 	// that holds ONLY observability:read for the allow assertion, so the
 	// 200 is attributable to that grant and not to admin's wildcard.
 	tplHash := seedDeployedTemplate(t, f, adminKey, "gate4-summary")
-	code, createResp := f.request(t, "POST", "/instances", adminKey, map[string]any{
+	code, createResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{
 		"template": tplHash,
 	})
 	if code != http.StatusCreated {
 		t.Fatalf("create instance: got %d %+v; want 201", code, createResp)
 	}
 
-	_, readerBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, readerBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "obs-reader",
 		"permissions": []map[string]any{{"action": "observability:read"}},
 	})
@@ -471,20 +471,20 @@ func TestObservabilityDashboard_GatedAndPopulated(t *testing.T) {
 func TestRotation_DualActiveAndSweep(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := adminBody["plaintext"].(string)
 
 	// Mint a second key so revoking admin doesn't trip the last-key guard.
-	_, _ = f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, _ = f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "second",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 
 	// Rotate admin with 1m grace.
-	code, body := f.request(t, "POST", "/auth/keys/admin/rotate", adminKey, map[string]any{
+	code, body := f.request(t, "POST", "/v1/auth/keys/admin/rotate", adminKey, map[string]any{
 		"grace": "1m",
 	})
 	if code != 200 {
@@ -496,10 +496,10 @@ func TestRotation_DualActiveAndSweep(t *testing.T) {
 	}
 
 	// Both keys still work during grace.
-	if code, _ := f.request(t, "GET", "/auth/keys", adminKey, nil); code != 200 {
+	if code, _ := f.request(t, "GET", "/v1/auth/keys", adminKey, nil); code != 200 {
 		t.Fatalf("old key during grace: %d", code)
 	}
-	if code, _ := f.request(t, "GET", "/auth/keys", newKey, nil); code != 200 {
+	if code, _ := f.request(t, "GET", "/v1/auth/keys", newKey, nil); code != 200 {
 		t.Fatalf("new key during grace: %d", code)
 	}
 
@@ -510,10 +510,10 @@ func TestRotation_DualActiveAndSweep(t *testing.T) {
 		t.Fatalf("sweep: n=%d err=%v", n, err)
 	}
 	// Old key now revoked → 401.
-	if code, _ := f.request(t, "GET", "/auth/keys", adminKey, nil); code != 401 {
+	if code, _ := f.request(t, "GET", "/v1/auth/keys", adminKey, nil); code != 401 {
 		t.Fatalf("old key after grace: %d (want 401)", code)
 	}
-	if code, _ := f.request(t, "GET", "/auth/keys", newKey, nil); code != 200 {
+	if code, _ := f.request(t, "GET", "/v1/auth/keys", newKey, nil); code != 200 {
 		t.Fatalf("new key after grace: %d (want 200)", code)
 	}
 }
@@ -521,23 +521,23 @@ func TestRotation_DualActiveAndSweep(t *testing.T) {
 func TestRevokeGuard_RefuseLastKey(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := body["plaintext"].(string)
 	// Revoke without force → 409.
-	code, body := f.request(t, "DELETE", "/auth/keys/admin", adminKey, nil)
+	code, body := f.request(t, "DELETE", "/v1/auth/keys/admin", adminKey, nil)
 	if code != 409 {
 		t.Fatalf("revoke without force: %d %+v", code, body)
 	}
 	// With force → 200; deployment returns to anonymous.
-	code, _ = f.request(t, "DELETE", "/auth/keys/admin?force_leave_anonymous=true", adminKey, nil)
+	code, _ = f.request(t, "DELETE", "/v1/auth/keys/admin?force_leave_anonymous=true", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("revoke with force: %d", code)
 	}
 	// Anon mode resumed.
-	code, body = f.request(t, "GET", "/auth/status", "", nil)
+	code, body = f.request(t, "GET", "/v1/auth/status", "", nil)
 	if code != 200 || body["mode"] != "anonymous" {
 		t.Fatalf("post-force-revoke: %d %+v", code, body)
 	}
@@ -546,19 +546,19 @@ func TestRevokeGuard_RefuseLastKey(t *testing.T) {
 func TestMCPSkin_FiltersByGrant(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := adminBody["plaintext"].(string)
-	_, roBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, roBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "ro",
 		"permissions": []map[string]any{{"action": "*:read"}},
 	})
 	roKey := roBody["plaintext"].(string)
 
 	// tools/list as admin → contains writes.
-	code, listResp := f.request(t, "POST", "/mcp", adminKey, map[string]any{
+	code, listResp := f.request(t, "POST", "/v1/mcp", adminKey, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
 	})
 	if code != 200 {
@@ -576,7 +576,7 @@ func TestMCPSkin_FiltersByGrant(t *testing.T) {
 	}
 
 	// tools/list as read-only → no writes.
-	code, listResp = f.request(t, "POST", "/mcp", roKey, map[string]any{
+	code, listResp = f.request(t, "POST", "/v1/mcp", roKey, map[string]any{
 		"jsonrpc": "2.0", "id": 2, "method": "tools/list",
 	})
 	if code != 200 {
@@ -594,13 +594,13 @@ func TestMCPSkin_FiltersByGrant(t *testing.T) {
 func TestAuditContent_AccessAttemptedKindEmitted(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := body["plaintext"].(string)
 	// Make some authenticated request.
-	_, _ = f.request(t, "GET", "/auth/keys", adminKey, nil)
+	_, _ = f.request(t, "GET", "/v1/auth/keys", adminKey, nil)
 
 	// Inspect rimsky_events for auth.access_attempted rows.
 	ctx := context.Background()
@@ -623,21 +623,21 @@ func TestAuditContent_AccessAttemptedKindEmitted(t *testing.T) {
 func TestAuditContent_AccessDeniedRevoked(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	_, b := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, b := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := b["plaintext"].(string)
 	// Mint a second key so revoke doesn't trip the last-key guard.
-	_, secondBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, secondBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "second",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	secondKey := secondBody["plaintext"].(string)
 	// Revoke the second key.
-	_, _ = f.request(t, "DELETE", "/auth/keys/second", adminKey, nil)
+	_, _ = f.request(t, "DELETE", "/v1/auth/keys/second", adminKey, nil)
 	// Use the revoked plaintext → 401.
-	code, _ := f.request(t, "GET", "/auth/keys", secondKey, nil)
+	code, _ := f.request(t, "GET", "/v1/auth/keys", secondKey, nil)
 	if code != 401 {
 		t.Fatalf("revoked key: %d (want 401)", code)
 	}
@@ -675,7 +675,7 @@ func TestAuditContent_AccessDeniedNonBearer(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 	// Mint admin so deployment is no longer in anonymous mode.
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -686,7 +686,7 @@ func TestAuditContent_AccessDeniedNonBearer(t *testing.T) {
 	// Send a request with a `Basic` scheme — header present, but not
 	// `Bearer`. Use net/http directly because f.request only knows
 	// the Bearer shape.
-	req, _ := http.NewRequest("GET", f.srv.URL+"/auth/keys", nil)
+	req, _ := http.NewRequest("GET", f.srv.URL+"/v1/auth/keys", nil)
 	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -740,20 +740,20 @@ func TestSweepRotationGrace_InvalidatesAnonCache(t *testing.T) {
 	defer f.Close()
 	t.Cleanup(runtime.RegisterAuthMutationHook(f.state.OnAuthMutation))
 
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "soon-to-revoke",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := body["plaintext"].(string)
 	// Mint a second admin so we can rotate the first one without
 	// tripping the last-key guard.
-	_, _ = f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, _ = f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "permanent",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	// Rotate soon-to-revoke with a 1s grace, then fast-forward
 	// past the grace.
-	code, rotResp := f.request(t, "POST", "/auth/keys/soon-to-revoke/rotate", adminKey, map[string]any{
+	code, rotResp := f.request(t, "POST", "/v1/auth/keys/soon-to-revoke/rotate", adminKey, map[string]any{
 		"grace": "1s",
 	})
 	if code != 200 {
@@ -809,7 +809,7 @@ func TestAnonymousModePredicateCache_InvalidatesOnMint(t *testing.T) {
 
 	// Mint admin via anonymous mode. handleCreateKey calls
 	// InvalidateAnonCache after the row is inserted.
-	code, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	code, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -840,7 +840,7 @@ func TestAnonymousModePredicateCache_InvalidatesOnRevoke(t *testing.T) {
 	defer f.Close()
 
 	// Mint admin via anonymous; deployment is now authenticated.
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -859,7 +859,7 @@ func TestAnonymousModePredicateCache_InvalidatesOnRevoke(t *testing.T) {
 
 	// Revoke the last active key with force_leave_anonymous=true.
 	// handleRevokeKey calls InvalidateAnonCache after the update.
-	code, body := f.request(t, "DELETE", "/auth/keys/admin?force_leave_anonymous=true", adminKey, nil)
+	code, body := f.request(t, "DELETE", "/v1/auth/keys/admin?force_leave_anonymous=true", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("revoke admin: %d %+v", code, body)
 	}
@@ -885,7 +885,7 @@ func TestAnonymousModePredicateCache_InvalidatesOnRevoke(t *testing.T) {
 func TestMCPSkin_RequiresMCPReadGate(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -893,14 +893,14 @@ func TestMCPSkin_RequiresMCPReadGate(t *testing.T) {
 	// Mint a key that has SOME permission but does NOT cover
 	// `mcp:read`. `instance:read` is concrete enough that no wildcard
 	// fan-out matches `mcp:read`.
-	_, narrowBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, narrowBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "narrow",
 		"permissions": []map[string]any{{"action": "instance:read"}},
 	})
 	narrowKey := narrowBody["plaintext"].(string)
 
 	// POST /mcp must 403 with this key.
-	code, body := f.request(t, "POST", "/mcp", narrowKey, map[string]any{
+	code, body := f.request(t, "POST", "/v1/mcp", narrowKey, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
 	})
 	if code != 403 {
@@ -917,14 +917,14 @@ func TestMCPSkin_RequiresMCPReadGate(t *testing.T) {
 func TestMCPSkin_OperatorRoleKeyWorks(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := adminBody["plaintext"].(string)
 	// Mint a key shaped like the bundled `operator` role: explicit
 	// per-noun grants, no `*` wildcard, but including `mcp:read`.
-	_, opBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, opBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name": "operator-shape",
 		"permissions": []map[string]any{
 			{"action": "instance:*"},
@@ -936,7 +936,7 @@ func TestMCPSkin_OperatorRoleKeyWorks(t *testing.T) {
 	})
 	opKey := opBody["plaintext"].(string)
 
-	code, body := f.request(t, "POST", "/mcp", opKey, map[string]any{
+	code, body := f.request(t, "POST", "/v1/mcp", opKey, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
 	})
 	if code != 200 {
@@ -967,7 +967,7 @@ func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
 	// Anonymous bootstrap → admin bearer (action "*" covers both the
 	// mcp:read umbrella on POST /mcp and the per-tool instance:create
 	// gate the re-entry re-runs).
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -981,7 +981,7 @@ func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
 
 	// HTTP path: POST /instances with a distinct instance_key.
 	httpKey := "ck-http"
-	code, httpResp := f.request(t, "POST", "/instances", adminKey, map[string]any{
+	code, httpResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{
 		"template":     tplHash,
 		"instance_key": httpKey,
 	})
@@ -1000,7 +1000,7 @@ func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
 	// so the idempotent (template_hash, instance_key) resolution does
 	// not collapse the two creates into one row.
 	mcpKey := "ck-mcp"
-	code, mcpResp := f.request(t, "POST", "/mcp", adminKey, map[string]any{
+	code, mcpResp := f.request(t, "POST", "/v1/mcp", adminKey, map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
@@ -1061,7 +1061,7 @@ func TestMCPSkin_ToolsCallParityCreatesInstance(t *testing.T) {
 			action, _ := e.Payload["action"].(string)
 			path, _ := e.Payload["request_path"].(string)
 			method, _ := e.Payload["request_method"].(string)
-			if skin == "mcp" && action == "instance:create" && path == "/instances" && method == "POST" {
+			if skin == "mcp" && action == "instance:create" && path == "/v1/instances" && method == "POST" {
 				foundMCPCreate = true
 			}
 		}
@@ -1107,7 +1107,7 @@ func decodeMCPToolText(t *testing.T, resp map[string]any) map[string]any {
 // and instance_key.
 func assertInstancePersisted(t *testing.T, f *authFixture, key, instanceID, wantTemplateHash, wantInstanceKey string) {
 	t.Helper()
-	code, body := f.request(t, "GET", "/instances/"+instanceID, key, nil)
+	code, body := f.request(t, "GET", "/v1/instances/"+instanceID, key, nil)
 	if code != http.StatusOK {
 		t.Fatalf("GET /instances/%s: expected 200; got %d %+v", instanceID, code, body)
 	}
@@ -1193,7 +1193,7 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 	// anonymous mode, so every subsequent request is evaluated against
 	// its own key's grant (in anonymous mode the gate allows all and
 	// the deny assertions would be meaningless).
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin-bootstrap",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -1216,7 +1216,7 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 			// representative denied action, so only the allowed leg runs.
 			role: "admin",
 			allowed: roleEnforceCase{
-				action: "template:register", method: "POST", path: "/templates?dry_run=true",
+				action: "template:register", method: "POST", path: "/v1/templates?dry_run=true",
 				body: map[string]any{"spec": map[string]any{
 					"name": "gate6-admin-dryrun", "version": "1",
 					"frame_resolution_mode": "serial_queue",
@@ -1230,10 +1230,10 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 			// instance:create write.
 			role: "read-only",
 			allowed: roleEnforceCase{
-				action: "instance:read", method: "GET", path: "/instances",
+				action: "instance:read", method: "GET", path: "/v1/instances",
 			},
 			denied: &roleEnforceCase{
-				action: "instance:create", method: "POST", path: "/instances",
+				action: "instance:create", method: "POST", path: "/v1/instances",
 				body: map[string]any{"template": tplHash},
 			},
 		},
@@ -1243,11 +1243,11 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 			// as a dry-run so it mutates nothing.
 			role: "operator",
 			allowed: roleEnforceCase{
-				action: "instance:create", method: "POST", path: "/instances?dry_run=true",
+				action: "instance:create", method: "POST", path: "/v1/instances?dry_run=true",
 				body: map[string]any{"template": tplHash},
 			},
 			denied: &roleEnforceCase{
-				action: "auth:create", method: "POST", path: "/auth/keys",
+				action: "auth:create", method: "POST", path: "/v1/auth/keys",
 				body: map[string]any{
 					"name":        "operator-should-not-mint",
 					"permissions": []map[string]any{{"action": "instance:read"}},
@@ -1263,7 +1263,7 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 			role: "publisher-service",
 			allowed: roleEnforceCase{
 				action: "message:send", method: "POST",
-				path: "/instances/00000000-0000-0000-0000-000000000000/messages",
+				path: "/v1/instances/00000000-0000-0000-0000-000000000000/messages",
 				body: map[string]any{
 					"kind":        "ping",
 					"sender_kind": "operator",
@@ -1272,7 +1272,7 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 				headerKey: "Idempotency-Key", headerVal: "gate6-publisher-send",
 			},
 			denied: &roleEnforceCase{
-				action: "instance:read", method: "GET", path: "/instances",
+				action: "instance:read", method: "GET", path: "/v1/instances",
 			},
 		},
 		{
@@ -1281,10 +1281,10 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 			// denied.
 			role: "debug-operator",
 			allowed: roleEnforceCase{
-				action: "instance:read", method: "GET", path: "/instances",
+				action: "instance:read", method: "GET", path: "/v1/instances",
 			},
 			denied: &roleEnforceCase{
-				action: "instance:create", method: "POST", path: "/instances",
+				action: "instance:create", method: "POST", path: "/v1/instances",
 				body: map[string]any{"template": tplHash},
 			},
 		},
@@ -1294,10 +1294,10 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 			// covered; instance:create denied.
 			role: "agent-supervisor",
 			allowed: roleEnforceCase{
-				action: "instance:read", method: "GET", path: "/instances",
+				action: "instance:read", method: "GET", path: "/v1/instances",
 			},
 			denied: &roleEnforceCase{
-				action: "instance:create", method: "POST", path: "/instances",
+				action: "instance:create", method: "POST", path: "/v1/instances",
 				body: map[string]any{"template": tplHash},
 			},
 		},
@@ -1323,7 +1323,7 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 			// Mint a key whose permissions ARE the role's expanded grant,
 			// loaded from the real embedded bundle.
 			perms := loadRolePermissions(t, s.role)
-			code, mintResp := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+			code, mintResp := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 				"name":        s.role + "-key",
 				"permissions": perms,
 			})
@@ -1389,12 +1389,247 @@ func TestAnonymousModeBanner_LogsAndStops(t *testing.T) {
 			controlapi.AnonymousModeBannerMessage, len(cap.Records()))
 	}
 	// Mint a key; banner stops.
-	_, _ = f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, _ = f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	f.state.InvalidateAnonCache()
 	if controlapi.CheckAnonymousBanner(context.Background(), f.state) {
 		t.Fatalf("banner should not fire after a key is provisioned")
+	}
+}
+
+// TestLifecycle_APIKeyManagement_AcceptanceWalk is the end-to-end
+// acceptance walk for STORY-api-key-management. It exercises EVERY
+// Acceptance clause in a single ordered transcript so a single failure
+// localizes to the violated clause, and it pins the three Falsifier
+// vectors from the spec:
+//
+//  1. Revoke leaves the old plaintext still accepted.
+//  2. Rotate's grace window collapses to zero (old key dies immediately)
+//     or never expires.
+//  3. auth-init succeeds when the keys table is non-empty.
+//
+// The test drives the real `/v1/auth/*` surfaces the `rimsky auth init` /
+// `auth create-key` / `auth list` / `auth get` / `auth revoke` /
+// `auth rotate` / `auth status` CLI verbs all bottom out in, so it is
+// the proof artifact for the executable-proof story.
+//
+// Why a single ordered transcript: STORY-api-key-management is a
+// lifecycle story (bootstrap → mint → list/get → revoke → rotate →
+// status). Asserting each clause in isolation could let an unrelated
+// regression slip through (e.g. a list call buried under the wrong
+// active-key-count). Walking the lifecycle once in order makes the
+// failure attribution obvious.
+//
+// Grace-window observability uses the fixture's ControllableClock: we
+// configure a 5s grace, hold the clock just before the boundary to
+// prove the old key still works, then advance past the boundary and
+// run the sweep to prove the old key is then refused. A wall-clock
+// sleep would be slower and racy; the clock here is the harness's
+// time-fastforward.
+func TestLifecycle_APIKeyManagement_AcceptanceWalk(t *testing.T) {
+	f := newAuthFixture(t)
+	defer f.Close()
+
+	// ----- Acceptance clause 1: fresh deployment is in anonymous mode
+	// and auth-status reports it accurately.
+	code, status := f.request(t, "GET", "/v1/auth/status", "", nil)
+	if code != http.StatusOK {
+		t.Fatalf("auth/status (fresh): got %d %+v", code, status)
+	}
+	if mode, _ := status["mode"].(string); mode != "anonymous" {
+		t.Fatalf("auth/status (fresh) mode = %q; want %q", mode, "anonymous")
+	}
+	if active, _ := status["active_key_count"].(float64); active != 0 {
+		t.Fatalf("auth/status (fresh) active_key_count = %v; want 0", status["active_key_count"])
+	}
+
+	// ----- Acceptance clause 2: bootstrap admin via `auth init` (POST
+	// /v1/auth/keys against anonymous mode) returns plaintext exactly
+	// once.
+	code, mintResp := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
+		"name":        "admin",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("auth init (bootstrap admin): got %d %+v", code, mintResp)
+	}
+	adminPlain, _ := mintResp["plaintext"].(string)
+	if adminPlain == "" {
+		t.Fatalf("auth init: missing plaintext on mint response: %+v", mintResp)
+	}
+
+	// ----- Acceptance clause 3: post-bootstrap auth-status reports
+	// authenticated mode AND active_key_count = 1 (the new admin key).
+	code, status = f.request(t, "GET", "/v1/auth/status", adminPlain, nil)
+	if code != http.StatusOK {
+		t.Fatalf("auth/status (post-bootstrap): got %d %+v", code, status)
+	}
+	if mode, _ := status["mode"].(string); mode != "authenticated" {
+		t.Fatalf("auth/status (post-bootstrap) mode = %q; want %q", mode, "authenticated")
+	}
+	if active, _ := status["active_key_count"].(float64); active != 1 {
+		t.Fatalf("auth/status (post-bootstrap) active_key_count = %v; want 1", status["active_key_count"])
+	}
+
+	// ----- Falsifier vector 3: auth-init succeeds when the keys table is
+	// non-empty. POST /v1/auth/keys ANONYMOUSLY (no Bearer) is the
+	// `rimsky auth init` surface; once a key exists the server-side gate
+	// (the auth middleware on the auth:create action) MUST refuse with
+	// 401. If this assertion turns green the falsifier is live.
+	code, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
+		"name":        "second-bootstrap",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	if code != http.StatusUnauthorized {
+		t.Fatalf("auth init when keys-table non-empty: got %d %+v; want 401 (falsifier: 'auth-init succeeds when the keys table is non-empty')", code, body)
+	}
+
+	// ----- Acceptance clause 4: with the admin key, the operator mints
+	// scoped keys.
+	code, scopedResp := f.request(t, "POST", "/v1/auth/keys", adminPlain, map[string]any{
+		"name":        "scoped-reader",
+		"permissions": []map[string]any{{"action": "*:read"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("mint scoped key: got %d %+v", code, scopedResp)
+	}
+	scopedPlain, _ := scopedResp["plaintext"].(string)
+	if scopedPlain == "" {
+		t.Fatalf("mint scoped key: missing plaintext: %+v", scopedResp)
+	}
+
+	// ----- Acceptance clause 5: metadata reads never expose plaintext.
+	// `list` (GET /v1/auth/keys) and `get` (GET /v1/auth/keys/{name})
+	// return the keyDTO shape, which has no plaintext field. Assert at
+	// the JSON level so a future struct field rename can't silently
+	// regress this — the property is "no `plaintext` JSON key anywhere
+	// in the listing".
+	code, listResp := f.request(t, "GET", "/v1/auth/keys", adminPlain, nil)
+	if code != http.StatusOK {
+		t.Fatalf("list keys: got %d %+v", code, listResp)
+	}
+	keys, _ := listResp["keys"].([]any)
+	if len(keys) < 2 {
+		t.Fatalf("list keys: got %d keys; want >= 2 (admin + scoped-reader)", len(keys))
+	}
+	for i, raw := range keys {
+		entry, _ := raw.(map[string]any)
+		if _, hasPlain := entry["plaintext"]; hasPlain {
+			t.Fatalf("list keys: entry[%d] leaked `plaintext` field: %+v", i, entry)
+		}
+	}
+	// Get each by name and assert the same property.
+	for _, name := range []string{"admin", "scoped-reader"} {
+		code, getResp := f.request(t, "GET", "/v1/auth/keys/"+name, adminPlain, nil)
+		if code != http.StatusOK {
+			t.Fatalf("get key %q: got %d %+v", name, code, getResp)
+		}
+		if _, hasPlain := getResp["plaintext"]; hasPlain {
+			t.Fatalf("get key %q: response leaked `plaintext`: %+v", name, getResp)
+		}
+	}
+
+	// ----- Falsifier vector 1 + Acceptance clause 6: revoking the
+	// scoped key causes subsequent requests bearing that key to be
+	// refused. If the revoke is a no-op (the falsifier) the next call
+	// would still 200; we require 401.
+	code, revResp := f.request(t, "DELETE", "/v1/auth/keys/scoped-reader", adminPlain, nil)
+	if code != http.StatusOK {
+		t.Fatalf("revoke scoped key: got %d %+v", code, revResp)
+	}
+	code, denyResp := f.request(t, "GET", "/v1/auth/keys", scopedPlain, nil)
+	if code != http.StatusUnauthorized {
+		t.Fatalf("revoked key request: got %d %+v; want 401 (falsifier: 'revoke leaves the old plaintext still accepted')", code, denyResp)
+	}
+	// active_key_count reflects the revoke (admin only → 1).
+	_, status = f.request(t, "GET", "/v1/auth/status", adminPlain, nil)
+	if active, _ := status["active_key_count"].(float64); active != 1 {
+		t.Fatalf("auth/status (post-revoke) active_key_count = %v; want 1", status["active_key_count"])
+	}
+
+	// ----- Acceptance clauses 7-8 + Falsifier vector 2: rotate produces
+	// new plaintext, old key keeps working through the grace window,
+	// then stops. Use a configured short grace and observe both sides
+	// of the boundary via the ControllableClock — the plan's load-bearing
+	// property.
+	//
+	// Mint a second admin first so rotating the bootstrap admin does
+	// not trip the last-key guard.
+	_, secondMint := f.request(t, "POST", "/v1/auth/keys", adminPlain, map[string]any{
+		"name":        "admin-2",
+		"permissions": []map[string]any{{"action": "*"}},
+	})
+	admin2Plain, _ := secondMint["plaintext"].(string)
+	if admin2Plain == "" {
+		t.Fatalf("mint admin-2 (rotate-guard): %+v", secondMint)
+	}
+
+	const graceDur = 5 * time.Second
+	code, rotResp := f.request(t, "POST", "/v1/auth/keys/admin/rotate", adminPlain, map[string]any{
+		"grace": graceDur.String(),
+	})
+	if code != http.StatusOK {
+		t.Fatalf("rotate admin: got %d %+v", code, rotResp)
+	}
+	newPlain, _ := rotResp["plaintext"].(string)
+	if newPlain == "" {
+		t.Fatalf("rotate admin: missing plaintext on new key: %+v", rotResp)
+	}
+	if newPlain == adminPlain {
+		t.Fatalf("rotate admin: new plaintext must differ from old (got identical strings)")
+	}
+
+	// During grace (clock has NOT advanced past the boundary), BOTH
+	// keys must work. This pins the second falsifier vector's
+	// "collapses to zero" branch: if the old key fails here, the grace
+	// window collapsed to zero.
+	if code, b := f.request(t, "GET", "/v1/auth/keys", adminPlain, nil); code != http.StatusOK {
+		t.Fatalf("old key inside grace: got %d %+v; want 200 (falsifier: 'grace window collapses to zero')", code, b)
+	}
+	if code, b := f.request(t, "GET", "/v1/auth/keys", newPlain, nil); code != http.StatusOK {
+		t.Fatalf("new key inside grace: got %d %+v; want 200", code, b)
+	}
+
+	// auth-status reflects the rotation's dual-active window:
+	// admin (old; still active because revoke_at is in the future),
+	// admin (new; just inserted), admin-2 → 3 active.
+	_, status = f.request(t, "GET", "/v1/auth/status", newPlain, nil)
+	if active, _ := status["active_key_count"].(float64); active != 3 {
+		t.Fatalf("auth/status (mid-rotation grace) active_key_count = %v; want 3 (old + new + admin-2)", status["active_key_count"])
+	}
+
+	// Edge probe: advance to just BEFORE the boundary; old key must
+	// still work. This pins the "never expires" branch from the
+	// other direction — at the boundary's near edge the window is
+	// still open.
+	f.clock.Advance(graceDur - 1*time.Second)
+	if code, b := f.request(t, "GET", "/v1/auth/keys", adminPlain, nil); code != http.StatusOK {
+		t.Fatalf("old key at grace-1s: got %d %+v; want 200", code, b)
+	}
+
+	// Advance past the boundary and run the sweep. The sweep marks
+	// the old key revoked; subsequent requests bearing it MUST 401.
+	// If this stayed 200, the second falsifier vector's
+	// "never expires" branch is live.
+	f.clock.Advance(2 * time.Second)
+	if n, err := runtime.SweepRotationGrace(context.Background(), f.db.Tables(), f.clock, shared.SilentLogger{}); err != nil || n < 1 {
+		t.Fatalf("sweep rotation grace: n=%d err=%v", n, err)
+	}
+	if code, b := f.request(t, "GET", "/v1/auth/keys", adminPlain, nil); code != http.StatusUnauthorized {
+		t.Fatalf("old key past grace + sweep: got %d %+v; want 401 (falsifier: 'rotated key grace window never expires')", code, b)
+	}
+	// New key still works.
+	if code, b := f.request(t, "GET", "/v1/auth/keys", newPlain, nil); code != http.StatusOK {
+		t.Fatalf("new key past grace: got %d %+v; want 200", code, b)
+	}
+	// active_key_count is now 2 (admin new + admin-2; old admin revoked).
+	_, status = f.request(t, "GET", "/v1/auth/status", newPlain, nil)
+	if active, _ := status["active_key_count"].(float64); active != 2 {
+		t.Fatalf("auth/status (post-sweep) active_key_count = %v; want 2", status["active_key_count"])
+	}
+	if mode, _ := status["mode"].(string); mode != "authenticated" {
+		t.Fatalf("auth/status (post-sweep) mode = %q; want %q", mode, "authenticated")
 	}
 }

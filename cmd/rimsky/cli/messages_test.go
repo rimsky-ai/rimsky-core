@@ -15,7 +15,7 @@ import (
 
 func TestClient_ListInstanceMessages(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/instances/abc/messages" {
+		if r.URL.Path != "/v1/instances/abc/messages" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		if r.URL.Query().Get("kind") != "invalidate" {
@@ -48,7 +48,7 @@ func TestClient_ListInstanceMessages(t *testing.T) {
 
 func TestClient_GetMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/messages/m1" {
+		if r.URL.Path != "/v1/messages/m1" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")

@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -301,7 +302,7 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 		}
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &row.NodeID, InstanceID: &target.InstanceID,
-			Kind: "park_timeout",
+			Kind: events.KindParkTimeout(),
 			Payload: map[string]any{
 				"error_class":               "park_timeout",
 				"reason_at_park":            row.Reason,

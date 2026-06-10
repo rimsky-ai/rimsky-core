@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
+	eventskinds "github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -45,12 +46,17 @@ func TestSQLite_EventListFilter_KindIn(t *testing.T) {
 	ctx := context.Background()
 	store := d.Tables()
 	events := store.Events()
-	for _, kind := range []string{"work_started", "error", "work_completed"} {
-		k := kind
+	cases := []eventskinds.Kind{
+		eventskinds.KindWorkStarted(),
+		eventskinds.KindError(),
+		eventskinds.KindWorkCompleted(),
+	}
+	for _, k := range cases {
+		k := k
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return events.Append(ctx, persistence.EventAppendInput{Kind: k}, tx)
 		}); err != nil {
-			t.Fatalf("append %s: %v", k, err)
+			t.Fatalf("append %s: %v", k.String(), err)
 		}
 	}
 	var res persistence.EventListResult

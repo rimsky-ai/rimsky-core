@@ -367,13 +367,13 @@ func rewriteCallbackURL(original, agentBase string) string {
 }
 
 // newControlAPIFetcher returns an instanceFetcher backed by control-api's
-// GET /instances/{id} endpoint. baseURL must have no trailing slash.
+// GET /v1/instances/{id} endpoint. baseURL must have no trailing slash.
 func newControlAPIFetcher(client *http.Client, baseURL, token string) instanceFetcher {
 	return func(ctx context.Context, instanceID string) (*instanceCacheEntry, bool, error) {
 		if baseURL == "" {
 			return nil, false, nil
 		}
-		reqURL := baseURL + "/instances/" + url.PathEscape(instanceID)
+		reqURL := baseURL + "/v1/instances/" + url.PathEscape(instanceID)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		if err != nil {
 			return nil, false, err
@@ -390,7 +390,7 @@ func newControlAPIFetcher(client *http.Client, baseURL, token string) instanceFe
 			return nil, false, nil
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, false, fmt.Errorf("control-api GET /instances/%s: status %d", instanceID, resp.StatusCode)
+			return nil, false, fmt.Errorf("control-api GET /v1/instances/%s: status %d", instanceID, resp.StatusCode)
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -400,7 +400,7 @@ func newControlAPIFetcher(client *http.Client, baseURL, token string) instanceFe
 	}
 }
 
-// instanceJSON is the subset of GET /instances/{id} the proxy reads.
+// instanceJSON is the subset of GET /v1/instances/{id} the proxy reads.
 type instanceJSON struct {
 	ServiceBindings map[string]bindingSpec `json:"service_bindings"`
 	CreatedByAPIKey string                 `json:"created_by_api_key_id"`
@@ -408,7 +408,7 @@ type instanceJSON struct {
 	Params          json.RawMessage        `json:"params"`
 }
 
-// parseInstanceResponse decodes a GET /instances/{id} body into a cache
+// parseInstanceResponse decodes a GET /v1/instances/{id} body into a cache
 // entry. Accepts either created_by_api_key_id or owner_api_key_id as the
 // owner field (control-api exposes the former; the lifecycle payload uses
 // the latter).

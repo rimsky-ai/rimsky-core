@@ -65,7 +65,7 @@ func newScopeLifecycleHarness(t *testing.T) *scopeLifecycleHarness {
 	f := newAuthFixture(t)
 	t.Cleanup(f.Close)
 
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -86,7 +86,7 @@ func newScopeLifecycleHarness(t *testing.T) *scopeLifecycleHarness {
 		// the gate can resolve hash→tags via the template-tag table).
 		{"action": "*:read"},
 	}
-	_, scopedBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, scopedBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "analytics-only-lifecycle",
 		"permissions": scopedPerms,
 	})
@@ -105,7 +105,7 @@ func newScopeLifecycleHarness(t *testing.T) *scopeLifecycleHarness {
 // cross-test state leakage in the in-process fixture.
 func (h *scopeLifecycleHarness) seedAnalyticsTemplate(t *testing.T, name string) (string, string) {
 	t.Helper()
-	code, resp := h.f.request(t, "POST", "/templates", h.adminKey, map[string]any{
+	code, resp := h.f.request(t, "POST", "/v1/templates", h.adminKey, map[string]any{
 		"spec": scopeLifecycleSpec(name),
 		"tag":  "analytics",
 	})
@@ -118,7 +118,7 @@ func (h *scopeLifecycleHarness) seedAnalyticsTemplate(t *testing.T, name string)
 	}
 	// Move it to deployed so undeploy/deregister/instance-create have
 	// the right precondition.
-	code, depResp := h.f.request(t, "POST", "/templates/"+hash+"/deploy", h.adminKey, map[string]any{})
+	code, depResp := h.f.request(t, "POST", "/v1/templates/"+hash+"/deploy", h.adminKey, map[string]any{})
 	if code != 200 {
 		t.Fatalf("seed analytics deploy %q: %d %+v", name, code, depResp)
 	}
@@ -130,7 +130,7 @@ func (h *scopeLifecycleHarness) seedAnalyticsTemplate(t *testing.T, name string)
 // "billing" coverage so any write targeting this template must 403.
 func (h *scopeLifecycleHarness) seedBillingTemplate(t *testing.T, name string) (string, string) {
 	t.Helper()
-	code, resp := h.f.request(t, "POST", "/templates", h.adminKey, map[string]any{
+	code, resp := h.f.request(t, "POST", "/v1/templates", h.adminKey, map[string]any{
 		"spec": scopeLifecycleSpec(name),
 		"tag":  "billing",
 	})
@@ -141,7 +141,7 @@ func (h *scopeLifecycleHarness) seedBillingTemplate(t *testing.T, name string) (
 	if hash == "" {
 		t.Fatalf("seed billing template %q: missing template_id %+v", name, resp)
 	}
-	code, depResp := h.f.request(t, "POST", "/templates/"+hash+"/deploy", h.adminKey, map[string]any{})
+	code, depResp := h.f.request(t, "POST", "/v1/templates/"+hash+"/deploy", h.adminKey, map[string]any{})
 	if code != 200 {
 		t.Fatalf("seed billing deploy %q: %d %+v", name, code, depResp)
 	}
@@ -156,7 +156,7 @@ func (h *scopeLifecycleHarness) seedBillingTemplate(t *testing.T, name string) (
 func (h *scopeLifecycleHarness) seedAnalyticsTemplateWithExtraTag(t *testing.T, name, extraTag string) string {
 	t.Helper()
 	hash, _ := h.seedAnalyticsTemplate(t, name)
-	code, resp := h.f.request(t, "POST", "/tags", h.adminKey, map[string]any{
+	code, resp := h.f.request(t, "POST", "/v1/tags", h.adminKey, map[string]any{
 		"tag":      extraTag,
 		"template": hash,
 	})
@@ -202,7 +202,7 @@ func TestGrantScope_TemplateDeploy(t *testing.T) {
 		// register-only via admin (no deploy yet): use a hand-rolled call.
 		name := "deploy-tag-in-" + randomNoun(t)
 		hash := registerOnly(t, h.f, h.adminKey, name, "analytics")
-		code, body := h.f.request(t, "POST", "/templates/analytics/deploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/analytics/deploy", h.analytics, map[string]any{})
 		// /templates/{id}/deploy accepts a tag in the {id} slot — the
 		// scope gate reads `template_tag=analytics` direct from URL.
 		requireOK(t, code, body, "deploy by tag-form (in-scope)")
@@ -212,7 +212,7 @@ func TestGrantScope_TemplateDeploy(t *testing.T) {
 	t.Run("in-scope hash-form (one tag) admits deploy", func(t *testing.T) {
 		name := "deploy-hash-1tag-" + randomNoun(t)
 		hash := registerOnly(t, h.f, h.adminKey, name, "analytics")
-		code, body := h.f.request(t, "POST", "/templates/"+hash+"/deploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/deploy", h.analytics, map[string]any{})
 		requireOK(t, code, body, "deploy by hash-form one-tag (in-scope)")
 	})
 
@@ -223,27 +223,27 @@ func TestGrantScope_TemplateDeploy(t *testing.T) {
 		name := "deploy-hash-2tag-" + randomNoun(t)
 		hash := registerOnly(t, h.f, h.adminKey, name, "analytics")
 		// Add a second tag for the same hash.
-		if code, body := h.f.request(t, "POST", "/tags", h.adminKey, map[string]any{
+		if code, body := h.f.request(t, "POST", "/v1/tags", h.adminKey, map[string]any{
 			"tag":      "forecasting",
 			"template": hash,
 		}); code != 200 && code != 201 {
 			t.Fatalf("POST /tags forecasting for deploy-hash-2tag: %d %+v", code, body)
 		}
-		code, body := h.f.request(t, "POST", "/templates/"+hash+"/deploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/deploy", h.analytics, map[string]any{})
 		requireOK(t, code, body, "deploy by hash-form two-tag (in-scope, set-membership)")
 	})
 
 	t.Run("out-of-scope tag-form rejects deploy", func(t *testing.T) {
 		name := "deploy-tag-out-" + randomNoun(t)
 		_ = registerOnly(t, h.f, h.adminKey, name, "billing")
-		code, body := h.f.request(t, "POST", "/templates/billing/deploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/billing/deploy", h.analytics, map[string]any{})
 		requireForbidden(t, code, body, "deploy by tag-form (out-of-scope)")
 	})
 
 	t.Run("out-of-scope hash-form rejects deploy", func(t *testing.T) {
 		name := "deploy-hash-out-" + randomNoun(t)
 		hash := registerOnly(t, h.f, h.adminKey, name, "billing")
-		code, body := h.f.request(t, "POST", "/templates/"+hash+"/deploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/deploy", h.analytics, map[string]any{})
 		requireForbidden(t, code, body, "deploy by hash-form (out-of-scope)")
 	})
 }
@@ -260,35 +260,35 @@ func TestGrantScope_TemplateUndeploy(t *testing.T) {
 	t.Run("in-scope tag-form admits undeploy", func(t *testing.T) {
 		name := "undeploy-tag-in-" + randomNoun(t)
 		_, _ = h.seedAnalyticsTemplate(t, name) // ends in deployed
-		code, body := h.f.request(t, "POST", "/templates/analytics/undeploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/analytics/undeploy", h.analytics, map[string]any{})
 		requireOK(t, code, body, "undeploy by tag-form (in-scope)")
 	})
 
 	t.Run("in-scope hash-form (one tag) admits undeploy", func(t *testing.T) {
 		name := "undeploy-hash-1tag-" + randomNoun(t)
 		hash, _ := h.seedAnalyticsTemplate(t, name)
-		code, body := h.f.request(t, "POST", "/templates/"+hash+"/undeploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/undeploy", h.analytics, map[string]any{})
 		requireOK(t, code, body, "undeploy by hash-form one-tag (in-scope)")
 	})
 
 	t.Run("in-scope hash-form (two tags) admits undeploy", func(t *testing.T) {
 		name := "undeploy-hash-2tag-" + randomNoun(t)
 		hash := h.seedAnalyticsTemplateWithExtraTag(t, name, "growth")
-		code, body := h.f.request(t, "POST", "/templates/"+hash+"/undeploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/undeploy", h.analytics, map[string]any{})
 		requireOK(t, code, body, "undeploy by hash-form two-tag (set-membership)")
 	})
 
 	t.Run("out-of-scope tag-form rejects undeploy", func(t *testing.T) {
 		name := "undeploy-tag-out-" + randomNoun(t)
 		_, _ = h.seedBillingTemplate(t, name)
-		code, body := h.f.request(t, "POST", "/templates/billing/undeploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/billing/undeploy", h.analytics, map[string]any{})
 		requireForbidden(t, code, body, "undeploy by tag-form (out-of-scope)")
 	})
 
 	t.Run("out-of-scope hash-form rejects undeploy", func(t *testing.T) {
 		name := "undeploy-hash-out-" + randomNoun(t)
 		hash, _ := h.seedBillingTemplate(t, name)
-		code, body := h.f.request(t, "POST", "/templates/"+hash+"/undeploy", h.analytics, map[string]any{})
+		code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/undeploy", h.analytics, map[string]any{})
 		requireForbidden(t, code, body, "undeploy by hash-form (out-of-scope)")
 	})
 }
@@ -310,50 +310,50 @@ func TestGrantScope_TemplateDeregister(t *testing.T) {
 		name := "dereg-tag-in-" + randomNoun(t)
 		_, _ = h.seedAnalyticsTemplate(t, name)
 		// Move to undeployed first (precondition for deregister).
-		if code, body := h.f.request(t, "POST", "/templates/analytics/undeploy", h.adminKey, map[string]any{}); code != 200 {
+		if code, body := h.f.request(t, "POST", "/v1/templates/analytics/undeploy", h.adminKey, map[string]any{}); code != 200 {
 			t.Fatalf("precondition undeploy: %d %+v", code, body)
 		}
-		code, body := h.f.request(t, "DELETE", "/templates/analytics", h.analytics, nil)
+		code, body := h.f.request(t, "DELETE", "/v1/templates/analytics", h.analytics, nil)
 		requireOK(t, code, body, "deregister by tag-form (in-scope)")
 	})
 
 	t.Run("in-scope hash-form (one tag) admits deregister", func(t *testing.T) {
 		name := "dereg-hash-1tag-in-" + randomNoun(t)
 		hash, _ := h.seedAnalyticsTemplate(t, name)
-		if code, body := h.f.request(t, "POST", "/templates/"+hash+"/undeploy", h.adminKey, map[string]any{}); code != 200 {
+		if code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/undeploy", h.adminKey, map[string]any{}); code != 200 {
 			t.Fatalf("precondition undeploy hash: %d %+v", code, body)
 		}
-		code, body := h.f.request(t, "DELETE", "/templates/"+hash, h.analytics, nil)
+		code, body := h.f.request(t, "DELETE", "/v1/templates/"+hash, h.analytics, nil)
 		requireOK(t, code, body, "deregister by hash-form one-tag (in-scope)")
 	})
 
 	t.Run("in-scope hash-form (two tags) admits deregister", func(t *testing.T) {
 		name := "dereg-hash-2tag-in-" + randomNoun(t)
 		hash := h.seedAnalyticsTemplateWithExtraTag(t, name, "ops")
-		if code, body := h.f.request(t, "POST", "/templates/"+hash+"/undeploy", h.adminKey, map[string]any{}); code != 200 {
+		if code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/undeploy", h.adminKey, map[string]any{}); code != 200 {
 			t.Fatalf("precondition undeploy multi-tag: %d %+v", code, body)
 		}
-		code, body := h.f.request(t, "DELETE", "/templates/"+hash, h.analytics, nil)
+		code, body := h.f.request(t, "DELETE", "/v1/templates/"+hash, h.analytics, nil)
 		requireOK(t, code, body, "deregister by hash-form two-tag (set-membership)")
 	})
 
 	t.Run("out-of-scope tag-form rejects deregister", func(t *testing.T) {
 		name := "dereg-tag-out-" + randomNoun(t)
 		_, _ = h.seedBillingTemplate(t, name)
-		if code, body := h.f.request(t, "POST", "/templates/billing/undeploy", h.adminKey, map[string]any{}); code != 200 {
+		if code, body := h.f.request(t, "POST", "/v1/templates/billing/undeploy", h.adminKey, map[string]any{}); code != 200 {
 			t.Fatalf("precondition undeploy billing tag: %d %+v", code, body)
 		}
-		code, body := h.f.request(t, "DELETE", "/templates/billing", h.analytics, nil)
+		code, body := h.f.request(t, "DELETE", "/v1/templates/billing", h.analytics, nil)
 		requireForbidden(t, code, body, "deregister by tag-form (out-of-scope)")
 	})
 
 	t.Run("out-of-scope hash-form rejects deregister", func(t *testing.T) {
 		name := "dereg-hash-out-" + randomNoun(t)
 		hash, _ := h.seedBillingTemplate(t, name)
-		if code, body := h.f.request(t, "POST", "/templates/"+hash+"/undeploy", h.adminKey, map[string]any{}); code != 200 {
+		if code, body := h.f.request(t, "POST", "/v1/templates/"+hash+"/undeploy", h.adminKey, map[string]any{}); code != 200 {
 			t.Fatalf("precondition undeploy billing hash: %d %+v", code, body)
 		}
-		code, body := h.f.request(t, "DELETE", "/templates/"+hash, h.analytics, nil)
+		code, body := h.f.request(t, "DELETE", "/v1/templates/"+hash, h.analytics, nil)
 		requireForbidden(t, code, body, "deregister by hash-form (out-of-scope)")
 	})
 }
@@ -380,7 +380,7 @@ func TestGrantScope_TagSet(t *testing.T) {
 		// Register a distinct second analytics-eligible template (via
 		// admin) — the PUT moves the analytics tag to point at it.
 		hashB := registerOnly(t, h.f, h.adminKey, "tagset-in-b-"+randomNoun(t), "analytics-pending-move")
-		code, body := h.f.request(t, "PUT", "/tags/analytics", h.analytics, map[string]any{
+		code, body := h.f.request(t, "PUT", "/v1/tags/analytics", h.analytics, map[string]any{
 			"template": hashB,
 		})
 		requireOK(t, code, body, "PUT /tags/analytics (in-scope)")
@@ -395,7 +395,7 @@ func TestGrantScope_TagSet(t *testing.T) {
 		// Re-target billing → any registered template. The 403 comes
 		// from the scope gate, not the target.
 		hashB := registerOnly(t, h.f, h.adminKey, "tagset-out-b-"+randomNoun(t), "billing-pending-move")
-		code, body := h.f.request(t, "PUT", "/tags/billing", h.analytics, map[string]any{
+		code, body := h.f.request(t, "PUT", "/v1/tags/billing", h.analytics, map[string]any{
 			"template": hashB,
 		})
 		requireForbidden(t, code, body, "PUT /tags/billing (out-of-scope)")
@@ -420,12 +420,12 @@ func TestGrantScope_TagDelete(t *testing.T) {
 		// each leg independent. Reuse pattern: spin a fresh fixture.
 		fLocal := newAuthFixture(t)
 		defer fLocal.Close()
-		_, body := fLocal.request(t, "POST", "/auth/keys", "", map[string]any{
+		_, body := fLocal.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 			"name":        "admin",
 			"permissions": []map[string]any{{"action": "*"}},
 		})
 		adminKey, _ := body["plaintext"].(string)
-		_, sb := fLocal.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+		_, sb := fLocal.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 			"name": "tagdel-scoped",
 			"permissions": []map[string]any{
 				{"action": "tag:delete", "scope": map[string]any{"template_tag": "scoped-tag"}},
@@ -436,19 +436,19 @@ func TestGrantScope_TagDelete(t *testing.T) {
 		// Seed the tag under admin so the scoped key can delete it.
 		hash := registerOnly(t, fLocal, adminKey, "tagdel-in-"+randomNoun(t), "scoped-tag")
 		_ = hash
-		code, body := fLocal.request(t, "DELETE", "/tags/scoped-tag", scopedKey, nil)
+		code, body := fLocal.request(t, "DELETE", "/v1/tags/scoped-tag", scopedKey, nil)
 		requireOK(t, code, body, "DELETE /tags/scoped-tag (in-scope)")
 	})
 
 	t.Run("out-of-scope tag DELETE rejects", func(t *testing.T) {
 		fLocal := newAuthFixture(t)
 		defer fLocal.Close()
-		_, body := fLocal.request(t, "POST", "/auth/keys", "", map[string]any{
+		_, body := fLocal.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 			"name":        "admin",
 			"permissions": []map[string]any{{"action": "*"}},
 		})
 		adminKey, _ := body["plaintext"].(string)
-		_, sb := fLocal.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+		_, sb := fLocal.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 			"name": "tagdel-scoped",
 			"permissions": []map[string]any{
 				{"action": "tag:delete", "scope": map[string]any{"template_tag": "scoped-tag"}},
@@ -457,7 +457,7 @@ func TestGrantScope_TagDelete(t *testing.T) {
 		})
 		scopedKey, _ := sb["plaintext"].(string)
 		_ = registerOnly(t, fLocal, adminKey, "tagdel-out-"+randomNoun(t), "other-tag")
-		code, body := fLocal.request(t, "DELETE", "/tags/other-tag", scopedKey, nil)
+		code, body := fLocal.request(t, "DELETE", "/v1/tags/other-tag", scopedKey, nil)
 		requireForbidden(t, code, body, "DELETE /tags/other-tag (out-of-scope)")
 	})
 }
@@ -475,7 +475,7 @@ func TestGrantScope_InstanceCreate(t *testing.T) {
 	t.Run("in-scope tag-form admits instance create", func(t *testing.T) {
 		_, _ = h.seedAnalyticsTemplate(t, "inst-tag-in-"+randomNoun(t))
 		ckey := "ck-" + randomNoun(t)
-		code, body := h.f.request(t, "POST", "/instances", h.analytics, map[string]any{
+		code, body := h.f.request(t, "POST", "/v1/instances", h.analytics, map[string]any{
 			"template":     "analytics",
 			"instance_key": ckey,
 		})
@@ -485,7 +485,7 @@ func TestGrantScope_InstanceCreate(t *testing.T) {
 	t.Run("in-scope hash-form (one tag) admits instance create", func(t *testing.T) {
 		hash, _ := h.seedAnalyticsTemplate(t, "inst-hash-1tag-in-"+randomNoun(t))
 		ckey := "ck-" + randomNoun(t)
-		code, body := h.f.request(t, "POST", "/instances", h.analytics, map[string]any{
+		code, body := h.f.request(t, "POST", "/v1/instances", h.analytics, map[string]any{
 			"template":     hash,
 			"instance_key": ckey,
 		})
@@ -495,7 +495,7 @@ func TestGrantScope_InstanceCreate(t *testing.T) {
 	t.Run("in-scope hash-form (two tags) admits instance create", func(t *testing.T) {
 		hash := h.seedAnalyticsTemplateWithExtraTag(t, "inst-hash-2tag-in-"+randomNoun(t), "ads")
 		ckey := "ck-" + randomNoun(t)
-		code, body := h.f.request(t, "POST", "/instances", h.analytics, map[string]any{
+		code, body := h.f.request(t, "POST", "/v1/instances", h.analytics, map[string]any{
 			"template":     hash,
 			"instance_key": ckey,
 		})
@@ -505,7 +505,7 @@ func TestGrantScope_InstanceCreate(t *testing.T) {
 	t.Run("out-of-scope tag-form rejects instance create", func(t *testing.T) {
 		_, _ = h.seedBillingTemplate(t, "inst-tag-out-"+randomNoun(t))
 		ckey := "ck-" + randomNoun(t)
-		code, body := h.f.request(t, "POST", "/instances", h.analytics, map[string]any{
+		code, body := h.f.request(t, "POST", "/v1/instances", h.analytics, map[string]any{
 			"template":     "billing",
 			"instance_key": ckey,
 		})
@@ -515,7 +515,7 @@ func TestGrantScope_InstanceCreate(t *testing.T) {
 	t.Run("out-of-scope hash-form rejects instance create", func(t *testing.T) {
 		hash, _ := h.seedBillingTemplate(t, "inst-hash-out-"+randomNoun(t))
 		ckey := "ck-" + randomNoun(t)
-		code, body := h.f.request(t, "POST", "/instances", h.analytics, map[string]any{
+		code, body := h.f.request(t, "POST", "/v1/instances", h.analytics, map[string]any{
 			"template":     hash,
 			"instance_key": ckey,
 		})
@@ -555,7 +555,7 @@ func TestGrantScope_InstanceCreate_LargeBodyAboveAuditCap(t *testing.T) {
 	const padSize = 5 * 1024 * 1024
 	pad := strings.Repeat("x", padSize)
 	ckey := "ck-large-" + randomNoun(t)
-	code, body := h.f.request(t, "POST", "/instances", h.analytics, map[string]any{
+	code, body := h.f.request(t, "POST", "/v1/instances", h.analytics, map[string]any{
 		"template":     "analytics",
 		"instance_key": ckey,
 		"params":       map[string]any{"pad": pad},
@@ -586,7 +586,7 @@ func TestGrantScope_TemplateRegister_HashForm(t *testing.T) {
 	h := newScopeLifecycleHarness(t)
 
 	t.Run("in-scope tag admits register", func(t *testing.T) {
-		code, body := h.f.request(t, "POST", "/templates", h.analytics, map[string]any{
+		code, body := h.f.request(t, "POST", "/v1/templates", h.analytics, map[string]any{
 			"spec": scopeLifecycleSpec("reg-in-" + randomNoun(t)),
 			"tag":  "analytics",
 		})
@@ -594,7 +594,7 @@ func TestGrantScope_TemplateRegister_HashForm(t *testing.T) {
 	})
 
 	t.Run("out-of-scope tag rejects register", func(t *testing.T) {
-		code, body := h.f.request(t, "POST", "/templates", h.analytics, map[string]any{
+		code, body := h.f.request(t, "POST", "/v1/templates", h.analytics, map[string]any{
 			"spec": scopeLifecycleSpec("reg-out-" + randomNoun(t)),
 			"tag":  "billing",
 		})
@@ -620,7 +620,7 @@ func registerOnly(t *testing.T, f *authFixture, adminKey, name, tag string) stri
 	if tag != "" {
 		body["tag"] = tag
 	}
-	code, resp := f.request(t, "POST", "/templates", adminKey, body)
+	code, resp := f.request(t, "POST", "/v1/templates", adminKey, body)
 	if code != 201 && code != 200 {
 		t.Fatalf("registerOnly %q: %d %+v", name, code, resp)
 	}

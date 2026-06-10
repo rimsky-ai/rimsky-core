@@ -55,7 +55,7 @@ func equalJSON(a, b any) bool {
 }
 
 func TestClient_RegisterTemplate(t *testing.T) {
-	srv := helperServer(t, http.MethodPost, "/templates",
+	srv := helperServer(t, http.MethodPost, "/v1/templates",
 		map[string]any{"tag": "ingest@1.0"},
 		http.StatusCreated,
 		map[string]any{"template_id": "sha256-abc", "tags": []string{"ingest@1.0"}},
@@ -104,7 +104,7 @@ func TestClient_ListTemplates(t *testing.T) {
 }
 
 func TestClient_GetTemplate_NotFound(t *testing.T) {
-	srv := helperServer(t, http.MethodGet, "/templates/missing",
+	srv := helperServer(t, http.MethodGet, "/v1/templates/missing",
 		nil, http.StatusNotFound,
 		map[string]any{"error": "template not found"},
 	)
@@ -120,7 +120,7 @@ func TestClient_GetTemplate_NotFound(t *testing.T) {
 }
 
 func TestClient_DeployTemplate(t *testing.T) {
-	srv := helperServer(t, http.MethodPost, "/templates/foo/deploy",
+	srv := helperServer(t, http.MethodPost, "/v1/templates/foo/deploy",
 		nil, http.StatusOK,
 		map[string]any{"state": "deployed"},
 	)
@@ -132,7 +132,7 @@ func TestClient_DeployTemplate(t *testing.T) {
 }
 
 func TestClient_DeleteTemplate_Conflict(t *testing.T) {
-	srv := helperServer(t, http.MethodDelete, "/templates/foo",
+	srv := helperServer(t, http.MethodDelete, "/v1/templates/foo",
 		nil, http.StatusConflict,
 		map[string]any{"error": "template has active instances"},
 	)
@@ -145,7 +145,7 @@ func TestClient_DeleteTemplate_Conflict(t *testing.T) {
 }
 
 func TestClient_CreateTag(t *testing.T) {
-	srv := helperServer(t, http.MethodPost, "/tags",
+	srv := helperServer(t, http.MethodPost, "/v1/tags",
 		map[string]any{"tag": "foo", "template": "sha256-abc"},
 		http.StatusCreated,
 		map[string]any{"tag": "foo", "template_id": "sha256-abc"},
@@ -162,7 +162,7 @@ func TestClient_CreateTag(t *testing.T) {
 }
 
 func TestClient_ListTags(t *testing.T) {
-	srv := helperServer(t, http.MethodGet, "/tags", nil, http.StatusOK,
+	srv := helperServer(t, http.MethodGet, "/v1/tags", nil, http.StatusOK,
 		map[string]any{
 			"tags": []map[string]any{{"tag": "a", "template_id": "h1"}},
 		},
@@ -179,7 +179,7 @@ func TestClient_ListTags(t *testing.T) {
 }
 
 func TestClient_MoveTag(t *testing.T) {
-	srv := helperServer(t, http.MethodPut, "/tags/foo",
+	srv := helperServer(t, http.MethodPut, "/v1/tags/foo",
 		map[string]any{"template": "sha256-bcd"},
 		http.StatusOK,
 		map[string]any{"tag": "foo", "template_id": "sha256-bcd"},
@@ -192,7 +192,7 @@ func TestClient_MoveTag(t *testing.T) {
 }
 
 func TestClient_DeleteTag(t *testing.T) {
-	srv := helperServer(t, http.MethodDelete, "/tags/foo",
+	srv := helperServer(t, http.MethodDelete, "/v1/tags/foo",
 		nil, http.StatusOK,
 		map[string]any{"deleted": true},
 	)
@@ -205,7 +205,7 @@ func TestClient_DeleteTag(t *testing.T) {
 
 func TestClient_CreateInstance(t *testing.T) {
 	key := "compose:p:n"
-	srv := helperServer(t, http.MethodPost, "/instances",
+	srv := helperServer(t, http.MethodPost, "/v1/instances",
 		map[string]any{"template": "sha256-abc", "instance_key": key},
 		http.StatusCreated,
 		map[string]any{"instance_id": "uuid-x", "template_hash": "sha256-abc", "instance_key": key, "node_count": 1},
@@ -226,7 +226,7 @@ func TestClient_CreateInstance(t *testing.T) {
 }
 
 func TestClient_GetInstance_NotFound(t *testing.T) {
-	srv := helperServer(t, http.MethodGet, "/instances/missing", nil, http.StatusNotFound,
+	srv := helperServer(t, http.MethodGet, "/v1/instances/missing", nil, http.StatusNotFound,
 		map[string]any{"error": "instance not found"},
 	)
 	defer srv.Close()
@@ -238,7 +238,7 @@ func TestClient_GetInstance_NotFound(t *testing.T) {
 }
 
 func TestClient_DeleteInstance_Conflict(t *testing.T) {
-	srv := helperServer(t, http.MethodDelete, "/instances/x", nil, http.StatusConflict,
+	srv := helperServer(t, http.MethodDelete, "/v1/instances/x", nil, http.StatusConflict,
 		map[string]any{"error": "instance is not in terminal state; wait for terminated_at to be set"},
 	)
 	defer srv.Close()
@@ -250,7 +250,7 @@ func TestClient_DeleteInstance_Conflict(t *testing.T) {
 }
 
 func TestClient_ListInstanceNodes(t *testing.T) {
-	srv := helperServer(t, http.MethodGet, "/instances/x/nodes", nil, http.StatusOK,
+	srv := helperServer(t, http.MethodGet, "/v1/instances/x/nodes", nil, http.StatusOK,
 		map[string]any{
 			"nodes": []map[string]any{
 				{"id": "n1", "instance_id": "x", "node_type": "hello", "state": "fresh", "retry_counter": 0, "action_index": 0, "created_at": "2026-05-02T00:00:00Z", "updated_at": "2026-05-02T00:00:00Z"},
@@ -269,7 +269,7 @@ func TestClient_ListInstanceNodes(t *testing.T) {
 }
 
 func TestClient_GetNode(t *testing.T) {
-	srv := helperServer(t, http.MethodGet, "/nodes/n1", nil, http.StatusOK,
+	srv := helperServer(t, http.MethodGet, "/v1/nodes/n1", nil, http.StatusOK,
 		map[string]any{"id": "n1", "instance_id": "x", "node_type": "h", "state": "fresh", "retry_counter": 0, "action_index": 0, "created_at": "t", "updated_at": "t"},
 	)
 	defer srv.Close()
@@ -284,7 +284,7 @@ func TestClient_GetNode(t *testing.T) {
 }
 
 func TestClient_InvalidateNode(t *testing.T) {
-	srv := helperServer(t, http.MethodPost, "/nodes/n1/invalidate",
+	srv := helperServer(t, http.MethodPost, "/v1/nodes/n1/invalidate",
 		map[string]any{"reason": "manual"},
 		http.StatusOK,
 		map[string]any{"ok": true},
@@ -297,7 +297,7 @@ func TestClient_InvalidateNode(t *testing.T) {
 }
 
 func TestClient_ResetNode(t *testing.T) {
-	srv := helperServer(t, http.MethodPost, "/nodes/n1/reset", nil, http.StatusOK,
+	srv := helperServer(t, http.MethodPost, "/v1/nodes/n1/reset", nil, http.StatusOK,
 		map[string]any{"ok": true},
 	)
 	defer srv.Close()
@@ -334,7 +334,7 @@ func TestClient_ListEvents(t *testing.T) {
 // / E16 schedule-retirement cascade.)
 
 func TestClient_Health(t *testing.T) {
-	srv := helperServer(t, http.MethodGet, "/health", nil, http.StatusOK,
+	srv := helperServer(t, http.MethodGet, "/v1/health", nil, http.StatusOK,
 		map[string]any{"status": "ok", "supervisors": []any{}, "node_counts": map[string]int{"fresh": 0}},
 	)
 	defer srv.Close()
@@ -349,7 +349,7 @@ func TestClient_Health(t *testing.T) {
 }
 
 func TestClient_5xxError(t *testing.T) {
-	srv := helperServer(t, http.MethodGet, "/health", nil, http.StatusInternalServerError,
+	srv := helperServer(t, http.MethodGet, "/v1/health", nil, http.StatusInternalServerError,
 		map[string]any{"error": "boom"},
 	)
 	defer srv.Close()

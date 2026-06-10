@@ -56,7 +56,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 	// "distinct-sender yields two envelopes").
 	messageCount := func(t *testing.T, instID string) int {
 		t.Helper()
-		status, out := h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/messages", instID), nil)
+		status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages", instID), nil)
 		require.Equal(t, http.StatusOK, status, out)
 		msgs, _ := out["messages"].([]any)
 		return len(msgs)
@@ -67,7 +67,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 	t.Run("first_insert_201", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "first-insert")
 		resp := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{"kind": "invalidate", "target": "root"},
 			map[string]string{"Idempotency-Key": "first-" + uuid.NewString()})
 		require.Equal(t, http.StatusCreated, resp.status, resp.body)
@@ -84,14 +84,14 @@ func TestIdempotencyMatrix(t *testing.T) {
 		body := map[string]any{"kind": "invalidate", "target": "root"}
 
 		first := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID), body,
+			fmt.Sprintf("/v1/instances/%s/messages", instID), body,
 			map[string]string{"Idempotency-Key": key})
 		require.Equal(t, http.StatusCreated, first.status, first.body)
 		firstID, _ := first.body["message_id"].(string)
 		require.NotEmpty(t, firstID)
 
 		second := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID), body,
+			fmt.Sprintf("/v1/instances/%s/messages", instID), body,
 			map[string]string{"Idempotency-Key": key})
 		require.Equal(t, http.StatusOK, second.status, "replay returns 200 OK")
 		secondID, _ := second.body["message_id"].(string)
@@ -108,7 +108,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 	t.Run("missing_key_400", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "missing-key")
 		status, out := h.httpJSON(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{"kind": "invalidate", "target": "root"})
 		require.Equal(t, http.StatusBadRequest, status, out)
 		errMsg, _ := out["error"].(string)
@@ -128,14 +128,14 @@ func TestIdempotencyMatrix(t *testing.T) {
 		key := "shared-" + uuid.NewString()
 
 		operator := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{"kind": "invalidate", "target": "root"},
 			map[string]string{"Idempotency-Key": key})
 		require.Equal(t, http.StatusCreated, operator.status, operator.body)
 		operatorID, _ := operator.body["message_id"].(string)
 
 		publisher := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"kind":                      "invalidate",
 				"target":                    "root",
@@ -167,14 +167,14 @@ func TestIdempotencyMatrix(t *testing.T) {
 		key := "pub-op-" + uuid.NewString()
 
 		operator := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{"kind": "invalidate", "target": "root"},
 			map[string]string{"Idempotency-Key": key})
 		require.Equal(t, http.StatusCreated, operator.status, operator.body)
 		operatorID, _ := operator.body["message_id"].(string)
 
 		publisher := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"kind":                      "invalidate",
 				"target":                    "root",
@@ -198,7 +198,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "active-sub")
 		subID := insertPublisherSubscription(t, h, instID, "sensor-http", persistence.PublisherSubscriptionStateActive)
 		resp := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"kind":                      "invalidate",
 				"target":                    "root",
@@ -216,7 +216,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "stopped-sub")
 		subID := insertPublisherSubscription(t, h, instID, "sensor-http", persistence.PublisherSubscriptionStateStopped)
 		resp := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"kind":                      "invalidate",
 				"target":                    "root",
@@ -233,7 +233,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 	t.Run("unknown_sub_403", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "unknown-sub")
 		resp := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"kind":                      "invalidate",
 				"target":                    "root",
@@ -252,7 +252,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		instB := newInstanceForMessages(t, h, "wrong-b")
 		subForA := insertPublisherSubscription(t, h, instA, "sensor-http", persistence.PublisherSubscriptionStateActive)
 		resp := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instB),
+			fmt.Sprintf("/v1/instances/%s/messages", instB),
 			map[string]any{
 				"kind":                      "invalidate",
 				"target":                    "root",
@@ -271,7 +271,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 	t.Run("missing_sub_id_400", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "missing-sub-id")
 		resp := h.httpJSONWithHeaders(t, "POST",
-			fmt.Sprintf("/instances/%s/messages", instID),
+			fmt.Sprintf("/v1/instances/%s/messages", instID),
 			map[string]any{
 				"kind":        "invalidate",
 				"target":      "root",

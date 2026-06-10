@@ -28,7 +28,7 @@ The design choice (row-write rather than direct invalidate dispatch) is correct 
 
 ## Resolution candidates (do NOT pick)
 
-- Have the force-fire endpoint answer with an "accepted / queued for next tick" status (with a polling hint) rather than a "done" status, so the response conveys the deferred-fire semantics honestly (see `concept:control-api`).
+- Have the force-fire endpoint answer with an "accepted / queued for next tick" status (with a polling hint) rather than a "done" status, so the response conveys the tick-bounded-fire semantics honestly (see `concept:control-api`).
 - State plainly in the sensor concept's definition that force-fire is a row-write whose actual fire lands on the next scheduler tick, so operators and test authors expect the tick-bounded latency (see `concept:sensor`, `concept:observability`).
 - Synchronously wait for the next tick before responding — rejected by design, since it would block the request on tick latency and undermine the advisory-lock-guarded per-tick orchestration.
 

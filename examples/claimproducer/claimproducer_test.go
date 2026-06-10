@@ -25,7 +25,7 @@ func TestOpenReturnsAcquired(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	srv := grpc.NewServer()
-	genv1.RegisterClaimProducerServer(srv, &Producer{})
+	genv1.RegisterClaimProducerServer(srv, newProducer())
 	go func() { _ = srv.Serve(lis) }()
 	defer srv.Stop()
 

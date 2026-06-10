@@ -29,7 +29,3 @@ Vocabulary that implies the wrong execution model produces wrong designs, wrong 
 ## Evidence
 
 - A dropped per-emission event-payload-binding design, abandoned once the invalidate-then-pull mechanism was understood. The corrected accuracy text now lives in `concept:named-event` and `concept:node-subscription`.
-
-## Notes
-
-- 2026-05-29 — Tension opened by `spec:2026-05-29-console-upstream-auth-audit-and-fixes`, which corrected the existing accuracy bugs in `concept:named-event` and `concept:node-subscription` but deliberately did **not** rename the vocabulary (that is the resolution-bearing change, deferred to a future design-refinement pass).

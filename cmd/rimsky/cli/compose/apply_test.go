@@ -158,7 +158,7 @@ func TestApplyPlan_FailureMidPlan(t *testing.T) {
 	srv := setupServer(t)
 	mf := writeFullManifest(t)
 	// Inject a 5xx on POST /tags so the plan fails after register.
-	srv.SetFailure("POST", "/tags", clitest.FailureSpec{Status: 500, Body: map[string]any{"error": "boom"}, Times: 5})
+	srv.SetFailure("POST", "/v1/tags", clitest.FailureSpec{Status: 500, Body: map[string]any{"error": "boom"}, Times: 5})
 	if got := compose.RunComposeUp(context.Background(), []string{"-f", mf, "--yes"}); got != 1 {
 		t.Errorf("exit %d", got)
 	}

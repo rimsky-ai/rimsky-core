@@ -126,19 +126,52 @@ func DialPublisherAndValidationRegistries(
 	// Walk producers + executors + publishers uniformly. The endpoint
 	// shape is peer-agnostic — the gRPC dial only cares about the
 	// transport target.
+	//
+	// `roles` is the LIVE `validation_supported_roles` list the peer
+	// advertised on its primary protocol's Capabilities handshake. We
+	// cannot read it from the operator-declared `e.Capabilities` —
+	// `cfg.Stores` is built at YAML-load time and `Capabilities` there
+	// carries only the operator-declared write-semantics envelope; the
+	// `ValidationSupportedRoles` field is always empty there. So when a
+	// claim-producer peer advertises the `validation` mix-in, we run a
+	// fresh ClaimProducer.Capabilities handshake here to learn the live
+	// supported roles. The cost is one extra RPC per validation-mix-in
+	// peer at startup — the same RPC `dialRemoteStores` already runs once,
+	// but it doesn't persist the live caps back into `cfg.Stores`, so
+	// re-running it here is the path that doesn't require a wider refactor.
+	// @story: validation-author
 	type peerSpec struct {
 		name      string
 		endpoint  string
 		protocols []string
-		roles     []string // executors carry validation_supported_roles in caps
+		// fetchRoles, when non-nil, is called lazily the first time the
+		// validation mix-in arm is processed for this peer. Non-store
+		// peers (executors / publishers) leave it nil — they advertise
+		// validation through different proto Capabilities surfaces that
+		// the existing dial code does not yet read; today their
+		// supported_roles list is treated as empty (the same pre-fix
+		// behavior).
+		fetchRoles func(context.Context) ([]string, error)
 	}
 	peers := make([]peerSpec, 0, len(stores.Stores)+len(execs.Executors)+len(publishers.Publishers))
 	for n, e := range stores.Stores {
+		nameCopy, endpointCopy := n, e.Endpoint
 		peers = append(peers, peerSpec{
 			name:      n,
 			endpoint:  e.Endpoint,
 			protocols: e.Protocols,
-			roles:     e.Capabilities.ValidationSupportedRoles,
+			fetchRoles: func(fctx context.Context) ([]string, error) {
+				c, dErr := peer.Dial(fctx, nameCopy, endpointCopy)
+				if dErr != nil {
+					return nil, dErr
+				}
+				defer c.Close()
+				caps, cErr := c.Capabilities(fctx)
+				if cErr != nil {
+					return nil, cErr
+				}
+				return append([]string(nil), caps.ValidationSupportedRoles...), nil
+			},
 		})
 	}
 	for n, e := range execs.Executors {
@@ -166,8 +199,26 @@ func DialPublisherAndValidationRegistries(
 				if _, already := validationClients[p.name]; already {
 					continue
 				}
+				// Resolve the LIVE supported_roles list right before
+				// dialing the validation client. For claim-producer
+				// peers the resolver re-runs the Capabilities handshake;
+				// for executors / publishers there is no fetcher today
+				// (their primary-protocol caps surfaces do not yet plumb
+				// validation_supported_roles into this function), so
+				// roles stays nil.
+				var roles []string
+				if p.fetchRoles != nil {
+					rCtx, rCancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
+					rolesResolved, fErr := p.fetchRoles(rCtx)
+					rCancel()
+					if fErr != nil {
+						closeAll()
+						return nil, nil, nil, nil, fmt.Errorf("DialPublisherAndValidationRegistries: validation %q: resolve supported_roles: %w", p.name, fErr)
+					}
+					roles = rolesResolved
+				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := peer.DialValidation(dialCtx, p.name, p.endpoint, p.roles)
+				c, dErr := peer.DialValidation(dialCtx, p.name, p.endpoint, roles)
 				cancel()
 				if dErr != nil {
 					closeAll()

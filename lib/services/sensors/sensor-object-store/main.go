@@ -11,15 +11,17 @@
 //
 //	@concept: sensor
 //
-// The default bundled image registers ONLY the in-memory backend
-// ("memory"), wired below. That is the sole serviceable backend: the
-// sensor advertises (Capabilities) and accepts (Subscribe) exactly the
-// registered set, so a subscription naming s3/gcs/azure is rejected at
-// Subscribe rather than silently no-op'ing at poll time. S3 / GCS /
-// Azure are deliberately NOT implemented in this binary — keeping the
-// cloud SDKs out of the default build keeps the `go.mod` budget tight
-// and avoids LocalStack-only dev dependencies. A deployment that needs
-// a cloud backend builds its own binary that constructs the desired
+// The default bundled image always registers the in-memory backend
+// ("memory") and conditionally registers the filesystem backend
+// ("filesystem", when env RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT is set).
+// Those are the SDK-free backends shipped here: the sensor advertises
+// (Capabilities) and accepts (Subscribe) exactly the registered set,
+// so a subscription naming s3/gcs/azure is rejected at Subscribe
+// rather than silently no-op'ing at poll time. S3 / GCS / Azure are
+// deliberately NOT implemented in this binary — keeping the cloud
+// SDKs out of the default build keeps the `go.mod` budget tight and
+// avoids LocalStack-only dev dependencies. A deployment that needs a
+// cloud backend builds its own binary that constructs the desired
 // ObjectLister, registers it via svc.SetBackend("s3", …) before
 // svc.Run, and the sensor then advertises and accepts that backend
 // automatically.
@@ -58,13 +60,28 @@ func main() {
 
 	svc := NewSensorService(rimskyEndpoint, slogAdapter{l: slog.Default()})
 
-	// Register the in-memory backend — the ONLY backend this default
-	// build services. After this call Capabilities advertises and
-	// Subscribe accepts exactly {"memory"}; s3/gcs/azure are rejected.
-	// A production build registers additional listers here (e.g.
-	// svc.SetBackend("s3", newS3Lister(...))) before svc.Run to make
-	// those backends serviceable.
+	// Register the in-memory backend — the always-registered default.
+	// After this call Capabilities advertises and Subscribe accepts
+	// "memory" at minimum; s3/gcs/azure are still rejected unless a
+	// production build wires them via SetBackend before svc.Run.
 	svc.SetBackend("memory", NewMemoryLister())
+
+	// Conditionally register the filesystem backend. Env
+	// RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT — when set — names the host-
+	// (or volume-) provided base directory the lister treats as the
+	// object-store root. Buckets map to first-level subdirectories
+	// under it. Leaving the env empty omits "filesystem" from
+	// Capabilities and Subscribe rejects it; setting it makes
+	// "filesystem" a first-class backend (advertised, accepted, polled
+	// through the real loop) on this binary without dragging in any
+	// cloud SDKs. The cross-stack STORY-sensor-object-store proof
+	// uses this path because it exhibits the pluggable-backend
+	// contract end-to-end with a backend the test process can mutate
+	// externally (drop a file into the mounted volume).
+	if fsRoot := os.Getenv("RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT"); fsRoot != "" {
+		svc.SetBackend("filesystem", NewFilesystemLister(fsRoot))
+		slog.Info("sensor-object-store filesystem backend registered", "root", fsRoot)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

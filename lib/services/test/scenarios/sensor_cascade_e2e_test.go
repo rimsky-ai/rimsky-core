@@ -259,7 +259,7 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 // reap that must not have happened on a durable (no-flag) instance.
 func requireInstanceNotTerminated(t *testing.T, ep harness.RimskyEndpoint, instanceID string) {
 	t.Helper()
-	status, raw := ep.GetJSON(t, "/instances/"+instanceID, "")
+	status, raw := ep.GetJSON(t, "/v1/instances/"+instanceID, "")
 	if status != http.StatusOK {
 		t.Fatalf("GET /instances/%s: %d %s", instanceID, status, string(raw))
 	}
@@ -369,7 +369,7 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 		},
 	}
 
-	status, raw := ep.PostJSON(t, "/templates", body)
+	status, raw := ep.PostJSON(t, "/v1/templates", body)
 	if status != http.StatusCreated {
 		t.Fatalf("POST /templates: %d %s", status, string(raw))
 	}
@@ -382,7 +382,7 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 	if resp.TemplateID == "" {
 		t.Fatalf("template_id empty: %s", string(raw))
 	}
-	deployStatus, deployRaw := ep.PostJSON(t, "/templates/"+resp.TemplateID+"/deploy", map[string]any{})
+	deployStatus, deployRaw := ep.PostJSON(t, "/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
 	if deployStatus != http.StatusOK {
 		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
 	}
@@ -395,7 +395,7 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 // real sensor's Subscribe RPC with the resolved url.
 func createSensorCascadeInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
@@ -507,7 +507,7 @@ func requirePublisherMessagePersisted(t *testing.T, ep harness.RimskyEndpoint, i
 	var lastSeen string
 	for time.Now().Before(end) {
 		status, raw := ep.GetJSON(t,
-			"/instances/"+instanceID+"/messages?sender_kind=publisher", "")
+			"/v1/instances/"+instanceID+"/messages?sender_kind=publisher", "")
 		if status == http.StatusOK {
 			var resp struct {
 				Messages []struct {

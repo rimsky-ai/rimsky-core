@@ -78,7 +78,7 @@ type LeafRunRecord struct {
 	TemplateNodeAlias  string         `json:"template_node_alias,omitempty"`
 	ParamsSnapshotHash string         `json:"params_snapshot_hash,omitempty"`
 	AttributesHash     string         `json:"attributes_hash,omitempty"`
-	ScopeDataHash      string         `json:"scope_data_hash,omitempty"`
+	ScopeDataHash      string         `json:"claim_scope_data_hash,omitempty"`
 	State              string         `json:"state"`
 	// SettlingSignalType is the canonical signal type-path the run
 	// settled with (concept:signal). Replaces the retired LastOutcome
@@ -92,12 +92,15 @@ type LeafRunRecord struct {
 	Extra              map[string]any    `json:"extra,omitempty"`
 }
 
-// HeldClaimRef is one entry of LeafRunRecord.HeldClaims.
+// HeldClaimRef is one entry of LeafRunRecord.HeldClaims. The
+// `claim_scope_data_hash` JSON tag is the canonical wire shape
+// (`runtime/lineage_writer.go::LeafRunHeldClaim`); the Go field name is
+// kept as `ScopeDataHash` for brevity within the subscriber package.
 type HeldClaimRef struct {
 	ClaimHandleID string `json:"claim_handle_id"`
 	Role          string `json:"role"`
 	ProducerName  string `json:"producer_name"`
-	ScopeDataHash string `json:"scope_data_hash"`
+	ScopeDataHash string `json:"claim_scope_data_hash"`
 }
 
 // SubstitutionRef is one entry of LeafRunRecord.SubstitutionRefs.
@@ -142,7 +145,7 @@ type ClaimTerminalRecord struct {
 	SubClaimHandleIDs   []string       `json:"sub_claim_handle_ids,omitempty"`
 	CommittedAt         string         `json:"committed_at,omitempty"`
 	ProducerName        string         `json:"producer_name,omitempty"`
-	ScopeDataHash       string         `json:"scope_data_hash,omitempty"`
+	ScopeDataHash       string         `json:"claim_scope_data_hash,omitempty"`
 	VersionID           string         `json:"version_id,omitempty"`
 	Outcome             string         `json:"outcome"`
 	Cause               string         `json:"cause,omitempty"`

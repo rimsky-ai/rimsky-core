@@ -33,8 +33,3 @@ A code-review discipline that grep-checks for "introspection-adjacent calls" nee
 
 - `_discover/2026-05-10-attribute-substitution-grammar.md` Observations bullet 3.
 - `_discover/2026-05-10-opacity-of-userdata-claim-blob.md` Observations bullet 2.
-
-## Notes
-
-- 2026-05-19 — Stale symbol name updated per `spec:2026-05-19-multi-instance-template-ergonomics-design`. The "single sanctioned introspection site" framing remains drifted from three actual sites; this is a name fix only. Tension stays open.
-

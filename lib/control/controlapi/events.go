@@ -9,11 +9,13 @@ package controlapi
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -35,8 +37,25 @@ func registerEventsRoutes(r chi.Router, deps AppDeps) {
 func handleListEvents(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
+		// Validate ?kind= against the typed catalog at the
+		// request boundary (per decision:event-log-kind-enum).
+		// Empty = no filter (accept). Non-empty = MUST parse to
+		// a known operational kind OR a signal-shaped type-path;
+		// anything else returns 400 with the offending value
+		// surfaced.
+		kindParam := q.Get("kind")
+		if kindParam != "" {
+			if _, err := events.ParseKindString(kindParam); err != nil {
+				badRequest(w, "invalid kind: "+kindParam+
+					" (expected an operational kind from the OperationalKind proto enum"+
+					" or a canonical signal type-path; got: "+
+					strings.Join(events.AllOperationalKinds(), ", ")+
+					", or terminal/*, transient/*, attribute/*/changed, event/*, message/*)")
+				return
+			}
+		}
 		filter := persistence.EventListFilter{
-			Kind: q.Get("kind"),
+			Kind: kindParam,
 		}
 		if s := q.Get("instance_id"); s != "" {
 			id, err := uuid.Parse(s)
@@ -89,7 +108,7 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 		for _, e := range page.Events {
 			item := eventResponseItem{
 				ID:         e.ID,
-				Kind:       e.Kind,
+				Kind:       e.KindRaw,
 				Payload:    e.Payload,
 				OccurredAt: e.OccurredAt,
 			}

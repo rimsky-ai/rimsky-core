@@ -106,6 +106,15 @@ type configBuilder struct {
 	// Postgres and renders a `driver: sqlite` config pointing at the
 	// image's baked, nonroot-writable state path. See WithSQLite.
 	sqlite bool
+	// refValidationMode is the value rendered into the rimsky.yml
+	// `templates.ref_validation_mode` field. Empty defaults to the strict
+	// "all" mode the all-in-one image bakes in. Tests that POST templates
+	// whose nodes reference an executor the harness has not declared (for
+	// example a publisher cascade test where the reactor's executor
+	// surfaces work_started but does not need to dispatch successfully)
+	// set this to "none" so registration is not refused at the
+	// reference-validation gate.
+	refValidationMode string
 }
 
 // sqliteStatePath is the SQLite state-file path the rimsky-all-in-one
@@ -118,11 +127,30 @@ const sqliteStatePath = "/var/lib/rimsky/state.db"
 type producerCfg struct {
 	endpoint              string
 	writeSemanticsAllowed []string
+	// extraProtocols are mix-in protocol names appended to the
+	// rendered `protocols:` list alongside the always-present
+	// `claim_producer`. Used by tests that exercise a producer
+	// advertising one of the mix-in protocols (`validation`,
+	// `data_processing`, `lifecycle_subscriber`) — the harness writes
+	// the union into the rimsky.yml so DialPublisherAndValidationRegistries
+	// dials the matching client per advertised protocol.
+	extraProtocols []string
 }
 
 type executorCfg struct {
 	endpoint  string
 	transport string // grpc | http (default grpc)
+	// extraProtocols are mix-in protocol names appended to the
+	// rendered `protocols:` list alongside the always-present
+	// `executor`. Used by tests that exercise an executor advertising
+	// the `lifecycle_subscriber` mix-in — DialLifecycleSubscribers
+	// walks the executor entries too and dials a LifecycleClient per
+	// peer whose protocols include `lifecycle_subscriber`. The
+	// executor's startup observability handshake is best-effort, so
+	// piggybacking the lifecycle mix-in on an executor entry avoids
+	// the eager-blocking Capabilities handshake the claim-producer
+	// path runs.
+	extraProtocols []string
 }
 
 type publisherCfg struct {
@@ -144,10 +172,69 @@ func WithClaimProducer(name, endpoint string, writeSemanticsAllowed ...string) O
 	}
 }
 
+// WithClaimProducerProtocols extends an already-registered claim-producer
+// peer's `protocols:` list with mix-in protocols (`validation`,
+// `data_processing`, `lifecycle_subscriber`). The peer MUST have been
+// registered with WithClaimProducer earlier in the option chain; the
+// helper panics on an unknown name so a test that forgets the prior
+// WithClaimProducer call fails loudly instead of silently producing a
+// rimsky.yml without the mix-in.
+//
+// Mix-in advertisement requires two things to line up: the peer's
+// `protocols:` block in rimsky.yml must list the mix-in (so
+// DialPublisherAndValidationRegistries dials the matching client), AND
+// the peer's Capabilities response must list the mix-in in its
+// `protocols` field AND populate `validation_supported_roles` when the
+// mix-in is `validation`. The harness owns the first; the example
+// service code owns the second.
+func WithClaimProducerProtocols(name string, extraProtocols ...string) Option {
+	return func(cb *configBuilder) {
+		entry, ok := cb.claimProducers[name]
+		if !ok {
+			panic(fmt.Sprintf("harness.WithClaimProducerProtocols: no claim-producer registered as %q — call WithClaimProducer first", name))
+		}
+		entry.extraProtocols = append(entry.extraProtocols, extraProtocols...)
+		cb.claimProducers[name] = entry
+	}
+}
+
 // WithExecutor registers a peer executor service.
 func WithExecutor(name, endpoint string) Option {
 	return func(cb *configBuilder) {
 		cb.executors[name] = executorCfg{endpoint: endpoint, transport: "grpc"}
+	}
+}
+
+// WithExecutorProtocols extends an already-registered executor peer's
+// `protocols:` list with mix-in protocols (currently the only sanctioned
+// mix-in on an executor entry is `lifecycle_subscriber`). The peer MUST
+// have been registered with WithExecutor earlier in the option chain;
+// the helper panics on an unknown name so a test that forgets the prior
+// WithExecutor call fails loudly instead of silently producing a
+// rimsky.yml without the mix-in.
+//
+// Mix-in advertisement requires two things to line up: the peer's
+// `protocols:` block in rimsky.yml must list the mix-in (so
+// DialLifecycleSubscribers dials the matching client), AND the peer's
+// observability Capabilities response must list the mix-in in its
+// `protocols` field. The harness owns the first; the peer's binary owns
+// the second.
+//
+// Use this in preference to WithClaimProducerProtocols for cross-stack
+// lifecycle-subscriber proofs whose in-process peer is exposed via
+// WithHostPortAccess — the claim-producer's eager-blocking Capabilities
+// handshake at StartScheduler races the reverse-SSH host-port tunnel
+// and flakes under load (per claimproducer_custom.go's preamble), but
+// the executor entry's observability handshake is best-effort and the
+// LifecycleClient dial happens after startup.
+func WithExecutorProtocols(name string, extraProtocols ...string) Option {
+	return func(cb *configBuilder) {
+		entry, ok := cb.executors[name]
+		if !ok {
+			panic(fmt.Sprintf("harness.WithExecutorProtocols: no executor registered as %q — call WithExecutor first", name))
+		}
+		entry.extraProtocols = append(entry.extraProtocols, extraProtocols...)
+		cb.executors[name] = entry
 	}
 }
 
@@ -192,6 +279,21 @@ func WithHostPortAccess(ports ...int) Option {
 	}
 }
 
+// WithRefValidationMode renders `templates.ref_validation_mode: <mode>`
+// into the rimsky.yml the harness mounts. The all-in-one image bakes
+// the strict "all" mode by default; tests whose templates reference an
+// executor the harness has not declared (for instance the publisher
+// cascade test, where the reactor's executor surfaces work_started but
+// does not need a real dispatch) set this to "none" so registration is
+// not refused at the reference-validation gate. Valid values: "all",
+// "available", "none" (case-insensitive; unknown values are accepted by
+// the harness and rejected by rimsky at startup).
+func WithRefValidationMode(mode string) Option {
+	return func(cb *configBuilder) {
+		cb.refValidationMode = mode
+	}
+}
+
 // NewNetwork creates a docker network registered for cleanup on
 // t.Cleanup. Used when callers need to start peer services on the
 // shared network BEFORE rimsky/all comes up (e.g. claim producers
@@ -226,6 +328,87 @@ func WithExistingNetwork(name string) Option {
 // test process); RimskyEndpoint.InternalURL is reachable from sibling
 // containers brought up on the same Network.
 func BringUpRimsky(ctx context.Context, t testing.TB, opts ...Option) RimskyEndpoint {
+	t.Helper()
+	return BringUpRimskyHandle(ctx, t, opts...).Endpoint
+}
+
+// RimskyHandle is the richer bring-up handle returned by
+// BringUpRimskyHandle. It exposes the embedded RimskyEndpoint (URLs +
+// DSN + Network) plus a Restart method that recreates the rimsky/all
+// container against the SAME persistence backend (Postgres testcontainer
+// or baked SQLite path) and the SAME peer wiring (executors / publishers
+// / claim-producers / named-locks / host-port-access). Use Restart to
+// exercise startup-time hooks the control-api runs every time it boots
+// (e.g. runtime.ResyncPublisherSubscriptions): the publisher-registry,
+// the rimsky_publisher_subscriptions table, and the live publisher's
+// in-memory state survive across the restart, so the second boot can
+// observe ListSubscriptions being called against the same publisher.
+//
+// Restart preserves the docker network and the persistence container,
+// terminates the previous rimsky/all container, brings up a fresh one
+// with identical config, waits for /health 200, and updates
+// Endpoint.BaseURL to reflect the new mapped host port (the in-network
+// alias `http://rimsky:8080` is unchanged).
+type RimskyHandle struct {
+	// Endpoint carries the URL + DSN + Network the test process uses
+	// to talk to rimsky. BaseURL changes on Restart (new mapped port);
+	// InternalURL / HostDSN / InternalDSN / Network are stable.
+	Endpoint RimskyEndpoint
+
+	// container holds the live rimsky/all testcontainer so Restart
+	// can terminate and recreate it. Kept private — callers operate
+	// through the methods, not the raw container.
+	container testcontainers.Container
+
+	// configBuilder + yamlBytes carry the bring-up inputs so Restart
+	// can replay them verbatim against a fresh container.
+	cb        *configBuilder
+	yamlBytes []byte
+}
+
+// DumpRimskyLogs writes the rimsky/all container's combined
+// stdout/stderr to t.Log under a clear banner. Used by failing
+// assertions to surface what the control-api was actually doing at
+// the moment of failure — the resync goroutine's `publisher.resync.*`
+// log keys are the canonical evidence of whether reconcile ran. Safe
+// to call at any point in the test; never fatal.
+func (h *RimskyHandle) DumpRimskyLogs(t testing.TB) {
+	t.Helper()
+	if h.container == nil {
+		return
+	}
+	dumpLogsForFailure(t, h.container)
+}
+
+// Restart terminates the current rimsky/all container and brings up a
+// fresh one with the SAME config + peer wiring against the SAME
+// persistence backend (Postgres testcontainer or baked SQLite file).
+// Blocks until `GET /health` returns 200 on the new container. Updates
+// h.Endpoint.BaseURL with the new mapped host port.
+//
+// Failure modes are t.Fatal (the harness never t.Skip's). The
+// restarted container's cleanup is registered via t.Cleanup so it is
+// torn down at test end exactly like the initial bring-up.
+func (h *RimskyHandle) Restart(ctx context.Context, t testing.TB) {
+	t.Helper()
+	if h.container != nil {
+		termCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		_ = h.container.Terminate(termCtx)
+		cancel()
+	}
+	c, baseURL := runRimskyContainer(ctx, t, h.cb, h.yamlBytes, h.Endpoint.Network)
+	h.container = c
+	h.Endpoint.BaseURL = baseURL
+}
+
+// BringUpRimskyHandle is BringUpRimsky's restart-capable sibling: it
+// performs the same bring-up sequence but returns a *RimskyHandle that
+// can be Restart()ed to recreate the rimsky/all container against the
+// SAME persistence + peer wiring. The persistence container (Postgres
+// testcontainer or SQLite VOLUME) is NOT torn down between restarts —
+// the durable state survives, which is what restart-recovery tests
+// need.
+func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *RimskyHandle {
 	t.Helper()
 
 	cb := &configBuilder{
@@ -304,7 +487,35 @@ func BringUpRimsky(ctx context.Context, t testing.TB, opts ...Option) RimskyEndp
 	}
 
 	// 4. Bring up rimsky/all. The unified entrypoint runs migrations
-	//    then spawns scheduler + supervisor + control-api.
+	//    then spawns scheduler + supervisor + control-api. Extracted to
+	//    runRimskyContainer so RimskyHandle.Restart can re-run only the
+	//    rimsky/all bring-up step (the persistence container persists).
+	rimsky, baseURL := runRimskyContainer(ctx, t, cb, yamlBytes, networkName)
+
+	internalURL := "http://rimsky:8080"
+
+	return &RimskyHandle{
+		Endpoint: RimskyEndpoint{
+			BaseURL:     baseURL,
+			InternalURL: internalURL,
+			HostDSN:     hostDSN,
+			InternalDSN: internalDSN,
+			Network:     networkName,
+		},
+		container: rimsky,
+		cb:        cb,
+		yamlBytes: yamlBytes,
+	}
+}
+
+// runRimskyContainer starts a rimsky/all container with the given
+// rendered rimsky.yml on the given docker network, waits for /health
+// 200, and returns the container plus its host-mapped base URL. Used
+// by BringUpRimskyHandle on the initial boot and by RimskyHandle.Restart
+// on subsequent boots — the implementations are identical so they share
+// this helper.
+func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string) {
+	t.Helper()
 	rimskyOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithExposedPorts("8080/tcp"),
 		tcnet.WithNetworkName([]string{"rimsky"}, networkName),
@@ -342,28 +553,27 @@ func BringUpRimsky(ctx context.Context, t testing.TB, opts ...Option) RimskyEndp
 
 	hostIP, err := rimsky.Host(ctx)
 	if err != nil {
+		dumpLogsForFailure(t, rimsky)
 		t.Fatalf("harness: rimsky host: %v", err)
 	}
 	mapped, err := rimsky.MappedPort(ctx, "8080")
 	if err != nil {
+		// Most likely cause: rimsky-all-in-one exited non-zero between
+		// the wait-strategy port-up observation and the mapped-port
+		// lookup — typically a peer the startup eager-dial cannot
+		// reach. Dump container logs so the failure mode is visible
+		// without a manual `docker logs`.
+		dumpLogsForFailure(t, rimsky)
 		t.Fatalf("harness: rimsky mapped port: %v", err)
 	}
 	baseURL := fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
-	internalURL := "http://rimsky:8080"
 
-	// 5. Poll /health until control-api accepts traffic.
+	// Poll /health until control-api accepts traffic.
 	if err := waitForHealth(ctx, baseURL, healthDeadline); err != nil {
 		dumpLogsForFailure(t, rimsky)
 		t.Fatalf("harness: rimsky /health did not return 200: %v", err)
 	}
-
-	return RimskyEndpoint{
-		BaseURL:     baseURL,
-		InternalURL: internalURL,
-		HostDSN:     hostDSN,
-		InternalDSN: internalDSN,
-		Network:     networkName,
-	}
+	return rimsky, baseURL
 }
 
 // PostJSON marshals body to JSON and POSTs to e.BaseURL+path. Helper
@@ -428,7 +638,7 @@ func (e RimskyEndpoint) GetJSON(t testing.TB, path, bearer string) (int, []byte)
 	return resp.StatusCode, out
 }
 
-// waitForHealth polls baseURL+"/health" until it returns 200 or the
+// waitForHealth polls baseURL+"/v1/health" until it returns 200 or the
 // deadline elapses.
 func waitForHealth(ctx context.Context, baseURL string, deadline time.Duration) error {
 	pollCtx, cancel := context.WithTimeout(ctx, deadline)
@@ -437,7 +647,7 @@ func waitForHealth(ctx context.Context, baseURL string, deadline time.Duration) 
 		if pollCtx.Err() != nil {
 			return fmt.Errorf("timed out after %v", deadline)
 		}
-		req, _ := http.NewRequestWithContext(pollCtx, http.MethodGet, baseURL+"/health", nil)
+		req, _ := http.NewRequestWithContext(pollCtx, http.MethodGet, baseURL+"/v1/health", nil)
 		resp, err := http.DefaultClient.Do(req)
 		if err == nil {
 			resp.Body.Close()
@@ -500,8 +710,15 @@ func renderRimskyYAMLSQLite(cb *configBuilder) string {
 // writePeerBlocks appends the claim_producers / named_locks / executors /
 // publishers declarations to b. Shared by the Postgres and SQLite config
 // renderers so peer wiring (WithExecutor / WithClaimProducer / ...) is
-// identical regardless of the persistence backend.
+// identical regardless of the persistence backend. When
+// cb.refValidationMode is set, a `templates.ref_validation_mode:` field
+// is rendered first so the registration-time validator picks up the
+// operator-set mode at startup.
 func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
+	if cb.refValidationMode != "" {
+		b.WriteString("templates:\n")
+		fmt.Fprintf(b, "  ref_validation_mode: %s\n", cb.refValidationMode)
+	}
 	if len(cb.claimProducers) == 0 {
 		b.WriteString("claim_producers: {}\n")
 	} else {
@@ -509,7 +726,16 @@ func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 		for name, p := range cb.claimProducers {
 			fmt.Fprintf(b, "  %s:\n", name)
 			fmt.Fprintf(b, "    endpoint: %q\n", p.endpoint)
-			b.WriteString("    protocols: [claim_producer]\n")
+			// `claim_producer` is the primary protocol; mix-in
+			// protocols added via WithClaimProducerProtocols follow.
+			// Order is significant only for documentation — the
+			// validate-protocols loader treats the list as a set.
+			b.WriteString("    protocols: [claim_producer")
+			for _, extra := range p.extraProtocols {
+				b.WriteString(", ")
+				b.WriteString(extra)
+			}
+			b.WriteString("]\n")
 			b.WriteString("    write_semantics_allowed: [")
 			for i, ws := range p.writeSemanticsAllowed {
 				if i > 0 {
@@ -539,7 +765,16 @@ func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 			fmt.Fprintf(b, "    transport: %s\n", e.transport)
 			fmt.Fprintf(b, "    endpoint: %q\n", e.endpoint)
 			b.WriteString("    tls: off\n")
-			b.WriteString("    protocols: [executor]\n")
+			// `executor` is the primary protocol; mix-in protocols
+			// added via WithExecutorProtocols follow. Order is
+			// significant only for documentation — the protocols
+			// loader treats the list as a set.
+			b.WriteString("    protocols: [executor")
+			for _, extra := range e.extraProtocols {
+				b.WriteString(", ")
+				b.WriteString(extra)
+			}
+			b.WriteString("]\n")
 		}
 	}
 

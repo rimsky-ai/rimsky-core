@@ -64,8 +64,8 @@ func TestEmitSignal_WritesCanonicalRow(t *testing.T) {
 		t.Fatalf("EmitSignal: want 1 row, got %d", got)
 	}
 	row := events.rows[0]
-	if row.Kind != "terminal/success" {
-		t.Fatalf("EmitSignal: kind = %q; want terminal/success", row.Kind)
+	if row.Kind.String() != "terminal/success" {
+		t.Fatalf("EmitSignal: kind = %q; want terminal/success", row.Kind.String())
 	}
 	if row.InstanceID == nil || *row.InstanceID != instanceID {
 		t.Fatalf("EmitSignal: instance id mismatch")

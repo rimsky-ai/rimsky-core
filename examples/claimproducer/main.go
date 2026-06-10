@@ -24,7 +24,7 @@ import (
 //	serverkit.Mount(mux, prod)
 //	go http.ListenAndServe("0.0.0.0:9401", mux)
 func main() {
-	prod := &Producer{}
+	prod := newProducer()
 
 	lis, err := serverkit.Listen("0.0.0.0", 9400)
 	if err != nil {

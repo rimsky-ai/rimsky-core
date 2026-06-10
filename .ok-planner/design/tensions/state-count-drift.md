@@ -5,6 +5,7 @@ status: open
 affects:
   - node-run
   - parked-state
+  - node
 ---
 
 # Node-state vocabulary count drifts across prose

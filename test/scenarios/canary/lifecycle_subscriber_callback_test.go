@@ -123,17 +123,17 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
 	}))
-	deleteAndExpectOK(t, h, "/instances/"+instanceID.String())
+	deleteAndExpectOK(t, h, "/v1/instances/"+instanceID.String())
 	require.True(t, fake.waitFor("OnInstanceTerminated", templateHash, instanceID.String(), 5*time.Second),
 		"fake LifecycleSubscriber did not receive OnInstanceTerminated for %s", instanceID)
 
 	// Step 4: POST /templates/{hash}/undeploy fires OnTemplateUndeployed.
-	postAndExpectOK(t, h, "/templates/"+templateHash+"/undeploy")
+	postAndExpectOK(t, h, "/v1/templates/"+templateHash+"/undeploy")
 	require.True(t, fake.waitFor("OnTemplateUndeployed", templateHash, "", 5*time.Second),
 		"fake LifecycleSubscriber did not receive OnTemplateUndeployed for %s", templateHash)
 
 	// Step 5: DELETE /templates/{hash} fires OnTemplateDeregistered.
-	deleteAndExpectOK(t, h, "/templates/"+templateHash)
+	deleteAndExpectOK(t, h, "/v1/templates/"+templateHash)
 	require.True(t, fake.waitFor("OnTemplateDeregistered", templateHash, "", 5*time.Second),
 		"fake LifecycleSubscriber did not receive OnTemplateDeregistered for %s", templateHash)
 

@@ -17,6 +17,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
@@ -183,7 +184,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "unresolved_executor",
+				Kind: events.KindUnresolvedExecutor(),
 				Payload: map[string]any{
 					"executor_name": acq.Executor,
 					"supervisor_id": args.SupervisorID,
@@ -564,7 +565,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "attributes_substituted",
+			Kind: events.KindAttributesSubstituted(),
 			Payload: map[string]any{
 				"substituted_fields": fieldNames(resolved),
 			},

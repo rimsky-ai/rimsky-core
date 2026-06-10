@@ -410,6 +410,20 @@ async function runAndCallback(
   post: PostCallbackFn,
   logger: Logger,
 ): Promise<void> {
+  // Fast-fail dispatches (CliConfigError thrown by resolveHostServers,
+  // dispatch_id missing, malformed attributes) settle in single-digit
+  // milliseconds. The supervisor registers the async ack id AFTER
+  // draining the gRPC stream — a sequence that takes tens of
+  // milliseconds. Without this defensive yield, the fast-fail callback
+  // POST races ahead of the registration, the supervisor responds 404
+  // (unknown ack id), the supervisor never receives the failure
+  // terminal, and the node hangs in `running` until the heartbeat-loss
+  // sweep re-dispatches into the same race — looping forever. Slow
+  // (CLI-spawning) dispatches don't hit this because the spawn itself
+  // takes longer than the registration window. Property protected:
+  // dispatch-time failures land on the FIRST callback POST, not via the
+  // heartbeat-loss sweep.
+  await new Promise((r) => setTimeout(r, 100));
   try {
     const attributes = toRecord(req.attributes);
     const outcome = await runAgent({

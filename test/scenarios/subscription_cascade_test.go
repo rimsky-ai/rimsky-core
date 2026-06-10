@@ -125,7 +125,7 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 
 	invalidate := func(id shared.UUID) {
 		t.Helper()
-		resp, err := http.Post(h.ControlBase+"/nodes/"+id.String()+"/invalidate",
+		resp, err := http.Post(h.ControlBase+"/v1/nodes/"+id.String()+"/invalidate",
 			"application/json", bytes.NewReader([]byte(`{}`)))
 		require.NoError(t, err)
 		_ = resp.Body.Close()
@@ -246,7 +246,7 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	// Invalidate worker; monitor MUST NOT re-fire because no edge
 	// connects them.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "w-ok-2")
-	resp, err := http.Post(h.ControlBase+"/nodes/"+worker.ID.String()+"/invalidate",
+	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+worker.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader([]byte(`{}`)))
 	require.NoError(t, err)
 	_ = resp.Body.Close()

@@ -15,6 +15,8 @@ The supervisor's async-callback HTTP listener binds on `0.0.0.0`, but executors 
 
 Two distinct hostnames in play; the YAML config doesn't make the asymmetry obvious. Operators may assume the listener bind value is the advertise value.
 
+Proxy-mediated executors do not sidestep the asymmetry: the `concept:host-agent-proxy` → supervisor callback hop has the same advertise-host requirement as any other executor → supervisor hop, so routing a dispatch through the proxy does not change the callback-reachability story for that hop. A separate hostname class joins the system on the dev-side path — the `concept:host-agent`'s local-listener address, used by spawned processes to POST callbacks back through the agent — but it is implicit (loopback by default) and reported to the proxy at registration time; it needs no advertise-host knob because agents dial outbound (the proxy never dials the agent).
+
 ## Why it matters
 
 A misconfigured deployment fails silently: the supervisor accepts dispatches, the executor accepts work, but the final-outcome POST never arrives, and the dispatch ages into orphan-reap. Diagnosis requires correlating supervisor logs, executor logs, and network policy.
@@ -24,11 +26,6 @@ A misconfigured deployment fails silently: the supervisor accepts dispatches, th
 - Require the advertised-callback-host setting (no default) and fail fast at startup if it is missing.
 - Auto-derive the advertised host from the deployment environment.
 - Add a startup self-probe that POSTs to its own advertised URL and warns if unreachable.
-
-## Addendum (2026-05-24, per spec 2026-05-24-host-agent-and-proxy-design)
-
-1. Proxy-mediated executors do not sidestep this tension. The `concept:host-agent-proxy` → supervisor callback hop has the same advertise-host requirement as any other executor → supervisor hop today; routing a dispatch through the proxy does not change the callback-reachability story for that hop.
-2. A new hostname class joins the system implicitly: the `concept:host-agent`'s local-listener address, used by spawned processes to POST callbacks back through the agent. The agent's local address is implicit (loopback by default) and reported to the proxy at registration time; it needs no advertise-host knob because agents dial outbound (the proxy never dials the agent).
 
 ## Evidence
 

@@ -142,7 +142,7 @@ type authStatusResp struct {
 func fetchAuthStatus(ctx context.Context, endpoint, key string) (*authStatusResp, bool) {
 	c := newAuthClient(endpoint, key)
 	var resp authStatusResp
-	if _, err := c.RawCall(ctx, "GET", "/auth/status", nil, &resp); err != nil {
+	if _, err := c.RawCall(ctx, "GET", "/v1/auth/status", nil, &resp); err != nil {
 		return nil, false
 	}
 	return &resp, true

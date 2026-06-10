@@ -16,7 +16,7 @@ import (
 func TestClient_PruneLineage(t *testing.T) {
 	got := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/admin/lineage/prune" {
+		if r.URL.Path != "/v1/admin/lineage/prune" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {

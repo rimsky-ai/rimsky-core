@@ -11,15 +11,34 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// Append inserts an event row. The typed Kind is marshaled to its
+// canonical wire form via Kind.String() at the persistence boundary
+// (per decision:event-log-kind-enum). A zero / unrecognized typed
+// value stringifies to "" and we refuse the write — silently
+// inserting an empty kind would create observability blind spots
+// indistinguishable from a missing row to consumers filtering by
+// kind.
+//
+// Nil-tx enforcement (option C / no-nil-tx contract — see
+// deadlock_guard_test.go) is preserved: q(tx) panics first, so
+// callers that pass a nil tx still get the deadlock guard rather
+// than an empty-kind error masquerading as the real problem.
 func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput, tx persistence.Tx) error {
+	ex := s.q(tx)
+	kindWire := in.Kind.String()
+	if kindWire == "" {
+		return fmt.Errorf("events.append: empty kind (zero events.Kind value)")
+	}
 	payload := in.Payload
 	if payload == nil {
 		payload = map[string]any{}
@@ -32,11 +51,11 @@ func (s *eventsImpl) Append(ctx context.Context, in persistence.EventAppendInput
 	if in.OccurredAt != nil {
 		occurredAt = formatTime(*in.OccurredAt)
 	}
-	_, err = s.q(tx).ExecContext(ctx,
+	_, err = ex.ExecContext(ctx,
 		`INSERT INTO rimsky_events (instance_id, node_id, kind, payload, occurred_at)
 		 VALUES (?, ?, ?, ?, ?)`,
 		instanceIDArg(in.InstanceID), nodeIDArg(in.NodeID),
-		in.Kind, string(payloadBytes), occurredAt,
+		kindWire, string(payloadBytes), occurredAt,
 	)
 	return err
 }
@@ -165,14 +184,25 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 			r             persistence.EventRow
 			instanceIDStr sql.NullString
 			nodeIDStr     sql.NullString
+			kindRaw       string
 			payloadStr    string
 			occurredAtStr string
 			eventID       int64
 		)
-		if err := rows.Scan(&eventID, &instanceIDStr, &nodeIDStr, &r.Kind, &payloadStr, &occurredAtStr); err != nil {
+		if err := rows.Scan(&eventID, &instanceIDStr, &nodeIDStr, &kindRaw, &payloadStr, &occurredAtStr); err != nil {
 			return persistence.EventListResult{}, err
 		}
+		// Defensive parse at the unmarshal boundary (per
+		// decision:event-log-kind-enum). An unknown string is a
+		// real error — surface it, don't synthesize a Kind.
+		k, err := events.ParseKindString(kindRaw)
+		if err != nil {
+			slog.Error("events.unknown_kind_at_unmarshal", slog.String("raw", kindRaw))
+			return persistence.EventListResult{}, fmt.Errorf("events.list: %w", err)
+		}
 		r.ID = eventID
+		r.Kind = k
+		r.KindRaw = kindRaw
 		if instanceIDStr.Valid && instanceIDStr.String != "" {
 			u, err := uuid.Parse(instanceIDStr.String)
 			if err != nil {
@@ -253,14 +283,22 @@ func (s *eventsImpl) LastTerminalByNodes(ctx context.Context, nodeIDs []shared.U
 			r             persistence.EventRow
 			instanceIDStr sql.NullString
 			nodeIDStr     sql.NullString
+			kindRaw       string
 			payloadStr    string
 			occurredAtStr string
 			eventID       int64
 		)
-		if err := rows.Scan(&eventID, &instanceIDStr, &nodeIDStr, &r.Kind, &payloadStr, &occurredAtStr); err != nil {
+		if err := rows.Scan(&eventID, &instanceIDStr, &nodeIDStr, &kindRaw, &payloadStr, &occurredAtStr); err != nil {
 			return nil, err
 		}
+		k, err := events.ParseKindString(kindRaw)
+		if err != nil {
+			slog.Error("events.unknown_kind_at_unmarshal", slog.String("raw", kindRaw))
+			return nil, fmt.Errorf("events.lastTerminalByNodes: %w", err)
+		}
 		r.ID = eventID
+		r.Kind = k
+		r.KindRaw = kindRaw
 		if instanceIDStr.Valid && instanceIDStr.String != "" {
 			u, err := uuid.Parse(instanceIDStr.String)
 			if err != nil {

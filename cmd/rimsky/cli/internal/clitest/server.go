@@ -105,38 +105,38 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func (s *Server) registerRoutes(r chi.Router) {
-	r.Get("/health", s.handleHealth)
+	r.Get("/v1/health", s.handleHealth)
 
-	r.Post("/templates", s.handleRegisterTemplate)
-	r.Post("/templates/validate", s.handleValidateTemplate)
-	r.Get("/templates", s.handleListTemplates)
-	r.Get("/templates/{id}", s.handleGetTemplate)
-	r.Post("/templates/{id}/deploy", s.handleDeployTemplate)
-	r.Post("/templates/{id}/undeploy", s.handleUndeployTemplate)
-	r.Delete("/templates/{id}", s.handleDeleteTemplate)
+	r.Post("/v1/templates", s.handleRegisterTemplate)
+	r.Post("/v1/templates/validate", s.handleValidateTemplate)
+	r.Get("/v1/templates", s.handleListTemplates)
+	r.Get("/v1/templates/{id}", s.handleGetTemplate)
+	r.Post("/v1/templates/{id}/deploy", s.handleDeployTemplate)
+	r.Post("/v1/templates/{id}/undeploy", s.handleUndeployTemplate)
+	r.Delete("/v1/templates/{id}", s.handleDeleteTemplate)
 
-	r.Post("/tags", s.handleCreateTag)
-	r.Get("/tags", s.handleListTags)
-	r.Put("/tags/{tag}", s.handleMoveTag)
-	r.Delete("/tags/{tag}", s.handleDeleteTag)
+	r.Post("/v1/tags", s.handleCreateTag)
+	r.Get("/v1/tags", s.handleListTags)
+	r.Put("/v1/tags/{tag}", s.handleMoveTag)
+	r.Delete("/v1/tags/{tag}", s.handleDeleteTag)
 
-	r.Post("/instances", s.handleCreateInstance)
-	r.Get("/instances", s.handleListInstances)
-	r.Get("/instances/{idOrKey}", s.handleGetInstance)
-	r.Delete("/instances/{idOrKey}", s.handleDeleteInstance)
-	r.Post("/instances/{idOrKey}/terminate", s.handleTerminateInstance)
-	r.Get("/instances/{idOrKey}/nodes", s.handleListInstanceNodes)
-	r.Get("/instances/{idOrKey}/breakpoint-hits", s.handleListBreakpointHits)
+	r.Post("/v1/instances", s.handleCreateInstance)
+	r.Get("/v1/instances", s.handleListInstances)
+	r.Get("/v1/instances/{idOrKey}", s.handleGetInstance)
+	r.Delete("/v1/instances/{idOrKey}", s.handleDeleteInstance)
+	r.Post("/v1/instances/{idOrKey}/terminate", s.handleTerminateInstance)
+	r.Get("/v1/instances/{idOrKey}/nodes", s.handleListInstanceNodes)
+	r.Get("/v1/instances/{idOrKey}/breakpoint-hits", s.handleListBreakpointHits)
 
-	r.Get("/nodes/{id}", s.handleGetNode)
-	r.Post("/nodes/{id}/invalidate", s.handleInvalidateNode)
-	r.Post("/nodes/{id}/reset", s.handleResetNode)
+	r.Get("/v1/nodes/{id}", s.handleGetNode)
+	r.Post("/v1/nodes/{id}/invalidate", s.handleInvalidateNode)
+	r.Post("/v1/nodes/{id}/reset", s.handleResetNode)
 
-	r.Get("/events", s.handleListEvents)
+	r.Get("/v1/events", s.handleListEvents)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/health") {
+	if s.maybeFail(w, r, "/v1/health") {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -147,7 +147,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRegisterTemplate(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/templates") {
+	if s.maybeFail(w, r, "/v1/templates") {
 		return
 	}
 	var body struct {
@@ -193,7 +193,7 @@ func (s *Server) handleRegisterTemplate(w http.ResponseWriter, r *http.Request) 
 // referencing "warn-executor" yields a warning. `?warnings_as_errors=true`
 // folds warnings into the ok verdict, mirroring the live handler.
 func (s *Server) handleValidateTemplate(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/templates/validate") {
+	if s.maybeFail(w, r, "/v1/templates/validate") {
 		return
 	}
 	var body struct {
@@ -239,7 +239,7 @@ func (s *Server) handleValidateTemplate(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/templates") {
+	if s.maybeFail(w, r, "/v1/templates") {
 		return
 	}
 	stateFilter := r.URL.Query().Get("state")
@@ -270,7 +270,7 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
 	ref := chi.URLParam(r, "id")
-	if s.maybeFail(w, r, "/templates/"+ref) {
+	if s.maybeFail(w, r, "/v1/templates/"+ref) {
 		return
 	}
 	hash := s.State.LookupRef(ref)
@@ -301,7 +301,7 @@ func (s *Server) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
 	ref := chi.URLParam(r, "id")
-	if s.maybeFail(w, r, "/templates/"+ref+"/deploy") {
+	if s.maybeFail(w, r, "/v1/templates/"+ref+"/deploy") {
 		return
 	}
 	hash := s.State.LookupRef(ref)
@@ -324,7 +324,7 @@ func (s *Server) handleDeployTemplate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUndeployTemplate(w http.ResponseWriter, r *http.Request) {
 	ref := chi.URLParam(r, "id")
-	if s.maybeFail(w, r, "/templates/"+ref+"/undeploy") {
+	if s.maybeFail(w, r, "/v1/templates/"+ref+"/undeploy") {
 		return
 	}
 	hash := s.State.LookupRef(ref)
@@ -354,7 +354,7 @@ func (s *Server) handleUndeployTemplate(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 	ref := chi.URLParam(r, "id")
-	if s.maybeFail(w, r, "/templates/"+ref) {
+	if s.maybeFail(w, r, "/v1/templates/"+ref) {
 		return
 	}
 	isTagForm := !looksLikeHashFake(ref)
@@ -390,7 +390,7 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/tags") {
+	if s.maybeFail(w, r, "/v1/tags") {
 		return
 	}
 	var body struct {
@@ -419,7 +419,7 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/tags") {
+	if s.maybeFail(w, r, "/v1/tags") {
 		return
 	}
 	tags := s.State.ListTags()
@@ -431,7 +431,7 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMoveTag(w http.ResponseWriter, r *http.Request) {
 	tag := chi.URLParam(r, "tag")
-	if s.maybeFail(w, r, "/tags/"+tag) {
+	if s.maybeFail(w, r, "/v1/tags/"+tag) {
 		return
 	}
 	if existing := s.State.LookupRef(tag); existing == "" {
@@ -456,7 +456,7 @@ func (s *Server) handleMoveTag(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 	tag := chi.URLParam(r, "tag")
-	if s.maybeFail(w, r, "/tags/"+tag) {
+	if s.maybeFail(w, r, "/v1/tags/"+tag) {
 		return
 	}
 	if !s.State.DeleteTag(tag) {
@@ -467,7 +467,7 @@ func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateInstance(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/instances") {
+	if s.maybeFail(w, r, "/v1/instances") {
 		return
 	}
 	var body struct {
@@ -524,7 +524,7 @@ func nodeCountForSpec(spec map[string]any) int {
 }
 
 func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/instances") {
+	if s.maybeFail(w, r, "/v1/instances") {
 		return
 	}
 	hash := r.URL.Query().Get("template_hash")
@@ -545,7 +545,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
-	if s.maybeFail(w, r, "/instances/"+idOrKey) {
+	if s.maybeFail(w, r, "/v1/instances/"+idOrKey) {
 		return
 	}
 	inst := s.State.FindInstance(idOrKey)
@@ -558,7 +558,7 @@ func (s *Server) handleGetInstance(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
-	if s.maybeFail(w, r, "/instances/"+idOrKey) {
+	if s.maybeFail(w, r, "/v1/instances/"+idOrKey) {
 		return
 	}
 	inst := s.State.FindInstance(idOrKey)
@@ -586,7 +586,7 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 // fake while breaking against the real server.
 func (s *Server) handleTerminateInstance(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
-	if s.maybeFail(w, r, "/instances/"+idOrKey+"/terminate") {
+	if s.maybeFail(w, r, "/v1/instances/"+idOrKey+"/terminate") {
 		return
 	}
 	inst := s.State.FindInstance(idOrKey)
@@ -603,7 +603,7 @@ func (s *Server) handleTerminateInstance(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) handleListInstanceNodes(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
-	if s.maybeFail(w, r, "/instances/"+idOrKey+"/nodes") {
+	if s.maybeFail(w, r, "/v1/instances/"+idOrKey+"/nodes") {
 		return
 	}
 	inst := s.State.FindInstance(idOrKey)
@@ -625,7 +625,7 @@ func (s *Server) handleListInstanceNodes(w http.ResponseWriter, r *http.Request)
 // the real server.
 func (s *Server) handleListBreakpointHits(w http.ResponseWriter, r *http.Request) {
 	idOrKey := chi.URLParam(r, "idOrKey")
-	if s.maybeFail(w, r, "/instances/"+idOrKey+"/breakpoint-hits") {
+	if s.maybeFail(w, r, "/v1/instances/"+idOrKey+"/breakpoint-hits") {
 		return
 	}
 	inst := s.State.FindInstance(idOrKey)
@@ -669,7 +669,7 @@ func (s *Server) handleListBreakpointHits(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if s.maybeFail(w, r, "/nodes/"+id) {
+	if s.maybeFail(w, r, "/v1/nodes/"+id) {
 		return
 	}
 	n, ok := s.State.GetNode(id)
@@ -682,7 +682,7 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleInvalidateNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if s.maybeFail(w, r, "/nodes/"+id+"/invalidate") {
+	if s.maybeFail(w, r, "/v1/nodes/"+id+"/invalidate") {
 		return
 	}
 	if _, ok := s.State.GetNode(id); !ok {
@@ -694,7 +694,7 @@ func (s *Server) handleInvalidateNode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleResetNode(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if s.maybeFail(w, r, "/nodes/"+id+"/reset") {
+	if s.maybeFail(w, r, "/v1/nodes/"+id+"/reset") {
 		return
 	}
 	if _, ok := s.State.GetNode(id); !ok {
@@ -705,7 +705,7 @@ func (s *Server) handleResetNode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
-	if s.maybeFail(w, r, "/events") {
+	if s.maybeFail(w, r, "/v1/events") {
 		return
 	}
 	q := r.URL.Query()

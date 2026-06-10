@@ -31,7 +31,7 @@ var terminalStates = map[string]bool{
 // the template hash.
 func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/templates", body)
+	status, raw := ep.PostJSON(t, "/v1/templates", body)
 	if status != http.StatusCreated {
 		t.Fatalf("POST /templates: %d %s", status, string(raw))
 	}
@@ -45,7 +45,7 @@ func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any
 		t.Fatalf("template_id empty: %s", string(raw))
 	}
 	deployStatus, deployRaw := ep.PostJSON(t,
-		"/templates/"+resp.TemplateID+"/deploy", map[string]any{})
+		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
 	if deployStatus != http.StatusOK {
 		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
 	}
@@ -55,7 +55,7 @@ func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any
 // createInstance POSTs a new instance and returns its instance_id.
 func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},

@@ -11,7 +11,7 @@ aliases: []
 The operator interface exposed by the control-api binary. Serves two protocol skins on the same TCP port and the same operation set:
 
 - **HTTP+JSON** — routed at bare, unversioned paths covering template registration, instance lifecycle (create, pause, resume), per-instance breakpoint management (set, delete, resume), the auth surface, observability reads, and admin diagnostics endpoints.
-- **MCP** (Model Context Protocol) — JSON-RPC 2.0 over HTTP at a dedicated MCP endpoint, served by an in-process MCP package. Tools-only V1, plus read-only resource list and read added by `spec:2026-05-24-instance-debugger-design`. No resource-subscribe and no server-pushed notifications in V1 — those await a transport upgrade. The tool catalog is computed from the canonical action registry; the tool-list call filters by the requesting key's permission grant.
+- **MCP** (Model Context Protocol) — JSON-RPC 2.0 over HTTP at a dedicated MCP endpoint, served by an in-process MCP package. The MCP surface exposes tools plus read-only resource list and read. Resource-subscribe and server-pushed notifications are not part of this concept. The tool catalog is computed from the canonical action registry; the tool-list call filters by the requesting key's permission grant.
 
 Both skins pass through the same auth + permission middleware. Fires lifecycle-subscriber events at state transitions (synchronously; see `concept:lifecycle-subscriber`).
 
@@ -33,25 +33,6 @@ Owns: the route mounts, the per-route handlers, the lifecycle-subscriber fan-out
 
 ## MCP-as-skin
 
-The MCP protocol skin is hosted in-process by a package under the control-api implementation. Tool invocations dispatch back into the router via an in-process handler (no self-loopback HTTP call). The pre-spec standalone MCP-server Go module has been retired; its tool-catalog scaffolding and JSON-RPC envelope handling folded into the in-process package.
+The MCP protocol skin is hosted in-process by a package under the control-api implementation. Tool invocations dispatch back into the router via an in-process handler (no self-loopback HTTP call). The tool-catalog scaffolding and JSON-RPC envelope handling live in the in-process MCP package.
 
 Note: an LLM-agent executor embeds a separate per-run *internal* MCP server — same protocol, different role (per-dispatch executor-local tools vs operator control-plane). Do not confuse the two.
-
-(Previously documented as a standalone concept `mcp-server`; folded here under `spec:2026-05-11-design-log-convergence`. The standalone MCP-server framing retired by `spec:2026-05-15-control-plane-mcp-and-auth-design`.)
-
-## Aliases and historical names
-
-None live.
-
-## Open within this concept
-
-- The compose prefix reservation is server-enforced (see the Invariant above).
-- Bare-paths vs eventual v1 versioning commitment is acknowledged but unresolved — see `tension:control-api-version-prefix`.
-
-## Notes
-
-- [2026-05-15] `spec:2026-05-15-control-plane-mcp-and-auth-design` adds the auth surface, makes MCP a first-class protocol skin hosted in-process at a dedicated MCP endpoint, and retires the standalone MCP-server framing.
-- 2026-05-24 — MCP capability extends from tools-only to tools + read-only resources per `spec:2026-05-24-instance-debugger-design`. Resource list and read added to the dispatch switch; push (resource-subscribe + resource-update notifications) deferred to a future transport-upgrade spec. New per-instance pause and resume routes added. New per-instance breakpoint routes added.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- 2026-06-07 — compose-prefix reservation moved from client-side convention to server-enforced invariant per spec:2026-06-06-comprehensive-gap-closure.
-

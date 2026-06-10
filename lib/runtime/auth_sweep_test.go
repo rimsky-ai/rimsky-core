@@ -90,7 +90,7 @@ func TestSweepRotationGrace(t *testing.T) {
 			return err
 		}
 		for _, e := range rl.Events {
-			if e.Kind == auth.EventKeyRevoked {
+			if e.KindRaw == auth.EventKeyRevoked {
 				auditFound++
 				if reason, _ := e.Payload["reason"].(string); reason != string(auth.RevokeReasonRotationGrace) {
 					t.Errorf("audit reason: got %q want %q", reason, auth.RevokeReasonRotationGrace)

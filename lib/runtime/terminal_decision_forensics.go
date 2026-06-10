@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
@@ -123,7 +124,7 @@ func emitTerminalForensics(
 	// Event payload mirrors the lineage shape but excludes node_id (the
 	// event row already carries it as a column). The kind discriminates
 	// commit vs abandon; the cause field carries the abandon-flavor.
-	kind := "claim_resolution.commit"
+	kind := events.KindClaimResolutionCommit()
 	payload := map[string]any{
 		"claim_handle_id":       td.ClaimHandleID.String(),
 		"run_id":                td.LineageHint.RunID.String(),
@@ -136,7 +137,7 @@ func emitTerminalForensics(
 		payload["parent_claim_handle_id"] = td.ParentClaimHandleID.String()
 	}
 	if td.Outcome == AggregateAbandon {
-		kind = "claim_resolution.abandon"
+		kind = events.KindClaimResolutionAbandon()
 		cause := td.Cause
 		if cause == "" {
 			cause = TerminalCauseNatural
@@ -160,7 +161,7 @@ func emitTerminalForensics(
 	}, tx); err != nil && args.Logger != nil {
 		args.Logger.Warn("ResolveClaimHandleTerminal: event append failed",
 			"claim_handle_id", td.ClaimHandleID.String(),
-			"kind", kind,
+			"kind", kind.String(),
 			"error", err.Error())
 	}
 }

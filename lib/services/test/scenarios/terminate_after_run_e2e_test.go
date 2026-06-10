@@ -101,7 +101,7 @@ func deployTerminateAfterRunTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 // the terminal predicate at frame-end.
 func createTerminateAfterRunInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":            templateID,
 		"instance_key":        instanceKey,
 		"params":              map[string]any{},
@@ -121,7 +121,7 @@ func createTerminateAfterRunInstance(t *testing.T, ep harness.RimskyEndpoint, te
 	}
 	// Confirm the flag round-tripped onto the GET projection — the wire
 	// thread-through is itself part of the feature under test.
-	gstatus, graw := ep.GetJSON(t, "/instances/"+resp.InstanceID, "")
+	gstatus, graw := ep.GetJSON(t, "/v1/instances/"+resp.InstanceID, "")
 	if gstatus != http.StatusOK {
 		t.Fatalf("GET /instances/%s: %d %s", resp.InstanceID, gstatus, string(graw))
 	}
@@ -147,7 +147,7 @@ func requireInstanceTerminated(t *testing.T, ep harness.RimskyEndpoint, instance
 	end := time.Now().Add(deadline)
 	var lastBody string
 	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, "/instances/"+instanceID, "")
+		status, raw := ep.GetJSON(t, "/v1/instances/"+instanceID, "")
 		if status == http.StatusOK {
 			lastBody = string(raw)
 			var resp struct {
@@ -172,7 +172,7 @@ func requireInstanceTerminated(t *testing.T, ep harness.RimskyEndpoint, instance
 // instance still accepts work.
 func requireMessageRejectedTerminated(t *testing.T, ep harness.RimskyEndpoint, instanceID, target string) {
 	t.Helper()
-	path := "/instances/" + instanceID + "/messages"
+	path := "/v1/instances/" + instanceID + "/messages"
 	body := map[string]any{
 		"kind":   "invalidate",
 		"target": target,

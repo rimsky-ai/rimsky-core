@@ -18,7 +18,7 @@ A `rimsky conformance <protocol>` subcommand family — one subcommand per proto
 - Publisher-protocol conformance — capabilities plus subscribe, list-subscriptions, idempotent-subscribe, message-push (in-process receiver), unsubscribe, and idempotent-unsubscribe.
 - Validation-mix-in conformance — per-role happy-path plus malformed-input plus unknown-role checks.
 
-The conformance library lives in the protocols module; each subcommand is a thin wrapper (parse flags, dial endpoint, invoke library, format output, exit). The conformance surface ships inside the single rimsky binary — there are no standalone per-protocol conformance binaries.
+The conformance library lives in the protocols module; each subcommand is a thin wrapper (parse flags, dial endpoint, invoke library, format output, exit). The conformance surface ships inside the single rimsky binary.
 
 ## Purpose
 
@@ -36,22 +36,3 @@ Owns: the conformance library, the `rimsky conformance <protocol>` subcommand ha
 - LifecycleSubscriber has no dedicated conformance subcommand; its idempotency is enforced server-side via a persisted idempotency ledger, exercised by integration tests.
 - The uniformity check is silently skipped (rather than failed) for pick-policy producers whose consecutive opens return non-byte-equal scopes.
 - The memory blob backend's startup-time unified-only gate is bypassed in the blob-backend conformance subcommand by running it under the unified process role.
-
-## Aliases and historical names
-
-The conformance surface was historically a set of standalone per-protocol binaries (named for the protocol they exercised), then thin CLI wrappers over the extracted runner library; both forms are retired. The conformance runners now ship as `rimsky conformance <protocol>` subcommands inside the single rimsky binary.
-
-## Open within this concept
-
-- Stub-mode runtime gate + probe pairing is a runtime gate; build-time gating is not enforced — see `tension:stub-mode-runtime-only-gate`.
-- Blob-backend conformance inlines its six checks rather than reusing the shared persistence-conformance fixture pattern — see `tension:blob-backend-conformance-fixture-asymmetry`.
-- The stub-mode signature (the stub attributes-delta map shape) has no proto/doc surface — see `tension:stub-mode-signature-no-proto-surface`.
-
-## Notes
-
-- Renamed the executor-conformance runner per `spec:2026-05-12-nomenclature-resolution` (audit ride-along I.1). The probe runner retains its generic protocol-agnostic name.
-- 2026-05-24: conformance runner logic extracted from the per-protocol binaries into the SDK conformance library. The CLI form was kept as thin wrappers calling the library. External Go authors can now invoke conformance from a Go test. Also corrected a pre-existing stale runner count (four → six) in the "What it is" section. See `spec:2026-05-24-repo-reorganization-design` phase P2.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- [2026-05-24] The host-agent-proxy is conformance-testable as a normal service via the existing executor and claim-producer conformance runners, run against the proxy with a stub spawned process behind an in-process agent fake. A dedicated host-agent conformance runner covering the agent ↔ proxy protocol from the agent side is a follow-up. Per spec 2026-05-24-host-agent-and-proxy-design.
-- 2026-05-26 — conformance library moved from the SDK module into the protocols module as a sub-package; no API change. Per spec:2026-05-26-collapse-sdk-into-protocols.
-- 2026-06-02 — the standalone per-protocol conformance binaries were folded into `rimsky conformance <protocol>` subcommands shipped in the single rimsky binary; the importable runner library is unchanged. Per `spec:2026-06-02-rimsky-core-remediation-design`.

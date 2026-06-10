@@ -118,7 +118,7 @@ func TestInvalidateNode_FrameIn_JoinsRunningFrame(t *testing.T) {
     `, []any{inst.ID}, &framesBefore)
 
 	// Issue the operator invalidate with frame: in against the target.
-	status, out := h.httpJSON(t, "POST", "/nodes/"+target.ID.String()+"/invalidate", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/nodes/"+target.ID.String()+"/invalidate", map[string]any{
 		"reason": "mid-cascade correction",
 		"frame":  "in",
 	})
@@ -208,7 +208,7 @@ func TestGetNode_SettlingSignalType(t *testing.T) {
 	// Resolve the node id through the public surface (GET
 	// /instances/{id}/nodes) so the test exercises the same resolution an
 	// operator would, then key the seed on that id.
-	status, listOut := h.httpJSON(t, "GET", "/instances/"+inst.ID.String()+"/nodes", nil)
+	status, listOut := h.httpJSON(t, "GET", "/v1/instances/"+inst.ID.String()+"/nodes", nil)
 	require.Equal(t, http.StatusOK, status, listOut)
 	nodes, _ := listOut["nodes"].([]any)
 	require.NotEmpty(t, nodes)
@@ -232,7 +232,7 @@ func TestGetNode_SettlingSignalType(t *testing.T) {
 	runID := seedTerminalRunWithSignalType(ctx, t, h, inst, settledNode.ID, wantSignalType)
 	require.NotEqual(t, uuid.Nil, runID)
 
-	status, out := h.httpJSON(t, "GET", "/nodes/"+settledNode.ID.String(), nil)
+	status, out := h.httpJSON(t, "GET", "/v1/nodes/"+settledNode.ID.String(), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, wantSignalType, out["settling_signal_type"],
 		"node detail must carry the persisted settling signal type")
@@ -241,7 +241,7 @@ func TestGetNode_SettlingSignalType(t *testing.T) {
 	// absent/empty (omitempty drops it when the projected column is NULL).
 	freshInst := seedInstance(t, h, "node-fresh-"+uuid.NewString())
 	freshNode := firstNode(t, h, freshInst)
-	status, freshOut := h.httpJSON(t, "GET", "/nodes/"+freshNode.ID.String(), nil)
+	status, freshOut := h.httpJSON(t, "GET", "/v1/nodes/"+freshNode.ID.String(), nil)
 	require.Equal(t, http.StatusOK, status, freshOut)
 	got, present := freshOut["settling_signal_type"]
 	require.False(t, present && got != nil && got != "",

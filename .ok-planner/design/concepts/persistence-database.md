@@ -18,7 +18,7 @@ Two impls: a Postgres adapter (production) and an SQLite adapter (dev). Alongsid
 
 The adapter selector — a string-valued driver config field ("postgres" / "sqlite") — is distinct from the database interface and stays as-is. "Driver" is correctly used there to name the adapter shape.
 
-Row-struct convention: row structs stay singular even though the persisted tables are plural — the node, frame, claim-handle, and node-run row structs map to the corresponding pluralized node, frame, claim-handle, and node-run ledgers, named in their final post-baseline-rebase form per `spec:2026-05-12-nomenclature-resolution`.
+Row-struct convention: row structs stay singular even though the persisted tables are plural — the node, frame, claim-handle, and node-run row structs map to the corresponding pluralized node, frame, claim-handle, and node-run ledgers.
 
 ## Purpose
 
@@ -34,17 +34,3 @@ Owns: the top-level database container interface, the per-row-type accessor umbr
 - The memory blob backend IS gate-rejected outside the unified single-process role.
 - The raw-Postgres-driver isolation rule restricts direct driver use to the Postgres adapter, its test helpers, the binary entrypoints, the scenario harness, the bundled services, and the smoke-test harness — graph and control code go through the database interface.
 - Pre-v1 migration discipline: filenames are append-only; SQL inside is free to drop+recreate.
-
-## Aliases and historical names
-
-Pre-`spec:2026-05-12-nomenclature-resolution` baseline rebase, the migration history threaded through ~20 numbered files capturing a chain of renames: the dispatch → worker-request → node-run ledger renames, the consumer-key → instance-key field rename, the lock-holder → claim-handle ledger rename plus pluralization, the frame `mode` field renamed to `frame_resolution_mode`, and the lifecycle-idempotency ledger pluralized. Post-rebase the chain collapses to a single baseline migration reflecting the final schema; dev Postgres requires dropping and recreating the public schema before re-applying (per `spec:2026-05-12-nomenclature-resolution` Group A).
-
-## Open within this concept
-
-- SQLite-multi-replica silent-split is documented but not enforced; the memory backend IS — asymmetric gating, see `tension:sqlite-vs-memory-reject-asymmetry`.
-
-## Notes
-
-- Renamed from `persistence-driver` per the deferred B.7 follow-up of `spec:2026-05-12-nomenclature-resolution`. The top-tier interface was renamed from "driver" to "database" to match its actual role (runtime object, not adapter — analogous to Go stdlib sql.DB). Per-row-type sub-interfaces normalized to the singular per-row-accessor form. The top-tier accessor method that hands back the per-row-type umbrella was renamed from "store" to "tables". The string config field selecting "postgres" vs "sqlite" stays named "driver" — that's the adapter selector and correctly named.
-- 2026-05-24 — Migration history flattened per `spec:2026-05-24-instance-debugger-design`. The fourteen numbered migrations are deleted and replaced with a single consolidated baseline migration per backend reflecting current schema state plus the new breakpoint tables and a paused flag on the instance row. Pre-v1 break-freely operation; existing dev databases drop and recreate. Adds breakpoint and breakpoint-hit table accessors on the per-row-type accessor umbrella.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

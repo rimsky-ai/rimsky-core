@@ -112,7 +112,7 @@ func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 	// Wake via admin invalidate (NOT /v1/callback — a parked node is not
 	// woken by the callback endpoint).
 	resp, err := http.Post(
-		h.ControlBase+"/admin/instances/"+worker.InstanceID.String()+"/nodes/"+worker.ID.String()+"/invalidate",
+		h.ControlBase+"/v1/admin/instances/"+worker.InstanceID.String()+"/nodes/"+worker.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader([]byte(`{}`)),
 	)
 	require.NoError(t, err)
@@ -142,7 +142,7 @@ func createInstanceTerminateAfterRun(t *testing.T, h *scenario.Harness, template
 		"terminate_after_run": true,
 	})
 	require.NoError(t, err)
-	resp, err := http.Post(h.ControlBase+"/instances", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
@@ -179,7 +179,7 @@ func createInstanceTerminateAfterRun(t *testing.T, h *scenario.Harness, template
 // getInstance fetches GET /instances/{id} and decodes the projection.
 func getInstance(t *testing.T, h *scenario.Harness, id shared.UUID) instanceProjection {
 	t.Helper()
-	resp, err := http.Get(h.ControlBase + "/instances/" + id.String())
+	resp, err := http.Get(h.ControlBase + "/v1/instances/" + id.String())
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode, "GET /instances/{id} should return 200")
@@ -206,7 +206,7 @@ func waitForHeldFrame(t *testing.T, h *scenario.Harness, nodeID string, timeout 
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(h.ControlBase + "/admin/diagnostics/held-frames")
+		resp, err := http.Get(h.ControlBase + "/v1/admin/diagnostics/held-frames")
 		if err == nil {
 			var body controlapi.HeldFramesResponse
 			decErr := json.NewDecoder(resp.Body).Decode(&body)

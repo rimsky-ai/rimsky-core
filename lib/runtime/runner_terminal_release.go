@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -245,7 +246,7 @@ func emitLockReleased(
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "lock_released", Payload: payload,
+		Kind: events.KindLockReleased(), Payload: payload,
 	}, tx); err != nil {
 		return fmt.Errorf("emitLockReleased: %w", err)
 	}

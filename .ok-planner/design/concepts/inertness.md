@@ -2,7 +2,6 @@
 concept: inertness
 status: as-is
 aliases:
-  - opacity (legacy)
   - inert bytes
 ---
 
@@ -12,7 +11,7 @@ aliases:
 
 A uniform discipline applied across two overlapping lists.
 
-**Carrier streams the discipline governs** (seven, post-2026-05-21): claim scope (per `concept:claim-scope`), claim address, claim payload, blob content, attribute values, named-event payloads, message payloads. Plus executor error payloads from the post-2026-05-12 proto restructure. Each stream is "inert" in rimsky — rimsky neither inspects nor interprets the bytes beyond a narrowly defined set of read sites.
+**Carrier streams the discipline governs** (seven): claim scope (per `concept:claim-scope`), claim address, claim payload, blob content, attribute values, named-event payloads, message payloads. Plus executor error payloads. Each stream is "inert" in rimsky — rimsky neither inspects nor interprets the bytes beyond a narrowly defined set of read sites.
 
 **Read-site sub-disciplines** distinguish how strict the rule is per stream:
 
@@ -33,34 +32,16 @@ Three `@blessed-invariant`s codify the discipline:
 
 - **§20** — claim payload, address, and claim scope are byte-opaque inert (carried on the claim-result value type).
 - **§21** — blob content (carried by the blob-backend interface) and (by extension) named-event payloads + executor error payloads are structurally inert.
-- **§24** (post-2026-05-15) — message payloads are inert. Read only at the substitution leaf (resolving the trigger message) and at the persistence-layer fetch that surfaces a single message row. The message delivery path touches envelope routing fields (kind, sender, sender-kind, target, frame id, delivered-at) but never the payload.
+- **§24** — message payloads are inert. Read only at the substitution leaf (resolving the trigger message) and at the persistence-layer fetch that surfaces a single message row. The message delivery path touches envelope routing fields (kind, sender, sender-kind, target, frame id, delivered-at) but never the payload.
 
 Sanctioned read sites (each carries the inertness annotation in code):
 
 - **Substitution-leaf path walk** — traverses every inert stream at substitution time (claim payload, attribute values, named-event payloads, message payloads) to extract the leaf value named by a substitution path.
 - **Top-level directive stringify** — renders top-level address / claim-scope directives during substitution.
 - **Claim-handle wire encoding** — encodes the claim handle into the executor's wire structure at dispatch.
-- **Message persistence fetch** — surfaces a single message row verbatim to the operator (added 2026-05-15 for message payloads).
+- **Message persistence fetch** — surfaces a single message row verbatim to the operator.
 - **Attribute matcher evaluation** — applies to attribute values only. Reads the resolved post-L4 attribute bag to evaluate `attrs.<path>` equality predicates from `by_match` attribute-override matchers and from `concept:breakpoint` matchers. The read is primitive-equality only; no traversal beyond the named path; values not logged, not formatted, not included in error messages. Sanctioned by `concept:attribute`'s L5 matcher-overlay invariant.
-
-## Aliases and historical names
-
-Renamed from the former opacity concept per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #17). Adopts the two-sub-discipline framing (byte-opaque vs structural).
-
-## Open within this concept
-
-- "Single sanctioned introspection site" claim (an in-code substitution comment) vs the multiple actual sites — see `tension:substitution-introspection-site-count`.
 
 ## Auth audit log: verbatim request_params
 
 The `auth.access_attempted` and `auth.access_denied` event rows store the request body verbatim as `request_params` (see `concept:event-log`). Verbatim storage is sanctioned by inertness: rimsky's structural-inertness discipline guarantees no sensitive data flows in request bodies (the only sensitive value in an auth-relevant exchange is the API key itself, which is in the `Authorization` header — never stored). Verbatim params make the audit log materially more useful for forensic queries ("show me everything `agent:supervisor:prod` did with template_hash X") without violating inertness.
-
-## Notes
-
-- Renamed from the former opacity concept per `spec:2026-05-12-nomenclature-resolution` (audit cross-layer #17). Adopts two-sub-discipline framing.
-- [2026-05-15] Clarifying addition: auth audit records store `request_params` verbatim (justified by structural-inertness + claim/payload-inert invariants — no secrets in any control-plane request body). Added by `spec:2026-05-15-control-plane-mcp-and-auth`.
-- 2026-05-21 — Userdata collapse. The now-retired userdata concept retires; `@blessed-invariant 11` retires. Attribute-value inertness covered by the structural-inertness discipline. See `spec:2026-05-20-userdata-collapse-into-attributes`.
-- 2026-05-21 — Matcher overlay added per `spec:2026-05-21-attribute-overrides-matcher-overlay`. New sanctioned read site (the attribute matcher evaluation) reads resolved attribute values for equality matching. The structural-inertness bullet was tightened to explicitly allow sanctioned-site reads while preserving the general "no value-driven decisions" discipline.
-- 2026-05-22 — Updated for the claim-scope rename per `spec:2026-05-22-fan-out-safety-scope-first`: bare "scope" references in the claim-identity-bytes sense are qualified to "claim scope" and the adjacency reference was repointed to `concept:claim-scope` (its former name was the now-retired `scope`). Invariant §20 wording adjusted accordingly.
-- 2026-05-24 — Matcher evaluator extracted to a shared matcher package per `spec:2026-05-24-instance-debugger`. The sanctioned attribute-value read site for matcher predicates is now the shared matcher evaluator's `attrs.<path>` branch; the `by_match` attribute-override path delegates to that shared evaluator; the inertness discipline is unchanged.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

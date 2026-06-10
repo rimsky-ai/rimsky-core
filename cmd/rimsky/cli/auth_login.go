@@ -94,7 +94,7 @@ func RunAuthLogin(ctx context.Context, args []string) int {
 		// follow-up call so the operator gets an actionable message.
 		c := newAuthClient(url, key)
 		var resp authStatusResp
-		if _, callErr := c.RawCall(ctx, http.MethodGet, "/auth/status", nil, &resp); callErr != nil {
+		if _, callErr := c.RawCall(ctx, http.MethodGet, "/v1/auth/status", nil, &resp); callErr != nil {
 			var apiErr *APIError
 			if errors.As(callErr, &apiErr) && apiErr.Status == http.StatusUnauthorized {
 				fmt.Fprintln(os.Stderr, "rimsky auth login: the api-key was rejected (401)")

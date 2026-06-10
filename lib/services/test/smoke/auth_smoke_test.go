@@ -26,13 +26,13 @@ func TestAuthSmoke_BootstrapLifecycle(t *testing.T) {
 	ep := harness.BringUpRimsky(ctx, t)
 
 	// 1. Anonymous mode at startup (no API keys provisioned).
-	body := authGet(t, ep.BaseURL+"/auth/status", "")
+	body := authGet(t, ep.BaseURL+"/v1/auth/status", "")
 	if body["mode"] != "anonymous" {
 		t.Fatalf("startup mode: got %v, want anonymous", body["mode"])
 	}
 
 	// 2. Mint admin via anonymous mode (no Bearer).
-	adminResp := authPost(t, ep.BaseURL+"/auth/keys", "", map[string]any{
+	adminResp := authPost(t, ep.BaseURL+"/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -42,13 +42,13 @@ func TestAuthSmoke_BootstrapLifecycle(t *testing.T) {
 	}
 
 	// 3. Authenticated now.
-	body = authGet(t, ep.BaseURL+"/auth/status", adminKey)
+	body = authGet(t, ep.BaseURL+"/v1/auth/status", adminKey)
 	if body["mode"] != "authenticated" {
 		t.Fatalf("post-init mode: got %v, want authenticated", body["mode"])
 	}
 
 	// 4. Mint a read-only key with the admin token.
-	roResp := authPost(t, ep.BaseURL+"/auth/keys", adminKey, map[string]any{
+	roResp := authPost(t, ep.BaseURL+"/v1/auth/keys", adminKey, map[string]any{
 		"name":        "smoke-readonly",
 		"permissions": []map[string]any{{"action": "*:read"}},
 	})
@@ -58,30 +58,30 @@ func TestAuthSmoke_BootstrapLifecycle(t *testing.T) {
 	}
 
 	// 5. Read-only key can GET /auth/keys but cannot DELETE.
-	if code := authCode(t, "GET", ep.BaseURL+"/auth/keys", roKey, nil); code != 200 {
+	if code := authCode(t, "GET", ep.BaseURL+"/v1/auth/keys", roKey, nil); code != 200 {
 		t.Fatalf("ro GET: %d", code)
 	}
-	if code := authCode(t, "DELETE", ep.BaseURL+"/auth/keys/smoke-readonly", roKey, nil); code != 403 {
+	if code := authCode(t, "DELETE", ep.BaseURL+"/v1/auth/keys/smoke-readonly", roKey, nil); code != 403 {
 		t.Fatalf("ro DELETE: %d (want 403)", code)
 	}
 
 	// 6. Rotate admin with 1m grace; both keys work.
-	rotResp := authPost(t, ep.BaseURL+"/auth/keys/admin/rotate", adminKey, map[string]any{
+	rotResp := authPost(t, ep.BaseURL+"/v1/auth/keys/admin/rotate", adminKey, map[string]any{
 		"grace": "1m",
 	})
 	newAdmin, _ := rotResp["plaintext"].(string)
 	if newAdmin == "" || newAdmin == adminKey {
 		t.Fatalf("rotated key empty or unchanged")
 	}
-	if code := authCode(t, "GET", ep.BaseURL+"/auth/keys", adminKey, nil); code != 200 {
+	if code := authCode(t, "GET", ep.BaseURL+"/v1/auth/keys", adminKey, nil); code != 200 {
 		t.Fatalf("old admin during grace: %d", code)
 	}
-	if code := authCode(t, "GET", ep.BaseURL+"/auth/keys", newAdmin, nil); code != 200 {
+	if code := authCode(t, "GET", ep.BaseURL+"/v1/auth/keys", newAdmin, nil); code != 200 {
 		t.Fatalf("new admin: %d", code)
 	}
 
 	// 7. Revoke read-only.
-	if code := authCode(t, "DELETE", ep.BaseURL+"/auth/keys/smoke-readonly", newAdmin, nil); code != 200 {
+	if code := authCode(t, "DELETE", ep.BaseURL+"/v1/auth/keys/smoke-readonly", newAdmin, nil); code != 200 {
 		t.Fatalf("revoke ro: %d", code)
 	}
 }

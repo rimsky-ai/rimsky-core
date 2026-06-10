@@ -87,11 +87,54 @@ func TestCLICompose_UpThenDown(t *testing.T) {
 
 	manifestPath := writeComposeManifest(t)
 
+	// `compose plan` BEFORE up: the manifest has not been applied yet, so
+	// every member is a pending change. Spec'd exit code is 3 (mirrors
+	// `terraform plan -detailed-exitcode`). Confirms the verb performs a
+	// real plan/diff against live state — a stubbed verb that returned 0
+	// would fail here.
+	if code := compose.RunComposePlan(ctx, []string{"-f", manifestPath, "--endpoint", ep.BaseURL}); code != 3 {
+		t.Fatalf("rimsky compose plan (pre-up) exited %d (want 3 for pending changes)", code)
+	}
+
 	// `compose up` reconciles the manifest into the already-running stack.
 	// --yes confirms the (here empty) destructive set non-interactively; the
 	// engine builds its own compose-origin cli.Client from --endpoint.
 	if code := compose.RunComposeUp(ctx, []string{"-f", manifestPath, "--endpoint", ep.BaseURL, "--yes"}); code != 0 {
 		t.Fatalf("rimsky compose up exited %d (want 0)", code)
+	}
+
+	// `compose plan` AFTER up: state matches manifest, so the verb must
+	// report zero changes and exit 0. A verb that always exits 3 (cached
+	// or stubbed) would fail this assertion — it must perform a fresh
+	// diff against the live state the previous `compose up` wrote.
+	if code := compose.RunComposePlan(ctx, []string{"-f", manifestPath, "--endpoint", ep.BaseURL}); code != 0 {
+		t.Fatalf("rimsky compose plan (post-up) exited %d (want 0 for no changes)", code)
+	}
+
+	// `compose status` AFTER up reports manifest-vs-state annotations.
+	// Capture stdout via the package-shared captureRun (which holds
+	// stdoutCaptureMu so parallel CLI captures don't race) to assert the
+	// verb actually inspects live state — every manifest tag and instance
+	// must surface annotated `in-manifest`, proving the verb queried state
+	// (not just printed the manifest).
+	statusOut, statusExit := captureRun(t, func() int {
+		return compose.RunComposeStatus(ctx, []string{"-f", manifestPath, "--endpoint", ep.BaseURL})
+	})
+	if statusExit != 0 {
+		t.Fatalf("rimsky compose status exited %d (want 0)\n--- output ---\n%s\n--- end ---", statusExit, statusOut)
+	}
+	for _, expect := range []string{
+		composePrefix + "tpl-a@1",
+		composePrefix + "tpl-b@1",
+		composePrefix + "inst-a",
+		composePrefix + "inst-b",
+	} {
+		if !strings.Contains(statusOut, expect) {
+			t.Fatalf("compose status output missing %q\n--- output ---\n%s\n--- end ---", expect, statusOut)
+		}
+	}
+	if !strings.Contains(statusOut, "in-manifest") {
+		t.Fatalf("compose status output missing `in-manifest` annotations (verb may not have queried live state)\n--- output ---\n%s\n--- end ---", statusOut)
 	}
 
 	// A client identical to the engine's, for read-back assertions against the

@@ -66,7 +66,7 @@ func TestHappyPathExecutor(t *testing.T) {
 	}))
 	var sawCompleted bool
 	for _, e := range evs.Events {
-		if e.Kind == "terminal/success" {
+		if e.KindRaw == "terminal/success" {
 			sawCompleted = true
 			break
 		}

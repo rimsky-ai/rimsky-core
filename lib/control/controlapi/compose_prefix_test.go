@@ -38,10 +38,10 @@ const composeOriginHeaderName = "X-Rimsky-Compose-Origin"
 // the guard firing (not a missing-template 404).
 func registerAndDeploy(t *testing.T, h *harness, namePrefix string) string {
 	t.Helper()
-	_, out := h.httpJSON(t, "POST", "/templates", validTemplateBody(namePrefix+"-"+uuid.NewString()))
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody(namePrefix+"-"+uuid.NewString()))
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID, "register did not return a template_id: %v", out)
-	deployStatus, deployOut := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, deployOut := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus, deployOut)
 	return tplID
 }
@@ -49,7 +49,7 @@ func registerAndDeploy(t *testing.T, h *harness, namePrefix string) string {
 // tagPresent reports whether GET /tags lists a tag with the given name.
 func tagPresent(t *testing.T, h *harness, name string) bool {
 	t.Helper()
-	status, listed := h.httpJSON(t, "GET", "/tags", nil)
+	status, listed := h.httpJSON(t, "GET", "/v1/tags", nil)
 	require.Equal(t, http.StatusOK, status, listed)
 	tags, _ := listed["tags"].([]any)
 	for _, raw := range tags {
@@ -79,7 +79,7 @@ func TestCreateTag_ComposePrefixRejected(t *testing.T) {
 	tplID := registerAndDeploy(t, h, "compose-tag-reject")
 
 	reservedTag := "compose:my-app:v1"
-	status, body := h.httpJSON(t, "POST", "/tags", map[string]any{
+	status, body := h.httpJSON(t, "POST", "/v1/tags", map[string]any{
 		"tag":      reservedTag,
 		"template": tplID,
 	})
@@ -111,7 +111,7 @@ func TestCreateInstance_ComposePrefixRejected(t *testing.T) {
 	tplID := registerAndDeploy(t, h, "compose-inst-reject")
 
 	reservedKey := "compose:my-app:i1"
-	status, body := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, body := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": reservedKey,
 	})
@@ -124,7 +124,7 @@ func TestCreateInstance_ComposePrefixRejected(t *testing.T) {
 		"error should cite the compose: prefix: %v", body)
 
 	// No instance was created: GET by the reserved instance_key is 404.
-	getStatus, getBody := h.httpJSON(t, "GET", "/instances/"+reservedKey, nil)
+	getStatus, getBody := h.httpJSON(t, "GET", "/v1/instances/"+reservedKey, nil)
 	require.Equal(t, http.StatusNotFound, getStatus, getBody)
 }
 
@@ -141,7 +141,7 @@ func TestCreateTag_ComposeOriginAllowed(t *testing.T) {
 	tplID := registerAndDeploy(t, h, "compose-tag-allow")
 
 	reservedTag := "compose:my-app:v1"
-	resp := h.httpJSONWithHeaders(t, "POST", "/tags", map[string]any{
+	resp := h.httpJSONWithHeaders(t, "POST", "/v1/tags", map[string]any{
 		"tag":      reservedTag,
 		"template": tplID,
 	}, map[string]string{composeOriginHeaderName: "1"})

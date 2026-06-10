@@ -384,7 +384,7 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 
 	// Operator invalidate against A.
 	body, _ := json.Marshal(map[string]any{})
-	resp, err := http.Post(h.ControlBase+"/nodes/"+a.ID.String()+"/invalidate", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	resp.Body.Close()
 

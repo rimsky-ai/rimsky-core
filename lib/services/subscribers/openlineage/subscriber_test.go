@@ -271,7 +271,7 @@ func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 // postTemplate POSTs a template body and returns the template hash.
 func postTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/templates", body)
+	status, raw := ep.PostJSON(t, "/v1/templates", body)
 	if status != http.StatusCreated {
 		t.Fatalf("POST /templates: %d %s", status, string(raw))
 	}
@@ -282,7 +282,7 @@ func postTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) 
 		t.Fatalf("decode: %v: %s", err, string(raw))
 	}
 	deployStatus, deployRaw := ep.PostJSON(t,
-		"/templates/"+resp.TemplateID+"/deploy", map[string]any{})
+		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
 	if deployStatus != http.StatusOK {
 		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
 	}
@@ -292,7 +292,7 @@ func postTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) 
 // postInstance POSTs a new instance and returns the instance_id.
 func postInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, key string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     templateID,
 		"instance_key": key,
 		"params":       map[string]any{},
@@ -385,7 +385,7 @@ func TestLeafRunRecord_WireContract(t *testing.T) {
 	  "frame_trigger_kind": "invalidate",
 	  "trigger_message_id": "55555555-5555-5555-5555-555555555555",
 	  "held_claims": [
-	    {"claim_handle_id":"c1","role":"acquire","producer_name":"p","scope_data_hash":"s"}
+	    {"claim_handle_id":"c1","role":"acquire","producer_name":"p","claim_scope_data_hash":"s"}
 	  ],
 	  "executor_name": "claude-agent",
 	  "executor_version": "1.2.3",
@@ -393,7 +393,7 @@ func TestLeafRunRecord_WireContract(t *testing.T) {
 	  "template_node_alias": "stage",
 	  "params_snapshot_hash": "sha256-bbb",
 	  "attributes_hash": "sha256-ccc",
-	  "scope_data_hash": "sha256-ddd",
+	  "claim_scope_data_hash": "sha256-ddd",
 	  "state": "fresh",
 	  "settling_signal_type": "terminal/success",
 	  "changed": true,
@@ -461,7 +461,7 @@ func TestClaimTerminalRecord_WireContract(t *testing.T) {
 	  "sub_claim_handle_ids": ["c1", "c2"],
 	  "committed_at": "2026-05-17T00:00:00Z",
 	  "producer_name": "p",
-	  "scope_data_hash": "sha256-eee",
+	  "claim_scope_data_hash": "sha256-eee",
 	  "version_id": "v-1",
 	  "outcome": "committed",
 	  "producer_metadata": {"region": "us-west-1", "shard": 7}
@@ -543,7 +543,7 @@ func TestLeafRunRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"TemplateNodeAlias", "template_node_alias", true},
 		{"ParamsSnapshotHash", "params_snapshot_hash", true},
 		{"AttributesHash", "attributes_hash", true},
-		{"ScopeDataHash", "scope_data_hash", true},
+		{"ScopeDataHash", "claim_scope_data_hash", true},
 		{"State", "state", false},
 		{"SettlingSignalType", "settling_signal_type", false},
 		{"Changed", "changed", true},
@@ -573,7 +573,7 @@ func TestClaimTerminalRecord_TagDisciplineAndOrder(t *testing.T) {
 		{"SubClaimHandleIDs", "sub_claim_handle_ids", true},
 		{"CommittedAt", "committed_at", true},
 		{"ProducerName", "producer_name", true},
-		{"ScopeDataHash", "scope_data_hash", true},
+		{"ScopeDataHash", "claim_scope_data_hash", true},
 		{"VersionID", "version_id", true},
 		{"Outcome", "outcome", false},
 		{"Cause", "cause", true},

@@ -145,7 +145,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	// handler resolves the running frame F via GetRunningFrameID and
 	// threads it as SourceFrameID so invalidateInFrame joins F.
 	resp, err := http.Post(
-		h.ControlBase+"/nodes/"+holder.ID.String()+"/invalidate",
+		h.ControlBase+"/v1/nodes/"+holder.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader([]byte(`{"reason":"mid-cascade correction","frame":"in"}`)),
 	)
 	require.NoError(t, err)
@@ -196,7 +196,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	// would_have_invalidated envelope carries frame: in), and persists
 	// nothing — no second invalidate, no new frame.
 	dryResp, err := http.Post(
-		h.ControlBase+"/nodes/"+holder.ID.String()+"/invalidate?dry_run=true",
+		h.ControlBase+"/v1/nodes/"+holder.ID.String()+"/invalidate?dry_run=true",
 		"application/json", bytes.NewReader([]byte(`{"reason":"preview","frame":"in"}`)),
 	)
 	require.NoError(t, err)

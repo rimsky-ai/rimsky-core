@@ -48,6 +48,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -131,7 +132,7 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID:     &nodeID,
 			InstanceID: instanceID,
-			Kind:       "lock_orphan_reaped",
+			Kind:       events.KindLockOrphanReaped(),
 			Payload:    lockReapPayload(lh),
 		}, tx); err != nil {
 			log.Warn("tick: append lock_orphan_reaped failed",

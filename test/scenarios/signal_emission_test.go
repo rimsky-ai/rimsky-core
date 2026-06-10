@@ -56,7 +56,7 @@ func TestSignalEmission_TerminalSuccess(t *testing.T) {
 		"expected one rimsky_events row with kind=terminal/success; got kinds=%v", kindsOf(rows))
 	// Payload shape check on the terminal/success row.
 	for _, e := range rows {
-		if e.Kind == "terminal/success" {
+		if e.KindRaw == "terminal/success" {
 			require.Equal(t, true, e.Payload["changed"],
 				"terminal/success.payload.changed should be true (executor returned changed=true)")
 			require.Equal(t, "ok-summary", e.Payload["change_summary"],
@@ -142,7 +142,7 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 	require.True(t, hasEventKind(rows, "terminal/park/snooze"),
 		"expected one rimsky_events row with kind=terminal/park/snooze; got kinds=%v", kindsOf(rows))
 	for _, e := range rows {
-		if e.Kind != "terminal/park/snooze" {
+		if e.KindRaw != "terminal/park/snooze" {
 			continue
 		}
 		// resume_at is round-tripped through JSON; the payload value
@@ -177,7 +177,7 @@ func readEventsForNode(t *testing.T, h *scenario.Harness, nodeID shared.UUID) []
 
 func hasEventKind(rows []persistence.EventRow, kind string) bool {
 	for _, e := range rows {
-		if e.Kind == kind {
+		if e.KindRaw == kind {
 			return true
 		}
 	}
@@ -186,7 +186,7 @@ func hasEventKind(rows []persistence.EventRow, kind string) bool {
 
 func indexOfKind(rows []persistence.EventRow, kind string) int {
 	for i, e := range rows {
-		if e.Kind == kind {
+		if e.KindRaw == kind {
 			return i
 		}
 	}
@@ -196,7 +196,7 @@ func indexOfKind(rows []persistence.EventRow, kind string) int {
 func kindsOf(rows []persistence.EventRow) []string {
 	out := make([]string, 0, len(rows))
 	for _, e := range rows {
-		out = append(out, e.Kind)
+		out = append(out, e.KindRaw)
 	}
 	return out
 }

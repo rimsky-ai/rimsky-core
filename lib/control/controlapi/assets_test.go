@@ -174,12 +174,12 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 	ctx := context.Background()
 	h := ah.harness
 
-	_, out := h.httpJSON(t, "POST", "/templates", assetTemplateBody(namePrefix+"-"+uuid.NewString()))
+	_, out := h.httpJSON(t, "POST", "/v1/templates", assetTemplateBody(namePrefix+"-"+uuid.NewString()))
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": namePrefix + "-ck-" + uuid.NewString(),
 	})
@@ -248,7 +248,7 @@ func TestAssetEndpoints_ListSurfacesDurableCommittedRows(t *testing.T) {
 
 	instID, claimID, _, _ := ah.seedAsset(t, "asset-list")
 
-	status, out := ah.harness.httpJSON(t, "GET", "/instances/"+instID.String()+"/assets", nil)
+	status, out := ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	assets, _ := out["assets"].([]any)
 	require.Len(t, assets, 1, "exactly the seeded durable/committed asset must surface")
@@ -274,17 +274,17 @@ func TestAssetEndpoints_GetSingleAsset(t *testing.T) {
 
 	instID, claimID, _, _ := ah.seedAsset(t, "asset-get")
 
-	status, out := ah.harness.httpJSON(t, "GET", "/instances/"+instID.String()+"/assets/producer.dataset", nil)
+	status, out := ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/producer.dataset", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, claimID.String(), out["claim_id"])
 	require.Equal(t, "producer.dataset", out["alias"])
 
 	// A well-formed but unknown alias resolves to no row → 404.
-	status, _ = ah.harness.httpJSON(t, "GET", "/instances/"+instID.String()+"/assets/producer.ghost", nil)
+	status, _ = ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/producer.ghost", nil)
 	require.Equal(t, http.StatusNotFound, status)
 
 	// A malformed alias (no dot) → 400.
-	status, _ = ah.harness.httpJSON(t, "GET", "/instances/"+instID.String()+"/assets/nodot", nil)
+	status, _ = ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/nodot", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
@@ -300,7 +300,7 @@ func TestAssetEndpoints_VersionsProxiesDataProcessor(t *testing.T) {
 
 	instID, claimID, _, _ := ah.seedAsset(t, "asset-ver")
 
-	status, out := ah.harness.httpJSON(t, "GET", "/instances/"+instID.String()+"/assets/producer.dataset/versions", nil)
+	status, out := ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/producer.dataset/versions", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	got, _ := out["versions"].([]any)
 	require.Len(t, got, 2)
@@ -347,7 +347,7 @@ func TestAssetEndpoints_MaterializationHistoryJoinsLineage(t *testing.T) {
 	insertClaimTerminal("v-001", base)
 	insertClaimTerminal("v-002", base.Add(time.Second))
 
-	status, out := ah.harness.httpJSON(t, "GET", "/instances/"+instID.String()+"/assets/producer.dataset/materialization-history", nil)
+	status, out := ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/producer.dataset/materialization-history", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hist, _ := out["materialization_history"].([]any)
 	require.Len(t, hist, 2, "both claim_terminal rows for this claim handle must join in")
@@ -366,7 +366,7 @@ func TestAssetEndpoints_DeleteReleasesAndDeletes(t *testing.T) {
 
 	instID, claimID, _, _ := ah.seedAsset(t, "asset-del")
 
-	status, out := ah.harness.httpJSON(t, "DELETE", "/instances/"+instID.String()+"/assets/producer.dataset", nil)
+	status, out := ah.harness.httpJSON(t, "DELETE", "/v1/instances/"+instID.String()+"/assets/producer.dataset", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["deleted"])
 
@@ -416,7 +416,7 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 		VALUES ($1, $2, $3, 'active', $4)
 	`, uuid.New(), claimID, holderRunID, frameID)
 
-	status, out := ah.harness.httpJSON(t, "DELETE", "/instances/"+instID.String()+"/assets/producer.dataset", nil)
+	status, out := ah.harness.httpJSON(t, "DELETE", "/v1/instances/"+instID.String()+"/assets/producer.dataset", nil)
 	require.Equal(t, http.StatusConflict, status, out)
 	require.EqualValues(t, 1, out["active_count"])
 
@@ -444,7 +444,7 @@ func TestAssetEndpoints_MaterializeEnqueuesInvalidate(t *testing.T) {
 
 	instID, _, _, _ := ah.seedAsset(t, "asset-mat")
 
-	status, out := ah.harness.httpJSON(t, "POST", "/instances/"+instID.String()+"/assets/producer.dataset/materialize",
+	status, out := ah.harness.httpJSON(t, "POST", "/v1/instances/"+instID.String()+"/assets/producer.dataset/materialize",
 		map[string]any{"reason": "operator-poke"})
 	require.Equal(t, http.StatusCreated, status, out)
 	msgID, _ := out["message_id"].(string)
@@ -460,7 +460,7 @@ func TestAssetEndpoints_MaterializeEnqueuesInvalidate(t *testing.T) {
 	// Drive the instance terminal — materialize must then refuse with 409.
 	pgtest.ExecForTest(ctx, t, ah.harness.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
-	status, _ = ah.harness.httpJSON(t, "POST", "/instances/"+instID.String()+"/assets/producer.dataset/materialize",
+	status, _ = ah.harness.httpJSON(t, "POST", "/v1/instances/"+instID.String()+"/assets/producer.dataset/materialize",
 		map[string]any{"reason": "too-late"})
 	require.Equal(t, http.StatusConflict, status)
 	_ = ctx

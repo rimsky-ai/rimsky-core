@@ -56,7 +56,7 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 			return nil
 		}
 		return &terminalEventView{
-			Kind:       ev.Kind,
+			Kind:       ev.KindRaw,
 			OccurredAt: ev.OccurredAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 	}

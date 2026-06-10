@@ -249,6 +249,92 @@ func waitForFile(t *testing.T, path string) {
 	t.Fatalf("expected file %q to appear", path)
 }
 
+// TestShouldMigrate asserts the migrate-once-per-deployment discipline
+// directly against shouldMigrate. The spec's Acceptance and Falsifier
+// both name this property: the no-arg all-in-one always migrates; a
+// three-container split migrates exactly once (only the control-api
+// container owns it, never the scheduler and never the supervisor);
+// RIMSKY_ENTRYPOINT_MIGRATE=1 forces migrate, =0 skips it. This is the
+// proof that a three-container deploy can't race three migrations and
+// can't silently skip migrations — without it the existing test file
+// would prove only the role-selection leg of the story.
+func TestShouldMigrate(t *testing.T) {
+	allThree := []string{"rimsky-scheduler", "rimsky-supervisor", "rimsky-control-api"}
+
+	t.Run("default rules (no env override)", func(t *testing.T) {
+		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "")
+
+		for _, tc := range []struct {
+			name     string
+			selected []string
+			want     bool
+		}{
+			// All-in-one path: one process owns the whole store, migrate runs.
+			{"all-in-one (no args path) migrates", allThree, true},
+			// Three-container split: exactly one role owns migrate, the other
+			// two do NOT. This is the load-bearing leg of the falsifier — three
+			// simultaneous rimsky-entrypoint processes must NOT all migrate
+			// (race), and must NOT all skip (no migration at all).
+			{"single rimsky-control-api migrates", []string{"rimsky-control-api"}, true},
+			{"single rimsky-scheduler does NOT migrate", []string{"rimsky-scheduler"}, false},
+			{"single rimsky-supervisor does NOT migrate", []string{"rimsky-supervisor"}, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := shouldMigrate(tc.selected); got != tc.want {
+					t.Fatalf("shouldMigrate(%v) = %v, want %v", tc.selected, got, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("RIMSKY_ENTRYPOINT_MIGRATE=1 forces migrate everywhere", func(t *testing.T) {
+		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "1")
+		for _, sel := range [][]string{
+			allThree,
+			{"rimsky-control-api"},
+			{"rimsky-scheduler"},
+			{"rimsky-supervisor"},
+		} {
+			if got := shouldMigrate(sel); !got {
+				t.Errorf("shouldMigrate(%v) with =1 override = false, want true", sel)
+			}
+		}
+	})
+
+	t.Run("RIMSKY_ENTRYPOINT_MIGRATE=0 skips migrate everywhere", func(t *testing.T) {
+		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "0")
+		for _, sel := range [][]string{
+			allThree,
+			{"rimsky-control-api"},
+			{"rimsky-scheduler"},
+			{"rimsky-supervisor"},
+		} {
+			if got := shouldMigrate(sel); got {
+				t.Errorf("shouldMigrate(%v) with =0 override = true, want false", sel)
+			}
+		}
+	})
+
+	// Falsifier-shaped check: simulate the three-container split as three
+	// independent shouldMigrate calls (one per rimsky-entrypoint process)
+	// and assert exactly one of them returns true. This is the proof against
+	// "migrations race when three processes fire simultaneously" and
+	// "three-container split never migrates" — both legs of the spec's
+	// Falsifier collapse to this count == 1 assertion.
+	t.Run("three-container split migrates exactly once", func(t *testing.T) {
+		t.Setenv("RIMSKY_ENTRYPOINT_MIGRATE", "")
+		count := 0
+		for _, role := range allThree {
+			if shouldMigrate([]string{role}) {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("three-container split: %d roles migrate, want exactly 1", count)
+		}
+	})
+}
+
 // TestSignalForwarding spawns the entrypoint as a subprocess against a
 // directory of fixture binaries that sleep, sends SIGTERM, and asserts
 // the entrypoint exits cleanly within the deadline. End-to-end this

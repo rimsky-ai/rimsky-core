@@ -114,7 +114,7 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 
 	// ---- (1) Foreign raw POST /tags with a compose: prefix → 400, nothing created.
 	const foreignTag = guardPrefix + "v1"
-	status, raw := ep.PostJSON(t, "/tags", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/tags", map[string]any{
 		"tag":      foreignTag,
 		"template": foreignTemplateHash,
 	})
@@ -132,7 +132,7 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 
 	// ---- (2) Foreign raw POST /instances with a compose: instance_key → 400, not created.
 	const foreignInstanceKey = guardPrefix + "i1"
-	status, raw = ep.PostJSON(t, "/instances", map[string]any{
+	status, raw = ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     foreignTemplateHash,
 		"instance_key": foreignInstanceKey,
 		"params":       map[string]any{},
@@ -253,7 +253,7 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 
 	// ---- (1) Non-admin key + compose-origin header → 400, no row created.
 	const foreignTag = "compose:project-alpha:perm-v1"
-	status, raw := ep.PostJSONWithHeaders(t, "/tags", map[string]any{
+	status, raw := ep.PostJSONWithHeaders(t, "/v1/tags", map[string]any{
 		"tag":      foreignTag,
 		"template": templateHash,
 	}, map[string]string{
@@ -274,7 +274,7 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 
 	// ---- (2) Non-admin key + compose-origin header on /instances → 400, not created.
 	const foreignInstanceKey = "compose:project-alpha:perm-inst"
-	status, raw = ep.PostJSONWithHeaders(t, "/instances", map[string]any{
+	status, raw = ep.PostJSONWithHeaders(t, "/v1/instances", map[string]any{
 		"template":     templateHash,
 		"instance_key": foreignInstanceKey,
 		"params":       map[string]any{},
@@ -299,7 +299,7 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	// — proving the header-only branch matches the header-absent branch when
 	// the permission is missing. Belt-and-suspenders against a regression
 	// that decoupled the two branches.
-	status, raw = ep.PostJSONWithHeaders(t, "/tags", map[string]any{
+	status, raw = ep.PostJSONWithHeaders(t, "/v1/tags", map[string]any{
 		"tag":      foreignTag,
 		"template": templateHash,
 	}, map[string]string{
@@ -324,7 +324,7 @@ func mintAPIKey(t *testing.T, ep harness.RimskyEndpoint, callerKey, name string,
 	if callerKey != "" {
 		headers["Authorization"] = "Bearer " + callerKey
 	}
-	status, raw := ep.PostJSONWithHeaders(t, "/auth/keys", map[string]any{
+	status, raw := ep.PostJSONWithHeaders(t, "/v1/auth/keys", map[string]any{
 		"name":        name,
 		"permissions": perms,
 	}, headers)
@@ -349,7 +349,7 @@ func mintAPIKey(t *testing.T, ep harness.RimskyEndpoint, callerKey, name string,
 func deploySQLiteTemplateAuth(t *testing.T, ep harness.RimskyEndpoint, bearer string, body map[string]any) string {
 	t.Helper()
 	authHeader := map[string]string{"Authorization": "Bearer " + bearer}
-	status, raw := ep.PostJSONWithHeaders(t, "/templates", body, authHeader)
+	status, raw := ep.PostJSONWithHeaders(t, "/v1/templates", body, authHeader)
 	if status != http.StatusCreated {
 		t.Fatalf("POST /templates: %d %s", status, string(raw))
 	}
@@ -363,7 +363,7 @@ func deploySQLiteTemplateAuth(t *testing.T, ep harness.RimskyEndpoint, bearer st
 		t.Fatalf("template_id empty: %s", string(raw))
 	}
 	deployStatus, deployRaw := ep.PostJSONWithHeaders(t,
-		"/templates/"+resp.TemplateID+"/deploy", map[string]any{}, authHeader)
+		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{}, authHeader)
 	if deployStatus != http.StatusOK {
 		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
 	}
@@ -376,7 +376,7 @@ func tagListedAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, name string)
 	t.Helper()
 	cursor := ""
 	for {
-		path := "/tags"
+		path := "/v1/tags"
 		if cursor != "" {
 			path += "?cursor=" + cursor
 		}
@@ -408,7 +408,7 @@ func tagListedAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, name string)
 // instanceGetStatusAuth is instanceGetStatus authenticated.
 func instanceGetStatusAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, key string) int {
 	t.Helper()
-	status, _ := ep.GetJSON(t, "/instances/"+key, bearer)
+	status, _ := ep.GetJSON(t, "/v1/instances/"+key, bearer)
 	return status
 }
 
@@ -454,7 +454,7 @@ func tagListed(t *testing.T, ep harness.RimskyEndpoint, name string) bool {
 	t.Helper()
 	cursor := ""
 	for {
-		path := "/tags"
+		path := "/v1/tags"
 		if cursor != "" {
 			path += "?cursor=" + cursor
 		}
@@ -489,6 +489,6 @@ func tagListed(t *testing.T, ep harness.RimskyEndpoint, name string) bool {
 // instance-create persisted nothing.
 func instanceGetStatus(t *testing.T, ep harness.RimskyEndpoint, key string) int {
 	t.Helper()
-	status, _ := ep.GetJSON(t, "/instances/"+key, "")
+	status, _ := ep.GetJSON(t, "/v1/instances/"+key, "")
 	return status
 }

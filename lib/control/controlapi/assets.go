@@ -45,6 +45,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
@@ -582,7 +583,37 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 			if isDryRun {
 				return errDryRunOK
 			}
-			return runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq)
+			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq); err != nil {
+				return err
+			}
+			// Seed a delivery frame so the just-enqueued invalidate is
+			// actually delivered. Messages are delivered ONLY into a
+			// running frame (`SweepDeliverMessagesForRunningFrames`); a
+			// quiescent instance (e.g. one whose producer node already
+			// committed its durable claim and has nothing else to run)
+			// has no running frame, so without this seed the materialize
+			// trigger would silently stall — the row would sit pending,
+			// no producing dispatch would ever fire, and the operator
+			// would never see the re-materialization. Mirrors the
+			// `POST /instances/{id}/messages` path's same in-tx seed at
+			// `code:messages.go::handleCreateMessage`. Atomic with the
+			// message insert: a crash mid-flow can't leave a pending
+			// message with no frame to carry it, nor a frame with no
+			// message. Falsifier guarded: the spec story's load-bearing
+			// property is that the materialize trigger causes a real
+			// producing dispatch; without this seed it does not.
+			sourceNodeID, ok, srcErr := resolveMessageFrameSource(ctx, deps.Persist, tx, shared.UUID(instanceID), nodeType)
+			if srcErr != nil {
+				return srcErr
+			}
+			if !ok {
+				// Degenerate: no nodes in the instance — nothing to
+				// source a frame on. Leave the message pending; mirrors
+				// the `POST /instances/{id}/messages` path.
+				return nil
+			}
+			_, frErr := frame.EnqueueOrCoalesce(ctx, deps.Persist, tx, shared.UUID(instanceID), sourceNodeID)
+			return frErr
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_materialized", map[string]any{

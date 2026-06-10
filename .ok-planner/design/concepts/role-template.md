@@ -32,10 +32,3 @@ Owns: the bundled JSON files, the CLI expansion logic, the grant patch operators
 
 - **CLI-side only.** The server does not know roles exist. `rimsky auth show <name>` may pattern-match a grant against bundled roles for display ("role:operator + 1 override") but this is a display nicety; the wire surface is always the raw grant.
 - **Operator-defined roles are local.** No server-side surface for "register a role with the cluster" in V1.
-
-## Notes
-
-- [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth-design` ("Bundled role templates (CLI-side)").
-- 2026-05-24 — Adds debug-operator role-template per `spec:2026-05-24-instance-debugger-design`. Bundles *:read, instance:pause, instance:resume, breakpoint:create, breakpoint:resume, breakpoint:delete. High-risk in production; grant explicitly. agent-supervisor unchanged.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: removed the `--dry-run=<action>` grant-patch operator from Boundaries and deleted the invariant that it rejected read/auth-mutation actions because the handlers ignored dry-run mode. Both are now false — per-grant dry-run no longer exists (preview-vs-commit is a per-request flag; see `concept:dry-run`), so there is no `--dry-run` CLI operator, and auth mutations are now previewable via the request flag. The bundled role JSONs were already mode-free, so no entry text changed. The operator role-template now grants `audit:read` explicitly (see `concept:permission`).

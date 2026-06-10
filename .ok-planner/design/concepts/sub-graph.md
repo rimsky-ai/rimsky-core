@@ -22,9 +22,3 @@ Owns: the sub-graph template-DSL shape (`entry:`, `exit:`, internal `nodes:`), t
 - All internal nodes MUST be reachable from `entry` and MUST feed `exit` (no disconnected internals; reject as `subgraph_internal_disconnected`).
 - Recursive sub-graphs (a sub-graph delegating to itself, directly or via a cycle) are rejected as `subgraph_recursion_unsupported`.
 - The `main` graph cannot be a sub-graph (no `entry:` / `exit:`; reject).
-
-## Notes
-
-Introduced by `spec:2026-05-15-data-platform-extensions` as the first-class composition primitive. The entry-node absorption discipline is what makes delegation feel like a function call from outside while still letting internal nodes structure their own DAG.
-
-2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

@@ -33,12 +33,3 @@ Does NOT own: the actual replica posture of any individual binary, the deploymen
 - Multi-replica safety (when required) lives in the binary's implementation, not rimsky's runtime. The supervisor's claim-handle advisory lock is the canonical pattern; bundled sensors do NOT attempt similar coordination.
 
 - The control-api routes that depend on cross-replica consistency (subscription routing, message delivery) are coordinated via the underlying persistence layer's atomicity, not via rimsky-level coordination.
-
-## Notes
-
-Introduced by the 2026-05-17 publisher-unification spec to document the v1 sensor replica posture decision. The earlier pre-2026-05-17 draft proposed adding per-publisher-subscription advisory locks to coordinate multi-replica sensors; that proposal was retired in favor of "single-replica is the v1 contract."
-
-If a publisher implementation wants HA, it owns the implementation. Rimsky's job at the protocol surface is "accept messages from publishers and deliver them"; HA at the publisher tier is a sibling concern.
-
-2026-05-24: bundled reference implementations relocated from in-tree locations to the consumption side, outside the platform, per `spec:2026-05-24-repo-reorganization-design` (phase P3).
-2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

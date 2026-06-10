@@ -5,6 +5,7 @@ status: open
 affects:
   - persistence-database
   - blob-backend
+  - advisory-lock
 ---
 
 # `memory` blob backend is startup-rejected outside unified mode; SQLite + replicas > 1 is NOT — same broken-by-construction semantics

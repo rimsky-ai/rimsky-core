@@ -364,7 +364,7 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 	if err != nil {
 		return err
 	}
-	url := strings.TrimRight(s.rimskyEndpoint, "/") + "/instances/" + w.InstanceID + "/messages"
+	url := strings.TrimRight(s.rimskyEndpoint, "/") + "/v1/instances/" + w.InstanceID + "/messages"
 	res := publisherkit.Send(ctx, s.httpClient, s.logger, nil, publisherkit.Request{
 		URL:            url,
 		Envelope:       raw,

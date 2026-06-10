@@ -64,7 +64,9 @@ type AppDeps struct {
 	// hook. Setter is control/config.StartControlAPI; per spec §1.1 the
 	// observability surface is wired in at startup alongside the
 	// existing admin/operator routes. Nil → /v1/observability/* is not
-	// mounted (used by tests that don't exercise observability).
+	// mounted (used by tests that don't exercise observability). The
+	// router itself registers routes relative to the parent mount; the
+	// hosting code below mounts it under the unified /v1/ prefix.
 	Observability ObservabilityRouter
 
 	// ExecutorCapabilities optionally exposes the observability cache's
@@ -176,65 +178,78 @@ func NewApp(deps AppDeps) http.Handler {
 	r.Use(chimiddleware.Recoverer)
 	r.Use(accessLog(deps.Logger))
 
-	// Health endpoints are NOT auth-gated — they predate auth and
-	// serve infrastructure clients (load balancer, k8s probes) that
-	// don't carry Bearer tokens. Mount before the auth middleware.
-	registerHealthRoutes(r, deps)
+	// Every control-API route lives under the /v1/ version prefix. The
+	// previous tree mixed bare paths (`/templates`, `/instances`, …)
+	// with carve-outs at `/v1/observability/*` and `/v1/callback/...`
+	// (the callback listener lives on a separate http.Server in
+	// runtime.CallbackServer and is unaffected by this mount). The /v1/
+	// route below absorbs both surfaces under a single prefix per
+	// decision:pre-v1-break-freely + tension:control-api-version-prefix.
+	r.Route("/v1", func(v1 chi.Router) {
+		// Health endpoints are NOT auth-gated — they predate auth and
+		// serve infrastructure clients (load balancer, k8s probes) that
+		// don't carry Bearer tokens. Register on the /v1/ sub-router
+		// BEFORE the auth middleware group so `GET /v1/health` reaches
+		// the handler without identity resolution. STORY-rimsky-health-
+		// check Falsifier: "/v1/health requires auth" — protect that by
+		// keeping this registration outside the auth group.
+		registerHealthRoutes(v1, deps)
 
-	// Everything else under the auth middleware.
-	r.Group(func(rr chi.Router) {
-		if deps.AuthState != nil {
-			rr.Use(deps.AuthState.IdentityResolver())
-		}
+		// Everything else under the auth middleware.
+		v1.Group(func(rr chi.Router) {
+			if deps.AuthState != nil {
+				rr.Use(deps.AuthState.IdentityResolver())
+			}
 
-		// Mount the observability subtree under its own chi.Group
-		// with a minimal middleware stack. Observability is
-		// read-only (GET-only) and intentionally exempt from the
-		// AllowContentType "application/json" gate.
-		if deps.Observability != nil {
-			rr.Group(func(obs chi.Router) {
-				obs.Use(func(next http.Handler) http.Handler {
+			// Mount the observability subtree under its own chi.Group
+			// with a minimal middleware stack. Observability is
+			// read-only (GET-only) and intentionally exempt from the
+			// AllowContentType "application/json" gate.
+			if deps.Observability != nil {
+				rr.Group(func(obs chi.Router) {
+					obs.Use(func(next http.Handler) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+							w.Header().Set("Content-Type", "application/json")
+							next.ServeHTTP(w, req)
+						})
+					})
+					if deps.AuthState != nil {
+						obs.Method("GET", "/observability/*", deps.AuthState.gateByAction("observability:read", deps.AuthState.observabilityWrapper(deps.Observability)))
+					} else {
+						obs.Route("/observability", deps.Observability)
+					}
+				})
+			}
+
+			// Write/admin surface — sets common content-type and the
+			// strict AllowContentType gate. Sibling files register each
+			// group of routes; each handler is wrapped with
+			// gateByAction at registration time.
+			rr.Group(func(rrr chi.Router) {
+				rrr.Use(chimiddleware.AllowContentType("application/json"))
+				rrr.Use(func(next http.Handler) http.Handler {
 					return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 						w.Header().Set("Content-Type", "application/json")
 						next.ServeHTTP(w, req)
 					})
 				})
-				if deps.AuthState != nil {
-					obs.Method("GET", "/v1/observability/*", deps.AuthState.gateByAction("observability:read", deps.AuthState.observabilityWrapper(deps.Observability)))
-				} else {
-					obs.Route("/v1/observability", deps.Observability)
-				}
-			})
-		}
 
-		// Write/admin surface — sets common content-type and the
-		// strict AllowContentType gate. Sibling files register each
-		// group of routes; each handler is wrapped with
-		// gateByAction at registration time.
-		rr.Group(func(rrr chi.Router) {
-			rrr.Use(chimiddleware.AllowContentType("application/json"))
-			rrr.Use(func(next http.Handler) http.Handler {
-				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					next.ServeHTTP(w, req)
-				})
+				registerTemplatesRoutes(rrr, deps)
+				registerTagsRoutes(rrr, deps)
+				registerInstancesRoutes(rrr, deps)
+				registerBreakpointsRoutes(rrr, deps)
+				registerNodesRoutes(rrr, deps)
+				registerEventsRoutes(rrr, deps)
+				registerAuditRoutes(rrr, deps)
+				registerClaimsRoutes(rrr, deps)
+				registerMessagesRoutes(rrr, deps)
+				registerBackfillsRoutes(rrr, deps)
+				registerAssetsRoutes(rrr, deps)
+				registerLineageRoutes(rrr, deps)
+				registerAdminDiagnosticsRoutes(rrr, deps)
+				registerAuthRoutes(rrr, deps)
+				registerMCPRoute(rrr, deps)
 			})
-
-			registerTemplatesRoutes(rrr, deps)
-			registerTagsRoutes(rrr, deps)
-			registerInstancesRoutes(rrr, deps)
-			registerBreakpointsRoutes(rrr, deps)
-			registerNodesRoutes(rrr, deps)
-			registerEventsRoutes(rrr, deps)
-			registerAuditRoutes(rrr, deps)
-			registerClaimsRoutes(rrr, deps)
-			registerMessagesRoutes(rrr, deps)
-			registerBackfillsRoutes(rrr, deps)
-			registerAssetsRoutes(rrr, deps)
-			registerLineageRoutes(rrr, deps)
-			registerAdminDiagnosticsRoutes(rrr, deps)
-			registerAuthRoutes(rrr, deps)
-			registerMCPRoute(rrr, deps)
 		})
 	})
 
@@ -249,11 +264,12 @@ func NewApp(deps AppDeps) http.Handler {
 
 // observabilityWrapper turns an ObservabilityRouter into an
 // http.HandlerFunc. The router is a `chi.Router → ObservabilityRouter`
-// closure; we mount it under a local sub-router so a single chi
-// pattern (`/v1/observability/*`) covers every nested route.
+// closure; we mount it under a local sub-router whose pattern matches
+// the /v1/ sub-router we are already inside (`/observability/*`), so
+// the outer /v1/ prefix is not double-applied.
 func (s *AuthState) observabilityWrapper(or ObservabilityRouter) http.HandlerFunc {
 	r := chi.NewRouter()
-	r.Route("/v1/observability", or)
+	r.Route("/observability", or)
 	return r.ServeHTTP
 }
 

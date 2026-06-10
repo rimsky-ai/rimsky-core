@@ -37,13 +37,13 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("inst-tar-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
 	// Instance A: created WITH terminate_after_run: true.
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        "ck-tar-true-" + uuid.NewString(),
 		"terminate_after_run": true,
@@ -51,7 +51,7 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, out)
 	idTrue, _ := out["instance_id"].(string)
 
-	status, out = h.httpJSON(t, "GET", "/instances/"+idTrue, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+idTrue, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["terminate_after_run"],
 		"GET projection must surface terminate_after_run=true")
@@ -70,14 +70,14 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 		"persisted row must carry terminate_after_run=true")
 
 	// Instance B: created WITHOUT the field → defaults to false.
-	status, out = h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-tar-false-" + uuid.NewString(),
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 	idFalse, _ := out["instance_id"].(string)
 
-	status, out = h.httpJSON(t, "GET", "/instances/"+idFalse, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+idFalse, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, false, out["terminate_after_run"],
 		"GET projection must surface terminate_after_run=false when the field is omitted")
@@ -110,15 +110,15 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("inst-tar-idem-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
 	key := "ck-tar-idem-" + uuid.NewString()
 
 	// First create: terminate_after_run = true → 201 Created.
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        key,
 		"terminate_after_run": true,
@@ -129,7 +129,7 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 
 	// Idempotent re-create: SAME key, CONFLICTING flag (false). Spec §1 — the
 	// re-create resolves to the existing row (200 OK) and ignores the flag.
-	status, out = h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        key,
 		"terminate_after_run": false,
@@ -140,7 +140,7 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 		"idempotent re-create must return the existing instance, not a new one")
 
 	// GET projection still reports true — the re-create's false was ignored.
-	status, out = h.httpJSON(t, "GET", "/instances/"+firstID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+firstID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["terminate_after_run"],
 		"idempotent re-create must ignore the flag; stored terminate_after_run=true must be unchanged")

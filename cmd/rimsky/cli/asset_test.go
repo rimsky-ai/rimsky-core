@@ -15,7 +15,7 @@ import (
 
 func TestClient_ListAssets(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/instances/abc/assets" {
+		if r.URL.Path != "/v1/instances/abc/assets" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -54,7 +54,7 @@ func TestClient_ListAssets(t *testing.T) {
 
 func TestClient_MaterializeAsset(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/instances/abc/assets/loader.fs/materialize" {
+		if r.URL.Path != "/v1/instances/abc/assets/loader.fs/materialize" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -77,7 +77,7 @@ func TestClient_DeleteAsset(t *testing.T) {
 		if r.Method != http.MethodDelete {
 			t.Errorf("method: %s", r.Method)
 		}
-		if r.URL.Path != "/instances/abc/assets/loader.fs" {
+		if r.URL.Path != "/v1/instances/abc/assets/loader.fs" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -92,7 +92,7 @@ func TestClient_DeleteAsset(t *testing.T) {
 
 func TestClient_GetClaimAncestors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/lineage/claims/claim-1/ancestors" {
+		if r.URL.Path != "/v1/lineage/claims/claim-1/ancestors" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		if r.URL.Query().Get("depth") != "5" {

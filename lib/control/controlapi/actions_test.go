@@ -360,21 +360,26 @@ func TestRegistryCoversRouter(t *testing.T) {
 		AuthState: state,
 	}
 	r := chi.NewRouter()
-	registerTemplatesRoutes(r, deps)
-	registerTagsRoutes(r, deps)
-	registerInstancesRoutes(r, deps)
-	registerBreakpointsRoutes(r, deps)
-	registerNodesRoutes(r, deps)
-	registerEventsRoutes(r, deps)
-	registerAuditRoutes(r, deps)
-	registerClaimsRoutes(r, deps)
-	registerMessagesRoutes(r, deps)
-	registerBackfillsRoutes(r, deps)
-	registerAssetsRoutes(r, deps)
-	registerLineageRoutes(r, deps)
-	registerAdminDiagnosticsRoutes(r, deps)
-	registerAuthRoutes(r, deps)
-	registerMCPRoute(r, deps)
+	// Mirror NewApp's `/v1/` mount so chi.Walk reports `/v1/...`
+	// patterns — the action registry stores routes under their full
+	// `/v1/` paths so the byRoutePattern lookup below matches.
+	r.Route("/v1", func(v1 chi.Router) {
+		registerTemplatesRoutes(v1, deps)
+		registerTagsRoutes(v1, deps)
+		registerInstancesRoutes(v1, deps)
+		registerBreakpointsRoutes(v1, deps)
+		registerNodesRoutes(v1, deps)
+		registerEventsRoutes(v1, deps)
+		registerAuditRoutes(v1, deps)
+		registerClaimsRoutes(v1, deps)
+		registerMessagesRoutes(v1, deps)
+		registerBackfillsRoutes(v1, deps)
+		registerAssetsRoutes(v1, deps)
+		registerLineageRoutes(v1, deps)
+		registerAdminDiagnosticsRoutes(v1, deps)
+		registerAuthRoutes(v1, deps)
+		registerMCPRoute(v1, deps)
+	})
 
 	// Build a quick (METHOD pattern → action) lookup from the
 	// registry.
@@ -388,7 +393,7 @@ func TestRegistryCoversRouter(t *testing.T) {
 	}
 
 	exempt := func(method, pattern string) bool {
-		if method == http.MethodGet && pattern == "/health" {
+		if method == http.MethodGet && pattern == "/v1/health" {
 			return true
 		}
 		if strings.HasPrefix(pattern, "/v1/observability") {
@@ -477,7 +482,7 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	exempt := func(method, pattern string) bool {
-		if method == http.MethodGet && pattern == "/health" {
+		if method == http.MethodGet && pattern == "/v1/health" {
 			return true
 		}
 		if strings.HasPrefix(pattern, "/v1/observability") {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -174,16 +175,30 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("template/instance insert: %v", err)
 	}
-	for _, k := range []string{"a", "b", "c"} {
-		k := k
+	// The kinds below are real operational kinds (work_started,
+	// state_transition, work_completed) chosen so the pagination
+	// test exercises the read path through ParseKindString at the
+	// unmarshal boundary (per decision:event-log-kind-enum). The
+	// ordering assertions below rely on insertion order; the three
+	// kinds are just stand-ins for "three rows."
+	cases := []struct {
+		kind events.Kind
+		wire string
+	}{
+		{events.KindWorkStarted(), "work_started"},
+		{events.KindStateTransition(), "state_transition"},
+		{events.KindWorkCompleted(), "work_completed"},
+	}
+	for _, c := range cases {
+		c := c
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
 			return store.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &id,
-				Kind:       k,
+				Kind:       c.kind,
 				Payload:    map[string]any{},
 			}, tx)
 		}); err != nil {
-			t.Fatalf("append %s: %v", k, err)
+			t.Fatalf("append %s: %v", c.wire, err)
 		}
 	}
 	var res persistence.EventListResult
@@ -197,9 +212,9 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 	if len(res.Events) != 3 {
 		t.Fatalf("events = %d, want 3", len(res.Events))
 	}
-	if res.Events[0].Kind != "c" || res.Events[2].Kind != "a" {
-		t.Fatalf("events kinds = %v %v %v, want [c, b, a] (DESC)",
-			res.Events[0].Kind, res.Events[1].Kind, res.Events[2].Kind)
+	if res.Events[0].KindRaw != "work_completed" || res.Events[2].KindRaw != "work_started" {
+		t.Fatalf("events kinds = %v %v %v, want [work_completed, state_transition, work_started] (DESC)",
+			res.Events[0].KindRaw, res.Events[1].KindRaw, res.Events[2].KindRaw)
 	}
 }
 
@@ -242,7 +257,7 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		p := p
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
 			return store.Events().Append(ctx, persistence.EventAppendInput{
-				Kind:    "auth.access_attempted",
+				Kind:    events.KindAuthAccessAttempted(),
 				Payload: p,
 			}, tx)
 		}); err != nil {

@@ -173,7 +173,7 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 	// External admin invalidate.
 	body, _ := json.Marshal(map[string]any{})
 	resp, err := http.Post(
-		h.ControlBase+"/admin/instances/"+worker.InstanceID.String()+"/nodes/"+worker.ID.String()+"/invalidate",
+		h.ControlBase+"/v1/admin/instances/"+worker.InstanceID.String()+"/nodes/"+worker.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader(body),
 	)
 	require.NoError(t, err)

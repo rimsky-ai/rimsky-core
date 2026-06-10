@@ -107,7 +107,7 @@ func postTemplate(t *testing.T, h *scenario.Harness, specBody map[string]any) (i
 	t.Helper()
 	body, err := json.Marshal(map[string]any{"spec": specBody})
 	require.NoError(t, err)
-	resp, err := http.Post(h.ControlBase+"/templates", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(h.ControlBase+"/v1/templates", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	var out map[string]any

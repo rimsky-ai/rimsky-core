@@ -326,7 +326,7 @@ func (fx *hostAgentFixture) waitForNodeEventKind(t *testing.T, instanceID shared
 					return err
 				}
 				for _, e := range r.Events {
-					if e.Kind == kind {
+					if e.KindRaw == kind {
 						seen = true
 						return nil
 					}

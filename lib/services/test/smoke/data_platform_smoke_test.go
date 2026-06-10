@@ -129,7 +129,7 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
 	}
-	pushURL := fmt.Sprintf("%s/instances/%s/messages", rimsky.URL, instanceID)
+	pushURL := fmt.Sprintf("%s/v1/instances/%s/messages", rimsky.URL, instanceID)
 	pushReq, _ := http.NewRequest(http.MethodPost, pushURL, bytes.NewReader(rawEnvelope))
 	pushReq.Header.Set("Content-Type", "application/json")
 	pushReq.Header.Set("Idempotency-Key", subscriptionID+"+sha256-stub")
@@ -154,7 +154,7 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 		t.Fatalf("expected 1 arrival, got %d", len(arrivals))
 	}
 	got := arrivals[0]
-	wantPath := "/instances/" + instanceID + "/messages"
+	wantPath := "/v1/instances/" + instanceID + "/messages"
 	if got.Path != wantPath {
 		t.Fatalf("arrival path = %q, want %q", got.Path, wantPath)
 	}

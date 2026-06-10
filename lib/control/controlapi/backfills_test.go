@@ -44,11 +44,11 @@ func postBackfillWithMode(t *testing.T, h *harness, instID string, mode auth.Mod
 			next.ServeHTTP(w, req.WithContext(context.WithValue(req.Context(), ctxKeyMode{}, mode)))
 		})
 	})
-	r.Post("/instances/{id}/backfills", handleCreateBackfill(deps))
+	r.Post("/v1/instances/{id}/backfills", handleCreateBackfill(deps))
 
 	b, err := json.Marshal(body)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/instances/%s/backfills", instID), bytes.NewReader(b))
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/instances/%s/backfills", instID), bytes.NewReader(b))
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
@@ -131,12 +131,12 @@ func unwiredFanOutBackfillTemplateBody(name string) map[string]any {
 // creates an instance, returning the instance id.
 func deployFanOutInstance(t *testing.T, h *harness, tplBody map[string]any, keyPrefix string) string {
 	t.Helper()
-	status, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	require.Equal(t, http.StatusCreated, status, out)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out = h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": keyPrefix + uuid.NewString(),
 	})
@@ -155,7 +155,7 @@ func TestBackfills_CreateListShowCancel(t *testing.T) {
 	instID := deployFanOutInstance(t, h, fanOutBackfillTemplateBody("bf-"+uuid.NewString()), "bf-ck-")
 
 	// Create a backfill targeting `root` (a wired fan-out node).
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/backfills", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/backfills", instID), map[string]any{
 		"target_node": "root",
 		"reason":      "smoke",
 		"partition_request_override": map[string]any{
@@ -168,7 +168,7 @@ func TestBackfills_CreateListShowCancel(t *testing.T) {
 	require.NotEmpty(t, out["message_id"])
 
 	// List backfills for the instance.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/backfills", instID), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/backfills", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	items, _ := out["backfills"].([]any)
 	require.GreaterOrEqual(t, len(items), 1)
@@ -178,19 +178,19 @@ func TestBackfills_CreateListShowCancel(t *testing.T) {
 	require.Equal(t, "smoke", first["reason"])
 
 	// Show single backfill.
-	status, out = h.httpJSON(t, "GET", "/backfills/"+opID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/backfills/"+opID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, opID, out["operation_id"])
 	require.Equal(t, "smoke", out["reason"])
 
 	// Partitions: not yet delivered → empty list.
-	status, out = h.httpJSON(t, "GET", "/backfills/"+opID+"/partitions", nil)
+	status, out = h.httpJSON(t, "GET", "/v1/backfills/"+opID+"/partitions", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	parts, _ := out["partitions"].([]any)
 	require.Equal(t, 0, len(parts))
 
 	// Cancel.
-	status, out = h.httpJSON(t, "POST", "/backfills/"+opID+"/cancel", nil)
+	status, out = h.httpJSON(t, "POST", "/v1/backfills/"+opID+"/cancel", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["cancelled"])
 }
@@ -203,7 +203,7 @@ func TestBackfills_CreateMissingTargetNode(t *testing.T) {
 
 	instID := deployFanOutInstance(t, h, fanOutBackfillTemplateBody("bf-mt-"+uuid.NewString()), "bf-mt-ck-")
 
-	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/backfills", instID), map[string]any{
+	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/backfills", instID), map[string]any{
 		"reason": "no target",
 	})
 	require.Equal(t, http.StatusBadRequest, status)
@@ -218,7 +218,7 @@ func TestBackfills_CreateRejectsUnknownTargetNode(t *testing.T) {
 
 	instID := deployFanOutInstance(t, h, fanOutBackfillTemplateBody("bf-unk-"+uuid.NewString()), "bf-unk-ck-")
 
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/backfills", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/backfills", instID), map[string]any{
 		"target_node": "does-not-exist",
 		"reason":      "bad target",
 	})
@@ -236,7 +236,7 @@ func TestBackfills_CreateRejectsNonFanOutTarget(t *testing.T) {
 	// `child` exists but is a plain executor node (no fan_out).
 	instID := deployFanOutInstance(t, h, fanOutBackfillTemplateBody("bf-nf-"+uuid.NewString()), "bf-nf-ck-")
 
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/backfills", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/backfills", instID), map[string]any{
 		"target_node": "child",
 		"reason":      "not a fan-out",
 	})
@@ -255,7 +255,7 @@ func TestBackfills_CreateRejectsFanOutNotWiredForOverride(t *testing.T) {
 
 	instID := deployFanOutInstance(t, h, unwiredFanOutBackfillTemplateBody("bf-uw-"+uuid.NewString()), "bf-uw-ck-")
 
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/backfills", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/backfills", instID), map[string]any{
 		"target_node": "root",
 		"reason":      "fan-out but unwired",
 		"partition_request_override": map[string]any{
@@ -317,7 +317,7 @@ func TestBackfills_DryRunAcceptsWiredTarget(t *testing.T) {
 
 	// The dry-run must NOT have enqueued a backfill message — listing
 	// returns no backfills for this instance.
-	listStatus, listOut := h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/backfills", instID), nil)
+	listStatus, listOut := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/backfills", instID), nil)
 	require.Equal(t, http.StatusOK, listStatus, listOut)
 	items, _ := listOut["backfills"].([]any)
 	require.Equal(t, 0, len(items), "dry-run must not enqueue a backfill")

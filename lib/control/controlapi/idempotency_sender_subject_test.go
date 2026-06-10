@@ -207,15 +207,15 @@ func (h *senderSubjectHarness) newInstance(t *testing.T, adminKey, tag string) s
 			},
 		},
 	}
-	status, body := h.httpPostAs(t, "/templates", tplBody, adminKey, "")
+	status, body := h.httpPostAs(t, "/v1/templates", tplBody, adminKey, "")
 	require.Equal(t, http.StatusCreated, status, body)
 	tplID, _ := body["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	status, body = h.httpPostAs(t, "/templates/"+tplID+"/deploy", map[string]any{}, adminKey, "")
+	status, body = h.httpPostAs(t, "/v1/templates/"+tplID+"/deploy", map[string]any{}, adminKey, "")
 	require.Equal(t, http.StatusOK, status, body)
 
 	ck := "ck-" + uuid.NewString()
-	status, body = h.httpPostAs(t, "/instances", map[string]any{
+	status, body = h.httpPostAs(t, "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": ck,
 	}, adminKey, "")
@@ -238,7 +238,7 @@ func messagePayload(label string) json.RawMessage {
 // MUST persist; key-A's later replay-payload P3 MUST NOT).
 func (h *senderSubjectHarness) getMessage(t *testing.T, msgID, bearer string) map[string]any {
 	t.Helper()
-	req, err := http.NewRequest("GET", h.srv.URL+"/messages/"+msgID, nil)
+	req, err := http.NewRequest("GET", h.srv.URL+"/v1/messages/"+msgID, nil)
 	require.NoError(t, err)
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
@@ -284,7 +284,7 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	instID := h.newInstance(t, adminKey, "ss-distinct")
 
 	const sharedKey = "shared-idem-key"
-	path := fmt.Sprintf("/instances/%s/messages", instID)
+	path := fmt.Sprintf("/v1/instances/%s/messages", instID)
 
 	// (1) Key A first emit: 201, captures the persisted message_id.
 	statusA1, bodyA1 := h.httpPostAs(t, path, map[string]any{

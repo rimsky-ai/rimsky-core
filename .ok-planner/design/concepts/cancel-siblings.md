@@ -43,11 +43,3 @@ Practical consequence under `strict.cancel_siblings: true` + multi-supervisor fa
 "Fail fast" is honored within a supervisor, not across. The producer side is also protected: forcing an Abandon from supervisor A on a claim held by supervisor B would race with B's natural Commit/Abandon and corrupt the producer's `claim_id`-keyed state.
 
 Fan-out is typically single-supervisor in practice (the supervisor that acquired the parent dispatches the children; single-replica deployments are the common case). The multi-supervisor edge case matters when (a) `replicas > 1`, AND (b) multiple supervisors picked up sibling sub-claim rows in parallel, AND (c) `strict.cancel_siblings: true` is set on the parent.
-
-## Notes
-
-Introduced by spec:2026-05-15-data-platform-extensions-design §Error policy. The recursive-descent variant (descendants of force-Abandoned siblings get force-Abandoned too) landed in a later cleanup cycle after the single-level implementation was reviewed as spec-violating. The multi-supervisor scope is a documented intentional limitation; if cross-supervisor cancellation is ever needed, options are (a) a DB-mediated "please abandon" signal that the other supervisor's terminal handler reads on tick, or (b) producer-side multi-supervisor coordination on the claim id. Neither is implemented.
-
-State-column refactor per spec:2026-05-17-post-data-platform-cleanup: the skip filter changed from a dedicated held-durable flag to "row is not active." The post-refactor filter is strictly broader (also skips committed-subgraph and abandoned rows) but the behavior is identical because (a) only active rows are cancellation candidates in the first place; (b) the pre-refactor cancel path went through a delete which would have no-op'd on already-deleted committed-subgraph or abandoned rows.
-
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

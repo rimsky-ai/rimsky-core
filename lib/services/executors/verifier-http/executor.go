@@ -114,14 +114,39 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	if !statusInSet(resp.StatusCode, expected) {
-		payload, _ := structpb.NewStruct(map[string]any{
+		// Surface the upstream's typed class on the error class so
+		// `concept:signal` policy/subscriber matching keys on the
+		// upstream's taxonomy rather than collapsing to the generic
+		// `verifier/check_failed` leaf. The class is read from a
+		// configurable JSON field on the upstream body (default
+		// `class`, per `attributes.class_field`). Mirrors http-node's
+		// `configured-error-class-field` discipline so the spec's
+		// "error with the upstream's class" Acceptance is satisfied
+		// structurally (not by relying on a body_preview text scrape,
+		// which would let "class field dropped" pass silently).
+		classField := defaultClassField
+		if cf, ok := ud["class_field"].(string); ok && cf != "" {
+			classField = cf
+		}
+		upstreamClass := extractClassField(respBody, classField)
+		errClass := "verifier/check_failed"
+		if upstreamClass != "" {
+			errClass = "verifier/check_failed/" + upstreamClass
+		}
+		payloadMap := map[string]any{
 			"actual_status":   float64(resp.StatusCode),
 			"expected_status": toFloatSet(expected),
 			"body_preview":    truncate(string(respBody), 512),
-		})
+		}
+		if upstreamClass != "" {
+			// Echo the typed class on the payload too so downstream
+			// readers can inspect it without parsing body_preview.
+			payloadMap["upstream_class"] = upstreamClass
+		}
+		payload, _ := structpb.NewStruct(payloadMap)
 		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: "verifier/check_failed",
+				ErrorClass: errClass,
 				Payload:    payload,
 			}}},
 		}})
@@ -140,6 +165,28 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 			ChangeSummary:   fmt.Sprintf("verifier-http: %d from %s", resp.StatusCode, urlStr),
 		}}},
 	}})
+}
+
+// defaultClassField is the JSON field the executor reads from a 4xx/5xx
+// upstream body to derive the `verifier/check_failed/<class>` leaf when
+// the per-node `attributes.class_field` is not set. Mirrors the
+// http-node executor's `DefaultErrorClassField` discipline.
+const defaultClassField = "class"
+
+// extractClassField parses `body` as a JSON object and returns the
+// string value at `field`. Returns "" if the body is empty, not a JSON
+// object, or the field is missing/non-string. The "" sentinel routes
+// the caller to the unqualified `verifier/check_failed` leaf.
+func extractClassField(body []byte, field string) string {
+	if len(body) == 0 || field == "" {
+		return ""
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		return ""
+	}
+	cls, _ := decoded[field].(string)
+	return cls
 }
 
 // statusInSet reports whether `n` is in the configured expected set.

@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-A rimsky-stack `concept:service` implementing the multi-protocol composition pattern (per `concept:service` invariants: distinct handler types per protocol, separately registered on one gRPC server). Presents the rimsky gRPC service protocols (`concept:executor`, `concept:claim-producer`, eventually `concept:publisher` / `concept:lifecycle-subscriber` / `concept:validation` / `concept:data-processing`) on the supervisor-facing side. Maintains agent connections on the dev-facing side via a new long-lived bidi-stream protocol (the agent-connection protocol). Routes dispatches to whichever agent is connected for the instance's owner. Declared in the rimsky config (`concept:rimsky-yml`) once per protocol it serves — an entry under the executor block, one under the claim-producer block, and so on, all pointing at the same binary.
+A rimsky-stack `concept:service` implementing the multi-protocol composition pattern (per `concept:service` invariants: distinct handler types per protocol, separately registered on one gRPC server). Presents the rimsky gRPC service protocols (`concept:executor`, `concept:claim-producer`) on the supervisor-facing side. Maintains agent connections on the dev-facing side via a new long-lived bidi-stream protocol (the agent-connection protocol). Routes dispatches to whichever agent is connected for the instance's owner. Declared in the rimsky config (`concept:rimsky-yml`) once per protocol it serves — an entry under the executor block, one under the claim-producer block, and so on, all pointing at the same binary.
 
 ## Purpose
 
@@ -27,18 +27,3 @@ Owns: the agent ↔ proxy bidi-stream protocol, the spawn-lifecycle state machin
 - The proxy is declared in the rimsky config per protocol it serves, using the same binary across all entries (one endpoint, N namespace registrations).
 - The proxy is the URL-rewriting boundary for rimsky URLs handed to spawned processes (the callback URL specifically; other rimsky URLs follow the same principle as additional protocols are wired).
 - The proxy is a transparent forwarder of every rimsky service protocol it fronts (`concept:executor`, `concept:claim-producer`, `concept:publisher`, `concept:validation`, `concept:data-processing`) by one uniform spawn/forward mechanism, each presenting exactly the fronted service's protocol. No protocol ships as a registered-but-unimplemented stub, and no per-protocol special-casing leaves some protocols unable to reach the spawn/forward path. A service that conforms to its own protocol works behind the proxy by construction — so the proxy adds no separate conformance surface (there is no host-agent / proxy conformance suite).
-
-## Aliases and historical names
-
-None.
-
-## Open within this concept
-
-None at creation time.
-
-## Notes
-
-- [2026-05-24] Concept created per spec 2026-05-24-host-agent-and-proxy-design. v1 implements `concept:executor` and `concept:claim-producer` supervisor-facing handlers (late-bound service fronting) plus `concept:lifecycle-subscriber` as the proxy's own consumer-role handler (consuming the instance-created event for the binding cache and the run-scope-terminal event for reap; the other lifecycle methods no-op with an acknowledgement). `concept:publisher` / `concept:validation` / `concept:data-processing` handlers ship registered but unimplemented. `concept:blob-backend` is intentionally excluded — it's an in-process Go interface, not a gRPC wire protocol.
-- [2026-06-06] Dispatch routing now resolves the serving agent by the instance owner's api-key OR, for owner-less (anonymous-mode) instances, by a well-known anonymous routing identity — removing the prior lock-out where an owner-less instance's late-bind dispatch hard-failed with `host_agent_not_connected`. Per spec:2026-06-06-comprehensive-gap-closure; resolves the former `anonymous-mode-locks-out-late-bind` tension.
-- [2026-06-06] The "one spawn per (run-scope, binding-name) … reaped on run-scope termination" invariant is now actually enforced rather than aspirational: v1 threads the run-scope id onto the dispatch wire, so the proxy keys spawns by the real run-scope instead of collapsing all run-scopes of an instance onto one shared child. Concurrent run-scopes of a fanned-out instance therefore get distinct, isolated children, and reaping one run-scope's child leaves the others serving. Per spec:2026-06-06-comprehensive-gap-closure.
-- [2026-06-06] Follow-on to the [2026-05-24] note: `concept:publisher` / `concept:validation` / `concept:data-processing` no longer ship registered-but-unimplemented. All five fronted protocols are now fully forwarded by the one uniform spawn/forward mechanism, each presenting exactly the fronted service's protocol — none returns `Unimplemented`. This makes the protocol-transparency invariant above real: a late-bound binary speaking any of these protocols works behind the proxy by construction. Per spec:2026-06-06-comprehensive-gap-closure.

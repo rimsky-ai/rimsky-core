@@ -49,6 +49,22 @@ type Config struct {
 	// ReapGracePeriod bounds how long orphaned children are given to exit
 	// after a stream close before they are SIGKILLed. Default 30s.
 	ReapGracePeriod time.Duration
+	// StatusFile is the path the daemon writes its connection state to so an
+	// external supervisor (the `rimsky agent start` parent, `rimsky agent
+	// status`, a probe script) can observe whether the bidi stream is up
+	// without an extra IPC channel. The daemon writes
+	// `{"connected":true,"proxy":"<url>","since":"<rfc3339>"}` on each
+	// successful RegisterAck and DELETES the file when the stream tears
+	// down — so a stale file from a previous run that crashed without
+	// removing it is overwritten by the next successful connect, and
+	// `connected` truly tracks the live stream. Empty → no status file is
+	// written (the standalone cmd/rimsky-host-agent binary leaves this
+	// empty; the `rimsky agent start` CLI wrapper sets it).
+	//
+	// @story: host-agent-control-plane — the falsifier "status reports
+	// `connected` when the bidi stream is actually down" hinges on this
+	// file tracking the LIVE stream, not just the daemon's pid.
+	StatusFile string
 }
 
 // LoadConfigFromEnv reads the host-agent configuration from the environment.
@@ -60,6 +76,8 @@ type Config struct {
 //	RIMSKY_LOG_LEVEL           optional; debug|info|warn|error (default info).
 //	RIMSKY_AGENT_HEARTBEAT_SEC optional; heartbeat cadence seconds (default 10).
 //	RIMSKY_AGENT_REAP_GRACE_SEC optional; reap grace seconds (default 30).
+//	RIMSKY_AGENT_STATUS_FILE   optional; path the daemon writes connection
+//	                           state to (consumed by `rimsky agent status`).
 func LoadConfigFromEnv() Config {
 	return Config{
 		RimskyURL:         os.Getenv("RIMSKY_URL"),
@@ -69,6 +87,7 @@ func LoadConfigFromEnv() Config {
 		LogLevel:          envOr("RIMSKY_LOG_LEVEL", "info"),
 		HeartbeatInterval: envDurationSec("RIMSKY_AGENT_HEARTBEAT_SEC", 10*time.Second),
 		ReapGracePeriod:   envDurationSec("RIMSKY_AGENT_REAP_GRACE_SEC", 30*time.Second),
+		StatusFile:        os.Getenv("RIMSKY_AGENT_STATUS_FILE"),
 	}
 }
 

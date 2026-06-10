@@ -53,12 +53,12 @@ func TestTerminateInstance_NoReasonEmptyBody(t *testing.T) {
 
 	inst := seedInstance(t, h, "term-nobody-"+uuid.NewString())
 
-	status, out := h.httpJSON(t, "POST", "/instances/"+inst.ID.String()+"/terminate", nil)
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.NotEmpty(t, out["terminated_at"])
 
 	status, out = h.httpJSON(t, "GET",
-		fmt.Sprintf("/events?instance_id=%s&kind=instance_terminated", inst.ID.String()), nil)
+		fmt.Sprintf("/v1/events?instance_id=%s&kind=instance_terminated", inst.ID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	events, _ := out["events"].([]any)
 	require.Len(t, events, 1)
@@ -77,14 +77,14 @@ func TestTerminateInstance_Idempotent(t *testing.T) {
 
 	inst := seedInstance(t, h, "term-idem-"+uuid.NewString())
 
-	status, out := h.httpJSON(t, "POST", "/instances/"+inst.ID.String()+"/terminate", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate", map[string]any{
 		"reason": "first",
 	})
 	require.Equal(t, http.StatusOK, status, out)
 	require.NotEmpty(t, out["terminated_at"])
 
 	// Second call is idempotent: still 200, terminated_at unchanged.
-	status, out2 := h.httpJSON(t, "POST", "/instances/"+inst.ID.String()+"/terminate", map[string]any{
+	status, out2 := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate", map[string]any{
 		"reason": "second",
 	})
 	require.Equal(t, http.StatusOK, status, out2)
@@ -93,7 +93,7 @@ func TestTerminateInstance_Idempotent(t *testing.T) {
 
 	// Only the first call recorded an event.
 	status, out3 := h.httpJSON(t, "GET",
-		fmt.Sprintf("/events?instance_id=%s&kind=instance_terminated", inst.ID.String()), nil)
+		fmt.Sprintf("/v1/events?instance_id=%s&kind=instance_terminated", inst.ID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out3)
 	events, _ := out3["events"].([]any)
 	require.Len(t, events, 1, "idempotent terminate must not append a second event")
@@ -105,7 +105,7 @@ func TestTerminateInstance_NotFound(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	status, _ := h.httpJSON(t, "POST", "/instances/"+uuid.NewString()+"/terminate", nil)
+	status, _ := h.httpJSON(t, "POST", "/v1/instances/"+uuid.NewString()+"/terminate", nil)
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -160,11 +160,11 @@ func refModeTemplateProvisionedValid(name string) map[string]any {
 // must be caught at instantiation.
 func registerAndDeployBody(t *testing.T, h *harness, body map[string]any) string {
 	t.Helper()
-	status, out := h.httpJSON(t, "POST", "/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, "register must succeed under the harness ref-mode; body: %v", out)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	deployStatus, deployOut := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, deployOut := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus, "deploy must succeed; body: %v", deployOut)
 	return tplID
 }
@@ -176,7 +176,7 @@ func registerAndDeployBody(t *testing.T, h *harness, body map[string]any) string
 // hold: a 400 instance-create leaves zero rows behind).
 func instanceCountForTemplate(t *testing.T, h *harness, templateHash string) int {
 	t.Helper()
-	status, out := h.httpJSON(t, "GET", "/instances?template_hash="+templateHash, nil)
+	status, out := h.httpJSON(t, "GET", "/v1/instances?template_hash="+templateHash, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	rows, _ := out["instances"].([]any)
 	return len(rows)
@@ -219,7 +219,7 @@ func TestCreateInstance_StaticConfigValidationGate(t *testing.T) {
 		// with a 400 that names the offending attribute (`count`) AND cites
 		// the `minimum` value-constraint violation — a genuine value check,
 		// not a missing/extra-attribute surface error.
-		status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+		status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 			"template":     tplID,
 			"instance_key": "ck-" + uuid.NewString(),
 		})
@@ -242,7 +242,7 @@ func TestCreateInstance_StaticConfigValidationGate(t *testing.T) {
 
 		tplID := registerAndDeployBody(t, h, refModeTemplateProvisionedValid("static-gate-ok-"+uuid.NewString()))
 
-		status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+		status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 			"template":     tplID,
 			"instance_key": "ck-" + uuid.NewString(),
 		})

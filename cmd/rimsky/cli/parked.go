@@ -53,7 +53,7 @@ func RunParkedList(ctx context.Context, args []string) int {
 	}
 	// G5 forwards to F7's spec-named path; the admin-named path stays
 	// available server-side as a backwards-compat alias.
-	path := "/diagnostics/parked"
+	path := "/v1/diagnostics/parked"
 	if len(q) > 0 {
 		path += "?" + q.Encode()
 	}

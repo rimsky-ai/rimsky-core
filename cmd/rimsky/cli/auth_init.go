@@ -52,8 +52,8 @@ func RunAuthInit(ctx context.Context, args []string) int {
 		Name      string `json:"name"`
 		Plaintext string `json:"plaintext"`
 	}
-	if _, err := c.RawCall(ctx, http.MethodPost, "/auth/keys", body, &resp); err != nil {
-		fmt.Fprintln(os.Stderr, "rimsky auth init: POST /auth/keys failed:", formatAuthAPIError(http.MethodPost, "/auth/keys", err).Error())
+	if _, err := c.RawCall(ctx, http.MethodPost, "/v1/auth/keys", body, &resp); err != nil {
+		fmt.Fprintln(os.Stderr, "rimsky auth init: POST /auth/keys failed:", formatAuthAPIError(http.MethodPost, "/v1/auth/keys", err).Error())
 		return 1
 	}
 	fmt.Fprintln(os.Stdout)

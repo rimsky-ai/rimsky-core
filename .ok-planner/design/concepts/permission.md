@@ -36,7 +36,7 @@ No infix wildcards; no regex. `auth:*` matches `auth:create` but NOT `authority:
 
 ## Scope match
 
-A `scope` selector restricts the entry to requests whose target resource satisfies the selector (e.g. `{template_tag: "analytics"}` restricts a `template:register` grant to templates tagged `analytics`). Selector keys are per-action resource dimensions; an entry with no `scope` matches any target of its action (today's behavior).
+A `scope` selector restricts the entry to requests whose target resource satisfies the selector (e.g. `{template_tag: "analytics"}` restricts a `template:register` grant to templates tagged `analytics`). Selector keys are per-action resource dimensions; an entry with no `scope` matches any target of its action.
 
 ## Invariants
 
@@ -45,12 +45,3 @@ A `scope` selector restricts the entry to requests whose target resource satisfi
 - **Grant mode is a floor.** The matched entry's `mode` (default `execute`) is the most permissive mode the request may run at; the dry-run flag may restrict further but never escalate (see `concept:dry-run`).
 - **Forward-compatible parser.** Unknown JSON fields on grant entries are preserved (round-tripped through marshal) so future fields aren't lost.
 - **Action registry is canonical.** The same registry validates key-creation request bodies (unknown action strings → 400) and resolves MCP tool names → action → handler.
-
-## Notes
-
-- [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth-design` ("Permissions model").
-- 2026-05-24 — Adds breakpoint:* and instance:pause / instance:resume action verbs to the canonical registry per `spec:2026-05-24-instance-debugger-design`. breakpoint:read covered by *:read wildcard; the four writes (create, resume, delete, instance:pause, instance:resume) require explicit grant via the new debug-operator role-template.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: a grant entry is now just an action string — the optional `mode` modifier is dropped entirely (preview-vs-commit is a per-request flag owned by `concept:dry-run`, not a grant property). The permission evaluator becomes **set-membership** (any matching entry allows); first-match-wins is removed as a concept, and the "Read actions ignore mode" and "Auth mutations are NOT dry-runnable" invariants are removed (both were mode-vocabulary statements). The wildcard grammar is unchanged. Adds `audit:read` to the canonical action registry (read of the `auth.*` audit rows — see `concept:event-log`), granted separately from `event:read` because audit data is sensitive; covered by the `*` (admin) and `*:read` (read-only) wildcards and granted explicitly to the operator role-template.
-- 2026-06-06 — Per `spec:2026-06-06-comprehensive-gap-closure-design` (S-auth-identity-bound-dryrun, S-auth-grant-scope-enforced): restores the per-grant `mode` modifier (an identity-bound dry-run floor) and un-defers the 2026-05-15 V2 deferral of resource scoping — adds a `scope` resource-selector field with scope-match semantics evaluated alongside the action match, plus the least-privilege invariant.
-- 2026-06-07 — Clarifies that the `compose:origin` capability action is matched by the same wildcard rules every other action uses, so an admin grant (`{"action": "*"}`) holds `compose:origin` by virtue of holding everything; non-wildcard non-compose-CLI keys do not hold it.

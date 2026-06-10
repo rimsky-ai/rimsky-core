@@ -1,12 +1,16 @@
 ---
 tension: events-kind-no-enum
 category: unspecified
-status: open
+status: resolved
 affects:
   - event-log
 ---
 
 # `rimsky_events.kind` is free-form (no enum CHECK); kind typos produce events no consumer finds
+
+## Resolution
+
+`decision:event-log-kind-enum` declares the canonical operational kinds in the events proto and commits rimsky's app logic to consuming typed values exclusively (the generated Go enum for operational kinds; the parsed signal type-path for signal-class kinds). Code work implied: extend the events proto with an `OperationalKind` enum covering every kind currently emitted (`auth.*`, `state_transition`, `lock_acquired`, `work_started`, `attributes_substituted`, `breakpoint.hit`, etc.); regenerate Go bindings; sweep every emit site under the runtime, graph, control-api, and foundation-audit packages to use the typed enum; tighten the persistence-layer marshal/unmarshal paths to fail on unknown strings; update read filters (`GET /events?kind=...`, `GET /audit?kind=...`) to validate the query parameter against the enum at the request boundary. Resolved by `spec:2026-06-08-design-corpus-bootstrap`.
 
 ## What is muddy
 

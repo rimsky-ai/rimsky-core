@@ -22,11 +22,11 @@ func TestCreateTag_HappyPath(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	_, out := h.httpJSON(t, "POST", "/templates", validTemplateBody("tag-hp-"+uuid.NewString()))
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("tag-hp-"+uuid.NewString()))
 	tplID := out["template_id"].(string)
 
 	tag := "newtag-" + uuid.NewString()
-	status, body := h.httpJSON(t, "POST", "/tags", map[string]any{
+	status, body := h.httpJSON(t, "POST", "/v1/tags", map[string]any{
 		"tag": tag, "template": tplID,
 	})
 	require.Equal(t, http.StatusCreated, status, body)
@@ -41,13 +41,13 @@ func TestCreateTag_DuplicateRejected(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	_, out := h.httpJSON(t, "POST", "/templates", validTemplateBody("dup-tag-"+uuid.NewString()))
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("dup-tag-"+uuid.NewString()))
 	tplID := out["template_id"].(string)
 
 	tag := "dup-" + uuid.NewString()
-	status, _ := h.httpJSON(t, "POST", "/tags", map[string]any{"tag": tag, "template": tplID})
+	status, _ := h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": tplID})
 	require.Equal(t, http.StatusCreated, status)
-	status, _ = h.httpJSON(t, "POST", "/tags", map[string]any{"tag": tag, "template": tplID})
+	status, _ = h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag, "template": tplID})
 	require.Equal(t, http.StatusConflict, status)
 }
 
@@ -58,11 +58,11 @@ func TestCreateTag_RejectsHashShape(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	_, out := h.httpJSON(t, "POST", "/templates", validTemplateBody("hashy-tag-"+uuid.NewString()))
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("hashy-tag-"+uuid.NewString()))
 	tplID := out["template_id"].(string)
 
 	hashShape := "sha256-" + repeatHex("b", 64)
-	status, _ := h.httpJSON(t, "POST", "/tags", map[string]any{
+	status, _ := h.httpJSON(t, "POST", "/v1/tags", map[string]any{
 		"tag": hashShape, "template": tplID,
 	})
 	require.Equal(t, http.StatusBadRequest, status)
@@ -76,9 +76,9 @@ func TestListTags(t *testing.T) {
 
 	tag := "listed-" + uuid.NewString()
 	body := templateBodyWithTag("tag-list-"+uuid.NewString(), tag)
-	_, _ = h.httpJSON(t, "POST", "/templates", body)
+	_, _ = h.httpJSON(t, "POST", "/v1/templates", body)
 
-	status, listed := h.httpJSON(t, "GET", "/tags", nil)
+	status, listed := h.httpJSON(t, "GET", "/v1/tags", nil)
 	require.Equal(t, http.StatusOK, status, listed)
 	tags := listed["tags"].([]any)
 	require.NotEmpty(t, tags)
@@ -91,11 +91,11 @@ func TestMoveTag_404OnMissing(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	_, out := h.httpJSON(t, "POST", "/templates", validTemplateBody("move-target-"+uuid.NewString()))
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody("move-target-"+uuid.NewString()))
 	tplID := out["template_id"].(string)
 
 	missingTag := "ghost-" + uuid.NewString()
-	status, _ := h.httpJSON(t, "PUT", "/tags/"+missingTag, map[string]any{"template": tplID})
+	status, _ := h.httpJSON(t, "PUT", "/v1/tags/"+missingTag, map[string]any{"template": tplID})
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -108,7 +108,7 @@ func TestDeleteTag_404OnMissing(t *testing.T) {
 	t.Cleanup(teardown)
 
 	missingTag := "ghost-" + uuid.NewString()
-	status, _ := h.httpJSON(t, "DELETE", "/tags/"+missingTag, nil)
+	status, _ := h.httpJSON(t, "DELETE", "/v1/tags/"+missingTag, nil)
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -123,13 +123,13 @@ func TestDeleteTag_DoesNotDeleteTemplate(t *testing.T) {
 
 	tag := "soft-delete-" + uuid.NewString()
 	body := templateBodyWithTag("tag-delete-"+uuid.NewString(), tag)
-	_, out := h.httpJSON(t, "POST", "/templates", body)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	tplID := out["template_id"].(string)
 
-	status, _ := h.httpJSON(t, "DELETE", "/tags/"+tag, nil)
+	status, _ := h.httpJSON(t, "DELETE", "/v1/tags/"+tag, nil)
 	require.Equal(t, http.StatusOK, status)
 
 	// Template still resolvable by hash.
-	status, _ = h.httpJSON(t, "GET", "/templates/"+tplID, nil)
+	status, _ = h.httpJSON(t, "GET", "/v1/templates/"+tplID, nil)
 	require.Equal(t, http.StatusOK, status)
 }

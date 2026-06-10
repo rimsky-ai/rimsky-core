@@ -71,6 +71,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
@@ -598,7 +599,7 @@ func applyTerminalCompleteSubgraphCaller(
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "subgraph_internal_cascade_fired",
+		Kind: events.KindSubgraphInternalCascadeFired(),
 		Payload: map[string]any{
 			"delegate_graph":       acq.NodeDef.Delegate,
 			"calling_run_id":       acq.DispatchID.String(),
@@ -612,7 +613,7 @@ func applyTerminalCompleteSubgraphCaller(
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "subgraph.dispatched",
+		Kind: events.KindSubgraphDispatched(),
 		Payload: map[string]any{
 			"caller_run_id":  acq.DispatchID.String(),
 			"caller_node_id": acq.NodeID.String(),
@@ -786,7 +787,7 @@ func applyTerminalCompleteSubgraphExit(
 	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID:     &nodeID,
 		InstanceID: &instanceID,
-		Kind:       "subgraph.exit_carry",
+		Kind:       events.KindSubgraphExitCarry(),
 		Payload: map[string]any{
 			"parent_run_id":   exitScope.ParentRunID.String(),
 			"exit_run_id":     acq.DispatchID.String(),

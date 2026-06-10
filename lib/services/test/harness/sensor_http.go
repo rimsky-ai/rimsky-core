@@ -44,27 +44,7 @@ const sensorHTTPImage = "rimsky-sensor-http:latest"
 // image is missing — the harness never t.Skip's.
 func StartSensorHTTP(ctx context.Context, t testing.TB, networkName, alias string, hostAccessPorts ...int) (endpoint string) {
 	t.Helper()
-
-	opts := []testcontainers.ContainerCustomizer{
-		tcnet.WithNetworkName([]string{alias}, networkName),
-		testcontainers.WithEnv(map[string]string{
-			"RIMSKY_SENSOR_HTTP_PORT": "9082",
-			// rimsky's stable in-network alias; known before rimsky is up.
-			"RIMSKY_ENDPOINT": "http://rimsky:8080",
-		}),
-		testcontainers.WithExposedPorts("9082/tcp"),
-		testcontainers.WithWaitStrategy(
-			wait.ForListeningPort("9082/tcp").WithStartupTimeout(60 * time.Second),
-		),
-	}
-	if len(hostAccessPorts) > 0 {
-		opts = append(opts, testcontainers.WithHostPortAccess(hostAccessPorts...))
-	}
-
-	c, err := testcontainers.Run(ctx, sensorHTTPImage, opts...)
-	if err != nil {
-		t.Fatalf("harness: start sensor-http: %v", err)
-	}
+	c := runSensorHTTPContainer(ctx, t, networkName, alias, "", hostAccessPorts)
 	t.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -77,4 +57,132 @@ func StartSensorHTTP(ctx context.Context, t testing.TB, networkName, alias strin
 	// plaintext gRPC Publisher server, so a bare host:port matches the
 	// other gRPC peers' shape.
 	return fmt.Sprintf("%s:9082", alias)
+}
+
+// SensorHTTPHandle is the restart-capable bring-up handle for a
+// rimsky-sensor-http peer container. Endpoint is the in-network gRPC
+// endpoint (the value to pass to BringUpRimsky via WithPublisher).
+// Stop terminates the live container and Restart brings up a fresh one
+// with IDENTICAL env, so the test can exercise the restart-recovery
+// path: durable subscriptions + body-hash watermarks survive in the
+// configured RIMSKY_SENSOR_HTTP_STATE_DSN, but the in-memory watches
+// are dropped on terminate and rebuilt by the fresh container's
+// AttachStateDB.
+//
+// The Postgres state DSN and the host-port-access list passed at
+// construction time are preserved across Restart (the DSN points at a
+// sibling Postgres container that is NOT torn down between sensor
+// restarts; the host-port-access list keeps the host-side
+// httptest.Server reachable from inside the post-restart sensor
+// container at host.testcontainers.internal:<port>).
+type SensorHTTPHandle struct {
+	Endpoint string
+
+	t               testing.TB
+	networkName     string
+	alias           string
+	stateDSN        string
+	hostAccessPorts []int
+
+	container testcontainers.Container
+}
+
+// StartSensorHTTPHandle brings up the rimsky-sensor-http image on the
+// given docker network with the given alias and a durable state DSN,
+// returning a restart-capable handle. Pass stateDSN="" for the in-memory
+// default (no durability proof possible). hostAccessPorts is forwarded
+// verbatim to testcontainers.WithHostPortAccess on every bring-up
+// (initial + restart) so a host-side httptest.Server stays reachable
+// inside the fresh container at host.testcontainers.internal:<port>.
+//
+// Cleanup is registered via t.Cleanup; fails hard (t.Fatal) when the
+// image is missing — the harness never t.Skip's.
+func StartSensorHTTPHandle(ctx context.Context, t testing.TB, networkName, alias, stateDSN string, hostAccessPorts ...int) *SensorHTTPHandle {
+	t.Helper()
+	h := &SensorHTTPHandle{
+		t:               t,
+		networkName:     networkName,
+		alias:           alias,
+		stateDSN:        stateDSN,
+		hostAccessPorts: append([]int(nil), hostAccessPorts...),
+	}
+	h.container = runSensorHTTPContainer(ctx, t, networkName, alias, stateDSN, h.hostAccessPorts)
+	h.Endpoint = fmt.Sprintf("%s:9082", alias)
+	t.Cleanup(func() {
+		if h.container == nil {
+			return
+		}
+		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = h.container.Terminate(termCtx)
+	})
+	return h
+}
+
+// Stop terminates the live sensor-http container without bringing a
+// fresh one up. Used by restart-recovery tests to drop the in-memory
+// watches between Subscribe (persisted via state DSN) and the
+// recovered post-restart poll.
+func (h *SensorHTTPHandle) Stop(ctx context.Context) {
+	h.t.Helper()
+	if h.container == nil {
+		return
+	}
+	termCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	_ = h.container.Terminate(termCtx)
+	h.container = nil
+}
+
+// Restart brings up a fresh sensor-http container with IDENTICAL
+// network / alias / state DSN / host-port-access, replacing any live
+// container. The fresh container's AttachStateDB rebuilds in-memory
+// watches from durable rows — recovering each subscription's
+// ORIGINALLY-declared poll interval, body filter, and body-hash
+// watermark rather than waiting for rimsky to re-Subscribe (rimsky's
+// ResyncPublisherSubscriptions runs only at control-api startup, not on
+// demand). The DSN points at a sibling Postgres container that survives
+// the restart, so the durable state persists across the call.
+func (h *SensorHTTPHandle) Restart(ctx context.Context) {
+	h.t.Helper()
+	h.Stop(ctx)
+	h.container = runSensorHTTPContainer(ctx, h.t, h.networkName, h.alias, h.stateDSN, h.hostAccessPorts)
+}
+
+// runSensorHTTPContainer starts one rimsky-sensor-http container with
+// the given env wiring. Shared by StartSensorHTTP, StartSensorHTTPHandle,
+// and SensorHTTPHandle.Restart so the bring-up shape is identical on
+// initial boot and after a restart.
+func runSensorHTTPContainer(ctx context.Context, t testing.TB, networkName, alias, stateDSN string, hostAccessPorts []int) testcontainers.Container {
+	t.Helper()
+	env := map[string]string{
+		"RIMSKY_SENSOR_HTTP_PORT": "9082",
+		// rimsky's stable in-network alias; known before rimsky is up.
+		"RIMSKY_ENDPOINT": "http://rimsky:8080",
+	}
+	if stateDSN != "" {
+		// Durability gate. When set, sensor-http persists active
+		// publisher-subscriptions + their body-hash watermarks to the
+		// configured Postgres so a process restart resumes the durable
+		// watch with its body filter + watermark intact. Empty → in-
+		// memory default, which loses watches on restart (and breaks
+		// the STORY-sensor-http durability acceptance).
+		env["RIMSKY_SENSOR_HTTP_STATE_DSN"] = stateDSN
+	}
+	opts := []testcontainers.ContainerCustomizer{
+		tcnet.WithNetworkName([]string{alias}, networkName),
+		testcontainers.WithEnv(env),
+		testcontainers.WithExposedPorts("9082/tcp"),
+		testcontainers.WithWaitStrategy(
+			wait.ForListeningPort("9082/tcp").WithStartupTimeout(60 * time.Second),
+		),
+	}
+	if len(hostAccessPorts) > 0 {
+		opts = append(opts, testcontainers.WithHostPortAccess(hostAccessPorts...))
+	}
+	c, err := testcontainers.Run(ctx, sensorHTTPImage, opts...)
+	if err != nil {
+		t.Fatalf("harness: start sensor-http: %v", err)
+	}
+	return c
 }

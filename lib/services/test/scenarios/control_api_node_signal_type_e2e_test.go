@@ -159,7 +159,7 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 // the node with the given node_type. This is the id `GET /nodes/{id}` keys on.
 func resolveWorkerNodeID(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) string {
 	t.Helper()
-	path := "/instances/" + instanceID + "/nodes"
+	path := "/v1/instances/" + instanceID + "/nodes"
 	// Brief retry: the node rows are materialized synchronously at instance
 	// create, but the GET races the create's commit on SQLite, so guard the
 	// first read.
@@ -196,7 +196,7 @@ func resolveWorkerNodeID(t *testing.T, ep harness.RimskyEndpoint, instanceID, no
 // surface under test (controlapi.nodeResponse projected by toNodeResponse).
 func getNodeSettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, nodeID string) (string, bool) {
 	t.Helper()
-	path := "/nodes/" + nodeID
+	path := "/v1/nodes/" + nodeID
 	status, raw := ep.GetJSON(t, path, "")
 	if status != http.StatusOK {
 		t.Fatalf("GET %s returned %d, want 200\nbody: %s", path, status, string(raw))

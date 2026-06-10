@@ -48,7 +48,13 @@ func newAdminHarness(t *testing.T) *adminHarness {
 
 func buildRouter(register func(chi.Router, AppDeps), deps AppDeps) http.Handler {
 	r := chi.NewRouter()
-	register(r, deps)
+	// Mirror NewApp's `/v1/` mount: the test fires requests at
+	// `/v1/...` paths and the production router lives under that
+	// prefix, so unit tests of single-group registrations must mount
+	// the same way.
+	r.Route("/v1", func(v1 chi.Router) {
+		register(v1, deps)
+	})
 	return r
 }
 
@@ -82,12 +88,12 @@ func TestClaimHoldersRoute(t *testing.T) {
 	router := buildRouter(registerClaimsRoutes, deps)
 
 	// Missing UUID → 400.
-	status, _ := doJSON(t, router, http.MethodGet, "/lock-holders/not-a-uuid/claim-holders", nil)
+	status, _ := doJSON(t, router, http.MethodGet, "/v1/lock-holders/not-a-uuid/claim-holders", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 
 	// Unknown lock-holder UUID returns 200 + empty list.
 	emptyID := uuid.New().String()
-	status, body := doJSON(t, router, http.MethodGet, "/lock-holders/"+emptyID+"/claim-holders", nil)
+	status, body := doJSON(t, router, http.MethodGet, "/v1/lock-holders/"+emptyID+"/claim-holders", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	var emptyResp struct {
 		Holders []map[string]any `json:"holders"`
@@ -110,7 +116,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 		}, tx)
 	}))
 
-	status, body = doJSON(t, router, http.MethodGet, "/lock-holders/"+lockHolderID.String()+"/claim-holders", nil)
+	status, body = doJSON(t, router, http.MethodGet, "/v1/lock-holders/"+lockHolderID.String()+"/claim-holders", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
 	var resp struct {
 		Holders []map[string]any `json:"holders"`

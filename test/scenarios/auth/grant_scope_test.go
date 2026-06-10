@@ -56,7 +56,7 @@ func grantScopeSpec() map[string]any {
 // scans every template's tags, not just for a separate row.
 func templateHasTag(t *testing.T, f *authFixture, adminKey, tag string) bool {
 	t.Helper()
-	code, resp := f.request(t, "GET", "/templates", adminKey, nil)
+	code, resp := f.request(t, "GET", "/v1/templates", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("GET /templates: %d %+v", code, resp)
 	}
@@ -79,7 +79,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 
 	// Mint admin via the anonymous path so we can mint scoped keys and
 	// authoritatively list templates afterward.
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -92,7 +92,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 	// "analytics" (least-privilege delegation) and otherwise grants reads.
 	// The matcher must honor the scope: register-as-analytics succeeds,
 	// register-as-billing is denied.
-	_, scopedBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, scopedBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name": "analytics-only",
 		"permissions": []map[string]any{
 			{"action": "template:register", "scope": map[string]any{"template_tag": "analytics"}},
@@ -106,7 +106,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 
 	// In-scope: register a template tagged "analytics" with the scoped key.
 	// The scope matches, so the write must succeed (201) and persist.
-	code, regResp := f.request(t, "POST", "/templates", scopedKey, map[string]any{
+	code, regResp := f.request(t, "POST", "/v1/templates", scopedKey, map[string]any{
 		"spec": grantScopeSpec(),
 		"tag":  "analytics",
 	})
@@ -127,7 +127,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 	// scoped key. The action matches but the scope ("analytics") does not
 	// cover the "billing" target, so the permission gate must reject it
 	// with HTTP 403 — denied on scope, not action.
-	code, denyResp := f.request(t, "POST", "/templates", scopedKey, map[string]any{
+	code, denyResp := f.request(t, "POST", "/v1/templates", scopedKey, map[string]any{
 		"spec": grantScopeSpec(),
 		"tag":  "billing",
 	})

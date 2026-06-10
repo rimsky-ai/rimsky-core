@@ -13,21 +13,19 @@ import (
 )
 
 // TestRulesDoc_CitedPathsExist is the doc-drift accuracy gate for
-// .claude/rules/rules.md (story S-cli-onboarding-rules-deploy-paths). It scans
-// the rules document for every repo-relative filesystem path it instructs a
-// contributor to use and asserts each resolves against the current tree, then
-// pins the specific positive/negative contract: the rebuild instruction must
-// name the real mechanism (`make core-images`) and must carry NONE of the
-// currently-dead references (the absent deploy/ paths, the bare
+// .claude/rules/rules.md.
+//
+// @story: rules-doc-accuracy
+//
+// It scans the rules document for every repo-relative filesystem path it
+// instructs a contributor to use and asserts each resolves against the current
+// tree (via os.Stat, not text-only matching) so a regression — a stale path or
+// a dead make target — fails this test under `go test ./...` and therefore CI.
+// It also pins the specific positive/negative contract: the rebuild
+// instruction must name the real mechanism (`make core-images`) and must carry
+// NONE of the currently-dead references (the absent deploy/ paths, the bare
 // executors/claude-agent prefix that the tree relocated under lib/services/,
 // and the relocated stores-redesign sketch path).
-//
-// Today this test FAILS: rules.md cites deploy/build-images.sh and
-// deploy/docker-compose.yml (no deploy/ directory exists), the bare
-// executors/claude-agent prefix (the real tree is lib/services/executors/...),
-// and docs/2026-04-25-stores-redesign.md (no docs/ directory), and it does not
-// yet name `make core-images`. A later GREEN pass corrects rules.md; this pass
-// only authors the failing gate.
 func TestRulesDoc_CitedPathsExist(t *testing.T) {
 	root := repoRoot(t)
 	rulesPath := filepath.Join(root, ".claude", "rules", "rules.md")

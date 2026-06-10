@@ -15,7 +15,7 @@ import (
 func fakeHealthServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if r.URL.Path != "/v1/health" {
 			t.Errorf("path %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")

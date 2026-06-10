@@ -378,7 +378,7 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 	if err != nil {
 		h.T.Fatal(err)
 	}
-	resp, err := http.Post(h.ControlBase+"/templates", "application/json", bytesReader(body))
+	resp, err := http.Post(h.ControlBase+"/v1/templates", "application/json", bytesReader(body))
 	if err != nil {
 		h.T.Fatal(err)
 	}
@@ -398,7 +398,7 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 		h.T.Fatalf("DeployTemplate: empty template_id")
 	}
 	// Transition register → deployed so /instances will accept the id.
-	deployURL := h.ControlBase + "/templates/" + out.TemplateID + "/deploy"
+	deployURL := h.ControlBase + "/v1/templates/" + out.TemplateID + "/deploy"
 	deployResp, err := http.Post(deployURL, "application/json", bytesReader([]byte("{}")))
 	if err != nil {
 		h.T.Fatal(err)
@@ -426,7 +426,7 @@ func (h *Harness) DeployTemplateSpecMap(specMap map[string]any, bearerKey string
 	if err != nil {
 		h.T.Fatal(err)
 	}
-	regResp := h.authedPost("/templates", bearerKey, body)
+	regResp := h.authedPost("/v1/templates", bearerKey, body)
 	defer regResp.Body.Close()
 	if regResp.StatusCode != http.StatusCreated && regResp.StatusCode != http.StatusOK {
 		buf := make([]byte, 4096)
@@ -442,7 +442,7 @@ func (h *Harness) DeployTemplateSpecMap(specMap map[string]any, bearerKey string
 	if out.TemplateID == "" {
 		h.T.Fatalf("DeployTemplateSpecMap: empty template_id")
 	}
-	deployResp := h.authedPost("/templates/"+out.TemplateID+"/deploy", bearerKey, []byte("{}"))
+	deployResp := h.authedPost("/v1/templates/"+out.TemplateID+"/deploy", bearerKey, []byte("{}"))
 	defer deployResp.Body.Close()
 	if deployResp.StatusCode != http.StatusOK {
 		buf := make([]byte, 4096)
@@ -505,7 +505,7 @@ func (h *Harness) CreateInstanceWithOverrides(
 	if err != nil {
 		h.T.Fatal(err)
 	}
-	resp, err := http.Post(h.ControlBase+"/instances", "application/json", bytesReader(body))
+	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytesReader(body))
 	if err != nil {
 		h.T.Fatal(err)
 	}
@@ -557,7 +557,7 @@ func (h *Harness) CreateInstanceWithServiceBindings(
 	if err != nil {
 		h.T.Fatal(err)
 	}
-	req, err := http.NewRequest(http.MethodPost, h.ControlBase+"/instances", bytesReader(body))
+	req, err := http.NewRequest(http.MethodPost, h.ControlBase+"/v1/instances", bytesReader(body))
 	if err != nil {
 		h.T.Fatal(err)
 	}
@@ -600,7 +600,7 @@ func (h *Harness) MintAdminKey(name string) (plaintext, keyID string) {
 		"name":        name,
 		"permissions": []map[string]any{{"action": "*"}},
 	})
-	resp, err := http.Post(h.ControlBase+"/auth/keys", "application/json", bytesReader(body))
+	resp, err := http.Post(h.ControlBase+"/v1/auth/keys", "application/json", bytesReader(body))
 	if err != nil {
 		h.T.Fatal(err)
 	}
@@ -1055,6 +1055,18 @@ func storeRefToJSON(s node.NodeStoreRef) map[string]any {
 	}
 	if s.Alias != "" {
 		item["alias"] = s.Alias
+	}
+	// Carry through the `lifetime:` discriminator ("subgraph" default |
+	// "durable" asset pattern). Without this, scenario templates that
+	// declare durable claims would silently serialize as the default,
+	// dropping the asset-pattern construction at template registration.
+	// Spec property protected: `concept:asset` requires the durable
+	// lifetime to thread end to end so the producer node's terminal
+	// promotes the claim handle row to state=committed (vs. the
+	// subgraph-default Delete that would drop it before the asset
+	// surface could read it).
+	if s.Lifetime != "" {
+		item["lifetime"] = s.Lifetime
 	}
 	return item
 }

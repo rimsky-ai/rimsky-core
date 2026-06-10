@@ -36,12 +36,12 @@ import (
 func seedBPInstance(t *testing.T, h *harness, suffix string) (string, string) {
 	t.Helper()
 	tplBody := validTemplateBody("bp-" + suffix)
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	status, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	status, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
-	status, out = h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "bp-ck-" + suffix,
 	})
@@ -61,7 +61,7 @@ func TestBreakpoint_CreateListDelete(t *testing.T) {
 
 	// Create with explicit pause mode and the default overflow_policy
 	// (empty body → block_dispatch).
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "root"},
 	})
@@ -73,17 +73,17 @@ func TestBreakpoint_CreateListDelete(t *testing.T) {
 	require.Equal(t, "before_dispatch", out["checkpoint"])
 
 	// List → 1 row.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoints", instID), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), nil)
 	require.Equal(t, http.StatusOK, status)
 	bps, _ := out["breakpoints"].([]any)
 	require.Len(t, bps, 1)
 
 	// Delete → 204.
-	status, _ = h.httpJSON(t, "DELETE", fmt.Sprintf("/instances/%s/breakpoints/%s", instID, bpID), nil)
+	status, _ = h.httpJSON(t, "DELETE", fmt.Sprintf("/v1/instances/%s/breakpoints/%s", instID, bpID), nil)
 	require.Equal(t, http.StatusNoContent, status)
 
 	// List → empty.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoints", instID), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), nil)
 	require.Equal(t, http.StatusOK, status)
 	bps, _ = out["breakpoints"].([]any)
 	require.Len(t, bps, 0)
@@ -97,7 +97,7 @@ func TestBreakpoint_CreateDefaultsForNotifyOnly(t *testing.T) {
 	t.Cleanup(teardown)
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 		"mode":       "notify_only",
 	})
@@ -124,7 +124,7 @@ func TestBreakpoint_CreateRejectsIllegalCombinations(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+			status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 				"checkpoint":      "before_dispatch",
 				"mode":            c.mode,
 				"overflow_policy": c.overflowPolicy,
@@ -143,7 +143,7 @@ func TestBreakpoint_CreateRejectsSignalTypeOnBeforeDispatch(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
 	signalType := "terminal/error/*"
-	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint":  "before_dispatch",
 		"signal_type": signalType,
 	})
@@ -158,7 +158,7 @@ func TestBreakpoint_CreateAcceptsTrailingWildcardSignal(t *testing.T) {
 	t.Cleanup(teardown)
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint":  "after_terminal",
 		"signal_type": "terminal/error/*",
 		"mode":        "notify_only",
@@ -177,7 +177,7 @@ func TestBreakpoint_CreateRejectsUnknownNodeType(t *testing.T) {
 	t.Cleanup(teardown)
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "not-a-real-node"},
 	})
@@ -193,7 +193,7 @@ func TestBreakpoint_DeleteNotFound(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
 	bogus := uuid.NewString()
-	status, _ := h.httpJSON(t, "DELETE", fmt.Sprintf("/instances/%s/breakpoints/%s", instID, bogus), nil)
+	status, _ := h.httpJSON(t, "DELETE", fmt.Sprintf("/v1/instances/%s/breakpoints/%s", instID, bogus), nil)
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -210,7 +210,7 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
 	// Create a breakpoint via HTTP.
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 	})
 	require.Equal(t, http.StatusCreated, status, out)
@@ -243,7 +243,7 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	}))
 
 	// First resume call returns first_resume=true.
-	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
+	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
 		"hit_id": hitID.String(),
 	})
 	require.Equal(t, http.StatusOK, status, out)
@@ -251,7 +251,7 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	require.Equal(t, true, out["first_resume"])
 
 	// Replay returns first_resume=false (idempotent).
-	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
+	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
 		"hit_id": hitID.String(),
 	})
 	require.Equal(t, http.StatusOK, status, out)
@@ -282,7 +282,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.Less(t, seq2, seq3)
 
 	// Full page: all 3 hits, next_since == last seq, not truncated.
-	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits", instID), nil)
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ := out["hits"].([]any)
 	require.Len(t, hits, 3)
@@ -315,7 +315,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.Equal(t, mcpBody, httpBody, "HTTP route and MCP resource must return identical breakpoint-hits payloads")
 
 	// since cursor: ?since=seq1 drops the first hit, keeps seq2 + seq3.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits?since=%d", instID, seq1), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?since=%d", instID, seq1), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ = out["hits"].([]any)
 	require.Len(t, hits, 2)
@@ -325,7 +325,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	// limit truncation: ?limit=2 over 3 hits → 2 returned, truncated
 	// true (the handler fetches limit+1 and observes the third row),
 	// next_since advances to the last returned seq (seq2).
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits?limit=2", instID), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?limit=2", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ = out["hits"].([]any)
 	require.Len(t, hits, 2)
@@ -333,7 +333,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.Equal(t, true, out["truncated"])
 
 	// Bad query param → 400 (parseSinceLimit error mapped to badRequest).
-	status, _ = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits?since=-1", instID), nil)
+	status, _ = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?since=-1", instID), nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
@@ -344,7 +344,7 @@ func TestBreakpoint_ListHits_InstanceNotFound(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	status, _ := h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/breakpoint-hits", uuid.NewString()), nil)
+	status, _ := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits", uuid.NewString()), nil)
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -357,14 +357,14 @@ func TestBreakpoint_ResumeMissingHitID(t *testing.T) {
 	t.Cleanup(teardown)
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 	bpID, _ := out["breakpoint_id"].(string)
 
 	bogusHit := uuid.NewString()
-	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
+	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
 		"hit_id": bogusHit,
 	})
 	require.Equal(t, http.StatusNotFound, status)
@@ -377,13 +377,13 @@ func TestBreakpoint_ResumeBadHitID(t *testing.T) {
 	t.Cleanup(teardown)
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 	bpID, _ := out["breakpoint_id"].(string)
 
-	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
+	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
 		"hit_id": "not-a-uuid",
 	})
 	require.Equal(t, http.StatusBadRequest, status)

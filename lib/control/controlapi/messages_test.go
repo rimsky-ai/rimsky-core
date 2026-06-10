@@ -34,13 +34,13 @@ func TestMessages_PostListGet(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("msg-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "msg-ck-" + uuid.NewString(),
 	})
@@ -50,7 +50,7 @@ func TestMessages_PostListGet(t *testing.T) {
 
 	// Post a message targeting `root`. Idempotency-Key is mandatory on
 	// every emit, so a successful 201 path must carry one.
-	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind":    "invalidate",
 		"target":  "root",
 		"payload": map[string]any{"reason": "manual"},
@@ -60,7 +60,7 @@ func TestMessages_PostListGet(t *testing.T) {
 	require.NotEmpty(t, msgID)
 
 	// List with kind filter.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/messages?kind=invalidate", instID), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?kind=invalidate", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ := out["messages"].([]any)
 	require.GreaterOrEqual(t, len(msgs), 1)
@@ -70,7 +70,7 @@ func TestMessages_PostListGet(t *testing.T) {
 	require.Equal(t, "operator", first["sender_kind"])
 
 	// Detail.
-	status, out = h.httpJSON(t, "GET", "/messages/"+msgID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/messages/"+msgID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, msgID, out["id"])
 	require.Equal(t, instID, out["instance_id"])
@@ -104,7 +104,7 @@ func TestMessages_ListByFrameID(t *testing.T) {
 	post := func() string {
 		// Each emit needs a distinct Idempotency-Key (mandatory header)
 		// so the two posts are independent inserts, not a dedup replay.
-		resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+		resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 			"kind":   "invalidate",
 			"target": "root",
 		}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
@@ -132,7 +132,7 @@ func TestMessages_ListByFrameID(t *testing.T) {
 
 	// ?frame_id=<frame> → exactly the delivered message.
 	status, out := h.httpJSON(t, "GET",
-		fmt.Sprintf("/instances/%s/messages?frame_id=%s", instID, frameID.String()), nil)
+		fmt.Sprintf("/v1/instances/%s/messages?frame_id=%s", instID, frameID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ := out["messages"].([]any)
 	require.Len(t, msgs, 1, "frame filter must narrow to the one delivered message")
@@ -142,14 +142,14 @@ func TestMessages_ListByFrameID(t *testing.T) {
 
 	// ?frame_id=<other> → nothing (cross-frame exclusion; pending excluded).
 	status, out = h.httpJSON(t, "GET",
-		fmt.Sprintf("/instances/%s/messages?frame_id=%s", instID, uuid.NewString()), nil)
+		fmt.Sprintf("/v1/instances/%s/messages?frame_id=%s", instID, uuid.NewString()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ = out["messages"].([]any)
 	require.Empty(t, msgs, "a frame with no delivered message returns zero")
 
 	// Malformed frame id → 400.
 	status, _ = h.httpJSON(t, "GET",
-		fmt.Sprintf("/instances/%s/messages?frame_id=not-a-uuid", instID), nil)
+		fmt.Sprintf("/v1/instances/%s/messages?frame_id=not-a-uuid", instID), nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
@@ -162,18 +162,18 @@ func TestMessages_PostInvalidKind(t *testing.T) {
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("msg-bad-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "msg-bad-ck-" + uuid.NewString(),
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 	instID, _ := out["instance_id"].(string)
 
-	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind": "some-other-kind",
 	})
 	require.Equal(t, http.StatusBadRequest, status)
@@ -188,11 +188,11 @@ func TestMessages_TargetTerminatedInstanceConflict(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("msg-term-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "msg-term-ck-" + uuid.NewString(),
 	})
@@ -209,7 +209,7 @@ func TestMessages_TargetTerminatedInstanceConflict(t *testing.T) {
 	// The 409 fires inside the tx (instance terminated), AFTER the
 	// request-level Idempotency-Key guard — so carry a key, otherwise the
 	// guard would pre-empt with a 400 and mask the intended conflict.
-	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind": "invalidate",
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
 	require.Equal(t, http.StatusConflict, resp.status)
@@ -219,12 +219,12 @@ func TestMessages_TargetTerminatedInstanceConflict(t *testing.T) {
 func newInstanceForMessages(t *testing.T, h *harness, tag string) string {
 	t.Helper()
 	tplBody := validTemplateBody("msg-pub-" + tag + "-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "msg-pub-ck-" + tag + "-" + uuid.NewString(),
 	})
@@ -271,7 +271,7 @@ func TestCreateMessage_SenderKindPublisherActiveSubscriptionSucceeds(t *testing.
 	instID := newInstanceForMessages(t, h, "active")
 	subID := insertPublisherSubscription(t, h, instID, "sensor-http", persistence.PublisherSubscriptionStateActive)
 
-	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind":                      "invalidate",
 		"target":                    "root",
 		"sender_kind":               "publisher",
@@ -304,7 +304,7 @@ func TestCreateMessage_SenderKindPublisherStoppedSubscriptionForbidden(t *testin
 
 	// 403 fires inside the tx (capability check), after the request-level
 	// Idempotency-Key guard — carry a key so the guard doesn't pre-empt.
-	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind":                      "invalidate",
 		"target":                    "root",
 		"sender_kind":               "publisher",
@@ -325,7 +325,7 @@ func TestCreateMessage_SenderKindPublisherUnknownSubscriptionForbidden(t *testin
 	instID := newInstanceForMessages(t, h, "unknown")
 	// 403 fires inside the tx (capability check), after the request-level
 	// Idempotency-Key guard — carry a key so the guard doesn't pre-empt.
-	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind":                      "invalidate",
 		"target":                    "root",
 		"sender_kind":               "publisher",
@@ -349,7 +349,7 @@ func TestCreateMessage_SenderKindPublisherWrongInstanceForbidden(t *testing.T) {
 	// 403 fires inside the tx (capability check binds the sub to instance
 	// A, not B), after the request-level Idempotency-Key guard — carry a
 	// key so the guard doesn't pre-empt.
-	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/instances/%s/messages", instB), map[string]any{
+	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instB), map[string]any{
 		"kind":                      "invalidate",
 		"target":                    "root",
 		"sender_kind":               "publisher",
@@ -367,7 +367,7 @@ func TestCreateMessage_SenderKindPublisherMissingSubscriptionIDBadRequest(t *tes
 	t.Cleanup(teardown)
 
 	instID := newInstanceForMessages(t, h, "missing-sub")
-	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind":        "invalidate",
 		"target":      "root",
 		"sender_kind": "publisher",
@@ -383,7 +383,7 @@ func TestCreateMessage_SenderKindInvalidBadRequest(t *testing.T) {
 	t.Cleanup(teardown)
 
 	instID := newInstanceForMessages(t, h, "invalid-kind")
-	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind":        "invalidate",
 		"target":      "root",
 		"sender_kind": "sensor", // legacy / unsupported
@@ -410,7 +410,7 @@ func TestCreateMessage_MissingIdempotencyKeyRejected(t *testing.T) {
 	instID := newInstanceForMessages(t, h, "no-idem-key")
 
 	// httpJSON sets no Idempotency-Key header.
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/messages", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
 		"kind":   "invalidate",
 		"target": "root",
 	})
@@ -423,7 +423,7 @@ func TestCreateMessage_MissingIdempotencyKeyRejected(t *testing.T) {
 	// tx as the (would-be) idempotency-row insert, so an empty messages
 	// list proves neither side effect occurred — the rejection happens
 	// before any write.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/instances/%s/messages", instID), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ := out["messages"].([]any)
 	require.Empty(t, msgs, "a rejected keyless emit must persist no message envelope")
@@ -445,14 +445,14 @@ func TestCreateMessage_IdempotencyKeyDuplicateReturnsExisting(t *testing.T) {
 	}
 	// First send.
 	first := h.httpJSONWithHeaders(t, "POST",
-		fmt.Sprintf("/instances/%s/messages", instID),
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
 		body, map[string]string{"Idempotency-Key": idemKey})
 	require.Equal(t, http.StatusCreated, first.status, first.body)
 	firstID, _ := first.body["message_id"].(string)
 	require.NotEmpty(t, firstID)
 	// Second send (replay) — must dedup.
 	second := h.httpJSONWithHeaders(t, "POST",
-		fmt.Sprintf("/instances/%s/messages", instID),
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
 		body, map[string]string{"Idempotency-Key": idemKey})
 	require.Equal(t, http.StatusOK, second.status, "replay returns 200 OK")
 	secondID, _ := second.body["message_id"].(string)
@@ -474,7 +474,7 @@ func TestCreateMessage_IdempotencyKeyDistinctSendersDoNotCollide(t *testing.T) {
 
 	// Operator-side send.
 	first := h.httpJSONWithHeaders(t, "POST",
-		fmt.Sprintf("/instances/%s/messages", instID),
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
 		map[string]any{"kind": "invalidate", "target": "root"},
 		map[string]string{"Idempotency-Key": idemKey})
 	require.Equal(t, http.StatusCreated, first.status)
@@ -483,7 +483,7 @@ func TestCreateMessage_IdempotencyKeyDistinctSendersDoNotCollide(t *testing.T) {
 	// Publisher-side send with the SAME idempotency key but a
 	// different sender (the subscription's publisher_name).
 	second := h.httpJSONWithHeaders(t, "POST",
-		fmt.Sprintf("/instances/%s/messages", instID),
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
 		map[string]any{
 			"kind":                      "invalidate",
 			"target":                    "root",

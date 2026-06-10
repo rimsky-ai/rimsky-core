@@ -141,6 +141,42 @@ func StartPublisherSubscriptionsForInstance(
 	return nil
 }
 
+// callListSubscriptionsWithRetry wraps PublisherClient.ListSubscriptions
+// with the same bounded retry-with-backoff loop as Subscribe. Reconcile
+// runs in a startup goroutine that races with whatever stack glue makes
+// the publisher reachable (host-port tunnels, sidecars, DNS warm-up); a
+// single one-shot ListSubscriptions silently skips the publisher's
+// reconcile leg when the first attempt loses the race, so the retry is
+// not optional. 3 attempts with exp 200ms → ~1.6s, jittered ±25%
+// (identical schedule to callSubscribeWithRetry so the two helpers share
+// observable failure semantics).
+func callListSubscriptionsWithRetry(ctx context.Context, client PublisherClient, log shared.Logger) ([]ListedPublisherSubscription, error) {
+	var lastErr error
+	for attempt := 0; attempt < subscribeRetryAttempts; attempt++ {
+		if attempt > 0 {
+			d := time.Duration(float64(subscribeRetryBase) * pow28(attempt))
+			j := time.Duration(rand.Float64()*0.5*float64(d)) - d/4
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(d + j):
+			}
+		}
+		live, err := client.ListSubscriptions(ctx)
+		if err == nil {
+			return live, nil
+		}
+		lastErr = err
+		if log != nil {
+			log.Warn("publisher.resync.list_retry",
+				"publisher_name", client.Name(),
+				"attempt", attempt+1,
+				"error", err.Error())
+		}
+	}
+	return nil, lastErr
+}
+
 // callSubscribeWithRetry wraps PublisherClient.Subscribe with a bounded
 // retry-with-backoff loop. Per spec §Rimsky-side Subscribe retry:
 // 3 attempts with exp 200ms → ~1.6s, jittered ±25%. After exhaustion
@@ -237,6 +273,10 @@ func StopPublisherSubscriptionsForInstance(
 //
 // Errors from individual publishers are logged and the sweep continues
 // across the remaining set — one broken publisher cannot wedge the rest.
+// ListSubscriptions is retried with the same bounded backoff as Subscribe
+// so a transient network race at startup (e.g. the publisher is reachable
+// at registration but not at the moment resync first fires) does not
+// silently skip the publisher's reconcile leg.
 func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDeps) error {
 	if deps.Publishers == nil {
 		return nil
@@ -250,7 +290,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 		expectedByPublisher[s.PublisherName] = append(expectedByPublisher[s.PublisherName], s)
 	}
 	for _, client := range deps.Publishers.All() {
-		live, err := client.ListSubscriptions(ctx)
+		live, err := callListSubscriptionsWithRetry(ctx, client, deps.Logger)
 		if err != nil {
 			deps.Logger.Warn("publisher.resync.list_failed",
 				"publisher_name", client.Name(),

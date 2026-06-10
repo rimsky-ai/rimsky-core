@@ -1,0 +1,34 @@
+---
+story: audit-log-read
+status: as-is
+---
+
+# Operator reads auth-relevant action audit
+
+## Role
+
+As an operator, I can read the audit log of every auth-relevant action against the deployment — key creates, revokes, rotates, dry-run-mode access attempts, denied attempts — with filtering, so that I see who did what to the rimsky stack and when.
+
+## Capability
+
+Audit-read surface gated on `audit:read` exposing every auth-relevant action with actor identity, action name, outcome, target, and time.
+
+## Business value
+
+Operators see who did what against the rimsky stack and when — a forensic record for compliance and incident review.
+
+## Acceptance
+
+Through the control-api's `GET /audit` route (gated by `audit:read`), after an admin mints / revokes / rotates keys and a non-admin caller triggers an access denied, the audit log returns each event in timestamp order carrying actor identity, action name, outcome, and resource target.
+
+## Falsifier
+
+A real access denied doesn't appear in the audit, OR dry-run-mode attempts are absent, OR actor identity is dropped from the record.
+
+## Proof
+
+Executable proof.
+
+## Notes
+
+2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

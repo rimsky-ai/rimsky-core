@@ -343,7 +343,7 @@ func TestInvalidateNode_EnqueuesFrameAndEmitsEvents(t *testing.T) {
 	}))
 	kinds := map[string]int{}
 	for _, e := range events.Events {
-		kinds[e.Kind]++
+		kinds[e.KindRaw]++
 	}
 	require.GreaterOrEqual(t, kinds["message_emitted"], 1)
 	require.GreaterOrEqual(t, kinds["message_received"], 1)

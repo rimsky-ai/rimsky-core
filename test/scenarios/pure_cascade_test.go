@@ -49,7 +49,7 @@ func TestPureCascadeNode(t *testing.T) {
 		"hub did not reach fresh via initial pure-cascade sweep")
 
 	// Invalidate via control API.
-	resp, err := http.Post(h.ControlBase+"/nodes/"+hub.ID.String()+"/invalidate",
+	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+hub.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader([]byte(`{}`)))
 	require.NoError(t, err)
 	_ = resp.Body.Close()
@@ -73,7 +73,7 @@ func TestPureCascadeNode(t *testing.T) {
 	}))
 	var sawCommit bool
 	for _, e := range evs.Events {
-		if e.Kind == "terminal/success" {
+		if e.KindRaw == "terminal/success" {
 			sawCommit = true
 			break
 		}

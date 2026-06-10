@@ -36,9 +36,14 @@ export const expectedAttributesSchema = {
   properties: {
     // cwd_from_store / cwd are top-level attribute fields read by
     // server.ts and http-bridge.ts to resolve the agent's working
-    // directory.
-    cwd_from_store: { type: "string" },
-    cwd: { type: "string" },
+    // directory. Both default to empty string so a template that
+    // doesn't override them clears rimsky's "property has no
+    // `source:` / `default:` / `readOnly`" composition check
+    // (template_validator.go::checkAttributesSchema); an empty
+    // value is treated by the dispatch entrypoint as "no override"
+    // (the cwd resolution logic falls through to the default).
+    cwd_from_store: { type: "string", default: "" },
+    cwd: { type: "string", default: "" },
     // model / system_prompt / user_prompt are read at the top level
     // by the dispatch entrypoint in agent-run.ts. They are NOT under
     // `cli.*` even though they affect the spawned CLI. Keeping them
@@ -85,24 +90,49 @@ export const expectedAttributesSchema = {
         // requiredSignoffs / maxSignoffAttempts). Host-wired validator
         // MCP servers and the required (public_key, path) signature
         // pairs. Kept in lock-step with the parser per the comment above.
+        //
+        // Two entry shapes (S-executors-mcp-catalog-transports), mirrored
+        // by parseMcpServers in server.ts / http-bridge.ts:
+        //   - inline { name, url, headers?, allowed_tools? } — declared
+        //     on the node, permitted only when the executor's
+        //     allow_inline policy is true.
+        //   - catalog reference { ref } — resolved at dispatch against
+        //     the startup catalog the executor loaded from
+        //     RIMSKY_EXECUTOR_MCP_CATALOG.
+        //
+        // The schema mirrors the parser's `if ("ref" in e) { ... }` /
+        // inline-fallthrough split: anyOf admits either shape, neither
+        // requires the other's fields. Rejecting one of the two valid
+        // shapes here would force every template wiring a catalog ref
+        // to fail composition validation even though the dispatch path
+        // would have accepted it — exactly the silently-mismatched
+        // schema-vs-parser footgun the in-line comments warn against
+        // (a kept-in-lock-step parser whose schema was kept partially
+        // in lock-step, dropping the ref leg).
         mcp_servers: {
           type: "array",
           items: {
             type: "object",
-            // name + url are mandatory and non-empty: a present-but-
-            // malformed host-server entry must be rejected by rimsky at
-            // registration/dispatch, not silently dropped (which would
-            // unwire a validator the host intended the agent to reach).
-            required: ["name", "url"],
-            properties: {
-              name: { type: "string", minLength: 1 },
-              url: { type: "string", minLength: 1 },
-              headers: {
-                type: "object",
-                additionalProperties: { type: "string" },
+            anyOf: [
+              {
+                required: ["ref"],
+                properties: {
+                  ref: { type: "string", minLength: 1 },
+                },
               },
-              allowed_tools: { type: "array", items: { type: "string" } },
-            },
+              {
+                required: ["name", "url"],
+                properties: {
+                  name: { type: "string", minLength: 1 },
+                  url: { type: "string", minLength: 1 },
+                  headers: {
+                    type: "object",
+                    additionalProperties: { type: "string" },
+                  },
+                  allowed_tools: { type: "array", items: { type: "string" } },
+                },
+              },
+            ],
           },
         },
         required_signoffs: {

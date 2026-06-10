@@ -462,66 +462,97 @@ func findNodeByType(
 	return nil, nil
 }
 
-// findRootRunInFrame finds the root (parent_run_id NULL) run row for a
-// given (node_id, frame_id) pair via the run-tree accessor. There is
-// no direct lookup in the interface; we walk children with a list and
-// short-circuit. For backfill drill-down the call is bounded by the
-// fan-out's partition count, which is operator-driven and modest.
+// findRootRunInFrame finds the root run row (the fan-out parent's
+// run) for a given (node_id, frame_id) pair. The "root" here is the
+// run whose owning RunScope has `parent_run_id IS NULL` — the
+// non-partition scope the fan-out parent dispatched in. Its children
+// are the per-partition run-rows whose owning RunScopes carry
+// `parent_run_id = <root run id>` and `partition_key = <key>`.
 //
-// Implementation walks `rimsky_node_runs` via the persistence-layer
-// helpers we already have. The dispatch-ledger Queue.SelectCandidates
-// path joins frames + node_runs; we reproduce the lookup against the
-// state-bearing run-tree row directly.
+// Strategy — robust to the fan-out lifecycle:
+//
+//   - Project the node's most-relevant run-scope id via NodeTable.Get
+//     (LATERAL picks an in-flight row when any exist; the children
+//     win the ORDER BY tie under the fan-out's "parent completes
+//     before children claim" lifecycle). When the projection points
+//     at a partition scope, walk one hop up via
+//     RunScopeTable.GetByID → ParentRunID to land on the parent's
+//     run row directly. This is the path the V1 fan-out drives: the
+//     parent run reaches phase=completed the moment SubClaims commit;
+//     its children stay phase in {pending,active,held,parked} until
+//     each terminates. The parent run-id is NOT recoverable through
+//     `GetInFlightRunForNode(nodeID, parentScopeID)` (the parent's
+//     run-row is no longer in-flight); we go through the scope's
+//     parent_run_id pointer instead, which survives the parent's
+//     terminal phase.
+//
+//   - When the projection points at a non-partition scope (no
+//     `parent_run_id` on the scope), the parent IS the projected
+//     run — call GetInFlightRunForNode to resolve it. This covers
+//     the in-flight parent case (e.g. before children have claimed,
+//     or a non-fan-out target).
+//
+// The `frameID` argument is consulted to short-circuit when the
+// node's projection points at a different frame entirely (template
+// churn or stale projection).
+//
+// Returns (nil, nil) when no projection or no parent can be resolved
+// — the caller emits an empty partition list.
 func findRootRunInFrame(
 	ctx context.Context, deps AppDeps, tx persistence.Tx,
 	nodeID shared.UUID, frameID shared.UUID,
 ) (*persistence.RunTreeRow, error) {
-	// The run-tree interface does not expose a direct (node, frame)
-	// lookup. For now we approximate by walking the node's in-flight
-	// run via the existing NodeTable.Get (which projects the
-	// most-relevant run row) and check whether its frame matches.
 	node, err := deps.Persist.Nodes().Get(ctx, nodeID, tx)
 	if err != nil {
 		return nil, err
 	}
-	if node == nil || node.FrameID == nil || *node.FrameID != frameID {
+	if node == nil {
 		return nil, nil
 	}
-	// Node's most-relevant run row lines up with the frame; load via
-	// the runtree by id is not directly available either. We expose
-	// the run id from the NodeRow projection's most-relevant-run
-	// lookup when GetByParentChildKey isn't usable. The current
-	// NodeRow doesn't carry the run id, so we resort to a small
-	// SELECT through the queue accessor.
-	//
-	// Pre-v1 acceptable: backfill drill-down is a low-volume operator
-	// surface; the lookup uses the per-driver tables interface.
-	return runTreeRowForNodeInFrame(ctx, deps, tx, nodeID, frameID)
-}
-
-// runTreeRowForNodeInFrame loads the run-tree row whose (node, frame)
-// matches and `parent_run_id IS NULL`. Implemented by walking the
-// node's children via the Queue's in-flight-run lookup helper.
-func runTreeRowForNodeInFrame(
-	ctx context.Context, deps AppDeps, tx persistence.Tx,
-	nodeID shared.UUID, frameID shared.UUID,
-) (*persistence.RunTreeRow, error) {
-	// Resolve the node's projected RunScope; GetInFlightRunForNode
-	// keys on (node_id, run_scope_id) under RunScope-first. Without a
-	// RunScope projection we have no key.
-	node, err := deps.Persist.Nodes().Get(ctx, nodeID, tx)
-	if err != nil || node == nil || node.RunScopeID == nil {
-		return nil, err
+	// Frame mismatch on the node projection: the node's latest frame
+	// has moved on; the backfill's frame is no longer the one the
+	// node row projects. Empty partitions — the caller short-circuits.
+	if node.FrameID != nil && *node.FrameID != frameID {
+		return nil, nil
 	}
-	_ = frameID
-	runID, ok, err := deps.Queue.GetInFlightRunForNode(ctx, tx, nodeID, *node.RunScopeID)
+	if node.RunScopeID == nil {
+		// No in-flight run for the node — nothing to drill into.
+		return nil, nil
+	}
+	// Look up the projected scope. If it carries a parent_run_id, the
+	// projection points at a partition child's scope and the parent
+	// run-id is the scope's parent_run_id directly. Otherwise the
+	// scope IS the parent's (no partition keying); we resolve the
+	// parent's in-flight run via the queue helper.
+	scope, err := deps.Persist.RunScopes().GetByID(ctx, tx, *node.RunScopeID)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
+	if scope == nil {
 		return nil, nil
 	}
-	return deps.Persist.RunTree().GetByID(ctx, tx, runID)
+	var parentRunID shared.UUID
+	if scope.ParentRunID != nil {
+		// Partition child's scope → parent run-id is the scope's
+		// parent_run_id pointer. This survives the parent's
+		// phase=completed transition.
+		parentRunID = *scope.ParentRunID
+	} else {
+		// Non-partition scope → the projection IS the parent run.
+		// Use GetInFlightRunForNode to resolve the run-id (only
+		// in-flight while the parent has not yet reached terminal;
+		// for a fan-out the parent terminates fast, so this branch
+		// is the non-fan-out / pre-fan-out case).
+		runID, ok, qerr := deps.Queue.GetInFlightRunForNode(ctx, tx, nodeID, *node.RunScopeID)
+		if qerr != nil {
+			return nil, qerr
+		}
+		if !ok {
+			return nil, nil
+		}
+		parentRunID = runID
+	}
+	return deps.Persist.RunTree().GetByID(ctx, tx, parentRunID)
 }
 
 func handleCancelBackfill(deps AppDeps) http.HandlerFunc {

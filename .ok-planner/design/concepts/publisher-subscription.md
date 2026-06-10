@@ -36,8 +36,3 @@ Adjacent: `concept:publisher` (the protocol), `concept:sensor` (one class of pub
 - `state` is one of `active`, `failed`, `stopped`. Transitions: `active → failed` on Subscribe RPC failure (operator-recoverable via resync); `active → stopped` on Unsubscribe success; `failed → active` on resync re-Subscribe.
 - The publisher capability check on the message-emit endpoint validates `(id, instance_id, state='active')` — three-way match. Cross-instance subscription IDs are rejected with 403.
 - @blessed-invariant: rimsky-side subscription rows are inert with respect to the publisher's substrate. The row exists; the publisher's internal state is the publisher's concern.
-
-## Notes
-
-The shape replaces the pre-2026-05-17 sensor-watch ledger. The rename collapses the wrong-name (sensors as protocol) and removes the `on_observation` substruct (routing fields now inline). The earlier `sensor-watch` content is folded into this doc; the old slug is retained as an `alias` in this doc's front matter for grep continuity.
-2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	eventskinds "github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
@@ -173,11 +174,21 @@ func (s *AuthState) insertEvent(_ context.Context, kind string, payload any) {
 		s.Logger.Error("audit.unmarshal-to-map", "kind", kind, "err", err.Error())
 		return
 	}
+	// The kind string is one of the auth.Event* canonical wire-form
+	// constants (e.g. auth.EventAccessAttempted). Parse it back to
+	// the typed events.Kind at the persistence boundary so the
+	// emit-site discipline (decision:event-log-kind-enum) holds even
+	// through this tiny package-internal dispatch wrapper.
+	typedKind, err := eventskinds.ParseKindString(kind)
+	if err != nil {
+		s.Logger.Error("audit.kind-parse", "kind", kind, "err", err.Error())
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), auditWriteTimeout)
 	defer cancel()
 	if err := s.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return s.Tables.Events().Append(ctx, persistence.EventAppendInput{
-			Kind:    kind,
+			Kind:    typedKind,
 			Payload: payloadMap,
 		}, tx)
 	}); err != nil {

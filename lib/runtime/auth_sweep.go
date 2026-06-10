@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -138,7 +139,7 @@ func emitKeyRevoked(ctx context.Context, tables persistence.Tables, p auth.KeyRe
 	}
 	_ = tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return tables.Events().Append(ctx, persistence.EventAppendInput{
-			Kind:    auth.EventKeyRevoked,
+			Kind:    events.KindAuthKeyRevoked(),
 			Payload: payloadMap,
 		}, tx)
 	})

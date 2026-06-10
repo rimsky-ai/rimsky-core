@@ -35,7 +35,7 @@ import (
 // breakpoint id. Fatals on any non-201 status.
 func breakpointCreate(t *testing.T, h *scenario.Harness, instanceID shared.UUID, body map[string]any) shared.UUID {
 	t.Helper()
-	status, out := postJSON(t, h.ControlBase+fmt.Sprintf("/instances/%s/breakpoints", instanceID.String()), body)
+	status, out := postJSON(t, h.ControlBase+fmt.Sprintf("/v1/instances/%s/breakpoints", instanceID.String()), body)
 	if status != http.StatusCreated {
 		t.Fatalf("breakpointCreate: status %d body=%v", status, out)
 	}
@@ -55,7 +55,7 @@ func breakpointCreate(t *testing.T, h *scenario.Harness, instanceID shared.UUID,
 // (status, body) so callers can pin 400s.
 func breakpointResume(t *testing.T, h *scenario.Harness, instanceID, breakpointID shared.UUID, body map[string]any) (int, map[string]any) {
 	t.Helper()
-	url := h.ControlBase + fmt.Sprintf("/instances/%s/breakpoints/%s/resume",
+	url := h.ControlBase + fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume",
 		instanceID.String(), breakpointID.String())
 	return postJSON(t, url, body)
 }
@@ -63,7 +63,7 @@ func breakpointResume(t *testing.T, h *scenario.Harness, instanceID, breakpointI
 // breakpointDelete DELETEs the breakpoint row; fatals on non-204.
 func breakpointDelete(t *testing.T, h *scenario.Harness, instanceID, breakpointID shared.UUID) {
 	t.Helper()
-	url := h.ControlBase + fmt.Sprintf("/instances/%s/breakpoints/%s",
+	url := h.ControlBase + fmt.Sprintf("/v1/instances/%s/breakpoints/%s",
 		instanceID.String(), breakpointID.String())
 	req, err := http.NewRequest(http.MethodDelete, url, nil)
 	if err != nil {
@@ -85,12 +85,12 @@ func breakpointDelete(t *testing.T, h *scenario.Harness, instanceID, breakpointI
 // (`already paused` / `not paused`) can be asserted explicitly.
 func instancePause(t *testing.T, h *scenario.Harness, instanceID shared.UUID) (int, map[string]any) {
 	t.Helper()
-	return postJSON(t, h.ControlBase+fmt.Sprintf("/instances/%s/pause", instanceID.String()), map[string]any{})
+	return postJSON(t, h.ControlBase+fmt.Sprintf("/v1/instances/%s/pause", instanceID.String()), map[string]any{})
 }
 
 func instanceResume(t *testing.T, h *scenario.Harness, instanceID shared.UUID) (int, map[string]any) {
 	t.Helper()
-	return postJSON(t, h.ControlBase+fmt.Sprintf("/instances/%s/resume", instanceID.String()), map[string]any{})
+	return postJSON(t, h.ControlBase+fmt.Sprintf("/v1/instances/%s/resume", instanceID.String()), map[string]any{})
 }
 
 // postJSON marshals body, POSTs to url, decodes response JSON. Returns
@@ -240,7 +240,7 @@ func createInstanceWithPause(t *testing.T, h *scenario.Harness, templateHash, co
 	if consumerKey != "" {
 		bodyMap["instance_key"] = consumerKey
 	}
-	status, out := postJSON(t, h.ControlBase+"/instances", bodyMap)
+	status, out := postJSON(t, h.ControlBase+"/v1/instances", bodyMap)
 	if status != http.StatusCreated {
 		t.Fatalf("createInstanceWithPause: status %d body=%v", status, out)
 	}

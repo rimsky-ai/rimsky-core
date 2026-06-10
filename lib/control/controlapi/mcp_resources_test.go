@@ -44,7 +44,7 @@ import (
 func withIdentity(t *testing.T, ident auth.Identity) *http.Request {
 	t.Helper()
 	ctx := context.WithValue(context.Background(), ctxKeyIdentity{}, ident)
-	return httptest.NewRequest("POST", "/mcp", nil).WithContext(ctx)
+	return httptest.NewRequest("POST", "/v1/mcp", nil).WithContext(ctx)
 }
 
 // seedBPHit inserts a breakpoint hit row directly into persistence and
@@ -377,7 +377,7 @@ func TestResources_Read_LimitCappedAtMax(t *testing.T) {
 // inserts would require.
 func createBreakpointForRead(t *testing.T, h *harness, instID string) foundationshared.UUID {
 	t.Helper()
-	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/instances/%s/breakpoints", instID), map[string]any{
+	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 	})
 	require.Equal(t, 201, status, out)

@@ -36,7 +36,7 @@ func withStdin(t *testing.T, input string) {
 
 func TestRunAuthLogin_WritesKeyToConfig(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/auth/status" {
+		if r.URL.Path == "/v1/auth/status" {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"mode":"authenticated","active_key_count":1,"admin_count":1}`))
 			return
@@ -97,7 +97,7 @@ func TestRunAuthLogin_KeyRejected(t *testing.T) {
 
 func TestRunAuthLogin_UsesDefaultEndpoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/auth/status" {
+		if r.URL.Path == "/v1/auth/status" {
 			_, _ = w.Write([]byte(`{"mode":"authenticated","active_key_count":1,"admin_count":1}`))
 			return
 		}

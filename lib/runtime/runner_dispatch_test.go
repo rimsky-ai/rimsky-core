@@ -536,8 +536,8 @@ func TestResolveAttributes_DispatchExecutorSchemaValidation(t *testing.T) {
 	if class != "template_validation_failed" {
 		t.Fatalf("expected class=template_validation_failed, got %q", class)
 	}
-	if eventKind != "template_validation_failed" {
-		t.Fatalf("expected eventKind=template_validation_failed, got %q", eventKind)
+	if eventKind.String() != "template_validation_failed" {
+		t.Fatalf("expected eventKind=template_validation_failed, got %q", eventKind.String())
 	}
 }
 
@@ -719,8 +719,8 @@ func TestClassifyAttributeFailure_RoutesByErrorType(t *testing.T) {
 		if class != "template_resolution_failed" {
 			t.Fatalf("class: want template_resolution_failed, got %q", class)
 		}
-		if eventKind != "template_resolution_failed" {
-			t.Fatalf("eventKind: want template_resolution_failed, got %q", eventKind)
+		if eventKind.String() != "template_resolution_failed" {
+			t.Fatalf("eventKind: want template_resolution_failed, got %q", eventKind.String())
 		}
 	})
 
@@ -730,8 +730,8 @@ func TestClassifyAttributeFailure_RoutesByErrorType(t *testing.T) {
 		if class != "executor_schema_unavailable" {
 			t.Fatalf("class: want executor_schema_unavailable, got %q", class)
 		}
-		if eventKind != "executor_schema_unavailable" {
-			t.Fatalf("eventKind: want executor_schema_unavailable, got %q", eventKind)
+		if eventKind.String() != "executor_schema_unavailable" {
+			t.Fatalf("eventKind: want executor_schema_unavailable, got %q", eventKind.String())
 		}
 	})
 
@@ -741,8 +741,8 @@ func TestClassifyAttributeFailure_RoutesByErrorType(t *testing.T) {
 		if class != "template_validation_failed" {
 			t.Fatalf("class: want template_validation_failed, got %q", class)
 		}
-		if eventKind != "template_validation_failed" {
-			t.Fatalf("eventKind: want template_validation_failed, got %q", eventKind)
+		if eventKind.String() != "template_validation_failed" {
+			t.Fatalf("eventKind: want template_validation_failed, got %q", eventKind.String())
 		}
 	})
 

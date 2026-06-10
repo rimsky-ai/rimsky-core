@@ -23,15 +23,4 @@ Owns: name → hash mapping, lifecycle event fan-out (tags arrive on the templat
 
 - Tag → hash mapping is mutable; the hash itself is immutable.
 - Tag movement does NOT retroactively migrate live instances bound to a different hash.
-- The `compose:<project>:<...>` tag prefix is reserved and **server-enforced**: tag-create rejects a `compose:`-prefixed name unless the request originates from the privileged compose path. Enforcement is at the source of truth, not a CLI courtesy.
-
-## Aliases and historical names
-
-`template-tag` is the explicit name in some references; the schema column and operator vocabulary just use `tag`.
-
-## Notes
-
-2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-
-2026-06-07 — compose-prefix reservation moved from client-side convention to server-enforced invariant per spec:2026-06-06-comprehensive-gap-closure.
-
+- The `compose:<project>:<...>` tag prefix is reserved and **server-enforced**: tag-create rejects a `compose:`-prefixed name unless the request originates from the privileged compose path.

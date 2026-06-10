@@ -45,13 +45,13 @@ func TestListNodes_TagFilter(t *testing.T) {
 			},
 		},
 	}
-	status, out := h.httpJSON(t, "POST", "/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
 	tplID := out["template_id"].(string)
-	status, _ = h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	status, _ = h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
 
-	status, out = h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 	})
@@ -59,7 +59,7 @@ func TestListNodes_TagFilter(t *testing.T) {
 	instID := out["instance_id"].(string)
 
 	// No filter — both rows returned, each with its tags.
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID+"/nodes", nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ := out["nodes"].([]any)
 	require.Len(t, nodes, 2)
@@ -76,7 +76,7 @@ func TestListNodes_TagFilter(t *testing.T) {
 	require.True(t, tagsSeen["recurring"])
 
 	// Filter to setup — only one row.
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID+"/nodes?tag=setup", nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes?tag=setup", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ = out["nodes"].([]any)
 	require.Len(t, nodes, 1)
@@ -84,7 +84,7 @@ func TestListNodes_TagFilter(t *testing.T) {
 	require.Equal(t, "root", row["node_type"])
 
 	// Filter to a non-existent tag — empty.
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID+"/nodes?tag=nonexistent", nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes?tag=nonexistent", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ = out["nodes"].([]any)
 	require.Len(t, nodes, 0)

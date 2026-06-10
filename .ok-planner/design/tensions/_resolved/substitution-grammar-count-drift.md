@@ -1,12 +1,16 @@
 ---
 tension: substitution-grammar-count-drift
 category: inconsistent
-status: open
+status: resolved
 affects:
   - attribute
 ---
 
 # Substitution grammar count drifts: 5 in some prose, 6 in code (event kind added separately)
+
+## Resolution
+
+`story:substitution-doc-accuracy` lands the accuracy gate (header-enumeration vs. resolver case-arm cross-check via the substitution-test pattern) as a durable story; the muddiness is closed because the gate now exists and the story names where it lives. Resolved by `spec:2026-06-08-design-corpus-bootstrap`.
 
 ## What is muddy
 

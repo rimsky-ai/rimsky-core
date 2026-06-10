@@ -153,7 +153,7 @@ func TestOnEventUndeclaredEventNameRejectedAtRegistration(t *testing.T) {
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
-	resp, err := http.Post(h.ControlBase+"/templates/register",
+	resp, err := http.Post(h.ControlBase+"/v1/templates/register",
 		"application/json", bytes.NewReader(raw))
 	require.NoError(t, err)
 	defer resp.Body.Close()

@@ -158,7 +158,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 		"reason":                     "scenario backfill",
 	})
 	require.NoError(t, err)
-	resp, err := http.Post(h.ControlBase+"/instances/"+iid.String()+"/backfills",
+	resp, err := http.Post(h.ControlBase+"/v1/instances/"+iid.String()+"/backfills",
 		"application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	backfillBody := new(bytes.Buffer)

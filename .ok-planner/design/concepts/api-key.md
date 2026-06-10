@@ -31,8 +31,3 @@ Owns: the plaintext format + hash; the persisted API-key ledger; the lifecycle v
 - **Mint** — the key-mint endpoint. CSPRNG plaintext minted; its SHA-256 hash stored; plaintext surfaced in the response and never persisted. Emits a key-created audit event.
 - **Rotate** — the key-rotate endpoint with a grace duration. Atomic: schedules the existing row's revocation at now-plus-grace and inserts a new row with the same name + permissions in one transaction. Old key authenticates normally until the grace expires; the rotation-grace sweep (a periodic scheduler job) then revokes it. Emits a key-rotated audit event, and later a key-revoked event with a rotation-grace reason.
 - **Revoke** — the key-revoke endpoint. Sets the revocation timestamp to now. Refuses if the operation would leave zero active keys unless an explicit force-leave-anonymous flag is supplied. Emits a key-revoked audit event with a manual reason.
-
-## Notes
-
-- [2026-05-15] Concept introduced by spec:2026-05-15-control-plane-mcp-and-auth-design ("Authentication model").
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

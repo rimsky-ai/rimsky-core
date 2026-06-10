@@ -244,24 +244,24 @@ func TestTemplateLifecycle_DeployGetListDelete(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("alpha-" + uuid.NewString())
-	status, out := h.httpJSON(t, "POST", "/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
 
-	status, out = h.httpJSON(t, "GET", "/templates/"+tplID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/templates/"+tplID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, tplID, out["id"])
 
-	status, out = h.httpJSON(t, "GET", "/templates", nil)
+	status, out = h.httpJSON(t, "GET", "/v1/templates", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	tpls, _ := out["templates"].([]any)
 	require.GreaterOrEqual(t, len(tpls), 1)
 
-	status, _ = h.httpJSON(t, "DELETE", "/templates/"+tplID, nil)
+	status, _ = h.httpJSON(t, "DELETE", "/v1/templates/"+tplID, nil)
 	require.Equal(t, http.StatusOK, status)
 
-	status, _ = h.httpJSON(t, "GET", "/templates/"+tplID, nil)
+	status, _ = h.httpJSON(t, "GET", "/v1/templates/"+tplID, nil)
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -271,7 +271,7 @@ func TestTemplateDeploy_NewShape_StoresAndLocks(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := templateWithStoresAndLocks("stores-lc-" + uuid.NewString())
-	status, out := h.httpJSON(t, "POST", "/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
 	require.NotEmpty(t, out["template_id"])
 }
@@ -283,7 +283,7 @@ func TestTemplateDeploy_MissingName_400(t *testing.T) {
 
 	body := validTemplateBody("bad")
 	delete(specOf(body), "name")
-	status, out := h.httpJSON(t, "POST", "/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Contains(t, fmt.Sprint(out["error"]), "template validation")
 	errs, _ := out["validation_errors"].([]any)
@@ -302,7 +302,7 @@ func TestTemplateDeploy_UnknownStore_400(t *testing.T) {
 		{"name": "ghost-store", "selector": "x", "intent": "r"},
 	}
 	spec["nodes"] = nodes
-	status, out := h.httpJSON(t, "POST", "/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 }
 
@@ -327,7 +327,7 @@ func TestTemplateDeploy_ClaimResolutions_Rejected(t *testing.T) {
 		},
 	}
 	spec["nodes"] = nodes
-	status, out := h.httpJSON(t, "POST", "/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Contains(t, fmt.Sprint(out["error"]), "claim_resolutions")
 }
@@ -354,7 +354,7 @@ func TestTemplateDeploy_DependencyCycle_400(t *testing.T) {
 			},
 		},
 	}
-	status, out := h.httpJSON(t, "POST", "/templates", body)
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 }
 
@@ -364,15 +364,15 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-lc-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
 	// Transition register → deployed; instance creation requires
 	// state='deployed' per spec §2.2.
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
 	ck := "ck-" + uuid.NewString()
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": ck,
 		"params":       map[string]any{"region": "us-east"},
@@ -384,14 +384,14 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	require.Equal(t, ck, out["instance_key"])
 	require.Equal(t, float64(2), out["node_count"])
 
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, ck, out["instance_key"])
 
-	status, out = h.httpJSON(t, "GET", "/instances/"+ck, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+ck, nil)
 	require.Equal(t, http.StatusOK, status, out)
 
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID+"/nodes", nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ := out["nodes"].([]any)
 	require.Len(t, nodes, 2)
@@ -402,10 +402,10 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	pgtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
 
-	status, _ = h.httpJSON(t, "DELETE", "/instances/"+instID, nil)
+	status, _ = h.httpJSON(t, "DELETE", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status)
 
-	status, _ = h.httpJSON(t, "GET", "/instances/"+instID, nil)
+	status, _ = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -416,11 +416,11 @@ func TestInstanceCreate_RootEnqueued(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("enq-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 	})
@@ -441,13 +441,13 @@ func TestInstanceDuplicateConsumerKey_Idempotent(t *testing.T) {
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("dup-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
 	ck := "ck-" + uuid.NewString()
-	status, firstOut := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, firstOut := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": ck,
 	})
@@ -457,7 +457,7 @@ func TestInstanceDuplicateConsumerKey_Idempotent(t *testing.T) {
 
 	// Per spec §2.2 idempotent re-create: a second POST with the same
 	// (template_hash, instance_key) returns the existing row at 200 OK.
-	status, secondOut := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, secondOut := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": ck,
 	})
@@ -476,7 +476,7 @@ func TestOperatorInvalidate(t *testing.T) {
 	// Post-stage-3: 'fresh' = no in-flight run row. Delete any.
 	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1 AND phase IN ('pending','active','held','parked')`, nodeRow.ID)
 
-	status, out := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
 		"reason": "manual-poke",
 	})
 	require.Equal(t, http.StatusOK, status, out)
@@ -506,7 +506,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	inst := seedInstance(t, h, "op-rst-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
 
-	status, _ := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/reset", nil)
+	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusConflict, status)
 
 	// Post-stage-3: state lives on rimsky_node_runs. Seed a failed
@@ -527,7 +527,7 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
             (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, active_terminal_at, run_scope_id)
         VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'failed', 'failed', $2, now(), $3)
     `, nodeRow.ID, frameID, mainScopeID)
-	status, _ = h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/reset", nil)
+	status, _ = h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusOK, status)
 
 	var loaded *persistence.NodeRow
@@ -555,7 +555,7 @@ func TestOperatorKill_RouteRemoved(t *testing.T) {
 	inst := seedInstance(t, h, "op-kill-removed-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
 
-	status, _ := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/kill", nil)
+	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/kill", nil)
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -568,12 +568,12 @@ func TestEventsList(t *testing.T) {
 	inst := seedInstance(t, h, "ev-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
 	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1 AND phase IN ('pending','active','held','parked')`, nodeRow.ID)
-	status, _ := h.httpJSON(t, "POST", "/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
+	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
 		"reason": "ev-test",
 	})
 	require.Equal(t, http.StatusOK, status)
 
-	status, out := h.httpJSON(t, "GET", "/events?node_id="+nodeRow.ID.String(), nil)
+	status, out := h.httpJSON(t, "GET", "/v1/events?node_id="+nodeRow.ID.String(), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	events, _ := out["events"].([]any)
 	require.Greater(t, len(events), 0)
@@ -584,7 +584,7 @@ func TestHealth(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	status, out := h.httpJSON(t, "GET", "/health", nil)
+	status, out := h.httpJSON(t, "GET", "/v1/health", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, "ok", out["status"])
 	counts, ok := out["node_counts"].(map[string]any)
@@ -602,7 +602,7 @@ func TestClaimHoldersRoute_EmptyList(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	status, out := h.httpJSON(t, "GET", "/lock-holders/"+uuid.NewString()+"/claim-holders", nil)
+	status, out := h.httpJSON(t, "GET", "/v1/lock-holders/"+uuid.NewString()+"/claim-holders", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	holders, _ := out["holders"].([]any)
 	require.Empty(t, holders)
@@ -615,12 +615,12 @@ func TestClaimHoldersRoute_EmptyList(t *testing.T) {
 func seedInstance(t *testing.T, h *harness, tplName string) persistence.InstanceRow {
 	t.Helper()
 	ctx := context.Background()
-	_, out := h.httpJSON(t, "POST", "/templates", validTemplateBody(tplName))
+	_, out := h.httpJSON(t, "POST", "/v1/templates", validTemplateBody(tplName))
 	tplID := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 	ck := "ck-" + uuid.NewString()
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": ck,
 	})

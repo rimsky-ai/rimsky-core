@@ -38,9 +38,3 @@ Adjacent: `concept:fan-out`, `concept:delegation`, `concept:frame`, `concept:cla
 - `closed_at IS NOT NULL` means parent-run rendezvous has fired (sub-graph carry-rule, fan-out aggregation, or instance termination). The lazy-allocation primitive refuses to allocate into a closed RunScope, surfacing a closed-scope error. Cascade walker reaching INTO a closed RunScope is a bug.
 - The lazy-allocation primitive that affirms a node-run row is the allocation entry point; callers must not depend on its return value beyond error/no-error (preserves lazy↔eager rewrite property).
 - Depth gating: runtime safety net that rejects a sub-graph creating a RunScope already present in the parent chain at any depth. The canonicalizer's static sub-graph-recursion rejection per `concept:sub-graph` is the primary; this is defense-in-depth.
-
-## Notes
-
-- 2026-05-22 — Created per `spec:2026-05-22-fan-out-safety-scope-first-design`.
-- 2026-05-23 — Cascade walker membership refinement: when the sender lives in a non-main RunScope (sub-graph, fanout_partition), the terminal-cascade walker MUST NOT lazy-allocate run rows for receivers. Non-main RunScopes are CLOSED contexts: a receiver belongs to the sender's scope only if it already has an in-flight row there (dispatched explicitly by the sub-graph caller's internal cascade or by fan-out child creation). Receivers without a same-scope row live in some ancestor scope (typically main) and are handled by the cross-scope bridge that runs when the parent settles. The lazy-allocation discipline applies only to main RunScopes. The cross-scope bridge must also drain wait-set rows for the just-settled parent (cascade-then-drain pattern mirrors the standard terminal-complete path).
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

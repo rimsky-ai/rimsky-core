@@ -119,7 +119,7 @@ func adminInvalidate(t *testing.T, h *scenario.Harness, instanceID, nodeID inter
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{})
 	resp, err := http.Post(
-		h.ControlBase+"/admin/instances/"+instanceID.String()+"/nodes/"+nodeID.String()+"/invalidate",
+		h.ControlBase+"/v1/admin/instances/"+instanceID.String()+"/nodes/"+nodeID.String()+"/invalidate",
 		"application/json", bytes.NewReader(body),
 	)
 	require.NoError(t, err)

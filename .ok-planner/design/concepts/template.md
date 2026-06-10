@@ -24,24 +24,5 @@ Owns: the spec bytes, the canonical hash, the lifecycle states, the registration
 - The template id is a `sha256-` prefix + 64 hex chars over RFC 8785 JCS bytes.
 - The JCS canonicalization-library version is pinned — a transitive bump that changes canonicalization output invalidates every existing template id.
 - Instances bind to a specific `template_hash` at creation; tag movement does not migrate live instances.
-- A top-level `late_bind_services` list names services whose registration-time existence and schema validation are bypassed (their actual schema comes from the spawned binary's Capabilities handshake at dispatch). The list is stored inside the canonical spec bytes, so it participates in the JCS-canonicalized template hash — changing the list reregisters the template under a new hash, preserving the content-addressing invariant. Names absent from the list retain today's strict registration-time checks. See `concept:host-agent-proxy`.
-- Reference and schema validation is **optional at registration** under an operator-set mode (`all` default / `available` / `none`); a relaxed mode skips refs whose target services are not yet provisioned (the previously-implicit always-on soft-fail heuristic IS mode `available`, now explicit and uniform across the executor / store / lock / schema legs).
-
-## Aliases and historical names
-
-The legacy `template_id` term still appears in some prose; `template_hash` is the current canonical name.
-
-## Open within this concept
-
-- Pre-v1, hash bytes are not pinned across breaking canonicalization changes (`tension:pre-v1-hash-instability`).
-- The `compose:`-tag prefix reservation is client-side only — see `tension:compose-prefix-client-side`.
-
-## Notes
-
-- 2026-05-19 — The template spec gains an optional defaults block carrying template-author userdata baselines (per-executor defaults). The per-node template definition gains an optional tags list for operator-facing metadata (with materialization-time `{{params.<key>}}` substitution support). Both extensions are additive; hash semantics unchanged. Per spec:2026-05-19-multi-instance-template-ergonomics.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- [2026-05-24] Adds the top-level `late_bind_services` field (stored in the canonical spec bytes, so it participates in the content-addressing hash). Names in the list bypass registration-time existence + schema validation; their schemas come from the spawned binary's Capabilities at dispatch. Per spec 2026-05-24-host-agent-and-proxy-design.
-- 2026-05-28 — a validate-only control-api action (template:validate) now runs the full registration validation pipeline (static attribute-schema check + the validation-protocol RPC fan-out) without persisting, per spec:2026-05-28-quality-of-life-features; registration remains the only persisting entry point.
-- 2026-06-06 — Registration-time reference validation becomes operator-mode-controlled (all/available/none, default all) per spec:2026-06-06-comprehensive-gap-closure-design (story S-template-validation-ref-validation-mode). The implicit always-on soft-fail heuristic retires; its behavior is exactly mode available. Mandatory validation moves to instantiation (see concept:instance).
-- 2026-06-06 — Validation-timing model: optional-at-registration (mode-controlled) + mandatory-at-instantiation (see concept:instance). The dispatch value-validation (@blessed-invariant 12) stays for substitution-sourced values and is defense-in-depth for the static config part.
-
+- A top-level `late_bind_services` list names services whose registration-time existence and schema validation are bypassed (their actual schema comes from the spawned binary's Capabilities handshake at dispatch). The list is stored inside the canonical spec bytes, so it participates in the JCS-canonicalized template hash — changing the list reregisters the template under a new hash, preserving the content-addressing invariant. Names absent from the list are subject to strict registration-time checks. See `concept:host-agent-proxy`.
+- Reference and schema validation is **optional at registration** under an operator-set mode (`all` default / `available` / `none`); a relaxed mode skips refs whose target services are not yet provisioned (mode `available` makes the soft-fail uniform across the executor / store / lock / schema legs).

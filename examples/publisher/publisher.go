@@ -28,15 +28,66 @@ const exampleKind = "example"
 // Publisher implements genv1.PublisherServer with an in-memory subscription
 // registry. Embedding the generated Unimplemented server keeps it
 // forward-compatible.
+//
+// The per-RPC call counters (subscribeCalls / unsubscribeCalls /
+// listSubscriptionsCalls) exist for the cross-stack proof in
+// main_e2e_test.go to assert that rimsky's startup reconcile sweep calls
+// ListSubscriptions and does NOT re-issue Subscribe for already-active
+// subscriptions. A production publisher would expose these via its own
+// metrics surface, not as struct fields; this example keeps them inline
+// to stay copy-and-modify simple. Callers use the Calls() helper to read
+// a consistent snapshot.
 type Publisher struct {
 	genv1.UnimplementedPublisherServer
 
-	mu   sync.Mutex
-	subs map[string]*genv1.PublisherSubscriptionDescriptor
+	mu                     sync.Mutex
+	subs                   map[string]*genv1.PublisherSubscriptionDescriptor
+	subscribeCalls         int
+	unsubscribeCalls       int
+	listSubscriptionsCalls int
 }
 
 func newPublisher() *Publisher {
 	return &Publisher{subs: map[string]*genv1.PublisherSubscriptionDescriptor{}}
+}
+
+// CallCounts is the snapshot returned by Publisher.Calls(). The
+// cross-stack proof asserts on these counters across a rimsky restart:
+// (Subscribe before restart) == (Subscribe after restart), proving the
+// reconcile sweep did NOT re-issue Subscribe for the already-active
+// subscription the publisher reports on ListSubscriptions.
+type CallCounts struct {
+	Subscribe         int
+	Unsubscribe       int
+	ListSubscriptions int
+}
+
+// Calls returns a consistent snapshot of the per-RPC call counters. Used
+// by the cross-stack proof to assert reconcile semantics on rimsky
+// restart. The mutex guard makes the read atomic w.r.t. concurrent RPC
+// handlers running on the gRPC server.
+func (p *Publisher) Calls() CallCounts {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return CallCounts{
+		Subscribe:         p.subscribeCalls,
+		Unsubscribe:       p.unsubscribeCalls,
+		ListSubscriptions: p.listSubscriptionsCalls,
+	}
+}
+
+// SubscriptionIDs returns the set of currently-held publisher-subscription
+// IDs in arbitrary order. Used by the cross-stack proof to assert that
+// the rimsky restart's reconcile sweep finds the still-live subscription
+// via ListSubscriptions and leaves it alone.
+func (p *Publisher) SubscriptionIDs() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, 0, len(p.subs))
+	for id := range p.subs {
+		out = append(out, id)
+	}
+	return out
 }
 
 // Capabilities is the startup handshake: advertise the publisher kinds this
@@ -52,6 +103,7 @@ func (p *Publisher) Capabilities(_ context.Context, _ *emptypb.Empty) (*genv1.Pu
 func (p *Publisher) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*genv1.SubscribeResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.subscribeCalls++
 	p.subs[req.GetPublisherSubscriptionId()] = &genv1.PublisherSubscriptionDescriptor{
 		PublisherSubscriptionId: req.GetPublisherSubscriptionId(),
 		InstanceId:              req.GetInstanceId(),
@@ -67,6 +119,7 @@ func (p *Publisher) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*
 func (p *Publisher) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest) (*genv1.UnsubscribeResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.unsubscribeCalls++
 	delete(p.subs, req.GetPublisherSubscriptionId())
 	return &genv1.UnsubscribeResponse{}, nil
 }
@@ -76,6 +129,7 @@ func (p *Publisher) Unsubscribe(_ context.Context, req *genv1.UnsubscribeRequest
 func (p *Publisher) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (*genv1.ListSubscriptionsResponse, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.listSubscriptionsCalls++
 	out := make([]*genv1.PublisherSubscriptionDescriptor, 0, len(p.subs))
 	for _, s := range p.subs {
 		out = append(out, s)

@@ -86,8 +86,8 @@ func RunAuthCreateKey(ctx context.Context, args []string) int {
 		Name      string `json:"name"`
 		Plaintext string `json:"plaintext"`
 	}
-	if _, err := c.RawCall(ctx, http.MethodPost, "/auth/keys", body, &resp); err != nil {
-		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodPost, "/auth/keys", err))
+	if _, err := c.RawCall(ctx, http.MethodPost, "/v1/auth/keys", body, &resp); err != nil {
+		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodPost, "/v1/auth/keys", err))
 		return 1
 	}
 	fmt.Fprintln(os.Stdout)

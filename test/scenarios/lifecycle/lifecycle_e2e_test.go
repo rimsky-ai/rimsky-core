@@ -106,18 +106,18 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	// DELETE /instances triggers OnInstanceTerminated fan-out, which
 	// deletes the per-store lifecycle row before dropping the
 	// instance row. We verify both outcomes below.
-	deleteAndExpect(t, h, "/instances/"+instanceID.String(), http.StatusOK)
+	deleteAndExpect(t, h, "/v1/instances/"+instanceID.String(), http.StatusOK)
 	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeInstance, instanceID.String()),
 		"instance-scope lifecycle row must be deleted by terminate fan-out")
 
 	// Undeploy: template-scope row state='undeployed'.
-	postAndExpect(t, h, "/templates/"+templateHash+"/undeploy", http.StatusOK)
+	postAndExpect(t, h, "/v1/templates/"+templateHash+"/undeploy", http.StatusOK)
 	tplRow = getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash)
 	require.NotNil(t, tplRow)
 	require.Equal(t, persistence.LifecycleIdempotencyStateUndeployed, tplRow.State)
 
 	// Deregister: DELETE /templates/{hash}; lifecycle row must be gone.
-	deleteAndExpect(t, h, "/templates/"+templateHash, http.StatusOK)
+	deleteAndExpect(t, h, "/v1/templates/"+templateHash, http.StatusOK)
 	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash),
 		"template-scope lifecycle row must be deleted by deregister fan-out")
 }

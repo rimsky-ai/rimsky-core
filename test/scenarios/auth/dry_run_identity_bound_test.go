@@ -50,7 +50,7 @@ func seedDryRunTemplate(t *testing.T, f *authFixture, adminKey string) string {
 			"nodes":                 []map[string]any{{"type": "n1"}},
 		},
 	}
-	code, regResp := f.request(t, "POST", "/templates", adminKey, tplBody)
+	code, regResp := f.request(t, "POST", "/v1/templates", adminKey, tplBody)
 	if code != 201 && code != 200 {
 		t.Fatalf("seed template register: %d %+v", code, regResp)
 	}
@@ -58,7 +58,7 @@ func seedDryRunTemplate(t *testing.T, f *authFixture, adminKey string) string {
 	if hash == "" {
 		t.Fatalf("seed template register missing template_id: %+v", regResp)
 	}
-	code, depResp := f.request(t, "POST", "/templates/"+hash+"/deploy", adminKey, map[string]any{})
+	code, depResp := f.request(t, "POST", "/v1/templates/"+hash+"/deploy", adminKey, map[string]any{})
 	if code != 200 {
 		t.Fatalf("seed template deploy: %d %+v", code, depResp)
 	}
@@ -70,7 +70,7 @@ func seedDryRunTemplate(t *testing.T, f *authFixture, adminKey string) string {
 // nothing and the subsequent execute-mode create persisted exactly one.
 func countInstances(t *testing.T, f *authFixture, adminKey string) int {
 	t.Helper()
-	code, resp := f.request(t, "GET", "/instances", adminKey, nil)
+	code, resp := f.request(t, "GET", "/v1/instances", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("GET /instances: %d %+v", code, resp)
 	}
@@ -84,7 +84,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 
 	// Mint admin via the anonymous path so we can mint scoped keys and
 	// authoritatively list instances afterward.
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -104,7 +104,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 	// Mint a key whose grant pins instance:create to dry_run (attempt-only
 	// floor) and otherwise grants reads. This key can preview a create but
 	// can never commit one — the floor is on the identity, not the flag.
-	_, dryBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, dryBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name": "attempt-only",
 		"permissions": []map[string]any{
 			{"action": "instance:create", "mode": "dry_run"},
@@ -118,7 +118,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 
 	// POST /instances with the mode:dry_run key and NO ?dry_run flag. The
 	// identity-bound floor must force preview: 200 + synthetic envelope.
-	code, resp := f.request(t, "POST", "/instances", dryKey, map[string]any{"template": hash})
+	code, resp := f.request(t, "POST", "/v1/instances", dryKey, map[string]any{"template": hash})
 	if code != 200 {
 		t.Fatalf("mode:dry_run create (no flag): code=%d resp=%+v (want 200 — identity-bound dry-run floor)", code, resp)
 	}
@@ -174,7 +174,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 	// grant (no mode). With NO flag it must really create the instance —
 	// proving attempt-only is carried by the first key's identity, not by
 	// the request flag.
-	_, execBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, execBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name": "execute-capable",
 		"permissions": []map[string]any{
 			{"action": "instance:create"},
@@ -186,7 +186,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 		t.Fatalf("execute-capable key plaintext missing: %+v", execBody)
 	}
 
-	code, execResp := f.request(t, "POST", "/instances", execKey, map[string]any{"template": hash})
+	code, execResp := f.request(t, "POST", "/v1/instances", execKey, map[string]any{"template": hash})
 	if code != 201 && code != 200 {
 		t.Fatalf("execute-mode create (no flag): code=%d resp=%+v (want 201 — ordinary key commits)", code, execResp)
 	}

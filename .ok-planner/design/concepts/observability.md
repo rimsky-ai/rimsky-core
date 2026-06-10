@@ -21,17 +21,5 @@ Owns: the optional service protocols, the handshake mechanism, the refresh-loop 
 ## Invariants
 
 - The handshake is best-effort: unreachable services are recorded with an unreachable status in `discovery-cache`; never aborts startup.
-- The capabilities query is named uniformly across both observability protocols (per `spec:2026-05-12-nomenclature-resolution` Group E.11 / B.4); pre-2026-05-12 the executor side and the store side used divergent names.
+- The capabilities query is named uniformly across both observability protocols.
 - Per-service `userdata_schema` validates at template registration AND at dispatch post-merge/post-substitution.
-
-## Aliases and historical names
-
-Pre-`2026-05-11-design-log-convergence`, this concept also covered the cascade-graph HTTP routes and the discovery cache; those are now `cascade-graph` and `discovery-cache` respectively.
-
-## Resolved within this concept
-
-- The `userdata_schema` placement on the observability protocol (read by rimsky to validate userdata bytes at template-registration and dispatch time), which sat in tension with `@blessed-invariant 11` opacity, was resolved — see `tension:_resolved/userdata-schema-as-opacity-exception`.
-
-## Notes
-
-2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

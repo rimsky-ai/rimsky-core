@@ -26,14 +26,24 @@ package errorclasses
 //     transport-layer Timeout() error.
 //   - verifier/check_failed         — the verifier endpoint responded
 //     with a status outside the operator's expected set (the upstream
-//     check itself failed). No `/<check_kind>` suffix because the
-//     verifier-http response envelope does not carry a check-kind
-//     identity — the executor only sees an HTTP status code.
+//     check itself failed). Emitted when the upstream's 4xx/5xx body
+//     does not carry a parseable `class_field` token (the stable
+//     subscribable fallback so `verifier/check_failed/*` policies
+//     still match taxonomy-less upstreams without collapsing to the
+//     catch-all).
+//   - verifier/check_failed/*       — wildcard cover for the typed
+//     leaves the executor populates from the upstream's
+//     `class_field` JSON token (default `class`, per
+//     `attributes.class_field`). The suffix is the upstream's
+//     verbatim class string so policy / subscriber matching keys on
+//     the upstream's taxonomy. Mirrors http-node's
+//     `http/request_invalid/*` discipline.
 func Declared() []string {
 	return []string{
 		"verifier/attribute_invalid",
 		"verifier/network_error",
 		"verifier/timeout",
 		"verifier/check_failed",
+		"verifier/check_failed/*",
 	}
 }

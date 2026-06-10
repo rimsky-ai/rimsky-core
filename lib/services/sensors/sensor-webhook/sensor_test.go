@@ -48,7 +48,7 @@ func TestSubscribe_MountsRouteAndForwards(t *testing.T) {
 		obsBody []map[string]any
 	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/instances/") || !strings.HasSuffix(r.URL.Path, "/messages") {
+		if !strings.HasPrefix(r.URL.Path, "/v1/instances/") || !strings.HasSuffix(r.URL.Path, "/messages") {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		raw, _ := io.ReadAll(r.Body)

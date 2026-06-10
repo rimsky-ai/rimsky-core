@@ -37,11 +37,3 @@ For the create case, the envelope's `would_have_created` object holds a placehol
 For non-create writes the placeholder ID is replaced with the actual targets: an invalidate, for example, carries a `would_have_invalidated` object with the actual `instance_id` and `node_id` of the target being invalidated.
 
 Clients (CLI, MCP) check the top-level `dry_run` flag to render the response distinctly from a live invocation.
-
-## Notes
-
-- [2026-05-15] Concept introduced by `spec:2026-05-15-control-plane-mcp-and-auth` ("Dry-run mode").
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- 2026-05-28 — instance:kill added to the dry-run-branch enumeration per spec:2026-05-28-quality-of-life-features; the force-terminate write action returns a would_have_terminated envelope under a dry_run grant.
-- 2026-05-29 — Per `spec:2026-05-29-console-upstream-auth-audit-and-fixes`: dry-run becomes a per-request flag (`?dry_run=true`), not a per-grant-entry mode modifier — the grant in `concept:permission` no longer carries a mode. Coverage is uniform across all writes with no auth carve-out; `auth:create` / `auth:revoke` / `auth:rotate` are now previewable (the "auth mutations are NOT dry-runnable" carve-out is removed). Reads honor the flag as a no-op with `executed: true`. The "forced dry-run never mutates" guarantee is enforced structurally by a coverage conformance test enumerating every write action. The graduated-trust / agent-promotion narrative is dropped; purpose is human-in-the-loop preview-before-commit and validate-without-commit.
-- 2026-06-06 — Per `spec:2026-06-06-comprehensive-gap-closure-design` (S-auth-identity-bound-dryrun): reverses the 2026-05-29 "flag is the only source" decision. Dry-run resolves from EITHER the request flag OR an identity-bound grant mode; the grant mode is a floor the caller cannot escalate past. The per-grant mode modifier (un-deferred in `concept:permission`) is restored.

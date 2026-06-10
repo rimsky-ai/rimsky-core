@@ -100,7 +100,7 @@ func TestStoresRedesignSmoke(t *testing.T) {
 		// Drive an invalidate on the acquirer node so the next cycle
 		// fires.
 		status, raw := ep.PostJSON(t,
-			fmt.Sprintf("/admin/instances/%s/nodes/%s/invalidate", instanceID, nodeID), nil)
+			fmt.Sprintf("/v1/admin/instances/%s/nodes/%s/invalidate", instanceID, nodeID), nil)
 		if status != http.StatusOK {
 			t.Fatalf("invalidate %d: %d %s", n, status, string(raw))
 		}
@@ -114,7 +114,7 @@ func TestStoresRedesignSmoke(t *testing.T) {
 // smokeDeployTemplate POSTs body to /templates then deploys.
 func smokeDeployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/templates", body)
+	status, raw := ep.PostJSON(t, "/v1/templates", body)
 	if status != http.StatusCreated {
 		t.Fatalf("POST /templates: %d %s", status, string(raw))
 	}
@@ -125,7 +125,7 @@ func smokeDeployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[strin
 		t.Fatalf("decode template response: %v: %s", err, string(raw))
 	}
 	deployStatus, deployRaw := ep.PostJSON(t,
-		"/templates/"+resp.TemplateID+"/deploy", map[string]any{})
+		"/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
 	if deployStatus != http.StatusOK {
 		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
 	}
@@ -135,7 +135,7 @@ func smokeDeployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[strin
 // smokeCreateInstance POSTs a new instance and returns instance_id.
 func smokeCreateInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},

@@ -290,7 +290,7 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 	srv := httptest.NewServer(app)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/admin/diagnostics/parked-nodes")
+	resp, err := http.Get(srv.URL + "/v1/admin/diagnostics/parked-nodes")
 	if err != nil {
 		t.Fatalf("GET parked-nodes: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 
 	// With reason filter (post-2026-05-22 ParkReason 7→2 collapse, the
 	// enum projection validates: await_callback | snooze).
-	resp2, err := http.Get(srv.URL + "/admin/diagnostics/parked-nodes?reason=snooze")
+	resp2, err := http.Get(srv.URL + "/v1/admin/diagnostics/parked-nodes?reason=snooze")
 	if err != nil {
 		t.Fatalf("GET parked-nodes filtered: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestAdminHeldFrames_GroupsByFrame(t *testing.T) {
 	srv := httptest.NewServer(NewApp(deps))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/admin/diagnostics/held-frames")
+	resp, err := http.Get(srv.URL + "/v1/admin/diagnostics/held-frames")
 	if err != nil {
 		t.Fatalf("GET held-frames: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestAdminInvalidateNode_NoHandler503(t *testing.T) {
 	}
 	srv := httptest.NewServer(NewApp(deps))
 	defer srv.Close()
-	resp, err := http.Post(srv.URL+"/admin/instances/11111111-1111-1111-1111-111111111111/nodes/22222222-2222-2222-2222-222222222222/invalidate",
+	resp, err := http.Post(srv.URL+"/v1/admin/instances/11111111-1111-1111-1111-111111111111/nodes/22222222-2222-2222-2222-222222222222/invalidate",
 		"application/json", nil)
 	if err != nil {
 		t.Fatalf("POST invalidate: %v", err)
@@ -395,7 +395,7 @@ func TestAdminInvalidateNode_Conflict409(t *testing.T) {
 	deps.InvalidateHandler = &fakeInvalidateHandler{err: ErrInvalidateConflict}
 	srv := httptest.NewServer(NewApp(deps))
 	defer srv.Close()
-	resp, err := http.Post(srv.URL+"/admin/instances/11111111-1111-1111-1111-111111111111/nodes/22222222-2222-2222-2222-222222222222/invalidate",
+	resp, err := http.Post(srv.URL+"/v1/admin/instances/11111111-1111-1111-1111-111111111111/nodes/22222222-2222-2222-2222-222222222222/invalidate",
 		"application/json", nil)
 	if err != nil {
 		t.Fatalf("POST invalidate: %v", err)

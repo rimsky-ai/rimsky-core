@@ -6,7 +6,7 @@
 // Runs an HTTP server on the configured port; each publisher-
 // subscription registers a route under its `path_prefix`. Inbound
 // POSTs push message envelopes to rimsky's generic
-// `POST /instances/{instance_id}/messages` endpoint with
+// `POST /v1/instances/{instance_id}/messages` endpoint with
 // `sender_kind: "publisher"`.
 //
 // Spec .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md

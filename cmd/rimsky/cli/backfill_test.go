@@ -18,7 +18,7 @@ func TestClient_CreateBackfill(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method: %s", r.Method)
 		}
-		if r.URL.Path != "/instances/abc/backfills" {
+		if r.URL.Path != "/v1/instances/abc/backfills" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		raw, _ := io.ReadAll(r.Body)
@@ -47,7 +47,7 @@ func TestClient_CreateBackfill(t *testing.T) {
 
 func TestClient_ListBackfills(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/instances/abc/backfills" {
+		if r.URL.Path != "/v1/instances/abc/backfills" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -70,7 +70,7 @@ func TestClient_ListBackfills(t *testing.T) {
 
 func TestClient_CancelBackfill(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/backfills/op-1/cancel" {
+		if r.URL.Path != "/v1/backfills/op-1/cancel" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")

@@ -80,7 +80,7 @@ func TestBreakpointHitEmitsEvent(t *testing.T) {
 	// A client polling the named acceptance route observes exactly one
 	// `breakpoint.hit` event row whose payload carries the full hit
 	// descriptor and whose `hit_id` is the ledger hit's stable ID.
-	url := h.ControlBase + "/events?kind=breakpoint.hit&instance_id=" + iid.String()
+	url := h.ControlBase + "/v1/events?kind=breakpoint.hit&instance_id=" + iid.String()
 	events := waitForBreakpointHitEvents(t, url, 1, 10*time.Second)
 	require.Len(t, events, 1,
 		"a recorded breakpoint hit must be reflected as exactly one breakpoint.hit event on GET /events")

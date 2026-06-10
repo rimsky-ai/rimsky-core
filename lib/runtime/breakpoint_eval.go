@@ -28,6 +28,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/matcher"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -277,7 +278,7 @@ func EvaluateBreakpoints(
 			return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &cc.InstanceID,
 				NodeID:     nodeIDPt,
-				Kind:       "breakpoint.hit",
+				Kind:       events.KindBreakpointHit(),
 				Payload: map[string]any{
 					"instance_id":   cc.InstanceID.String(),
 					"node_id":       cc.NodeID.String(),

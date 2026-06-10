@@ -10,13 +10,13 @@ aliases: []
 
 `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing. They have different invariants by layer — `@blessed-invariant 20` (claim content inert) gates content; `@blessed-invariant 4` (claimant-guarded release) gates the persistence row.
 
-A claim is a node's request to access a producer-managed resource: an items-table row, a filesystem path, a queue head, an MVCC snapshot. Declared in templates as a claim spec (fields: producer name, selector, intent, alias — post-`spec:2026-05-12-nomenclature-resolution` Group B.3 the producer-name field replaced the legacy store-name field). At runtime, the producer's open verb returns an acquired result (address, payload, claim scope, realized write semantics) or an unavailable response. The resolved claim scope bytes are persisted as claim-scope-kinded rows in the claim-handle ledger (see `concept:claim-handle`).
+A claim is a node's request to access a producer-managed resource: an items-table row, a filesystem path, a queue head, an MVCC snapshot. Declared in templates as a claim spec (fields: producer name, selector, intent, alias). At runtime, the producer's open verb returns an acquired result (address, payload, claim scope, realized write semantics) or an unavailable response. The resolved claim scope bytes are persisted as claim-scope-kinded rows in the claim-handle ledger (see `concept:claim-handle`).
 
 ## Purpose
 
 Claims are how a graph node says "I need exclusive (or coexisting) access to this thing while I run." The producer parses the selector from its own DSL and emits canonical claim scope bytes; rimsky enforces the conflict matrix byte-equally.
 
-Per the 2026-05-15 data-platform-extensions, claims gain three orthogonal extensions:
+Claims carry three orthogonal extensions:
 
 - **Lifetime** (`subgraph | durable`; default `subgraph`): governs auto-terminal behavior. A `durable` claim's handle row persists past holding-subgraph completion in a committed-durable state, released only by explicit operator action or instance termination. See `concept:claim-lifetime`, `concept:asset`.
 - **Sub-claim chains**: a claim's claim scope may be partitioned via the producer's split-scope verb into sub-claims that hold sub-scopes. Persisted via a self-referential parent pointer on the claim-handle ledger. Auto-terminal walks bottom-up: a parent claim resolves only after all sub-claims have terminal. See `concept:fan-out`, `concept:claim-handle`.
@@ -31,18 +31,3 @@ Owns: the claim declaration, the address/payload/claim-scope returned at open, t
 - Claim content (payload, address, claim scope) is inert in rimsky: read only at the sanctioned substitution sites and one wire-encoding site. Never logged, formatted into strings, attached to traces, validated beyond schema gates, or included in error messages (`@blessed-invariant 20`).
 - Producers do not persist lock state internally; the claim-handle ledger is the sole authority (`@blessed-invariant 9a`).
 - Producers must not internally serialize on lock-shaped predicates (reader-lease serialization is forbidden for the staged-async write semantics) — `@blessed-invariant 9b`.
-
-## Aliases and historical names
-
-`region` is a deprecated synonym for `claim scope` and still appears in older sketches and comments.
-
-## Resolved within this concept
-
-- The "store" vs claim-producer vocabulary split was resolved (see `tension:_resolved/store-vs-claim-producer-vocabulary`).
-- The `region` legacy synonym was resolved (see `tension:_resolved/region-vs-scope-legacy`).
-
-## Notes
-
-- 2026-05-22 — Updated for the ClaimScope rename per `spec:2026-05-22-fan-out-safety-scope-first-design`: bare "scope" references in the claim-identity-bytes sense qualified to "claim scope"; the scope adjacency rewritten to `concept:claim-scope`; the claim-scope kind enum value renamed accordingly; byte-equal references retain meaning but read "byte-equal claim scope".
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-

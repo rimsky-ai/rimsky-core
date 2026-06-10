@@ -45,7 +45,7 @@ func TestAuditDurability_NoDropsUnderConcurrentLoad(t *testing.T) {
 	// auth.access_attempted row of its own (POST /auth/keys), which we
 	// exclude from the count below by scoping to GET /auth/keys under
 	// the dedicated load key.
-	_, adminBody := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, adminBody := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -57,7 +57,7 @@ func TestAuditDurability_NoDropsUnderConcurrentLoad(t *testing.T) {
 	// Mint a dedicated read-only key with a unique name so its audit
 	// rows are unambiguously attributable to this test's burst.
 	const loadKeyName = "audit-load-key"
-	code, loadBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	code, loadBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        loadKeyName,
 		"permissions": []map[string]any{{"action": "auth:read"}},
 	})
@@ -83,7 +83,7 @@ func TestAuditDurability_NoDropsUnderConcurrentLoad(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			st, _ := f.request(t, "GET", "/auth/keys", loadKey, nil)
+			st, _ := f.request(t, "GET", "/v1/auth/keys", loadKey, nil)
 			if st != 200 {
 				mu.Lock()
 				if badStatus == 0 {
@@ -102,7 +102,7 @@ func TestAuditDurability_NoDropsUnderConcurrentLoad(t *testing.T) {
 	// committed and visible. Page through all auth.access_attempted
 	// rows and count those attributable to the load key's GET /auth/keys
 	// burst. Exactly auditLoadRequests must be present — no drops.
-	got := countAttemptedRows(t, f, loadKeyName, "GET", "/auth/keys")
+	got := countAttemptedRows(t, f, loadKeyName, "GET", "/v1/auth/keys")
 	if got != auditLoadRequests {
 		t.Fatalf("audit drop detected: synchronous write must land one auth.access_attempted row per request; "+
 			"fired %d, found %d", auditLoadRequests, got)

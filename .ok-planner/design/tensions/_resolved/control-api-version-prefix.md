@@ -1,13 +1,17 @@
 ---
 tension: control-api-version-prefix
 category: unspecified
-status: open
+status: resolved
 affects:
   - control-api
   - rimsky
 ---
 
 # Control-API uses bare paths (no `/v1/`); the post-v1 commitment is unspecified
+
+## Resolution
+
+`decision:protocol-version-v1-namespaced` sweeps every control-API HTTP route under `/v1/`, aligning the URL layer with the already-versioned proto package. Pre-v1 freedom means no transition window; bare paths are removed when the sweep lands. Code work implied by this resolution: every route registration in the control layer's control-api package moves under a `/v1/` mount; the MCP route catalog and every test that hits a bare path updates in lockstep; the rimsky CLI client issues requests against the `/v1/` paths. Resolved by `spec:2026-06-08-design-corpus-bootstrap`.
 
 ## What is muddy
 

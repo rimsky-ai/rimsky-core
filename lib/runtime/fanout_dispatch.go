@@ -66,6 +66,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -424,7 +425,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "fan_out_dispatched",
+			Kind: events.KindFanOutDispatched(),
 			Payload: map[string]any{
 				"parent_run_id":  acq.DispatchID.String(),
 				"child_run_ids":  childIDs,
@@ -438,7 +439,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "fanout.children_created",
+			Kind: events.KindFanoutChildrenCreated(),
 			Payload: map[string]any{
 				"parent_run_id":        acq.DispatchID.String(),
 				"parent_node_id":       acq.NodeID.String(),

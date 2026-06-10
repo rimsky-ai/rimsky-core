@@ -26,7 +26,7 @@ rimsky-core is AGPL; these examples deliberately depend only on the Apache
 | `claimproducer/` | `ClaimProducer` (read-only) | in-process gRPC behavioral test |
 | `atomic-staging-fs-producer/` | `ClaimProducer` (staged-write: stage-at-Open, atomic-rename-on-Commit, drop-on-Abandon over a POSIX filesystem) | in-process gRPC behavioral test + sweep unit test |
 | `lifecyclesubscriber/` | `LifecycleSubscriber` | behavioral test |
-| `publisher/` | `Publisher` (in-memory subscriptions) | in-process gRPC behavioral test |
+| `publisher/` | `Publisher` (in-memory subscriptions) | in-process gRPC behavioral test + cross-stack proof against a running rimsky (`main_e2e_test.go`; see `publisher/README.md`) |
 | `validation/` | `Validation` (registration-time mix-in; routes the `ValidateRequest` role oneof, executor arm) | in-process gRPC behavioral test |
 | `data-processing/` | `DataProcessing` (fan-out candidate lifecycle: BeginCandidate → CommitCandidate / AbandonCandidate) | in-process gRPC behavioral test |
 | `compose/` | `rimsky compose` manifest (not a protocol server) | manifest loads + each template validates |
@@ -57,6 +57,45 @@ which is the executor's own **test-only** signer: it is excluded from `dist/` vi
 `tsconfig.json`, exists solely to drive the executor's internal tests, and is
 **not** a copyable reference. Build your validator from the Apache reference
 above, not from the dist-excluded test signer.
+
+## Onboarding walkthrough (the first-steps demo)
+
+`onboarding-template.yaml` + `onboarding-demo.sh` are the README's
+first-steps walkthrough. Unlike `compose/template-a.yml` (which
+references the placeholder `stub` executor), the onboarding template
+references the bundled `verifier-shape-checks` executor and embeds a
+real inline three-row dataset as JSON-schema `default:` values, so the
+dispatch runs real verification work end-to-end without the operator
+editing the file:
+
+```sh
+# Against a stack that declares the verifier-shape-checks executor:
+rimsky run examples/onboarding-template.yaml
+```
+
+The demo script wraps `rimsky run` + `rimsky watch` so a single
+invocation drives the full dev loop and exits 0 once the instance
+terminates. The driver test under
+`lib/services/test/scenarios/onboarding_demo_e2e_test.go` runs the
+script as a subprocess against a testcontainers-managed stack with the
+bundled `rimsky-executor-verifier-shape-checks:latest` image wired in,
+and is the load-bearing gate that the walkthrough actually works.
+
+For a bare-metal local stack, declare the verifier executor in
+`rimsky.yml` (the all-in-one image ships with an empty executors block;
+see `dockerfiles/all-in-one.rimsky.yml` for the default config shape):
+
+```yaml
+executors:
+  verifier-shape-checks:
+    transport: grpc
+    endpoint: "verifier-shape-checks:9095"
+    tls: off
+    protocols: [executor]
+```
+
+Then `make service-images` (to build the verifier image locally) and
+run both containers on the same docker network.
 
 ## Run a shipped TemplateSpec (the dev-loop verb)
 

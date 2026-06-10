@@ -238,17 +238,31 @@ func evaluateClaimScopeConflict(
 		// active claims that this supervisor is in the middle of
 		// acquiring inside the current in-flight transaction
 		// (`HolderSupervisorID == args.SupervisorID` matches the
-		// in-flight INSERT). Committed-durable rows
-		// (state='committed' AND lifetime='durable') correctly DO
-		// surface in conflict detection across the Promote boundary —
-		// an asset belongs to its scope until explicit Release, so the
-		// post-Promote CHECK constraint nulls `holder_supervisor_id`
-		// and the equality test naturally fails. A same-node retry
-		// through an existing durable asset is a no-op the caller must
-		// handle, not a scope conflict to skip — the listing query
-		// (`ListByProducerClaimScope`) returns both active and
-		// committed-durable rows for exactly this reason.
+		// in-flight INSERT).
 		if h.HolderNodeID == cand.NodeID && h.HolderSupervisorID != nil && *h.HolderSupervisorID == args.SupervisorID {
+			continue
+		}
+		// Same-node re-materialization of an existing durable asset:
+		// a row that has already promoted to (state='committed',
+		// lifetime='durable') and whose holder_node_id equals the
+		// candidate's node is an asset belonging to THIS node. The
+		// operator's `POST /instances/{id}/assets/{alias}/materialize`
+		// path (and any other invalidate-driven re-dispatch of the
+		// producing node) MUST be able to re-acquire — the spec story
+		// "triggering a re-materialization causes the supervisor to
+		// dispatch the producing node again" turns on this allowing.
+		// Treat the prior asset row as same-node and skip the conflict
+		// check; the re-dispatch creates a fresh active row, drives to
+		// terminal, and Promotes that row to a new committed-durable
+		// asset row alongside the prior one (each materialization is
+		// its own asset row, mapping naturally to the per-claim-handle
+		// version-history and materialization-history surfaces). Cross-
+		// node acquisitions of the same scope still conflict — the
+		// guard is HolderNodeID-equality, not a blanket skip.
+		// @concept: asset
+		if h.HolderNodeID == cand.NodeID &&
+			h.State == fspec.ClaimHandleStateCommitted &&
+			h.Lifetime == fspec.ClaimLifetimeDurable {
 			continue
 		}
 		// @blessed-invariant 4b: producer-aware scope-overlap. A producer

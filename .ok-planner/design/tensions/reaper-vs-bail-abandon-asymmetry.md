@@ -6,6 +6,7 @@ affects:
   - orphan-reaper
   - claim-producer
   - supervisor
+  - claim-handle
 ---
 
 # Periodic orphan reaper does NOT call `Abandon`; bail path `handleOrphanedClaim` does — annotated asymmetry, easy to miss

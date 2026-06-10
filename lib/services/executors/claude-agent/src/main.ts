@@ -16,6 +16,7 @@ import { stubModeEnabled } from "./agent-run.js";
 import { Observability } from "./observability.js";
 import { registerCrashHandlers } from "./crash-handlers.js";
 import { loadCatalogFromEnv, parsePolicy } from "./mcp-catalog.js";
+import { createClaudeCliRunner } from "./cli-runner.js";
 
 /**
  * Executable entry point for the claude-agent executor.
@@ -46,6 +47,13 @@ async function main(): Promise<void> {
     process.env.RIMSKY_EXECUTOR_SILENCE_MS ?? "120000",
     10,
   );
+  // README documents `RIMSKY_EXECUTOR_CLAUDE_BINARY` as the path to the
+  // Claude CLI. Read once at startup and thread through to both transports
+  // so a deployment can override the bare `claude` PATH lookup — required
+  // for cross-stack tests that bind a stub CLI replacing the third-party
+  // binary while keeping the rest of the dispatch path real. Empty leaves
+  // the default ("claude" from PATH).
+  const cliBinaryPath = process.env.RIMSKY_EXECUTOR_CLAUDE_BINARY ?? "";
 
   const cliAuth: CliAuthConfig = {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
@@ -106,6 +114,24 @@ async function main(): Promise<void> {
   const observabilityHttpBridgeUrl =
     process.env.RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL ?? "";
 
+  // In stub mode `runAgent` short-circuits before spawning the CLI, so the
+  // runner is never reached and we leave both transports to lazily build
+  // their default. In real mode, when `RIMSKY_EXECUTOR_CLAUDE_BINARY` is
+  // set, build the runner here once and inject the same instance into both
+  // transports so the override applies uniformly across the gRPC and HTTP
+  // paths (a stub-CLI binding skewed across transports would defeat the
+  // override and leave a real-CLI dispatch latent on one path).
+  const sharedCliRunner =
+    !stubModeEnabled() && cliBinaryPath !== ""
+      ? createClaudeCliRunner({ auth: cliAuth, binaryPath: cliBinaryPath })
+      : undefined;
+  if (sharedCliRunner) {
+    logger.info(
+      { cli_binary_path: cliBinaryPath },
+      "cli binary override active",
+    );
+  }
+
   const grpc = await startGrpcServer({
     host,
     port: grpcPort,
@@ -117,6 +143,7 @@ async function main(): Promise<void> {
     observabilityHttpBridgeUrl,
     mcpCatalog,
     mcpAllowInline,
+    cliRunner: sharedCliRunner,
   });
 
   const http = await startHttpBridge({
@@ -130,6 +157,7 @@ async function main(): Promise<void> {
     observabilityHttpBridgeUrl,
     mcpCatalog,
     mcpAllowInline,
+    cliRunner: sharedCliRunner,
   });
 
   const shutdown = async (): Promise<void> => {

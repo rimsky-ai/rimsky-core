@@ -68,7 +68,7 @@ func TestDryRunCoverage_AllWriteActions(t *testing.T) {
 
 	// Admin key drives every request (a `*` grant covers every action;
 	// dry-run is sourced from the request flag, not the grant).
-	_, body := f.request(t, "POST", "/auth/keys", "", map[string]any{
+	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
@@ -158,14 +158,14 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	// A deployed template + instance, reused by the instance/message/
 	// backfill/breakpoint/node:invalidate/asset:materialize cases.
 	tplHash := seedDeployedTemplate(t, f, adminKey, "dryrun-coverage")
-	code, instResp := f.request(t, "POST", "/instances", adminKey, map[string]any{"template": tplHash})
+	code, instResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{"template": tplHash})
 	if code != 201 && code != 200 {
 		t.Fatalf("seed instance: %d %+v", code, instResp)
 	}
 	instanceID := instResp["instance_id"].(string)
 
 	// The instance's single root node (for node:invalidate).
-	code, nodesResp := f.request(t, "GET", "/instances/"+instanceID+"/nodes", adminKey, nil)
+	code, nodesResp := f.request(t, "GET", "/v1/instances/"+instanceID+"/nodes", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("seed list nodes: %d %+v", code, nodesResp)
 	}
@@ -181,7 +181,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	tplHash2 := seedDeployedTemplate(t, f, adminKey, "dryrun-coverage-2")
 
 	// A tag pointing at tplHash2 (for tag:set / tag:delete).
-	code, tagResp := f.request(t, "POST", "/tags", adminKey, map[string]any{
+	code, tagResp := f.request(t, "POST", "/v1/tags", adminKey, map[string]any{
 		"tag": "dryrun-tag", "template": tplHash2,
 	})
 	if code != 201 {
@@ -195,7 +195,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	// distinct from the plain-node `dryrun-coverage` instance reused by
 	// the node/asset/message cases.
 	backfillTplHash := seedDeployedFanOutTemplate(t, f, adminKey, "dryrun-backfill-fanout")
-	code, bfInstResp := f.request(t, "POST", "/instances", adminKey, map[string]any{"template": backfillTplHash})
+	code, bfInstResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{"template": backfillTplHash})
 	if code != 201 && code != 200 {
 		t.Fatalf("seed backfill instance: %d %+v", code, bfInstResp)
 	}
@@ -213,7 +213,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 	// A second key (for auth:revoke / auth:rotate) so the dry-run target
 	// is a real persisted key. (auth:create needs no target.)
-	_, victimBody := f.request(t, "POST", "/auth/keys", adminKey, map[string]any{
+	_, victimBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name": "dryrun-victim", "permissions": []map[string]any{{"action": "*:read"}},
 	})
 	victimKey := victimBody["plaintext"].(string)
@@ -240,7 +240,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 	keyStillActive := func(name string, key string) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, _ := f.request(t, "GET", "/auth/keys", key, nil)
+			code, _ := f.request(t, "GET", "/v1/auth/keys", key, nil)
 			if code != 200 {
 				t.Fatalf("key %q must still be usable after dry-run (no mutation); got %d", name, code)
 			}
@@ -248,7 +248,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	tagUnchanged := func(tag, wantTemplate string) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, resp := f.request(t, "GET", "/tags", adminKey, nil)
+			code, resp := f.request(t, "GET", "/v1/tags", adminKey, nil)
 			if code != 200 {
 				t.Fatalf("tag re-list: %d", code)
 			}
@@ -267,7 +267,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	templateStateIs := func(hash, wantState string) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, resp := f.request(t, "GET", "/templates/"+hash, adminKey, nil)
+			code, resp := f.request(t, "GET", "/v1/templates/"+hash, adminKey, nil)
 			if code != 200 {
 				t.Fatalf("template re-fetch %s: %d %+v", hash, code, resp)
 			}
@@ -278,7 +278,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	instancePausedIs := func(id string, want bool) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, resp := f.request(t, "GET", "/instances/"+id, adminKey, nil)
+			code, resp := f.request(t, "GET", "/v1/instances/"+id, adminKey, nil)
 			if code != 200 {
 				t.Fatalf("instance re-fetch: %d %+v", code, resp)
 			}
@@ -289,7 +289,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	instanceNotTerminated := func(id string) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, resp := f.request(t, "GET", "/instances/"+id, adminKey, nil)
+			code, resp := f.request(t, "GET", "/v1/instances/"+id, adminKey, nil)
 			if code != 200 {
 				t.Fatalf("instance re-fetch: %d %+v", code, resp)
 			}
@@ -300,7 +300,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	breakpointStillExists := func(id, bp string) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, resp := f.request(t, "GET", "/instances/"+id+"/breakpoints", adminKey, nil)
+			code, resp := f.request(t, "GET", "/v1/instances/"+id+"/breakpoints", adminKey, nil)
 			if code != 200 {
 				t.Fatalf("breakpoint re-list: %d", code)
 			}
@@ -315,7 +315,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	backfillNotCancelled := func(op string) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, resp := f.request(t, "GET", "/backfills/"+op, adminKey, nil)
+			code, resp := f.request(t, "GET", "/v1/backfills/"+op, adminKey, nil)
 			if code != 200 {
 				t.Fatalf("backfill re-fetch: %d %+v", code, resp)
 			}
@@ -338,7 +338,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	nodeStateIs := func(id, want string) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, resp := f.request(t, "GET", "/nodes/"+id, adminKey, nil)
+			code, resp := f.request(t, "GET", "/v1/nodes/"+id, adminKey, nil)
 			if code != 200 {
 				t.Fatalf("node re-fetch: %d %+v", code, resp)
 			}
@@ -349,7 +349,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	assetStillExists := func(id, alias string) func(t *testing.T) {
 		return func(t *testing.T) {
-			code, _ := f.request(t, "GET", "/instances/"+id+"/assets/"+alias, adminKey, nil)
+			code, _ := f.request(t, "GET", "/v1/instances/"+id+"/assets/"+alias, adminKey, nil)
 			if code != 200 {
 				t.Fatalf("asset %q deleted under dry-run; GET got %d", alias, code)
 			}
@@ -359,44 +359,44 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	return map[string]dryRunCase{
 		// --- instances ---
 		"instance:create": {
-			method: "POST", path: "/instances" + dr,
+			method: "POST", path: "/v1/instances" + dr,
 			body:         map[string]any{"template": tplHash, "instance_key": "dryrun-create-key"},
 			wouldHaveKey: "would_have_created",
 			verifyNoMutation: func(t *testing.T) {
-				code, _ := f.request(t, "GET", "/instances/dryrun-create-key", adminKey, nil)
+				code, _ := f.request(t, "GET", "/v1/instances/dryrun-create-key", adminKey, nil)
 				if code != 404 {
 					t.Fatalf("instance created under dry-run; GET by key got %d (want 404)", code)
 				}
 			},
 		},
 		"instance:pause": {
-			method: "POST", path: "/instances/" + instanceID + "/pause" + dr,
+			method: "POST", path: "/v1/instances/" + instanceID + "/pause" + dr,
 			wouldHaveKey: "would_have_paused", verifyNoMutation: instancePausedIs(instanceID, false),
 		},
 		"instance:resume": {
-			method: "POST", path: "/instances/" + instanceID + "/resume" + dr,
+			method: "POST", path: "/v1/instances/" + instanceID + "/resume" + dr,
 			wouldHaveKey: "would_have_resumed", verifyNoMutation: instancePausedIs(instanceID, false),
 		},
 		"instance:kill": {
-			method: "POST", path: "/instances/" + instanceID + "/terminate" + dr,
+			method: "POST", path: "/v1/instances/" + instanceID + "/terminate" + dr,
 			body:         map[string]any{"reason": "dry-run"},
 			wouldHaveKey: "would_have_terminated", verifyNoMutation: instanceNotTerminated(instanceID),
 		},
 		"instance:terminate": {
 			// DELETE requires the instance to already be terminal; seed a
 			// separate, terminated instance so the dry-run reaches the gate.
-			method: "DELETE", path: "/instances/" + seedTerminatedInstanceForDelete(ctx, t, f, tplHash, adminKey) + dr,
+			method: "DELETE", path: "/v1/instances/" + seedTerminatedInstanceForDelete(ctx, t, f, tplHash, adminKey) + dr,
 			wouldHaveKey: "would_have_terminated",
 			// The dedicated instance stays present (no row delete).
 		},
 
 		// --- breakpoints ---
 		"breakpoint:create": {
-			method: "POST", path: "/instances/" + instanceID + "/breakpoints" + dr,
+			method: "POST", path: "/v1/instances/" + instanceID + "/breakpoints" + dr,
 			body:         map[string]any{"checkpoint": "before_dispatch"},
 			wouldHaveKey: "would_have_created_breakpoint",
 			verifyNoMutation: func(t *testing.T) {
-				code, resp := f.request(t, "GET", "/instances/"+instanceID+"/breakpoints", adminKey, nil)
+				code, resp := f.request(t, "GET", "/v1/instances/"+instanceID+"/breakpoints", adminKey, nil)
 				if code != 200 {
 					t.Fatalf("breakpoint re-list: %d", code)
 				}
@@ -408,11 +408,11 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			},
 		},
 		"breakpoint:delete": {
-			method: "DELETE", path: "/instances/" + instanceID + "/breakpoints/" + bpID + dr,
+			method: "DELETE", path: "/v1/instances/" + instanceID + "/breakpoints/" + bpID + dr,
 			wouldHaveKey: "would_have_deleted_breakpoint", verifyNoMutation: breakpointStillExists(instanceID, bpID),
 		},
 		"breakpoint:resume": {
-			method: "POST", path: "/instances/" + instanceID + "/breakpoints/" + bpID + "/resume" + dr,
+			method: "POST", path: "/v1/instances/" + instanceID + "/breakpoints/" + bpID + "/resume" + dr,
 			body:         map[string]any{"hit_id": hitID},
 			wouldHaveKey: "would_have_resumed_breakpoint",
 			// The hit stays unresumed; verified implicitly (the resume
@@ -421,7 +421,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 		// --- templates ---
 		"template:register": {
-			method: "POST", path: "/templates" + dr,
+			method: "POST", path: "/v1/templates" + dr,
 			body: map[string]any{"spec": map[string]any{
 				"name": "dryrun-register", "version": "1",
 				"frame_resolution_mode": "serial_queue",
@@ -433,27 +433,27 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			// and the spec's dry-run gate is before the persist).
 		},
 		"template:deploy": {
-			method: "POST", path: "/templates/" + registeredOnlyHash + "/deploy" + dr,
+			method: "POST", path: "/v1/templates/" + registeredOnlyHash + "/deploy" + dr,
 			wouldHaveKey: "would_have_deployed", verifyNoMutation: templateStateIs(registeredOnlyHash, "registered"),
 		},
 		"template:undeploy": {
-			method: "POST", path: "/templates/" + tplHash2 + "/undeploy" + dr,
+			method: "POST", path: "/v1/templates/" + tplHash2 + "/undeploy" + dr,
 			wouldHaveKey: "would_have_undeployed", verifyNoMutation: templateStateIs(tplHash2, "deployed"),
 		},
 		"template:deregister": {
 			// Deregister a throwaway registered (not deployed) template so
 			// the dry-run reaches its gate without affecting tplHash/tplHash2.
-			method: "DELETE", path: "/templates/" + seedRegisteredTemplate(t, f, adminKey, "dryrun-deregister") + dr,
+			method: "DELETE", path: "/v1/templates/" + seedRegisteredTemplate(t, f, adminKey, "dryrun-deregister") + dr,
 			wouldHaveKey: "would_have_deregistered",
 		},
 
 		// --- tags ---
 		"tag:create": {
-			method: "POST", path: "/tags" + dr,
+			method: "POST", path: "/v1/tags" + dr,
 			body:         map[string]any{"tag": "dryrun-new-tag", "template": tplHash2},
 			wouldHaveKey: "would_have_created_tag",
 			verifyNoMutation: func(t *testing.T) {
-				code, resp := f.request(t, "GET", "/tags", adminKey, nil)
+				code, resp := f.request(t, "GET", "/v1/tags", adminKey, nil)
 				if code != 200 {
 					t.Fatalf("tag re-list: %d", code)
 				}
@@ -466,29 +466,29 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			},
 		},
 		"tag:set": {
-			method: "PUT", path: "/tags/dryrun-tag" + dr,
+			method: "PUT", path: "/v1/tags/dryrun-tag" + dr,
 			body:         map[string]any{"template": tplHash},
 			wouldHaveKey: "would_have_moved_tag", verifyNoMutation: tagUnchanged("dryrun-tag", tplHash2),
 		},
 		"tag:delete": {
-			method: "DELETE", path: "/tags/dryrun-tag" + dr,
+			method: "DELETE", path: "/v1/tags/dryrun-tag" + dr,
 			wouldHaveKey: "would_have_deleted_tag", verifyNoMutation: tagUnchanged("dryrun-tag", tplHash2),
 		},
 
 		// --- nodes ---
 		"node:invalidate": {
-			method: "POST", path: "/nodes/" + invalidateNodeID + "/invalidate" + dr,
+			method: "POST", path: "/v1/nodes/" + invalidateNodeID + "/invalidate" + dr,
 			body:         map[string]any{"reason": "dry-run"},
 			wouldHaveKey: "would_have_invalidated", verifyNoMutation: nodeStateIs(invalidateNodeID, "fresh"),
 		},
 		"node:reset": {
-			method: "POST", path: "/nodes/" + resetNodeID + "/reset" + dr,
+			method: "POST", path: "/v1/nodes/" + resetNodeID + "/reset" + dr,
 			wouldHaveKey: "would_have_reset", verifyNoMutation: nodeStateIs(resetNodeID, "failed"),
 		},
 
 		// --- messages ---
 		"message:send": {
-			method: "POST", path: "/instances/" + instanceID + "/messages" + dr,
+			method: "POST", path: "/v1/instances/" + instanceID + "/messages" + dr,
 			body:      map[string]any{"kind": "invalidate", "target": "n1"},
 			headerKey: "Idempotency-Key", headerVal: "dryrun-msg-key",
 			wouldHaveKey: "would_have_sent", verifyNoMutation: messageCountUnchanged(instanceID),
@@ -496,7 +496,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 		// --- lineage ---
 		"lineage:prune": {
-			method: "POST", path: "/admin/lineage/prune" + dr,
+			method: "POST", path: "/v1/admin/lineage/prune" + dr,
 			body:         map[string]any{"before": time.Now().UTC().Format(time.RFC3339)},
 			wouldHaveKey: "would_have_pruned",
 			// Nothing to prune in the fixture; the gate is before the delete.
@@ -504,44 +504,44 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 		// --- backfills ---
 		"backfill:create": {
-			method: "POST", path: "/instances/" + backfillInstanceID + "/backfills" + dr,
+			method: "POST", path: "/v1/instances/" + backfillInstanceID + "/backfills" + dr,
 			body:         map[string]any{"target_node": "n1", "reason": "dry-run"},
 			wouldHaveKey: "would_have_created_backfill", verifyNoMutation: messageCountUnchanged(backfillInstanceID),
 		},
 		"backfill:cancel": {
-			method: "POST", path: "/backfills/" + backfillOpID + "/cancel" + dr,
+			method: "POST", path: "/v1/backfills/" + backfillOpID + "/cancel" + dr,
 			wouldHaveKey: "would_have_cancelled_backfill", verifyNoMutation: backfillNotCancelled(backfillOpID),
 		},
 
 		// --- assets ---
 		"asset:materialize": {
-			method: "POST", path: "/instances/" + instanceID + "/assets/n1.main/materialize" + dr,
+			method: "POST", path: "/v1/instances/" + instanceID + "/assets/n1.main/materialize" + dr,
 			body:         map[string]any{"reason": "dry-run"},
 			wouldHaveKey: "would_have_materialized", verifyNoMutation: messageCountUnchanged(instanceID),
 		},
 		"asset:delete": {
-			method: "DELETE", path: "/instances/" + assetInstanceID + "/assets/" + assetAlias + dr,
+			method: "DELETE", path: "/v1/instances/" + assetInstanceID + "/assets/" + assetAlias + dr,
 			wouldHaveKey: "would_have_deleted_asset", verifyNoMutation: assetStillExists(assetInstanceID, assetAlias),
 		},
 
 		// --- auth (no carve-out; dry-runnable via the flag) ---
 		"auth:create": {
-			method: "POST", path: "/auth/keys" + dr,
+			method: "POST", path: "/v1/auth/keys" + dr,
 			body:         map[string]any{"name": "dryrun-created", "permissions": []map[string]any{{"action": "*:read"}}},
 			wouldHaveKey: "would_have_created_key",
 			verifyNoMutation: func(t *testing.T) {
-				code, _ := f.request(t, "GET", "/auth/keys/dryrun-created", adminKey, nil)
+				code, _ := f.request(t, "GET", "/v1/auth/keys/dryrun-created", adminKey, nil)
 				if code != 404 {
 					t.Fatalf("auth:create persisted a key under dry-run; GET got %d (want 404)", code)
 				}
 			},
 		},
 		"auth:revoke": {
-			method: "DELETE", path: "/auth/keys/dryrun-victim" + dr,
+			method: "DELETE", path: "/v1/auth/keys/dryrun-victim" + dr,
 			wouldHaveKey: "would_have_revoked_key", verifyNoMutation: keyStillActive("dryrun-victim", victimKey),
 		},
 		"auth:rotate": {
-			method: "POST", path: "/auth/keys/dryrun-victim/rotate" + dr,
+			method: "POST", path: "/v1/auth/keys/dryrun-victim/rotate" + dr,
 			body:         map[string]any{"grace": "1m"},
 			wouldHaveKey: "would_have_rotated_key", verifyNoMutation: keyStillActive("dryrun-victim", victimKey),
 		},
@@ -552,7 +552,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 func seedBreakpoint(t *testing.T, f *authFixture, adminKey, instanceID string) string {
 	t.Helper()
-	code, resp := f.request(t, "POST", "/instances/"+instanceID+"/breakpoints", adminKey, map[string]any{
+	code, resp := f.request(t, "POST", "/v1/instances/"+instanceID+"/breakpoints", adminKey, map[string]any{
 		"checkpoint": "before_dispatch",
 	})
 	if code != 201 {
@@ -563,7 +563,7 @@ func seedBreakpoint(t *testing.T, f *authFixture, adminKey, instanceID string) s
 
 func seedBackfill(t *testing.T, f *authFixture, adminKey, instanceID string) string {
 	t.Helper()
-	code, resp := f.request(t, "POST", "/instances/"+instanceID+"/backfills", adminKey, map[string]any{
+	code, resp := f.request(t, "POST", "/v1/instances/"+instanceID+"/backfills", adminKey, map[string]any{
 		"target_node": "n1", "reason": "seed",
 	})
 	if code != 201 && code != 200 {
@@ -604,7 +604,7 @@ func seedDeployedFanOutTemplate(t *testing.T, f *authFixture, adminKey, name str
 			},
 		},
 	}
-	code, regResp := f.request(t, "POST", "/templates", adminKey, tplBody)
+	code, regResp := f.request(t, "POST", "/v1/templates", adminKey, tplBody)
 	if code != 201 && code != 200 {
 		t.Fatalf("seedDeployedFanOutTemplate register: %d %+v", code, regResp)
 	}
@@ -612,7 +612,7 @@ func seedDeployedFanOutTemplate(t *testing.T, f *authFixture, adminKey, name str
 	if hash == "" {
 		t.Fatalf("seedDeployedFanOutTemplate register missing template_id: %+v", regResp)
 	}
-	code, depResp := f.request(t, "POST", "/templates/"+hash+"/deploy", adminKey, map[string]any{})
+	code, depResp := f.request(t, "POST", "/v1/templates/"+hash+"/deploy", adminKey, map[string]any{})
 	if code != 200 {
 		t.Fatalf("seedDeployedFanOutTemplate deploy: %d %+v", code, depResp)
 	}
@@ -621,7 +621,7 @@ func seedDeployedFanOutTemplate(t *testing.T, f *authFixture, adminKey, name str
 
 func seedRegisteredTemplate(t *testing.T, f *authFixture, adminKey, name string) string {
 	t.Helper()
-	code, resp := f.request(t, "POST", "/templates", adminKey, map[string]any{
+	code, resp := f.request(t, "POST", "/v1/templates", adminKey, map[string]any{
 		"spec": map[string]any{
 			"name": name, "version": "1",
 			"frame_resolution_mode": "serial_queue",
@@ -639,7 +639,7 @@ func seedRegisteredTemplate(t *testing.T, f *authFixture, adminKey, name string)
 // DELETE dry-run reaches its gate (the 409 terminal guard passes).
 func seedTerminatedInstanceForDelete(ctx context.Context, t *testing.T, f *authFixture, tplHash, adminKey string) string {
 	t.Helper()
-	code, resp := f.request(t, "POST", "/instances", adminKey, map[string]any{
+	code, resp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{
 		"template": tplHash, "instance_key": "dryrun-delete-target",
 	})
 	if code != 201 && code != 200 {
@@ -698,14 +698,14 @@ func seedBreakpointHit(t *testing.T, f *authFixture, instanceID, bpID foundation
 // must stay `fresh`). Returns (instanceID, nodeID).
 func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixture, adminKey, tplHash string) (string, string) {
 	t.Helper()
-	code, instResp := f.request(t, "POST", "/instances", adminKey, map[string]any{
+	code, instResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{
 		"template": tplHash, "instance_key": "dryrun-reset-instance",
 	})
 	if code != 201 && code != 200 {
 		t.Fatalf("seed reset instance: %d %+v", code, instResp)
 	}
 	instanceID := mustUUID(t, instResp["instance_id"].(string))
-	code, nodesResp := f.request(t, "GET", "/instances/"+instanceID.String()+"/nodes", adminKey, nil)
+	code, nodesResp := f.request(t, "GET", "/v1/instances/"+instanceID.String()+"/nodes", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("seed reset list nodes: %d %+v", code, nodesResp)
 	}
@@ -842,7 +842,7 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 // dry-runs enqueue nothing).
 func listMessageCount(t *testing.T, f *authFixture, adminKey, instanceID string) int {
 	t.Helper()
-	code, resp := f.request(t, "GET", "/instances/"+instanceID+"/messages", adminKey, nil)
+	code, resp := f.request(t, "GET", "/v1/instances/"+instanceID+"/messages", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("list messages: %d %+v", code, resp)
 	}

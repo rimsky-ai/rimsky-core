@@ -4,8 +4,9 @@
 
 // client.go — typed HTTP client over the rimsky control-api. One method
 // per endpoint; pure pass-through (no business logic). The control-api
-// uses bare paths (no /v1/ prefix); methods here issue requests against
-// the configured endpoint with those bare paths.
+// is mounted under the /v1/ version prefix (see
+// tension:control-api-version-prefix); every URL constructed here
+// starts with /v1/.
 //
 // Field names on request/response structs match the JSON shapes returned
 // by the corresponding handlers under control/controlapi/. Field shapes were
@@ -246,7 +247,7 @@ type ListTemplatesResponse struct {
 
 // RegisterTemplate calls POST /templates.
 func (c *Client) RegisterTemplate(ctx context.Context, body RegisterTemplateRequest) (*Template, error) {
-	req, err := c.request(ctx, http.MethodPost, "/templates", body)
+	req, err := c.request(ctx, http.MethodPost, "/v1/templates", body)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +283,7 @@ type ValidateResult struct {
 // is set, the server folds any warnings into the Ok=false verdict (the
 // `?warnings_as_errors=true` query param).
 func (c *Client) ValidateTemplate(ctx context.Context, body RegisterTemplateRequest, warningsAsErrors bool) (*ValidateResult, error) {
-	path := "/templates/validate"
+	path := "/v1/templates/validate"
 	if warningsAsErrors {
 		path += "?warnings_as_errors=true"
 	}
@@ -309,7 +310,7 @@ func (c *Client) ListTemplates(ctx context.Context, q ListTemplatesQuery) (*List
 	if q.Limit > 0 {
 		v.Set("limit", strconv.Itoa(q.Limit))
 	}
-	path := "/templates"
+	path := "/v1/templates"
 	if encoded := v.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -326,7 +327,7 @@ func (c *Client) ListTemplates(ctx context.Context, q ListTemplatesQuery) (*List
 
 // GetTemplate calls GET /templates/{ref} (tag or hash).
 func (c *Client) GetTemplate(ctx context.Context, ref string) (*Template, error) {
-	req, err := c.request(ctx, http.MethodGet, "/templates/"+url.PathEscape(ref), nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/templates/"+url.PathEscape(ref), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +340,7 @@ func (c *Client) GetTemplate(ctx context.Context, ref string) (*Template, error)
 
 // DeployTemplate calls POST /templates/{ref}/deploy.
 func (c *Client) DeployTemplate(ctx context.Context, ref string) (*Template, error) {
-	req, err := c.request(ctx, http.MethodPost, "/templates/"+url.PathEscape(ref)+"/deploy", nil)
+	req, err := c.request(ctx, http.MethodPost, "/v1/templates/"+url.PathEscape(ref)+"/deploy", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +353,7 @@ func (c *Client) DeployTemplate(ctx context.Context, ref string) (*Template, err
 
 // UndeployTemplate calls POST /templates/{ref}/undeploy.
 func (c *Client) UndeployTemplate(ctx context.Context, ref string) (*Template, error) {
-	req, err := c.request(ctx, http.MethodPost, "/templates/"+url.PathEscape(ref)+"/undeploy", nil)
+	req, err := c.request(ctx, http.MethodPost, "/v1/templates/"+url.PathEscape(ref)+"/undeploy", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +366,7 @@ func (c *Client) UndeployTemplate(ctx context.Context, ref string) (*Template, e
 
 // DeleteTemplate calls DELETE /templates/{ref}.
 func (c *Client) DeleteTemplate(ctx context.Context, ref string) error {
-	req, err := c.request(ctx, http.MethodDelete, "/templates/"+url.PathEscape(ref), nil)
+	req, err := c.request(ctx, http.MethodDelete, "/v1/templates/"+url.PathEscape(ref), nil)
 	if err != nil {
 		return err
 	}
@@ -408,7 +409,7 @@ type ListTagsResponse struct {
 
 // CreateTag calls POST /tags.
 func (c *Client) CreateTag(ctx context.Context, body CreateTagRequest) (*Tag, error) {
-	req, err := c.request(ctx, http.MethodPost, "/tags", body)
+	req, err := c.request(ctx, http.MethodPost, "/v1/tags", body)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +429,7 @@ func (c *Client) ListTags(ctx context.Context, q ListTagsQuery) (*ListTagsRespon
 	if q.Limit > 0 {
 		v.Set("limit", strconv.Itoa(q.Limit))
 	}
-	path := "/tags"
+	path := "/v1/tags"
 	if encoded := v.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -445,7 +446,7 @@ func (c *Client) ListTags(ctx context.Context, q ListTagsQuery) (*ListTagsRespon
 
 // MoveTag calls PUT /tags/{tag}.
 func (c *Client) MoveTag(ctx context.Context, tag string, body MoveTagRequest) (*Tag, error) {
-	req, err := c.request(ctx, http.MethodPut, "/tags/"+url.PathEscape(tag), body)
+	req, err := c.request(ctx, http.MethodPut, "/v1/tags/"+url.PathEscape(tag), body)
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +459,7 @@ func (c *Client) MoveTag(ctx context.Context, tag string, body MoveTagRequest) (
 
 // DeleteTag calls DELETE /tags/{tag}.
 func (c *Client) DeleteTag(ctx context.Context, tag string) error {
-	req, err := c.request(ctx, http.MethodDelete, "/tags/"+url.PathEscape(tag), nil)
+	req, err := c.request(ctx, http.MethodDelete, "/v1/tags/"+url.PathEscape(tag), nil)
 	if err != nil {
 		return err
 	}
@@ -543,7 +544,7 @@ type ListInstanceNodesResponse struct {
 
 // CreateInstance calls POST /instances.
 func (c *Client) CreateInstance(ctx context.Context, body CreateInstanceRequest) (*Instance, error) {
-	req, err := c.request(ctx, http.MethodPost, "/instances", body)
+	req, err := c.request(ctx, http.MethodPost, "/v1/instances", body)
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +567,7 @@ func (c *Client) ListInstances(ctx context.Context, q ListInstancesQuery) (*List
 	if q.Limit > 0 {
 		v.Set("limit", strconv.Itoa(q.Limit))
 	}
-	path := "/instances"
+	path := "/v1/instances"
 	if encoded := v.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -583,7 +584,7 @@ func (c *Client) ListInstances(ctx context.Context, q ListInstancesQuery) (*List
 
 // GetInstance calls GET /instances/{idOrKey}.
 func (c *Client) GetInstance(ctx context.Context, idOrKey string) (*Instance, error) {
-	req, err := c.request(ctx, http.MethodGet, "/instances/"+url.PathEscape(idOrKey), nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(idOrKey), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -596,7 +597,7 @@ func (c *Client) GetInstance(ctx context.Context, idOrKey string) (*Instance, er
 
 // DeleteInstance calls DELETE /instances/{idOrKey}.
 func (c *Client) DeleteInstance(ctx context.Context, idOrKey string) error {
-	req, err := c.request(ctx, http.MethodDelete, "/instances/"+url.PathEscape(idOrKey), nil)
+	req, err := c.request(ctx, http.MethodDelete, "/v1/instances/"+url.PathEscape(idOrKey), nil)
 	if err != nil {
 		return err
 	}
@@ -612,7 +613,7 @@ func (c *Client) DeleteInstance(ctx context.Context, idOrKey string) error {
 // projection unchanged.
 func (c *Client) TerminateInstance(ctx context.Context, idOrKey string, reason string) (*Instance, error) {
 	body := map[string]string{"reason": reason}
-	req, err := c.request(ctx, http.MethodPost, "/instances/"+url.PathEscape(idOrKey)+"/terminate", body)
+	req, err := c.request(ctx, http.MethodPost, "/v1/instances/"+url.PathEscape(idOrKey)+"/terminate", body)
 	if err != nil {
 		return nil, err
 	}
@@ -625,7 +626,7 @@ func (c *Client) TerminateInstance(ctx context.Context, idOrKey string, reason s
 
 // ListInstanceNodes calls GET /instances/{idOrKey}/nodes.
 func (c *Client) ListInstanceNodes(ctx context.Context, idOrKey string) (*ListInstanceNodesResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/instances/"+url.PathEscape(idOrKey)+"/nodes", nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(idOrKey)+"/nodes", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -661,7 +662,7 @@ func (c *Client) ListBreakpointHits(ctx context.Context, idOrKey string, since i
 	if limit > 0 {
 		v.Set("limit", strconv.Itoa(limit))
 	}
-	path := "/instances/" + url.PathEscape(idOrKey) + "/breakpoint-hits"
+	path := "/v1/instances/" + url.PathEscape(idOrKey) + "/breakpoint-hits"
 	if encoded := v.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -743,7 +744,7 @@ func (c *Client) GetParkedNodes(ctx context.Context, path string) (*ParkedNodesR
 
 // GetNode calls GET /nodes/{id}.
 func (c *Client) GetNode(ctx context.Context, id string) (*Node, error) {
-	req, err := c.request(ctx, http.MethodGet, "/nodes/"+url.PathEscape(id), nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/nodes/"+url.PathEscape(id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +757,7 @@ func (c *Client) GetNode(ctx context.Context, id string) (*Node, error) {
 
 // InvalidateNode calls POST /nodes/{id}/invalidate.
 func (c *Client) InvalidateNode(ctx context.Context, id string, body InvalidateNodeRequest) error {
-	req, err := c.request(ctx, http.MethodPost, "/nodes/"+url.PathEscape(id)+"/invalidate", body)
+	req, err := c.request(ctx, http.MethodPost, "/v1/nodes/"+url.PathEscape(id)+"/invalidate", body)
 	if err != nil {
 		return err
 	}
@@ -765,7 +766,7 @@ func (c *Client) InvalidateNode(ctx context.Context, id string, body InvalidateN
 
 // ResetNode calls POST /nodes/{id}/reset.
 func (c *Client) ResetNode(ctx context.Context, id string) error {
-	req, err := c.request(ctx, http.MethodPost, "/nodes/"+url.PathEscape(id)+"/reset", nil)
+	req, err := c.request(ctx, http.MethodPost, "/v1/nodes/"+url.PathEscape(id)+"/reset", nil)
 	if err != nil {
 		return err
 	}
@@ -827,7 +828,7 @@ func (c *Client) ListEvents(ctx context.Context, q ListEventsQuery) (*ListEvents
 	if q.Limit > 0 {
 		v.Set("limit", strconv.Itoa(q.Limit))
 	}
-	path := "/events"
+	path := "/v1/events"
 	if encoded := v.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -864,7 +865,7 @@ type SupervisorSummary struct {
 
 // Health calls GET /health.
 func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/health", nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/health", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -943,7 +944,7 @@ func (c *Client) ListInstanceMessages(ctx context.Context, instanceID string, q 
 	if q.Limit > 0 {
 		v.Set("limit", strconv.Itoa(q.Limit))
 	}
-	path := "/instances/" + url.PathEscape(instanceID) + "/messages"
+	path := "/v1/instances/" + url.PathEscape(instanceID) + "/messages"
 	if encoded := v.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -960,7 +961,7 @@ func (c *Client) ListInstanceMessages(ctx context.Context, instanceID string, q 
 
 // GetMessage calls GET /messages/{id}.
 func (c *Client) GetMessage(ctx context.Context, id string) (*MessageItem, error) {
-	req, err := c.request(ctx, http.MethodGet, "/messages/"+url.PathEscape(id), nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/messages/"+url.PathEscape(id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,7 +1023,7 @@ type BackfillPartitionsResponse struct {
 
 // CreateBackfill calls POST /instances/{id}/backfills.
 func (c *Client) CreateBackfill(ctx context.Context, instanceID string, body CreateBackfillRequest) (*CreateBackfillResponse, error) {
-	req, err := c.request(ctx, http.MethodPost, "/instances/"+url.PathEscape(instanceID)+"/backfills", body)
+	req, err := c.request(ctx, http.MethodPost, "/v1/instances/"+url.PathEscape(instanceID)+"/backfills", body)
 	if err != nil {
 		return nil, err
 	}
@@ -1035,7 +1036,7 @@ func (c *Client) CreateBackfill(ctx context.Context, instanceID string, body Cre
 
 // ListBackfills calls GET /instances/{id}/backfills.
 func (c *Client) ListBackfills(ctx context.Context, instanceID string) (*ListBackfillsResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/instances/"+url.PathEscape(instanceID)+"/backfills", nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(instanceID)+"/backfills", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1048,7 +1049,7 @@ func (c *Client) ListBackfills(ctx context.Context, instanceID string) (*ListBac
 
 // GetBackfill calls GET /backfills/{op_id}.
 func (c *Client) GetBackfill(ctx context.Context, opID string) (*BackfillItem, error) {
-	req, err := c.request(ctx, http.MethodGet, "/backfills/"+url.PathEscape(opID), nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/backfills/"+url.PathEscape(opID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1061,7 +1062,7 @@ func (c *Client) GetBackfill(ctx context.Context, opID string) (*BackfillItem, e
 
 // GetBackfillPartitions calls GET /backfills/{op_id}/partitions.
 func (c *Client) GetBackfillPartitions(ctx context.Context, opID string) (*BackfillPartitionsResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/backfills/"+url.PathEscape(opID)+"/partitions", nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/backfills/"+url.PathEscape(opID)+"/partitions", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1074,7 +1075,7 @@ func (c *Client) GetBackfillPartitions(ctx context.Context, opID string) (*Backf
 
 // CancelBackfill calls POST /backfills/{op_id}/cancel.
 func (c *Client) CancelBackfill(ctx context.Context, opID string) (map[string]any, error) {
-	req, err := c.request(ctx, http.MethodPost, "/backfills/"+url.PathEscape(opID)+"/cancel", nil)
+	req, err := c.request(ctx, http.MethodPost, "/v1/backfills/"+url.PathEscape(opID)+"/cancel", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1118,7 +1119,7 @@ type ListAssetsResponse struct {
 
 // ListAssets calls GET /instances/{id}/assets.
 func (c *Client) ListAssets(ctx context.Context, instanceID string) (*ListAssetsResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/instances/"+url.PathEscape(instanceID)+"/assets", nil)
+	req, err := c.request(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(instanceID)+"/assets", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1131,7 +1132,7 @@ func (c *Client) ListAssets(ctx context.Context, instanceID string) (*ListAssets
 
 // GetAsset calls GET /instances/{id}/assets/{alias}.
 func (c *Client) GetAsset(ctx context.Context, instanceID, alias string) (*AssetItem, error) {
-	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias)
+	path := "/v1/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias)
 	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -1153,7 +1154,7 @@ type AssetVersionsResponse struct {
 
 // GetAssetVersions calls GET /instances/{id}/assets/{alias}/versions.
 func (c *Client) GetAssetVersions(ctx context.Context, instanceID, alias string) (*AssetVersionsResponse, error) {
-	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/versions"
+	path := "/v1/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/versions"
 	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -1173,7 +1174,7 @@ type MaterializeAssetRequest struct {
 
 // MaterializeAsset calls POST /instances/{id}/assets/{alias}/materialize.
 func (c *Client) MaterializeAsset(ctx context.Context, instanceID, alias string, body MaterializeAssetRequest) (map[string]any, error) {
-	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/materialize"
+	path := "/v1/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/materialize"
 	req, err := c.request(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return nil, err
@@ -1187,7 +1188,7 @@ func (c *Client) MaterializeAsset(ctx context.Context, instanceID, alias string,
 
 // DeleteAsset calls DELETE /instances/{id}/assets/{alias}.
 func (c *Client) DeleteAsset(ctx context.Context, instanceID, alias string) error {
-	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias)
+	path := "/v1/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias)
 	req, err := c.request(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return err
@@ -1202,7 +1203,7 @@ type AssetMaterializationHistoryResponse struct {
 
 // GetAssetMaterializationHistory calls GET .../materialization-history.
 func (c *Client) GetAssetMaterializationHistory(ctx context.Context, instanceID, alias string) (*AssetMaterializationHistoryResponse, error) {
-	path := "/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/materialization-history"
+	path := "/v1/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/materialization-history"
 	req, err := c.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
@@ -1240,7 +1241,7 @@ func (c *Client) GetClaimAncestors(ctx context.Context, claimHandleID string, de
 	if depth > 0 {
 		v.Set("depth", strconv.Itoa(depth))
 	}
-	path := "/lineage/claims/" + url.PathEscape(claimHandleID) + "/ancestors"
+	path := "/v1/lineage/claims/" + url.PathEscape(claimHandleID) + "/ancestors"
 	if encoded := v.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
@@ -1263,7 +1264,7 @@ type PruneLineageRequest struct {
 // PruneLineage calls POST /admin/lineage/prune. Returns the affected-row
 // summary the server emits.
 func (c *Client) PruneLineage(ctx context.Context, before string) (map[string]any, error) {
-	req, err := c.request(ctx, http.MethodPost, "/admin/lineage/prune", PruneLineageRequest{Before: before})
+	req, err := c.request(ctx, http.MethodPost, "/v1/admin/lineage/prune", PruneLineageRequest{Before: before})
 	if err != nil {
 		return nil, err
 	}
@@ -1291,7 +1292,7 @@ type RegisterTemplateOptions struct {
 // RegisterTemplate; kept as a separate method to avoid breaking the
 // existing single-body call shape.
 func (c *Client) RegisterTemplateWithOptions(ctx context.Context, body RegisterTemplateRequest, opts RegisterTemplateOptions) (*Template, error) {
-	path := "/templates"
+	path := "/v1/templates"
 	if opts.WarningsAsErrors {
 		path += "?warnings_as_errors=true"
 	}

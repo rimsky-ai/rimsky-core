@@ -32,7 +32,7 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 	post := func(spec map[string]any) (int, string) {
 		raw, err := json.Marshal(map[string]any{"spec": spec})
 		require.NoError(t, err)
-		resp, err := http.Post(h.ControlBase+"/templates", "application/json", bytes.NewReader(raw))
+		resp, err := http.Post(h.ControlBase+"/v1/templates", "application/json", bytes.NewReader(raw))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		buf, _ := io.ReadAll(resp.Body)

@@ -37,7 +37,7 @@ func RunAuthRotate(ctx context.Context, args []string) int {
 		return 2
 	}
 	body := map[string]any{"grace": grace}
-	path := "/auth/keys/" + url.PathEscape(rest[0]) + "/rotate"
+	path := "/v1/auth/keys/" + url.PathEscape(rest[0]) + "/rotate"
 	c := newAuthClient(endpoint, key)
 	var resp struct {
 		OldKeyID  string `json:"old_key_id"`

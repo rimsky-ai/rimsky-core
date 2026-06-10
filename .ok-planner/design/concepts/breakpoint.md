@@ -48,17 +48,3 @@ The breakpoint matcher shares its grammar with `concept:attribute`'s `by_match` 
 - Breakpoint matchers leave the used-executors set empty so an operator can install a breakpoint against any declared executor — including ones the current template doesn't dispatch to. This supports cross-template debugger habits (an operator who runs a debug session against many templates can carry one matcher pinned to a specific executor even on templates that happen not to use that executor; the breakpoint just doesn't fire).
 
 The breakpoint matcher still enforces every other cross-check: `node_type` must be declared, `graph` must exist (or be `main`), `executor` must be a declared deployment-level executor name, and the closed five-key grammar applies. This is enforced by the control-api breakpoint matcher-refs check.
-
-## Aliases and historical names
-
-None.
-
-## Open within this concept
-
-(none yet)
-
-## Notes
-
-- 2026-05-24 — Introduced per spec:2026-05-24-instance-debugger-design.
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.
-- 2026-05-28 — hit-delivery boundary broadened to include a REST read route alongside the MCP resource per spec:2026-05-28-quality-of-life-features.

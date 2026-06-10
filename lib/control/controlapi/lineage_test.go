@@ -45,12 +45,12 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	// `rimsky_lineage.instance_id` for the descendant walker, but the
 	// row's NOT NULL constraint requires a real instance row.
 	tplBody := validTemplateBody("lin-desc-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "lin-desc-ck-" + uuid.NewString(),
 	})
@@ -112,7 +112,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	insertLeafRun(t, grandchild1RunID, child1RunID, base.Add(2*time.Second))
 
 	// Walk descendants depth=2 from root.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/lineage/runs/%s/descendants?depth=2", rootRunID.String()), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=2", rootRunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.EqualValues(t, 2, out["depth"])
 	descendants, _ := out["descendants"].([]any)
@@ -135,7 +135,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	require.False(t, gotIDs[rootRunID.String()], "root must not appear in its own descendants set")
 
 	// Bonus: depth=1 must surface only child1.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/lineage/runs/%s/descendants?depth=1", rootRunID.String()), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=1", rootRunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	descendants, _ = out["descendants"].([]any)
 	require.Len(t, descendants, 1, "depth=1 should only return child1")
@@ -154,12 +154,12 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("lin-anc-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "lin-anc-ck-" + uuid.NewString(),
 	})
@@ -227,7 +227,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	insertLeafRun(t, grandchild1RunID, child1RunID, base.Add(2*time.Second))
 
 	// Walk ancestors depth=2 from grandchild1.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/lineage/runs/%s/ancestors?depth=2", grandchild1RunID.String()), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=2", grandchild1RunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.EqualValues(t, 2, out["depth"])
 	ancestors, _ := out["ancestors"].([]any)
@@ -247,7 +247,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	require.False(t, gotIDs[grandchild1RunID.String()], "seed (grandchild1) must not appear in its own ancestors set")
 
 	// Bonus: depth=1 must surface only child1.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/lineage/runs/%s/ancestors?depth=1", grandchild1RunID.String()), nil)
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=1", grandchild1RunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	ancestors, _ = out["ancestors"].([]any)
 	require.Len(t, ancestors, 1, "depth=1 should only return child1")
@@ -270,12 +270,12 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	// Seed a deployed template + instance so the lineage rows' instance_id
 	// FK is satisfiable.
 	tplBody := validTemplateBody("lin-prune-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "lin-prune-ck-" + uuid.NewString(),
 	})
@@ -343,7 +343,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	handler := handleLineagePrune(deps)
 
 	// Dry-run: mode set on the context (no gateByAction in this harness).
-	dryReq := httptest.NewRequest(http.MethodPost, "/admin/lineage/prune",
+	dryReq := httptest.NewRequest(http.MethodPost, "/v1/admin/lineage/prune",
 		strings.NewReader(`{"before":"`+before+`"}`))
 	dryReq = dryReq.WithContext(context.WithValue(dryReq.Context(), ctxKeyMode{}, auth.ModeDryRun))
 	dryRec := httptest.NewRecorder()
@@ -363,7 +363,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	require.Equal(t, wantPrunable, dryBody.WouldHavePruned.Count, "dry-run count must equal the prunable rows")
 
 	// Live delete with the SAME cutoff (default mode = execute).
-	liveReq := httptest.NewRequest(http.MethodPost, "/admin/lineage/prune",
+	liveReq := httptest.NewRequest(http.MethodPost, "/v1/admin/lineage/prune",
 		strings.NewReader(`{"before":"`+before+`"}`))
 	liveRec := httptest.NewRecorder()
 	handler(liveRec, liveReq)
@@ -390,12 +390,12 @@ func seedLineageInstance(t *testing.T, h *harness, prefix string) (instID uuid.U
 	ctx := context.Background()
 
 	tplBody := validTemplateBody(prefix + "-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": prefix + "-ck-" + uuid.NewString(),
 	})
@@ -458,7 +458,7 @@ func TestLineageEndpoints_RunReturnsMostRecent(t *testing.T) {
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
 		map[string]any{"run_id": runID.String(), "frame_id": frameID.String(), "state": "fresh", "attempt": 2}, base.Add(time.Second), "")
 
-	status, out := h.httpJSON(t, "GET", "/lineage/runs/"+runID.String(), nil)
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/runs/"+runID.String(), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, "leaf_run", out["record_kind"])
 	record, _ := out["record"].(map[string]any)
@@ -466,11 +466,11 @@ func TestLineageEndpoints_RunReturnsMostRecent(t *testing.T) {
 	require.EqualValues(t, 2, record["attempt"], "GET /lineage/runs returns the most recent (observed_at ASC, last) record")
 
 	// Unknown run → 404.
-	status, _ = h.httpJSON(t, "GET", "/lineage/runs/"+uuid.NewString(), nil)
+	status, _ = h.httpJSON(t, "GET", "/v1/lineage/runs/"+uuid.NewString(), nil)
 	require.Equal(t, http.StatusNotFound, status)
 
 	// Malformed run id → 400.
-	status, _ = h.httpJSON(t, "GET", "/lineage/runs/not-a-uuid", nil)
+	status, _ = h.httpJSON(t, "GET", "/v1/lineage/runs/not-a-uuid", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
@@ -490,13 +490,13 @@ func TestLineageEndpoints_ClaimReturnsMostRecent(t *testing.T) {
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
 		map[string]any{"claim_handle_id": claimID.String(), "version_id": "v-002"}, base.Add(time.Second), persistence.LineageOutcomeCommitted)
 
-	status, out := h.httpJSON(t, "GET", "/lineage/claims/"+claimID.String(), nil)
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/claims/"+claimID.String(), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, "claim_terminal", out["record_kind"])
 	record, _ := out["record"].(map[string]any)
 	require.Equal(t, "v-002", record["version_id"], "GET /lineage/claims returns the most recent record")
 
-	status, _ = h.httpJSON(t, "GET", "/lineage/claims/"+uuid.NewString(), nil)
+	status, _ = h.httpJSON(t, "GET", "/v1/lineage/claims/"+uuid.NewString(), nil)
 	require.Equal(t, http.StatusNotFound, status)
 }
 
@@ -526,7 +526,7 @@ func TestLineageEndpoints_ClaimAncestorsWalksSubClaimChain(t *testing.T) {
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
 		map[string]any{"claim_handle_id": subB.String(), "version_id": "sub-b"}, base.Add(2*time.Second), persistence.LineageOutcomeCommitted)
 
-	status, out := h.httpJSON(t, "GET", "/lineage/claims/"+parentClaim.String()+"/ancestors?depth=2", nil)
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/claims/"+parentClaim.String()+"/ancestors?depth=2", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	ancestors, _ := out["ancestors"].([]any)
 
@@ -588,7 +588,7 @@ func TestLineageEndpoints_BySourceReverseLookup(t *testing.T) {
 			"substitution_refs": []map[string]any{{"source_kind": "attribute", "source_version_or_id": srcID}},
 		}, base.Add(3*time.Second), "")
 
-	status, out := h.httpJSON(t, "GET", "/lineage/by-source/run/"+srcID, nil)
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/by-source/run/"+srcID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ := out["records"].([]any)
 	require.Len(t, records, 2, "exactly the two (run, srcID)-citing rows must match — not the decoys")
@@ -606,7 +606,7 @@ func TestLineageEndpoints_BySourceReverseLookup(t *testing.T) {
 	require.False(t, gotRuns[decoyRun.String()], "decoy (different source id) must not match")
 
 	// A source with no citing rows → empty record set, not 404.
-	status, out = h.httpJSON(t, "GET", "/lineage/by-source/run/"+uuid.NewString(), nil)
+	status, out = h.httpJSON(t, "GET", "/v1/lineage/by-source/run/"+uuid.NewString(), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ = out["records"].([]any)
 	require.Empty(t, records)
@@ -634,7 +634,7 @@ func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
 		map[string]any{"claim_handle_id": uuid.NewString(), "producer_name": "beta-store", "version_id": "v1"}, base.Add(2*time.Second), persistence.LineageOutcomeCommitted)
 
 	// All alpha-store rows (no version filter).
-	status, out := h.httpJSON(t, "GET", "/lineage/by-producer/alpha-store", nil)
+	status, out := h.httpJSON(t, "GET", "/v1/lineage/by-producer/alpha-store", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ := out["records"].([]any)
 	require.Len(t, records, 2, "both alpha-store rows must match; beta-store must not")
@@ -645,7 +645,7 @@ func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
 	}
 
 	// Narrowed by version=v2 → exactly one.
-	status, out = h.httpJSON(t, "GET", "/lineage/by-producer/alpha-store?version=v2", nil)
+	status, out = h.httpJSON(t, "GET", "/v1/lineage/by-producer/alpha-store?version=v2", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ = out["records"].([]any)
 	require.Len(t, records, 1, "version filter narrows to the single matching row")
@@ -654,7 +654,7 @@ func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
 	require.Equal(t, "v2", rec["version_id"])
 
 	// Unknown producer → empty set, not error.
-	status, out = h.httpJSON(t, "GET", "/lineage/by-producer/ghost-store", nil)
+	status, out = h.httpJSON(t, "GET", "/v1/lineage/by-producer/ghost-store", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ = out["records"].([]any)
 	require.Empty(t, records)

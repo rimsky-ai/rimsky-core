@@ -16,6 +16,7 @@ import (
 	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
@@ -75,7 +76,7 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-			Kind: "orphaned_claim_lost_race",
+			Kind: events.KindOrphanedClaimLostRace(),
 			Payload: map[string]any{
 				"dispatch_id":   acq.DispatchID.String(),
 				"supervisor_id": args.SupervisorID,
@@ -125,7 +126,7 @@ func emitLockAcquired(
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-		Kind: "lock_acquired", Payload: payload,
+		Kind: events.KindLockAcquired(), Payload: payload,
 	}, tx); err != nil {
 		return fmt.Errorf("emitLockAcquired: %w", err)
 	}

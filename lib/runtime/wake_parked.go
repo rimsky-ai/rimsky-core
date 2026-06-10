@@ -29,6 +29,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -144,7 +145,7 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 		}
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &target.ID, InstanceID: &target.InstanceID,
-			Kind: "parked_resume_started",
+			Kind: events.KindParkedResumeStarted(),
 			Payload: map[string]any{
 				"resume_reason": string(reason),
 				"supervisor_id": supervisorID,
@@ -271,7 +272,7 @@ func wakeParkedReceiverInTx(
 	}
 	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &receiver.ID, InstanceID: &receiver.InstanceID,
-		Kind: "parked_resume_started",
+		Kind: events.KindParkedResumeStarted(),
 		Payload: map[string]any{
 			"resume_reason": "cascade_wake",
 			"prior_reason":  parked.Reason,

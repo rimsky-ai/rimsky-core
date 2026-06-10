@@ -128,7 +128,7 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 		observed int
 	)
 	rimsky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/instances/i1/messages" {
+		if r.URL.Path != "/v1/instances/i1/messages" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {

@@ -6,11 +6,11 @@
 // and the terminal line as ONE timestamp-ordered feed against the REAL
 // assembled product — not a source-grouped batch.
 //
-// S-cli-onboarding-watch-chronological: an operator debugging a running
-// instance runs `rimsky watch <id>` and sees a breakpoint hit that occurred
-// BETWEEN two events printed between those two events, by true timestamp
-// order across the sources, so the relative ordering of an event and a
-// breakpoint hit is faithfully shown.
+// STORY-event-log-read: an operator debugging a running instance runs
+// `rimsky watch <id>` and sees node lifecycle transitions, breakpoint hits,
+// message activity, and supervisor decisions interleaved by true timestamp
+// order across the kinds — so the relative ordering of every source on the
+// unified event feed is faithfully shown.
 //
 // The value path is driven through the REAL CLI entrypoint (`cli.RunWatch`)
 // in-process — the same poll loop an operator hits — against a live
@@ -20,7 +20,9 @@
 // "whatever executor your deployment provides".
 //
 // The interleaved sequence is seeded by a real pause-mode breakpoint on the
-// worker node's `before_dispatch` checkpoint:
+// worker node's `before_dispatch` checkpoint, then an operator-side
+// invalidate is injected DURING the paused window so a `message_emitted`
+// event lands strictly between the hit and the post-resume settle events:
 //
 //  1. The supervisor acquires the node and appends `work_started` (an EVENT,
 //     timestamped BEFORE the hit).
@@ -29,18 +31,31 @@
 //     (S-observability-breakpoint-hit-event), that hit is a `breakpoint.hit`
 //     row on the SAME ordered `/events` stream — timestamped AFTER
 //     `work_started`. Pause mode then BLOCKS the dispatch.
-//  3. The test resumes the breakpoint; the node dispatches and settles, and
-//     the supervisor appends the settle/terminal EVENTS (timestamped AFTER
-//     the hit). `terminate_after_run` then terminates the instance, which
+//  3. While the dispatch is held at the hit, the test POSTs an admin
+//     invalidate against the worker node. `runtime.InvalidateNode` appends a
+//     `message_emitted` event (and an `operator_override` audit event
+//     ahead of it) on the SAME /events stream — timestamped AFTER the hit
+//     and BEFORE any post-resume event, exhibiting the "message activity"
+//     interleaving the story names. The invalidate enqueues a NEXT frame
+//     that never runs (terminate_after_run will terminate the instance
+//     after the currently-running frame ends).
+//  4. The test resumes the breakpoint; the node dispatches and settles
+//     against the stub, the cascade walk appends settle/terminal events
+//     including a `state_transition` (the "node lifecycle transition"
+//     kind), and `terminate_after_run` terminates the instance, which
 //     makes watch's terminal check fire and the loop exit.
 //
-// So the real timeline is: event(work_started) → breakpoint.hit → later
-// event(s) → terminal. The assertion proves watch printed them in that true
-// timestamp order — the hit line sits BETWEEN the two event lines — and that
-// the whole printed feed is timestamp-monotonic. A source-grouped watch (all
-// events, then all hits) would print the hit AFTER every event, breaking the
-// "between" relation and the monotonic-timestamp invariant; this test would
-// catch that as a real value-path defect, not a Docker error.
+// So the real timeline is: work_started → breakpoint.hit → operator_override
+// → message_emitted → … → state_transition → terminal. The assertion proves
+// watch printed them in that true timestamp order — the hit line sits
+// BETWEEN the pre-acquire events and the message-activity events, and the
+// message events sit BETWEEN the hit and the post-resume settle events —
+// and that the whole printed feed is timestamp-monotonic. A source-grouped
+// watch (all events, then all hits) would print the hit AFTER every event,
+// breaking the "between" relation and the monotonic-timestamp invariant;
+// a kind-grouped feed (all of one kind then another) would scramble the
+// message-activity interleaving; this test would catch either defect as a
+// real value-path defect, not a Docker error.
 package scenarios
 
 import (
@@ -128,7 +143,7 @@ func TestCLIWatch_ChronologicalAcrossSources(t *testing.T) {
 	// Resume the instance: the supervisor now claims the node, appends
 	// `work_started`, reaches before_dispatch, records the hit (a
 	// breakpoint.hit row on /events), and BLOCKS on pause mode.
-	if status, raw := ep.PostJSON(t, "/instances/"+instanceID+"/resume", map[string]any{}); status != http.StatusOK {
+	if status, raw := ep.PostJSON(t, "/v1/instances/"+instanceID+"/resume", map[string]any{}); status != http.StatusOK {
 		t.Fatalf("POST /instances/%s/resume: %d %s", instanceID, status, string(raw))
 	}
 
@@ -142,6 +157,30 @@ func TestCLIWatch_ChronologicalAcrossSources(t *testing.T) {
 	// resume the breakpoint — this guarantees the hit is durably between the
 	// pre-dispatch and post-dispatch events before the node proceeds.
 	hitID := waitForWatchBreakpointHit(t, ep, instanceID, 60*time.Second)
+
+	// While the dispatch is held at the pause-mode breakpoint, inject an
+	// admin invalidate against the worker node. This routes through
+	// `runtime.InvalidateNode`, which appends `operator_override` +
+	// `message_emitted` events onto the SAME /events stream — timestamped
+	// strictly AFTER the hit (the hit is already durably recorded above)
+	// and strictly BEFORE the post-resume settle events (the dispatch
+	// is still blocked). The invalidate uses `frame: "next"` so it
+	// enqueues a separate frame rather than racing the in-flight dispatch;
+	// terminate_after_run will terminate the instance after the running
+	// frame settles, so the newly-enqueued frame never runs and the
+	// watch loop still exits cleanly. The injection exhibits the
+	// message-activity interleaving the story names — without it, the
+	// feed would only carry node-lifecycle / breakpoint kinds and the
+	// "message activity in chronological order" acceptance clause would
+	// be untested.
+	//
+	// We protect the timestamp ordering by waiting for the hit BEFORE
+	// injecting (so message_emitted is provably after the hit) and by
+	// injecting BEFORE resuming the breakpoint (so message_emitted is
+	// provably before the post-resume state_transition that the cascade
+	// emits during settle propagation).
+	workerNodeID := resolveWorkerNodeID(t, ep, instanceID, "worker")
+	injectAdminInvalidate(t, ep, workerNodeID, "watch-chronological-interleave")
 
 	// Resume the breakpoint hit: the node dispatches, settles, and
 	// terminate_after_run terminates the instance — which makes watch's
@@ -246,7 +285,7 @@ func (wc *watchCapture) wait(t *testing.T, deadline time.Duration) string {
 // post-resume settle terminates the instance and ends the watch loop.
 func createWatchPausedInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":            templateID,
 		"instance_key":        instanceKey,
 		"params":              map[string]any{},
@@ -274,7 +313,7 @@ func createWatchPausedInstance(t *testing.T, ep harness.RimskyEndpoint, template
 // pre-dispatch and post-dispatch events.
 func createWatchBreakpoint(t *testing.T, ep harness.RimskyEndpoint, instanceID string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances/"+instanceID+"/breakpoints", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances/"+instanceID+"/breakpoints", map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "worker"},
 		"mode":       "pause",
@@ -301,7 +340,7 @@ func waitForWatchBreakpointHit(t *testing.T, ep harness.RimskyEndpoint, instance
 	t.Helper()
 	end := time.Now().Add(deadline)
 	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t, "/instances/"+instanceID+"/breakpoint-hits", "")
+		status, raw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/breakpoint-hits", "")
 		if status == http.StatusOK {
 			var resp struct {
 				Hits []map[string]any `json:"hits"`
@@ -317,10 +356,10 @@ func waitForWatchBreakpointHit(t *testing.T, ep harness.RimskyEndpoint, instance
 	}
 	// Diagnostics on timeout: dump instance, node, breakpoint, and events so a
 	// real sequencing defect is visible without re-running.
-	_, instRaw := ep.GetJSON(t, "/instances/"+instanceID, "")
+	_, instRaw := ep.GetJSON(t, "/v1/instances/"+instanceID, "")
 	_, nodeRaw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/worker", "")
-	_, bpRaw := ep.GetJSON(t, "/instances/"+instanceID+"/breakpoints", "")
-	_, evRaw := ep.GetJSON(t, "/events?instance_id="+instanceID+"&limit=100", "")
+	_, bpRaw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/breakpoints", "")
+	_, evRaw := ep.GetJSON(t, "/v1/events?instance_id="+instanceID+"&limit=100", "")
 	t.Logf("diag instance=%s", string(instRaw))
 	t.Logf("diag node=%s", string(nodeRaw))
 	t.Logf("diag breakpoints=%s", string(bpRaw))
@@ -334,10 +373,32 @@ func waitForWatchBreakpointHit(t *testing.T, ep harness.RimskyEndpoint, instance
 func resumeWatchBreakpoint(t *testing.T, ep harness.RimskyEndpoint, instanceID, bpID, hitID string) {
 	t.Helper()
 	status, raw := ep.PostJSON(t,
-		"/instances/"+instanceID+"/breakpoints/"+bpID+"/resume",
+		"/v1/instances/"+instanceID+"/breakpoints/"+bpID+"/resume",
 		map[string]any{"hit_id": hitID})
 	if status != http.StatusOK {
 		t.Fatalf("POST breakpoint resume: %d %s", status, string(raw))
+	}
+}
+
+// injectAdminInvalidate POSTs an operator-side invalidate against a node so
+// `runtime.InvalidateNode` appends `operator_override` + `message_emitted`
+// events to the instance's unified /events feed. Uses `frame: "next"` so
+// the enqueued frame is queued behind the running one — for a
+// terminate_after_run instance the queued frame is orphaned at terminal
+// (per `MarkInstanceTerminatedIfDone`'s strict "run at most once more"
+// semantics) and never executes, so the injection is observable only as
+// the appended events. The 202 Accepted return shape is the admin
+// invalidate's documented success status.
+func injectAdminInvalidate(t *testing.T, ep harness.RimskyEndpoint, nodeID, reason string) {
+	t.Helper()
+	status, raw := ep.PostJSON(t,
+		"/v1/nodes/"+nodeID+"/invalidate",
+		map[string]any{"reason": reason, "frame": "next"})
+	// The handler returns 202 Accepted on success; treat any 2xx as success
+	// (the load-bearing assertion is on the events the call appended, not
+	// the status code itself).
+	if status < 200 || status >= 300 {
+		t.Fatalf("POST /v1/nodes/%s/invalidate: %d %s", nodeID, status, string(raw))
 	}
 }
 
@@ -463,6 +524,68 @@ func assertWatchFeedChronological(t *testing.T, stdout string) {
 			hitTS.Format(time.RFC3339Nano),
 			beforeEvent.ts.Format(time.RFC3339Nano),
 			afterEvent.ts.Format(time.RFC3339Nano),
+			stdout)
+	}
+
+	// 4. Message-activity interleaving: the admin invalidate injected during
+	//    the paused window must have produced a `message_emitted` event row
+	//    on the unified /events feed, printed AFTER the breakpoint.hit row
+	//    and BEFORE the post-resume node-lifecycle row (a `state_transition`
+	//    or `work_completed` event the cascade walk emits during settle).
+	//    This is the "node lifecycle transitions, breakpoint hits, message
+	//    activity, and supervisor decisions in true chronological order
+	//    across kinds" clause of STORY-event-log-read's Acceptance: the
+	//    bracket from (3) only proves event-source vs hit-source ordering,
+	//    while this clause proves three distinct event KINDS (hit, message,
+	//    lifecycle) appear interleaved by timestamp rather than grouped by
+	//    kind. A kind-grouped renderer (e.g. one that drained the feed by
+	//    kind and printed each batch in order) would fail this check the
+	//    moment message_emitted printed adjacent to other message kinds
+	//    rather than between the hit and the lifecycle event.
+	messageIdx := -1
+	for i := hitIdx + 1; i < len(lines); i++ {
+		if lines[i].source == "event" && lines[i].kind == "message_emitted" {
+			messageIdx = i
+			break
+		}
+	}
+	if messageIdx < 0 {
+		t.Fatalf("watch feed has no `message_emitted` event row after the breakpoint.hit — the admin invalidate injected during the paused window did not surface as a message-activity event on the unified /events feed\nfull feed:\n%s", stdout)
+	}
+
+	// The lifecycle row must be a post-resume node-state transition emitted
+	// by the cascade walk at settle. `state_transition` (cascade) or
+	// `work_completed` (acquire-side terminal) are the canonical kinds; any
+	// non-hit, non-message event row strictly after the message row is
+	// accepted so a future runtime that surfaces a different terminal kind
+	// (e.g. `claim_resolved` / `lock_released`) does not falsely fail the
+	// gate. The story's load-bearing claim is "three distinct kinds appear
+	// in chronological order", not "exactly these named kinds".
+	lifecycleIdx := -1
+	for i := messageIdx + 1; i < len(lines); i++ {
+		if lines[i].source == "event" && lines[i].kind != "breakpoint.hit" && lines[i].kind != "message_emitted" && lines[i].kind != "message_received" && lines[i].kind != "operator_override" {
+			lifecycleIdx = i
+			break
+		}
+	}
+	if lifecycleIdx < 0 {
+		t.Fatalf("watch feed has no post-message non-message event row — the post-resume settle did not surface a node-lifecycle event after `message_emitted`, so the three-kind chronological interleaving cannot be proven\nfull feed:\n%s", stdout)
+	}
+
+	// Timestamp-faithfulness on the message bracket: the message_emitted
+	// timestamp must fall strictly within (hitTS, lifecycleTS]. The
+	// monotonic check (1) already forbids print-order violations, but
+	// pinning the message's timestamp inside (hitTS, lifecycleTS] proves
+	// the interleaving is driven by real recorded times rather than a
+	// drain-order accident.
+	messageTS := lines[messageIdx].ts
+	lifecycleTS := lines[lifecycleIdx].ts
+	if messageTS.Before(hitTS) || lifecycleTS.Before(messageTS) {
+		t.Fatalf("message_emitted timestamp %s is not within (%s, %s] of (breakpoint.hit, post-resume %s] — message-activity ordering is not timestamp-faithful\nfull feed:\n%s",
+			messageTS.Format(time.RFC3339Nano),
+			hitTS.Format(time.RFC3339Nano),
+			lifecycleTS.Format(time.RFC3339Nano),
+			lines[lifecycleIdx].kind,
 			stdout)
 	}
 }

@@ -24,11 +24,13 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
@@ -61,8 +63,40 @@ func registerAuditRoutes(r chi.Router, deps AppDeps) {
 func handleListAudit(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
+		// Validate ?kind= against both the proto enum AND the audit
+		// surface's allowlist (auth.*). The intersection is the
+		// rule: a kind that's valid in the proto enum but not in
+		// the audit surface (e.g. state_transition) returns 400 —
+		// the audit reader exists to surface auth audit data, not
+		// arbitrary operational events. An unknown kind also
+		// returns 400. Empty kind = the full auth.* set (today's
+		// behavior).
 		filter := persistence.EventListFilter{
 			KindIn: auditKinds,
+		}
+		if s := q.Get("kind"); s != "" {
+			parsed, err := events.ParseKindString(s)
+			if err != nil {
+				badRequest(w, "invalid kind: "+s+
+					" (expected one of: "+
+					strings.Join(auditKinds, ", ")+")")
+				return
+			}
+			wire := parsed.String()
+			if !strings.HasPrefix(wire, "auth.") {
+				badRequest(w, "kind not in audit allowlist: "+wire+
+					" (the /audit surface accepts only auth.* kinds; expected one of: "+
+					strings.Join(auditKinds, ", ")+")")
+				return
+			}
+			// Narrow the read to the single requested kind via
+			// the exact-match Kind field; KindIn stays set so the
+			// allowlist still gates downstream filters that may
+			// fall through (the persistence layer AND-composes
+			// Kind and KindIn). Both filtering on `kind = X` AND
+			// `kind IN (auth.*)` is equivalent to just `kind = X`
+			// when X is in the allowlist.
+			filter.Kind = wire
 		}
 		// Actor filters.
 		if s := q.Get("key_id"); s != "" {
@@ -132,7 +166,7 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 		for _, e := range page.Events {
 			item := eventResponseItem{
 				ID:         e.ID,
-				Kind:       e.Kind,
+				Kind:       e.KindRaw,
 				Payload:    e.Payload,
 				OccurredAt: e.OccurredAt,
 			}

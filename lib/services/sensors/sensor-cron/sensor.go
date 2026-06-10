@@ -5,7 +5,7 @@
 // Package main — sensor-cron bundled sensor. Implements the Publisher
 // gRPC protocol; on each tick, fires any publisher-subscription whose
 // `next_fire_at <= now` by POSTing a message envelope to rimsky's
-// generic `POST /instances/{instance_id}/messages` endpoint with
+// generic `POST /v1/instances/{instance_id}/messages` endpoint with
 // `sender_kind: "publisher"`.
 //
 // Spec .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
@@ -368,7 +368,7 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 	if err != nil {
 		return err
 	}
-	url := s.rimskyEndpoint + "/instances/" + w.InstanceID + "/messages"
+	url := s.rimskyEndpoint + "/v1/instances/" + w.InstanceID + "/messages"
 	res := publisherkit.Send(ctx, s.httpClient, s.logger, nil, publisherkit.Request{
 		URL:            url,
 		Envelope:       raw,

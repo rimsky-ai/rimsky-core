@@ -6,7 +6,7 @@
 // gRPC protocol; per publisher-subscription, polls a configured URL on
 // a fixed interval, applies a match predicate (status code and / or
 // JSONPath substring match), and POSTs a message envelope to rimsky's
-// generic `POST /instances/{instance_id}/messages` endpoint when the
+// generic `POST /v1/instances/{instance_id}/messages` endpoint when the
 // response body's content-hash changes.
 //
 // Spec .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
@@ -79,10 +79,48 @@ type SensorService struct {
 
 // AttachStateDB binds an optional persistence layer for subscriptions +
 // body-hash watermarks. Pass nil to run in pure in-memory mode.
+//
+// When non-nil, it also rebuilds s.watches from state.ListAll so a
+// restarted binary resumes the durable subscriptions with their
+// body-filter + body-hash watermark (the recovered state), rather than
+// waiting for rimsky to re-Subscribe. Rimsky's
+// `ResyncPublisherSubscriptions` runs only at control-api startup,
+// not on demand, so a sensor process restart against a still-running
+// rimsky would otherwise silently drop every watch end-to-end. The
+// rebuilt Watch keeps the persisted LastHash so the first post-restart
+// poll against an unchanged body does not re-emit; this is the durable-
+// watermark contract the STORY-sensor-http falsifier brief asserts.
 func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = state
+	if state == nil {
+		return
+	}
+	rows, err := state.ListAll(context.Background())
+	if err != nil {
+		s.logger.Warn("sensor-http.attach_state_db.list_failed", "error", err.Error())
+		return
+	}
+	for _, r := range rows {
+		s.watches[r.SubscriptionID] = &Watch{
+			SubscriptionID: r.SubscriptionID,
+			InstanceID:     r.InstanceID,
+			URL:            r.URL,
+			PollInterval:   r.PollInterval,
+			MatchStatus:    r.MatchStatus,
+			MatchJSONKey:   r.MatchJSONKey,
+			MatchJSONVal:   r.MatchJSONVal,
+			TargetNode:     r.TargetNode,
+			MessageKind:    r.MessageKind,
+			LastHash:       r.LastHash,
+		}
+		s.logger.Info("sensor-http.state_recovered",
+			"publisher_subscription_id", r.SubscriptionID,
+			"url", r.URL,
+			"poll_interval", r.PollInterval.String(),
+			"restored_last_hash", r.LastHash != "")
+	}
 }
 
 type logger interface {
@@ -438,7 +476,7 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 	if err != nil {
 		return err
 	}
-	url := s.rimskyEndpoint + "/instances/" + w.InstanceID + "/messages"
+	url := s.rimskyEndpoint + "/v1/instances/" + w.InstanceID + "/messages"
 	res := publisherkit.Send(ctx, s.httpClient, s.logger, nil, publisherkit.Request{
 		URL:            url,
 		Envelope:       raw,

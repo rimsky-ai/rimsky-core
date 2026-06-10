@@ -32,13 +32,13 @@ func RunAuthStatus(ctx context.Context, args []string) int {
 	}
 	c := newAuthClient(endpoint, key)
 	var resp authStatusResp
-	if _, err := c.RawCall(ctx, http.MethodGet, "/auth/status", nil, &resp); err != nil {
+	if _, err := c.RawCall(ctx, http.MethodGet, "/v1/auth/status", nil, &resp); err != nil {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized {
 			fmt.Fprintln(os.Stderr, "rimsky auth status: auth required; set RIMSKY_API_KEY or pass --key")
 			return 1
 		}
-		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodGet, "/auth/status", err))
+		fmt.Fprintln(os.Stderr, formatAuthAPIError(http.MethodGet, "/v1/auth/status", err))
 		return 1
 	}
 	switch resp.Mode {

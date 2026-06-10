@@ -36,6 +36,7 @@ import (
 	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
@@ -213,7 +214,7 @@ func applyTerminalComplete(
 		if err := attributes.Validate(schema, merged, attributes.PhaseCommit); err != nil {
 			if appendErr := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
-				Kind: "attributes_schema_failed",
+				Kind: events.KindAttributesSchemaFailed(),
 				Payload: map[string]any{
 					"errors": []map[string]any{{"message": err.Error()}},
 				},

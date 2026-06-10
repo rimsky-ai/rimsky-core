@@ -65,7 +65,7 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 
 	// POST /nodes/{id}/reset.
 	resp, err := http.Post(
-		h.ControlBase+"/nodes/"+worker.ID.String()+"/reset",
+		h.ControlBase+"/v1/nodes/"+worker.ID.String()+"/reset",
 		"application/json", bytes.NewReader([]byte(`{}`)))
 	require.NoError(t, err)
 	defer resp.Body.Close()

@@ -87,7 +87,7 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 	})
 	instanceID := createSQLiteInstance(t, ep, templateID, "ck-idempotency-required-e2e")
 
-	messagesPath := "/instances/" + instanceID + "/messages"
+	messagesPath := "/v1/instances/" + instanceID + "/messages"
 
 	// A valid invalidate body — targets the worker node by type. The ONLY
 	// difference between the rejected and accepted POSTs below is the presence

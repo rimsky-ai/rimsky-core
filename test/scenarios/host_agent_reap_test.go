@@ -57,7 +57,7 @@ func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
 	// Delete the instance: control-api closes the main run-scope and fires
 	// OnRunScopeTerminal{run_scope_id (≠ instance id), instance_id} to the
 	// proxy, which reaps the spawn keyed to the instance.
-	req, err := http.NewRequest(http.MethodDelete, fx.h.ControlBase+"/instances/"+iid.String(), nil)
+	req, err := http.NewRequest(http.MethodDelete, fx.h.ControlBase+"/v1/instances/"+iid.String(), nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer "+fx.adminKey)
 	resp, err := http.DefaultClient.Do(req)

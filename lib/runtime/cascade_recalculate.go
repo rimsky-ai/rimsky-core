@@ -15,6 +15,7 @@ import (
 	"errors"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
@@ -50,18 +51,17 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if args.SourceNodeID != nil {
 		sourceStr = args.SourceNodeID.String()
 	}
-	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return sb.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &args.TargetNodeID,
-			Kind:   "message_received",
-			Payload: map[string]any{
-				"type":           "recalculate",
-				"source_node_id": sourceStr,
-				"target_node_id": args.TargetNodeID.String(),
-			},
-		}, tx)
-	})
 
+	// Load target BEFORE emitting the audit event so the message_received
+	// row carries the owning InstanceID. STORY-event-log-read says an
+	// operator filters /v1/events by instance_id and expects to see every
+	// event of the instance; an event row without InstanceID is dropped
+	// by that filter and silently absent from the unified feed. The prior
+	// ordering (emit first, then load) dropped the InstanceID column on
+	// every message_received row — fixing here at the read-surface
+	// boundary rather than threading instance_id resolution through the
+	// payload map keeps the storage shape consistent with every other
+	// instance-scoped emit site.
 	var target *persistence.NodeRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := sb.Nodes().Get(ctx, args.TargetNodeID, tx)
@@ -73,6 +73,19 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	if target == nil {
 		return nil
 	}
+
+	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return sb.Events().Append(ctx, persistence.EventAppendInput{
+			InstanceID: &target.InstanceID,
+			NodeID:     &args.TargetNodeID,
+			Kind:       events.KindMessageReceived(),
+			Payload: map[string]any{
+				"type":           "recalculate",
+				"source_node_id": sourceStr,
+				"target_node_id": args.TargetNodeID.String(),
+			},
+		}, tx)
+	})
 	if target.State != cascade.NodeStateStale {
 		// fresh / running / failed — no-op.
 		return nil

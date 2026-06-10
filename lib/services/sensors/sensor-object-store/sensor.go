@@ -15,8 +15,10 @@
 //
 // Backends: the sensor is structured around a narrow `ObjectLister`
 // interface (List(prefix) -> []ObjectMeta) so a single poll loop drives
-// every backend. The default bundled image registers ONLY the in-memory
-// lister ("memory"), so it advertises and accepts only "memory" — it
+// every backend. The default bundled image always registers the in-
+// memory lister ("memory") and conditionally registers the filesystem
+// lister ("filesystem", when env RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT is
+// set). It advertises and accepts exactly the registered set — it
 // rejects s3/gcs/azure at Subscribe rather than no-op'ing on them at
 // poll time. S3 / GCS / Azure are not implemented here (deliberately
 // cut to keep the cloud SDKs out of the default build); a production
@@ -29,6 +31,18 @@
 // `last_modified`). New observations are objects whose watermark value
 // strictly exceeds the prior watermark. Idempotency: re-listing the
 // same set without any new object produces zero observations.
+//
+// Restart durability: when a state DSN is configured, the binary
+// persists each subscription + its watermark cursor to a Postgres
+// table. On restart, AttachStateDB rebuilds the in-memory watches
+// from that durable state — recovering each subscription's bucket /
+// prefix / watermark_field and the live cursor (watermark_name or
+// watermark_time). The first post-restart poll re-lists the bucket
+// and skips objects whose watermark value is `<= cursor`, so an
+// object emitted before the restart is NOT re-emitted after.
+// Without this rebuild, the in-memory watch map would start empty
+// and no poll would happen until rimsky re-issued Subscribe
+// (which it does only at control-api startup, not on demand).
 package main
 
 import (
@@ -104,11 +118,62 @@ type SensorService struct {
 	state *stateDB
 }
 
-// AttachStateDB binds an optional persistence layer.
+// AttachStateDB binds an optional persistence layer for subscriptions +
+// watermark cursors. Pass nil to run in pure in-memory mode.
+//
+// When non-nil, it also rebuilds s.watches from state.ListAll so a
+// restarted binary resumes the durable subscriptions with their
+// recovered watermark cursor (watermark_name or watermark_time),
+// rather than waiting for a Subscribe replay. Recovery is by cursor,
+// never by recompute: a row whose cursor is the name of an object
+// already emitted before the restart keeps that cursor, so the first
+// post-restart poll will skip that same-named object instead of re-
+// emitting it. Without this rebuild the durability story for
+// STORY-sensor-object-store does not hold — the in-memory watches
+// map starts empty after process start, and a sensor that lost its
+// watches polls nothing at all.
 func (s *SensorService) AttachStateDB(state *stateDB) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = state
+	if state == nil {
+		return
+	}
+	rows, err := state.ListAll(context.Background())
+	if err != nil {
+		s.logger.Warn("sensor-object-store.attach_state_db.list_failed", "error", err.Error())
+		return
+	}
+	for _, r := range rows {
+		interval, err := time.ParseDuration(r.PollInterval)
+		if err != nil || interval <= 0 {
+			interval = 30 * time.Second
+		}
+		w := &Watch{
+			SubscriptionID: r.SubscriptionID,
+			InstanceID:     r.InstanceID,
+			Backend:        r.Backend,
+			Bucket:         r.Bucket,
+			Prefix:         r.Prefix,
+			PollInterval:   interval,
+			WatermarkField: r.WatermarkField,
+			TargetNode:     r.TargetNode,
+			MessageKind:    r.MessageKind,
+			WatermarkName:  r.WatermarkName,
+		}
+		if r.WatermarkTime != nil {
+			w.WatermarkTime = *r.WatermarkTime
+		}
+		s.watches[r.SubscriptionID] = w
+		s.logger.Info("sensor-object-store.state_recovered",
+			"publisher_subscription_id", r.SubscriptionID,
+			"backend", r.Backend,
+			"bucket", r.Bucket,
+			"prefix", r.Prefix,
+			"watermark_field", r.WatermarkField,
+			"watermark_name", r.WatermarkName,
+			"poll_interval", interval.String())
+	}
 }
 
 type logger interface {
@@ -470,7 +535,7 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 	if err != nil {
 		return err
 	}
-	url := strings.TrimRight(s.rimskyEndpoint, "/") + "/instances/" + w.InstanceID + "/messages"
+	url := strings.TrimRight(s.rimskyEndpoint, "/") + "/v1/instances/" + w.InstanceID + "/messages"
 	res := publisherkit.Send(ctx, s.httpClient, s.logger, nil, publisherkit.Request{
 		URL:            url,
 		Envelope:       raw,

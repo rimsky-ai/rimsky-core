@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
@@ -116,40 +117,19 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 		args.Metrics.IncInvalidate(invalidateSourceBucket(args.Reason))
 	}
 
-	// Emit + receive events for the audit trail.
-	params := map[string]any{
-		"reason": args.Reason,
-	}
-	sourceStr := "(external)"
-	if args.SourceNodeID != nil {
-		sourceStr = args.SourceNodeID.String()
-	}
-	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		if err := sb.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &args.TargetNodeID,
-			Kind:   "message_emitted",
-			Payload: map[string]any{
-				"type":           "invalidate",
-				"source_node_id": sourceStr,
-				"target_node_id": args.TargetNodeID.String(),
-				"params":         params,
-			},
-		}, tx); err != nil {
-			return err
-		}
-		return sb.Events().Append(ctx, persistence.EventAppendInput{
-			NodeID: &args.TargetNodeID,
-			Kind:   "message_received",
-			Payload: map[string]any{
-				"type":           "invalidate",
-				"source_node_id": sourceStr,
-				"target_node_id": args.TargetNodeID.String(),
-				"params":         params,
-			},
-		}, tx)
-	})
-
-	// Load target to resolve instance_id.
+	// Load target to resolve instance_id BEFORE emitting events. The
+	// message_emitted / message_received events are part of an instance's
+	// unified event feed (STORY-event-log-read: an operator filters
+	// /v1/events by instance_id and expects to see EVERY event of the
+	// instance), so each row must carry InstanceID alongside NodeID. We
+	// hoist the target load above the emit tx so the filterable instance
+	// column is populated; the prior ordering (emit first, then load)
+	// dropped the InstanceID column on these two rows, which made them
+	// invisible to `GET /v1/events?instance_id=...` polls (the watch CLI
+	// uses exactly that filter) — a silent gap in the chronological feed
+	// the watch story names. The target-not-found branch below remains a
+	// no-op as before, so a stale invalidate against a freshly-deleted
+	// node still cleanly aborts without leaving orphan events.
 	var target *persistence.NodeRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := sb.Nodes().Get(ctx, args.TargetNodeID, tx)
@@ -162,6 +142,43 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 		log.Warn("InvalidateNode: target not found", "node_id", args.TargetNodeID.String())
 		return nil
 	}
+
+	// Emit + receive events for the audit trail. Both rows carry the
+	// resolved InstanceID so the operator's instance-scoped /v1/events
+	// query surfaces them on the unified feed.
+	params := map[string]any{
+		"reason": args.Reason,
+	}
+	sourceStr := "(external)"
+	if args.SourceNodeID != nil {
+		sourceStr = args.SourceNodeID.String()
+	}
+	_ = sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := sb.Events().Append(ctx, persistence.EventAppendInput{
+			InstanceID: &target.InstanceID,
+			NodeID:     &args.TargetNodeID,
+			Kind:       events.KindMessageEmitted(),
+			Payload: map[string]any{
+				"type":           "invalidate",
+				"source_node_id": sourceStr,
+				"target_node_id": args.TargetNodeID.String(),
+				"params":         params,
+			},
+		}, tx); err != nil {
+			return err
+		}
+		return sb.Events().Append(ctx, persistence.EventAppendInput{
+			InstanceID: &target.InstanceID,
+			NodeID:     &args.TargetNodeID,
+			Kind:       events.KindMessageReceived(),
+			Payload: map[string]any{
+				"type":           "invalidate",
+				"source_node_id": sourceStr,
+				"target_node_id": args.TargetNodeID.String(),
+				"params":         params,
+			},
+		}, tx)
+	})
 
 	useFrame := args.Frame
 	if useFrame == "" {
@@ -302,7 +319,7 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 		}
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &target.ID, InstanceID: &target.InstanceID,
-			Kind: "state_transition",
+			Kind: events.KindStateTransition(),
 			Payload: map[string]any{
 				"from": "fresh", "to": "stale", "reason": "in_frame_invalidate",
 				"frame_id": frameID.String(),
@@ -440,7 +457,7 @@ func stalemarkAndEnqueueInFrame(
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &target.ID, InstanceID: &target.InstanceID,
-		Kind: "state_transition",
+		Kind: events.KindStateTransition(),
 		Payload: map[string]any{
 			"from":     "fresh",
 			"to":       "stale",

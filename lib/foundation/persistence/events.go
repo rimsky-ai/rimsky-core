@@ -8,24 +8,41 @@ import (
 	"context"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 // EventRow mirrors a row of rimsky_events.
+//
+// The Kind field carries the typed-discriminator value parsed from
+// the persistence column at read time. KindRaw preserves the raw
+// wire string for diagnostics and is the value that lands in the
+// HTTP response (the read-API surface is wire-compatible). Drivers
+// fill BOTH on a successful read; on parse failure the read returns
+// the parse error rather than emit a synthetic Kind (per
+// decision:event-log-kind-enum).
 type EventRow struct {
 	ID         int64          `json:"id"`
 	InstanceID *shared.UUID   `json:"instance_id,omitempty"`
 	NodeID     *shared.UUID   `json:"node_id,omitempty"`
-	Kind       string         `json:"kind"`
+	Kind       events.Kind    `json:"-"`
+	KindRaw    string         `json:"kind"`
 	Payload    map[string]any `json:"payload"`
 	OccurredAt time.Time      `json:"occurred_at"`
 }
 
 // EventAppendInput is the per-row input for Append.
+//
+// Kind is the typed event-log discriminator. Drivers marshal
+// Kind.String() into the TEXT column at write time; app logic
+// constructs typed values via events.OperationalKindFromProto /
+// events.SignalKind (or one of the Kind* convenience constructors).
+// Passing the zero events.Kind is a caller bug — the wire string
+// would be empty and Append would fail downstream.
 type EventAppendInput struct {
 	InstanceID *shared.UUID
 	NodeID     *shared.UUID
-	Kind       string
+	Kind       events.Kind
 	Payload    map[string]any
 	OccurredAt *time.Time // nil → server NOW()
 }

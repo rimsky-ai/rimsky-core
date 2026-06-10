@@ -34,6 +34,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -317,7 +318,7 @@ func emitSubclaimBeginCandidate(
 		return
 	}
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		Kind: "subclaim.begin_candidate",
+		Kind: events.KindSubclaimBeginCandidate(),
 		Payload: map[string]any{
 			"parent_claim_handle_id":      parentID.String(),
 			"sub_claim_handle_id":         subID.String(),
@@ -346,7 +347,7 @@ func emitSubclaimAcquired(
 	nodeID := holderNodeID
 	if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &nodeID,
-		Kind:   "subclaim.acquired",
+		Kind:   events.KindSubclaimAcquired(),
 		Payload: map[string]any{
 			"parent_claim_handle_id":     parentID.String(),
 			"sub_scope_descriptor_count": subScopeCount,

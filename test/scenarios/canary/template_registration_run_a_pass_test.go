@@ -145,7 +145,7 @@ func createInstanceViaHTTP(t *testing.T, h *scenario.Harness, templateHash strin
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
-		h.ControlBase+"/instances", bytes.NewReader(raw))
+		h.ControlBase+"/v1/instances", bytes.NewReader(raw))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)

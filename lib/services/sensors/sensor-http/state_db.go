@@ -30,6 +30,9 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	// jackc/pgx/v5 stdlib driver; registers the "pgx" driver name.
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -154,25 +157,42 @@ func (s *stateDB) UpdateLastHash(ctx context.Context, subscriptionID, hash strin
 }
 
 // SubscriptionState is the persisted shape returned by ListAll /
-// GetSubscription.
+// GetSubscription. It carries every field the in-memory Watch needs,
+// so AttachStateDB can rebuild watches end-to-end on restart without
+// requiring rimsky to re-Subscribe (rimsky's ResyncPublisherSubscriptions
+// runs only at control-api startup, not on demand; sensor process
+// restarts on a still-running rimsky would otherwise silently drop the
+// in-memory watches).
 type SubscriptionState struct {
 	SubscriptionID string
 	InstanceID     string
 	URL            string
-	PollInterval   string
-	TargetNode     string
-	MessageKind    string
-	LastHash       string
+	// PollInterval is the in-memory Watch's PollInterval. Stored as a
+	// duration-string in the table; surfaced here as a parsed Duration so
+	// AttachStateDB rebuild can populate Watch.PollInterval directly.
+	PollInterval time.Duration
+	MatchStatus  []int
+	MatchJSONKey string
+	MatchJSONVal string
+	TargetNode   string
+	MessageKind  string
+	LastHash     string
 }
 
 // ListAll returns every persisted subscription. Used at startup to
-// rebuild in-memory state from durable storage.
+// rebuild in-memory state from durable storage. The returned slice
+// carries every field the in-memory Watch needs (URL, poll interval,
+// match predicate, body-hash watermark), so a restarted binary resumes
+// polling without losing the body-filter or the watermark.
 func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	if s == nil {
 		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT publisher_subscription_id, instance_id, url, poll_interval,
+		        COALESCE(match_status, ''),
+		        COALESCE(match_json_key, ''),
+		        COALESCE(match_json_val, ''),
 		        target_node, message_kind, COALESCE(last_hash, '')
 		   FROM sensor_http_state`)
 	if err != nil {
@@ -181,9 +201,8 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	defer rows.Close()
 	out := []SubscriptionState{}
 	for rows.Next() {
-		var w SubscriptionState
-		if err := rows.Scan(&w.SubscriptionID, &w.InstanceID, &w.URL, &w.PollInterval,
-			&w.TargetNode, &w.MessageKind, &w.LastHash); err != nil {
+		w, err := scanSubscriptionState(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, w)
@@ -200,17 +219,70 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 	}
 	row := s.db.QueryRowContext(ctx,
 		`SELECT publisher_subscription_id, instance_id, url, poll_interval,
+		        COALESCE(match_status, ''),
+		        COALESCE(match_json_key, ''),
+		        COALESCE(match_json_val, ''),
 		        target_node, message_kind, COALESCE(last_hash, '')
 		   FROM sensor_http_state
 		  WHERE publisher_subscription_id = $1`,
 		subscriptionID)
-	var w SubscriptionState
-	if err := row.Scan(&w.SubscriptionID, &w.InstanceID, &w.URL, &w.PollInterval,
-		&w.TargetNode, &w.MessageKind, &w.LastHash); err != nil {
+	w, err := scanSubscriptionState(row.Scan)
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
 	return &w, nil
+}
+
+// scanSubscriptionState centralizes the row → SubscriptionState
+// projection used by ListAll and GetSubscription. The SELECT column
+// order in both callers MUST match the Scan order here.
+//
+// `poll_interval` is stored as a duration-string (e.g. "30s") and
+// parsed back to time.Duration; an unparseable value is reported as an
+// error rather than silently zeroed so the sensor doesn't quietly poll
+// every nanosecond after a restart against a corrupted row.
+//
+// `match_status` is stored as a comma-joined integer list (e.g.
+// "200,201") to keep the schema simple (TEXT column); an empty string
+// means "no explicit set declared," matching the in-memory Watch's
+// MatchStatus=nil semantics ("any 2xx").
+func scanSubscriptionState(scan func(...any) error) (SubscriptionState, error) {
+	var (
+		w            SubscriptionState
+		pollInterval string
+		matchStatus  string
+	)
+	if err := scan(&w.SubscriptionID, &w.InstanceID, &w.URL, &pollInterval,
+		&matchStatus, &w.MatchJSONKey, &w.MatchJSONVal,
+		&w.TargetNode, &w.MessageKind, &w.LastHash); err != nil {
+		return SubscriptionState{}, err
+	}
+	if pollInterval != "" {
+		d, err := time.ParseDuration(pollInterval)
+		if err != nil {
+			return SubscriptionState{}, fmt.Errorf("parse persisted poll_interval %q for %s: %w",
+				pollInterval, w.SubscriptionID, err)
+		}
+		w.PollInterval = d
+	}
+	if matchStatus != "" {
+		parts := strings.Split(matchStatus, ",")
+		w.MatchStatus = make([]int, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p == "" {
+				continue
+			}
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				return SubscriptionState{}, fmt.Errorf("parse persisted match_status %q for %s: %w",
+					matchStatus, w.SubscriptionID, err)
+			}
+			w.MatchStatus = append(w.MatchStatus, n)
+		}
+	}
+	return w, nil
 }

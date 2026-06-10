@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
@@ -165,7 +166,19 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		}
 	}
 
-	inner, err := http.NewRequestWithContext(r.Context(), route.Method, path, body)
+	// Strip the parent chi.RouteContext from the inner request's context.
+	// The parent context carries the rctx populated by the OUTER `/v1/mcp`
+	// (or `/mcp`) match: rctx.RoutePath, URLParams, and the routing stack
+	// all reflect that prior match. chi's Mux.ServeHTTP reuses any rctx it
+	// finds on the context instead of fetching a fresh one from its pool —
+	// so the re-entry would route against the stale `RoutePath` (e.g.
+	// `/mcp`) at the top-level router and 404. Re-issuing through the chi
+	// router post-`/v1/` mount makes this leakage visible; pre-`/v1/` the
+	// stale `RoutePath` happened to equal `""` and re-routing matched on
+	// `r.URL.Path` by accident. Either way, the right semantics is "fresh
+	// re-entry": detach the rctx so chi starts routing from scratch.
+	innerCtx := context.WithValue(r.Context(), chi.RouteCtxKey, (*chi.Context)(nil))
+	inner, err := http.NewRequestWithContext(innerCtx, route.Method, path, body)
 	if err != nil {
 		return nil, &Error{Code: CodeInternalError, Message: "build inner request: " + err.Error()}
 	}

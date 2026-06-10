@@ -28,9 +28,9 @@ func TestInstanceCreate_AttributeOverrides_RoundTripAndPersistence(t *testing.T)
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("inst-uo-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
 	overrides := map[string]any{
@@ -48,7 +48,7 @@ func TestInstanceCreate_AttributeOverrides_RoundTripAndPersistence(t *testing.T)
 			},
 		},
 	}
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        "ck-" + uuid.NewString(),
 		"attribute_overrides": overrides,
@@ -58,7 +58,7 @@ func TestInstanceCreate_AttributeOverrides_RoundTripAndPersistence(t *testing.T)
 	require.NotEmpty(t, instID)
 
 	// Round-trips via GET /instances/:id.
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	gotOverrides, ok := out["attribute_overrides"].(map[string]any)
 	require.True(t, ok, "attribute_overrides missing from GET response: %v", out)
@@ -84,19 +84,19 @@ func TestInstanceCreate_AttributeOverrides_OmittedDefaultsEmpty(t *testing.T) {
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-uo-empty-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 	instID, _ := out["instance_id"].(string)
 
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status)
 	// Omit-from-response when empty (omitempty on the struct tag).
 	_, present := out["attribute_overrides"]
@@ -109,12 +109,12 @@ func TestInstanceCreate_AttributeOverrides_RejectsUnknownExecutor(t *testing.T) 
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-uo-bad-exec-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 		"attribute_overrides": map[string]any{
@@ -133,12 +133,12 @@ func TestInstanceCreate_AttributeOverrides_RejectsUnknownNode(t *testing.T) {
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-uo-bad-node-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 		"attribute_overrides": map[string]any{
@@ -157,16 +157,16 @@ func TestInstanceCreate_AttributeOverrides_RejectsExecutorNotReferencedByTemplat
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-uo-unused-exec-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
 	// `unused-exec` is declared in the harness's Executors map but the
 	// `validTemplateBody` template only routes to `worker`. Attempting
 	// to override on `unused-exec` would be a silent no-op at dispatch —
 	// the validator must reject it.
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 		"attribute_overrides": map[string]any{
@@ -185,9 +185,9 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMatch_NoWarn(t *testing.T) 
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-uo-idemp-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
 	overrides := map[string]any{
@@ -198,7 +198,7 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMatch_NoWarn(t *testing.T) 
 		},
 	}
 	instanceKey := "ck-" + uuid.NewString()
-	status, _ := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, _ := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        instanceKey,
 		"attribute_overrides": overrides,
@@ -212,7 +212,7 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMatch_NoWarn(t *testing.T) 
 	// Idempotent retry with the SAME body: the persisted row's
 	// overrides match the request, so nothing was actually discarded;
 	// the WARN must not fire.
-	status, _ = h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, _ = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        instanceKey,
 		"attribute_overrides": overrides,
@@ -232,9 +232,9 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMismatch_Warns(t *testing.T
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-uo-idemp-mm-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
 	originalOverrides := map[string]any{
@@ -245,7 +245,7 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMismatch_Warns(t *testing.T
 		},
 	}
 	instanceKey := "ck-" + uuid.NewString()
-	status, _ := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, _ := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        instanceKey,
 		"attribute_overrides": originalOverrides,
@@ -263,7 +263,7 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMismatch_Warns(t *testing.T
 			},
 		},
 	}
-	status, _ = h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, _ = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        instanceKey,
 		"attribute_overrides": differentOverrides,
@@ -286,12 +286,12 @@ func TestInstanceCreate_AttributeOverrides_RejectsUnknownTopLevelKey(t *testing.
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-uo-bad-top-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 		"attribute_overrides": map[string]any{

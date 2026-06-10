@@ -38,6 +38,15 @@ type FilesystemStoreSpec struct {
 	// for the store's startup pick-policy `root: <path>` stat check.
 	// Each entry is a slice of path segments (e.g. {"docs","alpha"}).
 	SeedFolders [][]string
+	// AdvertiseHTTPBridge, when true, sets the store's `http_bridge_url`
+	// to the in-network HTTP+JSON observability bridge URL and exposes
+	// the HTTP port so the test process can dial the bridge directly.
+	// Required for proofs that exercise the dashboard's per-store
+	// observability surface (the rimsky dashboard surfaces this URL via
+	// `GET /v1/observability/stores/{name}` so the operator's browser
+	// can fetch claim detail / stream / list / admin views from the
+	// store directly).
+	AdvertiseHTTPBridge bool
 }
 
 // FilesystemPickPolicy mirrors `stores/filesystem/cmd/main.go::yamlPickPolicy`.
@@ -58,6 +67,15 @@ type FilesystemStoreEndpoint struct {
 	// HostDir is the host-side directory mounted into the container.
 	// Tests use this to seed pick-policy folders before drive.
 	HostDir string
+	// HostHTTPBridge is the host-mapped HTTP+JSON observability bridge
+	// base URL (e.g. "http://127.0.0.1:32777"). Empty unless the spec
+	// set AdvertiseHTTPBridge=true. Tests that exercise the dashboard's
+	// per-store observability surface dial this directly to fetch claim
+	// detail / stream / list / admin views — the in-network
+	// `http_bridge_url` the store advertises to rimsky is not reachable
+	// from the test process, so the test reaches the bridge via this
+	// mapped port.
+	HostHTTPBridge string
 }
 
 // StartFilesystemStore brings up the production filesystem-store image
@@ -84,14 +102,28 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 		}
 	}
 
-	configYAML := renderFilesystemConfig(spec)
+	// When AdvertiseHTTPBridge is set, the store advertises its
+	// in-network HTTP bridge URL through ClaimProducerObservabilityCapabilities
+	// so rimsky's dashboard surface (`GET /v1/observability/stores/{name}`)
+	// can expose it to operators. The test process reaches the same bridge
+	// via the host-mapped port returned in HostHTTPBridge.
+	httpBridgeURL := ""
+	if spec.AdvertiseHTTPBridge {
+		httpBridgeURL = fmt.Sprintf("http://%s:9110", alias)
+	}
+	configYAML := renderFilesystemConfig(spec, httpBridgeURL)
+
+	exposedPorts := []string{"9100/tcp"}
+	if spec.AdvertiseHTTPBridge {
+		exposedPorts = append(exposedPorts, "9110/tcp")
+	}
 
 	c, err := testcontainers.Run(ctx, storeFilesystemImage,
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(map[string]string{
 			"STORE_FILESYSTEM_CONFIG": "/etc/store/config.yml",
 		}),
-		testcontainers.WithExposedPorts("9100/tcp"),
+		testcontainers.WithExposedPorts(exposedPorts...),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
 			Reader:            strings.NewReader(configYAML),
 			ContainerFilePath: "/etc/store/config.yml",
@@ -116,9 +148,23 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 		_ = c.Terminate(termCtx)
 	})
 
+	hostHTTPBridge := ""
+	if spec.AdvertiseHTTPBridge {
+		hostIP, err := c.Host(ctx)
+		if err != nil {
+			t.Fatalf("harness: store-filesystem host: %v", err)
+		}
+		mapped, err := c.MappedPort(ctx, "9110")
+		if err != nil {
+			t.Fatalf("harness: store-filesystem mapped http port: %v", err)
+		}
+		hostHTTPBridge = fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
+	}
+
 	return FilesystemStoreEndpoint{
 		InternalEndpoint: fmt.Sprintf("grpc://%s:9100", alias),
 		HostDir:          hostDir,
+		HostHTTPBridge:   hostHTTPBridge,
 	}
 }
 
@@ -136,13 +182,19 @@ func (e FilesystemStoreEndpoint) SeedFolder(t testing.TB, parts ...string) {
 
 // renderFilesystemConfig serializes the in-container YAML config the
 // store binary reads. Inlines the small format rather than pulling in
-// gopkg.in/yaml.v3 here.
-func renderFilesystemConfig(spec FilesystemStoreSpec) string {
+// gopkg.in/yaml.v3 here. httpBridgeURL, when non-empty, is rendered as
+// the `http_bridge_url:` field the store advertises in its
+// ClaimProducerObservabilityCapabilities (which rimsky surfaces through
+// the dashboard's per-store observability route).
+func renderFilesystemConfig(spec FilesystemStoreSpec, httpBridgeURL string) string {
 	var b strings.Builder
 	b.WriteString("root: /workspace\n")
 	b.WriteString("host: 0.0.0.0\n")
 	b.WriteString("grpc_port: 9100\n")
 	b.WriteString("http_port: 9110\n")
+	if httpBridgeURL != "" {
+		fmt.Fprintf(&b, "http_bridge_url: %q\n", httpBridgeURL)
+	}
 	if len(spec.PickPolicies) > 0 {
 		b.WriteString("admin_port: 9120\n")
 	}

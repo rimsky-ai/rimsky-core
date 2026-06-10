@@ -119,7 +119,7 @@ func TestNoOpCommit(t *testing.T) {
 	// the controlapi → InvalidateNode → frame.EnqueueOrCoalesce path.
 	// A direct UpdateState bypasses the frame engine and leaves the
 	// node stale-with-nil-frame_id.
-	resp, err := http.Post(h.ControlBase+"/nodes/"+producer.ID.String()+"/invalidate",
+	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+producer.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader([]byte(`{}`)))
 	require.NoError(t, err)
 	resp.Body.Close()

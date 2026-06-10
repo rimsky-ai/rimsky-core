@@ -65,6 +65,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -624,12 +625,15 @@ func upsertAttributesPreDispatch(
 }
 
 // emitAttributeFailureEvent appends the typed event for a dispatch-time
-// attribute failure. `kind` is the event name (`template_resolution_failed`,
-// `template_validation_failed`, or `executor_schema_unavailable`) and
-// determines how operator tooling routes the surface; the payload shape
-// is identical across all three classes.
+// attribute failure. `kind` is the typed event-log discriminator
+// (`template_resolution_failed`, `template_validation_failed`, or
+// `executor_schema_unavailable`) and determines how operator tooling
+// routes the surface; the payload shape is identical across all three
+// classes. The typed Kind is enforced by classifyAttributeFailure
+// returning events.Kind values, never a raw string (per
+// decision:event-log-kind-enum).
 func emitAttributeFailureEvent(
-	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, kind, directive, site, field, reason string,
+	ctx context.Context, args RunArgs, nodeID, instanceID shared.UUID, kind events.Kind, directive, site, field, reason string,
 ) {
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
@@ -646,7 +650,7 @@ func emitAttributeFailureEvent(
 		args.Logger.Warn("emitAttributeFailureEvent: append event failed",
 			"node_id", nodeID.String(),
 			"instance_id", instanceID.String(),
-			"kind", kind,
+			"kind", kind.String(),
 			"directive", directive,
 			"error", err.Error())
 	}
@@ -708,24 +712,27 @@ func applyAttributeFailure(
 // (error_class, event_kind) pair used to route the failure. The two
 // names are kept equal for each class to simplify downstream tooling;
 // the split exists in case the event surface ever needs to evolve
-// independently of the policy class.
-func classifyAttributeFailure(err error) (string, string) {
+// independently of the policy class. The event_kind is a typed
+// events.Kind value (per decision:event-log-kind-enum); the
+// error_class is the route key the policy chain consumes (string by
+// design, the policy table is operator-authored).
+func classifyAttributeFailure(err error) (string, events.Kind) {
 	var miss *attributes.ErrMissingSource
 	if errors.As(err, &miss) {
-		return "template_resolution_failed", "template_resolution_failed"
+		return "template_resolution_failed", events.KindTemplateResolutionFailed()
 	}
 	var schemaUnavail *executorSchemaUnavailableError
 	if errors.As(err, &schemaUnavail) {
-		return "executor_schema_unavailable", "executor_schema_unavailable"
+		return "executor_schema_unavailable", events.KindExecutorSchemaUnavailable()
 	}
 	var validation *attributeValidationError
 	if errors.As(err, &validation) {
-		return "template_validation_failed", "template_validation_failed"
+		return "template_validation_failed", events.KindTemplateValidationFailed()
 	}
 	// Defensive fallback: anything we didn't classify routes through the
 	// resolution chain. Preserves backwards-compatible behaviour for
 	// errors that didn't go through resolveAttributes' typed wrappers.
-	return "template_resolution_failed", "template_resolution_failed"
+	return "template_resolution_failed", events.KindTemplateResolutionFailed()
 }
 
 // extractDirective digs the directive name out of an *attributes.ErrMissingSource

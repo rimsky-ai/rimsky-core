@@ -83,7 +83,7 @@ func postJSON(t *testing.T, h *scenario.Harness, path string, body map[string]an
 // rows; a well-formed create leaves exactly one.
 func instanceCountForTemplateE2E(t *testing.T, h *scenario.Harness, templateHash string) int {
 	t.Helper()
-	resp, err := http.Get(h.ControlBase + "/instances?template_hash=" + templateHash)
+	resp, err := http.Get(h.ControlBase + "/v1/instances?template_hash=" + templateHash)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode, "GET /instances must succeed")
@@ -175,7 +175,7 @@ func registerDeployStaticGateTemplate(t *testing.T, h *scenario.Harness, name st
 	tplID, _ := out["template_id"].(string)
 	require.NotEmpty(t, tplID, "register must return a template_id; body: %v", out)
 
-	deployStatus, deployOut := postJSON(t, h, "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, deployOut := postJSON(t, h, "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus, "deploy must succeed; body: %v", deployOut)
 	return tplID
 }
@@ -195,7 +195,7 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		// registration; instantiation is the gate that must catch it.
 		tplID := registerDeployStaticGateTemplate(t, h, "static-gate-bad-"+uuid.NewString(), -1)
 
-		status, out := postJSON(t, h, "/instances", map[string]any{
+		status, out := postJSON(t, h, "/v1/instances", map[string]any{
 			"template":     tplID,
 			"instance_key": "ck-bad-" + uuid.NewString(),
 		})
@@ -224,7 +224,7 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		// count:5 satisfies the executor schema's minimum:0.
 		tplID := registerDeployStaticGateTemplate(t, h, "static-gate-ok-"+uuid.NewString(), 5)
 
-		status, out := postJSON(t, h, "/instances", map[string]any{
+		status, out := postJSON(t, h, "/v1/instances", map[string]any{
 			"template":     tplID,
 			"instance_key": "ck-ok-" + uuid.NewString(),
 		})

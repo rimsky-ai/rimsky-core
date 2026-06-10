@@ -102,7 +102,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 
 	// (3) control-api GET /nodes/{id} must carry latest_attributes equal to
 	// the SECOND run's resolved bag (the GetLatestByNode value).
-	caBody := getJSONMap(t, h.ControlBase+"/nodes/"+w.ID.String())
+	caBody := getJSONMap(t, h.ControlBase+"/v1/nodes/"+w.ID.String())
 	caLatest, ok := caBody["latest_attributes"]
 	require.True(t, ok,
 		"GET /nodes/{id} must carry a latest_attributes key (the most-recent resolved bag)")
@@ -128,7 +128,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	require.Nil(t, latestAttrRow(h, pausedW.ID, h.GetMainRunScopeID(pausedIID)),
 		"never-executed node should have no node_attributes row")
 
-	caPaused := getJSONMap(t, h.ControlBase+"/nodes/"+pausedW.ID.String())
+	caPaused := getJSONMap(t, h.ControlBase+"/v1/nodes/"+pausedW.ID.String())
 	requireAbsentOrEmptyBag(t, caPaused["latest_attributes"],
 		"GET /nodes/{id} for a never-executed node must omit/empty latest_attributes")
 
@@ -153,7 +153,7 @@ func latestAttrRow(h *scenario.Harness, nodeID, runScopeID shared.UUID) *persist
 func adminInvalidateLatestAttr(t *testing.T, h *scenario.Harness, instanceID, nodeID shared.UUID) {
 	t.Helper()
 	resp, err := http.Post(
-		h.ControlBase+"/admin/instances/"+instanceID.String()+"/nodes/"+nodeID.String()+"/invalidate",
+		h.ControlBase+"/v1/admin/instances/"+instanceID.String()+"/nodes/"+nodeID.String()+"/invalidate",
 		"application/json", nil,
 	)
 	require.NoError(t, err)
@@ -170,7 +170,7 @@ func createPausedInstanceLatestAttr(t *testing.T, h *scenario.Harness, templateH
 		"instance_key": consumerKey,
 		"paused":       true,
 	})
-	resp, err := http.Post(h.ControlBase+"/instances", "application/json", bytes.NewReader(body))
+	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusCreated, resp.StatusCode)

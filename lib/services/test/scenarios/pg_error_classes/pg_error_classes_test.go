@@ -411,7 +411,7 @@ func seedSwapCollision(t *testing.T, pool *pgxpool.Pool, canonical string) {
 // template id.
 func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/templates", body)
+	status, raw := ep.PostJSON(t, "/v1/templates", body)
 	if status != http.StatusCreated {
 		t.Fatalf("POST /templates: %d %s", status, string(raw))
 	}
@@ -424,7 +424,7 @@ func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any
 	if resp.TemplateID == "" {
 		t.Fatalf("template_id empty: %s", string(raw))
 	}
-	deployStatus, deployRaw := ep.PostJSON(t, "/templates/"+resp.TemplateID+"/deploy", map[string]any{})
+	deployStatus, deployRaw := ep.PostJSON(t, "/v1/templates/"+resp.TemplateID+"/deploy", map[string]any{})
 	if deployStatus != http.StatusOK {
 		t.Fatalf("POST /templates/%s/deploy: %d %s", resp.TemplateID, deployStatus, string(deployRaw))
 	}
@@ -434,7 +434,7 @@ func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any
 // createInstance POSTs a new instance and returns its instance_id.
 func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
-	status, raw := ep.PostJSON(t, "/instances", map[string]any{
+	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     templateID,
 		"instance_key": instanceKey,
 		"params":       map[string]any{},
@@ -463,7 +463,7 @@ func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanc
 func requireEventKind(t *testing.T, ep harness.RimskyEndpoint, instanceID, kind string, deadline time.Duration, why string) {
 	t.Helper()
 	end := time.Now().Add(deadline)
-	path := fmt.Sprintf("/events?instance_id=%s&kind=%s", instanceID, kind)
+	path := fmt.Sprintf("/v1/events?instance_id=%s&kind=%s", instanceID, kind)
 	for time.Now().Before(end) {
 		status, raw := ep.GetJSON(t, path, "")
 		if status == http.StatusOK {

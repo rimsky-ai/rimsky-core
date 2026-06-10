@@ -112,7 +112,7 @@ func TestCascadeInvalidate(t *testing.T) {
 	require.Contains(t, bRow.Data, "b", "b.attributes.data should contain `b` from executor delta")
 
 	// Invalidate A; B and C should cascade-stale then rerun to fresh.
-	resp, err := http.Post(h.ControlBase+"/nodes/"+a.ID.String()+"/invalidate",
+	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader([]byte(`{}`)))
 	require.NoError(t, err)
 	_ = resp.Body.Close()

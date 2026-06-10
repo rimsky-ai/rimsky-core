@@ -146,7 +146,7 @@ func TestValidationPipeline_RejectsOnError(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-err-" + uuid.NewString())
-	status, out := vh.httpJSON(t, "POST", "/templates", body)
+	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Contains(t, out["error"], "validation pipeline")
 	errs, _ := out["validation_errors"].([]any)
@@ -172,7 +172,7 @@ func TestValidationPipeline_PassesOnWarningsOnly(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-warn-" + uuid.NewString())
-	status, out := vh.httpJSON(t, "POST", "/templates", body)
+	status, out := vh.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
 	require.NotEmpty(t, out["template_id"])
 }
@@ -193,7 +193,7 @@ func TestValidationPipeline_WarningsAsErrorsRejects(t *testing.T) {
 	t.Cleanup(teardown)
 
 	body := validTemplateBody("vp-waserrs-" + uuid.NewString())
-	status, out := vh.httpJSON(t, "POST", "/templates?warnings_as_errors=true", body)
+	status, out := vh.httpJSON(t, "POST", "/v1/templates?warnings_as_errors=true", body)
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Equal(t, true, out["warnings_as_errors"])
 }

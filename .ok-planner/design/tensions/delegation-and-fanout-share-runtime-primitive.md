@@ -39,7 +39,7 @@ Two emission sites (`applyTerminalCompleteSubgraphCaller`, `CreateFanOutChildren
 - Bug-fix duplication: defects in one path (e.g., the cascade bridge missing from `applyTerminalCompleteSubgraphExit` discovered during Phase F2, or the partition-RunScope-closure-on-aggregation-settlement work) need parallel fixes in the other.
 - Concept-doc duplication: `concept:delegation` and `concept:fan-out` re-state the same RunScope tree shape, the same closure-on-rendezvous invariant, the same parent-settlement cascade contract.
 - Mental-model cost: a new contributor learning rimsky encounters "delegation" and "fan-out" as two things to internalize when the run-side is one shape.
-- The just-landed RunScope-first reshape (per `spec:2026-05-22-fan-out-safety-scope-first-design`) makes the unification newly tractable — pre-RunScope, the two had different inline disambiguators on the node-run row and weren't structurally parallel. Now they are.
+- The RunScope-first structure makes the unification tractable — without RunScope, the two have different inline disambiguators on the node-run row and aren't structurally parallel. With it, they are.
 
 ## Resolution candidates (do NOT pick)
 
@@ -47,7 +47,3 @@ Two emission sites (`applyTerminalCompleteSubgraphCaller`, `CreateFanOutChildren
 - Introduce a unified dispatch-child / settle-child runtime primitive pair that both delegation and fan-out route through; the delegation carry-rule collapses into the settle-child path expressed as a verbatim-carry aggregation policy.
 - Keep `concept:delegation` and `concept:fan-out` but reframe both as referencing a shared cross-cutting concept; do the runtime unification without the concept-doc reshape.
 - Leave the duplication; accept the cost.
-
-## Notes
-
-- 2026-05-23 — Captured during walkthrough of divergences from the 2026-05-22 fan-out-safety-scope-first plan. The user observed: "a single sub-graph call should be a fan-out of one. may be an opportunity to reduce code paths so fan-out isn't a separate case. it's just triggered by a partition, but otherwise the subgraph machinery is the same." Sketch produced alongside this entry.

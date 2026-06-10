@@ -31,12 +31,12 @@ func TestInstanceCreate_FrameDeliveryMode_DefaultIsSerialQueue(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("inst-fdm-def-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 	})
@@ -47,7 +47,7 @@ func TestInstanceCreate_FrameDeliveryMode_DefaultIsSerialQueue(t *testing.T) {
 	// by the INSERT literal (COALESCE(?, 'serial_queue')) to 'serial_queue'
 	// — the new default per spec 2026-05-29 (one message per frame; coalesce
 	// is now the opt-in mode).
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, "serial_queue", out["frame_delivery_mode"])
 
@@ -71,12 +71,12 @@ func TestInstanceCreate_FrameDeliveryMode_SerialQueueRoundTrips(t *testing.T) {
 	ctx := context.Background()
 
 	tplBody := validTemplateBody("inst-fdm-sq-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        "ck-" + uuid.NewString(),
 		"frame_delivery_mode": "serial_queue",
@@ -84,7 +84,7 @@ func TestInstanceCreate_FrameDeliveryMode_SerialQueueRoundTrips(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, out)
 	instID, _ := out["instance_id"].(string)
 
-	status, out = h.httpJSON(t, "GET", "/instances/"+instID, nil)
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, "serial_queue", out["frame_delivery_mode"])
 
@@ -106,12 +106,12 @@ func TestInstanceCreate_FrameDeliveryMode_RejectsUnknownValue(t *testing.T) {
 	t.Cleanup(teardown)
 
 	tplBody := validTemplateBody("inst-fdm-bad-" + uuid.NewString())
-	_, out := h.httpJSON(t, "POST", "/templates", tplBody)
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	deployStatus, _ := h.httpJSON(t, "POST", "/templates/"+tplID+"/deploy", map[string]any{})
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	status, out := h.httpJSON(t, "POST", "/instances", map[string]any{
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        "ck-" + uuid.NewString(),
 		"frame_delivery_mode": "wishful-thinking",

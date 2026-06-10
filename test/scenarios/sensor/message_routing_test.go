@@ -48,9 +48,9 @@ func (f *fakeRimsky) handler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	parts := splitNonEmpty(r.URL.Path, '/')
 	var instanceID string
-	// path: /instances/<id>/messages
-	if len(parts) >= 3 && parts[0] == "instances" && parts[2] == "messages" {
-		instanceID = parts[1]
+	// path: /v1/instances/<id>/messages
+	if len(parts) >= 4 && parts[0] == "v1" && parts[1] == "instances" && parts[3] == "messages" {
+		instanceID = parts[2]
 	}
 	var decoded map[string]any
 	_ = json.Unmarshal(body, &decoded)
@@ -97,7 +97,7 @@ func TestMessageRouting_PublisherPostsEnvelopeToInstanceMessages(t *testing.T) {
 	}
 	body, _ := json.Marshal(envelope)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
-		srv.URL+"/instances/scenario-instance/messages", bytes.NewReader(body))
+		srv.URL+"/v1/instances/scenario-instance/messages", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}

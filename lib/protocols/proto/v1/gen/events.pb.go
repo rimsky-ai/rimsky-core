@@ -26,6 +26,207 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// OperationalKind enumerates the canonical set of operational event-log
+// kind discriminators rimsky emits today. Signal-class kinds (the
+// `terminal/...`, `transient/...`, `attribute/...`, `event/...`,
+// `message/...` taxonomy validated at template registration) are NOT
+// listed here — those carry the parsed signal type-path as the kind
+// value and live in the signal taxonomy.
+//
+// See decision:event-log-kind-enum: rimsky's app logic consumes typed
+// values exclusively (this enum for operational kinds; the parsed
+// signal type-path for signal-class kinds), never raw strings. The
+// persistence layer marshals typed → string at write and string →
+// typed at read; an unknown string at the unmarshal boundary is a
+// defensive error.
+//
+// Adding a new operational kind = adding a value here and regenerating
+// Go bindings (no schema migration; the storage column stays TEXT).
+type OperationalKind int32
+
+const (
+	OperationalKind_OPERATIONAL_KIND_UNSPECIFIED OperationalKind = 0
+	// auth.* — auth-audit slice surfaced by GET /audit.
+	OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED OperationalKind = 1
+	OperationalKind_OPERATIONAL_KIND_AUTH_ACCESS_DENIED    OperationalKind = 2
+	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_CREATED      OperationalKind = 3
+	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_REVOKED      OperationalKind = 4
+	OperationalKind_OPERATIONAL_KIND_AUTH_KEY_ROTATED      OperationalKind = 5
+	// Node-run lifecycle and supervisor decisions.
+	OperationalKind_OPERATIONAL_KIND_STATE_TRANSITION    OperationalKind = 10
+	OperationalKind_OPERATIONAL_KIND_WORK_STARTED        OperationalKind = 11
+	OperationalKind_OPERATIONAL_KIND_WORK_COMPLETED      OperationalKind = 12
+	OperationalKind_OPERATIONAL_KIND_WORK_REJECTED       OperationalKind = 13
+	OperationalKind_OPERATIONAL_KIND_HEARTBEAT_LOST      OperationalKind = 14
+	OperationalKind_OPERATIONAL_KIND_NO_OP_COMMIT        OperationalKind = 15
+	OperationalKind_OPERATIONAL_KIND_OPERATOR_OVERRIDE   OperationalKind = 16
+	OperationalKind_OPERATIONAL_KIND_UNRESOLVED_EXECUTOR OperationalKind = 17
+	OperationalKind_OPERATIONAL_KIND_INSTANCE_TERMINATED OperationalKind = 18
+	OperationalKind_OPERATIONAL_KIND_ERROR               OperationalKind = 19
+	// Lock-holder lifecycle.
+	OperationalKind_OPERATIONAL_KIND_LOCK_ACQUIRED      OperationalKind = 20
+	OperationalKind_OPERATIONAL_KIND_LOCK_RELEASED      OperationalKind = 21
+	OperationalKind_OPERATIONAL_KIND_LOCK_ORPHAN_REAPED OperationalKind = 22
+	// Claim lifecycle.
+	OperationalKind_OPERATIONAL_KIND_CLAIM_ACQUIRED           OperationalKind = 30
+	OperationalKind_OPERATIONAL_KIND_CLAIM_HELD               OperationalKind = 31
+	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLVED           OperationalKind = 32
+	OperationalKind_OPERATIONAL_KIND_ORPHANED_CLAIM_RELEASED  OperationalKind = 33
+	OperationalKind_OPERATIONAL_KIND_ORPHANED_CLAIM_LOST_RACE OperationalKind = 34
+	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_COMMIT  OperationalKind = 35
+	OperationalKind_OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON OperationalKind = 36
+	// Attribute-substitution + validation.
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED       OperationalKind = 40
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_COMMITTED         OperationalKind = 41
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED OperationalKind = 42
+	OperationalKind_OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED     OperationalKind = 43
+	OperationalKind_OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED   OperationalKind = 44
+	OperationalKind_OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED   OperationalKind = 45
+	OperationalKind_OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE  OperationalKind = 46
+	// Breakpoint debugger.
+	OperationalKind_OPERATIONAL_KIND_BREAKPOINT_HIT OperationalKind = 50
+	// Message bus (operational-side audit of message activity, distinct
+	// from the signal-class `message/...` topology).
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_EMITTED  OperationalKind = 60
+	OperationalKind_OPERATIONAL_KIND_MESSAGE_RECEIVED OperationalKind = 61
+	// Fan-out + sub-claim + sub-graph dispatch.
+	OperationalKind_OPERATIONAL_KIND_FAN_OUT_DISPATCHED              OperationalKind = 70
+	OperationalKind_OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED         OperationalKind = 71
+	OperationalKind_OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE        OperationalKind = 72
+	OperationalKind_OPERATIONAL_KIND_SUBCLAIM_ACQUIRED               OperationalKind = 73
+	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED OperationalKind = 74
+	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_DISPATCHED             OperationalKind = 75
+	OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY             OperationalKind = 76
+	// Parked-node lifecycle.
+	OperationalKind_OPERATIONAL_KIND_PARK_TIMEOUT          OperationalKind = 80
+	OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED OperationalKind = 81
+)
+
+// Enum value maps for OperationalKind.
+var (
+	OperationalKind_name = map[int32]string{
+		0:  "OPERATIONAL_KIND_UNSPECIFIED",
+		1:  "OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED",
+		2:  "OPERATIONAL_KIND_AUTH_ACCESS_DENIED",
+		3:  "OPERATIONAL_KIND_AUTH_KEY_CREATED",
+		4:  "OPERATIONAL_KIND_AUTH_KEY_REVOKED",
+		5:  "OPERATIONAL_KIND_AUTH_KEY_ROTATED",
+		10: "OPERATIONAL_KIND_STATE_TRANSITION",
+		11: "OPERATIONAL_KIND_WORK_STARTED",
+		12: "OPERATIONAL_KIND_WORK_COMPLETED",
+		13: "OPERATIONAL_KIND_WORK_REJECTED",
+		14: "OPERATIONAL_KIND_HEARTBEAT_LOST",
+		15: "OPERATIONAL_KIND_NO_OP_COMMIT",
+		16: "OPERATIONAL_KIND_OPERATOR_OVERRIDE",
+		17: "OPERATIONAL_KIND_UNRESOLVED_EXECUTOR",
+		18: "OPERATIONAL_KIND_INSTANCE_TERMINATED",
+		19: "OPERATIONAL_KIND_ERROR",
+		20: "OPERATIONAL_KIND_LOCK_ACQUIRED",
+		21: "OPERATIONAL_KIND_LOCK_RELEASED",
+		22: "OPERATIONAL_KIND_LOCK_ORPHAN_REAPED",
+		30: "OPERATIONAL_KIND_CLAIM_ACQUIRED",
+		31: "OPERATIONAL_KIND_CLAIM_HELD",
+		32: "OPERATIONAL_KIND_CLAIM_RESOLVED",
+		33: "OPERATIONAL_KIND_ORPHANED_CLAIM_RELEASED",
+		34: "OPERATIONAL_KIND_ORPHANED_CLAIM_LOST_RACE",
+		35: "OPERATIONAL_KIND_CLAIM_RESOLUTION_COMMIT",
+		36: "OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON",
+		40: "OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED",
+		41: "OPERATIONAL_KIND_ATTRIBUTES_COMMITTED",
+		42: "OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED",
+		43: "OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED",
+		44: "OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED",
+		45: "OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED",
+		46: "OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE",
+		50: "OPERATIONAL_KIND_BREAKPOINT_HIT",
+		60: "OPERATIONAL_KIND_MESSAGE_EMITTED",
+		61: "OPERATIONAL_KIND_MESSAGE_RECEIVED",
+		70: "OPERATIONAL_KIND_FAN_OUT_DISPATCHED",
+		71: "OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED",
+		72: "OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE",
+		73: "OPERATIONAL_KIND_SUBCLAIM_ACQUIRED",
+		74: "OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED",
+		75: "OPERATIONAL_KIND_SUBGRAPH_DISPATCHED",
+		76: "OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY",
+		80: "OPERATIONAL_KIND_PARK_TIMEOUT",
+		81: "OPERATIONAL_KIND_PARKED_RESUME_STARTED",
+	}
+	OperationalKind_value = map[string]int32{
+		"OPERATIONAL_KIND_UNSPECIFIED":                     0,
+		"OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED":           1,
+		"OPERATIONAL_KIND_AUTH_ACCESS_DENIED":              2,
+		"OPERATIONAL_KIND_AUTH_KEY_CREATED":                3,
+		"OPERATIONAL_KIND_AUTH_KEY_REVOKED":                4,
+		"OPERATIONAL_KIND_AUTH_KEY_ROTATED":                5,
+		"OPERATIONAL_KIND_STATE_TRANSITION":                10,
+		"OPERATIONAL_KIND_WORK_STARTED":                    11,
+		"OPERATIONAL_KIND_WORK_COMPLETED":                  12,
+		"OPERATIONAL_KIND_WORK_REJECTED":                   13,
+		"OPERATIONAL_KIND_HEARTBEAT_LOST":                  14,
+		"OPERATIONAL_KIND_NO_OP_COMMIT":                    15,
+		"OPERATIONAL_KIND_OPERATOR_OVERRIDE":               16,
+		"OPERATIONAL_KIND_UNRESOLVED_EXECUTOR":             17,
+		"OPERATIONAL_KIND_INSTANCE_TERMINATED":             18,
+		"OPERATIONAL_KIND_ERROR":                           19,
+		"OPERATIONAL_KIND_LOCK_ACQUIRED":                   20,
+		"OPERATIONAL_KIND_LOCK_RELEASED":                   21,
+		"OPERATIONAL_KIND_LOCK_ORPHAN_REAPED":              22,
+		"OPERATIONAL_KIND_CLAIM_ACQUIRED":                  30,
+		"OPERATIONAL_KIND_CLAIM_HELD":                      31,
+		"OPERATIONAL_KIND_CLAIM_RESOLVED":                  32,
+		"OPERATIONAL_KIND_ORPHANED_CLAIM_RELEASED":         33,
+		"OPERATIONAL_KIND_ORPHANED_CLAIM_LOST_RACE":        34,
+		"OPERATIONAL_KIND_CLAIM_RESOLUTION_COMMIT":         35,
+		"OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON":        36,
+		"OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED":          40,
+		"OPERATIONAL_KIND_ATTRIBUTES_COMMITTED":            41,
+		"OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED":    42,
+		"OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED":        43,
+		"OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED":      44,
+		"OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED":      45,
+		"OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE":     46,
+		"OPERATIONAL_KIND_BREAKPOINT_HIT":                  50,
+		"OPERATIONAL_KIND_MESSAGE_EMITTED":                 60,
+		"OPERATIONAL_KIND_MESSAGE_RECEIVED":                61,
+		"OPERATIONAL_KIND_FAN_OUT_DISPATCHED":              70,
+		"OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED":         71,
+		"OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE":        72,
+		"OPERATIONAL_KIND_SUBCLAIM_ACQUIRED":               73,
+		"OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED": 74,
+		"OPERATIONAL_KIND_SUBGRAPH_DISPATCHED":             75,
+		"OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY":             76,
+		"OPERATIONAL_KIND_PARK_TIMEOUT":                    80,
+		"OPERATIONAL_KIND_PARKED_RESUME_STARTED":           81,
+	}
+)
+
+func (x OperationalKind) Enum() *OperationalKind {
+	p := new(OperationalKind)
+	*p = x
+	return p
+}
+
+func (x OperationalKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OperationalKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_events_proto_enumTypes[0].Descriptor()
+}
+
+func (OperationalKind) Type() protoreflect.EnumType {
+	return &file_events_proto_enumTypes[0]
+}
+
+func (x OperationalKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OperationalKind.Descriptor instead.
+func (OperationalKind) EnumDescriptor() ([]byte, []int) {
+	return file_events_proto_rawDescGZIP(), []int{0}
+}
+
 // Event is one row of the rimsky_events log with a typed payload. Consumers
 // who want type-checked event streams may use this shape; rimsky's own
 // internals use map[string]any + JSONB and do not marshal through this proto.
@@ -33,6 +234,12 @@ const (
 // See spec §9.8 of docs/history/2026-04-25-stores-redesign-design.md for the
 // full event-kind catalogue. When new kinds are added to the log, they should
 // be declared here.
+//
+// The wire `kind` field is `string` for backward compatibility on the wire
+// (rimsky's typed-payload oneof is unchanged); the typed `OperationalKind`
+// enum is what app logic consumes internally, with marshaling to/from the
+// wire string happening at the persistence boundary. See
+// decision:event-log-kind-enum.
 type Event struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	Id         int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -2172,7 +2379,54 @@ const file_events_proto_rawDesc = "" +
 	"\tdirective\x18\x01 \x01(\tR\tdirective\x12\x12\n" +
 	"\x04site\x18\x02 \x01(\tR\x04site\x12\x14\n" +
 	"\x05field\x18\x03 \x01(\tR\x05field\x12\x16\n" +
-	"\x06reason\x18\x04 \x01(\tR\x06reasonBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
+	"\x06reason\x18\x04 \x01(\tR\x06reason*\xcd\x0e\n" +
+	"\x0fOperationalKind\x12 \n" +
+	"\x1cOPERATIONAL_KIND_UNSPECIFIED\x10\x00\x12*\n" +
+	"&OPERATIONAL_KIND_AUTH_ACCESS_ATTEMPTED\x10\x01\x12'\n" +
+	"#OPERATIONAL_KIND_AUTH_ACCESS_DENIED\x10\x02\x12%\n" +
+	"!OPERATIONAL_KIND_AUTH_KEY_CREATED\x10\x03\x12%\n" +
+	"!OPERATIONAL_KIND_AUTH_KEY_REVOKED\x10\x04\x12%\n" +
+	"!OPERATIONAL_KIND_AUTH_KEY_ROTATED\x10\x05\x12%\n" +
+	"!OPERATIONAL_KIND_STATE_TRANSITION\x10\n" +
+	"\x12!\n" +
+	"\x1dOPERATIONAL_KIND_WORK_STARTED\x10\v\x12#\n" +
+	"\x1fOPERATIONAL_KIND_WORK_COMPLETED\x10\f\x12\"\n" +
+	"\x1eOPERATIONAL_KIND_WORK_REJECTED\x10\r\x12#\n" +
+	"\x1fOPERATIONAL_KIND_HEARTBEAT_LOST\x10\x0e\x12!\n" +
+	"\x1dOPERATIONAL_KIND_NO_OP_COMMIT\x10\x0f\x12&\n" +
+	"\"OPERATIONAL_KIND_OPERATOR_OVERRIDE\x10\x10\x12(\n" +
+	"$OPERATIONAL_KIND_UNRESOLVED_EXECUTOR\x10\x11\x12(\n" +
+	"$OPERATIONAL_KIND_INSTANCE_TERMINATED\x10\x12\x12\x1a\n" +
+	"\x16OPERATIONAL_KIND_ERROR\x10\x13\x12\"\n" +
+	"\x1eOPERATIONAL_KIND_LOCK_ACQUIRED\x10\x14\x12\"\n" +
+	"\x1eOPERATIONAL_KIND_LOCK_RELEASED\x10\x15\x12'\n" +
+	"#OPERATIONAL_KIND_LOCK_ORPHAN_REAPED\x10\x16\x12#\n" +
+	"\x1fOPERATIONAL_KIND_CLAIM_ACQUIRED\x10\x1e\x12\x1f\n" +
+	"\x1bOPERATIONAL_KIND_CLAIM_HELD\x10\x1f\x12#\n" +
+	"\x1fOPERATIONAL_KIND_CLAIM_RESOLVED\x10 \x12,\n" +
+	"(OPERATIONAL_KIND_ORPHANED_CLAIM_RELEASED\x10!\x12-\n" +
+	")OPERATIONAL_KIND_ORPHANED_CLAIM_LOST_RACE\x10\"\x12,\n" +
+	"(OPERATIONAL_KIND_CLAIM_RESOLUTION_COMMIT\x10#\x12-\n" +
+	")OPERATIONAL_KIND_CLAIM_RESOLUTION_ABANDON\x10$\x12+\n" +
+	"'OPERATIONAL_KIND_ATTRIBUTES_SUBSTITUTED\x10(\x12)\n" +
+	"%OPERATIONAL_KIND_ATTRIBUTES_COMMITTED\x10)\x121\n" +
+	"-OPERATIONAL_KIND_ATTRIBUTES_VALIDATION_FAILED\x10*\x12-\n" +
+	")OPERATIONAL_KIND_ATTRIBUTES_SCHEMA_FAILED\x10+\x12/\n" +
+	"+OPERATIONAL_KIND_TEMPLATE_RESOLUTION_FAILED\x10,\x12/\n" +
+	"+OPERATIONAL_KIND_TEMPLATE_VALIDATION_FAILED\x10-\x120\n" +
+	",OPERATIONAL_KIND_EXECUTOR_SCHEMA_UNAVAILABLE\x10.\x12#\n" +
+	"\x1fOPERATIONAL_KIND_BREAKPOINT_HIT\x102\x12$\n" +
+	" OPERATIONAL_KIND_MESSAGE_EMITTED\x10<\x12%\n" +
+	"!OPERATIONAL_KIND_MESSAGE_RECEIVED\x10=\x12'\n" +
+	"#OPERATIONAL_KIND_FAN_OUT_DISPATCHED\x10F\x12,\n" +
+	"(OPERATIONAL_KIND_FANOUT_CHILDREN_CREATED\x10G\x12-\n" +
+	")OPERATIONAL_KIND_SUBCLAIM_BEGIN_CANDIDATE\x10H\x12&\n" +
+	"\"OPERATIONAL_KIND_SUBCLAIM_ACQUIRED\x10I\x124\n" +
+	"0OPERATIONAL_KIND_SUBGRAPH_INTERNAL_CASCADE_FIRED\x10J\x12(\n" +
+	"$OPERATIONAL_KIND_SUBGRAPH_DISPATCHED\x10K\x12(\n" +
+	"$OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY\x10L\x12!\n" +
+	"\x1dOPERATIONAL_KIND_PARK_TIMEOUT\x10P\x12*\n" +
+	"&OPERATIONAL_KIND_PARKED_RESUME_STARTED\x10QBCZAgithub.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen;genv1b\x06proto3"
 
 var (
 	file_events_proto_rawDescOnce sync.Once
@@ -2186,70 +2440,72 @@ func file_events_proto_rawDescGZIP() []byte {
 	return file_events_proto_rawDescData
 }
 
+var file_events_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_events_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_events_proto_goTypes = []any{
-	(*Event)(nil),                             // 0: rimsky.v1.Event
-	(*MessageEmittedPayload)(nil),             // 1: rimsky.v1.MessageEmittedPayload
-	(*MessageReceivedPayload)(nil),            // 2: rimsky.v1.MessageReceivedPayload
-	(*StateTransitionPayload)(nil),            // 3: rimsky.v1.StateTransitionPayload
-	(*ErrorPayload)(nil),                      // 4: rimsky.v1.ErrorPayload
-	(*WorkStartedPayload)(nil),                // 5: rimsky.v1.WorkStartedPayload
-	(*WorkCompletedPayload)(nil),              // 6: rimsky.v1.WorkCompletedPayload
-	(*NoOpCommitPayload)(nil),                 // 7: rimsky.v1.NoOpCommitPayload
-	(*HeartbeatLostPayload)(nil),              // 8: rimsky.v1.HeartbeatLostPayload
-	(*OperatorOverridePayload)(nil),           // 9: rimsky.v1.OperatorOverridePayload
-	(*OrphanedClaimReleasedPayload)(nil),      // 10: rimsky.v1.OrphanedClaimReleasedPayload
-	(*OrphanedClaimLostRacePayload)(nil),      // 11: rimsky.v1.OrphanedClaimLostRacePayload
-	(*WorkRejectedPayload)(nil),               // 12: rimsky.v1.WorkRejectedPayload
-	(*UnresolvedExecutorPayload)(nil),         // 13: rimsky.v1.UnresolvedExecutorPayload
-	(*LockAcquiredPayload)(nil),               // 14: rimsky.v1.LockAcquiredPayload
-	(*LockReleasedPayload)(nil),               // 15: rimsky.v1.LockReleasedPayload
-	(*LockOrphanReapedPayload)(nil),           // 16: rimsky.v1.LockOrphanReapedPayload
-	(*AttributesSubstitutedPayload)(nil),      // 17: rimsky.v1.AttributesSubstitutedPayload
-	(*AttributesCommittedPayload)(nil),        // 18: rimsky.v1.AttributesCommittedPayload
-	(*AttributesValidationFailedPayload)(nil), // 19: rimsky.v1.AttributesValidationFailedPayload
-	(*ClaimAcquiredPayload)(nil),              // 20: rimsky.v1.ClaimAcquiredPayload
-	(*ClaimHeldPayload)(nil),                  // 21: rimsky.v1.ClaimHeldPayload
-	(*ClaimResolvedPayload)(nil),              // 22: rimsky.v1.ClaimResolvedPayload
-	(*TemplateResolutionFailedPayload)(nil),   // 23: rimsky.v1.TemplateResolutionFailedPayload
-	(*timestamppb.Timestamp)(nil),             // 24: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),                   // 25: google.protobuf.Struct
+	(OperationalKind)(0),                      // 0: rimsky.v1.OperationalKind
+	(*Event)(nil),                             // 1: rimsky.v1.Event
+	(*MessageEmittedPayload)(nil),             // 2: rimsky.v1.MessageEmittedPayload
+	(*MessageReceivedPayload)(nil),            // 3: rimsky.v1.MessageReceivedPayload
+	(*StateTransitionPayload)(nil),            // 4: rimsky.v1.StateTransitionPayload
+	(*ErrorPayload)(nil),                      // 5: rimsky.v1.ErrorPayload
+	(*WorkStartedPayload)(nil),                // 6: rimsky.v1.WorkStartedPayload
+	(*WorkCompletedPayload)(nil),              // 7: rimsky.v1.WorkCompletedPayload
+	(*NoOpCommitPayload)(nil),                 // 8: rimsky.v1.NoOpCommitPayload
+	(*HeartbeatLostPayload)(nil),              // 9: rimsky.v1.HeartbeatLostPayload
+	(*OperatorOverridePayload)(nil),           // 10: rimsky.v1.OperatorOverridePayload
+	(*OrphanedClaimReleasedPayload)(nil),      // 11: rimsky.v1.OrphanedClaimReleasedPayload
+	(*OrphanedClaimLostRacePayload)(nil),      // 12: rimsky.v1.OrphanedClaimLostRacePayload
+	(*WorkRejectedPayload)(nil),               // 13: rimsky.v1.WorkRejectedPayload
+	(*UnresolvedExecutorPayload)(nil),         // 14: rimsky.v1.UnresolvedExecutorPayload
+	(*LockAcquiredPayload)(nil),               // 15: rimsky.v1.LockAcquiredPayload
+	(*LockReleasedPayload)(nil),               // 16: rimsky.v1.LockReleasedPayload
+	(*LockOrphanReapedPayload)(nil),           // 17: rimsky.v1.LockOrphanReapedPayload
+	(*AttributesSubstitutedPayload)(nil),      // 18: rimsky.v1.AttributesSubstitutedPayload
+	(*AttributesCommittedPayload)(nil),        // 19: rimsky.v1.AttributesCommittedPayload
+	(*AttributesValidationFailedPayload)(nil), // 20: rimsky.v1.AttributesValidationFailedPayload
+	(*ClaimAcquiredPayload)(nil),              // 21: rimsky.v1.ClaimAcquiredPayload
+	(*ClaimHeldPayload)(nil),                  // 22: rimsky.v1.ClaimHeldPayload
+	(*ClaimResolvedPayload)(nil),              // 23: rimsky.v1.ClaimResolvedPayload
+	(*TemplateResolutionFailedPayload)(nil),   // 24: rimsky.v1.TemplateResolutionFailedPayload
+	(*timestamppb.Timestamp)(nil),             // 25: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),                   // 26: google.protobuf.Struct
 }
 var file_events_proto_depIdxs = []int32{
-	24, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
-	1,  // 1: rimsky.v1.Event.message_emitted:type_name -> rimsky.v1.MessageEmittedPayload
-	2,  // 2: rimsky.v1.Event.message_received:type_name -> rimsky.v1.MessageReceivedPayload
-	3,  // 3: rimsky.v1.Event.state_transition:type_name -> rimsky.v1.StateTransitionPayload
-	4,  // 4: rimsky.v1.Event.error:type_name -> rimsky.v1.ErrorPayload
-	5,  // 5: rimsky.v1.Event.work_started:type_name -> rimsky.v1.WorkStartedPayload
-	6,  // 6: rimsky.v1.Event.work_completed:type_name -> rimsky.v1.WorkCompletedPayload
-	7,  // 7: rimsky.v1.Event.no_op_commit:type_name -> rimsky.v1.NoOpCommitPayload
-	8,  // 8: rimsky.v1.Event.heartbeat_lost:type_name -> rimsky.v1.HeartbeatLostPayload
-	9,  // 9: rimsky.v1.Event.operator_override:type_name -> rimsky.v1.OperatorOverridePayload
-	10, // 10: rimsky.v1.Event.orphaned_claim_released:type_name -> rimsky.v1.OrphanedClaimReleasedPayload
-	11, // 11: rimsky.v1.Event.orphaned_claim_lost_race:type_name -> rimsky.v1.OrphanedClaimLostRacePayload
-	12, // 12: rimsky.v1.Event.work_rejected:type_name -> rimsky.v1.WorkRejectedPayload
-	13, // 13: rimsky.v1.Event.unresolved_executor:type_name -> rimsky.v1.UnresolvedExecutorPayload
-	14, // 14: rimsky.v1.Event.lock_acquired:type_name -> rimsky.v1.LockAcquiredPayload
-	15, // 15: rimsky.v1.Event.lock_released:type_name -> rimsky.v1.LockReleasedPayload
-	16, // 16: rimsky.v1.Event.lock_orphan_reaped:type_name -> rimsky.v1.LockOrphanReapedPayload
-	17, // 17: rimsky.v1.Event.attributes_substituted:type_name -> rimsky.v1.AttributesSubstitutedPayload
-	18, // 18: rimsky.v1.Event.attributes_committed:type_name -> rimsky.v1.AttributesCommittedPayload
-	19, // 19: rimsky.v1.Event.attributes_validation_failed:type_name -> rimsky.v1.AttributesValidationFailedPayload
-	20, // 20: rimsky.v1.Event.claim_acquired:type_name -> rimsky.v1.ClaimAcquiredPayload
-	21, // 21: rimsky.v1.Event.claim_held:type_name -> rimsky.v1.ClaimHeldPayload
-	22, // 22: rimsky.v1.Event.claim_resolved:type_name -> rimsky.v1.ClaimResolvedPayload
-	23, // 23: rimsky.v1.Event.template_resolution_failed:type_name -> rimsky.v1.TemplateResolutionFailedPayload
-	25, // 24: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
-	25, // 25: rimsky.v1.MessageEmittedPayload.params:type_name -> google.protobuf.Struct
-	25, // 26: rimsky.v1.MessageReceivedPayload.params:type_name -> google.protobuf.Struct
-	25, // 27: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
-	24, // 28: rimsky.v1.HeartbeatLostPayload.last_heartbeat_at:type_name -> google.protobuf.Timestamp
-	24, // 29: rimsky.v1.OrphanedClaimReleasedPayload.claimed_at:type_name -> google.protobuf.Timestamp
-	25, // 30: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
-	25, // 31: rimsky.v1.LockAcquiredPayload.scope_data:type_name -> google.protobuf.Struct
-	24, // 32: rimsky.v1.LockOrphanReapedPayload.expired_at:type_name -> google.protobuf.Timestamp
-	25, // 33: rimsky.v1.AttributesValidationFailedPayload.errors:type_name -> google.protobuf.Struct
+	25, // 0: rimsky.v1.Event.occurred_at:type_name -> google.protobuf.Timestamp
+	2,  // 1: rimsky.v1.Event.message_emitted:type_name -> rimsky.v1.MessageEmittedPayload
+	3,  // 2: rimsky.v1.Event.message_received:type_name -> rimsky.v1.MessageReceivedPayload
+	4,  // 3: rimsky.v1.Event.state_transition:type_name -> rimsky.v1.StateTransitionPayload
+	5,  // 4: rimsky.v1.Event.error:type_name -> rimsky.v1.ErrorPayload
+	6,  // 5: rimsky.v1.Event.work_started:type_name -> rimsky.v1.WorkStartedPayload
+	7,  // 6: rimsky.v1.Event.work_completed:type_name -> rimsky.v1.WorkCompletedPayload
+	8,  // 7: rimsky.v1.Event.no_op_commit:type_name -> rimsky.v1.NoOpCommitPayload
+	9,  // 8: rimsky.v1.Event.heartbeat_lost:type_name -> rimsky.v1.HeartbeatLostPayload
+	10, // 9: rimsky.v1.Event.operator_override:type_name -> rimsky.v1.OperatorOverridePayload
+	11, // 10: rimsky.v1.Event.orphaned_claim_released:type_name -> rimsky.v1.OrphanedClaimReleasedPayload
+	12, // 11: rimsky.v1.Event.orphaned_claim_lost_race:type_name -> rimsky.v1.OrphanedClaimLostRacePayload
+	13, // 12: rimsky.v1.Event.work_rejected:type_name -> rimsky.v1.WorkRejectedPayload
+	14, // 13: rimsky.v1.Event.unresolved_executor:type_name -> rimsky.v1.UnresolvedExecutorPayload
+	15, // 14: rimsky.v1.Event.lock_acquired:type_name -> rimsky.v1.LockAcquiredPayload
+	16, // 15: rimsky.v1.Event.lock_released:type_name -> rimsky.v1.LockReleasedPayload
+	17, // 16: rimsky.v1.Event.lock_orphan_reaped:type_name -> rimsky.v1.LockOrphanReapedPayload
+	18, // 17: rimsky.v1.Event.attributes_substituted:type_name -> rimsky.v1.AttributesSubstitutedPayload
+	19, // 18: rimsky.v1.Event.attributes_committed:type_name -> rimsky.v1.AttributesCommittedPayload
+	20, // 19: rimsky.v1.Event.attributes_validation_failed:type_name -> rimsky.v1.AttributesValidationFailedPayload
+	21, // 20: rimsky.v1.Event.claim_acquired:type_name -> rimsky.v1.ClaimAcquiredPayload
+	22, // 21: rimsky.v1.Event.claim_held:type_name -> rimsky.v1.ClaimHeldPayload
+	23, // 22: rimsky.v1.Event.claim_resolved:type_name -> rimsky.v1.ClaimResolvedPayload
+	24, // 23: rimsky.v1.Event.template_resolution_failed:type_name -> rimsky.v1.TemplateResolutionFailedPayload
+	26, // 24: rimsky.v1.Event.payload_raw:type_name -> google.protobuf.Struct
+	26, // 25: rimsky.v1.MessageEmittedPayload.params:type_name -> google.protobuf.Struct
+	26, // 26: rimsky.v1.MessageReceivedPayload.params:type_name -> google.protobuf.Struct
+	26, // 27: rimsky.v1.ErrorPayload.details:type_name -> google.protobuf.Struct
+	25, // 28: rimsky.v1.HeartbeatLostPayload.last_heartbeat_at:type_name -> google.protobuf.Timestamp
+	25, // 29: rimsky.v1.OrphanedClaimReleasedPayload.claimed_at:type_name -> google.protobuf.Timestamp
+	26, // 30: rimsky.v1.WorkRejectedPayload.errors:type_name -> google.protobuf.Struct
+	26, // 31: rimsky.v1.LockAcquiredPayload.scope_data:type_name -> google.protobuf.Struct
+	25, // 32: rimsky.v1.LockOrphanReapedPayload.expired_at:type_name -> google.protobuf.Timestamp
+	26, // 33: rimsky.v1.AttributesValidationFailedPayload.errors:type_name -> google.protobuf.Struct
 	34, // [34:34] is the sub-list for method output_type
 	34, // [34:34] is the sub-list for method input_type
 	34, // [34:34] is the sub-list for extension type_name
@@ -2292,13 +2548,14 @@ func file_events_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_events_proto_rawDesc), len(file_events_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      1,
 			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_events_proto_goTypes,
 		DependencyIndexes: file_events_proto_depIdxs,
+		EnumInfos:         file_events_proto_enumTypes,
 		MessageInfos:      file_events_proto_msgTypes,
 	}.Build()
 	File_events_proto = out.File

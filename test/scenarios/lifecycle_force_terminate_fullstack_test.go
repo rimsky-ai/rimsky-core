@@ -77,7 +77,7 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 
 	// Force-terminate through the live control-api. Anonymous-mode gates
 	// pass (no api-key), per existing scenarios (cascade_invalidate_test.go).
-	resp, err := http.Post(h.ControlBase+"/instances/"+iid.String()+"/terminate",
+	resp, err := http.Post(h.ControlBase+"/v1/instances/"+iid.String()+"/terminate",
 		"application/json", nil)
 	require.NoError(t, err)
 	_ = resp.Body.Close()
@@ -122,7 +122,7 @@ func TestForceTerminateAwaitAsyncStuckFullStack(t *testing.T) {
 	// (e) A subsequent DELETE succeeds now that the terminal guard passes,
 	// returning 200 {"deleted":true}.
 	delReq, err := http.NewRequest(http.MethodDelete,
-		h.ControlBase+"/instances/"+iid.String(), nil)
+		h.ControlBase+"/v1/instances/"+iid.String(), nil)
 	require.NoError(t, err)
 	delResp, err := http.DefaultClient.Do(delReq)
 	require.NoError(t, err)

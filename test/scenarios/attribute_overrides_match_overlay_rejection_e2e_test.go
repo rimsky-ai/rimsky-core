@@ -102,7 +102,7 @@ func TestAttributeOverridesMatchOverlayRejection_OrdinalAndUnknownKeys(t *testin
 				},
 			})
 			require.NoError(t, err)
-			resp, err := http.Post(h.ControlBase+"/instances", "application/json", bytes.NewReader(body))
+			resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytes.NewReader(body))
 			require.NoError(t, err)
 			defer resp.Body.Close()
 			respBody, _ := io.ReadAll(resp.Body)

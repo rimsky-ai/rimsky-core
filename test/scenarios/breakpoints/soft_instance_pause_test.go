@@ -97,7 +97,7 @@ func TestSoftInstancePause(t *testing.T) {
 // cascade_invalidate_test.go.
 func invalidateNode(t *testing.T, h *scenario.Harness, nodeID foundationshared.UUID) {
 	t.Helper()
-	url := h.ControlBase + "/nodes/" + nodeID.String() + "/invalidate"
+	url := h.ControlBase + "/v1/nodes/" + nodeID.String() + "/invalidate"
 	status, body := postJSON(t, url, map[string]any{"reason": "scenario:soft-pause-probe"})
 	require.Equal(t, http.StatusOK, status, "invalidate should succeed: %v", body)
 }

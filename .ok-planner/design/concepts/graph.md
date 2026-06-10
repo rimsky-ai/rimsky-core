@@ -20,9 +20,3 @@ Owns: the template-DSL `graphs:` block, the uniform declaration shape, the reser
 - A graph is either the top-level `main` or a sub-graph (declares `entry:` + `exit:`).
 - Sub-graph definitions can only be referenced via `delegate:` from a node in another graph; they're never instantiated directly at instance creation.
 - The `main` graph cannot have `entry:` / `exit:` (those have no meaning at instance level; rejected at registration).
-
-## Notes
-
-Introduced by `spec:2026-05-15-data-platform-extensions` as part of the sub-graph composition primitive. Pre-2026-05-15 templates carried a flat `nodes:` block at top level; the new shape is `graphs: [{name, nodes: [...]}]` with `main` as the canonical entry graph.
-
-- 2026-05-25 — Codebase citations removed + cross-refs repaired for self-containment per spec:2026-05-25-concept-doc-self-containment.

@@ -33,7 +33,7 @@ func RunAuthShow(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	path := "/auth/keys/" + url.PathEscape(rest[0])
+	path := "/v1/auth/keys/" + url.PathEscape(rest[0])
 	c := newAuthClient(endpoint, key)
 	var resp map[string]any
 	if _, err := c.RawCall(ctx, http.MethodGet, path, nil, &resp); err != nil {

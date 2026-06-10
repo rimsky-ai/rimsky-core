@@ -45,6 +45,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -980,7 +981,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			// form is reserved for the concept:signal type-path taxonomy.
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &inst.ID,
-				Kind:       "instance_terminated",
+				Kind:       events.KindInstanceTerminated(),
 				Payload:    map[string]any{"reason": reason},
 			}, tx)
 		}); err != nil {

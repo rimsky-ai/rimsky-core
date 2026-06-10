@@ -99,7 +99,7 @@ func TestServer_InstanceLifecycle(t *testing.T) {
 func TestServer_FailureInjection(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
-	srv.SetFailure("GET", "/health", clitest.FailureSpec{Status: 500, Body: map[string]any{"error": "boom"}})
+	srv.SetFailure("GET", "/v1/health", clitest.FailureSpec{Status: 500, Body: map[string]any{"error": "boom"}})
 	c := cli.NewClient(srv.URL)
 	if _, err := c.Health(context.Background()); err == nil {
 		t.Fatal("want error")

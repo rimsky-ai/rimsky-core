@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.7
+#
+# Example claim-producer image, built on demand by the cross-stack proof in
+# examples/claimproducer/main_e2e_test.go via testcontainers FromDockerfile.
+# Never published as a product image — the example ships only as source code
+# (the Apache 2.0 permissive surface) for service authors to copy-and-modify.
+#
+# Why a container? rimsky's three roles (control-api / supervisor / scheduler)
+# eager-dial every declared claim-producer at startup and EXIT NON-ZERO on
+# any unreachable peer. An in-process producer exposed via the harness's
+# WithHostPortAccess option races the reverse-SSH host-port tunnel against
+# rimsky's startup dial; under load the tunnel loses, rimsky fails to dial
+# the producer, and the all-in-one container exits before /health flips to
+# 200 (the same failure mode `lib/services/test/harness/claimproducer_custom.go`
+# warns about for the overlap producer). A container on a stable in-network
+# alias is up BEFORE rimsky boots, so the handshake reaches it
+# deterministically.
+#
+# Build context: the rimsky-core repo root. The example builds against the
+# in-tree lib/protocols module via go.work — no module proxy, no published-
+# tag pin.
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY go.work go.work.sum ./
+COPY go.mod go.sum ./
+COPY lib/foundation/go.mod lib/foundation/go.sum ./lib/foundation/
+COPY lib/protocols/go.mod lib/protocols/go.sum ./lib/protocols/
+COPY lib/services/go.mod lib/services/go.sum ./lib/services/
+COPY examples/go.mod examples/go.sum ./examples/
+RUN cd examples && go mod download
+COPY . .
+RUN cd examples && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/example-claim-producer ./claimproducer
+
+FROM gcr.io/distroless/static:nonroot
+COPY --from=builder /out/example-claim-producer /usr/local/bin/example-claim-producer
+USER nonroot
+EXPOSE 9400
+ENTRYPOINT ["/usr/local/bin/example-claim-producer"]

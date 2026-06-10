@@ -114,12 +114,12 @@ func TestGate_DryRunFlagSetsModeAndReadExecutes(t *testing.T) {
 	r := chi.NewRouter()
 	r.Use(h.state.IdentityResolver())
 	// instance:read is a registered read action (IsWrite=false).
-	r.Get("/instances", h.state.gateByAction("instance:read", probe))
+	r.Get("/v1/instances", h.state.gateByAction("instance:read", probe))
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/instances?dry_run=true", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/instances?dry_run=true", nil)
 	req.Header.Set("Authorization", "Bearer "+h.plaintext)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -171,12 +171,12 @@ func TestGate_StreamingHandlerCanFlush(t *testing.T) {
 	r := chi.NewRouter()
 	r.Use(h.state.IdentityResolver())
 	// mcp:read is a registered read action — the umbrella GET /mcp gates on.
-	r.Get("/mcp", h.state.gateByAction("mcp:read", probe))
+	r.Get("/v1/mcp", h.state.gateByAction("mcp:read", probe))
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/mcp", nil)
 	req.Header.Set("Authorization", "Bearer "+h.plaintext)
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := http.DefaultClient.Do(req)
@@ -265,12 +265,12 @@ func TestGate_ExecuteBeatsDryRun_MultiEntryGrant(t *testing.T) {
 			}
 			r := chi.NewRouter()
 			r.Use(state.IdentityResolver())
-			r.Get("/instances", state.gateByAction("instance:read", probe))
+			r.Get("/v1/instances", state.gateByAction("instance:read", probe))
 
 			srv := httptest.NewServer(r)
 			t.Cleanup(srv.Close)
 
-			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/instances", nil)
+			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/instances", nil)
 			req.Header.Set("Authorization", "Bearer "+plaintext)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
@@ -303,12 +303,12 @@ func TestGate_DefaultModeIsExecute(t *testing.T) {
 	}
 	r := chi.NewRouter()
 	r.Use(h.state.IdentityResolver())
-	r.Get("/instances", h.state.gateByAction("instance:read", probe))
+	r.Get("/v1/instances", h.state.gateByAction("instance:read", probe))
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/instances", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/instances", nil)
 	req.Header.Set("Authorization", "Bearer "+h.plaintext)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
