@@ -193,6 +193,16 @@ func runDemoScript(t *testing.T, ctx context.Context, scriptPath, binPath, baseU
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
+	// On context cancel, exec.CommandContext sends SIGKILL to bash but
+	// does NOT close the inherited stdout/stderr pipes — a grandchild
+	// (e.g. `rimsky watch` mid-poll) keeping the pipe open would block
+	// cmd.Run forever past the context deadline, escalating to the
+	// package's 10m test-timeout panic instead of this test's own
+	// failure. WaitDelay tells Run to force-close the pipes WaitDelay
+	// after the kill signal, surfacing the timeout here as a normal
+	// non-zero exit so the test's outer failure mode (script took too
+	// long) wins.
+	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
 	combined := out.String()
 	if errStr := errBuf.String(); errStr != "" {

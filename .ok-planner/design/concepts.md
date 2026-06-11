@@ -22,7 +22,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `claim-handle` — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
 - `claim-lifetime` — Per-claim property in the `claims:` block: `lifetime: subgraph | durable` (default `subgraph`).
 - `claim-producer` (aliases: claim-store) — A claim producer is an out-of-process service that implements the gRPC claim-producer protocol — 4 verbs (open / commit / abandon / release) plus the capabilities startup handshake.
-- `claim-scope` — ClaimScope is the opaque byte stream a claim producer's open verb returns to identify "what was acquired." Persisted as the claim-scope-data field on the claim-handle ledger.
+- `claim-scope` — ClaimScope is the opaque byte stream a claim producer's open verb returns to identify "what was acquired."
 - `claim-tree` — The tree-shaped relationship across claim handle rows, formed by the nullable self-referential parent pointer.
 - `conformance` — A `rimsky conformance <protocol>` subcommand family — one subcommand per protocol — over a shared conformance library in the protocols module (one sub-package per protocol).
 - `control-api` — The operator interface exposed by the control-api binary.
@@ -34,18 +34,18 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `event-log` (aliases: audit log) — Rimsky's internal append-only audit-log ledger.
 - `executor` — An executor is an out-of-process service that implements the gRPC executor's server-streaming execute method plus an optional executor-observability protocol.
 - `fan-out` — Fan-out is a node-level decision to partition a held claim into sub-claims and dispatch one work unit per sub-claim.
-- `frame` (aliases: cascade-frame) — A frame is one cascade resolution.
+- `frame` (aliases: cascade-frame) — A frame is one cascade resolution, persisted as a frame row carrying a resolution mode (`coalesce` or `serial_queue`) and a lifecycle state.
 - `graph` — A graph is rimsky's unit of node connectivity.
 - `host-agent` — A long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary and invoked as the `rimsky agent` subcommand.
-- `host-agent-proxy` — A rimsky-stack `concept:service` implementing the multi-protocol composition pattern (per `concept:service` invariants: distinct handler types per protocol, separately registered on one gRPC server).
-- `inertness` (aliases: inert bytes) — A uniform discipline applied across two overlapping lists.
+- `host-agent-proxy` — A rimsky-stack `concept:service` implementing the multi-protocol composition pattern, presenting the executor and claim-producer gRPC protocols on the supervisor-facing side and maintaining agent connections on the dev-facing side.
+- `inertness` (aliases: inert bytes) — A uniform discipline applied across two overlapping lists of carrier streams that rimsky neither inspects nor interprets beyond a narrowly defined set of read sites.
 - `instance` — An instance is one live deployment of a template, identified by a rimsky-generated UUID.
 - `invalidate` — `invalidate` is the sole graph-level message that the scheduler / control-api emits to mark a node `stale`.
 - `lifecycle-subscriber` — A service that implements the gRPC lifecycle-subscriber protocol — seven event callbacks: template registered, deployed, undeployed, and deregistered, plus instance created and terminated, plus run-scope terminal (carrying the run-scope id and a terminal reason).
 - `lineage` — A persisted projection of computational + data-promotion records.
 - `lineage-record` — An append-only record in the lineage projection (see `concept:lineage`).
 - `message` — A boundary-crossing dispatch unit.
-- `module-layout` (aliases: workspace-layout) — The Go workspace ties five modules into one build.
+- `module-layout` (aliases: workspace-layout) — The Go workspace ties five modules into one build, with the repo root holding four idiomatic top-level code directories (binaries, shippable library code, out-of-tree tests, and dev tooling).
 - `named-event` — A named event is a non-terminal executor emission tagged with a name (a string drawn from the executor's `declared_events` capability) and an inert payload recorded alongside it.
 - `named-lock` — A named lock is a producer-independent capacity-counter primitive.
 - `node` (aliases: graph-node) — A node is one declarative unit of work in a template's graph.
@@ -65,15 +65,15 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `run-scope` — RunScope is the first-class execution context for one graph instantiation (main / subgraph / fanout_partition).
 - `sensor` — A sensor is a class of `concept:publisher` implementation that observes external state.
 - `service` — An out-of-process gRPC binary that implements one or more rimsky service protocols and is orchestrated by rimsky.
-- `signal` — A **signal** is the unified emission shape for any transition that affects a node-run.
+- `signal` — A signal is the unified emission shape for any transition that affects a node-run.
 - `sub-graph` — A sub-graph is a graph with declared `entry:` and `exit:` nodes; invocable from another node via `delegate: <graph-name>`.
 - `supervisor` — One of the three rimsky runtime binaries.
 - `tag` (aliases: template-tag) — A tag is a movable string alias pointing at a `template_hash`.
 - `template` (aliases: canonical-spec) — A template is the static artifact a consumer registers: node definitions, attribute schemas, claim/lock declarations, frame-resolution policy, handler declarations, quality rules.
-- `terminal-resolution` (aliases: executor-terminal-spine) — The end-to-end spine that takes a single executor stream-close event off the wire and converges it onto exactly four decisions: (1) what canonical signal type-path to emit (and therefore what resolution color to stamp on the run row, which carries the last-outcome projection through Pass 5), (2) what to do with the node-run row (delete vs retry-enqueue), (3) what producer verb (`Commit` / `Abandon` / nothing) to fire on every acquired claim, (4) when to delete the persisted claim-handle rows claimant-guarded.
+- `terminal-resolution` (aliases: executor-terminal-spine) — The end-to-end spine that takes a single executor stream-close event off the wire and converges it onto exactly four decisions: what canonical signal type-path to emit, what to do with the node-run row, what producer verb to fire on every acquired claim, and when to delete the persisted claim-handle rows claimant-guarded.
 - `transition-reason` — The transition reason is the closed enum carried on every node-state transition.
 - `validation` — Cross-cutting service protocol.
-- `wait-set` — The wait-set is a per-frame persisted ledger that records "receiver R is waiting for sender S in frame F under (topic_kind, subscription_scope, topic_filter)." Cascade walks insert rows when a sender transitions out of a settled state (pessimistic invalidate); the settled-state drain bulk-marks rows as drained when the sender resolves (fresh / failed / parked) by stamping a drain timestamp rather than deleting the row.
+- `wait-set` — The wait-set is a per-frame persisted ledger that records "receiver R is waiting for sender S in frame F under (topic_kind, subscription_scope, topic_filter)."
 - `write-semantics` — A per-claim enum (`sync | staged_async | blocking_async | read_only`) that determines how the coexistence matrix treats concurrent claims on byte-equal claim scope (per `concept:claim-scope`).
 
 ## Retired concepts

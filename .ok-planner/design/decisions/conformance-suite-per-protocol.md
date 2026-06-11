@@ -12,7 +12,3 @@ One conformance suite per protocol under the protocols module's conformance pack
 ## Rationale
 
 External impls must pass conformance.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

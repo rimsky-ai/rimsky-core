@@ -54,9 +54,15 @@ echo "onboarding-demo: registering + deploying + instantiating ${TEMPLATE_PATH} 
 # register + deploy + instantiate in one shot. With --keep (the
 # default) it prints `instance_id=<uuid>` to stdout and exits 0; the
 # `instance_key` keeps repeated demo runs disjoint.
+#
+# `--terminate-after-run` opts the instance into self-termination once
+# its nodes settle. Without it, durable-by-default keeps the instance
+# alive past node-terminal — the subsequent `rimsky watch` polls for
+# `terminated_at` and would never see it flip.
 RUN_STDOUT="$( "${RIMSKY_BIN}" run \
     --endpoint "${RIMSKY_ENDPOINT}" \
     --instance-key "onboarding-demo-$( date +%s )-$$" \
+    --terminate-after-run \
     "${TEMPLATE_PATH}" )"
 echo "${RUN_STDOUT}"
 

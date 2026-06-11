@@ -28,7 +28,3 @@ Error-severity finding doesn't block registration, OR warning-severity finding b
 ## Proof
 
 Example — the examples module's validation reference extended with a worked walkthrough.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

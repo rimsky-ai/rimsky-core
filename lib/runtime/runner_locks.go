@@ -212,7 +212,7 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 // upstream's acquire has not landed yet, or the upstream's template
 // node is missing).
 //
-//	@concept: claim-co-holdership
+// @concept: claim-co-holdership
 func collectCoHeldClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	spec *node.TemplateSpec, instanceID shared.UUID,
@@ -242,6 +242,7 @@ func collectCoHeldClaims(
 		}
 		out[localAlias] = claimproducer.ClaimResult{
 			Address:    lh.Address,
+			Payload:    lh.Payload,
 			ClaimScope: lh.ClaimScopeData,
 		}
 	}

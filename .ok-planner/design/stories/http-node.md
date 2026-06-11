@@ -28,7 +28,3 @@ A template using `http-node` against a real upstream: a 200 response populates t
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

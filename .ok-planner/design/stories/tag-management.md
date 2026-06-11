@@ -28,7 +28,3 @@ Tag rebind isn't picked up by subsequent instance creation (resolves to the prio
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

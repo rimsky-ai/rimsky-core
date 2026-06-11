@@ -12,7 +12,3 @@ Prefer tracked duplication (`@source: path:func`, `@diverged: true` + `@reason:`
 ## Rationale
 
 Visible duplication is editable; abstractions hide intent.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

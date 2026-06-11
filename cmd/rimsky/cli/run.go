@@ -83,16 +83,17 @@ func RunLogs(ctx context.Context, args []string) int {
 //     running (PID-existence check on ~/.rimsky/agent.pid).
 func RunRun(ctx context.Context, args []string) int {
 	var (
-		params       string
-		templateName string
-		key          string
-		tag          string
-		keep         bool
-		noKeep       bool
-		pollInterval time.Duration
-		timeout      time.Duration
-		paramKV      repeatedFlag
-		services     repeatedFlag
+		params            string
+		templateName      string
+		key               string
+		tag               string
+		keep              bool
+		noKeep            bool
+		terminateAfterRun bool
+		pollInterval      time.Duration
+		timeout           time.Duration
+		paramKV           repeatedFlag
+		services          repeatedFlag
 	)
 	fs, common, endpoint, code := runWithCommon("run", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&params, "params", "", "JSON object or @file path")
@@ -101,6 +102,9 @@ func RunRun(ctx context.Context, args []string) int {
 		fs.StringVar(&tag, "tag", "", "tag to attach to the registered template")
 		fs.BoolVar(&keep, "keep", true, "leave the instance and template after creation (default)")
 		fs.BoolVar(&noKeep, "no-keep", false, "delete instance and template after terminal state")
+		fs.BoolVar(&terminateAfterRun, "terminate-after-run", false,
+			"create the instance with terminate_after_run=true — it self-terminates once its nodes settle, "+
+				"so terminal-flag polling (e.g. `rimsky watch`) exits. Implied by --no-keep.")
 		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "poll interval when --no-keep")
 		fs.DurationVar(&timeout, "timeout", 0, "max wait for terminal state when --no-keep (0 = unbounded)")
 		fs.Var(&paramKV, "param", "k=v param (repeatable); merged over --params (later wins)")
@@ -121,8 +125,20 @@ func RunRun(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: rimsky run {<file>|--template <name>} [--params ...] [--param k=v ...] [--service <name>=<path> ...] [--instance-key ...] [--tag ...] [--no-keep]")
 		return 2
 	}
-	if noKeep {
+	// "Don't keep the instance" can be expressed two equivalent ways —
+	// `--no-keep` (sets noKeep=true) or `--keep=false` (clears keep).
+	// Both must drive the same waitAndCleanup path AND both must imply
+	// terminate-after-run, otherwise the polling loop in waitAndCleanup
+	// hangs forever waiting on a terminated_at flip that durable-by-
+	// default semantics never produce. Coalesce here so the rest of the
+	// flow keys off the single `keep` boolean.
+	if noKeep || !keep {
 		keep = false
+		// Imply terminate-after-run so the dev-loop verb stays coherent.
+		// The instance self-terminates once its nodes settle, the
+		// terminal-flag polling in waitAndCleanup exits, and the
+		// instance + template are deleted.
+		terminateAfterRun = true
 	}
 
 	pp, err := mergeParams(params, paramKV)
@@ -186,6 +202,9 @@ func RunRun(ctx context.Context, args []string) int {
 	}
 	if len(bindings) > 0 {
 		body.ServiceBindings = bindings
+	}
+	if terminateAfterRun {
+		body.TerminateAfterRun = true
 	}
 	inst, err := c.CreateInstance(ctx, body)
 	if err != nil {

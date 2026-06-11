@@ -482,6 +482,13 @@ type CreateInstanceRequest struct {
 	// dispatch time. Omitted from the body when no --service flags are
 	// supplied. Per spec 2026-05-24-host-agent-and-proxy-design.md.
 	ServiceBindings map[string]bindingSpec `json:"service_bindings,omitempty"`
+	// TerminateAfterRun opts the instance into self-termination once its
+	// nodes settle. Default false → durable-by-default (the instance
+	// stays alive across dispatches and only terminates on explicit
+	// DELETE). Set true for one-shot dev-loop invocations where the
+	// caller needs `terminated_at` to flip so `rimsky watch` (and any
+	// other polled-on-terminal client) can exit cleanly.
+	TerminateAfterRun bool `json:"terminate_after_run,omitempty"`
 }
 
 // bindingSpec is the CLI's view of one service binding: the path the agent

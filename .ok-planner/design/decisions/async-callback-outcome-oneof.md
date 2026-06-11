@@ -12,7 +12,3 @@ Oneof `success` | `error` | `park` + optional `events` array; exactly one outcom
 ## Rationale
 
 Type-safe state machine; explicit error handling.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

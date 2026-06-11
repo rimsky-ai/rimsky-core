@@ -7,12 +7,8 @@ status: as-is
 
 ## Choice
 
-`jackc/pgx/v5`.
+The pgx Postgres driver, v5 line.
 
 ## Rationale
 
 Native driver, protocol-aware.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

@@ -28,7 +28,3 @@ Commit's swap is a copy-then-overwrite, OR the explicit-sync route doesn't actua
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

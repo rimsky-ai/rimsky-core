@@ -25,7 +25,7 @@ Frames are the unit of cascade resolution. They let new invalidates that arrive 
 
 The two modes are illustrative of different authoring intents:
 
-- **`serial_queue`** preserves ordering. Each invalidate produces its own frame; frames run one at a time per instance. Right answer when each invalidate carries distinct semantics that must be processed in order (e.g. "process item A, then process item B").
+- **`serial_queue`** preserves ordering. Each boundary-crossing invalidate (operator-API send or publisher-origin message) produces its own frame; cascade walks stay within the current frame. Frames run one at a time per instance. Right answer when each invalidate carries distinct semantics that must be processed in order (e.g. "process item A, then process item B").
 - **`coalesce`** preserves the latest input. While a frame is in flight, new invalidates merge into a single pending row; when the in-flight frame ends, that one merged row dispatches. Right answer when only the latest input matters (e.g. "recompute the dashboard from the current data"). Coalesce is **not** a debouncer — it merges all pending invalidates into one frame regardless of timing; it does not delay dispatch waiting for a quiet period.
 
 The two modes never mix within an instance — the policy is template-level. `serial_queue` ordering is per-instance, not template-wide: two instances of the same template execute independently.

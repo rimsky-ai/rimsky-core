@@ -28,7 +28,3 @@ The check is informational only (doesn't fail CI), OR text-matches the doc witho
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

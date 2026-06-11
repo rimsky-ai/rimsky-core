@@ -12,7 +12,3 @@ Enforced by the tools group's license-check (Apache packages import only stdlib 
 ## Rationale
 
 Prevent AGPL contamination of permissive consumers.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

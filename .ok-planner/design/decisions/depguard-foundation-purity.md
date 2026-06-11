@@ -12,7 +12,3 @@ Stdlib + the protocols module + chosen libs only; no graph, runtime, or control 
 ## Rationale
 
 The foundation module provides primitives, not workflow shape.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

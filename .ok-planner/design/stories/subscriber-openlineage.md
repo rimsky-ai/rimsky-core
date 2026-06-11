@@ -28,7 +28,3 @@ Subscriber posts to receiver but with malformed OpenLineage JSON, OR a lifecycle
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

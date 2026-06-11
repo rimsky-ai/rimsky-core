@@ -7,12 +7,8 @@ status: as-is
 
 ## Choice
 
-`google.golang.org/grpc`, `google.golang.org/protobuf`.
+The official Google gRPC and protobuf libraries for Go.
 
 ## Rationale
 
 Official, required for the protocols.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

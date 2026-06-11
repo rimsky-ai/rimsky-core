@@ -110,10 +110,15 @@ Skills relate to the design docs in three modes:
      section). The changes get applied later, by
      `execute-plan`.
    - `merge` reads the docs against a fresh merge or rebase
-     and **surfaces findings** for the user — mechanical
-     issues, drift, semantic conflicts. Resolution is
-     human-driven and goes through the spec pipeline; merge
-     does not write fixes to the design docs itself.
+     and **surfaces merge-only inconsistencies** for the user
+     — mechanical artifacts (slug collisions, broken
+     annotations) and semantic conflicts (two branches
+     editing the same artifact incompatibly). It does not
+     look for code-vs-doc drift: the spec pipeline changes
+     docs and code as one unit, so drift cannot accumulate
+     when the pipeline is followed. Resolution is human-driven
+     and goes through the spec pipeline; merge does not write
+     fixes to the design docs itself.
    - `write-plan` reads to plan spec-directed mutations as
      first-class tasks.
    - `review-work` and `review-plan` read to verify that
@@ -126,14 +131,11 @@ Layout (created by `/discover-design`):
 - `_discover/` — as-is scaffolding. Wide, detailed, possibly
   redundant. Discarded once the design stabilizes.
 - `concepts/` — one concept per file. Mutated in place by
-  `execute-plan` per the spec's `## Design changes` section;
-  Notes section is append-only.
+  `execute-plan` per the spec's `## Design changes` section.
 - `stories/` — one story per file. Mutated in place by
-  `execute-plan` per the spec's `## Design changes` section;
-  Notes section is append-only.
+  `execute-plan` per the spec's `## Design changes` section.
 - `decisions/` — one decision per file. Mutated in place by
-  `execute-plan` per the spec's `## Design changes` section;
-  Notes section is append-only.
+  `execute-plan` per the spec's `## Design changes` section.
 - `tensions/` — one tension per file. Tensions move to
   `tensions/_resolved/` when `execute-plan` carries out a
   resolution-bearing spec.
@@ -150,14 +152,28 @@ Layout (created by `/discover-design`):
   understand current state; the spec captures any needed
   changes. Other skills do not consult as oracle.
 - **Concept, story, and decision files are MUTABLE during
-  `execute-plan`.** Editing the body in place is the normal mode
-  — this is the prescriptive design, not an ADR journal. The
-  Notes section on each artifact is the append-only audit trail.
-  Mutations ride alongside the code changes that conform to them
-  and stay reversible until the plan executes.
+  `execute-plan`.** Editing the body in place to reflect the
+  new state is the normal mode — this is the prescriptive
+  design, not an ADR journal and not a changelog. Mutations
+  ride alongside the code changes that conform to them and
+  stay reversible until the plan executes.
+- **Current-state only.** Concept, story, decision, and
+  tension bodies describe the project as it stands today.
+  No `## Notes` / `## History` / `## Changelog` sections, no
+  dated audit-trail entries, no "previously called X" /
+  "used to live at Y" / "changed per spec Z" lines. No
+  forward-looking content either — "we plan to", "will be
+  replaced", "TODO", "deferred to V2", "open question for
+  later" all belong elsewhere (open ambiguities go in
+  `tensions/`; intended future changes go in a spec). Git
+  carries the past; the spec/plan pipeline carries the
+  future; the design doc is the present. The discovery
+  scaffolding (`_discover/`, `review-notes.md`) is the only
+  exception — those are explicitly point-in-time.
 - **DO NOT delete concept, story, or decision files on your own
-  initiative**, even if they look stale. Use `/merge` to surface
-  drift; resolution goes through the spec pipeline.
+  initiative**, even if they look stale. The spec pipeline is
+  the only mechanism for changes; surface drift concerns
+  through `/brainstorm` or `/refine-design`.
 - **DO NOT mutate `tensions/` entries outside the spec
   pipeline** — those entries record what the project considers
   unresolved.
@@ -180,14 +196,15 @@ citation is the same durability problem the rule exists to
 prevent — those paths rot when the scaffolding is retired,
 when specs are archived, or when the repo is reorganized.
 Once an artifact is baked, the lineage that produced it lives
-in the `_discover/` scaffolding (as history) and in the body's
-dated Notes entries (which cite specs by slug); frontmatter
-is restricted to slug-form metadata only: `concept:` /
-`story:` / `decision:` / `tension:`, `status:`, `aliases:`
-(list of names), and for tensions `category:` and `affects:`
-(list of slugs). Path-form `references:` does not belong in
-any artifact's frontmatter; if a `discover-design` or
-earlier-version run wrote one, strip it.
+in the `_discover/` scaffolding (as history) and in the git
+history of the artifact file itself; the artifact body and
+frontmatter carry no lineage. Frontmatter is restricted to
+slug-form metadata only: `concept:` / `story:` / `decision:` /
+`tension:`, `status:`, `aliases:` (list of names), and for
+tensions `category:` and `affects:` (list of slugs). Path-form
+`references:` does not belong in any artifact's frontmatter;
+if a `discover-design` or earlier-version run wrote one,
+strip it.
 
 **Allowed in artifact body** (concepts / stories / decisions):
 - Other artifact slugs across catalogs (`see also:
@@ -196,9 +213,6 @@ earlier-version run wrote one, strip it.
 - Annotation IDs the codebase uses (`@blessed-invariant: N`,
   `@agent-contract: X`) — IDs are stable across file moves;
   paths are not.
-- Spec slugs in dated Notes entries
-  (`spec:YYYY-MM-DD-<topic>`).
-- Dates.
 
 **Disallowed in artifact body** (concepts / stories /
 decisions):

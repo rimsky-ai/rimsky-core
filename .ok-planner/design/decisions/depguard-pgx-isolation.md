@@ -12,7 +12,3 @@ Only the foundation module's postgres persistence driver, the services module, t
 ## Rationale
 
 Keep postgres specifics out of the graph, runtime, and control layers.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

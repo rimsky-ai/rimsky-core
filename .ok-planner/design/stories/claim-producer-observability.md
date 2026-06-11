@@ -28,7 +28,3 @@ Streamed claim state lags or drops, OR an admin view the producer declared isn't
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

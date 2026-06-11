@@ -672,6 +672,25 @@ func buildResolveContextForDispatch(
 		}
 		claims[lk.Alias] = lk.ClaimResult
 	}
+	// Held claims (per the node's template `holds:` block) are populated at
+	// the co-holder's own acquire-tx by loadInheritedClaimsForNode. They
+	// carry the same `claimproducer.ClaimResult` shape (Address + ClaimScope)
+	// that an opened claim carries, so the substitution grammar resolves
+	// `{{claim.<alias>.address|payload.<f>|claim_scope}}` identically whether
+	// the alias was opened (acq.Locks) or co-held (acq.HeldClaims).
+	//
+	// Acquired claims win on alias collision: if the node both `claims:`
+	// and `holds:` the same alias, the opened entry in claims[] is
+	// authoritative and the held entry is informational. Mirrors the
+	// precedence at buildStoreHandles below.
+	//
+	// @concept: claim-co-holdership
+	for alias, held := range acq.HeldClaims {
+		if _, alreadyPresent := claims[alias]; alreadyPresent {
+			continue
+		}
+		claims[alias] = held
+	}
 	var paramsRaw json.RawMessage
 	if len(acq.InstanceParams) > 0 {
 		b, err := json.Marshal(acq.InstanceParams)

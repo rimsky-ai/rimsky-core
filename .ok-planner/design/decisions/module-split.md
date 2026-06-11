@@ -12,7 +12,3 @@ Root + the foundation module + the protocols module + the services module + the 
 ## Rationale
 
 Services-side ship as standalone containers with no rimsky-internal access; protocols are the implementer-facing contract with zero internal deps; the examples module gives each protocol a copy-and-modify reference implementation independent of the orchestrator.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

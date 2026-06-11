@@ -40,7 +40,7 @@ import (
 )
 
 const lockHolderCols = `
-  id, lock_kind, lock_name, producer_name, claim_scope_data, address, intent,
+  id, lock_kind, lock_name, producer_name, claim_scope_data, address, payload, intent,
   realized_write_semantics,
   holder_supervisor_id, holder_node_id,
   claimed_at, last_heartbeat_at, expires_at, frame_id,
@@ -73,17 +73,17 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 	}
 	_, err := s.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_claim_handles (
-		   id, lock_kind, lock_name, producer_name, claim_scope_data, address, intent,
+		   id, lock_kind, lock_name, producer_name, claim_scope_data, address, payload, intent,
 		   realized_write_semantics,
 		   holder_supervisor_id, holder_node_id,
 		   claimed_at, last_heartbeat_at, expires_at, frame_id,
 		   node_run_id, is_held,
 		   parent_claim_handle_id, lifetime, producer_candidate_handle,
 		   aggregation_policy
-		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
 		in.ID, string(in.LockKind),
 		in.LockName, in.ProducerName,
-		nullableJSONB(in.ClaimScopeData), nullableJSONB(in.Address),
+		nullableJSONB(in.ClaimScopeData), nullableJSONB(in.Address), nullableJSONB(in.Payload),
 		in.Intent,
 		rws,
 		in.HolderSupervisorID, in.HolderNodeID,
@@ -111,6 +111,23 @@ func (s *claimHandlesImpl) UpdateAddress(
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.UpdateAddress: %w", err)
+	}
+	return nil
+}
+
+// UpdatePayload sets the payload column on an existing scope-kind row.
+// Claimant-guarded on supervisorID; mismatches are a no-op (returns nil).
+func (s *claimHandlesImpl) UpdatePayload(
+	ctx context.Context, id shared.UUID, supervisorID string, payload json.RawMessage, tx persistence.Tx,
+) error {
+	_, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET payload = $1
+		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		nullableJSONB(payload), id, supervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.UpdatePayload: %w", err)
 	}
 	return nil
 }
@@ -426,6 +443,7 @@ func (s *claimHandlesImpl) SetVersionID(
 func qualifiedLockHolderCols(alias string) string {
 	return alias + `.id, ` + alias + `.lock_kind, ` + alias + `.lock_name, ` +
 		alias + `.producer_name, ` + alias + `.claim_scope_data, ` + alias + `.address, ` +
+		alias + `.payload, ` +
 		alias + `.intent, ` + alias + `.realized_write_semantics, ` +
 		alias + `.holder_supervisor_id, ` + alias + `.holder_node_id, ` +
 		alias + `.claimed_at, ` + alias + `.last_heartbeat_at, ` + alias + `.expires_at, ` +
@@ -804,6 +822,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		producerName       *string
 		scopeData          []byte
 		address            []byte
+		payload            []byte
 		intent             *string
 		rws                *string
 		holderSupervisorID *string
@@ -823,7 +842,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	)
 	if err := sc.Scan(
 		&r.ID, &kind,
-		&lockName, &producerName, &scopeData, &address, &intent,
+		&lockName, &producerName, &scopeData, &address, &payload, &intent,
 		&rws,
 		&holderSupervisorID, &r.HolderNodeID,
 		&r.ClaimedAt, &r.LastHeartbeatAt, &r.ExpiresAt, &frameID,
@@ -841,6 +860,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	r.ProducerName = producerName
 	r.ClaimScopeData = scopeData
 	r.Address = address
+	r.Payload = payload
 	r.Intent = intent
 	if rws != nil {
 		r.RealizedWriteSemantics = *rws

@@ -28,7 +28,3 @@ Switched context isn't picked up by the next command, OR removed context still r
 ## Proof
 
 Demo — a runnable script walking through register / switch / use / remove, with two real local control-api endpoints to make the switch observable.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

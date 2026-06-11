@@ -55,10 +55,23 @@ tidy:
 # because passing explicit paths to `go build` (unlike `./...`) turns
 # the "no non-test Go files" notice into an error.
 test-all:
-	go test ./...
+	# Both the root module (test/scenarios — the cascade + claim-handoff
+	# story proofs) and lib/services spin up their own rimsky-all-in-one
+	# + sensor + state-postgres + ryuk reaper per t.Parallel() subtest.
+	# At GOMAXPROCS-wide parallelism on a modern multi-core host that's
+	# 40+ containers fighting for CPU / disk / network, which pushes
+	# rimsky's synchronous Subscribe handshake (~2.36s retry budget at
+	# lib/runtime/publishers.go) past sensor-state-DB poll deadlines —
+	# observed as non-deterministic 'sensor never persisted subscription
+	# within 90s' failures in different sensor tests across runs, and
+	# the same harness shape now lives under test/scenarios. Capping at
+	# -parallel 4 in both modules bounds the concurrent-stack count and
+	# keeps the flake from biting; the wall-clock cost is minor because
+	# most of these tests are docker-IO-bound, not CPU-bound.
+	go test -parallel 4 ./...
 	cd lib/foundation && go test ./...
 	cd lib/protocols && go test ./...
-	cd lib/services && go test $$(go list ./... | grep -v /node_modules/)
+	cd lib/services && go test -parallel 4 $$(go list ./... | grep -v /node_modules/)
 	cd examples && go test ./...
 
 build-all:

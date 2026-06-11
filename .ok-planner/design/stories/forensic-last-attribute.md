@@ -28,7 +28,3 @@ The latest-attribute surface returns an earlier run's bag (stale), OR returns sy
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

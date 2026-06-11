@@ -28,7 +28,3 @@ Sub-claims are materialized but not dispatched concurrently, OR the parent settl
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

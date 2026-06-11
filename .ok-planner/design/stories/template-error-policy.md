@@ -28,7 +28,3 @@ Any of the four actions has no observable effect (the runtime acts the same rega
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

@@ -12,7 +12,3 @@ File-by-feature; ~500-line file / ~100-line function guidelines; max 3 nesting l
 ## Rationale
 
 Optimize for cold-read.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

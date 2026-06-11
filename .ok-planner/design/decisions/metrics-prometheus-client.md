@@ -7,12 +7,8 @@ status: as-is
 
 ## Choice
 
-`prometheus/client_golang`.
+The official Prometheus Go client library.
 
 ## Rationale
 
 Standard observability format.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

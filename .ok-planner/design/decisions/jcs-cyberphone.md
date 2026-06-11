@@ -7,12 +7,8 @@ status: as-is
 
 ## Choice
 
-`cyberphone/json-canonicalization`.
+Cyberphone's JCS canonicalization library.
 
 ## Rationale
 
 Only Go impl compliant with the spec.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

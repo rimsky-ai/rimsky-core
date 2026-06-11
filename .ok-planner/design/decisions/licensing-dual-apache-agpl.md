@@ -12,7 +12,3 @@ The protocols module + the services module's claude-agent executor (the TS refer
 ## Rationale
 
 Apache surface for everything an external implementer is meant to copy, modify, or link against; AGPL for the orchestrator itself.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

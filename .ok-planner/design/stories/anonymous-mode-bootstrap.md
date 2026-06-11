@@ -28,7 +28,3 @@ Anonymous mode stays open after a key is minted, OR `rimsky auth init` succeeds 
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

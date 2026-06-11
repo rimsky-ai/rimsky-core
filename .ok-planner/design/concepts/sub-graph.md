@@ -17,7 +17,7 @@ Owns: the sub-graph template-DSL shape (`entry:`, `exit:`, internal `nodes:`), t
 ## Invariants
 
 - A sub-graph MUST declare both `entry:` and `exit:`. Templates declaring a sub-graph without one are rejected with `subgraph_missing_entry_exit`.
-- Entry and exit MUST be distinct nodes. `entry == exit` is rejected for V1 (`subgraph_entry_equals_exit`).
+- Entry and exit MUST be distinct nodes. `entry == exit` is rejected (`subgraph_entry_equals_exit`).
 - Internal nodes can only reference other internal nodes within the same sub-graph or the entry alias (which resolves to the calling node per-invocation). References to outer-graph nodes or to other sub-graphs' internals are rejected at template registration (`subgraph_external_reference`).
 - All internal nodes MUST be reachable from `entry` and MUST feed `exit` (no disconnected internals; reject as `subgraph_internal_disconnected`).
 - Recursive sub-graphs (a sub-graph delegating to itself, directly or via a cycle) are rejected as `subgraph_recursion_unsupported`.

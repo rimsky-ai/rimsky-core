@@ -28,7 +28,3 @@ Subscribe is acknowledged but messages never reach the message endpoint, OR the 
 ## Proof
 
 Example — the examples module's publisher reference extended with a worked walkthrough that drives a real subscribe / publish / reconcile sequence against a running rimsky.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

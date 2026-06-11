@@ -12,7 +12,7 @@ Four advisory-lock primitives on the persistence-layer advisory-locker interface
 
 ## Purpose
 
-Cross-process coordination through Postgres (or `sync.Mutex` in single-process dev). The scheduler-tick lock makes the tick safely multi-replica; the migration lock serializes migrate runs; the per-name and per-scope advisory locks close the READ COMMITTED window in the acquisition tx.
+Cross-process coordination through Postgres (or an in-process mutex in single-process dev). The scheduler-tick lock makes the tick safely multi-replica; the migration lock serializes migrate runs; the per-name and per-scope advisory locks close the READ COMMITTED window in the acquisition tx.
 
 ## Boundaries
 

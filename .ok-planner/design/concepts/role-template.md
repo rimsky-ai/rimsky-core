@@ -31,4 +31,4 @@ Owns: the bundled JSON files, the CLI expansion logic, the grant patch operators
 ## Invariants
 
 - **CLI-side only.** The server does not know roles exist. `rimsky auth show <name>` may pattern-match a grant against bundled roles for display ("role:operator + 1 override") but this is a display nicety; the wire surface is always the raw grant.
-- **Operator-defined roles are local.** No server-side surface for "register a role with the cluster" in V1.
+- **Operator-defined roles are local.** No server-side surface for "register a role with the cluster".

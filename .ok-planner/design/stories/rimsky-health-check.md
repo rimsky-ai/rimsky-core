@@ -28,7 +28,3 @@ Health route returns success while a critical dependency is down (false-positive
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

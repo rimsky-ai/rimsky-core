@@ -7,12 +7,8 @@ status: as-is
 
 ## Choice
 
-`robfig/cron/v3`.
+The Robfig cron parser, v3 line.
 
 ## Rationale
 
 Reliable standards-aligned parser.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

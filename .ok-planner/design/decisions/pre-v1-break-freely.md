@@ -12,7 +12,3 @@ No backwards-compat guarantee on wire / config / event-log / resource interface;
 ## Rationale
 
 No production data yet; cleaner refactors. This rule is replaced by deployed-stage rules when v1 ships.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

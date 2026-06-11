@@ -11,12 +11,8 @@ The canonical set of operational `rimsky_events.kind` values (non-signal-class e
 
 ## Rationale
 
-Kinds are not inert per `concept:inertness` — they drive cascade dispatch (signal-class), breakpoint evaluation (`breakpoint.hit`), and audit-consumer filtering by canonical name (operational). A typed boundary at the app layer prevents typo-induced silent observability blind spots without coupling persistence to schema migrations. Adding a new operational kind = adding an enum value in the events proto + regenerating Go bindings. Resolves `tension:events-kind-no-enum`.
+Kinds are not inert per `concept:inertness` — they drive cascade dispatch (signal-class), breakpoint evaluation (`breakpoint.hit`), and audit-consumer filtering by canonical name (operational). A typed boundary at the app layer prevents typo-induced silent observability blind spots without coupling persistence to schema migrations. Adding a new operational kind = adding an enum value in the events proto + regenerating Go bindings.
 
 ## Alternatives
 
 CHECK constraint at persistence (couples schema to enum, requires migration per new kind, redundant when enum gates the app boundary); registry-table-with-FK (introduces a mutable kind catalog through an API, which the model doesn't want); leaving operational kinds free-form (accepts the footgun for audit consumers filtering by canonical kind name).
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

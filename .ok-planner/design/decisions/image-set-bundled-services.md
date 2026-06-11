@@ -12,7 +12,3 @@ One image per bundled service (eleven — sensors, stores, subscribers, executor
 ## Rationale
 
 Pre-packaged reference impls.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

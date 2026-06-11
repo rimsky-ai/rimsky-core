@@ -12,7 +12,3 @@ The `/release` skill drives SemVer judgment + notes draft + outward push behind 
 ## Rationale
 
 Human review at the right point; automation everywhere else.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

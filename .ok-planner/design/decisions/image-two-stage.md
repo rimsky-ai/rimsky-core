@@ -12,7 +12,3 @@ status: as-is
 ## Rationale
 
 Minimal runtime attack surface; nonroot by default.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

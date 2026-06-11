@@ -28,7 +28,3 @@ An out-of-scope request succeeds, OR a same-action operation later in the lifecy
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

@@ -28,7 +28,3 @@ The shipped example isn't a real runnable templatespec (would need modification 
 ## Proof
 
 Demo — a runnable shell sequence the onboarding documentation points to as the first-steps walkthrough.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

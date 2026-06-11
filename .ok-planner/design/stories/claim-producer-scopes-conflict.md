@@ -28,7 +28,3 @@ Both writers acquire, OR the fan-out path skips the consult, OR producers withou
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

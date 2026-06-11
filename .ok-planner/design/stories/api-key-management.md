@@ -28,7 +28,3 @@ Revoke leaves the old plaintext still accepted, OR the rotated key's grace windo
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

@@ -12,7 +12,3 @@ Drop + recreate when cleaner; no compat shims.
 ## Rationale
 
 Pre-v1 (see `decision:pre-v1-break-freely`).
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

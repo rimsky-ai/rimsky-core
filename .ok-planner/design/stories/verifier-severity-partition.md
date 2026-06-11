@@ -11,7 +11,7 @@ As a template author declaring data-quality checks, I can label a check `warning
 
 ## Capability
 
-Severity partition in verifier nodes: `severity: warning` is non-blocking; `severity: error` (and any non-`warning` string today) is blocking. Both observable through the runtime surface.
+Severity partition in verifier nodes: `severity: warning` is non-blocking; `severity: error` (and any non-`warning` string today) is blocking. Both observable through the runtime surface. Severity is a free-form string; the runtime partitions on exact-string `warning` (non-blocking) and treats every other value, including the documented `error` and any typo, as blocking. The two-string convention `warning`/`error` is the contract this story exercises; `tension:quality-rule-severity-string-footgun` tracks the typo footgun.
 
 ## Business value
 
@@ -28,9 +28,3 @@ Warning blocks commit, OR error doesn't block commit, OR the severity field is d
 ## Proof
 
 Executable proof.
-
-## Notes
-
-Severity is a free-form string today; the runtime partitions on exact-string `warning` (non-blocking) and treats every other value, including the documented `error` and any typo, as blocking. The two-string convention `warning`/`error` is the contract this story exercises; the open `tension:quality-rule-severity-string-footgun` tracks the typo footgun for separate resolution.
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

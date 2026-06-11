@@ -12,7 +12,3 @@ status: as-is
 ## Rationale
 
 Distinguish fresh vs. replayed without body inspection.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

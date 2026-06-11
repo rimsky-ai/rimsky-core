@@ -28,7 +28,3 @@ Materialize trigger doesn't actually cause a producing dispatch, OR the version-
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

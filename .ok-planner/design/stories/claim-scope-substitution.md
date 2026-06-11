@@ -28,7 +28,3 @@ Legacy `scope` spelling is silently accepted, OR canonical `claim_scope` resolve
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

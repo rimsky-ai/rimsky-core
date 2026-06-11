@@ -77,11 +77,43 @@ func acquireClaim(
 	// the uniformity invariant (spec §2.5), all conflicting claims share
 	// identical semantics, so the candidate's effective semantics on a
 	// match equals the holder's recorded value.
-	conflicted, err := evaluateClaimScopeConflict(ctx, args, tx, s, spec, cand)
+	//
+	// When the conflicting holder is a committed-durable row (the asset
+	// surface; concept:claim-lifetime invariant "Conflict detection
+	// includes committed-durable rows"), the conflict is permanent for
+	// the duration of the holder's asset lifetime — retrying the
+	// scope-conflict bail forever would silently stall the node. Instead
+	// surface the conflict as openResultUnavailable so it routes through
+	// the operator's `error_types: { acquire/unavailable: ... }` chain
+	// (defaulting to give_up when no policy is declared), matching the
+	// shape `concept:asset` and `concept:claim-lifetime` require:
+	// "competing acquirer against the same scope hits
+	// terminal/error/acquire/unavailable while the row is
+	// committed-durable."
+	//
+	// Active conflicts (a still-in-flight acquirer) keep the bail
+	// shape — the holder may release on its own terminal and the
+	// scheduler tick legitimately retries.
+	//
+	// @story: claim-handoff-durable
+	conflicted, persistent, err := evaluateClaimScopeConflict(ctx, args, tx, s, spec, cand)
 	if err != nil {
 		return AcquiredLock{}, openResultBail, err
 	}
 	if conflicted {
+		if persistent {
+			// Surface as unavailable so the operator's error_types chain
+			// routes the durable-conflict. UnavailableClass empty → the
+			// synthetic "acquire/unavailable" leaf the chain keys on.
+			// Count as a resolved acquisition outcome with
+			// intent="unavailable" — the durable-conflict terminates the
+			// tick into the error-policy chain (not a retry-bail), so it
+			// is symmetric with the producer-returned-unavailable branch
+			// below at IncClaimAcquisition / ObserveClaimAcquisitionLatency.
+			metricsOf(args).IncClaimAcquisition(spec.ProducerName, "unavailable")
+			metricsOf(args).ObserveClaimAcquisitionLatency(spec.ProducerName, args.Clock.Now().Sub(acquireStart).Seconds())
+			return AcquiredLock{}, openResultUnavailable, nil
+		}
 		return AcquiredLock{}, openResultBail, nil
 	}
 
@@ -167,6 +199,19 @@ func acquireClaim(
 			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateClaimScope: %w", err)
 		}
 	}
+	// Persist the producer-supplied capture-time Payload so downstream
+	// co-holders' `{{claim.<alias>.payload.<f>}}` substitution can read
+	// the same bytes at their own acquire-tx. Inert in rimsky per
+	// @blessed-invariant 20. Empty payload → no UPDATE (the column
+	// stays NULL; the substitution returns ErrMissingSource which is
+	// the correct outcome when the producer didn't return one).
+	//
+	// @concept: claim-co-holdership
+	if len(cr.Payload) > 0 {
+		if err := args.ClaimHandles.UpdatePayload(ctx, rowID, args.SupervisorID, cr.Payload, tx); err != nil {
+			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdatePayload: %w", err)
+		}
+	}
 	// Persist the per-claim RealizedWriteSemantics returned by the
 	// producer. Required for the in-Go scope-conflict check on
 	// subsequent acquisitions; per the uniformity invariant (§2.5) all
@@ -196,8 +241,20 @@ func acquireClaim(
 
 // evaluateClaimScopeConflict re-loads existing claim-scope holders for the
 // store and runs scopesConflict ∧ ModeCoexists against the candidate spec.
-// Skips own-node rows. Returns true if any holder conflicts AND the modes
-// don't coexist.
+// Skips own-node rows. Returns (conflicted, persistent, err): `conflicted`
+// = any holder conflicts AND the modes don't coexist; `persistent` = AT
+// LEAST ONE such conflicting holder is a committed-durable row (the
+// asset surface; won't release on its own). Iterating all conflicting
+// holders rather than returning on the first lets a durable-committed
+// conflict ANY of them mark the conflict as persistent — without this
+// OR-fold, a still-active conflicting acquirer that happens to sort
+// before a committed-durable holder on `claimed_at ASC` would mask the
+// durable conflict and send the node into retry-bail forever even
+// though the durable row guarantees the conflict can never clear without
+// operator action. Active-only conflicts (no durable holder among the
+// rejecters) keep `persistent=false` so the caller's retry-bail shape
+// keeps the scheduler legitimately polling for the active holder's
+// terminal.
 //
 // @blessed-invariant 4b: single-writer-per-scope, producer-aware overlap.
 // The scope-overlap predicate is byte-equal by default (spec §7.7 — the
@@ -213,17 +270,19 @@ func acquireClaim(
 // Per the uniformity invariant (spec §2.5) all conflicting claims share
 // identical RealizedWriteSemantics. The conflict check uses the holder's
 // recorded RealizedWriteSemantics for both sides.
+//
+// @story: claim-handoff-durable
 func evaluateClaimScopeConflict(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	s claimproducer.ClaimProducer, spec claimproducer.ClaimSpec, cand persistence.Candidate,
-) (bool, error) {
+) (bool, bool, error) {
 	holders, err := args.ClaimHandles.ListByProducerClaimScope(ctx, spec.ProducerName, tx)
 	if err != nil {
-		return false, fmt.Errorf("evaluateClaimScopeConflict: ListByProducerClaimScope: %w", err)
+		return false, false, fmt.Errorf("evaluateClaimScopeConflict: ListByProducerClaimScope: %w", err)
 	}
 	candidateScope, err := json.Marshal(spec.Selector)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	// Resolve the producer's conflict capability ONCE per evaluation. When
 	// advertised, each holder comparison routes through the producer's own
@@ -231,8 +290,15 @@ func evaluateClaimScopeConflict(
 	// (@blessed-invariant 4b).
 	caps, err := s.Capabilities(ctx)
 	if err != nil {
-		return false, fmt.Errorf("evaluateClaimScopeConflict: Capabilities(%s): %w", spec.ProducerName, err)
+		return false, false, fmt.Errorf("evaluateClaimScopeConflict: Capabilities(%s): %w", spec.ProducerName, err)
 	}
+	// Track whether ANY conflicting holder is committed-durable so the
+	// returned `persistent` reflects the worst case across the holder
+	// set, not just the first one inspected.
+	var (
+		sawConflict             bool
+		sawDurableCommittedConf bool
+	)
 	for _, h := range holders {
 		// Same-node-skip note: this branch only takes effect on still-
 		// active claims that this supervisor is in the middle of
@@ -272,7 +338,7 @@ func evaluateClaimScopeConflict(
 		// default.
 		conflicts, cErr := scopesConflict(ctx, s, caps, candidateScope, h.ClaimScopeData)
 		if cErr != nil {
-			return false, fmt.Errorf("evaluateClaimScopeConflict: ScopesConflict(%s): %w", spec.ProducerName, cErr)
+			return false, false, fmt.Errorf("evaluateClaimScopeConflict: ScopesConflict(%s): %w", spec.ProducerName, cErr)
 		}
 		if !conflicts {
 			continue
@@ -286,10 +352,23 @@ func evaluateClaimScopeConflict(
 		// (post-Open) MUST match the holder's; we use the holder's
 		// recorded value for both sides of the matrix.
 		if !locks.ModeCoexists(spec.Intent, holderRWS, holderIntent, holderRWS) {
-			return true, nil
+			// At least one conflicting holder. Persistent iff THIS holder
+			// (or any prior in the loop) is the asset surface (committed-
+			// durable): the row won't release on its own, so the conflict
+			// cannot be cleared by waiting on the holder's terminal —
+			// the operator's `error_types: { acquire/unavailable: ... }`
+			// chain decides. We must keep iterating after the first
+			// rejection: an active-conflicting row may sort before a
+			// later durable-committed conflicting row by `claimed_at
+			// ASC`, and a first-rejection-wins shape would mask the
+			// durable conflict.
+			sawConflict = true
+			if h.State == fspec.ClaimHandleStateCommitted && h.Lifetime == fspec.ClaimLifetimeDurable {
+				sawDurableCommittedConf = true
+			}
 		}
 	}
-	return false, nil
+	return sawConflict, sawDurableCommittedConf, nil
 }
 
 // scopesConflict reports whether two claim-scope byte strings conflict

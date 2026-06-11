@@ -28,7 +28,3 @@ Through the `rimsky agent` CLI: `start` launches the agent connected to the conf
 ## Proof
 
 Demo.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

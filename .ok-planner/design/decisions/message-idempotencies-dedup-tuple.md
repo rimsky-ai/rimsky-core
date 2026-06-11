@@ -12,7 +12,3 @@ status: as-is
 ## Rationale
 
 Prevent cross-tenant + cross-kind replay collisions.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

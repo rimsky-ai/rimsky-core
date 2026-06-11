@@ -28,7 +28,3 @@ A dry-run-pinned key's write actually persists state, OR the audit misses the at
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

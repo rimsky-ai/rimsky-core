@@ -18,7 +18,7 @@ Owns: the compound definition, the control-api asset endpoints (list, detail, ve
 
 ## Invariants
 
-- Per-instance namespacing: `{instance_id}.{asset_alias}` is the canonical identity for V1.
+- Per-instance namespacing: `{instance_id}.{asset_alias}` is the canonical identity.
 - The producer MUST advertise the data-processing capability. A durable-lifetime claim against a producer lacking that capability is a held-durable claim, not an asset.
 - The asset's `data:` block in the template is producer-targeted and opaque to rimsky. Rimsky-aware fields outside `data:`: `producer`, `scope`, `lifetime`, `write_semantics`.
 - The asset-delete endpoint releases the claim handle via the producer's release verb; it refuses if any in-flight run holds the claim.

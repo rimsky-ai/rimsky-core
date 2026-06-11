@@ -28,7 +28,3 @@ Atomic-staging schema is created but Commit doesn't atomically swap, OR `row_cou
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

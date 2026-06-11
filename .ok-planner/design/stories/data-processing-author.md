@@ -28,7 +28,3 @@ A claim-producer advertising the `DataProcessing` mix-in is referenced from a te
 ## Proof
 
 Example.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

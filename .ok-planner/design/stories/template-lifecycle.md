@@ -28,7 +28,3 @@ Deployed-vs-undeployed state is recorded but not gated on at instance creation (
 ## Proof
 
 Executable proof exercising the full lifecycle against the assembled all-in-one stack.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

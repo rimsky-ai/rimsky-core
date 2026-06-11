@@ -8,7 +8,7 @@ aliases: [persistence-driver]
 
 ## What it is
 
-The top-level database interface is the umbrella over the rimsky persistence layer. One database is constructed per process (a single open call); the three runtime processes hold it for their lifetime and close it on shutdown. Analogous to Go stdlib `sql.DB` — the runtime object, not the adapter. It exposes the container methods that hand back the queue, the per-row-type table accessors, the advisory locker, the migration runner, a ping/healthcheck, a blob-backend setter, and close.
+The top-level database interface is the umbrella over the rimsky persistence layer. One database is constructed per process (a single open call); the three runtime processes hold it for their lifetime and close it on shutdown. Analogous to a stdlib-style database handle — the runtime object, not the adapter. It exposes the container methods that hand back the queue, the per-row-type table accessors, the advisory locker, the migration runner, a ping/healthcheck, a blob-backend setter, and close.
 
 The per-row-type accessor umbrella is the bundle returned by the database interface. It aggregates the per-row-type accessors (templates, nodes, frames, instances, claim-handles, claim-holders, etc.). Most callers depend on only a subset; the umbrella keeps startup wiring compact.
 

@@ -42,6 +42,16 @@ type ClaimHandleRow struct {
 	// scope a claim covers; address is opaque to rimsky and meant
 	// for the store/executor only.
 	Address json.RawMessage `json:"-"`
+	// Payload carries the producer-supplied capture-time bytes — the
+	// same `ClaimResult.Payload` the original acquirer received. Held
+	// on the row so a co-holder declaring `holds:` against this alias
+	// can read `{{claim.<alias>.payload.<f>}}` at its own dispatch tx
+	// (the holder's `collectCoHeldClaims` reads this column). Inert in
+	// rimsky per @blessed-invariant 20 — `json:"-"` so observability
+	// handlers cannot leak it via the row's JSON envelope.
+	//
+	// @concept: claim-co-holdership
+	Payload json.RawMessage `json:"-"`
 	Intent  *string         `json:"intent,omitempty"`
 	// HolderSupervisorID is the supervisor id currently bracketing this
 	// claim. Nil iff `State != active` per the
@@ -142,6 +152,7 @@ type ClaimHandleInsertInput struct {
 	ProducerName           *string
 	ClaimScopeData         json.RawMessage
 	Address                json.RawMessage
+	Payload                json.RawMessage
 	Intent                 *string
 	HolderSupervisorID     string
 	HolderNodeID           shared.UUID
@@ -186,6 +197,17 @@ type ClaimHandleInsertInput struct {
 type ClaimHandleTable interface {
 	Insert(ctx context.Context, in ClaimHandleInsertInput, tx Tx) error
 	UpdateAddress(ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx Tx) error
+	// UpdatePayload writes the producer-supplied capture-time payload
+	// bytes onto an existing claim-scope row. Claimant-guarded on
+	// supervisorID; mismatches are a no-op. Called by the supervisor's
+	// acquireClaim path after Open returns a non-empty Payload (the
+	// row is Insert'd BEFORE Open, so the payload cannot ride the
+	// initial INSERT). The persisted bytes back co-holders' downstream
+	// `{{claim.<alias>.payload.<f>}}` substitution at their own acquire-
+	// tx; per @blessed-invariant 20 the bytes are inert in rimsky.
+	//
+	// @concept: claim-co-holdership
+	UpdatePayload(ctx context.Context, id shared.UUID, supervisorID string, payload json.RawMessage, tx Tx) error
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHandleRow, error)
 	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
 

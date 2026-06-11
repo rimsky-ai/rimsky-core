@@ -28,7 +28,3 @@ Subscription fires the node on a non-matching payload (predicate ignored), OR do
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

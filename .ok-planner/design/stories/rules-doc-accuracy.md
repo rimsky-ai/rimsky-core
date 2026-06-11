@@ -28,7 +28,3 @@ The check accepts a non-existent path (text-search only, no resolve), OR the che
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

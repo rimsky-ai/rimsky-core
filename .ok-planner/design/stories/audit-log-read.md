@@ -28,7 +28,3 @@ A real access denied doesn't appear in the audit, OR dry-run-mode attempts are a
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

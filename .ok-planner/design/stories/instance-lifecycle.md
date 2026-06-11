@@ -28,7 +28,3 @@ Pause is recorded but the supervisor keeps dispatching against the instance, OR 
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

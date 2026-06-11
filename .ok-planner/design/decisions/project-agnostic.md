@@ -12,7 +12,3 @@ No code/doc/test/example/comment names or assumes a specific consumer; templates
 ## Rationale
 
 Rimsky ships as embedded platform to many consumers.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

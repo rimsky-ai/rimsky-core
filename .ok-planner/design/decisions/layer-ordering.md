@@ -12,7 +12,3 @@ Within the root module, four ordered layers: the foundation module's layer → t
 ## Rationale
 
 Directed dependency DAG; lower layers never see higher ones.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

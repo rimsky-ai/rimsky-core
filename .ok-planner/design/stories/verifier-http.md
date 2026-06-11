@@ -28,7 +28,3 @@ The verifier resolves to success when the upstream returned 5xx, OR the upstream
 ## Proof
 
 Executable proof.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

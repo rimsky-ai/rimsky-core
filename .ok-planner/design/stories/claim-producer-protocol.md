@@ -28,7 +28,3 @@ A registered producer's `Open` is bypassed, OR Commit/Abandon/Release are called
 ## Proof
 
 Example.
-
-## Notes
-
-2026-06-08 — Story landed via spec 2026-06-08-design-corpus-bootstrap.

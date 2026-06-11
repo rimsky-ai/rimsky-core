@@ -7,12 +7,8 @@ status: as-is
 
 ## Choice
 
-`modernc.org/sqlite`.
+The modernc.org pure-Go SQLite driver.
 
 ## Rationale
 
 Pure-Go, no CGO; simplified deployment.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.

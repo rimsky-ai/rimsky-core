@@ -12,7 +12,3 @@ End-to-end via the test group's scenarios directory + the services module's scen
 ## Rationale
 
 Real-stack integration tests against blessed invariants.
-
-## Notes
-
-2026-06-08 — Decision recorded via spec 2026-06-08-design-corpus-bootstrap.
