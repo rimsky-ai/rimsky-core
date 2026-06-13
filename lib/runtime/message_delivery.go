@@ -27,7 +27,7 @@
 //     this frame, then stop (the rest stay pending for the next frame).
 //     Same-value (idempotent) bindings keep coalescing.
 //
-// @blessed-invariant: messages are inert in rimsky. The delivery path
+// @blessed-invariant: message-inertness — messages are inert in rimsky. The delivery path
 // touches envelope routing fields (kind, sender, sender_kind, target,
 // frame_id, delivered_at) but never the `payload` bytes. The two
 // sanctioned read sites for payload bytes live elsewhere: the
@@ -552,7 +552,7 @@ func DeliverPendingMessages(
 // message bound for the same node. The conflicting message — and every
 // message after it — stays pending for the next frame.
 //
-// @blessed-invariant: no silent override loss under coalesce. Two
+// @blessed-invariant: no-silent-override-coalesce — no silent override loss under coalesce. Two
 // messages that would resolve the SAME payload-reading node to DIFFERENT
 // values land in SEPARATE frames; only same-value (idempotent) bindings
 // coalesce into one. A distinct backfill `partition_request_override` is

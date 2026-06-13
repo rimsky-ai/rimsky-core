@@ -534,7 +534,7 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 
 // handleGetMessage is GET /messages/{id}.
 //
-// @blessed-invariant: messages are inert in rimsky. The persistence-
+// @blessed-invariant: message-inertness — messages are inert in rimsky. The persistence-
 // layer fetch here is one of two sanctioned read sites for message
 // payload bytes (the other is the substitution-leaf walk in
 // graph/attribute/substitution.go::resolveTrigger). Rimsky never logs,

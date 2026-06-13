@@ -202,7 +202,7 @@ type NodeTable interface {
 	// pins frame_id. Pure UPDATE keyed by run_id; allocation is the
 	// cascade walker's responsibility via AffirmNodeRunRow.
 	//
-	// @blessed-invariant: State-machine writes for a single run must be
+	// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
 	// tx-atomic. Caller MUST resolve the run id (via the affirm-then-read
 	// pattern) within the same tx as this UPDATE.
 	//
@@ -224,7 +224,7 @@ type NodeTable interface {
 	//   - ErrRunScopeClosed: the RunScope's closed_at is set.
 	//   - underlying database errors: propagated.
 	//
-	// @blessed-invariant: AffirmNodeRunRow no-return-value-dependency
+	// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency
 	// per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
 	//
 	// @concept: run-scope
@@ -246,7 +246,7 @@ type NodeTable interface {
 	// Used by the callback handler in runtime/callback.go to resolve
 	// the run for a callback under the atomic phase check.
 	//
-	// @blessed-invariant: Callback determinism per spec.
+	// @blessed-invariant: callback-determinism — Callback determinism per spec.
 	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID shared.UUID, tx Tx) (*NodeRunForCallback, error)
 }
 

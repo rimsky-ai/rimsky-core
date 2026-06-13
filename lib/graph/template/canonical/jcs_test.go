@@ -2,6 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @blessed-invariant: canonical-hash-identity — exercised here: the canonical-hash function is the registry's identity.
+
 package canonical
 
 import (

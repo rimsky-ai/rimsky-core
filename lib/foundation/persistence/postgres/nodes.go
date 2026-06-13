@@ -739,7 +739,7 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 // frame_id. Pure UPDATE keyed by run_id; allocation is the cascade
 // walker's job via AffirmNodeRunRow.
 //
-// @blessed-invariant: State-machine writes for a single run must be
+// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
 // tx-atomic. Caller resolves the run id (affirm-then-read) within the
 // same tx.
 //
@@ -796,7 +796,7 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 // stable closed-vs-success answer should pass a non-nil tx so the
 // INSERT and the fallback SELECT share a snapshot.
 //
-// @blessed-invariant: AffirmNodeRunRow no-return-value-dependency.
+// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 // @concept: run-scope
 func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
@@ -880,7 +880,7 @@ func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundations
 // dispatch_id (== rimsky_node_runs.id), with FOR UPDATE row lock.
 // Returns nil when the row doesn't exist.
 //
-// @blessed-invariant: Callback determinism.
+// @blessed-invariant: callback-determinism — Callback determinism.
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	ex := s.q(tx)
 	var (

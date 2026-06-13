@@ -55,7 +55,7 @@ import (
 // RunScope (an in-flight run for the same node in the same RunScope
 // supersedes the rejected dispatch).
 //
-// @blessed-invariant: Callback determinism.
+// @blessed-invariant: callback-determinism — Callback determinism.
 type callbackAckBody struct {
 	AckStatus         string  `json:"ack_status"`
 	CurrentDispatchID *string `json:"current_dispatch_id,omitempty"`
@@ -535,7 +535,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error) {
 // resolution, state→fresh / stale / failed transitions, dispatch
 // re-enqueue, and event audit trail in one place.
 //
-// @blessed-invariant: A callback for a run is honored if and only if
+// @blessed-invariant: callback-honored-iff — A callback for a run is honored if and only if
 // the run's phase ∈ {active, held} at acceptance, checked atomically
 // inside the same tx as the state mutation. Otherwise: HTTP 200
 // ack-but-noop with a structured log event. Per spec
@@ -589,7 +589,7 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 	// phase ∈ {active, held}, then (2) runs applyTerminal's state
 	// mutation in the same tx. ack-but-noop on rejection.
 	//
-	// @blessed-invariant: Callback determinism — phase-check + state
+	// @blessed-invariant: callback-determinism — Callback determinism — phase-check + state
 	// mutation share one tx; structurally enforced here.
 	// @concept: run-scope
 	var ackStatus string

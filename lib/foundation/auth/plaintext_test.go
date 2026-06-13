@@ -27,6 +27,9 @@ func TestMintDistinct(t *testing.T) {
 	}
 }
 
+// @blessed-invariant: plaintext-mint-once — exercised here: Mint produces a
+// fresh API-key plaintext whose round-trip parse succeeds and whose prefix is
+// the package's documented bound.
 func TestMintPlaintextValidates(t *testing.T) {
 	p, _, err := Mint()
 	if err != nil {

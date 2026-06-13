@@ -2,6 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @blessed-invariant: event-log-canonical-forensic — exercised here: the event log is the canonical forensic record.
+
 // audit_read_test.go — exercises the GET /audit ?kind= parameter
 // introduced by spec:2026-06-08-design-corpus-bootstrap Pass 2
 // (Task 9). The ?kind= filter on the /audit surface intersects

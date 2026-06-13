@@ -501,7 +501,7 @@ func stringifyAny(v any) string {
 // the whole payload as a JSON-decoded value (per spec §Item 3 — bare-
 // form pull).
 //
-// @blessed-invariant: messages are inert in rimsky. Message payload
+// @blessed-invariant: message-inertness — messages are inert in rimsky. Message payload
 // bytes are read by rimsky only here (via `walkPath` substitution
 // against the trigger message) and at the persistence-layer fetch in
 // `GET /messages/{id}` (control/controlapi/messages.go). Rimsky never

@@ -140,7 +140,7 @@ func testAffirmNodeRunRow_ErrorsOnClosedScope(t *testing.T, d persistence.Databa
 // declaration below. The runtime body of this subtest just sanity-checks
 // the signature shape (any return mismatch is caught at compile time).
 //
-// @blessed-invariant: AffirmNodeRunRow no-return-value-dependency.
+// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 func testAffirmNodeRunRow_NoReturnValueDependency(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)

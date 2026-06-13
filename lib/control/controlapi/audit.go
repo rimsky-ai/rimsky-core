@@ -152,7 +152,7 @@ const auditWriteTimeout = 2 * time.Second
 // generic map[string]any shape the EventTable.Append signature wants,
 // and writes the row SYNCHRONOUSLY in the calling (request) goroutine.
 //
-// @blessed-invariant: the event log is the canonical forensic record
+// @blessed-invariant: event-log-canonical-forensic — the event log is the canonical forensic record
 // (concept:event-log) — the per-request auth-audit write is durable
 // and is never silently dropped. There is no queue/worker/buffer: the
 // row lands (or the failure is surfaced) before the gate returns. The

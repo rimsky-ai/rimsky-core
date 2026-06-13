@@ -10,7 +10,7 @@
 // whitespace, or non-essential string-escape variations — produce
 // byte-identical canonical bytes and, in turn, identical hashes.
 //
-// @blessed-invariant: the canonical-hash function is the registry's identity
+// @blessed-invariant: canonical-hash-identity — the canonical-hash function is the registry's identity
 // function. Any change that alters output bytes for previously-registered
 // specs is a breaking change. The JCS library version is pinned in go.mod.
 package canonical

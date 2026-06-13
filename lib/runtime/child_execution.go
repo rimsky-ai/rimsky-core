@@ -401,7 +401,7 @@ func SettleChildren(
 // parent's terminal state per the standard rule table; only the
 // writeback content carries here.
 //
-// @blessed-invariant: exit-node-writeback flows to parent run writeback
+// @blessed-invariant: exit-node-writeback-to-parent — exit-node-writeback flows to parent run writeback
 // (the NodeAttributes().Upsert against the parent's row below is the
 // carry site; downstream {{nodes.<calling-node>.attribute.<field>}}
 // reads depend on it).

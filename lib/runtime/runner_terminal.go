@@ -55,7 +55,7 @@ import (
 //
 // The split exists so the callback-determinism phase-check and the
 // terminal's primary state-mutation share one tx (per
-// @blessed-invariant: Callback determinism) while the open-its-own-tx
+// @blessed-invariant: callback-determinism — Callback determinism) while the open-its-own-tx
 // observability work continues to run after commit (which it must,
 // since SQLite uses a single-conn pool and would self-deadlock on a
 // nested Transaction call).
@@ -71,7 +71,7 @@ type postCommitFn func(ctx context.Context)
 // recalculate) is returned as a `postCommitFn` the caller invokes
 // AFTER the outer tx commits.
 //
-// @blessed-invariant: Callback determinism. The phase-check read +
+// @blessed-invariant: callback-determinism — Callback determinism. The phase-check read +
 // terminal state mutation share one tx; the structural enforcement is
 // at the two call sites (driveTerminal in callback.go, runner.go in
 // the sync path) that open the outer tx and pass it through. Per spec
@@ -170,7 +170,7 @@ func emitWorkCompleted(ctx context.Context, args RunArgs, acq *acquisition, kind
 // Returning a non-nil error from `setup` skips applyTerminal entirely
 // (the determinism path's ack-but-noop branch).
 //
-// @blessed-invariant: Callback determinism — the phase-check read +
+// @blessed-invariant: callback-determinism — Callback determinism — the phase-check read +
 // terminal state mutation share one tx.
 func runApplyTerminal(
 	ctx context.Context, args RunArgs, acq *acquisition,
@@ -337,7 +337,7 @@ func applyTerminalComplete(
 	settlingSignalType := &successType
 
 	// Primary state-mutation work runs inline in the caller's outer tx.
-	// Per @blessed-invariant: Callback determinism — phase-check read
+	// Per @blessed-invariant: callback-determinism — Callback determinism — phase-check read
 	// and these writes must share one tx.
 	if err := releaseLocksInTx(ctx, args, tx, acq, true, false); err != nil {
 		return nil, err
@@ -892,7 +892,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 					// attribute-topic edges.
 					//
 					// @concept: run-scope
-					// @blessed-invariant: AffirmNodeRunRow
+					// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow
 					// no-return-value-dependency.
 					var receiverRunID foundationshared.UUID
 					if skipAffirm {
@@ -1111,7 +1111,7 @@ func pullHardDepUpstreams(
 		// target_run_scope_id) when none exists.
 		//
 		// @concept: run-scope
-		// @blessed-invariant: AffirmNodeRunRow no-return-value-dependency.
+		// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 		if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, upstreamNode.ID, upstreamRunScopeID, senderFrameID, tx); err != nil {
 			// Defensive: a closed RunScope means the upstream's scope
 			// rendezvous has fired. Hard-dep upstreams in closed scopes

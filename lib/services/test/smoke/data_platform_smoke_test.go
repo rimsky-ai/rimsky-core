@@ -54,7 +54,7 @@ import (
 //     arrivals with `sender_kind: "publisher"`.
 //  3. Drive the poll → push contract via a generic HTTP client.
 //
-// Inert payload per `@blessed-invariant: messages are inert in rimsky`.
+// Inert payload per `@blessed-invariant: message-inertness — messages are inert in rimsky`.
 func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 	t.Parallel()
 

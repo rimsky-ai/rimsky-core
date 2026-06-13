@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // on_error_tx_atomicity_test.go pins
-// @blessed-invariant: State-machine writes for a single run must be
+// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
 // tx-atomic. Specifically, OnError's retry path must perform the
 // (state-write + remove-from-queue + enqueue-new-dispatch) sequence
 // inside a single transaction. Per spec

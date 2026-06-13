@@ -714,7 +714,7 @@ func applyAttributeFailure(
 	emitAttributeFailureEvent(ctx, args, acq.NodeID, acq.InstanceID,
 		eventKind, extractDirective(err), "attribute", "", err.Error())
 	// applyErrorPolicy now expects to run inside an outer state-mutation
-	// tx (per @blessed-invariant: Callback determinism). Wrap it in a
+	// tx (per @blessed-invariant: callback-determinism — Callback determinism). Wrap it in a
 	// fresh tx here — this caller is the dispatch-time attribute
 	// resolution path, which has no outer tx of its own, so we open one
 	// and run the returned postCommit after commit. Same shape as

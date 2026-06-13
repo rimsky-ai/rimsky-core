@@ -241,7 +241,7 @@ func invalidateNextFrame(ctx context.Context, args InvalidateArgs, target *persi
 //   - the resolved frame_id is nil (e.g., the source is itself stale
 //     and the cascade hasn't established a frame for this propagation).
 //
-// @blessed-invariant: State-machine writes for a single run must be
+// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
 // tx-atomic. Any operation that reads a run's current state to
 // decide what state to write must perform the read and the write
 // in the same transaction. The frame_id resolution is hoisted out

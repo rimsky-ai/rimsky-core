@@ -111,7 +111,7 @@ type OnErrorArgs struct {
 //	`attributes_schema_failed` when the template declares no override
 //	(via the policy == nil branch of node.Evaluate).
 //
-// @blessed-invariant: State-machine writes for a single run must be
+// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
 // tx-atomic. Any operation that reads a run's current state to
 // decide what state to write must perform the read and the write
 // in the same transaction. Per spec

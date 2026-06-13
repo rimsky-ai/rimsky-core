@@ -219,7 +219,7 @@ func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 	}
 
 	// The carry landed verbatim on the PARENT run's attribute row
-	// (@blessed-invariant: exit-node-writeback flows to parent run
+	// (@blessed-invariant: exit-node-writeback-to-parent — exit-node-writeback flows to parent run
 	// writeback).
 	attrs := readParentAttrs(t, fx)
 	if attrs == nil {

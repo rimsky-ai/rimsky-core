@@ -607,7 +607,7 @@ func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundations
 // postgres impl. Allocation is the cascade walker's responsibility via
 // AffirmNodeRunRow.
 //
-// @blessed-invariant: State-machine writes for a single run must be
+// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
 // tx-atomic.
 // @concept: cascade
 func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
@@ -652,7 +652,7 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 // row already in-flight (silent success), scope closed
 // (ErrRunScopeClosed), or scope absent (error).
 //
-// @blessed-invariant: AffirmNodeRunRow no-return-value-dependency.
+// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 // @concept: run-scope
 func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	res, err := s.q(tx).ExecContext(ctx,
@@ -732,7 +732,7 @@ func (s *nodesImpl) HasRunForNodeInFrame(ctx context.Context, nodeID foundations
 // dispatch_id (== rimsky_node_runs.id). SQLite holds the row lock
 // implicitly within BEGIN IMMEDIATE.
 //
-// @blessed-invariant: Callback determinism.
+// @blessed-invariant: callback-determinism — Callback determinism.
 func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID foundationshared.UUID, tx persistence.Tx) (*persistence.NodeRunForCallback, error) {
 	var (
 		r          persistence.NodeRunForCallback

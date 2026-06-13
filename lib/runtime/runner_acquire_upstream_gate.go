@@ -22,7 +22,7 @@
 // stays pending); the in-flight sender's own settlement re-triggers
 // selection.
 //
-// @blessed-invariant: a stale run is not dispatch-eligible while any
+// @blessed-invariant: stale-run-not-dispatch-eligible — a stale run is not dispatch-eligible while any
 // subscribed upstream has an in-flight run in the same frame,
 // propagation-path-independent. Enforced by candidateGatedByInFlightUpstream
 // at the tryAcquire pre-claim site; the persistence half is
