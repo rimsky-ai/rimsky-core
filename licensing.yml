@@ -63,3 +63,4 @@ exempt:
   - lib/services/executors/claude-agent/node_modules/
   - lib/services/executors/claude-agent/dist/
   - .elves/
+  - .claude/   # Claude Code session state, settings, and ephemeral worktrees; not source the project licenses

@@ -15,7 +15,7 @@
 # an unpinned FROM lets a rebuild pull a different base non-deterministically.
 # This digest is the multi-arch index validated to scan 0C/0H; bump it
 # deliberately (re-resolving the tag and re-scanning).
-FROM cgr.dev/chainguard/wolfi-base@sha256:441d6709305552a3411e585ad98aacb9dadda00c80f3267483c38ac6f86f49d4 AS builder
+FROM cgr.dev/chainguard/wolfi-base@sha256:34977aa13765da89f60fee8fe5230e2bb1c55192df08e383c58221ee0d1277fb AS builder
 RUN apk add --no-cache nodejs-24 npm
 WORKDIR /build
 COPY lib/protocols/ ./lib/protocols/
@@ -47,7 +47,7 @@ RUN find node_modules -mindepth 1 -type d -empty -delete
 # import.meta.url relative to the installed package.
 RUN cp -rL node_modules /build/node_modules_deref
 
-FROM cgr.dev/chainguard/wolfi-base@sha256:441d6709305552a3411e585ad98aacb9dadda00c80f3267483c38ac6f86f49d4
+FROM cgr.dev/chainguard/wolfi-base@sha256:34977aa13765da89f60fee8fe5230e2bb1c55192df08e383c58221ee0d1277fb
 RUN apk add --no-cache nodejs-24 npm git tini
 # The executor spawns the Claude Code CLI as a subprocess. cli-runner.ts
 # defaults to `"claude"` from PATH; install it globally so the binary
