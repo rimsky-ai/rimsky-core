@@ -134,7 +134,20 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		// executor-Success terminal can match on the audit-event
 		// payload (no separate signal-type leaf for pure-cascade pre-v1).
 		pureCascadeSig := "terminal/success"
-		return sb.Nodes().UpdateState(ctx, n.ID, *n.RunScopeID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx)
+		if err := sb.Nodes().UpdateState(ctx, n.ID, *n.RunScopeID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx); err != nil {
+			return err
+		}
+		// Retire the node's in-flight run row in the SAME tx as the
+		// settle (run-row-lifecycle atomicity: a settled run never
+		// leaves a live rimsky_node_runs row behind). The frame seed /
+		// AffirmNodeRunRow path enqueues a pending row for pure-cascade
+		// nodes too; nothing on the scheduler path claims it, so the
+		// claimant guard is empty (the row is pending+unclaimed — no
+		// supervisor owns it). Without this retire, the leaked pending
+		// row reads as a forever-in-flight sender to the upstream gate
+		// (runtime/runner_acquire_upstream_gate.go) and every
+		// subscribed receiver is gated off dispatch permanently.
+		return args.Queue.RemoveForNodeInTx(ctx, n.ID, *n.RunScopeID, "", tx)
 	}); err != nil {
 		log.Warn("ProcessPureCascade: state transition failed",
 			"node_id", n.ID.String(), "error", err.Error())

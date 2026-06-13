@@ -9,7 +9,7 @@ import (
 	"fmt"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
@@ -139,13 +139,19 @@ func (c *ValidationClient) Close() {
 // service. `supportedRoles` mirrors the `validation_supported_roles`
 // the peer advertised through its host Capabilities handshake (e.g.
 // the matching ClaimProducer or Executor Capabilities response).
-func DialValidation(_ context.Context, name, endpoint string, supportedRoles []string) (*ValidationClient, error) {
+// tlsMode is the peer entry's validated `tls:` mode (TLSModeOff /
+// TLSModeRequired; empty → off).
+func DialValidation(_ context.Context, name, endpoint, tlsMode string, supportedRoles []string) (*ValidationClient, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
 	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(target,
+		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
+		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
+		grpc.WithStreamInterceptor(TLSModeStreamInterceptor(name, tlsMode)),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("remote validation %q: dial %q: %w", name, endpoint, err)
 	}
@@ -155,6 +161,62 @@ func DialValidation(_ context.Context, name, endpoint string, supportedRoles []s
 		rpc:            genv1.NewValidationClient(conn),
 		supportedRoles: append([]string(nil), supportedRoles...),
 	}, nil
+}
+
+// FetchExecutorValidationRoles dials an executor peer's
+// ExecutorObservability service and returns the
+// validation_supported_roles list from its Capabilities response.
+// The Validation service has no Capabilities verb, so an executor
+// advertising the validation mix-in carries its supported roles on
+// the observability capability surface
+// (executor_observability.proto::ObservabilityCapabilities). The
+// connection is opened and closed within this call; the RPC is bounded
+// by ctx. tlsMode is the peer entry's validated `tls:` mode.
+func FetchExecutorValidationRoles(ctx context.Context, name, endpoint, tlsMode string) ([]string, error) {
+	target, err := stripScheme(name, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := grpc.NewClient(target,
+		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
+		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("remote executor %q: dial %q: %w", name, endpoint, err)
+	}
+	defer func() { _ = conn.Close() }()
+	resp, err := genv1.NewExecutorObservabilityClient(conn).Capabilities(ctx, &genv1.ExecutorCapabilitiesRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("remote executor %q: ExecutorObservability.Capabilities handshake: %w", name, err)
+	}
+	// Defensive copy: the caller caches the slice past the proto's lifetime.
+	return append([]string(nil), resp.GetValidationSupportedRoles()...), nil
+}
+
+// FetchPublisherValidationRoles dials a publisher peer's Publisher
+// service and returns the validation_supported_roles list from its
+// Capabilities response (publisher.proto::PublisherCapabilities). The
+// connection is opened and closed within this call; the RPC is bounded
+// by ctx. tlsMode is the peer entry's validated `tls:` mode.
+func FetchPublisherValidationRoles(ctx context.Context, name, endpoint, tlsMode string) ([]string, error) {
+	target, err := stripScheme(name, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := grpc.NewClient(target,
+		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
+		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("remote publisher %q: dial %q: %w", name, endpoint, err)
+	}
+	defer func() { _ = conn.Close() }()
+	resp, err := genv1.NewPublisherClient(conn).Capabilities(ctx, &emptypb.Empty{})
+	if err != nil {
+		return nil, fmt.Errorf("remote publisher %q: Publisher.Capabilities handshake: %w", name, err)
+	}
+	// Defensive copy: the caller caches the slice past the proto's lifetime.
+	return append([]string(nil), resp.GetValidationSupportedRoles()...), nil
 }
 
 // projectFindings maps proto ValidationFinding entries to the

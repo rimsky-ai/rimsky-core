@@ -18,6 +18,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -103,10 +104,18 @@ func TestRetryLoopCapDisabledWithZero(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Wait long enough for several retries to elapse. The node should
-	// either still be cycling (stale/running) or give up via the standard
-	// retry-budget exhaustion (Count: 5) — but not via the retry-loop cap.
-	time.Sleep(5 * time.Second)
+	// Wait until several retries have actually elapsed. Each retry
+	// emits a transient/retry/<n>/<class> audit row, so the event log
+	// carries the durable record of "retries happened" — waiting on it
+	// (instead of a fixed sleep) pins the precondition: the no-cap
+	// assertions below are vacuous unless retries genuinely occurred,
+	// and a fixed sleep can undershoot under load. With a per-node cap
+	// override of 0 and a retry budget of 5, at least 3 retries must
+	// land. (2026-06-11 polling audit: converted site.)
+	workerID := worker.ID
+	eventwait.WaitForEvent(h.Ctx, t, h.Persist, eventwait.Matcher{
+		NodeID: &workerID, KindPrefix: "transient/retry/", MinCount: 3,
+	}, 30*time.Second)
 
 	// Verify: no terminal/error/retry_loop_no_progress signal was emitted
 	// on this node. Post-Pass-5 the canonical signal taxonomy replaces

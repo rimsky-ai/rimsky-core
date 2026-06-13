@@ -6,33 +6,29 @@
 //
 // @concept: terminal-resolution
 //
-// Three sites need to call Producer.Abandon on a claim whose Open already
+// Two sites need to call Producer.Abandon on a claim whose Open already
 // succeeded:
 //
-//   1. The post-dispatch unified terminal-decision engine
+//   1. The unified terminal-decision engine
 //      (ResolveClaimHandleTerminal in terminal_decision.go), Abandon
-//      branch. Runs inside a caller-provided tx and is followed by a
-//      claimant-guarded ClaimHandles.Delete.
+//      branch. Runs inside a caller-provided tx; the engine itself
+//      owns the row transition that follows (Promote for the terminal
+//      sources, claimant-guarded Delete for the OwnershipBail source —
+//      the verify-before-run bail in runner_acquire_postcommit.go::
+//      handleOrphanedClaim resolves through the engine with that
+//      source).
 //
 //   2. The pre-dispatch acquire/unavailable carve-out
 //      (abandonPartialLocks in runner_lifecycle.go). Runs post-rollback
-//      from the operator's `error_types: { acquire/unavailable: ... }`
-//      chain; the rimsky_claim_handles rows have already been removed
-//      by the acquisition tx rollback, so no delete is needed.
-//
-//   3. The post-commit verify-before-run race-detection bail path
-//      (handleOrphanedClaim in runner_acquire.go). The acquisition tx
-//      committed (claim_handle rows persisted, Open succeeded), then
-//      verify-before-run discovered another supervisor stole the
-//      node-run. Each acquired claim is Abandon'd via this helper,
-//      followed by a claimant-guarded ClaimHandles.Delete owned by the
-//      caller.
+//      from the operator's `error_types:` chain; the
+//      rimsky_claim_handles rows have already been removed by the
+//      acquisition tx rollback, so no delete is needed. This is the
+//      single path that fires Abandon outside the unified engine.
 //
 // abandonOpenedClaim centralizes the producer-Abandon call so the
-// three sites share a single audited site for any future audit emit
-// or telemetry. It does NOT delete the rimsky_claim_handles row —
-// see the three callers for the delete semantics that apply at each
-// site.
+// two sites share a single audited site for any future audit emit
+// or telemetry. It does NOT touch the rimsky_claim_handles row —
+// see the two callers for the row semantics that apply at each site.
 //
 // Preserves @blessed-invariant 4 (claimant-guarded release): the
 // helper never touches the row; callers do.

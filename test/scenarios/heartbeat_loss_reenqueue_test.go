@@ -26,6 +26,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -97,36 +98,35 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 		}, tx)
 	}))
 
-	// Scheduler's stale-heartbeat sweep fires on each tick. Wait for the
-	// node to flip to stale and a dispatch row to reappear.
-	deadline := time.Now().Add(25 * time.Second)
-	var sawStale bool
-	for time.Now().Before(deadline) {
-		var got *persistence.NodeRow
-		_ = h.InTx(func(tx persistence.Tx) error {
-			r, err := h.Persist.Nodes().Get(h.Ctx, n.ID, tx)
-			got = r
-			return err
-		})
-		if got != nil && got.State == cascade.NodeStateStale {
-			sawStale = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	require.True(t, sawStale, "node did not transition running→stale")
-
-	// Verify transient/heartbeat_missed signal event (canonical audit
-	// row per concept:signal post-Pass-5).
+	// Scheduler's stale-heartbeat sweep fires on each tick. Wait on the
+	// event log for the sweep's transient/heartbeat_missed audit row
+	// (the canonical record per concept:signal post-Pass-5) — the
+	// append-only ledger cannot miss the transition, so this is the
+	// durable proof the sweep saw the zombie. NOTE the sweep is TWO
+	// transactions (lib/runtime conductor tick): tx1 commits the
+	// heartbeat_missed signal on its own (failures merely warned), and
+	// only tx2 commits the running→stale UpdateState + zombie-row
+	// retirement + recovery re-enqueue atomically. The event is durable
+	// strictly BEFORE the row flip / dispatch row exist, so the event
+	// wait alone does NOT order the mutable-row assertions below.
+	// (2026-06-11 polling audit: converted site — event wait for the
+	// durable record, plus a state wait to anchor tx2.)
 	nid := n.ID
-	var evs persistence.EventListResult
-	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
-		r, err := h.Persist.Events().List(h.Ctx, persistence.EventListFilter{NodeID: &nid, Kind: "transient/heartbeat_missed"},
-			persistence.ListPagination{Limit: 10}, tx)
-		evs = r
-		return err
-	}))
-	require.NotEmpty(t, evs.Events, "expected transient/heartbeat_missed signal event")
+	eventwait.WaitForEvent(h.Ctx, t, h.Persist, eventwait.Matcher{
+		NodeID: &nid, Kind: "transient/heartbeat_missed",
+	}, 25*time.Second)
+
+	// Anchor tx2: wait for the node row to land in stale. stale is a
+	// stable observation point here — the harness runs with
+	// NoSupervisor, so nothing reclaims the re-enqueued row and flips
+	// the state onward; this is a genuine outcome-wait, not a sampled
+	// transient. Once stale is visible, the dispatch-row assertions
+	// below are ordered: UpdateState→stale, RemoveForNodeInTx, and
+	// EnqueueInTx commit in the same transaction (tx2), guarded by
+	// @blessed-invariant "State-machine writes for a single run must be
+	// tx-atomic".
+	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateStale, 25*time.Second),
+		"node did not transition running→stale")
 
 	// A fresh dispatch row should exist (re-enqueued).
 	var dispatchID uuid.UUID
@@ -141,7 +141,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 
 	// The §7.5 step-2 lock-holder sweep should reap the expired row we
 	// seeded above. Poll rimsky_claim_handles directly until the row is gone.
-	deadline = time.Now().Add(25 * time.Second)
+	deadline := time.Now().Add(25 * time.Second)
 	var reaped bool
 	for time.Now().Before(deadline) {
 		var got *persistence.ClaimHandleRow

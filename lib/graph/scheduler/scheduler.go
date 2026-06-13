@@ -17,8 +17,10 @@
 //
 // Per tick:
 //  1. AdvisoryLocker-guarded TrySchedulerTick skips ticks when another
-//     replica holds the lock. Best-effort — if lock acquisition errors we
-//     fall through to an unlocked tick rather than dropping work.
+//     replica holds the lock. A lock-acquisition error is treated as
+//     lock-held — the pass is skipped, never run unlocked (the sweeps
+//     are periodic recovery; a one-interval delay is benign, while an
+//     unlocked run permits concurrent multi-replica sweeping).
 //  2. ProcessPureCascade — transition pure-cascade nodes (no executor) to
 //     fresh inline and emit recalculate to dependents.
 //  3. runtime.SweepStaleHeartbeats — running nodes whose last_heartbeat
@@ -252,14 +254,21 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	if cfg.AdvisoryLocker != nil {
 		held, release, err := cfg.AdvisoryLocker.TrySchedulerTick(ctx)
 		if err != nil {
-			log.Warn("tick: TrySchedulerTick failed; running unlocked",
+			// A lock-attempt error is treated as lock-held: the sweeps
+			// are periodic recovery, so skipping one interval is benign,
+			// while running unlocked under DB flakiness permits exactly
+			// the concurrent multi-replica sweeping the lock exists to
+			// prevent (@blessed-invariant 7 — mutual exclusion over
+			// availability of a single pass).
+			log.Warn("tick: TrySchedulerTick failed; skipping sweep pass",
 				"error", err.Error())
-		} else if !held {
+			return nil
+		}
+		if !held {
 			log.Debug("tick: another replica holds the lock, skipping")
 			return nil
-		} else {
-			defer release()
 		}
+		defer release()
 	}
 
 	// 2. Pure-cascade sweep. (The cron-fire sweep retired with the

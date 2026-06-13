@@ -98,6 +98,17 @@ type SelectCandidatesRequest struct {
 	// LateBindClaimProducerProxy is the rimsky.yml-configured proxy peer
 	// name for the claim_producer protocol. Empty string when none.
 	LateBindClaimProducerProxy string
+
+	// CursorEnqueuedAfter / CursorAfterDispatchID form an optional
+	// keyset cursor over the selection ordering (enqueued_at, id): only
+	// rows strictly after the cursor pair are returned. The runner uses
+	// it to page past a head-of-line batch whose candidates were all
+	// skipped in Go (e.g. the upstream in-flight gate) — without it, ≥
+	// Limit long-gated old candidates would keep their slots every poll
+	// and starve younger ungated rows for as long as the gates hold.
+	// Zero values = no cursor (start at the head).
+	CursorEnqueuedAfter   time.Time
+	CursorAfterDispatchID shared.UUID
 }
 
 // Candidate is a single dispatch row returned from SelectCandidates. The
@@ -179,6 +190,24 @@ type Queue interface {
 	// open transaction; implementations return an error when passed
 	// a nil tx.
 	SelectCandidates(ctx context.Context, tx Tx, req SelectCandidatesRequest) ([]Candidate, error)
+
+	// ListInFlightRunPhases returns, for each node in nodeIDs that has
+	// at least one in-flight rimsky_node_runs row (phase pending /
+	// active / held / parked) in the given (frame, run scope), the set
+	// of distinct phases present. Nodes with no in-flight row are
+	// absent from the map. The persistence half of the supervisor's
+	// upstream-gating eligibility condition: a stale receiver is not
+	// dispatch-eligible while any subscribed upstream has an in-flight
+	// run in the same frame, and the gate's pending-cycle tie-breaker
+	// must distinguish a merely-pending upstream (itself gated) from a
+	// progressing one. Returns an empty map for an empty node set. The
+	// caller MUST hold an open transaction (the check shares the
+	// candidate-acquisition tx so the answer is consistent with the
+	// rows the tx already locked).
+	//
+	// @concept: wait-set
+	// @concept: cascade
+	ListInFlightRunPhases(ctx context.Context, tx Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error)
 
 	// ClaimDispatchRow performs the claimant-guarded UPDATE of
 	// rimsky_node_runs.claimed_by from NULL to supervisorID for the

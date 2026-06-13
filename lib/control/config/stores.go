@@ -3,16 +3,14 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // ClaimProducers + executors config + remote-dialing helpers for the
-// rimsky processes. Per spec docs/specs/2026-05-04-service-protocol-
-// contract.md and the layer-crystallization plan (Phase 4 / Task 28):
-// the unified rimsky.yml shape (claim_producers + named_locks + executors
-// loaded together by all four rimsky binaries — control-api, supervisor,
-// scheduler, migrate — from $RIMSKY_CONFIG).
+// rimsky processes: the unified rimsky.yml shape (claim_producers +
+// named_locks + executors loaded together by all four rimsky binaries —
+// control-api, supervisor, scheduler, migrate — from $RIMSKY_CONFIG).
 //
-// Config shape (post-2026-05-12 nomenclature resolution):
-//   - top-level block is `claim_producers:` (the pre-Phase-4 alias
-//     `stores:` was rejected with a precise error in cross-layer #1 / B.6
-//     and is no longer accepted).
+// Config shape:
+//   - top-level block is `claim_producers:` (the retired alias
+//     `stores:` is rejected at load with a precise error and is no
+//     longer accepted).
 //   - each producer / executor entry gains optional `protocols: [...]`
 //     declaring which protocols it speaks. Default for claim_producers
 //     is [claim_producer]; default for executors is [executor].
@@ -101,6 +99,10 @@ const (
 type StoreEntry struct {
 	Endpoint     string
 	Capabilities claimproducer.Capabilities
+	// TLS is the dial mode for this peer: "off" (plaintext) or
+	// "required" (verified TLS). Validated at parse time; empty in the
+	// YAML normalizes to "off".
+	TLS string
 	// Protocols is the set of wire protocols this peer speaks. Always
 	// includes "claim_producer" for entries under the claim_producers:
 	// block; may also include "lifecycle_subscriber".
@@ -133,7 +135,10 @@ type RemoteStoresConfig struct {
 type ExecutorEntry struct {
 	Transport string // "grpc" | "http"
 	Endpoint  string // e.g. "claude-agent:9090"
-	TLS       string // "off" | "optional" | "required" (matches executor.Endpoint)
+	// TLS is the dial mode for this peer: "off" (plaintext) or
+	// "required" (verified TLS). Validated at parse time; empty in the
+	// YAML normalizes to "off". Matches executor.Endpoint.TLS.
+	TLS string
 	// Protocols is the set of wire protocols this peer speaks. Always
 	// includes "executor" for entries under the executors: block; may
 	// also include "lifecycle_subscriber".
@@ -168,6 +173,10 @@ type ExecutorsConfig struct {
 // publisher.
 type PublisherEntry struct {
 	Endpoint string
+	// TLS is the dial mode for this peer: "off" (plaintext) or
+	// "required" (verified TLS). Validated at parse time; empty in the
+	// YAML normalizes to "off".
+	TLS string
 	// Protocols is the set of wire protocols this peer speaks. Always
 	// includes "publisher" for entries under the publishers: block.
 	Protocols []string
@@ -196,7 +205,13 @@ type RemotePublishersConfig struct {
 }
 
 // Validate rejects empty transport or endpoint (syntactic only; no DNS
-// / dial).
+// / dial), plus the one tls/transport combination that cannot be
+// honored on the wire: a `tls: required` HTTP-bridge executor whose
+// endpoint is not https. Catching it here fails the deployment at
+// startup with the entry name instead of at first dispatch — the mode
+// is never accepted-and-ignored.
+// The HTTP client construction re-checks the same property as a
+// backstop for endpoints built outside this config path.
 func (c ExecutorsConfig) Validate() error {
 	for name, e := range c.Executors {
 		if e.Transport == "" {
@@ -204,6 +219,9 @@ func (c ExecutorsConfig) Validate() error {
 		}
 		if e.Endpoint == "" {
 			return fmt.Errorf("executor %q: endpoint required", name)
+		}
+		if e.Transport == "http" && e.TLS == peer.TLSModeRequired && !strings.HasPrefix(e.Endpoint, "https://") {
+			return fmt.Errorf("executor %q: tls: required with transport: http needs an https:// endpoint, got %q", name, e.Endpoint)
 		}
 	}
 	return nil
@@ -230,20 +248,15 @@ type RimskyConfig struct {
 	Stores     RemoteStoresConfig
 	NamedLocks locks.NamedLocksConfig
 	Executors  ExecutorsConfig
-	// Publishers is the parsed top-level `publishers:` block. Per spec
-	// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-	// §Publisher protocol unification, publishers are peer services that
-	// implement the `publisher` protocol (Subscribe / Unsubscribe /
-	// ListSubscriptions / Capabilities).
+	// Publishers is the parsed top-level `publishers:` block. Publishers
+	// are peer services that implement the `publisher` protocol
+	// (Subscribe / Unsubscribe / ListSubscriptions / Capabilities).
 	Publishers RemotePublishersConfig
 	// MaxParkDuration is the per-reason max_park_duration cap map. The
 	// keys are the stored ParkReason values ("await_callback",
 	// "snooze" — the closed two-value enum); the values are
 	// time.Duration caps. The per-row col:rimsky_node_runs.max_park_duration_seconds
 	// always takes priority — these are deployment-level fall-backs.
-	// Per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Parked-state taxonomy / Per-reason `max_park_duration` config.
 	// Recommended defaults: await_callback: 7d, snooze: 1h.
 	MaxParkDuration map[string]time.Duration
 	// Retention is the parsed `retention:` block — the trailing-window
@@ -301,15 +314,16 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	expanded := os.ExpandEnv(string(raw))
 	type yamlClaimProducerEntry struct {
 		Endpoint              string   `yaml:"endpoint"`
+		TLS                   string   `yaml:"tls"`
 		Protocols             []string `yaml:"protocols"`
 		WriteSemanticsAllowed []string `yaml:"write_semantics_allowed"`
 		// LegacyWriteSemantics catches the retired single-value
 		// `write_semantics:` shortcut so the loader can reject it with
-		// a precise error (cross-layer #6 / C.1).
+		// a precise error.
 		LegacyWriteSemantics string `yaml:"write_semantics"`
 		// LegacyWriteSemanticsEnvelope catches the retired
 		// `write_semantics_envelope:` key so the loader can reject it
-		// with a precise error (cross-layer #6 / C.2).
+		// with a precise error.
 		LegacyWriteSemanticsEnvelope []string `yaml:"write_semantics_envelope"`
 		ObservabilityEndpoint        string   `yaml:"observability_endpoint"`
 	}
@@ -322,6 +336,7 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 	}
 	type yamlPublisherEntry struct {
 		Endpoint              string   `yaml:"endpoint"`
+		TLS                   string   `yaml:"tls"`
 		Protocols             []string `yaml:"protocols"`
 		ObservabilityEndpoint string   `yaml:"observability_endpoint"`
 	}
@@ -355,21 +370,18 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		} `yaml:"persistence"`
 		ClaimProducers map[string]yamlClaimProducerEntry `yaml:"claim_producers"`
 		// Stores is captured into a sentinel field used to reject the
-		// retired YAML alias with a precise error. Per the 2026-05-12
-		// nomenclature resolution (cross-layer #1, B.6) the `stores:`
-		// alias is no longer accepted; configs must use
-		// `claim_producers:`.
+		// retired YAML alias with a precise error. The `stores:` alias
+		// is no longer accepted; configs must use `claim_producers:`.
 		Stores     map[string]yamlClaimProducerEntry `yaml:"stores"`
 		NamedLocks map[string]locks.NamedLockConfig  `yaml:"named_locks"`
 		Executors  map[string]yamlExecutorEntry      `yaml:"executors"`
 		Publishers map[string]yamlPublisherEntry     `yaml:"publishers"`
 		// MaxParkDuration is the per-reason max_park_duration map. Keys
 		// are the stored ParkReason values ("await_callback" / "snooze");
-		// values are time.Duration. Spec §Parked-state taxonomy.
+		// values are time.Duration.
 		MaxParkDuration map[string]time.Duration `yaml:"max_park_duration"`
-		// Retention is the `retention:` block. Spec
-		// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-		// §Retention.
+		// Retention is the `retention:` block — the trailing-window
+		// retention parameters for the scheduler-tick sweeps.
 		Retention *yamlRetention `yaml:"retention"`
 		// LateBindServiceProxies maps protocol name → proxy service name
 		// for late-bind dispatch resolution and fan-out subscription.
@@ -385,15 +397,15 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("parse rimsky config %q: %w", path, err)
 	}
 	if len(wrapper.Stores) > 0 {
-		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `stores`; rename to `claim_producers` (the `stores:` alias was retired in the 2026-05-12 nomenclature resolution)", path)
+		return RimskyConfig{}, fmt.Errorf("rimsky config %q: unknown config key `stores`; rename to `claim_producers` (the `stores:` alias is no longer accepted)", path)
 	}
 	rawProducers := wrapper.ClaimProducers
 	for name, e := range rawProducers {
 		if e.LegacyWriteSemantics != "" {
-			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: the `write_semantics:` single-value shortcut was retired in the 2026-05-12 nomenclature resolution; use `write_semantics_allowed: [<value>]`", path, name)
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: the `write_semantics:` single-value shortcut is no longer accepted; use `write_semantics_allowed: [<value>]`", path, name)
 		}
 		if len(e.LegacyWriteSemanticsEnvelope) > 0 {
-			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: `write_semantics_envelope` was renamed to `write_semantics_allowed` in the 2026-05-12 nomenclature resolution", path, name)
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: `write_semantics_envelope` is no longer accepted; rename it to `write_semantics_allowed`", path, name)
 		}
 	}
 	stores := RemoteStoresConfig{Stores: make(map[string]StoreEntry, len(rawProducers))}
@@ -419,9 +431,14 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasClaimProducer {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: claim_producers[%q]: protocols must include %q", path, name, ProtocolClaimProducer)
 		}
+		tlsMode, err := parseTLSMode("claim_producers", name, e.TLS)
+		if err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+		}
 		stores.Stores[name] = StoreEntry{
 			Endpoint:              e.Endpoint,
 			Capabilities:          claimproducer.Capabilities{WriteSemanticsAllowed: envelope},
+			TLS:                   tlsMode,
 			Protocols:             protocols,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
 		}
@@ -444,10 +461,14 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasExecutor {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: executors[%q]: protocols must include %q", path, name, ProtocolExecutor)
 		}
+		tlsMode, err := parseTLSMode("executors", name, e.TLS)
+		if err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+		}
 		executors.Executors[name] = ExecutorEntry{
 			Transport:             e.Transport,
 			Endpoint:              e.Endpoint,
-			TLS:                   e.TLS,
+			TLS:                   tlsMode,
 			Protocols:             protocols,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
 		}
@@ -470,8 +491,13 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if !hasPublisher {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: publishers[%q]: protocols must include %q", path, name, ProtocolPublisher)
 		}
+		tlsMode, err := parseTLSMode("publishers", name, e.TLS)
+		if err != nil {
+			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
+		}
 		publishersCfg.Publishers[name] = PublisherEntry{
 			Endpoint:              e.Endpoint,
+			TLS:                   tlsMode,
 			Protocols:             protocols,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
 		}
@@ -635,7 +661,7 @@ func validateMaxParkDurationKeys(m map[string]time.Duration) error {
 // into a non-empty []claimproducer.WriteSemantics. Returns an error when the
 // list is absent or any value is unknown. The legacy single-value
 // `write_semantics:` shortcut and `write_semantics_envelope:` alias
-// are rejected at the loader entry point (cross-layer #6 / C.1, C.2).
+// are rejected at the loader entry point.
 func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics, error) {
 	values := make([]claimproducer.WriteSemantics, 0, len(allowed))
 	for _, raw := range allowed {
@@ -658,6 +684,24 @@ func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics
 		deduped = append(deduped, v)
 	}
 	return deduped, nil
+}
+
+// parseTLSMode validates + normalizes a peer entry's `tls:` value to
+// the closed enum off | required (empty → off). Any other value —
+// including the retired "optional", which never had honest gRPC client
+// semantics — is a config error naming the entry and the accepted
+// values, so a security-shaped key can never be accepted and silently
+// ignored. `block` is the rimsky.yml block name (claim_producers /
+// executors / publishers) for the error message.
+func parseTLSMode(block, name, raw string) (string, error) {
+	switch raw {
+	case "", peer.TLSModeOff:
+		return peer.TLSModeOff, nil
+	case peer.TLSModeRequired:
+		return peer.TLSModeRequired, nil
+	default:
+		return "", fmt.Errorf("%s[%q]: tls: unknown value %q (one of: off, required)", block, name, raw)
+	}
 }
 
 // validateProtocols rejects unknown protocol values. Known set: the
@@ -711,7 +755,7 @@ func dialRemoteStores(
 			return nil, fmt.Errorf("dialRemoteStores: %w", err)
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := peer.Dial(dialCtx, name, entry.Endpoint)
+		client, err := peer.Dial(dialCtx, name, entry.Endpoint, entry.TLS)
 		cancel()
 		if err != nil {
 			reg.Close()
@@ -781,7 +825,7 @@ func DialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, ex
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint)
+		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
 		cancel()
 		if err != nil {
 			reg.Close()
@@ -794,7 +838,7 @@ func DialLifecycleSubscribers(ctx context.Context, stores RemoteStoresConfig, ex
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint)
+		client, err := peer.DialLifecycle(dialCtx, name, entry.Endpoint, entry.TLS)
 		cancel()
 		if err != nil {
 			reg.Close()

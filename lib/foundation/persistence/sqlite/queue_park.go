@@ -414,7 +414,9 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 // LoadResumeMetadataInTx returns the parked metadata that survived
 // parked → pending so resume dispatch can attach it to ResumeContext.
 //
-// SQLite stores TIMESTAMP columns as TEXT (RFC3339Nano). modernc/sqlite
+// SQLite stores TIMESTAMP columns as fixed-width UTC TEXT
+// (timeLayoutFixedNanos, whose lexicographic order matches chronological
+// order). modernc/sqlite
 // v1.50.0 onward refuses to scan a TEXT column into sql.NullTime —
 // `unsupported Scan, storing driver.Value type string into type
 // *time.Time`. Per the convention used elsewhere in this file

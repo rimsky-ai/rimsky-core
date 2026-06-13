@@ -175,6 +175,21 @@ func validateFanOut(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 
 	switch fo.ErrorPolicy.Kind {
 	case "", "strict", "threshold", "best_effort", "first":
+	case "carry_verbatim":
+		// Carry-verbatim is the delegation settlement shape and requires
+		// exactly one child by construction. `fan_out:` declares N
+		// children (the partition count is producer-determined at
+		// runtime), so the N=1 requirement is unsatisfiable here —
+		// reject at canonicalization. Delegation (`delegate:`) is the
+		// only shape that carries carry-verbatim, and it always declares
+		// exactly one child execution; `delegate:` + `fan_out:` is
+		// rejected above by mutual exclusion.
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fbase + ".error_policy.kind",
+			Msg: fmt.Sprintf(
+				"carry_verbatim_requires_single_child: node %q declares fan_out with error_policy.kind = carry_verbatim; carry-verbatim settlement requires exactly one child and fan_out declares many (use strict, threshold, best_effort, or first)",
+				n.Type),
+		})
 	default:
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fbase + ".error_policy.kind",

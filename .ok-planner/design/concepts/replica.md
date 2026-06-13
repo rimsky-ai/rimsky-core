@@ -10,6 +10,8 @@ aliases: []
 
 A replica is one running pod/process of a rimsky-platform binary, behind a deployment-tier load-balancing layer. Replicas are a deployment-tier concern; rimsky's runtime does not model replicas as a first-class concept. When operators scale a binary horizontally, rimsky-level behavior at scale=N is the union of N independent processes; replica-aware coordination (mutex per work-item, leader election, sticky routing) is not a service rimsky provides.
 
+The all-in-one deployment runs all three roles (scheduler, supervisor, control-api) in a single process — one replica of one process serving every role surface. Per-role replicas are the split deployment's shape, where each role runs as its own process and scales independently.
+
 ## Purpose
 
 To document that scaling rimsky binaries horizontally is the operator's decision and the operator's responsibility, and that the platform itself takes no opinion on replica count beyond what individual binaries require for correctness.

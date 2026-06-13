@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -94,6 +95,14 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 	if !filepath.IsAbs(cfg.Path) {
 		return nil, fmt.Errorf("sqlite: path %q must be absolute", cfg.Path)
 	}
+	// The path is spliced into a `file:` URI below, where `?` begins the
+	// query string — a `?` in the path would make the database file the
+	// driver opens diverge from the path the advisory locker derives its
+	// lock-file names from (two processes could lock different files).
+	// Reject it outright rather than risking a split-brain.
+	if strings.Contains(cfg.Path, "?") {
+		return nil, fmt.Errorf("sqlite: path %q must not contain '?' (reserved by the file: URI query string)", cfg.Path)
+	}
 	parent := filepath.Dir(cfg.Path)
 	if _, err := os.Stat(parent); err != nil {
 		return nil, fmt.Errorf("sqlite: parent dir %q: %w", parent, err)
@@ -116,14 +125,19 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open: %w", err)
 	}
-	// sqliteMaxOpenConns is load-bearing — multiple per-feature impls
-	// (notably node_attributes.MergeDelta) rely on conn-level
-	// serialization for read-then-write atomicity when the caller
-	// passes tx == nil. Raising this limit would silently introduce
-	// races. Any code that wants concurrent SQLite readers must first
-	// rewrite every read-then-write impl to either (a) require a
-	// caller-supplied tx (BEGIN IMMEDIATE writer-slot hold) or (b) use
-	// a SQL-level atomic UPDATE.
+	// sqliteMaxOpenConns is NOT load-bearing for correctness. Conn-level
+	// serialization only ever covered one process, and no read-then-write
+	// impl relies on it anymore: the Tables layer requires an explicit
+	// caller-supplied tx (tablesImpl.q panics on nil — the BEGIN
+	// IMMEDIATE writer-slot hold covers e.g. node_attributes.MergeDelta),
+	// and the Queue / APIKey surfaces that accept tx == nil open an
+	// internal immediate-mode transaction around their multi-statement
+	// sequences (queueImpl.Enqueue, apiKeysImpl.MarkRevoked). Atomicity
+	// therefore holds across OS processes sharing the database file, not
+	// just across goroutines. The limit stays at 1 for throughput and
+	// simplicity: SQLite admits a single writer per database file, so a
+	// wider pool would only add SQLITE_BUSY contention and busy_timeout
+	// churn between this process's own connections.
 	db.SetMaxOpenConns(sqliteMaxOpenConns)
 	if got := db.Stats().MaxOpenConnections; got != sqliteMaxOpenConns {
 		_ = db.Close()
@@ -142,7 +156,7 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 		"warning", "SQLite driver is for local development only — not supported for production. Use the postgres driver for deployed rimsky instances.")
 
 	d := &database{db: db}
-	d.c = newAdvisoryLocker(db)
+	d.c = newAdvisoryLocker(cfg.Path)
 	d.s = newTables(db)
 	d.q = newQueue(db)
 	return d, nil

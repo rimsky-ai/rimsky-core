@@ -38,7 +38,13 @@ type MetricsRegistry struct {
 	TerminalVerdicts  *prometheus.CounterVec
 	Invalidates       *prometheus.CounterVec
 	ClaimAcquisitions *prometheus.CounterVec
-	NamedEvents       *prometheus.CounterVec
+	// NamedLockAcquisitions is the named-lock sibling of
+	// ClaimAcquisitions: a separate counter family (rather than a kind
+	// label on the claim family) so the existing producer/intent label
+	// set stays stable while named locks remain distinguishable from
+	// producer claims at a glance.
+	NamedLockAcquisitions *prometheus.CounterVec
+	NamedEvents           *prometheus.CounterVec
 
 	// Gauges
 	NodesByState    *prometheus.GaugeVec
@@ -75,6 +81,10 @@ func NewMetricsRegistry() *MetricsRegistry {
 		ClaimAcquisitions: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "rimsky_claim_acquisitions_total", Help: "Claim acquisitions by producer and intent."},
 			[]string{"producer", "intent"},
+		),
+		NamedLockAcquisitions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "rimsky_named_lock_acquisitions_total", Help: "Named-lock acquisitions by lock name and intent."},
+			[]string{"lock_name", "intent"},
 		),
 		NamedEvents: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "rimsky_named_events_total", Help: "NamedEvent emissions persisted, by emitter executor and event name."},
@@ -130,6 +140,7 @@ func NewMetricsRegistry() *MetricsRegistry {
 		m.TerminalVerdicts,
 		m.Invalidates,
 		m.ClaimAcquisitions,
+		m.NamedLockAcquisitions,
 		m.NamedEvents,
 		m.NodesByState,
 		m.ParkedByReason,

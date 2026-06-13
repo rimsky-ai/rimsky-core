@@ -34,7 +34,6 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -65,7 +64,7 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 		return nil
 	}
 	conn, err := grpc.NewClient(stripScheme(opts.Endpoint.URL),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(transportCredsFor(opts.Endpoint.TLS)),
 	)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)

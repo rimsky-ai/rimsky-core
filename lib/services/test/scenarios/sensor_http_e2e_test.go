@@ -155,6 +155,13 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	templateID := deploySensorHttpTemplate(t, ep, watchedURL)
 	instanceID := createSensorHttpInstance(t, ep, templateID, "ck-sensor-http-e2e")
 
+	// Wait on OBSERVABLE subscription state — mounting is asynchronous
+	// (instance-create returns 201 with the row in `mounting`; the
+	// reconciler drives Subscribe to `active`), so the upstream-poll
+	// wait below must not race the mount under load: the sensor only
+	// starts polling once Subscribe lands.
+	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+
 	// 6. PROOF — body filter is honored (Falsifier prong 2).
 	//
 	// The upstream body has deployment.status="pending"; the template's

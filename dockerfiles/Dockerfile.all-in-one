@@ -6,8 +6,8 @@
 #
 #   docker run -p 8080:8080 rimskyai/rimsky-all-in-one
 #
-# rimsky-entrypoint runs migrate, then spawns scheduler + supervisor +
-# control-api against the baked /etc/rimsky config. Development only — for
+# rimsky-entrypoint runs migrate, then runs scheduler + supervisor +
+# control-api in a single process against the baked /etc/rimsky config. Development only — for
 # deployed instances use the `rimsky` image with the postgres driver and an
 # explicit config mounted at runtime.
 #
@@ -18,7 +18,7 @@ ARG RIMSKY_BASE=rimsky:latest
 FROM ${RIMSKY_BASE}
 
 LABEL org.opencontainers.image.title="rimsky-all-in-one"
-LABEL org.opencontainers.image.description="Zero-config rimsky orchestrator (development convenience image; SQLite default, all processes under one PID-1 — not for production)."
+LABEL org.opencontainers.image.description="Zero-config rimsky orchestrator (development convenience image; SQLite default, all roles in one single-process PID-1 — not for production)."
 
 # Bake the zero-config defaults, renaming each source file to the canonical
 # path the binaries read (RIMSKY_CONFIG / RIMSKY_SUPERVISOR_CONFIG, both set

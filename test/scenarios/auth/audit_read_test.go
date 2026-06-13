@@ -561,24 +561,36 @@ func TestAuditRead_StoryAuditLogReadAcceptance(t *testing.T) {
 	//     means a source-grouped feed would fail this assertion: the
 	//     key_rotated row (last in time) would have to lead the feed,
 	//     not appear interleaved with other kinds by timestamp.
-	var prev string
+	// Timestamps must be PARSED, not compared as strings: the wire
+	// shape is RFC3339Nano with trailing zeros trimmed, and trimmed
+	// fractions do not order lexically ("…0.12Z" > "…0.123Z" because
+	// 'Z' > '3', yet 0.12s < 0.123s) — a string comparison here flakes
+	// whenever two adjacent rows land on fractional seconds with
+	// different trimmed widths.
+	var prev time.Time
+	var prevRaw string
 	sawCrossKind := false
 	var prevKind string
 	for i, e := range rows {
-		ts, _ := e["occurred_at"].(string)
-		if ts == "" {
+		raw, _ := e["occurred_at"].(string)
+		if raw == "" {
 			t.Fatalf("row %d missing occurred_at — Acceptance: events returned in timestamp order", i)
+		}
+		ts, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			t.Fatalf("row %d occurred_at %q not RFC3339: %v", i, raw, err)
 		}
 		k, _ := e["kind"].(string)
 		if i > 0 {
-			if ts > prev {
-				t.Fatalf("row %d (%s/%s) breaks descending timestamp order vs prior (%s/%s) — Falsifier: source-grouped rather than timestamp-ordered", i, k, ts, prevKind, prev)
+			if ts.After(prev) {
+				t.Fatalf("row %d (%s/%s) breaks descending timestamp order vs prior (%s/%s) — Falsifier: source-grouped rather than timestamp-ordered", i, k, raw, prevKind, prevRaw)
 			}
 			if k != prevKind {
 				sawCrossKind = true
 			}
 		}
 		prev = ts
+		prevRaw = raw
 		prevKind = k
 	}
 	// The Acceptance only holds nontrivially when distinct kinds

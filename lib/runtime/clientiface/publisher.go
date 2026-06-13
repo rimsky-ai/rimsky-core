@@ -25,9 +25,19 @@ type PublisherClient interface {
 	// Subscribe begins a publisher-subscription on the publisher service.
 	// The subscription_id is rimsky-generated UUIDv4; the publisher binds
 	// it internally.
+	//
+	// Subscribe MUST be idempotent per publisher_subscription_id: rimsky
+	// retries it from the reconciliation worker (one attempt per tick,
+	// no attempt cap) and the startup resync sweep can overlap the
+	// reconciler, so a publisher may receive the same Subscribe two or
+	// more times — repeats must succeed without duplicating the
+	// subscription. The publisher conformance suite pins this
+	// (checkSubscribeIdempotent).
 	Subscribe(ctx context.Context, req SubscribeRequest) error
 
 	// Unsubscribe tears down a previously-started publisher-subscription.
+	// Idempotent: unsubscribing an unknown/already-removed id succeeds
+	// (also pinned by the conformance suite).
 	Unsubscribe(ctx context.Context, subscriptionID shared.UUID) error
 
 	// ListSubscriptions enumerates the publisher-subscriptions the

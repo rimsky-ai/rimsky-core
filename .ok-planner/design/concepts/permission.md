@@ -16,7 +16,7 @@ The grant comprises four pieces: the grant-entry types and their parser, the wil
 
 ## Purpose
 
-The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode`, `scope` today; e.g. `rate_limit` later) without a schema migration — so entries are JSONB with a parser that preserves unknown fields.
+The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode` and `scope` today) without a schema migration — so entries are JSONB with a parser that preserves unknown fields.
 
 ## Boundaries
 
@@ -40,7 +40,7 @@ A `scope` selector restricts the entry to requests whose target resource satisfi
 
 ## Invariants
 
-- **Set-membership evaluation.** A request is allowed iff some entry's action matches AND that entry's scope (if present) is satisfied by the request's target resource; otherwise denied. Iteration order is irrelevant — any matching, in-scope entry allows, so there is no first-match-wins rule (it was only ever meaningful for resolving a per-entry mode).
+- **Set-membership evaluation.** A request is allowed iff some entry's action matches AND that entry's scope (if present) is satisfied by the request's target resource; otherwise denied. Iteration order is irrelevant — any matching, in-scope entry allows, so there is no first-match-wins rule.
 - **Scoped entries are least-privilege.** A `scope`-bearing entry allows ONLY requests whose target resource satisfies the selector; an out-of-scope request of the same action is denied (403) unless another entry independently allows it.
 - **Grant mode is a floor.** The matched entry's `mode` (default `execute`) is the most permissive mode the request may run at; the dry-run flag may restrict further but never escalate (see `concept:dry-run`).
 - **Forward-compatible parser.** Unknown JSON fields on grant entries are preserved (round-tripped through marshal) so future fields aren't lost.

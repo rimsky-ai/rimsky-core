@@ -87,7 +87,7 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 	// A single worker node dispatched against the success-only stub: the
 	// healthy loop settles it into `fresh` with settling_signal_type =
 	// "terminal/success".
-	templateID := deploySQLiteTemplate(t, ep, map[string]any{
+	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "node-signal-type-e2e",
 			"version":               "1",
@@ -98,7 +98,7 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 			},
 		},
 	})
-	instanceID := createSQLiteInstance(t, ep, templateID, "ck-node-signal-type-e2e")
+	instanceID := createScenarioInstance(t, ep, templateID, "ck-node-signal-type-e2e")
 
 	// Resolve the worker node's UUID via the instance node-list surface. This
 	// is the same id `GET /nodes/{id}` keys on. We capture it BEFORE the node

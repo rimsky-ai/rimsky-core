@@ -52,6 +52,11 @@ func (h *RegistryHook) IncClaimAcquisition(producer, intent string) {
 	h.reg.ClaimAcquisitions.WithLabelValues(producer, intent).Inc()
 }
 
+// IncNamedLockAcquisition records a named-lock acquisition attempt.
+func (h *RegistryHook) IncNamedLockAcquisition(lockName, intent string) {
+	h.reg.NamedLockAcquisitions.WithLabelValues(lockName, intent).Inc()
+}
+
 // IncNamedEvent records a NamedEvent persistence write.
 func (h *RegistryHook) IncNamedEvent(executor, eventName string) {
 	h.reg.NamedEvents.WithLabelValues(executor, eventName).Inc()

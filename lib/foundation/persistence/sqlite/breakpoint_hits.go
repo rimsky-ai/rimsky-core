@@ -55,7 +55,7 @@ func (b *breakpointHitsImpl) Create(ctx context.Context, hit persistence.Breakpo
 	if err != nil {
 		return shared.UUID{}, 0, fmt.Errorf("sqlite.breakpointHits.create: marshal snapshot: %w", err)
 	}
-	hitAt := time.Now().UTC().Format(time.RFC3339Nano)
+	hitAt := time.Now().UTC().Format(timeLayoutFixedNanos)
 	var nodeRunArg, frameArg any
 	if hit.NodeRunID != nil {
 		nodeRunArg = hit.NodeRunID.String()
@@ -169,7 +169,7 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 		}
 		overlayArg = string(bb)
 	}
-	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
+	nowStr := time.Now().UTC().Format(timeLayoutFixedNanos)
 	res, err := ex.ExecContext(ctx,
 		`UPDATE rimsky_breakpoint_hits
 		    SET resumed_at = ?, resumed_by_key = ?, resume_overlay = ?
@@ -205,11 +205,16 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 // a current SQLite, so the postgres-style join is portable.
 func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
-	nowStr := now.UTC().Format(time.RFC3339Nano)
+	nowStr := now.UTC().Format(timeLayoutFixedNanos)
 	// Use a sub-select rather than UPDATE…FROM for maximum portability
 	// across modernc.org/sqlite versions: the rows to update are
 	// identified by their seq (the PRIMARY KEY). The ttl check is
 	// expressed via datetime() arithmetic on hit_at + hit_ttl_seconds.
+	// BOTH sides of the `<=` must go through datetime(): its output is
+	// space-separated ("YYYY-MM-DD HH:MM:SS"), and comparing it as TEXT
+	// against the fixed-width 'T'-separated parameter would always read
+	// as expired for same-day expiries (' ' < 'T' in ASCII), collapsing
+	// any TTL under ~24h to zero.
 	res, err := ex.ExecContext(ctx,
 		`UPDATE rimsky_breakpoint_hits
 		    SET resumed_at = ?, resumed_by_key = 'sweeper'
@@ -221,7 +226,7 @@ func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time,
 		            ON h.breakpoint_id = b.id
 		         WHERE h.resumed_at IS NULL
 		           AND b.overflow_policy = 'auto_resume_after_ttl'
-		           AND datetime(h.hit_at, '+' || b.hit_ttl_seconds || ' seconds') <= ?
+		           AND datetime(h.hit_at, '+' || b.hit_ttl_seconds || ' seconds') <= datetime(?)
 		    )`,
 		nowStr, nowStr)
 	if err != nil {
@@ -268,7 +273,7 @@ func (b *breakpointHitsImpl) DropOldest(ctx context.Context, bpID shared.UUID, k
 // foundation/persistence/postgres/breakpoint_hits.go for the rationale.
 func (b *breakpointHitsImpl) SweepOrphanedUnresumed(ctx context.Context, cutoff time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
-	cutoffStr := cutoff.UTC().Format(time.RFC3339Nano)
+	cutoffStr := cutoff.UTC().Format(timeLayoutFixedNanos)
 	res, err := ex.ExecContext(ctx,
 		`DELETE FROM rimsky_breakpoint_hits
 		  WHERE seq IN (
@@ -351,7 +356,7 @@ func scanSqliteBreakpointHit(sc scannable) (persistence.BreakpointHitRow, error)
 	if err != nil {
 		return persistence.BreakpointHitRow{}, fmt.Errorf("scan hit instance_id: %w", err)
 	}
-	hitAt, err := parseSQLiteTime(hitAtStr)
+	hitAt, err := parseTime(hitAtStr)
 	if err != nil {
 		return persistence.BreakpointHitRow{}, fmt.Errorf("scan hit hit_at: %w", err)
 	}
@@ -386,7 +391,7 @@ func scanSqliteBreakpointHit(sc scannable) (persistence.BreakpointHitRow, error)
 		out.FrameID = &u
 	}
 	if resumedAtStr.Valid {
-		t, err := parseSQLiteTime(resumedAtStr.String)
+		t, err := parseTime(resumedAtStr.String)
 		if err != nil {
 			return persistence.BreakpointHitRow{}, fmt.Errorf("scan hit resumed_at: %w", err)
 		}

@@ -35,11 +35,12 @@ The cascade walker consults two edge maps — the subscription-edge map and the 
 - Cascade always happens in a frame.
 - The walk + per-node behaviors are scheduler actions; they are NOT configurable via the per-emit `frame: in | next` discipline.
 - Settled-color is informational. The functional equivalent of suppressing downstream auto-fire on a failed sender is expressed receiver-side via subscribers' `when:` predicates or via not subscribing to `terminal/error/*` at all.
+- Staleness propagation — whether by invalidation walk or by sender settlement — does not by itself confer dispatch eligibility. Eligibility is the dispatch-time predicate per `concept:wait-set`, and the all-in-flight-upstreams-resolve-first guarantee is propagation-path-independent: a stale receiver does not dispatch while any subscribed upstream has an in-flight run in the same frame, no matter which path made it stale.
 
 ## Common pitfalls
 
 - **Rimsky's cascade is not CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through the per-template subscription-edge inverse map. The two share a name and nothing else.
 - Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a service message that travels alongside.
 - Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is subscription-driven, not value-diff-driven; the executor commits `changed: false` if it wants downstream subscribers that filter on `payload.changed` to suppress.
-- Confusing cascade reach with executor invocation. Cascade marks nodes stale and inserts wait-set rows; the scheduler decides which stale nodes are eligible for dispatch (wait-set empty for the current frame, claims and locks acquirable).
+- Confusing cascade reach with executor invocation. Cascade marks nodes stale and inserts wait-set rows; dispatch eligibility is decided at dispatch time by the two-condition predicate per `concept:wait-set` — no undrained wait-set rows for the run in the current frame AND no subscribed upstream with an in-flight run in the same frame — with claims and locks still to be acquired.
 - Treating `terminal/error/*` subscribers as automatically downstream-firing. Under the subscriber-driven cascade model, a subscriber filtering on `terminal/error/*` fires only if it has declared the subscription; the sender's color does not fire downstream nodes by itself. A node that wants to halt propagation on errors simply omits the subscription; a node that wants to act on every error subscribes broadly.

@@ -120,6 +120,22 @@ message CapabilitiesResponse {
   // the set of role discriminators this service is willing to validate
   // ("executor" | "claim_producer" | "lifecycle_subscriber" | "sensor").
   repeated string validation_supported_roles = 5;
+
+  // declared_error_classes is the set of error-class paths this
+  // producer may name on acquisition-failure responses (the
+  // Unavailable.error_class arm and gRPC ErrorInfo.Reason on faulted
+  // verbs). Patterns ending in `*` indicate prefix-pattern leaves
+  // (e.g., `pg/claim_unavailable/*`); exact strings indicate fixed
+  // leaves. The validator's range-check of operator `error_types:`
+  // keys accepts a key if it exactly matches a declared plain leaf OR
+  // matches a declared `<prefix>/*` pattern by prefix. Empty/absent
+  // means "producer does not declare" — legal; keys attributable to
+  // no declared vocabulary surface as advisory warnings, never hard
+  // rejections. Mirrors
+  // executor_observability.proto::ObservabilityCapabilities.declared_error_classes.
+  //
+  // Per concept:signal hierarchical error_class rule.
+  repeated string declared_error_classes = 6;
 }
 
 // OpenRequest carries the rimsky-generated claim_id plus the resolved
@@ -190,13 +206,18 @@ message CommitRequest {
 }
 
 message CommitResponse {
-  // Set by DataProcessing-capable producers; opaque to rimsky;
-  // persisted in col:rimsky_claim_handles.version_id and
-  // table:rimsky_lineage for record_kind: claim_terminal.
+  // Optional canonical version identifier any producer may stamp on
+  // the base-protocol Commit response; opaque to rimsky; persisted in
+  // col:rimsky_claim_handles.version_id and table:rimsky_lineage for
+  // record_kind: claim_terminal. A non-empty base-Commit version_id
+  // wins over the staged DataProcessing CommitCandidate one (the base
+  // verb is the finalizing call).
   string version_id = 1;
   // Optional producer-supplied metadata bytes. Inert in rimsky per
-  // @blessed-invariant 20; surfaced verbatim in the parent run's
-  // writeback row at fan-out parent terminal (spec §Output aggregation).
+  // @blessed-invariant 20; surfaced (base64-encoded — the writeback
+  // row is JSON) in the parent run's writeback row at fan-out parent
+  // terminal under the `producer_metadata` key, keyed by the child's
+  // partition key (spec §Output aggregation).
   bytes producer_metadata = 2;
 }
 

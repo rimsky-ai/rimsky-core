@@ -54,8 +54,9 @@ func TestHappyPathExecutor(t *testing.T) {
 
 	// Verify a terminal/success signal event was appended. Per Pass 5
 	// the canonical audit row for a settled-fresh terminal is the
-	// signal type-path; the legacy `work_completed` fixed-string row
-	// retired.
+	// signal type-path. (The operational `work_completed` event also
+	// lands at terminal, pairing `work_started`; its dedicated
+	// assertions live in work_completed_test.go.)
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

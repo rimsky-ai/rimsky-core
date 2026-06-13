@@ -109,6 +109,13 @@ func (f *invTestQueue) GetInFlightRunForNode(ctx context.Context, tx persistence
 	return shared.UUID{}, false, nil
 }
 
+func (f *invTestQueue) ListInFlightRunPhases(ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error) {
+	if f.real != nil {
+		return f.real.ListInFlightRunPhases(ctx, tx, nodeIDs, frameID, runScopeID)
+	}
+	return map[shared.UUID][]string{}, nil
+}
+
 // Park-lifecycle helpers for the 2026-05-08 platform-extensions plan.
 // invTestQueue is the cascade-invalidate test fixture; the parked
 // helpers are no-ops since these tests don't park nodes.

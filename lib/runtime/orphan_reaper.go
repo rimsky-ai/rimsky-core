@@ -58,6 +58,18 @@ type OrphanReaperArgs struct {
 	Persist      persistence.Tables
 	ClaimHandles persistence.ClaimHandleTable
 	Logger       shared.Logger
+
+	// PreReapHook, if non-nil, runs once per expired row after the
+	// ListExpired snapshot was taken and immediately before the per-row
+	// claimant-guarded DeleteIfExpired tx opens. Test-only seam
+	// (production passes nil). It exists solely so a deterministic
+	// injection test of the reaper-vs-in-flight-terminal overlap can
+	// resolve the row through the owning supervisor's terminal-release
+	// path inside the list→delete window and prove DeleteIfExpired
+	// no-ops for the loser (no double-resolve, no false
+	// `lock_orphan_reaped` emission). No production behavior change:
+	// the hook is invoked only when non-nil.
+	PreReapHook func(ctx context.Context, claimHandleID shared.UUID)
 }
 
 // SweepOrphanedClaimHandles implements the v3 orphan-reap. For each
@@ -110,6 +122,14 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 		// the defense-in-depth guard avoids a panic / mis-match on a
 		// promoted row that slipped into the batch.
 		return nil
+	}
+	// Test-only seam: the ListExpired snapshot already holds this row;
+	// the claimant-guarded DeleteIfExpired has not run yet. An injection
+	// test resolves the row through the owning supervisor's terminal
+	// release here to prove the reaper loses the race as a no-op. Nil in
+	// production (no behavior change); see OrphanReaperArgs.PreReapHook.
+	if args.PreReapHook != nil {
+		args.PreReapHook(ctx, lh.ID)
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		deleted, err := args.ClaimHandles.DeleteIfExpired(ctx, lh.ID, *lh.HolderSupervisorID, tx)

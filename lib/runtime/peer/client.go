@@ -55,12 +55,7 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 		RunScopeId:   spec.RunScopeID,
 	})
 	if err != nil {
-		return claimproducer.OpenOutcome{}, &ProducerCallError{
-			ProducerName: c.name,
-			Method:       "Open",
-			ErrorClass:   extractErrorClass(err),
-			Underlying:   err,
-		}
+		return claimproducer.OpenOutcome{}, NewProducerCallError(c.name, "Open", err)
 	}
 	if u := resp.GetUnavailable(); u != nil {
 		// Carry the producer-declared acquisition-failure class (when the
@@ -91,22 +86,24 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 	}, nil
 }
 
-// Commit RPCs to the remote producer.
-func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
-	_, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
+// Commit RPCs to the remote producer and returns the response body.
+// The base-protocol CommitResponse fields are honored, not discarded:
+// version_id flows to the claim-handle row and producer_metadata to
+// the fan-out parent's writeback (both wired by the unified resolution
+// engine in runtime). Inert in rimsky per @blessed-invariant 20.
+func (c *Client) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope, address []byte) (claimproducer.CommitResult, error) {
+	resp, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
 		ClaimId:    string(claimID),
 		ClaimScope: scope,
 		Address:    address,
 	})
 	if err != nil {
-		return &ProducerCallError{
-			ProducerName: c.name,
-			Method:       "Commit",
-			ErrorClass:   extractErrorClass(err),
-			Underlying:   err,
-		}
+		return claimproducer.CommitResult{}, NewProducerCallError(c.name, "Commit", err)
 	}
-	return nil
+	return claimproducer.CommitResult{
+		VersionID:        resp.GetVersionId(),
+		ProducerMetadata: resp.GetProducerMetadata(),
+	}, nil
 }
 
 // Abandon RPCs to the remote producer. address may be nil when Open's
@@ -118,12 +115,7 @@ func (c *Client) Abandon(ctx context.Context, claimID claimproducer.ClaimID, sco
 		Address:    address,
 	})
 	if err != nil {
-		return &ProducerCallError{
-			ProducerName: c.name,
-			Method:       "Abandon",
-			ErrorClass:   extractErrorClass(err),
-			Underlying:   err,
-		}
+		return NewProducerCallError(c.name, "Abandon", err)
 	}
 	return nil
 }
@@ -136,12 +128,7 @@ func (c *Client) Release(ctx context.Context, claimID claimproducer.ClaimID, sco
 		Address:    address,
 	})
 	if err != nil {
-		return &ProducerCallError{
-			ProducerName: c.name,
-			Method:       "Release",
-			ErrorClass:   extractErrorClass(err),
-			Underlying:   err,
-		}
+		return NewProducerCallError(c.name, "Release", err)
 	}
 	return nil
 }
@@ -160,7 +147,7 @@ func (c *Client) SplitScope(ctx context.Context, req claimproducer.SplitClaimSco
 		PartitionRequest: req.PartitionRequest,
 	})
 	if err != nil {
-		return claimproducer.SplitClaimScopeResponse{}, fmt.Errorf("remote producer %q: SplitScope: %w", c.name, err)
+		return claimproducer.SplitClaimScopeResponse{}, NewProducerCallError(c.name, "SplitScope", err)
 	}
 	out := claimproducer.SplitClaimScopeResponse{}
 	for _, sub := range resp.GetSubScopes() {
@@ -186,7 +173,7 @@ func (c *Client) ScopesConflict(ctx context.Context, a, b []byte) (bool, error) 
 		ClaimScopeB: b,
 	})
 	if err != nil {
-		return false, fmt.Errorf("remote producer %q: ScopesConflict: %w", c.name, err)
+		return false, NewProducerCallError(c.name, "ScopesConflict", err)
 	}
 	return resp.GetConflicts(), nil
 }

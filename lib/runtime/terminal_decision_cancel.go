@@ -64,7 +64,7 @@ func cancelInFlightSiblings(
 	if parent.State != spec.ClaimHandleStateActive {
 		// Parent already resolved (committed via durable promotion, or
 		// abandoned). Other auto-terminal paths (`CheckAndFireResolution`,
-		// `resolveParentClaimChain`) both guard on `State != active`
+		// `SettleChildren`) both guard on `State != active`
 		// and return nil; mirror the symmetry here so cancel_siblings
 		// doesn't retroactively force-Abandon children whose parent
 		// already resolved.
@@ -178,7 +178,7 @@ func cancelInFlightSiblings(
 		// Recurse: the sibling's own children (if any) cascade-cancel
 		// through the same path inside this recursive call. Forwarding
 		// `ParentClaimHandleID` keeps the parent counter bumping +
-		// `resolveParentClaimChain` walking under the sibling's own
+		// `SettleChildren` walking under the sibling's own
 		// resolution. `Cause` propagates `sibling_cancel` to the lineage
 		// + events projections so post-mortem queries can distinguish a
 		// sibling-driven force-Abandon from a natural exhaustion.
@@ -307,7 +307,7 @@ func cancelDescendantClaims(
 		// the OUTER `ResolveClaimHandleTerminal` frame above us, which
 		// will Delete that row after this descendant walk returns.
 		// Forwarding `d.ParentClaimHandleID` would re-enter the parent's
-		// counter-bump + `resolveParentClaimChain` walk on a row that
+		// counter-bump + `SettleChildren` walk on a row that
 		// is mid-resolution, risking a re-entrant Delete / duplicate
 		// `Producer.Abandon` on the parent. Skipping is safe because
 		// the parent's own resolution drives its grandparent counter

@@ -131,6 +131,12 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 		SupportsSplitScope:     true,
 		SupportsScopesConflict: true,
 		Protocols:              protocols,
+		// Producer-declared acquisition-failure vocabulary
+		// (claim_producer.proto::CapabilitiesResponse.declared_error_classes).
+		// The observability handshake captures this into the discovery
+		// cache, where the template registration validator's
+		// error_types: range-check reads it.
+		DeclaredErrorClasses: c.DeclaredErrorClasses,
 	}, nil
 }
 
@@ -146,8 +152,13 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 		return nil, err
 	}
 	if !outcome.Available {
+		// error_class carries the producer-declared acquisition-failure
+		// class (empty when the store names none) — rimsky's
+		// acquisition-failure routing keys error_types: on it.
 		return &genv1.OpenResponse{
-			Result: &genv1.OpenResponse_Unavailable{Unavailable: &genv1.Unavailable{}},
+			Result: &genv1.OpenResponse_Unavailable{Unavailable: &genv1.Unavailable{
+				ErrorClass: outcome.UnavailableClass,
+			}},
 		}, nil
 	}
 	return &genv1.OpenResponse{
@@ -160,12 +171,19 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	}, nil
 }
 
-// Commit delegates.
+// Commit delegates, stamping the configured base-Commit response
+// fields (version_id / producer_metadata) when the store carries them
+// — the fixture for scenarios proving rimsky honors the CommitResponse
+// body.
 func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
 	if err := s.Store.Commit(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
 		return nil, err
 	}
-	return &genv1.CommitResponse{}, nil
+	versionID, metadata := s.Store.CommitResponseFields()
+	return &genv1.CommitResponse{
+		VersionId:        versionID,
+		ProducerMetadata: metadata,
+	}, nil
 }
 
 // Abandon delegates.

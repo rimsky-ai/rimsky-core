@@ -1,20 +1,19 @@
 // Copyright © 2026 Fall Guy Consulting.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package publisher implements the shared publisher-side message-emit
+// Package publisherkit implements the shared publisher-side message-emit
 // retry-with-backoff helper used by every bundled sensor (sensor-cron,
 // sensor-http, sensor-object-store, sensor-webhook) and any third-party
-// publisher service that POSTs to rimsky's `POST /instances/{id}/messages`
-// endpoint.
+// publisher service that POSTs to rimsky's
+// `POST /v1/instances/{id}/messages` endpoint.
 //
-// Spec
-// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher-side message-emit retry: publishers POSTing to
-// rimsky's `POST /instances/{id}/messages` retry on 5xx + connection
-// errors (~3 attempts, exp backoff 200ms → ~1.6s). 4xx is terminal
-// and logged with the `publisher.message.rejected` key so operators
-// can spot capability-revocation / route-misconfiguration without
-// digging through per-sensor log noise.
+// Retry policy: publishers POSTing to rimsky's
+// `POST /v1/instances/{id}/messages` endpoint retry on 5xx + connection
+// errors (3 attempts total, with sleeps of 200ms then ~566ms between
+// attempts). 4xx is terminal and logged with the
+// `publisher.message.rejected` key so operators can spot
+// capability-revocation / route-misconfiguration without digging
+// through per-sensor log noise.
 //
 // Lives in the protocols module so third-party publisher authors get the same
 // retry-with-idempotency-header behavior as the bundled sensors.
@@ -60,7 +59,7 @@ type Sleeper func(d time.Duration)
 // Request is the input shape the helper needs to POST one envelope.
 type Request struct {
 	// URL is the fully-qualified rimsky messages endpoint, including
-	// the `/instances/{id}/messages` path.
+	// the `/v1/instances/{id}/messages` path.
 	URL string
 	// Envelope is the JSON-marshaled message body.
 	Envelope []byte
@@ -76,8 +75,9 @@ type Request struct {
 }
 
 // Send POSTs `req.Envelope` to `req.URL` with the universal retry-
-// with-backoff policy. Backoff base = 200ms; multiplier = 2.828
-// (geometric ratio that lands attempt 3 at ~1.6s per spec).
+// with-backoff policy. Backoff: 200ms after attempt 1, ~566ms after
+// attempt 2 (geometric, ratio ≈ 2.83), so attempt 3 is issued ≈766ms
+// of cumulative sleep after attempt 1.
 //
 // 5xx + transport errors: retry up to 3 attempts total.
 // 4xx: log `publisher.message.rejected` at WARN and abandon
@@ -94,8 +94,8 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 	}
 	const maxAttempts = 3
 	// Backoff schedule: 200ms after attempt 1, ~566ms after attempt 2.
-	// Cumulative pre-success delay ≈ 766ms; cumulative attempt-3 issue
-	// time ≈ 1.6s after the first attempt per spec.
+	// Cumulative sleep before attempt 3 ≈ 766ms (the wall-clock issue
+	// time also includes the first two attempts' own round-trip time).
 	delays := []time.Duration{
 		200 * time.Millisecond,
 		566 * time.Millisecond,

@@ -53,7 +53,7 @@ func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persis
 	}
 	res, err := b.q(tx).ExecContext(ctx, sqliteInsertMessageIdempotencySQL,
 		row.InstanceID.String(), row.SenderKind, row.Sender, row.SenderSubject, row.IdempotencyKey,
-		row.MessageID.String(), row.CreatedAt.UTC().Format(time.RFC3339Nano))
+		row.MessageID.String(), row.CreatedAt.UTC().Format(timeLayoutFixedNanos))
 	if err != nil {
 		return persistence.MessageIdempotencyRow{}, false, fmt.Errorf("sqlite.MessageIdempotencies.Insert: %w", err)
 	}
@@ -79,7 +79,7 @@ func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persis
 	if err != nil {
 		return persistence.MessageIdempotencyRow{}, false, fmt.Errorf("sqlite.MessageIdempotencies.Lookup: bad message_id %q: %w", msgIDStr, err)
 	}
-	t, err := parseSQLiteTime(createdAtStr)
+	t, err := parseTime(createdAtStr)
 	if err != nil {
 		return persistence.MessageIdempotencyRow{}, false, fmt.Errorf("sqlite.MessageIdempotencies.Lookup: bad created_at %q: %w", createdAtStr, err)
 	}
@@ -99,7 +99,7 @@ DELETE FROM rimsky_message_idempotencies WHERE created_at < ?`
 
 func (b *messageIdempotenciesImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error) {
 	res, err := (*tablesImpl)(b).db.ExecContext(ctx, sqliteDeleteMessageIdempotenciesOlderThanSQL,
-		cutoff.UTC().Format(time.RFC3339Nano))
+		cutoff.UTC().Format(timeLayoutFixedNanos))
 	if err != nil {
 		return 0, fmt.Errorf("sqlite.MessageIdempotencies.DeleteOlderThan: %w", err)
 	}
@@ -108,17 +108,4 @@ func (b *messageIdempotenciesImpl) DeleteOlderThan(ctx context.Context, cutoff t
 		return 0, fmt.Errorf("sqlite.MessageIdempotencies.DeleteOlderThan.RowsAffected: %w", err)
 	}
 	return n, nil
-}
-
-// parseSQLiteTime accepts the two formats SQLite produces for our
-// TIMESTAMP columns: either RFC3339[Nano] (when written explicitly) or
-// the `datetime('now')` default form ("2006-01-02 15:04:05").
-func parseSQLiteTime(s string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
-	}
-	return time.Parse("2006-01-02 15:04:05", s)
 }

@@ -46,7 +46,7 @@ func acquireFanOutIfDeclared(
 		return nil
 	}
 	// Only the root run of a fan-out tree splits. Children re-use the
-	// parent's node_id (per `runtime/fanout_dispatch.go::PlanFanOutChildren`)
+	// parent's node_id (per `runtime/fanout_dispatch.go::dispatchFanOutChildren`)
 	// and therefore inherit the same `nodeDef.FanOut` block; without this
 	// guard each child re-fires SplitScope and creates grand-children
 	// indefinitely. The "child" predicate is "this run's RunScope has a

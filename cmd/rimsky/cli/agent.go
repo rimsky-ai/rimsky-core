@@ -171,7 +171,7 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 	// Snapshot the child's pid BEFORE calling Process.Release. Go's
 	// os.Process.Release zeroes out the underlying handle and sets Pid
 	// to -1 to signal "no longer tracked" — which would silently break
-	// every downstream processAlive / syscall.Kill probe in this routine.
+	// every downstream processAlive / killProcess probe in this routine.
 	childPid := cmd.Process.Pid
 
 	pidPath := filepath.Join(stateDir, "agent.pid")
@@ -206,10 +206,10 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 	}
 
 	// Readiness window blew. The daemon is alive but never connected —
-	// SIGKILL it so a misconfigured `--proxy` doesn't leave a background
+	// kill it so a misconfigured `--proxy` doesn't leave a background
 	// process loop-dialing forever, and remove the pid file so a follow-up
 	// `agent status` doesn't claim it's "running".
-	_ = syscall.Kill(childPid, syscall.SIGKILL)
+	killProcess(childPid)
 	_ = os.Remove(pidPath)
 	fmt.Fprintf(os.Stderr,
 		"rimsky agent: daemon did not connect to proxy %q within %s; killed (proxy unreachable or misconfigured)\n",
@@ -294,7 +294,7 @@ func runAgentStop(args []string) int {
 	}
 
 	if processAlive(pid) {
-		if termErr := syscall.Kill(pid, syscall.SIGTERM); termErr != nil {
+		if termErr := terminateProcess(pid); termErr != nil {
 			fmt.Fprintf(os.Stderr, "rimsky agent: signal pid %d: %v\n", pid, termErr)
 			return 1
 		}
@@ -390,15 +390,6 @@ func readStatusFile(path string) (statusSnapshot, bool, error) {
 		return statusSnapshot{}, false, fmt.Errorf("agent status file: %w", err)
 	}
 	return snap, true, nil
-}
-
-// processAlive reports whether pid names a live process (signal 0 probe).
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	// On unix, signal 0 performs error checking without delivering a signal.
-	return syscall.Kill(pid, 0) == nil
 }
 
 // waitForExit polls until pid is gone or the deadline elapses.

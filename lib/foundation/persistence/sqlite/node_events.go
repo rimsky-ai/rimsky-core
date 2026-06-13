@@ -30,11 +30,13 @@ var _ persistence.NodeEventTable = (*nodeEventsImpl)(nil)
 
 // Insert appends a row and returns its auto-generated id.
 func (b *nodeEventsImpl) Insert(ctx context.Context, evt persistence.NodeEvent, tx persistence.Tx) (int64, error) {
-	// emitted_at is stored as RFC3339Nano TEXT — the same convention as the
-	// audit log's occurred_at and what DeleteOlderThan compares against — so
-	// the insert and the time-window reaper share one time format (a raw
-	// time.Time bind would store modernc's t.String() layout instead, which
-	// orders differently from the RFC3339Nano cutoff the reaper binds).
+	// emitted_at is stored as fixed-width UTC TEXT (timeLayoutFixedNanos,
+	// whose lexicographic order matches chronological order) — the same
+	// convention as the audit log's occurred_at and what DeleteOlderThan
+	// compares against — so the insert and the time-window reaper share one
+	// time format (a raw time.Time bind would store modernc's t.String()
+	// layout instead, which orders differently from the fixed-width cutoff
+	// the reaper binds).
 	now := formatTime(time.Now().UTC())
 	res, err := b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_events
@@ -102,9 +104,9 @@ func (b *nodeEventsImpl) LatestByName(ctx context.Context, instanceID, emitterNo
 	if fid.Valid {
 		out.FrameID = fid.String
 	}
-	// emitted_at is RFC3339Nano TEXT (same convention as the audit log's
-	// occurred_at); parse it back the way events.List does rather than
-	// scanning straight into a time.Time.
+	// emitted_at is fixed-width UTC TEXT (timeLayoutFixedNanos; same
+	// convention as the audit log's occurred_at); parse it back the way
+	// events.List does rather than scanning straight into a time.Time.
 	emittedAt, err := parseTime(whenStr)
 	if err != nil {
 		return nil, fmt.Errorf("node_events.LatestByName: parse emitted_at: %w", err)

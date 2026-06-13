@@ -27,6 +27,13 @@
 //     reference validation at all — even the provisioned-invalid ref
 //     registers clean.
 //
+// It also carries the executable acceptance proof for
+// STORY-validation-names-the-mode: the mode-all rejection body must name
+// the failing reference, the active mode, and the
+// templates.ref_validation_mode config key with its relaxed settings —
+// and registering the SAME template under the advised relaxed mode must
+// succeed, proving the advice the error gives is true.
+//
 // The "genuinely-invalid PROVISIONED ref" leg needs an executor whose
 // advertised schema actually constrains the attribute — the default
 // permissive `{"type":"object"}` stub can never make a ref "invalid".
@@ -52,6 +59,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -199,6 +207,58 @@ func TestAcceptance_RefValidationMode(t *testing.T) {
 		errs, ok := badOut["validation_errors"].([]any)
 		require.True(t, ok, "rejection must carry validation_errors; body: %v", badOut)
 		require.NotEmpty(t, errs, "validation_errors must name the schema violation")
+	})
+
+	// STORY-validation-names-the-mode: the rejection is self-documenting.
+	// Under the strict default mode the operator registering a template
+	// whose reference cannot be validated is told WHICH mode rejected it
+	// and WHICH config key changes the behavior — the register-before-
+	// provision workflow is discoverable from the error message itself.
+	// The companion sub-assertion re-registers the SAME template under
+	// the relaxed mode the message advises and succeeds, proving the
+	// advice the error gives is true.
+	t.Run("rejection names the active mode and the config key; the advised relaxed mode accepts", func(t *testing.T) {
+		t.Parallel()
+		spec := notProvisionedTemplate("refmode-msg-" + uuid.NewString())
+
+		// Strict default mode: rejection must name the mode + config key.
+		strict := startRefModeHarness(t, node.RefValidateAll)
+		status, out := postTemplate(t, strict, spec)
+		require.Equal(t, http.StatusBadRequest, status,
+			"mode all must reject the unprovisioned reference; body: %v", out)
+		errs, ok := out["validation_errors"].([]any)
+		require.True(t, ok, "rejection must carry validation_errors; body: %v", out)
+		require.NotEmpty(t, errs)
+		// Collect every rejection message; the missing-reference entry
+		// must be self-documenting.
+		var msgs []string
+		for _, e := range errs {
+			entry, entryOK := e.(map[string]any)
+			require.True(t, entryOK, "validation_errors entries must be objects; got %v", e)
+			msg, msgOK := entry["msg"].(string)
+			require.True(t, msgOK, "validation_errors entries must carry msg; got %v", entry)
+			msgs = append(msgs, msg)
+		}
+		joined := strings.Join(msgs, "\n")
+		require.Contains(t, joined, `"ghost-executor"`,
+			"the rejection must name the failing reference; messages: %s", joined)
+		require.Contains(t, joined, `mode "all"`,
+			"the rejection must name the active reference-validation mode; messages: %s", joined)
+		require.Contains(t, joined, "templates.ref_validation_mode",
+			"the rejection must name the config key that changes the behavior; messages: %s", joined)
+		require.Contains(t, joined, `"available"`,
+			"the rejection must name the relaxed settings for register-first workflows; messages: %s", joined)
+		require.Contains(t, joined, `"none"`,
+			"the rejection must name the relaxed settings for register-first workflows; messages: %s", joined)
+
+		// The advice is true: the SAME template registers clean under the
+		// relaxed mode the message names.
+		relaxed := startRefModeHarness(t, node.RefValidateAvailable)
+		okStatus, okOut := postTemplate(t, relaxed, spec)
+		require.Equal(t, http.StatusCreated, okStatus,
+			"the relaxed mode the rejection advises must accept the same template; body: %v", okOut)
+		require.NotEmpty(t, okOut["template_id"],
+			"a successful registration must return a template_id; body: %v", okOut)
 	})
 
 	t.Run("none: no registration-time reference validation", func(t *testing.T) {

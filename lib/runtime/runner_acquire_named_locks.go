@@ -82,6 +82,18 @@ func acquireNamedLock(
 			return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: CountByNamedLock(%q): %w", spec.Name, err)
 		}
 		if count >= cfg.Limit {
+			// Saturation bail. Counted as "unavailable" (mirroring the
+			// producer-claim intent vocabulary) even though the per-
+			// candidate tx rolls back — the metric is a monotonic
+			// counter of attempts, not persisted state, so the
+			// rollback does not (and must not) un-count it. The
+			// "acquired" outcome, by contrast, increments post-commit
+			// (see the audit step in acquireCandidate) so a later spec
+			// failing the same tx never leaves a phantom acquisition.
+			// Labeled with the bounded pre-substitution template name
+			// (namedLockMetricLabel) — the concrete per-entity name
+			// would mint one Prometheus series per runtime value.
+			metricsOf(args).IncNamedLockAcquisition(namedLockMetricLabel(spec), "unavailable")
 			return AcquiredLock{}, false, nil
 		}
 	}
@@ -105,8 +117,31 @@ func acquireNamedLock(
 	if err := args.ClaimHandles.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: Insert: %w", err)
 	}
+	// @story: named-lock-metric — named-lock acquisitions move a labeled
+	// counter (rimsky_named_lock_acquisitions_total) so saturation is
+	// graphable, not just reconstructable from the events ledger. The
+	// "acquired" increment does NOT happen here: this runs inside the
+	// per-candidate tx, and a later spec failing would roll the tx back
+	// while the counter kept the +1. It lands post-commit in
+	// acquireCandidate's audit step, beside the lock_acquired events.
 	return AcquiredLock{
 		Spec:          spec,
 		ClaimHandleID: rowID,
 	}, true, nil
+}
+
+// namedLockMetricLabel picks the Prometheus label for a named-lock
+// acquisition: the pre-substitution template name (bounded — one value
+// per template declaration) rather than the concrete post-substitution
+// name, whose per-entity values (the documented
+// `{{nodes.X.attribute.Y}}` pattern) would mint unbounded series. The
+// concrete name remains observable in the events ledger
+// (lock_acquired payloads). Falls back to the concrete name for specs
+// constructed without a template name (no substitution directives —
+// the two are then identical).
+func namedLockMetricLabel(spec locks.NamedLockSpec) string {
+	if spec.TemplateName != "" {
+		return spec.TemplateName
+	}
+	return spec.Name
 }

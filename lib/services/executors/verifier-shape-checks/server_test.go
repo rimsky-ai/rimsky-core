@@ -147,6 +147,23 @@ func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 	}
 }
 
+// TestCapabilities_AdvertisesValidationSupportedRoles confirms the
+// observability handshake advertises the Validation mix-in's supported
+// roles. The verifier's Validate handles role="executor"; rimsky's
+// registry learns roles only from this field, so an empty list would
+// leave the validator dialed but never selected at registration time.
+func TestCapabilities_AdvertisesValidationSupportedRoles(t *testing.T) {
+	obs := NewObservabilityServer()
+	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	roles := caps.GetValidationSupportedRoles()
+	if len(roles) != 1 || roles[0] != "executor" {
+		t.Fatalf("validation_supported_roles: got %v, want [executor]", roles)
+	}
+}
+
 // TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks
 // drives the real executeCore dispatch over a real rows payload and
 // asserts the severity partition (`S-executors-verifier-severity-partition`):

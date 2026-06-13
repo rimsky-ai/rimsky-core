@@ -39,10 +39,14 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 // that another supervisor stole the dispatch row in the gap between
 // commit and the second-read guard. The supervisor knows it just
 // opened the store state and is now unwinding the in-progress
-// acquisition; it owns the cleanup and calls Abandon on the store
-// to release any partial state (via the shared abandonOpenedClaim
-// helper — see @concept terminal-resolution), then deletes its own
-// lock-holder row claimant-guarded, then emits orphaned_claim_lost_race.
+// acquisition; it owns the cleanup and resolves each acquired claim
+// through the unified claim-handle resolution engine
+// (`ResolveClaimHandleTerminal`, OwnershipBail source): the engine
+// fires the producer Abandon and deletes the lock-holder row
+// claimant-guarded at the single audited verb-then-delete site. The
+// bail then emits orphaned_claim_lost_race (an admin event — the bail
+// emits no terminal signal, so each engine call carries a zero
+// LineageHint).
 //
 // This is NOT the periodic orphan reaper. The periodic reaper at
 // `graph/scheduler/sweep_locks.go::sweepClaimHandles` deletes expired
@@ -56,19 +60,10 @@ func verifyBeforeRun(ctx context.Context, args RunArgs, acq acquisition) bool {
 // @concept: terminal-resolution
 func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 	for _, lk := range acq.Locks {
-		if lk.Producer != nil {
-			scope := claimScope(lk)
-			address := claimAddress(lk)
-			if err := abandonOpenedClaim(ctx, lk.Producer, lk.ClaimHandleID, scope, address); err != nil {
-				args.Logger.Warn("handleOrphanedClaim: Abandon failed",
-					"producer", producerNameForSpec(lk.Spec), "error", err.Error())
-			}
-		}
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return args.ClaimHandles.Delete(ctx, lk.ClaimHandleID, args.SupervisorID, tx)
-		}); err != nil && args.Logger != nil {
-			args.Logger.Warn("handleOrphanedClaim: delete claim handle failed",
+		if err := bailAcquiredLock(ctx, args, lk); err != nil && args.Logger != nil {
+			args.Logger.Warn("handleOrphanedClaim: unwind acquired lock failed",
 				"claim_handle_id", lk.ClaimHandleID.String(),
+				"producer", producerNameForSpec(lk.Spec),
 				"dispatch_id", acq.DispatchID.String(),
 				"error", err.Error())
 		}
@@ -88,6 +83,55 @@ func handleOrphanedClaim(ctx context.Context, args RunArgs, acq acquisition) {
 			"dispatch_id", acq.DispatchID.String(),
 			"error", err.Error())
 	}
+}
+
+// bailAcquiredLock unwinds one acquired lock for the ownership bail.
+// Each lock gets its own short tx (mirroring the per-claim unwind
+// granularity: one claim's failure must not block its siblings'
+// cleanup — the caller logs and continues).
+//
+//   - Named lock (no producer) → claimant-guarded delete only, the
+//     same shape as the active-terminal named branch
+//     (`runner_terminal_release.go::releaseAcquiredLock`). Named locks
+//     carry no producer verb.
+//   - Claim (producer-backed) → the unified claim-handle resolution
+//     engine with the OwnershipBail source: Abandon, then
+//     claimant-guarded delete, at the single audited site.
+//
+// Load-bearing property protected here: verb-then-delete atomicity.
+// If the producer Abandon fails, the engine returns before the row
+// delete and this tx rolls back — the row survives for the periodic
+// reaper (which fires no verb; the producer's own TTL reconciles)
+// rather than being deleted with producer-side state leaked behind it.
+//
+// No concurrent-termination serialization is needed before the engine
+// call (its documented locking precondition): these rows were created
+// by this supervisor inside the acquisition tx that just committed,
+// the run was never dispatched, and the rows are not yet expired — no
+// other resolution path can be racing on them.
+//
+// @concept: terminal-resolution
+func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error {
+	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if lk.Producer == nil {
+			return args.ClaimHandles.Delete(ctx, lk.ClaimHandleID, args.SupervisorID, tx)
+		}
+		return ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+			ClaimHandleID: lk.ClaimHandleID,
+			SupervisorID:  args.SupervisorID,
+			Source:        OwnershipBail,
+			Outcome:       AggregateAbandon,
+			Producer:      lk.Producer,
+			Scope:         claimScope(lk),
+			Address:       claimAddress(lk),
+			// Zero LineageHint: the bail is an admin path and emits no
+			// claim_resolution.* signal — only the caller's
+			// orphaned_claim_lost_race admin event records it.
+			// ParentClaimHandleID stays nil: the bail unwinds a
+			// just-committed root acquisition; there is no parent
+			// aggregation to bump.
+		})
+	})
 }
 
 // transitionToRunning is the short-tx state transition. Threads

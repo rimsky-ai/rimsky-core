@@ -36,7 +36,7 @@ Owns: the conflict-check comparison, the schema column, inertness discipline at 
 ## Invariants
 
 - Claim scope comparison is byte-equality. Empty byte streams never conflict.
-- Producers maintain the byte-equal-claim-scope **uniformity invariant**: two open calls with byte-equal claim scope MUST return the same realized write semantics (spec §2.5). Rimsky relies on this; does not verify it.
+- Producers maintain the byte-equal-claim-scope **uniformity invariant**: two open calls with byte-equal claim scope MUST return the same realized write semantics. Rimsky relies on this; does not verify it.
 - The standard filesystem producer is concrete-paths only (canonicalizes by requiring absolute paths so byte-equality holds).
 - Claim scope content is inert in rimsky (`@blessed-invariant 20`).
 

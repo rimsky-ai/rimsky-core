@@ -84,17 +84,76 @@ func applyTerminal(
 ) (postCommitFn, error) {
 	// Plan I2: record the terminal verdict by class + error_class.
 	metricsOf(args).IncTerminal(string(terminalClassFor(t.Kind)), t.ErrorClass)
+	var pc postCommitFn
+	var err error
 	switch t.Kind {
 	case terminalKindComplete:
-		return applyTerminalComplete(ctx, args, acq, resolvedAttrs, schema, t, tx)
+		pc, err = applyTerminalComplete(ctx, args, acq, resolvedAttrs, schema, t, tx)
 	case terminalKindErrored:
-		return applyTerminalError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
+		pc, err = applyTerminalError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
 	case terminalKindInfra:
-		return applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
+		pc, err = applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
 	case terminalKindPark:
+		// Park does NOT end the dispatch — the parked run re-enters and
+		// its eventual terminal flows back through this switch, where the
+		// work_completed pairing below fires. Per
+		// concept:terminal-resolution's kind table, Park retains claims
+		// and the run row; the await-async-callback transient likewise
+		// never reaches this switch (its callback's final terminal does).
 		return applyTerminalPark(ctx, args, acq, t, tx)
+	default:
+		return nil, fmt.Errorf("applyTerminal: unhandled terminal kind %v", t.Kind)
 	}
-	return nil, fmt.Errorf("applyTerminal: unhandled terminal kind %v", t.Kind)
+	if err != nil {
+		return nil, err
+	}
+	// Pair the post-acquisition `work_started` append
+	// (runner_acquire.go::tryAcquire) with a `work_completed` append on
+	// every terminal kind that ends the dispatch (Complete / Errored /
+	// Infra — Errored covers all four policy dispositions: a retry ends
+	// THIS dispatch and the re-enqueued successor emits its own
+	// work_started, so per-dispatch pairing holds). Wrapped around the
+	// handler's postCommit so the append runs after the outer
+	// state-mutation tx commits, mirroring work_started's best-effort
+	// audit-tx placement.
+	//
+	//	@story: work-completed-emitted
+	inner := pc
+	kind := t.Kind
+	return func(ctx context.Context) {
+		if inner != nil {
+			inner(ctx)
+		}
+		emitWorkCompleted(ctx, args, acq, kind)
+	}, nil
+}
+
+// emitWorkCompleted appends the `work_completed` audit event that pairs
+// the post-acquisition `work_started` append in
+// runner_acquire.go::tryAcquire. Same identifying payload fields
+// (supervisor_id, dispatch_id) plus the terminal kind, so durations and
+// did-everything-finish audits are computable from the ledger by
+// joining on dispatch_id. Best-effort in its own tx: the dispatch's
+// state mutation has already committed, so a failed audit append must
+// not abort the terminal — WARN-and-continue, mirroring the
+// work_started append's loss-visibility discipline.
+func emitWorkCompleted(ctx context.Context, args RunArgs, acq *acquisition, kind terminalKind) {
+	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
+			Kind: events.KindWorkCompleted(), Payload: map[string]any{
+				"supervisor_id": args.SupervisorID,
+				"dispatch_id":   acq.DispatchID.String(),
+				"terminal_kind": string(terminalClassFor(kind)),
+			},
+		}, tx)
+	}); err != nil && args.Logger != nil {
+		args.Logger.Warn("emitWorkCompleted: work_completed event append failed; pairing event lost",
+			"node_id", acq.NodeID.String(),
+			"dispatch_id", acq.DispatchID.String(),
+			"terminal_kind", string(terminalClassFor(kind)),
+			"error", err.Error())
+	}
 }
 
 // runApplyTerminal opens the outer state-mutation tx, threads it
@@ -280,7 +339,7 @@ func applyTerminalComplete(
 	// Primary state-mutation work runs inline in the caller's outer tx.
 	// Per @blessed-invariant: Callback determinism — phase-check read
 	// and these writes must share one tx.
-	if err := releaseLocksInTx(ctx, args, tx, acq, true); err != nil {
+	if err := releaseLocksInTx(ctx, args, tx, acq, true, false); err != nil {
 		return nil, err
 	}
 	// Per spec §Sub-graphs / Writeback carry-rule for exit: the
@@ -789,10 +848,11 @@ func cascadeSubscribersStaleInTxWithVisited(
 					// but has a terminated row in this frame.
 					// Re-affirming would create a fresh pending run row
 					// missing prior wait-set gates; HasRunForNodeInFrame
-					// catches this. Wait-set inserts still happen on
-					// the just-terminated row so receiver's
-					// substitution context picks up the late-arriving
-					// upstream attributes.
+					// catches this. With no in-flight receiver row left
+					// to gate, the skip-affirm branch below `continue`s
+					// past the wait-set insert entirely — a settled
+					// receiver is never re-gated on a late-settling
+					// upstream in the same frame.
 					skipAffirm := false
 					if _, seen := visitedReceivers[r.ID]; seen {
 						skipAffirm = true
@@ -1000,6 +1060,47 @@ func pullHardDepUpstreams(
 			if err := wakeParkedReceiverInTx(ctx, args, tx, upstreamNode, senderFrameID); err != nil {
 				return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked hard-dep upstream %s: %w",
 					upstreamType, err)
+			}
+		}
+
+		// Settled-this-frame guard. With two or more hard-dep upstreams
+		// settling independently in one frame, the later settler's own
+		// cascade walk re-visits the receiver, and this pull would
+		// otherwise re-affirm the EARLIER upstream — which already
+		// settled this frame and so has no in-flight row. The re-affirm
+		// creates a fresh pending run; that re-run settles, walks back
+		// to the receiver, and re-affirms the OTHER settled upstream:
+		// mutual re-seeding, the frame never terminates (regression pin:
+		// test/scenarios/multi_hard_dep_test.go). An upstream that
+		// already has a run row in this frame but NO in-flight row is
+		// settled-this-frame: its value is already in the receiver's
+		// drained wait-set (inserted when it was first pulled into the
+		// frame, or by its own settle walk via the attribute
+		// auto-subscribe edge), so there is nothing to gate on and
+		// nothing to re-run. Skip. The in-flight probe comes first so a
+		// still-running (or just-woken parked) upstream in this frame
+		// falls through to the normal gate-insert path — the guard
+		// protects frame termination without weakening the rendezvous.
+		//
+		//	@concept: cascade
+		_, hasInFlightRun, err := args.Queue.GetInFlightRunForNode(
+			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
+		)
+		if err != nil {
+			return fmt.Errorf("cascadeSubscribersStaleInTx: probe in-flight upstream %s: %w",
+				upstreamType, err)
+		}
+		if !hasInFlightRun {
+			settledThisFrame, err := args.Persist.Nodes().HasRunForNodeInFrame(
+				ctx, upstreamNode.ID, senderFrameID, tx,
+			)
+			if err != nil {
+				return fmt.Errorf("cascadeSubscribersStaleInTx: probe settled upstream %s: %w",
+					upstreamType, err)
+			}
+			if settledThisFrame {
+				visited[upstreamNode.ID] = struct{}{}
+				continue
 			}
 		}
 

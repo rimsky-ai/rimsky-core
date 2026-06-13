@@ -138,7 +138,7 @@ func TestMcpTransportParity(t *testing.T) {
 	// category a real entity to read / mutate against. The same shape
 	// the other SQLite e2e tests use — one stub-backed worker node so
 	// the supervisor settles it through the real dispatch path.
-	templateID := deploySQLiteTemplateAuth(t, ep, adminKey, map[string]any{
+	templateID := deployScenarioTemplateAuth(t, ep, adminKey, map[string]any{
 		"spec": map[string]any{
 			"name":                  "mcp-transport-parity",
 			"version":               "1",
@@ -914,7 +914,7 @@ func getJSONAuth(t *testing.T, ep harness.RimskyEndpoint, path, bearer string) (
 }
 
 // createInstanceAuth POSTs /v1/instances with the supplied bearer
-// and returns the new instance id. Mirrors createSQLiteInstance but
+// and returns the new instance id. Mirrors createScenarioInstance but
 // authenticated.
 func createInstanceAuth(t *testing.T, ep harness.RimskyEndpoint, bearer, templateID, instanceKey string, params map[string]any) string {
 	t.Helper()

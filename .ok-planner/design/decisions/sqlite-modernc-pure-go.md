@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The modernc.org pure-Go SQLite driver.
+The modernc pure-Go SQLite driver.
 
 ## Rationale
 

@@ -83,8 +83,12 @@ func DefaultBlobConfig() BlobConfig {
 
 // ProcessRoleEnv is the env-var name read at startup to decide whether
 // the "memory" blob backend's multi-process rejection should fire.
-// The unified rimsky-entrypoint sets this to "unified"; the per-process
-// binaries either leave it unset or set their own role string.
+// rimsky-entrypoint sets this to "unified" only on its no-command
+// path — the single-process all-in-one mode, where all three roles
+// (scheduler, supervisor, control-api) run inside one OS process and
+// genuinely share one in-process blob map. Per-role processes (the
+// standalone role binaries, or entrypoint invocations naming a single
+// role) leave it unset.
 const ProcessRoleEnv = "RIMSKY_PROCESS_ROLE"
 
 // ErrInvalidBlobConfig is returned by ValidateBlobConfig when the config
@@ -92,10 +96,16 @@ const ProcessRoleEnv = "RIMSKY_PROCESS_ROLE"
 var ErrInvalidBlobConfig = errors.New("persistence: invalid blob config")
 
 // ValidateBlobConfig is called by the persistence Driver before
-// constructing a BlobBackend. It implements the multi-process safety
-// gate for the "memory" backend (per the plan's pre-resolved decision
-// and D5): "memory" is dev-only and is rejected unless the process is
-// running under the unified entrypoint (RIMSKY_PROCESS_ROLE="unified").
+// constructing a BlobBackend. It implements the single-process safety
+// gate for the "memory" backend: "memory" is dev-only and is rejected
+// unless the process runs in the single-process mode
+// (RIMSKY_PROCESS_ROLE="unified", set by the entrypoint's no-command
+// path, where every role shares one process and therefore one
+// in-process blob map). A per-role process cannot share an in-process
+// map with its siblings — cross-role blob reads would miss and the
+// orphan-blob sweep would reap nothing — so the gate rejects it. This
+// is physics, not policy: cross-process SQLite is made safe instead of
+// gated, but cross-process in-memory state cannot be.
 //
 // Other validation: the threshold must be non-negative, the filesystem
 // root must be non-empty when Backend is "filesystem", and Backend must
@@ -113,7 +123,7 @@ func ValidateBlobConfig(cfg BlobConfig) error {
 		return errInvalidBlobConfigf("filesystem backend requires filesystem.root")
 	}
 	if cfg.Backend == "memory" && os.Getenv(ProcessRoleEnv) != "unified" {
-		return errInvalidBlobConfigf("memory backend is dev-only and is rejected unless %s=unified (set by rimsky-entrypoint); the per-process binaries (rimsky-scheduler, rimsky-supervisor, rimsky-control-api) cannot share state through an in-process map", ProcessRoleEnv)
+		return errInvalidBlobConfigf("memory backend is dev-only and requires the single-process mode: all roles in one process sharing one in-process blob map, marked by %s=unified (set only by rimsky-entrypoint's no-command all-in-one path); a per-role process cannot share an in-process map with the other roles", ProcessRoleEnv)
 	}
 	return nil
 }

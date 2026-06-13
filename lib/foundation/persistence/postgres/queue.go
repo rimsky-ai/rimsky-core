@@ -218,6 +218,12 @@ func (q *queueImpl) SelectCandidates(
 	// the instance's service_bindings JSONB carries the named binding.
 	// The `<> ''` guards keep the new OR-branches inert when no proxy is
 	// configured ($4/$5 empty), so existing call sites behave identically.
+	// Keyset cursor ($6/$7): the runner pages past a batch whose
+	// candidates were all skipped in Go (e.g. the upstream in-flight
+	// gate) by re-selecting strictly after the last (enqueued_at, id)
+	// pair — without it, ≥ LIMIT long-gated old candidates would hold
+	// the window every poll and starve younger ungated rows. Zero
+	// values (year-1 time, zero uuid) match everything.
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition
@@ -245,15 +251,17 @@ func (q *queueImpl) SelectCandidates(
 		      )
 		    )
 		    AND d.enqueued_at <= NOW()
+		    AND (d.enqueued_at > $6 OR (d.enqueued_at = $6 AND d.id > $7))
 		    AND NOT EXISTS (
 		      SELECT 1 FROM rimsky_wait_set w
 		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
 		        AND w.drained_at IS NULL
 		    )
-		  ORDER BY d.enqueued_at
+		  ORDER BY d.enqueued_at, d.id
 		  LIMIT $3
 		  FOR UPDATE OF d SKIP LOCKED`,
 		acceptedStores, acceptedExecutors, limit, req.LateBindExecutorProxy, req.LateBindClaimProducerProxy,
+		req.CursorEnqueuedAfter, req.CursorAfterDispatchID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("postgres.SelectCandidates: %w", err)
@@ -720,6 +728,49 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 		return shared.UUID{}, false, fmt.Errorf("postgres.GetInFlightRunForNode: %w", err)
 	}
 	return id, true, nil
+}
+
+// ListInFlightRunPhases returns the distinct in-flight phases per node
+// in (frameID, runScopeID). The persistence half of the supervisor's
+// upstream-gating eligibility condition and its pending-cycle
+// tie-breaker (a merely-pending upstream is distinguishable from a
+// progressing one).
+//
+// @concept: wait-set
+// @concept: cascade
+func (q *queueImpl) ListInFlightRunPhases(
+	ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID,
+) (map[shared.UUID][]string, error) {
+	out := map[shared.UUID][]string{}
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	if tx == nil {
+		return nil, errors.New("postgres.ListInFlightRunPhases: tx required")
+	}
+	rows, err := q.q(tx).Query(ctx,
+		`SELECT DISTINCT node_id, phase FROM rimsky_node_runs
+		  WHERE node_id = ANY($1)
+		    AND frame_id = $2
+		    AND run_scope_id = $3
+		    AND phase IN ('pending','active','held','parked')`,
+		nodeIDs, frameID, runScopeID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.ListInFlightRunPhases: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeID shared.UUID
+		var phase string
+		if err := rows.Scan(&nodeID, &phase); err != nil {
+			return nil, fmt.Errorf("postgres.ListInFlightRunPhases: scan: %w", err)
+		}
+		out[nodeID] = append(out[nodeID], phase)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres.ListInFlightRunPhases: rows: %w", err)
+	}
+	return out, nil
 }
 
 // ---- dispatch cursor encoding ----

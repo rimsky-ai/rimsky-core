@@ -655,3 +655,123 @@ func TestRegisterTemplate_RefMode(t *testing.T) {
 			"mode none must perform no registration-time reference validation; body: %v", invalidOut)
 	})
 }
+
+// warningsContainAdvisory scans a decoded validation_warnings array for
+// the static validator's acquire/unavailable acquisition-policy
+// advisory. Entries may carry the message under "msg" (the validate
+// endpoint's {path, msg} projection) or "message" (the register
+// surface's ValidationFinding JSON); accept both.
+func warningsContainAdvisory(t *testing.T, out map[string]any) bool {
+	t.Helper()
+	warns, ok := out["validation_warnings"].([]any)
+	if !ok {
+		return false
+	}
+	for _, w := range warns {
+		entry, ok := w.(map[string]any)
+		if !ok {
+			continue
+		}
+		msg, _ := entry["msg"].(string)
+		if msg == "" {
+			msg, _ = entry["message"].(string)
+		}
+		if strings.Contains(msg, "acquire/unavailable") {
+			return true
+		}
+	}
+	return false
+}
+
+// storesTemplateWithoutAcquirePolicy returns a wrapped template body
+// whose claim-acquiring node declares NO acquire/unavailable
+// error_types entry — tripping the static validator's
+// validateAcquireUnavailablePolicyAdvised advisory warning.
+func storesTemplateWithoutAcquirePolicy(name string) map[string]any {
+	return map[string]any{
+		"spec": map[string]any{
+			"name":                  name,
+			"version":               "v1",
+			"frame_resolution_mode": "serial_queue",
+			"nodes": []map[string]any{
+				{
+					"type":     "claim-topic",
+					"executor": "worker",
+					"stores": []map[string]any{
+						{"name": "topics-ring", "selector": "@queue", "intent": "rw"},
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestTemplateRegister_StaticWarningSurfaced — a static-validator
+// advisory (claims acquired with no acquisition-failure policy) must
+// appear in the successful register response's validation_warnings
+// (TD-merge-validator-warnings; STORY-validation-warnings-surfaced).
+func TestTemplateRegister_StaticWarningSurfaced(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	body := storesTemplateWithoutAcquirePolicy("static-warn-" + uuid.NewString())
+	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
+	require.Equal(t, http.StatusCreated, status, out)
+	require.NotEmpty(t, out["template_id"])
+	require.True(t, warningsContainAdvisory(t, out),
+		"register response must surface the static validator's acquire/unavailable advisory in validation_warnings; got: %v", out)
+}
+
+// TestTemplateRegister_StaticWarningAsErrorsRejects — the same static
+// advisory must trip ?warnings_as_errors=true and reject the
+// registration without persisting.
+func TestTemplateRegister_StaticWarningAsErrorsRejects(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	_, listBefore := h.httpJSON(t, "GET", "/v1/templates", nil)
+	beforeCount := 0
+	if l, ok := listBefore["templates"].([]any); ok {
+		beforeCount = len(l)
+	}
+
+	body := storesTemplateWithoutAcquirePolicy("static-warn-rej-" + uuid.NewString())
+	status, out := h.httpJSON(t, "POST", "/v1/templates?warnings_as_errors=true", body)
+	require.Equal(t, http.StatusBadRequest, status, out)
+	require.Equal(t, true, out["warnings_as_errors"])
+	require.True(t, warningsContainAdvisory(t, out),
+		"rejection body must carry the static advisory in validation_warnings; got: %v", out)
+
+	// Nothing persisted on rejection.
+	_, listAfter := h.httpJSON(t, "GET", "/v1/templates", nil)
+	afterCount := 0
+	if l, ok := listAfter["templates"].([]any); ok {
+		afterCount = len(l)
+	}
+	require.Equal(t, beforeCount, afterCount,
+		"warnings_as_errors rejection must not persist a template row")
+}
+
+// TestTemplateValidate_StaticWarningSurfaced — the validate endpoint
+// must carry the same static advisory in validation_warnings, with
+// ok:true absent the flag and ok:false under ?warnings_as_errors=true.
+func TestTemplateValidate_StaticWarningSurfaced(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	body := storesTemplateWithoutAcquirePolicy("static-warn-validate-" + uuid.NewString())
+	status, out := h.httpJSON(t, "POST", "/v1/templates/validate", body)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, true, out["ok"], "warnings alone must not flip ok without the flag: %v", out)
+	require.True(t, warningsContainAdvisory(t, out),
+		"validate response must surface the static advisory in validation_warnings; got: %v", out)
+
+	status, out = h.httpJSON(t, "POST", "/v1/templates/validate?warnings_as_errors=true", body)
+	require.Equal(t, http.StatusOK, status, out)
+	require.Equal(t, false, out["ok"],
+		"warnings_as_errors=true must flip the validate verdict on a static advisory: %v", out)
+	require.True(t, warningsContainAdvisory(t, out), "advisory must still be listed: %v", out)
+}

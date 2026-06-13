@@ -181,6 +181,14 @@ type CallbackServer struct {
 	DataProcessors DataProcessingRegistry
 	addr           string
 	srv            *http.Server
+	// serveErr surfaces a fatal post-start death of the callback HTTP
+	// serve loop (anything other than a graceful Close). At most one
+	// error is ever sent; the channel is closed when the serve loop
+	// exits, so a clean shutdown delivers a close with no error. The
+	// supervisor's launch wiring forwards this onto its role fail
+	// channel — a supervisor whose callback listener has died must
+	// restart, not run degraded with async callbacks black-holed.
+	serveErr chan error
 	// ackOutcomes records the per-dispatch ack status produced by
 	// driveTerminal's phase-check tx so handleCallback can write the
 	// structured response body. Keyed by dispatch_id; entries are
@@ -250,12 +258,31 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	}
 	c.addr = listener.Addr().String()
 	c.srv = &http.Server{Handler: r}
-	go func() { _ = c.srv.Serve(listener) }()
+	c.serveErr = make(chan error, 1)
+	go func() {
+		// A serve-loop death other than the graceful-Close
+		// http.ErrServerClosed is a fatal post-start failure: report it
+		// on serveErr so the supervising process can exit instead of
+		// running degraded. The buffered send precedes the close in the
+		// same goroutine, so consumers see the error (if any) and then
+		// the close — no send-after-close race.
+		err := c.srv.Serve(listener)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			c.serveErr <- err
+		}
+		close(c.serveErr)
+	}()
 	return c.addr, nil
 }
 
 // Addr returns the bound address of the running server (empty before Start).
 func (c *CallbackServer) Addr() string { return c.addr }
+
+// ServeErr returns the channel surfacing a fatal post-start death of the
+// callback serve loop. At most one error is sent; the channel closes when
+// the serve loop exits (clean shutdown closes with no error). Nil before
+// Start.
+func (c *CallbackServer) ServeErr() <-chan error { return c.serveErr }
 
 // Close shuts down the server, honoring ctx for deadline.
 func (c *CallbackServer) Close(ctx context.Context) error {

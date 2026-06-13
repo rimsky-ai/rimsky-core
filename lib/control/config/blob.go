@@ -6,10 +6,33 @@ package config
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 )
+
+// sharedMemoryBackend is the process-wide MemoryBackend handed to every
+// OpenBlobBackend("memory") caller. The memory backend is gated to the
+// single-process mode (RIMSKY_PROCESS_ROLE=unified, set only by the
+// all-in-one entrypoint's no-command path), where the three roles run
+// in one process but each opens its own persistence driver — a
+// per-driver map would silently lose cross-role blob reads and make
+// the scheduler's orphan-blob sweep delete from an empty map. One
+// shared map per process is the property the gate promises; this
+// singleton is what makes it true. Tests constructing MemoryBackend
+// directly via persistence.NewMemoryBackend keep isolated instances.
+var (
+	sharedMemoryBackendOnce sync.Once
+	sharedMemoryBackend     *persistence.MemoryBackend
+)
+
+func memoryBackend() *persistence.MemoryBackend {
+	sharedMemoryBackendOnce.Do(func() {
+		sharedMemoryBackend = persistence.NewMemoryBackend()
+	})
+	return sharedMemoryBackend
+}
 
 // OpenBlobBackend constructs the BlobBackend selected by cfg.Backend
 // and installs it on the database via Database.SetBlobBackend. The backend
@@ -19,7 +42,9 @@ import (
 // "inline" returns a no-op InlineBackend; the spill-decision sites
 // (`ShouldSpillBlob`) treat it as "spill disabled."
 //
-// "memory" requires RIMSKY_PROCESS_ROLE=unified per ValidateBlobConfig.
+// "memory" requires the single-process mode (RIMSKY_PROCESS_ROLE=unified)
+// per ValidateBlobConfig, and returns the process-shared MemoryBackend so
+// every role's driver in that process reads and sweeps the same map.
 //
 // "filesystem" requires cfg.Filesystem.Root.
 //
@@ -38,7 +63,7 @@ func OpenBlobBackend(cfg persistence.BlobConfig, db persistence.Database) (persi
 		db.SetBlobBackend(bb, cfg.SpillThresholdBytes, cfg.Retention.RetentionAfterUnreferenced)
 		return bb, nil
 	case "memory":
-		bb := persistence.NewMemoryBackend()
+		bb := memoryBackend()
 		db.SetBlobBackend(bb, cfg.SpillThresholdBytes, cfg.Retention.RetentionAfterUnreferenced)
 		return bb, nil
 	case "filesystem":

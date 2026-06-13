@@ -33,19 +33,11 @@ type ValidationServer struct {
 // NewValidationServer constructs the validation handler.
 func NewValidationServer() *ValidationServer { return &ValidationServer{} }
 
-// knownCheckKinds returns the snake_case names of every check the
-// verifier supports. Drawn from the checks package's registry; kept
-// in sync there.
-var knownCheckKinds = map[string]bool{
-	"no_nulls":           true,
-	"pk_unique":          true,
-	"row_count_absolute": true,
-	"row_count_relative": true,
-	"value_in_set":       true,
-	"value_matches":      true,
-	"min_max":            true,
-	"foreign_key":        true,
-}
+// knownCheckKinds holds the snake_case names of every check the
+// verifier's runtime dispatcher supports, sourced from the checks
+// package's registry so the registration-time `unknown_check_kind`
+// advisory cannot drift from what Run actually dispatches.
+var knownCheckKinds = checks.KnownKinds()
 
 // Validate routes on the role discriminator. Only role="executor" is
 // supported; any other role surfaces an error finding with class
@@ -166,7 +158,3 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 		Warnings: warnings,
 	}
 }
-
-// keepCompilerHappy retains references that linters might otherwise
-// classify as unused (checks package is needed for the kind list).
-var _ = checks.CheckSpec{}

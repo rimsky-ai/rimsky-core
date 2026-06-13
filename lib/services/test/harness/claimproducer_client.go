@@ -131,14 +131,21 @@ func (c *ClaimProducerClient) Open(ctx context.Context, claimID claimproducer.Cl
 	}, nil
 }
 
-// Commit dispatches to the wire.
-func (c *ClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte) error {
-	_, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
+// Commit dispatches to the wire and returns the response body fields
+// (version_id + producer_metadata) per the base-protocol contract.
+func (c *ClaimProducerClient) Commit(ctx context.Context, claimID claimproducer.ClaimID, scope []byte, address []byte) (claimproducer.CommitResult, error) {
+	resp, err := c.rpc.Commit(ctx, &genv1.CommitRequest{
 		ClaimId:    string(claimID),
 		ClaimScope: scope,
 		Address:    address,
 	})
-	return err
+	if err != nil {
+		return claimproducer.CommitResult{}, err
+	}
+	return claimproducer.CommitResult{
+		VersionID:        resp.GetVersionId(),
+		ProducerMetadata: resp.GetProducerMetadata(),
+	}, nil
 }
 
 // Abandon dispatches to the wire.

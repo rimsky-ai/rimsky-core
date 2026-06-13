@@ -35,7 +35,7 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 	t.Cleanup(teardown)
 
 	ctx := context.Background()
-	client, err := peer.Dial(ctx, "stub", "grpc://"+endpoint)
+	client, err := peer.Dial(ctx, "stub", "grpc://"+endpoint, peer.TLSModeOff)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

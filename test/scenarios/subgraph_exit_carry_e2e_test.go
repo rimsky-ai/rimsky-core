@@ -11,7 +11,7 @@
 //
 //   - A sub-graph runs end-to-end: caller → internal cascade → exit.
 //   - At exit's terminal, the carry-rule fires per
-//     code:runtime/subgraph_dispatch.go::CarryExitWriteback — exit's
+//     code:runtime/child_execution.go::SettleChildren — exit's
 //     attributes_delta is copied to the calling node's attributes row.
 //   - The sub-graph RunScope is closed at the same tx (closed_at IS
 //     NOT NULL).

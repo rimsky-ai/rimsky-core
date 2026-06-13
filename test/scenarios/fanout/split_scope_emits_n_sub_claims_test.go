@@ -11,13 +11,15 @@
 // .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 // §Fan-out template DSL "Mechanics at dispatch" steps 2-3.
 //
-// This scenario validates the `PlanFanOutChildren` projection — the
-// pure helper that turns N sub-claim descriptors into N child-run
-// plans the dispatcher feeds to CreateChildRun. The unit-level
-// coverage in runtime/fanout_dispatch_test.go pins the projection
-// rules; this scenario exercises the additional contract that the
-// per-child plan carries the leaf executor + sub-claim handle id +
-// partition_key one-to-one.
+// This scenario validates the `FanOutPartitions` projection plus the
+// fan-out shape of the unified-dispatch input — the dispatcher builds
+// one `ChildExecutionInput` whose partitions map one-to-one onto the
+// producer's sub-claims and whose single child-run spec carries the
+// leaf executor + required stores. The unit-level coverage in
+// runtime/fanout_dispatch_test.go pins the projection rules; this
+// scenario exercises the additional contract that the per-partition
+// descriptor carries the sub-claim handle id + partition_key
+// one-to-one and the input addresses the parent run / node / frame.
 package fanout
 
 import (
@@ -30,7 +32,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-func TestSplitScopeEmitsNSubClaims_PlanProjectsOneChildPerSubScope(t *testing.T) {
+func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testing.T) {
 	t.Parallel()
 	parentRun := shared.UUID(uuid.New())
 	parentNode := shared.UUID(uuid.New())
@@ -44,39 +46,52 @@ func TestSplitScopeEmitsNSubClaims_PlanProjectsOneChildPerSubScope(t *testing.T)
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "ap-south-1", Address: json.RawMessage(`{"path":"d"}`)},
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "sa-east-1", Address: json.RawMessage(`{"path":"e"}`)},
 	}
-	plans := runtime.PlanFanOutChildren(parentRun, parentNode, frameID, subClaims,
-		"my-loader", []string{"parquet-store"})
-	if len(plans) != len(subClaims) {
-		t.Fatalf("plans: %d (want %d, one per sub-claim)", len(plans), len(subClaims))
+	// Build the input the same way the fan-out dispatch wrapper does:
+	// N partitions from the sub-claims, one child-run spec re-using the
+	// parent's node + the leaf executor + required stores.
+	in := runtime.ChildExecutionInput{
+		ParentRunID: parentRun,
+		FrameID:     frameID,
+		Partitions:  runtime.FanOutPartitions(subClaims),
+		Children: []runtime.ChildRunSpec{{
+			NodeID:         parentNode,
+			Executor:       "my-loader",
+			RequiredStores: []string{"parquet-store"},
+		}},
 	}
-	for i, p := range plans {
-		if p.ParentRunID != parentRun {
-			t.Errorf("plans[%d].ParentRunID: %s (want %s)", i, p.ParentRunID, parentRun)
-		}
-		if p.NodeID != parentNode {
-			t.Errorf("plans[%d].NodeID: %s (want %s)", i, p.NodeID, parentNode)
-		}
-		if p.FrameID != frameID {
-			t.Errorf("plans[%d].FrameID: %s (want %s)", i, p.FrameID, frameID)
-		}
+	if len(in.Partitions) != len(subClaims) {
+		t.Fatalf("partitions: %d (want %d, one per sub-claim)", len(in.Partitions), len(subClaims))
+	}
+	if in.ParentRunID != parentRun {
+		t.Errorf("in.ParentRunID: %s (want %s)", in.ParentRunID, parentRun)
+	}
+	if in.FrameID != frameID {
+		t.Errorf("in.FrameID: %s (want %s)", in.FrameID, frameID)
+	}
+	if len(in.Children) != 1 {
+		t.Fatalf("fan-out input must carry exactly one child-run spec; got %d", len(in.Children))
+	}
+	if in.Children[0].NodeID != parentNode {
+		t.Errorf("child spec NodeID: %s (want %s)", in.Children[0].NodeID, parentNode)
+	}
+	if in.Children[0].Executor != "my-loader" {
+		t.Errorf("child spec Executor: %s", in.Children[0].Executor)
+	}
+	for i, p := range in.Partitions {
 		if p.PartitionKey != subClaims[i].PartitionKey {
-			t.Errorf("plans[%d].PartitionKey: %s (want %s)",
+			t.Errorf("partitions[%d].PartitionKey: %s (want %s)",
 				i, p.PartitionKey, subClaims[i].PartitionKey)
 		}
 		if p.SubClaimHandleID != subClaims[i].ClaimHandleID {
-			t.Errorf("plans[%d].SubClaimHandleID mismatch", i)
-		}
-		if p.Executor != "my-loader" {
-			t.Errorf("plans[%d].Executor: %s", i, p.Executor)
+			t.Errorf("partitions[%d].SubClaimHandleID mismatch", i)
 		}
 	}
 }
 
-func TestSplitScopeEmitsNSubClaims_EmptyDescriptorListReturnsEmptyPlans(t *testing.T) {
+func TestSplitScopeEmitsNSubClaims_EmptyDescriptorListReturnsEmptyPartitions(t *testing.T) {
 	t.Parallel()
-	parentRun := shared.UUID(uuid.New())
-	plans := runtime.PlanFanOutChildren(parentRun, shared.UUID{}, shared.UUID{}, nil, "stub", nil)
-	if len(plans) != 0 {
-		t.Errorf("empty sub-claims should produce empty plans; got %d", len(plans))
+	parts := runtime.FanOutPartitions(nil)
+	if len(parts) != 0 {
+		t.Errorf("empty sub-claims should produce empty partitions; got %d", len(parts))
 	}
 }

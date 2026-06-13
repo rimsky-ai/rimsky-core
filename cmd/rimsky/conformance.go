@@ -86,7 +86,12 @@ func runConformanceExecutor(args []string) int {
 	checkLifecycle := fs.Bool("check-lifecycle", false, "probe LifecycleSubscriber six-RPC sanity instead of running executor scenarios")
 	callbackBind := fs.String("callback-bind", "127.0.0.1", "interface for the conformance callback receiver to bind (use 0.0.0.0 when the executor runs in a container)")
 	callbackHost := fs.String("callback-host", "", "host the executor should reach the callback receiver at (default: same as --callback-bind; for containerized executors set to host.docker.internal or a routable host IP)")
+	tlsMode := fs.String("tls", "off", "off|required — dial the executor with verified TLS against system roots (gRPC transport only; applies to the scenario suite, the observability probe, and the lifecycle probe alike)")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *tlsMode != "off" && *tlsMode != "required" {
+		fmt.Fprintf(os.Stderr, "rimsky conformance executor: --tls must be off or required, got %q\n", *tlsMode)
 		return 2
 	}
 
@@ -98,7 +103,7 @@ func runConformanceExecutor(args []string) int {
 	ctx := context.Background()
 
 	if *checkLifecycle {
-		if err := conformance.RunLifecycleCheck(ctx, *endpoint, *timeout); err != nil {
+		if err := conformance.RunLifecycleCheck(ctx, *endpoint, *tlsMode, *timeout); err != nil {
 			fmt.Fprintf(os.Stderr, "lifecycle: %v\n", err)
 			return 1
 		}
@@ -106,7 +111,7 @@ func runConformanceExecutor(args []string) int {
 		return 0
 	}
 
-	ep := conformance.Endpoint{Transport: *transport, URL: *endpoint}
+	ep := conformance.Endpoint{Transport: *transport, URL: *endpoint, TLS: *tlsMode}
 
 	onlyList := splitConformanceCSV(*only)
 	skipList := splitConformanceCSV(*skip)
@@ -187,7 +192,10 @@ func runConformanceClaimProducer(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	client, err := peer.Dial(ctx, "conformance-target", *endpoint)
+	// Conformance targets are dialed plaintext: the runner exercises
+	// the wire protocol, and TLS termination is the deployment's
+	// concern when pointing it at a TLS-fronted peer.
+	client, err := peer.Dial(ctx, "conformance-target", *endpoint, peer.TLSModeOff)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: dial: %v\n", err)
 		return 1

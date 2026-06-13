@@ -48,6 +48,13 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 		SupportsTraceStream:      false,
 		ExpectedAttributesSchema: []byte(`{"type":"object"}`),
 		DeclaredErrorClasses:     errorclasses.Declared(),
+		// The verifier ships the Validation mix-in (validation.go) whose
+		// Validate handles role="executor" only. Rimsky learns a
+		// validation peer's roles exclusively from this handshake field
+		// — omitting it means the peer is dialed but never selected by
+		// the registration-time pipeline (empty roles never match
+		// role="executor").
+		ValidationSupportedRoles: []string{"executor"},
 	}, nil
 }
 

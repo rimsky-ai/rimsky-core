@@ -223,9 +223,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Nodes.SetFrameID", func() {
 			_ = store.Nodes().SetFrameID(ctx, someID, nil, nil)
 		}},
-		{"Nodes.ClearSupervisorAssignment", func() {
-			_ = store.Nodes().ClearSupervisorAssignment(ctx, someID, someID, nil)
-		}},
 		{"Nodes.ClearSettlingSignalType", func() {
 			_ = store.Nodes().ClearSettlingSignalType(ctx, someID, someID, nil)
 		}},
@@ -247,9 +244,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		}},
 		{"ClaimHandles.ListByHolderNode", func() {
 			_, _ = store.ClaimHandles().ListByHolderNode(ctx, someID, nil)
-		}},
-		{"ClaimHandles.ListBySupervisor", func() {
-			_, _ = store.ClaimHandles().ListBySupervisor(ctx, "sup", nil)
 		}},
 		{"ClaimHandles.ExtendHeartbeat", func() {
 			_ = store.ClaimHandles().ExtendHeartbeat(ctx, "sup", time.Now(), nil)

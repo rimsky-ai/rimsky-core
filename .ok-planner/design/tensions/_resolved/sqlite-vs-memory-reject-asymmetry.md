@@ -1,11 +1,28 @@
 ---
 tension: sqlite-vs-memory-reject-asymmetry
 category: inconsistent
-status: open
+status: resolved
 affects:
   - persistence-database
   - blob-backend
   - advisory-lock
+resolution:
+  summary: |
+    No startup gate for SQLite. Instead of gating, the SQLite driver is
+    made safe for multiple processes sharing one local database file:
+    its read-then-write operations are transactional (immediate-mode
+    transactions hold the writer slot, giving cross-process atomicity),
+    and the scheduler-tick and migration locks are file-lock-based, so
+    their exclusion holds across processes sharing the file. The
+    platform defaults to Postgres outside the all-in-one deployment,
+    and an operator overriding to SQLite is presumed to have chosen
+    deliberately — gating a deliberate config choice is not this
+    platform's policy. The memory blob backend remains gated to the
+    single-process mode because cross-process in-memory state is broken
+    by physics, not policy. The asymmetry is thereby justified and
+    recorded rather than accidental. Separate database files per
+    process and network filesystems remain physically unsupportable
+    and undetectable in-process.
 ---
 
 # `memory` blob backend is startup-rejected outside unified mode; SQLite + replicas > 1 is NOT — same broken-by-construction semantics

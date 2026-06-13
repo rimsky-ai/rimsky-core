@@ -1,6 +1,7 @@
 ---
 concept: claim-co-holdership
 status: as-is
+aliases: []
 ---
 
 # Claim co-holdership

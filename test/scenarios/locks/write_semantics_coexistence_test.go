@@ -172,7 +172,7 @@ func startWriteSemanticsHarness(
 	// carry exactly `value` — the realized-value envelope check in
 	// peer/client.go::Open passes. Client + conn are concurrency-safe so two
 	// RunNode goroutines can share both.
-	client, err := peer.Dial(h.Ctx, "content", "grpc://"+endpoint)
+	client, err := peer.Dial(h.Ctx, "content", "grpc://"+endpoint, peer.TLSModeOff)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	reg := locks.NewRegistry()

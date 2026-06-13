@@ -24,7 +24,7 @@ Claims carry three orthogonal extensions:
 
 ## Boundaries
 
-Owns: the claim declaration, the address/payload/claim-scope returned at open, the post-terminal verb (commit, abandon, or release). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its Held variant subsection — the dropped held-claim concept's content lives there), `claim-producer`, `claim-scope`, `write-semantics`, `auto-terminal`, `inertness`.
+Owns: the claim declaration, the address/payload/claim-scope returned at open, the post-terminal verb (commit, abandon, or release). Does NOT own: lock state ledger (lives in `claim-handle`), capacity counting (that's `named-lock`), producer-internal state (lives in the producer). Adjacent: `claim-handle` (including its Held variant subsection), `claim-producer`, `claim-scope`, `write-semantics`, `auto-terminal`, `inertness`.
 
 ## Invariants
 

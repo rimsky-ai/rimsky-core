@@ -128,40 +128,40 @@ func DialPublisherAndValidationRegistries(
 	// transport target.
 	//
 	// `roles` is the LIVE `validation_supported_roles` list the peer
-	// advertised on its primary protocol's Capabilities handshake. We
-	// cannot read it from the operator-declared `e.Capabilities` —
-	// `cfg.Stores` is built at YAML-load time and `Capabilities` there
-	// carries only the operator-declared write-semantics envelope; the
+	// advertised on its own capability surface — the Validation service
+	// has no Capabilities verb, so each peer kind carries the list on
+	// its host capability handshake: ClaimProducer.Capabilities for
+	// claim producers, ExecutorObservability.Capabilities for executors,
+	// Publisher.Capabilities for publishers. We cannot read it from the
+	// operator-declared `e.Capabilities` — `cfg.Stores` is built at
+	// YAML-load time and `Capabilities` there carries only the
+	// operator-declared write-semantics envelope; the
 	// `ValidationSupportedRoles` field is always empty there. So when a
-	// claim-producer peer advertises the `validation` mix-in, we run a
-	// fresh ClaimProducer.Capabilities handshake here to learn the live
-	// supported roles. The cost is one extra RPC per validation-mix-in
-	// peer at startup — the same RPC `dialRemoteStores` already runs once,
-	// but it doesn't persist the live caps back into `cfg.Stores`, so
-	// re-running it here is the path that doesn't require a wider refactor.
+	// peer advertises the `validation` mix-in, we run a fresh
+	// capability handshake here to learn the live supported roles. The
+	// cost is one extra RPC per validation-mix-in peer at startup.
 	// @story: validation-author
+	// @story: validation-mixin-uniform
 	type peerSpec struct {
 		name      string
 		endpoint  string
+		tls       string // validated `tls:` mode from the peer's config entry
 		protocols []string
-		// fetchRoles, when non-nil, is called lazily the first time the
-		// validation mix-in arm is processed for this peer. Non-store
-		// peers (executors / publishers) leave it nil — they advertise
-		// validation through different proto Capabilities surfaces that
-		// the existing dial code does not yet read; today their
-		// supported_roles list is treated as empty (the same pre-fix
-		// behavior).
+		// fetchRoles is called lazily the first time the validation
+		// mix-in arm is processed for this peer. Every peer kind sets
+		// it — all three kinds resolve live roles identically.
 		fetchRoles func(context.Context) ([]string, error)
 	}
 	peers := make([]peerSpec, 0, len(stores.Stores)+len(execs.Executors)+len(publishers.Publishers))
 	for n, e := range stores.Stores {
-		nameCopy, endpointCopy := n, e.Endpoint
+		nameCopy, endpointCopy, tlsCopy := n, e.Endpoint, e.TLS
 		peers = append(peers, peerSpec{
 			name:      n,
 			endpoint:  e.Endpoint,
+			tls:       e.TLS,
 			protocols: e.Protocols,
 			fetchRoles: func(fctx context.Context) ([]string, error) {
-				c, dErr := peer.Dial(fctx, nameCopy, endpointCopy)
+				c, dErr := peer.Dial(fctx, nameCopy, endpointCopy, tlsCopy)
 				if dErr != nil {
 					return nil, dErr
 				}
@@ -175,10 +175,35 @@ func DialPublisherAndValidationRegistries(
 		})
 	}
 	for n, e := range execs.Executors {
-		peers = append(peers, peerSpec{name: n, endpoint: e.Endpoint, protocols: e.Protocols})
+		// The executor's validation_supported_roles ride on the
+		// ExecutorObservability capability surface, which the operator
+		// may split onto a dedicated observability endpoint.
+		nameCopy, tlsCopy := n, e.TLS
+		obsEndpoint := e.ObservabilityEndpoint
+		if obsEndpoint == "" {
+			obsEndpoint = e.Endpoint
+		}
+		peers = append(peers, peerSpec{
+			name:      n,
+			endpoint:  e.Endpoint,
+			tls:       e.TLS,
+			protocols: e.Protocols,
+			fetchRoles: func(fctx context.Context) ([]string, error) {
+				return peer.FetchExecutorValidationRoles(fctx, nameCopy, obsEndpoint, tlsCopy)
+			},
+		})
 	}
 	for n, e := range publishers.Publishers {
-		peers = append(peers, peerSpec{name: n, endpoint: e.Endpoint, protocols: e.Protocols})
+		nameCopy, endpointCopy, tlsCopy := n, e.Endpoint, e.TLS
+		peers = append(peers, peerSpec{
+			name:      n,
+			endpoint:  e.Endpoint,
+			tls:       e.TLS,
+			protocols: e.Protocols,
+			fetchRoles: func(fctx context.Context) ([]string, error) {
+				return peer.FetchPublisherValidationRoles(fctx, nameCopy, endpointCopy, tlsCopy)
+			},
+		})
 	}
 	for _, p := range peers {
 		for _, proto := range p.protocols {
@@ -188,7 +213,7 @@ func DialPublisherAndValidationRegistries(
 					continue
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := peer.DialPublisher(dialCtx, p.name, p.endpoint)
+				c, dErr := peer.DialPublisher(dialCtx, p.name, p.endpoint, p.tls)
 				cancel()
 				if dErr != nil {
 					closeAll()
@@ -200,25 +225,23 @@ func DialPublisherAndValidationRegistries(
 					continue
 				}
 				// Resolve the LIVE supported_roles list right before
-				// dialing the validation client. For claim-producer
-				// peers the resolver re-runs the Capabilities handshake;
-				// for executors / publishers there is no fetcher today
-				// (their primary-protocol caps surfaces do not yet plumb
-				// validation_supported_roles into this function), so
-				// roles stays nil.
-				var roles []string
-				if p.fetchRoles != nil {
-					rCtx, rCancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-					rolesResolved, fErr := p.fetchRoles(rCtx)
-					rCancel()
-					if fErr != nil {
-						closeAll()
-						return nil, nil, nil, nil, fmt.Errorf("DialPublisherAndValidationRegistries: validation %q: resolve supported_roles: %w", p.name, fErr)
-					}
-					roles = rolesResolved
+				// dialing the validation client. Every peer kind runs
+				// its own capability handshake (ClaimProducer /
+				// ExecutorObservability / Publisher Capabilities), so
+				// all three kinds resolve live roles identically. A
+				// failed handshake fails startup — a validation peer
+				// whose roles cannot be learned would be dialed but
+				// never used, which is exactly the silent gap this
+				// guards against.
+				rCtx, rCancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
+				roles, fErr := p.fetchRoles(rCtx)
+				rCancel()
+				if fErr != nil {
+					closeAll()
+					return nil, nil, nil, nil, fmt.Errorf("DialPublisherAndValidationRegistries: validation %q: resolve supported_roles: %w", p.name, fErr)
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := peer.DialValidation(dialCtx, p.name, p.endpoint, roles)
+				c, dErr := peer.DialValidation(dialCtx, p.name, p.endpoint, p.tls, roles)
 				cancel()
 				if dErr != nil {
 					closeAll()
@@ -230,7 +253,7 @@ func DialPublisherAndValidationRegistries(
 					continue
 				}
 				dialCtx, cancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
-				c, dErr := peer.DialDataProcessing(dialCtx, p.name, p.endpoint)
+				c, dErr := peer.DialDataProcessing(dialCtx, p.name, p.endpoint, p.tls)
 				cancel()
 				if dErr != nil {
 					closeAll()

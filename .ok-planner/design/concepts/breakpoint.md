@@ -31,7 +31,7 @@ Adjacent: `concept:supervisor`, `concept:control-api`, `concept:attribute`, `con
 
 ## Invariants
 
-- Only the supervisor writes hit rows (`@blessed-invariant` candidate).
+- Only the supervisor writes hit rows.
 - Resume is idempotent on `hit_id`: replays return the original outcome unchanged.
 - `signal_type` is rejected on `before_dispatch` breakpoints at registration.
 - `mode=pause + overflow_policy=drop_oldest` is rejected at registration (pause-mode hits cannot be silently dropped).

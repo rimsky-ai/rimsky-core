@@ -552,8 +552,18 @@ func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
 		b.OverflowPolicy = persistence.OverflowDropOldest
 		b.HitTTLSeconds = 1
 	}))
+	// Regression guard: a long-TTL hit must NOT be auto-resumed before its
+	// TTL elapses. The SQL once compared datetime()'s space-separated
+	// output (`"YYYY-MM-DD HH:MM:SS"`) lexicographically against the
+	// 'T'-separated fixed-width `now` parameter; since ' ' < 'T', every
+	// same-day expiry read as already expired and sub-24h TTLs collapsed
+	// to zero — this hit would have been resumed immediately.
+	longTTLID := createBreakpoint(t, ctx, store, newBreakpoint(instanceID, func(b *persistence.BreakpointRow) {
+		b.OverflowPolicy = persistence.OverflowAutoResumeAfterTTL
+		b.HitTTLSeconds = 3600
+	}))
 
-	var autoHitID, dropHitID shared.UUID
+	var autoHitID, dropHitID, longTTLHitID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ah, _, err := store.BreakpointHits().Create(ctx, makeHit(autoID, instanceID, nil), tx)
 		if err != nil {
@@ -563,8 +573,13 @@ func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		lh, _, err := store.BreakpointHits().Create(ctx, makeHit(longTTLID, instanceID, nil), tx)
+		if err != nil {
+			return err
+		}
 		autoHitID = ah
 		dropHitID = dh
+		longTTLHitID = lh
 		return nil
 	}); err != nil {
 		t.Fatalf("seed hits: %v", err)
@@ -581,7 +596,7 @@ func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
 	if n != 1 {
 		t.Errorf("AutoResumeStale rowcount: got %d want 1", n)
 	}
-	var auto, drop *persistence.BreakpointHitRow
+	var auto, drop, longTTL *persistence.BreakpointHitRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
 		auto, err = store.BreakpointHits().Get(ctx, autoHitID, tx)
@@ -589,6 +604,10 @@ func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
 			return err
 		}
 		drop, err = store.BreakpointHits().Get(ctx, dropHitID, tx)
+		if err != nil {
+			return err
+		}
+		longTTL, err = store.BreakpointHits().Get(ctx, longTTLHitID, tx)
 		return err
 	}); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -601,6 +620,9 @@ func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
 	}
 	if drop.ResumedAt != nil {
 		t.Errorf("drop_oldest hit erroneously resumed")
+	}
+	if longTTL.ResumedAt != nil {
+		t.Errorf("1-hour-TTL hit erroneously auto-resumed before its TTL elapsed")
 	}
 }
 

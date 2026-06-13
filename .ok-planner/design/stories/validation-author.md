@@ -27,4 +27,4 @@ Error-severity finding doesn't block registration, OR warning-severity finding b
 
 ## Proof
 
-Example — the examples module's validation reference extended with a worked walkthrough.
+Example — a shipped validation reference paired with a worked walkthrough.

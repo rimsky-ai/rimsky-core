@@ -163,6 +163,23 @@ type instanceItem struct {
 	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
 	ServiceBindings   json.RawMessage `json:"service_bindings,omitempty"`
 	CreatedByAPIKeyID string          `json:"created_by_api_key_id,omitempty"`
+	// Subscriptions surfaces the per-subscription publisher lifecycle
+	// (mounting → active, or failed with a reason) so an operator can
+	// observe mounting progress from the instance instead of inferring
+	// it from instance creation succeeding. Populated on the detail GET
+	// only (the list endpoint stays one-query cheap).
+	Subscriptions []instanceSubscriptionItem `json:"subscriptions,omitempty"`
+}
+
+// instanceSubscriptionItem is one rimsky_publisher_subscriptions row on
+// the instance-detail response.
+type instanceSubscriptionItem struct {
+	ID            string    `json:"id"`
+	PublisherName string    `json:"publisher_name"`
+	Kind          string    `json:"kind"`
+	State         string    `json:"state"`
+	StartedAt     time.Time `json:"started_at"`
+	FailureReason string    `json:"failure_reason,omitempty"`
 }
 
 func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
@@ -474,6 +491,42 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
+			// Insert the publisher-subscription rows in the SAME tx as the
+			// instance row, so the two commit atomically: a failure in any
+			// post-commit step of this handler (e.g. the lifecycle fan-out
+			// 500ing the request) can never strand a live instance with
+			// zero subscription rows — the retried create resolves
+			// idempotently on (template_hash, instance_key) and the rows
+			// already exist. No publisher RPC happens here (the inserts are
+			// pure DB writes — instance-create never blocks on publisher
+			// reachability); the reconciliation worker drives the Subscribe
+			// handshake asynchronously, and only the non-retryable classes
+			// (unknown publisher name, config-resolve failure) insert a row
+			// straight in `failed` with a reason.
+			if len(row.Spec.Publishers) > 0 {
+				instUUID, parseErr := uuid.Parse(provisioned.InstanceID)
+				if parseErr != nil {
+					// Defensive-unreachable (provisionInstanceTx stringifies
+					// a uuid.UUID) — but never silent: fail the create tx so
+					// no instance commits without its subscription rows.
+					deps.Logger.Error("instance.publisher_subscriptions.instance_id_parse_failed",
+						"instance_id", provisioned.InstanceID,
+						"error", parseErr.Error())
+					return fmt.Errorf("parse provisioned instance id %q: %w", provisioned.InstanceID, parseErr)
+				}
+				if subErr := runtime.StartPublisherSubscriptionsForInstance(ctx, runtime.PublisherLifecycleDeps{
+					Persist:    deps.Persist,
+					Publishers: deps.Publishers,
+					Clock:      deps.Clock,
+					Logger:     deps.Logger,
+				}, tx, foundationshared.UUID(instUUID), params, row.Spec.Publishers); subErr != nil {
+					deps.Logger.Error("instance.publisher_subscriptions.insert_failed",
+						"instance_id", provisioned.InstanceID,
+						"template_hash", hash,
+						"error", subErr.Error())
+					return fmt.Errorf("insert publisher-subscription rows for instance %s: %w", provisioned.InstanceID, subErr)
+				}
+			}
 			// New-create path: the persisted bindings + owner are exactly
 			// what we passed to provisionInstanceTx.
 			fanOutBindings = body.ServiceBindings
@@ -547,22 +600,11 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// Walk the template's `publishers:` block and issue
-		// Publisher.Subscribe for each. Per spec §Per-instance
-		// parameterization, publisher startup failures are non-blocking
-		// — the publisher-subscription row stays at `state = failed`
-		// for operator-recoverable retries via the resync sweeper.
-		if len(tplSpec.Publishers) > 0 && !existedKey {
-			instUUID, parseErr := uuid.Parse(respOut.InstanceID)
-			if parseErr == nil {
-				_ = runtime.StartPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
-					Persist:    deps.Persist,
-					Publishers: deps.Publishers,
-					Clock:      deps.Clock,
-					Logger:     deps.Logger,
-				}, foundationshared.UUID(instUUID), params, tplSpec.Publishers)
-			}
-		}
+		// The publisher-subscription rows were inserted inside the create
+		// tx above, atomically with the instance row (so a fan-out
+		// failure between the commit and here cannot strand an instance
+		// without them). The idempotent re-create path (existedKey)
+		// inserts nothing — the original create committed the rows.
 		status := http.StatusCreated
 		if existedKey {
 			status = http.StatusOK
@@ -692,7 +734,26 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
-		writeJSON(w, http.StatusOK, toInstanceItem(*inst, redact))
+		item := toInstanceItem(*inst, redact)
+		// Per-subscription publisher state (concept:publisher-subscription):
+		// the operator-visible mounting → active lifecycle, with the
+		// failure reason for non-retryable failed rows.
+		subs, err := deps.Persist.PublisherSubscriptions().ListByInstance(req.Context(), inst.ID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		for _, s := range subs {
+			item.Subscriptions = append(item.Subscriptions, instanceSubscriptionItem{
+				ID:            s.ID.String(),
+				PublisherName: s.PublisherName,
+				Kind:          s.Kind,
+				State:         s.State,
+				StartedAt:     s.StartedAt,
+				FailureReason: s.FailureReason,
+			})
+		}
+		writeJSON(w, http.StatusOK, item)
 	}
 }
 
@@ -791,16 +852,26 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
-		// Walk active publisher-subscriptions for this instance and call
-		// `Publisher.Unsubscribe` on each before dropping rows.
-		// Non-blocking per spec §Per-instance parameterization —
-		// failures are logged + retried by the resync sweeper.
-		_ = runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
+		// Walk this instance's mounting + active publisher-subscriptions,
+		// call `Publisher.Unsubscribe` on each, and flip the rows to
+		// stopped (mounting rows are force-stopped even when Unsubscribe
+		// fails, so the reconciler never re-drives a terminated
+		// instance). Non-blocking — failures are logged. The subscription
+		// rows are cascade-deleted with the instance row below, so a
+		// surviving row is not the retry mechanism: a publisher-side
+		// leftover whose Unsubscribe failed here is reaped by the startup
+		// resync's orphan sweep, which unsubscribes publisher-reported
+		// subscriptions with no backing row.
+		if err := runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
 			Persist:    deps.Persist,
 			Publishers: deps.Publishers,
 			Clock:      deps.Clock,
 			Logger:     deps.Logger,
-		}, inst.ID)
+		}, inst.ID); err != nil && deps.Logger != nil {
+			deps.Logger.Warn("handleDeleteInstance: stop publisher subscriptions failed",
+				"instance_id", inst.ID.String(),
+				"error", err.Error())
+		}
 		// E9: walk held-durable claim_handles for this instance and call
 		// `ClaimProducer.Release` on each before dropping rows. Per
 		// `@blessed-invariant 22` durable claim handles persist past
@@ -987,6 +1058,25 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}); err != nil {
 			writeError(w, err)
 			return
+		}
+
+		// Stop this instance's publisher subscriptions now that it is
+		// terminal: Unsubscribe each mounting/active subscription and flip
+		// the rows to stopped (same call DELETE makes). Without this, the
+		// reconciler would keep driving the terminated instance's mounting
+		// rows to active, creating publisher-side subscriptions whose
+		// every emit is rejected with errInstanceTerminated. Non-blocking
+		// — failures are logged; the reconciler's terminated-instance
+		// check and DELETE's repeat call are the backstops.
+		if err := runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
+			Persist:    deps.Persist,
+			Publishers: deps.Publishers,
+			Clock:      deps.Clock,
+			Logger:     deps.Logger,
+		}, inst.ID); err != nil && deps.Logger != nil {
+			deps.Logger.Warn("handleTerminateInstance: stop publisher subscriptions failed",
+				"instance_id", inst.ID.String(),
+				"error", err.Error())
 		}
 
 		// Fire OnRunScopeTerminal for the now-closed main run-scope so the

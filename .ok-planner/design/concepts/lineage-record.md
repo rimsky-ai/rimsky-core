@@ -11,7 +11,7 @@ aliases: []
 An append-only record in the lineage projection (see `concept:lineage`). Two kinds:
 
 - **`leaf_run`** — one per leaf-run terminal. Captures the computational unit: run_id, node alias, child_key, parent_run_id, frame trigger metadata, substitution refs, held claims, executor + template metadata, terminal kind and last_outcome.
-- **`claim_terminal`** — one per claim-handle terminal (commit, natural abandon, force-cancelled abandon). Captures the data-promotion unit: claim_handle_id, version_id (when data-processing-capable), producer name, claim_scope_data_hash, parent_run_id, frame_id, sub_claim_handle_ids (for fan-out parents), committed_at, outcome, cause. The projection covers every claim-handle terminal so post-mortem queries can reconstruct natural-vs-force-cancelled abandon flows alongside commits.
+- **`claim_terminal`** — one per claim-handle terminal (commit, natural abandon, force-cancelled abandon). Captures the data-promotion unit: claim_handle_id, version_id (when the producer stamps one — on the base Commit response or via the data-processing commit-candidate path), producer name, claim_scope_data_hash, parent_run_id, frame_id, sub_claim_handle_ids (for fan-out parents), committed_at, outcome, cause. The projection covers every claim-handle terminal so post-mortem queries can reconstruct natural-vs-force-cancelled abandon flows alongside commits.
 
 ## Boundaries
 

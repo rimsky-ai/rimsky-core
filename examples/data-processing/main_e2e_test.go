@@ -109,7 +109,7 @@ func TestE2E_ExampleDataProcessingProtocolSurfaces(t *testing.T) {
 	//    sub-claim acquisition.
 	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client, err := peer.DialDataProcessing(dialCtx, "example", endpoint)
+	client, err := peer.DialDataProcessing(dialCtx, "example", endpoint, peer.TLSModeOff)
 	if err != nil {
 		t.Fatalf("peer.DialDataProcessing(%q): %v", endpoint, err)
 	}

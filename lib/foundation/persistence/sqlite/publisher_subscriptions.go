@@ -11,7 +11,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -34,45 +33,25 @@ func (b *publisherSubscriptionsImpl) q(tx persistence.Tx) querier {
 const sqliteInsertPublisherSubscriptionSQL = `
 INSERT INTO rimsky_publisher_subscriptions (
     id, instance_id, publisher_name, kind, resolved_config,
-    target_node, message_kind, started_at, state
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    target_node, message_kind, started_at, state, failure_reason
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`
 
 func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.Tx, row persistence.PublisherSubscriptionRow) error {
 	if row.State == "" {
-		row.State = persistence.PublisherSubscriptionStateActive
+		row.State = persistence.PublisherSubscriptionStateMounting
 	}
 	if row.MessageKind == "" {
 		row.MessageKind = "invalidate"
 	}
+	// started_at goes through formatTime (fixed-width UTC text) — a raw
+	// time.Time bind would store modernc's zone-embedded t.String() form,
+	// which breaks text comparisons on non-UTC hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertPublisherSubscriptionSQL,
 		row.ID.String(), row.InstanceID.String(), row.PublisherName, row.Kind,
 		row.ResolvedConfig, row.TargetNode, row.MessageKind,
-		row.StartedAt, row.State)
+		formatTime(row.StartedAt), row.State, row.FailureReason)
 	if err != nil {
 		return fmt.Errorf("sqlite.PublisherSubscriptions.Insert: %w", err)
-	}
-	return nil
-}
-
-func (b *publisherSubscriptionsImpl) Update(ctx context.Context, tx persistence.Tx, id shared.UUID, upd persistence.PublisherSubscriptionUpdate) error {
-	sets := []string{}
-	args := []any{}
-	if upd.State != nil {
-		args = append(args, *upd.State)
-		sets = append(sets, "state = ?")
-	}
-	if upd.StartedAt != nil {
-		args = append(args, *upd.StartedAt)
-		sets = append(sets, "started_at = ?")
-	}
-	if len(sets) == 0 {
-		return nil
-	}
-	args = append(args, id.String())
-	sql := fmt.Sprintf(`UPDATE rimsky_publisher_subscriptions SET %s WHERE id = ?`,
-		strings.Join(sets, ", "))
-	if _, err := b.q(tx).ExecContext(ctx, sql, args...); err != nil {
-		return fmt.Errorf("sqlite.PublisherSubscriptions.Update: %w", err)
 	}
 	return nil
 }
@@ -88,7 +67,8 @@ func (b *publisherSubscriptionsImpl) Delete(ctx context.Context, tx persistence.
 
 const sqliteListPublisherSubscriptionsByInstanceSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_kind, started_at, state
+       target_node, message_kind, started_at, state,
+       COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE instance_id = ?
  ORDER BY publisher_name ASC`
@@ -104,7 +84,8 @@ func (b *publisherSubscriptionsImpl) ListByInstance(ctx context.Context, instanc
 
 const sqliteListPublisherSubscriptionsByStateSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_kind, started_at, state
+       target_node, message_kind, started_at, state,
+       COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE state = ?`
 
@@ -119,7 +100,8 @@ func (b *publisherSubscriptionsImpl) ListByState(ctx context.Context, state stri
 
 const sqliteGetPublisherSubscriptionSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_kind, started_at, state
+       target_node, message_kind, started_at, state,
+       COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE id = ?`
 
@@ -139,16 +121,40 @@ func (b *publisherSubscriptionsImpl) Get(ctx context.Context, tx persistence.Tx,
 	return &out[0], nil
 }
 
+// CompareAndSetState flips state from→to only when the row is still in
+// `from` (guarded single-statement UPDATE; see the interface contract in
+// persistence.PublisherSubscriptionsTable for the race it defends).
+const sqliteCASPublisherSubscriptionStateSQL = `
+UPDATE rimsky_publisher_subscriptions
+   SET state = ?, failure_reason = NULLIF(?, '')
+ WHERE id = ? AND state = ?`
+
+func (b *publisherSubscriptionsImpl) CompareAndSetState(ctx context.Context, id shared.UUID, from, to, failureReason string) (bool, error) {
+	res, err := (*tablesImpl)(b).db.ExecContext(ctx, sqliteCASPublisherSubscriptionStateSQL,
+		to, failureReason, id.String(), from)
+	if err != nil {
+		return false, fmt.Errorf("sqlite.PublisherSubscriptions.CompareAndSetState: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("sqlite.PublisherSubscriptions.CompareAndSetState: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
 func scanPublisherSubscriptions(rows *sql.Rows) ([]persistence.PublisherSubscriptionRow, error) {
 	out := []persistence.PublisherSubscriptionRow{}
 	for rows.Next() {
 		var w persistence.PublisherSubscriptionRow
 		var idStr, instanceStr string
-		var startedAt sql.NullTime
+		// started_at is fixed-width UTC TEXT; scan as a string and run
+		// through parseTime (per queue_park.go::LoadResumeMetadataInTx)
+		// instead of scanning into sql.NullTime.
+		var startedAtStr sql.NullString
 		if err := rows.Scan(
 			&idStr, &instanceStr, &w.PublisherName, &w.Kind,
 			&w.ResolvedConfig, &w.TargetNode, &w.MessageKind,
-			&startedAt, &w.State,
+			&startedAtStr, &w.State, &w.FailureReason,
 		); err != nil {
 			return nil, err
 		}
@@ -158,8 +164,12 @@ func scanPublisherSubscriptions(rows *sql.Rows) ([]persistence.PublisherSubscrip
 		if u, err := uuid.Parse(instanceStr); err == nil {
 			w.InstanceID = u
 		}
-		if startedAt.Valid {
-			w.StartedAt = startedAt.Time
+		if startedAtStr.Valid {
+			t, err := parseTime(startedAtStr.String)
+			if err != nil {
+				return nil, fmt.Errorf("sqlite.PublisherSubscriptions: parse started_at: %w", err)
+			}
+			w.StartedAt = t
 		}
 		out = append(out, w)
 	}

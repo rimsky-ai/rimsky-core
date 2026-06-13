@@ -117,6 +117,12 @@ type SupervisorHandle interface {
 	// runtime.Handle.CallbackRegistry doc). Production callers should
 	// NOT reach into the registry directly.
 	CallbackRegistry() *runtime.CallbackRegistry
+	// CallbackServeErr surfaces a fatal post-start death of the
+	// supervisor's async-callback HTTP serve loop (see
+	// runtime.Handle.CallbackServeErr). At most one error is ever sent;
+	// the channel closes when the serve loop exits. Supervising callers
+	// forward it onto the role fail channel.
+	CallbackServeErr() <-chan error
 }
 
 // StartSupervisor starts a supervisor process. SupervisorID must be
@@ -257,4 +263,8 @@ func (h supervisorHandleWithRegistry) CallbackAddr() string {
 
 func (h supervisorHandleWithRegistry) CallbackRegistry() *runtime.CallbackRegistry {
 	return h.inner.CallbackRegistry()
+}
+
+func (h supervisorHandleWithRegistry) CallbackServeErr() <-chan error {
+	return h.inner.CallbackServeErr()
 }

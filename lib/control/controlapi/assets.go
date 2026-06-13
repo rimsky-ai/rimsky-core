@@ -435,9 +435,10 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 			ClaimHandleID: row.ID.String(),
 		})
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{
-				"error": "DataProcessing.ListVersions failed: " + err.Error(),
-			})
+			// A remote producer returns *peer.ProducerCallError; writeError
+			// surfaces the producer's error class + message under 502/422
+			// instead of discarding them into a generic body.
+			writeError(w, err)
 			return
 		}
 		items := make([]map[string]any, 0, len(resp.Versions))
@@ -735,9 +736,14 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 		if deps.Stores != nil && row.ProducerName != nil {
 			if producer, ok := deps.Stores.Get(*row.ProducerName); ok {
 				if err := producer.Release(req.Context(), claimproducer.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address); err != nil {
-					writeJSON(w, http.StatusInternalServerError, map[string]any{
-						"error": "ClaimProducer.Release failed: " + err.Error(),
-					})
+					// A remote producer returns *peer.ProducerCallError;
+					// writeError surfaces the producer's error class +
+					// message under 502/422 ("your producer rejected this")
+					// instead of the bare 500 that used to mask them as a
+					// rimsky-internal failure. The claim_handle row is
+					// intentionally left in place — the delete did not
+					// happen; the operator can fix the producer and retry.
+					writeError(w, err)
 					return
 				}
 			}

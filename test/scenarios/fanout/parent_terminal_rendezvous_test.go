@@ -14,7 +14,7 @@
 // §Recursive claim-tree resolution + §Fan-out template DSL step 7.
 //
 // The parent-terminal rendezvous logic lives in
-// runtime/auto_terminal.go::resolveParentClaimChain. The persistence-
+// runtime/child_execution.go::SettleChildren. The persistence-
 // touching paths are covered by the auto-terminal aggregate-outcome
 // integration tests at test/scenarios/claim_stores/. This scenario
 // exercises the parallelism-semaphore that bounds in-flight leaves

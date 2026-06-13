@@ -395,20 +395,45 @@ func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
 	// scope rimsky_node_runs row (the partition runs each carry their
 	// own per-leaf settling signal; the main-scope row carries the
 	// aggregated parent settlement).
+	// Poll rather than one-shot read: the node's Failed state and the
+	// run row's settling_signal_type projection are written by separate
+	// steps, so under full-suite load the signal can land a beat after
+	// WaitForNodeState returns. The assertion semantics are unchanged —
+	// if the strict_failed signal never lands within the window, the
+	// test fails with the same message.
+	// Hand-rolled poll loop rather than require.Eventually: the closure
+	// must not call h.QueryRowSQL (it t.Fatalf's, and FailNow from a
+	// non-test goroutine is undefined — a transient scan error would
+	// surface as a misleading timeout), and the failure message needs
+	// the LAST read value, which Eventually's call-time-evaluated
+	// message args cannot carry.
 	var parentSettlingSig string
-	h.QueryRowSQL(`
-		SELECT COALESCE(r.settling_signal_type, '')
-		  FROM rimsky_node_runs r
-		  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
-		 WHERE r.node_id = $1
-		   AND rs.partition_key = ''
-		 ORDER BY COALESCE(r.active_terminal_at, r.enqueued_at) DESC
-		 LIMIT 1
-	`, []any{parentNode.ID}, &parentSettlingSig)
-	require.Equal(t,
-		"terminal/error/aggregate/strict_failed", parentSettlingSig,
-		"parent main-scope run's settling_signal_type must carry the strict_failed aggregate signal "+
-			"(aggregateStrict's projection from sub-claim Abandon → parent Failed)")
+	var lastReadErr error
+	sigDeadline := time.Now().Add(30 * time.Second)
+	for {
+		var sig string
+		lastReadErr = h.Pool.QueryRow(h.Ctx, `
+			SELECT COALESCE(r.settling_signal_type, '')
+			  FROM rimsky_node_runs r
+			  JOIN rimsky_run_scopes rs ON rs.id = r.run_scope_id
+			 WHERE r.node_id = $1
+			   AND rs.partition_key = ''
+			 ORDER BY COALESCE(r.active_terminal_at, r.enqueued_at) DESC
+			 LIMIT 1
+		`, parentNode.ID).Scan(&sig)
+		if lastReadErr == nil {
+			parentSettlingSig = sig
+		}
+		if parentSettlingSig == "terminal/error/aggregate/strict_failed" {
+			break
+		}
+		if time.Now().After(sigDeadline) {
+			t.Fatalf("parent main-scope run's settling_signal_type must carry the strict_failed aggregate signal "+
+				"(aggregateStrict's projection from sub-claim Abandon → parent Failed); last read: %q (last read error: %v)",
+				parentSettlingSig, lastReadErr)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // parentNodeState reads the fan-out parent node's effective state via

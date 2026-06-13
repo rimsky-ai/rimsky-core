@@ -19,6 +19,7 @@
 package controlapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -27,6 +28,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
@@ -253,4 +256,94 @@ func TestCreateInstance_StaticConfigValidationGate(t *testing.T) {
 		require.Equal(t, 1, instanceCountForTemplate(t, h, tplID),
 			"a well-formed create must persist exactly one instance row")
 	})
+}
+
+// TestGetInstance_SurfacesSubscriptionStates — the instance-detail GET
+// exposes per-subscription publisher state
+// (concept:publisher-subscription): the operator can watch a
+// subscription's mounting → active progress, and a failed row carries
+// its reason — instead of inferring publisher health from the create
+// response succeeding.
+func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	tplBody := validTemplateBody("inst-subs-" + uuid.NewString())
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
+
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+		"template": tplID,
+		"params":   map[string]any{"region": "us-east"},
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	instID, _ := out["instance_id"].(string)
+	require.NotEmpty(t, instID)
+
+	// No publishers declared → no subscriptions key (omitempty).
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	_, present := out["subscriptions"]
+	require.False(t, present, "instance without subscriptions must omit the array")
+
+	// Seed one mounting row and one failed row with a reason — the two
+	// states the operator most needs to distinguish.
+	instUUID, err := uuid.Parse(instID)
+	require.NoError(t, err)
+	mountingID := shared.UUID(uuid.New())
+	failedID := shared.UUID(uuid.New())
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := h.persist.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+			ID:             mountingID,
+			InstanceID:     shared.UUID(instUUID),
+			PublisherName:  "sensor-alpha",
+			Kind:           "http",
+			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
+			TargetNode:     "root",
+			State:          persistence.PublisherSubscriptionStateMounting,
+		}); err != nil {
+			return err
+		}
+		return h.persist.PublisherSubscriptions().Insert(ctx, tx, persistence.PublisherSubscriptionRow{
+			ID:             failedID,
+			InstanceID:     shared.UUID(instUUID),
+			PublisherName:  "sensor-beta",
+			Kind:           "http",
+			ResolvedConfig: []byte(`{}`),
+			TargetNode:     "root",
+			State:          persistence.PublisherSubscriptionStateFailed,
+			FailureReason:  `publisher "sensor-beta" is not registered`,
+		})
+	}))
+
+	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
+	require.Equal(t, http.StatusOK, status, out)
+	subs, _ := out["subscriptions"].([]any)
+	require.Len(t, subs, 2, "expected both subscription rows on the detail response: %v", out)
+
+	byName := map[string]map[string]any{}
+	for _, s := range subs {
+		entry, ok := s.(map[string]any)
+		require.True(t, ok)
+		name, _ := entry["publisher_name"].(string)
+		byName[name] = entry
+	}
+	mounting := byName["sensor-alpha"]
+	require.NotNil(t, mounting)
+	require.Equal(t, mountingID.String(), mounting["id"])
+	require.Equal(t, "http", mounting["kind"])
+	require.Equal(t, persistence.PublisherSubscriptionStateMounting, mounting["state"])
+	require.NotEmpty(t, mounting["started_at"])
+	_, reasonPresent := mounting["failure_reason"]
+	require.False(t, reasonPresent, "non-failed row must omit failure_reason")
+
+	failed := byName["sensor-beta"]
+	require.NotNil(t, failed)
+	require.Equal(t, persistence.PublisherSubscriptionStateFailed, failed["state"])
+	require.Equal(t, `publisher "sensor-beta" is not registered`, failed["failure_reason"])
 }

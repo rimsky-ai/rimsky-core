@@ -81,6 +81,23 @@ type CheckSpec struct {
 	Severity Severity       `json:"severity"`
 }
 
+// KnownKinds is the single source of truth for the check kinds Run
+// dispatches on. The registration-time Validation mix-in consumes it
+// so its `unknown_check_kind` advisory cannot drift from the runtime
+// dispatcher — keep it in lockstep with Run's switch arms.
+func KnownKinds() map[string]bool {
+	return map[string]bool{
+		"no_nulls":                true,
+		"nullable_fields_present": true,
+		"pk_unique":               true,
+		"row_count_ratio":         true,
+		"row_count_absolute":      true,
+		"value_in_set":            true,
+		"regex_match":             true,
+		"numeric_range":           true,
+	}
+}
+
 // Run dispatches a single check against rows. Returns a Result; the
 // `Pass` flag drives terminal aggregation upstream. Unknown kinds
 // produce a `Pass=false` Result with `Kind="unknown"` so the executor

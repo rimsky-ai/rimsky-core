@@ -488,6 +488,11 @@ func (s *nodesImpl) UpdateError(ctx context.Context, id foundationshared.UUID, e
 // `runID` (when non-nil) disambiguates which in-flight row to address —
 // required for fan-out children to prevent claimed_by leaking across
 // siblings. See the postgres mirror for the full rationale.
+//
+// @blessed-invariant 4: claimant-guarded release. The `claimed_by IS
+// NULL OR claimed_by = ?` predicate means a supervisor can stamp an
+// unclaimed row or refresh its own, but never overwrite another
+// supervisor's claim. See the postgres mirror.
 func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
@@ -495,8 +500,10 @@ func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUI
 		       claimed_by = COALESCE(?, claimed_by)
 		 WHERE node_id = ?
 		   AND run_scope_id = ?
-		   AND phase IN ('pending','active','held','parked')`,
+		   AND phase IN ('pending','active','held','parked')
+		   AND (claimed_by IS NULL OR claimed_by = ?)`,
 		formatTime(at), nullableString(supervisorID), id.String(), runScopeID.String(),
+		nullableString(supervisorID),
 	)
 	return err
 }
@@ -589,24 +596,6 @@ func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundati
 	}
 	scopeUUID := foundationshared.UUID(scope)
 	return &scopeUUID, nil
-}
-
-// ClearSupervisorAssignment — post-stage-3: claimed_by + heartbeat live
-// on the in-flight run row.
-//
-// `runID` (when non-nil) targets the specific in-flight row — required
-// for fan-out children to prevent leaking the clear onto a sibling's
-// claimed_by. Nil `runID` preserves the legacy by-node-id update.
-func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		   SET claimed_by = NULL,
-		       last_heartbeat_at = NULL
-		 WHERE node_id = ?
-		   AND run_scope_id = ?
-		   AND phase IN ('pending','active','held','parked')`,
-		id.String(), runScopeID.String())
-	return err
 }
 
 func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundationshared.UUID, tx persistence.Tx) error {

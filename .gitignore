@@ -2,6 +2,7 @@
 /tmp/
 *.test
 *.out
+*.exe
 vendor/
 .idea/
 .vscode/
@@ -72,3 +73,4 @@ lib/services/stubexecutor
 *.env.local
 coverage.out
 coverage.html
+.claude/scheduled_tasks.lock

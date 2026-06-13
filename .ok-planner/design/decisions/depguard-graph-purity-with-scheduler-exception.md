@@ -11,4 +11,4 @@ Pure except a documented scheduler exception allowing runtime layer imports for 
 
 ## Rationale
 
-Scheduler tick drives runtime sweeps; refactor pending.
+Scheduler tick drives runtime sweeps.

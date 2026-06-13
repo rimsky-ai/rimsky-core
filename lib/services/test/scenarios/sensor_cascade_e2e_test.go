@@ -112,6 +112,13 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	templateID := deploySensorCascadeTemplate(t, ep, watchedURL)
 	instanceID := createSensorCascadeInstance(t, ep, templateID, "ck-sensor-cascade")
 
+	// Wait on OBSERVABLE subscription state — mounting is asynchronous,
+	// and the body swap below is only observable if the sensor's
+	// baseline poll (which records the INITIAL content-hash) happened
+	// before the swap. The instance surface, not a wall-clock budget,
+	// says when the sensor's watch is live.
+	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+
 	// 4. Drive the reactor to an initial fresh — its initial frame runs
 	//    the stub executor and settles. The cascade assertion below is
 	//    only meaningful once the node has first settled.
@@ -175,6 +182,9 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 // reactor would never re-run. Proving N≥3 fires each re-run the reactor
 // while terminated_at stays NULL is the durable-by-default property end to
 // end against the real assembled product.
+//
+// @story: sensor-http
+// @story: terminate-after-run
 func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -212,6 +222,11 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	// NO terminate_after_run flag — durable by default. createSensorCascadeInstance
 	// POSTs without the flag, exactly the default-instance path.
 	instanceID := createSensorCascadeInstance(t, ep, templateID, "ck-sensor-durable")
+
+	// Wait on OBSERVABLE subscription state before any fire — the
+	// sensor's baseline poll must precede the first body swap (see the
+	// matching wait in the cascade test above).
+	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
 	// Drive both root nodes to an initial fresh, then quiesce so later
 	// dispatch growth is attributable to the sensor fires alone.

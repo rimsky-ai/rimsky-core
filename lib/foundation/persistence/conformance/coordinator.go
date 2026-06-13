@@ -6,10 +6,10 @@
 //
 // Inv 7: TrySchedulerTick mutual exclusion.
 //
-// Caveat for SQLite: this only verifies same-process semantics. Per spec
-// §9.1 and the SQLite coordinator (sync.Mutex on the same struct), there
-// is no cross-process scheduler-tick exclusion under SQLite — single-
-// process is the only supported topology.
+// Under SQLite the tick lock is an exclusive flock on a lock file
+// beside the database file: exclusion holds across OS processes sharing
+// the file (flock contends per open file description, so the in-process
+// acquisitions exercised here contend exactly like two processes do).
 package conformance
 
 import (

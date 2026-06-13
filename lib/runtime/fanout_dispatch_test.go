@@ -19,35 +19,26 @@ import (
 )
 
 // Fan-out dispatch unit tests — pure helpers; the integration-tx
-// wiring (CreateFanOutChildren against a real RunTreeTable, the
+// wiring (DispatchChildren against a real RunTreeTable, the
 // auto-terminal rendezvous with the producer's Commit response) is
 // covered by N2/N10 scenario tests.
 
-func TestPlanFanOutChildren_ProjectsPartitionKeys(t *testing.T) {
-	parentRun := shared.UUID(uuid.New())
-	parentNode := shared.UUID(uuid.New())
-	frameID := shared.UUID(uuid.New())
+func TestFanOutPartitions_ProjectsPartitionKeys(t *testing.T) {
 	subClaims := []SubClaim{
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p1", Address: json.RawMessage(`{"path":"a"}`)},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p2", Address: json.RawMessage(`{"path":"b"}`)},
-		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p3", Address: json.RawMessage(`{"path":"c"}`)},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p1", ClaimScope: json.RawMessage(`{"prefix":"a"}`)},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p2", ClaimScope: json.RawMessage(`{"prefix":"b"}`)},
+		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "p3", ClaimScope: json.RawMessage(`{"prefix":"c"}`)},
 	}
-	plans := PlanFanOutChildren(parentRun, parentNode, frameID, subClaims, "stub", []string{"content"})
-	if len(plans) != 3 {
-		t.Fatalf("plans: %d (want 3)", len(plans))
+	parts := FanOutPartitions(subClaims)
+	if len(parts) != 3 {
+		t.Fatalf("partitions: %d (want 3)", len(parts))
 	}
-	for i, p := range plans {
-		if p.ParentRunID != parentRun {
-			t.Errorf("plan[%d].ParentRunID: %s", i, p.ParentRunID)
-		}
+	for i, p := range parts {
 		if p.PartitionKey != subClaims[i].PartitionKey {
-			t.Errorf("plan[%d].PartitionKey: %s want %s", i, p.PartitionKey, subClaims[i].PartitionKey)
+			t.Errorf("partition[%d].PartitionKey: %s want %s", i, p.PartitionKey, subClaims[i].PartitionKey)
 		}
 		if p.SubClaimHandleID != subClaims[i].ClaimHandleID {
-			t.Errorf("plan[%d].SubClaimHandleID mismatch", i)
-		}
-		if p.Executor != "stub" {
-			t.Errorf("plan[%d].Executor: %s", i, p.Executor)
+			t.Errorf("partition[%d].SubClaimHandleID mismatch", i)
 		}
 	}
 }

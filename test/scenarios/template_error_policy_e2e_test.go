@@ -51,6 +51,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
+	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 	stubstore "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/store"
 	stubfixture "github.com/rimsky-ai/rimsky-core/test/support/stores/stub/testfixture"
@@ -221,6 +222,17 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 	}))
 	require.Equal(t, cascade.NodeStateFresh, downstreamRow.State,
 		"give_up must skip downstream — the downstream subscribes on terminal/success and the worker's give_up emits terminal/error/<class>, which must not cascade to it")
+
+	// Durable-record check (2026-06-11 polling audit): the fresh-state
+	// sample above cannot distinguish "downstream never ran" from
+	// "downstream spuriously ran and settled back to fresh inside the
+	// grace window". The append-only event log can — any dispatch
+	// leaves work_started / terminal/* rows that no later transition
+	// erases.
+	dsID := downstream.ID
+	require.Empty(t,
+		eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &dsID, Kind: "work_started", KindPrefix: "terminal/"}),
+		"downstream must leave no dispatch/terminal events on the ledger when give_up fires upstream")
 
 	// Falsifier guard: the downstream's executor must not have been
 	// invoked. h.Stub.Observed() only records worker dispatches.

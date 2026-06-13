@@ -198,6 +198,11 @@ type Handle struct {
 	// auxiliary ack_ids against an in-flight run (e.g. the F4 scenario
 	// pinning the callback-determinism rule).
 	callbackReg *CallbackRegistry
+	// callbackServeErr is the callback server's serve-loop fail channel
+	// (see CallbackServer.ServeErr). Exposed via CallbackServeErr so the
+	// launch wiring can forward a post-start listener death onto the
+	// role fail channel.
+	callbackServeErr <-chan error
 	// wg tracks in-flight run goroutines spawned by tryClaim so Shutdown can
 	// wait on their completion without a polling loop.
 	wg sync.WaitGroup
@@ -233,6 +238,14 @@ func (h *Handle) CallbackAddr() string { return h.addr }
 // path registers the per-dispatch ack_id at the AwaitAsyncCallback
 // terminal.
 func (h *Handle) CallbackRegistry() *CallbackRegistry { return h.callbackReg }
+
+// CallbackServeErr surfaces a fatal post-start death of the supervisor's
+// async-callback HTTP serve loop. At most one error is ever sent; the
+// channel closes when the serve loop exits (a clean Shutdown closes it
+// with no error sent). Supervising callers (the launch role runner)
+// forward it onto the role fail channel so a supervisor with a dead
+// callback listener restarts instead of running degraded.
+func (h *Handle) CallbackServeErr() <-chan error { return h.callbackServeErr }
 
 // Start launches the supervisor main loop. Returns once the callback server
 // is listening and the supervisor is registered; the claim/heartbeat loop
@@ -330,7 +343,7 @@ func Start(cfg Config) (*Handle, error) {
 
 	clientPool := executor.NewClientPool()
 	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
-	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg}
+	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
 	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedStores, lockHolders)
 	return h, nil
 }

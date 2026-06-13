@@ -168,8 +168,23 @@ type CapabilitiesResponse struct {
 	// the set of role discriminators this service is willing to validate
 	// ("executor" | "claim_producer" | "lifecycle_subscriber" | "sensor").
 	ValidationSupportedRoles []string `protobuf:"bytes,5,rep,name=validation_supported_roles,json=validationSupportedRoles,proto3" json:"validation_supported_roles,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// declared_error_classes is the set of error-class paths this
+	// producer may name on acquisition-failure responses (the
+	// Unavailable.error_class arm and gRPC ErrorInfo.Reason on faulted
+	// verbs). Patterns ending in `*` indicate prefix-pattern leaves
+	// (e.g., `pg/claim_unavailable/*`); exact strings indicate fixed
+	// leaves. The validator's range-check of operator `error_types:`
+	// keys accepts a key if it exactly matches a declared plain leaf OR
+	// matches a declared `<prefix>/*` pattern by prefix. Empty/absent
+	// means "producer does not declare" — legal; keys attributable to
+	// no declared vocabulary surface as advisory warnings, never hard
+	// rejections. Mirrors
+	// executor_observability.proto::ObservabilityCapabilities.declared_error_classes.
+	//
+	// Per concept:signal hierarchical error_class rule.
+	DeclaredErrorClasses []string `protobuf:"bytes,6,rep,name=declared_error_classes,json=declaredErrorClasses,proto3" json:"declared_error_classes,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *CapabilitiesResponse) Reset() {
@@ -233,6 +248,13 @@ func (x *CapabilitiesResponse) GetProtocols() []string {
 func (x *CapabilitiesResponse) GetValidationSupportedRoles() []string {
 	if x != nil {
 		return x.ValidationSupportedRoles
+	}
+	return nil
+}
+
+func (x *CapabilitiesResponse) GetDeclaredErrorClasses() []string {
+	if x != nil {
+		return x.DeclaredErrorClasses
 	}
 	return nil
 }
@@ -625,13 +647,18 @@ func (x *CommitRequest) GetAddress() []byte {
 
 type CommitResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Set by DataProcessing-capable producers; opaque to rimsky;
-	// persisted in col:rimsky_claim_handles.version_id and
-	// table:rimsky_lineage for record_kind: claim_terminal.
+	// Optional canonical version identifier any producer may stamp on
+	// the base-protocol Commit response; opaque to rimsky; persisted in
+	// col:rimsky_claim_handles.version_id and table:rimsky_lineage for
+	// record_kind: claim_terminal. A non-empty base-Commit version_id
+	// wins over the staged DataProcessing CommitCandidate one (the base
+	// verb is the finalizing call).
 	VersionId string `protobuf:"bytes,1,opt,name=version_id,json=versionId,proto3" json:"version_id,omitempty"`
 	// Optional producer-supplied metadata bytes. Inert in rimsky per
-	// @blessed-invariant 20; surfaced verbatim in the parent run's
-	// writeback row at fan-out parent terminal (spec §Output aggregation).
+	// @blessed-invariant 20; surfaced (base64-encoded — the writeback
+	// row is JSON) in the parent run's writeback row at fan-out parent
+	// terminal under the `producer_metadata` key, keyed by the child's
+	// partition key (spec §Output aggregation).
 	ProducerMetadata []byte `protobuf:"bytes,2,opt,name=producer_metadata,json=producerMetadata,proto3" json:"producer_metadata,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -1146,13 +1173,14 @@ var File_claim_producer_proto protoreflect.FileDescriptor
 const file_claim_producer_proto_rawDesc = "" +
 	"\n" +
 	"\x14claim_producer.proto\x12\trimsky.v1\"\x15\n" +
-	"\x13CapabilitiesRequest\"\xb1\x02\n" +
+	"\x13CapabilitiesRequest\"\xe7\x02\n" +
 	"\x14CapabilitiesResponse\x12Q\n" +
 	"\x17write_semantics_allowed\x18\x01 \x03(\x0e2\x19.rimsky.v1.WriteSemanticsR\x15writeSemanticsAllowed\x120\n" +
 	"\x14supports_split_scope\x18\x02 \x01(\bR\x12supportsSplitScope\x128\n" +
 	"\x18supports_scopes_conflict\x18\x03 \x01(\bR\x16supportsScopesConflict\x12\x1c\n" +
 	"\tprotocols\x18\x04 \x03(\tR\tprotocols\x12<\n" +
-	"\x1avalidation_supported_roles\x18\x05 \x03(\tR\x18validationSupportedRoles\"\xfb\x01\n" +
+	"\x1avalidation_supported_roles\x18\x05 \x03(\tR\x18validationSupportedRoles\x124\n" +
+	"\x16declared_error_classes\x18\x06 \x03(\tR\x14declaredErrorClasses\"\xfb\x01\n" +
 	"\vOpenRequest\x12\x19\n" +
 	"\bclaim_id\x18\x01 \x01(\tR\aclaimId\x12#\n" +
 	"\rproducer_name\x18\x02 \x01(\tR\fproducerName\x12\x1a\n" +

@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-The blob-backend interface is the abstraction that backs spilled byte streams from three surfaces: attribute values, parked-node payloads, and named-event payloads. It exposes five methods (write, read, ranged read, delete, and a backend-name accessor). Four implementations: inline (default; spill disabled), Postgres large-object, filesystem, and an in-memory dev-only backend.
+The blob-backend interface is the abstraction that backs spilled byte streams from three surfaces: attribute values, parked-node payloads, and named-event payloads. It exposes five methods (write, read, ranged read, delete, and a backend-name accessor). Four implementations: inline (default; spill disabled), Postgres large-object, filesystem, and an in-memory backend legal only in the single-process deployment mode.
 
 ## Purpose
 
@@ -21,6 +21,6 @@ Owns: the abstraction, the four impls, the spill threshold, the orphan-blob ledg
 ## Invariants
 
 - Blob content is inert in rimsky (`@blessed-invariant 21`). It is read only at the substitution path-walk leaf and at the persistence-layer fetch on read.
-- The in-memory backend is rejected at startup unless the process is running in the single-process unified role; the per-process binaries cannot share an in-process map.
+- The in-memory backend is legal only in the single-process deployment mode — all roles running in one process, where one in-process map is genuinely shared, cross-role blob reads work, and the orphan-blob sweep reaps spilled blobs. It is startup-rejected in any per-role process, because separate processes cannot share an in-process map.
 - Handles are self-describing strings carrying a backend prefix (inline, Postgres large-object, filesystem, in-memory); current single-backend-per-process means cross-prefix reads fail.
 - Orphan blobs go to a persisted orphan-blob ledger and are swept after a retention window.

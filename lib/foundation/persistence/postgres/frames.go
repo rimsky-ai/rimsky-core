@@ -290,7 +290,7 @@ func (s *framesImpl) MarkSourceNodeStale(
 	// Under RunScope-first the new row lives in the instance's main
 	// RunScope (the only RunScope a frame source's run can belong to;
 	// sub-graph + fan-out children allocate via AffirmNodeRunRow /
-	// CreateFanOutChildren, not via the frame source path).
+	// DispatchChildren, not via the frame source path).
 	// @concept: run-scope
 	tag, err := s.q(tx).Exec(ctx, `
         INSERT INTO rimsky_node_runs

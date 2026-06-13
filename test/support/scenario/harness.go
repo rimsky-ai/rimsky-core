@@ -47,6 +47,11 @@ import (
 type Harness struct {
 	T   testing.TB
 	Ctx context.Context
+	// LastDeployWarnings holds the validation_warnings messages (message
+	// + path, space-joined) from the most recent DeployTemplate
+	// registration response. Tests assert on the absence/presence of
+	// advisory findings without re-plumbing the HTTP response.
+	LastDeployWarnings []string
 	// Pool is the underlying *pgxpool.Pool. Test-only escape hatch
 	// (sourced via pgpersist.PoolFromDatabaseForTest) for scenario tests
 	// that seed fixtures via raw SQL. Use Driver / Persist / Queue for
@@ -389,13 +394,31 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 		h.T.Fatalf("DeployTemplate: status %d: %s", resp.StatusCode, string(buf[:n]))
 	}
 	var out struct {
-		TemplateID string `json:"template_id"`
+		TemplateID         string `json:"template_id"`
+		ValidationWarnings []struct {
+			ServiceName string `json:"service_name"`
+			Role        string `json:"role"`
+			NodeAlias   string `json:"node_alias,omitempty"`
+			Class       string `json:"class,omitempty"`
+			Message     string `json:"message,omitempty"`
+			Path        string `json:"path,omitempty"`
+		} `json:"validation_warnings"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		h.T.Fatalf("DeployTemplate: decode: %v", err)
 	}
 	if out.TemplateID == "" {
 		h.T.Fatalf("DeployTemplate: empty template_id")
+	}
+	// Stash the registration response's validation_warnings messages so
+	// tests can assert on (the absence of) advisory findings — e.g. the
+	// producer-class routing proof asserts no warning names a
+	// producer-declared class, which is the falsifiable half of
+	// "registration accepts what the runtime routes" now that
+	// error_types: keys never hard-reject.
+	h.LastDeployWarnings = h.LastDeployWarnings[:0]
+	for _, w := range out.ValidationWarnings {
+		h.LastDeployWarnings = append(h.LastDeployWarnings, w.Message+" "+w.Path)
 	}
 	// Transition register → deployed so /instances will accept the id.
 	deployURL := h.ControlBase + "/v1/templates/" + out.TemplateID + "/deploy"

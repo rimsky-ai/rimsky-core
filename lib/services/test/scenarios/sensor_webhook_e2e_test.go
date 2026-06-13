@@ -111,13 +111,18 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	templateID := deploySensorWebhookTemplate(t, ep)
 	instanceID := createSensorWebhookInstance(t, ep, templateID, "ck-sensor-webhook-e2e")
 
-	// Wait for the publisher-subscription to land — rimsky's
-	// StartPublisherSubscriptionsForInstance runs on instance-create and
-	// must complete the Subscribe handshake to the live sensor (mounting
-	// the path in sensor-webhook's pathToWatch) before the test POSTs.
-	// Until Subscribe lands, the catch-all dispatcher returns 404 for
-	// any path; polling for the first 200 on the configured path is
-	// observable evidence the subscription is live.
+	// Wait on OBSERVABLE subscription state — mounting is asynchronous
+	// (instance-create returns 201 with the row in `mounting`; the
+	// reconciler drives Subscribe to `active`), so the instance surface,
+	// not a wall-clock budget, says when the Subscribe handshake has
+	// landed on the sensor (mounting the path in sensor-webhook's
+	// pathToWatch).
+	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+
+	// Then confirm sensor-side liveness: until Subscribe lands, the
+	// catch-all dispatcher returns 404 for any path; polling for the
+	// first 200 on the configured path is observable evidence the
+	// subscription is live on the sensor itself.
 	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookPathPrefix, 30*time.Second)
 
 	// 4. PROOF — path-prefix filter is honored (Falsifier prong 2).

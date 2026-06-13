@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -94,14 +93,20 @@ func (c *PublisherClient) Close() {
 	}
 }
 
-// DialPublisher connects to a peer that implements the Publisher service.
-func DialPublisher(_ context.Context, name, endpoint string) (*PublisherClient, error) {
+// DialPublisher connects to a peer that implements the Publisher
+// service. tlsMode is the peer entry's validated `tls:` mode
+// (TLSModeOff / TLSModeRequired; empty → off).
+func DialPublisher(_ context.Context, name, endpoint, tlsMode string) (*PublisherClient, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
 	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(target,
+		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
+		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
+		grpc.WithStreamInterceptor(TLSModeStreamInterceptor(name, tlsMode)),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("remote publisher %q: dial %q: %w", name, endpoint, err)
 	}

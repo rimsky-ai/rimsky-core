@@ -872,7 +872,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 
 	// Resolve ONE sub-claim (commit). committed_children_count=1,
 	// expected_children_count=2 — quorum NOT met. The standard
-	// `resolveParentClaimChain` walker invoked by this resolution will
+	// `SettleChildren` walker invoked by this resolution will
 	// see sub[1] still present (non-durable) and return nil without
 	// touching the parent, so the parent row stays intact for the
 	// direct `CheckAndFireResolution` call below.
@@ -918,14 +918,14 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 
 	// Resolve the second sub-claim. This bumps committed_children_count
 	// to 2 inside `ResolveClaimHandleTerminal` and then recurses into
-	// `resolveParentClaimChain` — which now sees no remaining children
+	// `SettleChildren` — which now sees no remaining children
 	// + no active holders and fires Commit on the parent via the same
 	// `aggregateParentOutcome` aggregator the cycle-6 guard would have
 	// used. The two paths converge on the same Commit verdict.
 	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateCommit)
 
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "commit"),
-		"parent must Commit via `resolveParentClaimChain` once the last child resolves")
+		"parent must Commit via `SettleChildren` once the last child resolves")
 	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"parent must NOT Abandon under strict aggregation when both children committed")
 }
@@ -1302,7 +1302,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	// Resolve sub[0] as a durable-Commit first. Post-Stage-3 the row
 	// is promoted (state=committed, lifetime=durable preserved) but
 	// bumps the parent's committed_children_count and recurses through
-	// resolveParentClaimChain. Strict aggregator sees 1 commit + 0
+	// SettleChildren. Strict aggregator sees 1 commit + 0
 	// abandons + 2 outstanding children → parent NOT yet resolved.
 	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit, spec.ClaimLifetimeDurable)
 

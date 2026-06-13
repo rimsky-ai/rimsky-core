@@ -32,6 +32,13 @@ const (
 	AggregationKindThreshold  = "threshold"
 	AggregationKindBestEffort = "best_effort"
 	AggregationKindFirst      = "first"
+	// AggregationKindCarryVerbatim is the delegation (sub-graph)
+	// settlement shape: the single settlement child's outcome is copied
+	// verbatim to the parent. Carry-verbatim requires exactly one child
+	// by construction — enforced at template canonicalization
+	// (rejection class carry_verbatim_requires_single_child), so it is
+	// never legal on `fan_out:` (which declares N children).
+	AggregationKindCarryVerbatim = "carry_verbatim"
 )
 
 // Validate returns an error if p is not a well-formed policy. Used at
@@ -49,7 +56,7 @@ func (p AggregationPolicy) Validate() error {
 		if p.MaxFailures < 1 {
 			return fmt.Errorf("aggregation_policy: kind=threshold requires max_failures >= 1")
 		}
-	case AggregationKindBestEffort, AggregationKindFirst:
+	case AggregationKindBestEffort, AggregationKindFirst, AggregationKindCarryVerbatim:
 		if p.CancelSiblings {
 			return fmt.Errorf("aggregation_policy: cancel_siblings is only meaningful for kind=strict")
 		}
@@ -59,7 +66,7 @@ func (p AggregationPolicy) Validate() error {
 	case "":
 		return fmt.Errorf("aggregation_policy: kind is required")
 	default:
-		return fmt.Errorf("aggregation_policy: unknown kind %q (want strict|threshold|best_effort|first)", p.Kind)
+		return fmt.Errorf("aggregation_policy: unknown kind %q (want strict|threshold|best_effort|first|carry_verbatim)", p.Kind)
 	}
 	return nil
 }

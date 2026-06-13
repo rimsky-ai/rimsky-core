@@ -1,4 +1,4 @@
-.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
+.PHONY: proto-gen test build lint tidy lint-docker tidy-docker test-docker build-docker proto-gen-docker cli cli-release core-images service-images push-images publish-protocols check-clean smoke-all test-all test-race build-all license-lint license-stamp scan release buildx-builder publish-protocols-dev dev-release
 
 # ── Host targets (assume `go`, `golangci-lint`, `protoc-gen-go*` on PATH) ──
 
@@ -55,24 +55,30 @@ tidy:
 # because passing explicit paths to `go build` (unlike `./...`) turns
 # the "no non-test Go files" notice into an error.
 test-all:
-	# Both the root module (test/scenarios — the cascade + claim-handoff
-	# story proofs) and lib/services spin up their own rimsky-all-in-one
-	# + sensor + state-postgres + ryuk reaper per t.Parallel() subtest.
-	# At GOMAXPROCS-wide parallelism on a modern multi-core host that's
-	# 40+ containers fighting for CPU / disk / network, which pushes
-	# rimsky's synchronous Subscribe handshake (~2.36s retry budget at
-	# lib/runtime/publishers.go) past sensor-state-DB poll deadlines —
-	# observed as non-deterministic 'sensor never persisted subscription
-	# within 90s' failures in different sensor tests across runs, and
-	# the same harness shape now lives under test/scenarios. Capping at
-	# -parallel 4 in both modules bounds the concurrent-stack count and
-	# keeps the flake from biting; the wall-clock cost is minor because
-	# most of these tests are docker-IO-bound, not CPU-bound.
-	go test -parallel 4 ./...
+	# Subscription mounting is asynchronous (instance-create returns 201
+	# with rows in `mounting`; a reconciler drives Subscribe to `active`),
+	# and the docker-stack tests wait on that observable state instead of
+	# a wall-clock budget — so no -parallel cap is needed to keep the
+	# old synchronous-Subscribe flake from biting under load.
+	go test ./...
 	cd lib/foundation && go test ./...
 	cd lib/protocols && go test ./...
-	cd lib/services && go test -parallel 4 $$(go list ./... | grep -v /node_modules/)
+	cd lib/services && go test $$(go list ./... | grep -v /node_modules/)
 	cd examples && go test ./...
+	# Thin race slice over the race-sensitive packages (queue, supervisor,
+	# scheduler, persistence). One -race pass at -count=1 catches the common
+	# data races on every test-all run; the full -count=3 treatment lives in
+	# the `test-race` target, required by the release chain.
+	go test -race -count=1 ./lib/runtime/... ./lib/graph/scheduler/...
+	cd lib/foundation && go test -race -count=1 ./persistence/postgres/... ./persistence/sqlite/...
+
+# Full race-detection gate over the race-sensitive packages: -count=3 to
+# shake out scheduling-order-dependent races that a single run can miss.
+# Required by the `release` chain. The persistence packages spin up real
+# Postgres via testcontainers — Docker must be running.
+test-race:
+	go test -race -count=3 ./lib/runtime/... ./lib/graph/scheduler/...
+	cd lib/foundation && go test -race -count=3 ./persistence/postgres/... ./persistence/sqlite/...
 
 build-all:
 	go build ./...
@@ -254,6 +260,8 @@ push-images: check-clean buildx-builder
 #   service-images — build the 11 bundled-service images locally
 #   test-all       — full Go test suite, including testcontainer scenarios
 #                    (requires Docker daemon for the testcontainer tests)
+#   test-race      — full -race -count=3 treatment over the race-sensitive
+#                    packages (runtime, scheduler, persistence)
 #   scan           — docker scout cves against every locally-built image
 #   push-images    — buildx build + push with SBOM + provenance attestations
 #
@@ -272,7 +280,7 @@ push-images: check-clean buildx-builder
 # LATEST_TAG=dev so the floating tag pushed alongside :$(VERSION) is :dev
 # instead of :latest. If scan finds vulnerabilities, the chain stops before
 # push.
-release: lint license-lint core-images service-images test-all scan push-images
+release: lint license-lint core-images service-images test-all test-race scan push-images
 
 # Mechanical pre-release / dev channel. Derives a SemVer-2.0 pre-release
 # version (v<next-minor>.0-dev.<YYYYMMDD>.g<sha>) from the latest stable

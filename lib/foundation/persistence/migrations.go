@@ -22,7 +22,8 @@ import (
 //
 // The lock is held for the full pass via AdvisoryLocker.AcquireMigrationLock
 // (Postgres: session-level pg_advisory_lock on a dedicated conn; SQLite:
-// sync.Mutex). The release fn must run even if ctx is cancelled — both
+// exclusive flock on a lock file beside the database file — cross-process
+// on one host). The release fn must run even if ctx is cancelled — both
 // driver impls honor this.
 //
 // @blessed-invariant 8: session advisory lock on migrations. Held for the

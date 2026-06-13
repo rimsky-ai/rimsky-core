@@ -56,7 +56,7 @@ func TestAllInOneSQLite_DriveNodeToTerminal(t *testing.T) {
 	// A single executor node, no stores. The stub executor returns
 	// Success for every dispatch, so a healthy SQLite loop settles the
 	// node into the terminal `fresh` state.
-	templateID := deploySQLiteTemplate(t, ep, map[string]any{
+	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "sqlite-all-in-one",
 			"version":               "1",
@@ -71,7 +71,7 @@ func TestAllInOneSQLite_DriveNodeToTerminal(t *testing.T) {
 		},
 	})
 
-	instanceID := createSQLiteInstance(t, ep, templateID, "ck-sqlite-all-in-one")
+	instanceID := createScenarioInstance(t, ep, templateID, "ck-sqlite-all-in-one")
 
 	// 90s mirrors the stores-scenario deadline; on SQLite the loop is a
 	// single enqueue → claim → dispatch → settle, well inside that.
@@ -85,22 +85,22 @@ func TestAllInOneSQLite_DriveNodeToTerminal(t *testing.T) {
 	// on a committed claim (lib/runtime/runner_acquire.go) — which is
 	// unambiguous proof that the scheduler enqueued, the supervisor claimed
 	// and dispatched, and the executor ran, all against SQLite.
-	waitForSQLiteDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
+	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 }
 
-// sqliteTerminalStates are the node states the wait loop treats as
+// scenarioTerminalStates are the node states the wait loop treats as
 // settled. A healthy stub dispatch settles to `fresh`; `failed` is
 // accepted only so the loop stops promptly on a real defect instead of
 // timing out — the explicit `fresh` assertion below then fails the test.
-var sqliteTerminalStates = map[string]bool{
+var scenarioTerminalStates = map[string]bool{
 	"fresh":  true,
 	"failed": true,
 }
 
-// deploySQLiteTemplate POSTs body to /templates then deploys it. Returns
+// deployScenarioTemplate POSTs body to /templates then deploys it. Returns
 // the template id. Inlined rather than shared with the stores-package
 // helper because that helper lives in `package stores` and is unexported.
-func deploySQLiteTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
+func deployScenarioTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/templates", body)
 	if status != http.StatusCreated {
@@ -123,8 +123,8 @@ func deploySQLiteTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[stri
 	return resp.TemplateID
 }
 
-// createSQLiteInstance POSTs a new instance and returns its instance_id.
-func createSQLiteInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
+// createScenarioInstance POSTs a new instance and returns its instance_id.
+func createScenarioInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     templateID,
@@ -146,16 +146,15 @@ func createSQLiteInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, i
 	return resp.InstanceID
 }
 
-// waitForSQLiteDispatchToFresh polls the node-state observability route
+// waitForDispatchToFresh polls the node-state observability route
 // (which returns both the node row and its event log) until the node has
 // (a) emitted a `work_started` event — proving the supervisor claimed and
 // dispatched — and (b) settled into `fresh` — proving the executor ran and
 // the terminal transition landed. A non-`fresh` settle, a missing
-// `work_started`, or a timeout fails the test; each is the kind of
-// SQLite-specific defect this scenario exists to catch (writer
-// contention, a Postgres-only construct in the dispatch/claim path, a
-// missing WAL/busy_timeout pragma, etc.).
-func waitForSQLiteDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
+// `work_started`, or a timeout fails the test. Backend/topology-neutral:
+// the SQLite all-in-one, single-process, and split-topology proofs all
+// drive their stub dispatch to terminal through this loop.
+func waitForDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
 	t.Helper()
 	end := time.Now().Add(deadline)
 	var (
@@ -182,9 +181,9 @@ func waitForSQLiteDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, insta
 						break
 					}
 				}
-				if sawDispatch && sqliteTerminalStates[lastState] {
+				if sawDispatch && scenarioTerminalStates[lastState] {
 					if lastState != "fresh" {
-						t.Fatalf("node %q on SQLite dispatched but settled in %q, want fresh — the stub executor returns Success, so a non-fresh terminal is a SQLite-loop defect",
+						t.Fatalf("node %q dispatched but settled in %q, want fresh — the stub executor returns Success, so a non-fresh terminal is an orchestration-loop defect",
 							nodeType, lastState)
 					}
 					return
@@ -193,6 +192,6 @@ func waitForSQLiteDispatchToFresh(t *testing.T, ep harness.RimskyEndpoint, insta
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("node %q on instance %s did not complete a real dispatch on SQLite within %v; last state=%q, work_started seen=%v",
+	t.Fatalf("node %q on instance %s did not complete a real dispatch within %v; last state=%q, work_started seen=%v",
 		nodeType, instanceID, deadline, lastState, sawDispatch)
 }

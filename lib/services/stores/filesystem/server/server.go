@@ -8,13 +8,17 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	bridge "github.com/rimsky-ai/rimsky-core/lib/protocols/serverkit"
 	"github.com/rimsky-ai/rimsky-core/lib/services/stores/filesystem/lifecycle"
@@ -111,6 +115,21 @@ type Server struct {
 	store *fsstore.Store
 }
 
+// producerDeclaredErrorClasses is the error-class vocabulary the store
+// names on the ClaimProducer surface: the google.rpc.ErrorInfo Reason
+// stamped on faulted producer verbs (fs/root_unavailable). Advertised
+// on CapabilitiesResponse.declared_error_classes so the template
+// validator's `error_types:` range-check accepts these keys.
+//
+// @source: lib/services/stores/postgres/server/server.go:producerDeclaredErrorClasses
+// @diverged: true
+// @reason: the filesystem store transmits a single class (no swap staging).
+func producerDeclaredErrorClasses() []string {
+	return []string{
+		fsstore.RootUnavailableClass,
+	}
+}
+
 // Capabilities returns the store's advertised capability struct.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.store.Capabilities()
@@ -118,7 +137,10 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 	for _, ws := range c.WriteSemanticsAllowed {
 		out = append(out, bridge.WriteSemanticsToProto(string(ws)))
 	}
-	return &genv1.CapabilitiesResponse{WriteSemanticsAllowed: out}, nil
+	return &genv1.CapabilitiesResponse{
+		WriteSemanticsAllowed: out,
+		DeclaredErrorClasses:  producerDeclaredErrorClasses(),
+	}, nil
 }
 
 // Open delegates to the store logic and packages the OpenOutcome
@@ -132,7 +154,7 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	}
 	outcome, err := s.store.Open(ctx, req.GetClaimId(), req.GetSelector())
 	if err != nil {
-		return nil, err
+		return nil, classedStatus(err)
 	}
 	if !outcome.Available {
 		return &genv1.OpenResponse{
@@ -152,7 +174,7 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 // Commit delegates.
 func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.CommitResponse, error) {
 	if err := s.store.Commit(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
-		return nil, err
+		return nil, classedStatus(err)
 	}
 	return &genv1.CommitResponse{}, nil
 }
@@ -160,7 +182,7 @@ func (s *Server) Commit(ctx context.Context, req *genv1.CommitRequest) (*genv1.C
 // Abandon delegates.
 func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1.AbandonResponse, error) {
 	if err := s.store.Abandon(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
-		return nil, err
+		return nil, classedStatus(err)
 	}
 	return &genv1.AbandonResponse{}, nil
 }
@@ -168,7 +190,37 @@ func (s *Server) Abandon(ctx context.Context, req *genv1.AbandonRequest) (*genv1
 // Release delegates.
 func (s *Server) Release(ctx context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
 	if err := s.store.Release(ctx, req.GetClaimId(), req.GetClaimScope(), req.GetAddress()); err != nil {
-		return nil, err
+		return nil, classedStatus(err)
 	}
 	return &genv1.ReleaseResponse{}, nil
+}
+
+// classedStatus maps a store-side error into a gRPC status. When the
+// error carries a rimsky error_class (a *fsstore.ClassedError, e.g. the
+// `fs/root_unavailable` misconfigured-backing-root rejection), the class
+// is stamped into a google.rpc.ErrorInfo detail (Reason = class) — the
+// exact shape `lib/runtime/peer.extractErrorClass` decodes — so the
+// supervisor routes the producer-verb fault through the operator's
+// `error_types:` chain and the control-api surfaces the class + message
+// on API-triggered verbs instead of an anonymous failure.
+// An unclassed error passes through as a bare Internal status.
+//
+// @source: lib/services/stores/postgres/server/server.go:classedStatus
+func classedStatus(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *fsstore.ClassedError
+	if !errors.As(err, &ce) || ce.Class == "" {
+		return err
+	}
+	st := status.New(codes.Internal, ce.Error())
+	withInfo, derr := st.WithDetails(&errdetails.ErrorInfo{
+		Reason: ce.Class,
+		Domain: "rimsky.store-filesystem",
+	})
+	if derr != nil {
+		return st.Err()
+	}
+	return withInfo.Err()
 }

@@ -50,15 +50,127 @@ import (
 //
 // The inheritor branch is handled by releaseInheritedClaimsInTx, run
 // from the same tx.
+// `retainLinkedSubClaims` MUST be true when the caller is about to
+// re-dispatch this run into the same RunScope (retry / infra-reenqueue
+// dispositions). The linked sub-claim rows are parent-owned (opened at
+// `AcquireSubClaims`, not by this leaf), so they must survive the
+// round-trip: resolving them at a non-final terminal Abandons the
+// child's partition, lets `SettleChildren` settle the parent and close
+// the partition RunScope, and the retry enqueue then dead-ends on the
+// closed scope — the retry never runs (regression pin:
+// test/scenarios/fanout_child_error_retry_e2e_test.go). Property
+// protected: a retry-flavored disposition is not a final terminal for
+// the leaf's linked sub-claims.
 func releaseLocksInTx(
-	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
+	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition,
+	success bool, retainLinkedSubClaims bool,
 ) error {
 	for _, lk := range acq.Locks {
 		if err := releaseAcquiredLock(ctx, args, tx, acq, lk, success); err != nil {
 			return err
 		}
 	}
+	if !retainLinkedSubClaims {
+		if err := resolveLinkedSubClaimsInTx(ctx, args, tx, acq, success); err != nil {
+			return err
+		}
+	}
 	return releaseInheritedClaimsInTx(ctx, args, tx, acq, success)
+}
+
+// resolveLinkedSubClaimsInTx resolves the fan-out sub-claim rows linked
+// to this run. A fan-out leaf's sub-claim row was INSERTed at the
+// PARENT's acquisition (`AcquireSubClaims`) and repointed to this leaf
+// run by `DispatchChildren` — it is NOT in `acq.Locks` (the leaf's own
+// freshly-Open'd claims), so the per-lock release walk above never
+// sees it. Without this walk a non-held leaf's sub-claim row stays
+// 'active' past the leaf terminal: the parent's children-settlement
+// never fires, the parent claim handle is never Commit/Abandon'd per
+// its aggregate, and both eventually fall to the orphan reaper as
+// spurious Abandons — the claim chain's contract ("at the parent run's
+// aggregated terminal it fires ClaimProducer.Commit(parent_handle_id)")
+// silently never holds.
+//
+// Each linked sub-claim resolves through the unified engine with the
+// leaf's own success/failure binary; the engine fires the producer's
+// per-child verb (Commit on success — whose response body's
+// producer_metadata then surfaces in the parent's writeback — or
+// Abandon on failure), promotes the row, and recurses into
+// `SettleChildren` so the parent settles once every sibling has
+// resolved (load-bearing: the chain walk is what delivers the parent's
+// aggregate-outcome producer verb at all).
+//
+// Held sub-claims (is_held=true, inherited from a held parent claim)
+// are skipped: they persist past the leaf's active terminal until the
+// holding subgraph completes, per the held-claim lifecycle.
+// Already-resolved rows (state != active) are skipped for idempotency
+// under terminal retry.
+//
+// @concept: claim-tree
+// @concept: fan-out
+func resolveLinkedSubClaimsInTx(
+	ctx context.Context, args RunArgs, tx persistence.Tx, acq *acquisition, success bool,
+) error {
+	if args.ClaimHandles == nil {
+		return nil
+	}
+	rows, err := args.ClaimHandles.ListByNodeRun(ctx, acq.DispatchID, tx)
+	if err != nil {
+		return fmt.Errorf("resolveLinkedSubClaims: ListByNodeRun: %w", err)
+	}
+	// The leaf's own freshly-Open'd claims were already released by the
+	// acq.Locks walk; exclude them by id so a future row shape change
+	// cannot double-resolve.
+	released := make(map[shared.UUID]bool, len(acq.Locks))
+	for _, lk := range acq.Locks {
+		released[lk.ClaimHandleID] = true
+	}
+	for i := range rows {
+		row := rows[i]
+		if row.ParentClaimHandleID == nil || released[row.ID] {
+			continue
+		}
+		if row.IsHeld || row.State != spec.ClaimHandleStateActive {
+			continue
+		}
+		producerName := ""
+		if row.ProducerName != nil {
+			producerName = *row.ProducerName
+		}
+		producer, ok := args.StoreRegistry.Get(producerName)
+		if !ok {
+			return fmt.Errorf("resolveLinkedSubClaims: unknown producer %q for sub-claim %s", producerName, row.ID)
+		}
+		outcome := AggregateCommit
+		if !success {
+			outcome = AggregateAbandon
+		}
+		hint := ClaimLineageHint{
+			InstanceID:   acq.InstanceID,
+			FrameID:      acq.FrameID,
+			RunID:        acq.DispatchID,
+			NodeID:       acq.NodeID,
+			ProducerName: producerName,
+			VersionID:    row.VersionID,
+		}
+		if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
+			ClaimHandleID:       row.ID,
+			SupervisorID:        args.SupervisorID,
+			Source:              ActiveTerminal,
+			Outcome:             outcome,
+			Producer:            producer,
+			Scope:               []byte(row.ClaimScopeData),
+			Address:             []byte(row.Address),
+			Lifetime:            row.Lifetime,
+			CandidateHandle:     row.ProducerCandidateHandle,
+			ProducerName:        producerName,
+			LineageHint:         hint,
+			ParentClaimHandleID: row.ParentClaimHandleID,
+		}); err != nil {
+			return fmt.Errorf("resolveLinkedSubClaims: sub-claim %s: %w", row.ID, err)
+		}
+	}
+	return nil
 }
 
 // releaseAcquiredLock dispatches one acquired lock to the right

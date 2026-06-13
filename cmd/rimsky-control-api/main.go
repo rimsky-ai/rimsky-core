@@ -3,18 +3,19 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // rimsky-control-api is the env-var-driven entry point for the control
-// API HTTP server. Reads RIMSKY_CONFIG (persistence + stores +
-// named_locks + executors per docs/specs/2026-05-01-control-plane-and-
-// store-lifecycle-design.md §3.1 and 2026-05-02-persistence-pluggable-
-// and-unified-image-design.md §8) and calls config.StartControlAPI
-// which dials each remote store-service.
+// API HTTP server. Builds the role's logger from env, then delegates
+// the full wiring (rimsky.yml from RIMSKY_CONFIG, persistence open,
+// config.StartControlAPI, background loops) to launch.RunControlAPI and
+// waits for a termination signal.
 //
 // Environment variables:
 //
 //	RIMSKY_CONFIG            optional; path to rimsky.yml.
 //	                         default /etc/rimsky/rimsky.yml.
 //	RIMSKY_CONTROL_API_HOST  optional; default 127.0.0.1.
-//	RIMSKY_CONTROL_API_PORT  optional; default 8080 (0 = OS-assigned).
+//	RIMSKY_CONTROL_API_PORT  optional; default 8080. An explicit "0" also
+//	                         selects the default; a non-numeric value
+//	                         fails startup.
 //	RIMSKY_METRICS_PORT      optional; default 0 = disabled. When >0
 //	                         exposes /metrics on this port (Prometheus
 //	                         text format) on the same host as the
@@ -25,40 +26,18 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
-	"github.com/rimsky-ai/rimsky-core/lib/control/config"
-	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres" // register driver
-	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"   // register driver
+	"github.com/rimsky-ai/rimsky-core/lib/control/launch"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// defaultRimskyConfigPath is the path used when RIMSKY_CONFIG is unset.
-const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
-
 func main() {
-	host := os.Getenv("RIMSKY_CONTROL_API_HOST")
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	port, _ := strconv.Atoi(os.Getenv("RIMSKY_CONTROL_API_PORT"))
-	if port == 0 {
-		port = 8080
-	}
-	logLevel := os.Getenv("RIMSKY_LOG_LEVEL")
-
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(logLevel)})
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))})
 	logger := slog.New(handler)
 	if name := os.Getenv("RIMSKY_LOG_BINARY"); name != "" {
 		logger = logger.With("binary", name)
@@ -66,112 +45,29 @@ func main() {
 	slog.SetDefault(logger)
 	log := shared.NewSlogLogger(logger)
 
-	configPath := os.Getenv("RIMSKY_CONFIG")
-	if configPath == "" {
-		configPath = defaultRimskyConfigPath
-	}
-	rimskyCfg, err := config.LoadRimskyConfigYAML(configPath)
+	// Register the signal handler BEFORE the role starts: startup can be
+	// slow (DB dials, handshakes), and as a container PID-1 an
+	// unregistered SIGTERM during that window would be silently dropped
+	// (default disposition is ignored for PID-1), hanging the container
+	// until SIGKILL. The buffered channel queues a signal received
+	// mid-start.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	stop, failCh, err := launch.RunControlAPI(context.Background(), logger)
 	if err != nil {
-		log.Error("load rimsky config", "error", err.Error(), "path", configPath)
+		// RunControlAPI already logged the failure with full context.
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
-	driver, err := persistence.Open(ctx, rimskyCfg.Persistence)
-	if err != nil {
-		log.Error("persistence.Open", "error", err.Error())
-		os.Exit(1)
-	}
-
-	// Install BlobBackend on the driver so attribute writes from
-	// control-api (e.g. instance-create-time fixture seeding via raw
-	// store calls) honor the spill threshold. Validation is identical
-	// across the three processes via ValidateBlobConfig.
-	if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver); err != nil {
-		log.Error("config.OpenBlobBackend", "error", err.Error())
-		_ = driver.Close()
-		os.Exit(1)
-	}
-
-	// Plan I1/I2: per-process Prometheus registry. Constructed up-front
-	// so the control-api's admin-invalidate path can be instrumented
-	// via the MetricsHook adapter. The /metrics HTTP listener is opened
-	// below only when RIMSKY_METRICS_PORT > 0; the registry itself is
-	// built unconditionally so the hook stays wired even when the HTTP
-	// surface is disabled.
-	mreg := observability.NewMetricsRegistry()
-
-	h, err := config.StartControlAPI(config.ControlAPIConfig{
-		Driver:     driver,
-		Clock:      shared.SystemClock{},
-		Logger:     log,
-		Host:       host,
-		Port:       port,
-		Stores:     rimskyCfg.Stores,
-		NamedLocks: rimskyCfg.NamedLocks,
-		Executors:  rimskyCfg.Executors,
-		// Publishers is the parsed top-level `publishers:` block. Without
-		// it the publisher registry is empty and every publisher-
-		// subscription (sensors included) fails at instance-create with
-		// `unknown_publisher` — the entire sensor/publisher feature is
-		// dead in any multi-process deployment. The all-in-one and the
-		// three-container split both run the control-api through this
-		// binary, so the registry MUST be wired from the parsed config.
-		Publishers: rimskyCfg.Publishers,
-		Metrics:    observability.MetricsHookOf(mreg),
-
-		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
-		// Operator-set registration-time reference-validation mode parsed
-		// from cfg:templates.ref_validation_mode (env-overridable via
-		// env:RIMSKY_REF_VALIDATION_MODE). Default strict `all`.
-		RefValidationMode: rimskyCfg.RefValidationMode,
-	})
-	if err != nil {
-		log.Error("StartControlAPI", "error", err.Error())
-		_ = driver.Close()
-		os.Exit(1)
-	}
-	log.Info("control api listening", "addr", h.Addr())
-
-	// Plan I2: launch the gauge refresher so node-state, parked-by-reason,
-	// held-frames, and dispatch-queue-depth gauges reflect live persistence
-	// state. The refresher polls every 5s by default; cancel on shutdown.
-	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
-	defer cancelGauges()
-	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
-		mhook.StartGaugeRefresher(gaugeCtx, driver.Tables(), driver.Queue(), 0, log)
-	}
-
-	// Optional Prometheus /metrics endpoint on a separate port.
-	// Plan I1: gated by RIMSKY_METRICS_PORT (0 = disabled).
-	metricsPort, _ := strconv.Atoi(os.Getenv("RIMSKY_METRICS_PORT"))
-	var metricsSrv *http.Server
-	if metricsPort > 0 {
-		metricsRouter := chi.NewRouter()
-		observability.MountMetrics(metricsRouter, mreg)
-		metricsSrv = &http.Server{
-			Addr:              fmt.Sprintf("%s:%d", host, metricsPort),
-			Handler:           metricsRouter,
-			ReadHeaderTimeout: 5 * time.Second,
-		}
-		go func() {
-			log.Info("metrics endpoint listening", "addr", metricsSrv.Addr)
-			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Error("metrics endpoint", "error", err.Error())
-			}
-		}()
-	}
-
-	waitForSignal(log)
+	roleErr := waitForSignalOrFailure(log, sigCh, failCh)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := h.Shutdown(shutdownCtx); err != nil {
-		log.Error("control api shutdown", "error", err.Error())
+	_ = stop(shutdownCtx)
+	if roleErr != nil {
+		// A dead role must restart the container, not linger degraded.
+		os.Exit(1)
 	}
-	if metricsSrv != nil {
-		_ = metricsSrv.Shutdown(shutdownCtx)
-	}
-	_ = driver.Close()
 }
 
 func parseLogLevel(s string) slog.Level {
@@ -187,9 +83,18 @@ func parseLogLevel(s string) slog.Level {
 	}
 }
 
-func waitForSignal(log shared.Logger) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	s := <-sigCh
-	log.Info("signal received", "signal", s.String())
+// waitForSignalOrFailure blocks until a termination signal arrives
+// (returns nil) or the role reports a fatal post-start failure on
+// failCh (returns the error). sigCh must already be registered with
+// signal.Notify — main registers it before launch.RunControlAPI so a
+// SIGTERM during slow startup is queued instead of dropped.
+func waitForSignalOrFailure(log shared.Logger, sigCh <-chan os.Signal, failCh <-chan error) error {
+	select {
+	case s := <-sigCh:
+		log.Info("signal received", "signal", s.String())
+		return nil
+	case err := <-failCh:
+		log.Error("role failed", "error", err.Error())
+		return err
+	}
 }

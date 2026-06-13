@@ -225,7 +225,7 @@ var exampleTerminalStates = map[string]bool{
 // ran and the terminal transition landed. A non-`fresh` settle, a missing
 // `work_started`, or a timeout fails the test.
 //
-// @source: lib/services/test/scenarios/sqlite_all_in_one_test.go::waitForSQLiteDispatchToFresh
+// @source: lib/services/test/scenarios/sqlite_all_in_one_test.go::waitForDispatchToFresh
 // The wait shape is identical to the SQLite all-in-one scenario; it is
 // duplicated rather than shared because the sqlite helper is package-private to
 // the same package but reads against a path-equal selector and the two tests

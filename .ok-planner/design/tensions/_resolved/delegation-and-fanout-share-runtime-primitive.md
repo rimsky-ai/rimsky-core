@@ -1,11 +1,27 @@
 ---
 tension: delegation-and-fanout-share-runtime-primitive
 category: duplicated
-status: open
+status: resolved
 affects:
   - delegation
   - fan-out
   - run-scope
+resolution:
+  summary: |
+    A unified dispatch-children / settle-children runtime primitive
+    pair owns the run-side shape: dispatch allocates the child
+    execution contexts and child runs for N≥1 partitions; settlement
+    records child outcomes, applies the aggregation policy, closes
+    the child contexts, settles the parent, and fires the
+    parent-settlement cascade from inside settlement so no caller
+    can skip it. Delegation and fan-out are demoted to invocation
+    patterns over the new child-execution concept, which owns the
+    shared invariants; their concept docs shrink to the template
+    surface plus their genuine asymmetries (entry absorption for
+    delegation; per-partition sub-claims and producer-decided
+    cardinality for fan-out). The delegation carry-rule is the
+    carry-verbatim aggregation policy, which requires exactly one
+    child, enforced at template validation.
 ---
 
 # Delegation and fan-out are the same run-side primitive with two template surfaces

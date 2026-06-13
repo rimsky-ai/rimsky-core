@@ -57,7 +57,7 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	if err != nil {
 		return shared.UUID{}, fmt.Errorf("sqlite.breakpoints.create: marshal matcher: %w", err)
 	}
-	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+	createdAt := time.Now().UTC().Format(timeLayoutFixedNanos)
 	var (
 		ttlArg     any
 		expiresArg any
@@ -69,7 +69,7 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 		// is a simple `expires_at <= ?` comparison.
 		expiresArg = time.Now().UTC().
 			Add(time.Duration(*bp.TTLSeconds) * time.Second).
-			Format(time.RFC3339Nano)
+			Format(timeLayoutFixedNanos)
 	}
 	if bp.SignalType != nil {
 		sigArg = *bp.SignalType
@@ -116,8 +116,9 @@ func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared
 	args := []any{instanceID.String()}
 	if !includeExpired {
 		// SQLite stores expires_at as ISO-8601 text; lexicographic
-		// comparison agrees with chronological order for RFC3339Nano.
-		nowStr := time.Now().UTC().Format(time.RFC3339Nano)
+		// comparison agrees with chronological order for the fixed-width
+		// timeLayoutFixedNanos strings we write.
+		nowStr := time.Now().UTC().Format(timeLayoutFixedNanos)
 		sqlStr += ` AND (expires_at IS NULL OR expires_at > ?)`
 		args = append(args, nowStr)
 	}
@@ -169,7 +170,7 @@ func (b *breakpointsImpl) SweepExpired(ctx context.Context, now time.Time, tx pe
 	res, err := ex.ExecContext(ctx,
 		`DELETE FROM rimsky_instance_breakpoints
 		  WHERE expires_at IS NOT NULL AND expires_at <= ?`,
-		now.UTC().Format(time.RFC3339Nano))
+		now.UTC().Format(timeLayoutFixedNanos))
 	if err != nil {
 		return 0, fmt.Errorf("sqlite.breakpoints.sweepExpired: %w", err)
 	}
@@ -215,7 +216,7 @@ func scanSqliteBreakpoint(sc scannable) (persistence.BreakpointRow, error) {
 			return persistence.BreakpointRow{}, fmt.Errorf("unmarshal matcher: %w", err)
 		}
 	}
-	createdAt, err := parseSQLiteTime(createdAtStr)
+	createdAt, err := parseTime(createdAtStr)
 	if err != nil {
 		return persistence.BreakpointRow{}, fmt.Errorf("scan created_at: %w", err)
 	}
@@ -240,7 +241,7 @@ func scanSqliteBreakpoint(sc scannable) (persistence.BreakpointRow, error) {
 		out.TTLSeconds = &n
 	}
 	if expiresAtStr.Valid {
-		t, err := parseSQLiteTime(expiresAtStr.String)
+		t, err := parseTime(expiresAtStr.String)
 		if err != nil {
 			return persistence.BreakpointRow{}, fmt.Errorf("scan expires_at: %w", err)
 		}

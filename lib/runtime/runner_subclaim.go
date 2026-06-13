@@ -69,7 +69,7 @@ type AcquireSubClaimsInput struct {
 	// ParentIsHeld carries the parent claim_handle's `is_held` value.
 	// Sub-claims inherit it so the row persists past the fan-out leaf's
 	// own active-terminal until the parent's recursive resolution
-	// (`auto_terminal.go::resolveParentClaimChain`) walks
+	// (`child_execution.go::SettleChildren`) walks
 	// `ListChildClaimHandles` and finds them. Without inheritance the
 	// non-held sub-claim row drops at active-terminal of the leaf run
 	// and the parent's aggregation sees an empty children set,
@@ -80,7 +80,7 @@ type AcquireSubClaimsInput struct {
 	// AggregationPolicy is the fan-out parent's error policy snapshotted
 	// from the template-node spec. Persisted on the parent claim_handle
 	// row at the first sub-claim acquisition so the recursive walker
-	// (`runtime/auto_terminal.go::resolveParentClaimChain`) can compute a
+	// (`runtime/child_execution.go::SettleChildren`) can compute a
 	// true aggregate Commit/Abandon decision over ALL children's
 	// outcomes — not just the just-resolved seedOutcome (cycle 4 issue C).
 	// Empty policy → recursive walker defaults to `strict` semantics.
@@ -201,6 +201,20 @@ func AcquireSubClaims(
 		}
 	}
 	for _, desc := range resp.SubClaimScopes {
+		// An empty partition_key is a load-bearing discriminator: the
+		// delegation (sub-graph) shape reserves it, and the settlement
+		// walk (`child_execution.go::settleClaimChainAggregate`) skips
+		// closing empty-key child scopes — a producer-returned empty key
+		// would silently leak its partition RunScope open and dodge the
+		// per-partition uniqueness index
+		// (`uq_run_scopes_fanout_partition_open` is partial — it covers
+		// only non-empty keys). Reject it loudly; the whole acquisition
+		// tx aborts per @blessed-invariant 10.
+		if desc.PartitionKey == "" {
+			return nil, fmt.Errorf("AcquireSubClaims: producer %q returned a sub-claim scope with an empty partition_key; "+
+				"every SplitScope descriptor must carry a non-empty partition_key (the empty key is reserved for the delegation shape)",
+				in.ProducerName)
+		}
 		// @blessed-invariant 4b at the sub-claim level: conflict-check this
 		// sub-scope against every sibling already accepted in this wave
 		// BEFORE any producer-side side effect (BeginCandidate) or row
@@ -269,7 +283,7 @@ func AcquireSubClaims(
 			Lifetime:            lifetime,
 			// Sub-claims inherit the parent's is_held value so the row
 			// persists past the fan-out leaf's active terminal until
-			// `resolveParentClaimChain` walks the children at parent
+			// `SettleChildren` walks the children at parent
 			// resolution time. See `AcquireSubClaimsInput.ParentIsHeld`.
 			IsHeld:                  in.ParentIsHeld,
 			ProducerCandidateHandle: candidateHandle,

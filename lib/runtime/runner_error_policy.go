@@ -118,7 +118,10 @@ func applyErrorPolicy(
 	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
-	if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
+	// Retry-flavored dispositions re-dispatch into the same RunScope,
+	// so the parent-owned linked sub-claims must be retained — see
+	// releaseLocksInTx's retainLinkedSubClaims contract.
+	if err := releaseLocksInTx(ctx, args, tx, acq, false, isRetryKind(resolved.Kind)); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 	if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved, resolution); err != nil {
@@ -356,7 +359,10 @@ func applyTerminalInfraError(
 	// Read the current counter so we can carry it forward onto the
 	// freshly-inserted dispatch row.
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-	if err := releaseLocksInTx(ctx, args, tx, acq, false); err != nil {
+	// Infra-reenqueue re-dispatches into the same RunScope, so the
+	// parent-owned linked sub-claims must be retained — see
+	// releaseLocksInTx's retainLinkedSubClaims contract.
+	if err := releaseLocksInTx(ctx, args, tx, acq, false, true); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
 	if prior != nil && prior.State == cascade.NodeStateRunning {

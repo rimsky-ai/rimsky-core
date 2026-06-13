@@ -127,9 +127,6 @@ func (noopNodes) ResetFailedTerminalSettlingSignalType(context.Context, shared.U
 func (noopNodes) GetFailedTerminalRunScopeID(context.Context, shared.UUID, persistence.Tx) (*shared.UUID, error) {
 	return nil, nil
 }
-func (noopNodes) ClearSupervisorAssignment(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
-	return nil
-}
 func (noopNodes) DeleteByInstance(context.Context, shared.UUID, persistence.Tx) error { return nil }
 func (noopNodes) MarkStaleForCascade(context.Context, shared.UUID, shared.UUID, persistence.Tx) error {
 	return nil
@@ -215,6 +212,9 @@ func (f *fakeDiagnosticQueue) GetByID(context.Context, shared.UUID) (*persistenc
 }
 func (f *fakeDiagnosticQueue) GetInFlightRunForNode(context.Context, persistence.Tx, shared.UUID, shared.UUID) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
+}
+func (f *fakeDiagnosticQueue) ListInFlightRunPhases(context.Context, persistence.Tx, []shared.UUID, shared.UUID, shared.UUID) (map[shared.UUID][]string, error) {
+	return map[shared.UUID][]string{}, nil
 }
 func (f *fakeDiagnosticQueue) ParkActiveInTx(context.Context, persistence.Tx, persistence.ParkActiveInput) error {
 	return nil

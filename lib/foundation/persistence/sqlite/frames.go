@@ -569,8 +569,10 @@ func (s *framesImpl) EnqueueSerialFrame(
 	frameID := uuid.New()
 	now := nowUTC()
 	// Explicitly write last_progress_at at insert time using nowUTC()
-	// (RFC3339Nano) so the column is uniformly nano-precision across
-	// all rows. The migration's strftime DEFAULT only delivers
+	// (the fixed-width timeLayoutFixedNanos layout, whose lexicographic
+	// order matches chronological order) so the column is uniformly
+	// nano-precision across all rows. The migration's strftime DEFAULT
+	// only delivers
 	// millisecond precision; relying on it for runtime inserts would
 	// leave the column with mixed precision and break any future
 	// SQL-level string comparison against the column.

@@ -241,10 +241,13 @@ func TestHandler_SystemSummary_DispatchCounts(t *testing.T) {
 // handler tests that don't need a real peer.
 type nopProber struct{}
 
-func (*nopProber) ProbeExecutor(_ context.Context, _ string) (*observability.ObservabilityCapabilities, error) {
+func (*nopProber) ProbeExecutor(_ context.Context, _, _, _ string) (*observability.ObservabilityCapabilities, error) {
 	return nil, errProbeUnreachable
 }
-func (*nopProber) ProbeStore(_ context.Context, _ string) (*observability.ObservabilityCapabilities, error) {
+func (*nopProber) ProbeStore(_ context.Context, _, _, _ string) (*observability.ObservabilityCapabilities, error) {
+	return nil, errProbeUnreachable
+}
+func (*nopProber) ProbeStoreDeclaredErrorClasses(_ context.Context, _, _, _ string) ([]string, error) {
 	return nil, errProbeUnreachable
 }
 

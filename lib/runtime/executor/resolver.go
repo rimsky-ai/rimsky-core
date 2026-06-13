@@ -17,7 +17,9 @@ import (
 type Endpoint struct {
 	Transport string // "grpc" | "http"
 	URL       string
-	TLS       string // "off" | "optional" | "required"
+	// TLS is the dial mode: "off" (plaintext) or "required" (verified
+	// TLS). Validated at config-parse time; empty is treated as "off".
+	TLS string
 }
 
 // DispatchContext carries instance/run-scope identity into resolver

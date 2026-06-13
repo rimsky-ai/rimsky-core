@@ -10,12 +10,15 @@
 package controlapi
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	grpccodes "google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/matcher"
@@ -23,6 +26,7 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 type AppDeps struct {
@@ -79,6 +83,17 @@ type AppDeps struct {
 	// signal-taxonomy Pass 6.
 	ExecutorCapabilities func(executorName string) (declaredEvents []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool)
 
+	// StoreDeclaredErrorClasses optionally exposes the observability
+	// cache's per-store producer-declared error-class vocabulary
+	// (claim_producer.proto::CapabilitiesResponse.declared_error_classes,
+	// captured at the startup handshake) without forcing controlapi to
+	// import the observability package. Wired by config.StartControlAPI
+	// alongside ExecutorCapabilities. Returns ok=false when no
+	// capability cache is loaded for the named store (e.g. peer is
+	// unreachable). Feeds the template validator's `error_types:`
+	// range-check union (executor ∪ reachable producers ∪ acquire/*).
+	StoreDeclaredErrorClasses func(storeName string) (declaredErrorClasses []string, ok bool)
+
 	// RefValidationMode is the operator-set registration-time
 	// reference-validation mode (all / available / none), sourced from
 	// cfg:templates.ref_validation_mode and env:RIMSKY_REF_VALIDATION_MODE
@@ -106,12 +121,15 @@ type AppDeps struct {
 	// Nil → no-op.
 	Metrics runtime.MetricsHook
 
-	// Publishers is the per-process publisher-client registry. Used by
-	// the instance-create / instance-terminate flow to issue
-	// Publisher.Subscribe / Unsubscribe per the template's
-	// `publishers:` block. Nil → publisher lifecycle calls are
-	// skipped; the publisher-subscription row stays at `state =
-	// failed` and operators recover via the resync sweeper.
+	// Publishers is the per-process publisher-client registry. The
+	// instance-create flow inserts publisher-subscription rows in
+	// `state = mounting` per the template's `publishers:` block; the
+	// reconciler and instance-terminate flow resolve publisher names
+	// through this registry to issue Subscribe / Unsubscribe. Nil →
+	// every name resolves as unknown: rows are still inserted but flip
+	// straight to `failed` (unknown publisher) with a reason, and the
+	// startup resync sweep no-ops. Such rows recover at the next
+	// startup resync once the registry contains the name.
 	Publishers runtime.PublisherRegistry
 
 	// Validators is the per-process Validation-mix-in registry. Used by
@@ -324,7 +342,19 @@ func jsonMarshalStrict(v any) ([]byte, error) {
 // ErrInstanceAlreadyPaused → 409;
 // ErrTemplateValidation/ErrResumeOverlayInvalid/matcher.ErrInvalid → 400;
 // everything else → 500.
+//
+// A remote-producer failure (*peer.ProducerCallError, the typed
+// translation every producer-protocol client returns) is handled first
+// by writeProducerError: the producer's transmitted error class and
+// message cross the HTTP boundary intact under a status distinguishing
+// "your producer rejected/failed this" (422/502) from "rimsky broke
+// internally" (500). Rimsky-internal errors keep the mapping above.
 func writeError(w http.ResponseWriter, err error) {
+	var pcErr *peer.ProducerCallError
+	if errors.As(err, &pcErr) {
+		writeProducerError(w, pcErr)
+		return
+	}
 	status := http.StatusInternalServerError
 	switch {
 	case errorsIs(err, foundationshared.ErrTemplateNotFound),
@@ -344,6 +374,43 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusBadRequest
 	}
 	writeJSON(w, status, map[string]any{"error": err.Error()})
+}
+
+// writeProducerError maps a remote-producer call failure to the HTTP
+// response. Status (a deliberate two-way split):
+//   - 422 Unprocessable Entity when the producer REJECTED the request
+//     — it ran fine and judged the request itself bad. That is the
+//     request-rejection code family: InvalidArgument /
+//     FailedPrecondition / OutOfRange (malformed or ill-timed input),
+//     NotFound / AlreadyExists (the request names an entity in the
+//     wrong existence state — e.g. Release of a claim the producer
+//     doesn't hold), and PermissionDenied (the producer judged the
+//     request unauthorized). None of these are producer faults.
+//   - 502 Bad Gateway for every other code (Internal, Unavailable,
+//     DeadlineExceeded, Unknown, …) — the producer faulted or is
+//     unreachable, the gateway role rimsky plays between the operator
+//     and their producer.
+//
+// The body extends the standard {"error": ...} envelope with the
+// fields the producer transmitted: producer_name, error_class (the
+// ErrorInfo.Reason rimsky's peer client decoded; "" when the producer
+// named no class), and message (the producer's own status message,
+// without the gRPC wrapping). Discarding any of these would force the
+// operator back to grepping rimsky's logs for diagnosis the producer
+// already did.
+func writeProducerError(w http.ResponseWriter, pcErr *peer.ProducerCallError) {
+	httpStatus := http.StatusBadGateway
+	switch grpcstatus.Code(pcErr.Underlying) {
+	case grpccodes.InvalidArgument, grpccodes.FailedPrecondition, grpccodes.OutOfRange,
+		grpccodes.NotFound, grpccodes.AlreadyExists, grpccodes.PermissionDenied:
+		httpStatus = http.StatusUnprocessableEntity
+	}
+	writeJSON(w, httpStatus, map[string]any{
+		"error":         pcErr.Error(),
+		"producer_name": pcErr.ProducerName,
+		"error_class":   pcErr.ErrorClass,
+		"message":       pcErr.Message,
+	})
 }
 
 // badRequest writes a 400 with msg.

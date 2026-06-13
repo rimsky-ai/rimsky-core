@@ -33,6 +33,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -159,9 +160,15 @@ func TestNeverPropagateResolution_NewShape(t *testing.T) {
 		"changed=true terminal records settling_signal_type=terminal/success")
 }
 
-// TestFreshUnchangedDoesNotCascade covers Task 34. Default by_changed
-// resolution with t.Changed=false must NOT cascade. Same as today's
-// no_op_commit test, but explicit on the column-based gate.
+// TestFreshUnchangedDoesNotCascade: a changed=false terminal must NOT
+// fire a downstream subscriber gated on `when: payload.changed`.
+// (Post-2026-05-23 taxonomy there is no sender-side by_changed default —
+// the changed-gate is declared receiver-side via CEL; an ungated
+// `terminal/*` edge fires on every terminal regardless of `changed`,
+// which `cascade_signal_blind_e2e_test.go` pins. The 2026-06-11 polling
+// audit's durable-record check exposed that this test's previous
+// ungated edge made its no-cascade premise vacuous: b ran on a's
+// changed=false terminal and the fresh-state sample couldn't see it.)
 func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -176,7 +183,9 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{
+				Node: "a", Type: "terminal/*", When: "payload.changed",
+			})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fucnc", map[string]any{})
@@ -206,13 +215,26 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 		"changed=false terminal records settling_signal_type=terminal/success (changed-gate is receiver-side)")
 	require.Equal(t, cascade.NodeStateFresh, bRow.State,
 		"b should remain fresh on a no-op commit")
+	// Durable-record check (2026-06-11 polling audit): the fresh-state
+	// sample above cannot distinguish "b never ran" from "b spuriously
+	// ran and settled back to fresh during the grace window". The
+	// append-only event log can: a dispatched b leaves work_started and
+	// terminal/* rows that no later transition erases.
+	bID := b.ID
+	require.Empty(t,
+		eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
+		"b must leave no dispatch/terminal events on the ledger — a changed=false terminal must not fire a when:payload.changed subscriber")
 }
 
-// TestFailedUpstreamFreezesDownstream covers Task 36. A failed upstream
-// node freezes downstream — they don't fire (today's behavior; the
-// settling_signal_type=terminal/error/<class> column doesn't change
-// this — subscribers wildcard-matching `terminal/success` won't match
-// a `terminal/error/<class>` envelope).
+// TestFailedUpstreamFreezesDownstream: a failed upstream freezes a
+// downstream that subscribes to `terminal/success` — the give_up's
+// terminal/error/<class> envelope is structurally disjoint from the
+// subscription's type-path, so the cascade never fires it. (Per
+// concept:cascade, freeze-on-error is expressed receiver-side by NOT
+// subscribing to terminal/error/*; a `terminal/*` edge — this test's
+// previous shape — matches error envelopes too and fires, which the
+// 2026-06-11 polling audit's durable-record check exposed: b ran on
+// a's failure and the state sample couldn't see it.)
 func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -233,7 +255,7 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success"})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fail-freeze", map[string]any{})
@@ -263,6 +285,15 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 		"give_up should record settling_signal_type=terminal/error/<class>")
 	require.NotEqual(t, cascade.NodeStateRunning, bRow.State,
 		"b should not run while upstream is failed")
+	// Durable-record check (2026-06-11 polling audit): sampling
+	// bRow.State for "not running" can trivially miss a transient run —
+	// b could run and settle between the grace window and the read. The
+	// event log is append-only: any dispatch of b leaves work_started /
+	// terminal/* rows.
+	bID := b.ID
+	require.Empty(t,
+		eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"}),
+		"b must leave no dispatch/terminal events on the ledger — a terminal/success subscriber must not fire on the upstream's terminal/error/<class>")
 }
 
 // TestExecutorBlockedPassResolution_NewShape (was Task 37). Post-2026-
@@ -348,9 +379,15 @@ func TestExecutorErroredPassResolution_NewShape(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, wRow.State, "worker should be fresh after pass")
 }
 
-// TestOperatorInvalidateTargetOnly covers Task 35. Invalidating A in
-// chain A → B → C marks only A stale; B and C stay fresh. Cascade
-// happens lazily when A's commit propagates.
+// TestOperatorInvalidateTargetOnly: invalidating A in chain A → B → C
+// marks only A stale. A re-runs and settles changed=false; B and C gate
+// their subscriptions on `when: payload.changed`, so the no-op commit
+// does not re-fire them. (Post-2026-05-23 taxonomy the changed-gate is
+// declared receiver-side via CEL — an ungated `terminal/*` edge fires on
+// every terminal; the 2026-06-11 polling audit's durable-record check
+// exposed that this test's previous ungated edges made its B/C-stay-
+// quiescent premise vacuous: b re-ran and settled back to fresh inside
+// the grace window, invisible to the state sample.)
 func TestOperatorInvalidateTargetOnly(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: false})
@@ -364,9 +401,13 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"})),
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "a", Type: "terminal/*", When: "payload.changed",
+				})),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "b", Type: "terminal/*"})),
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "b", Type: "terminal/*", When: "payload.changed",
+				})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-op-inv-target", map[string]any{})
@@ -381,6 +422,18 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 	// Switch a's stub to changed=false so the cascade-on-commit gate
 	// stops at A. With default by_changed, B and C should stay fresh.
 	h.Stub.WhenType("a").Success(map[string]any{}, false, "a-noop")
+
+	// Snapshot B/C's ledger before the invalidate: they ran once in the
+	// initial pass, so quiescence after the invalidate is "no NEW
+	// dispatch/terminal events", asserted on the append-only event log
+	// below (2026-06-11 polling audit — a fresh-state sample alone would
+	// miss a spurious re-run that settled back to fresh in the window).
+	bID, cID := b.ID, c.ID
+	dispatchEvents := func(id shared.UUID) int {
+		return len(eventwait.Events(h.Ctx, t, h.Persist,
+			eventwait.Matcher{NodeID: &id, Kind: "work_started", KindPrefix: "terminal/"}))
+	}
+	bEventsBefore, cEventsBefore := dispatchEvents(bID), dispatchEvents(cID)
 
 	// Operator invalidate against A.
 	body, _ := json.Marshal(map[string]any{})
@@ -408,6 +461,14 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 	}))
 	require.Equal(t, cascade.NodeStateFresh, bRow.State, "b should stay fresh on a no-op rerun")
 	require.Equal(t, cascade.NodeStateFresh, cRow.State, "c should stay fresh on a no-op rerun")
+	// Durable-record check: no new dispatch/terminal events landed for
+	// B or C since the pre-invalidate snapshot.
+	bAfter := eventwait.Events(h.Ctx, t, h.Persist,
+		eventwait.Matcher{NodeID: &bID, Kind: "work_started", KindPrefix: "terminal/"})
+	require.Equal(t, bEventsBefore, len(bAfter),
+		"b must gain no dispatch/terminal events from a's no-op rerun; b's ledger: %+v", bAfter)
+	require.Equal(t, cEventsBefore, dispatchEvents(cID),
+		"c must gain no dispatch/terminal events from a's no-op rerun")
 }
 
 // waitForSettlingSignalType polls the node row until settling_signal_type

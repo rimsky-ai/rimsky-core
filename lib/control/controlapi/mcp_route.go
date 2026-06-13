@@ -2,9 +2,12 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Mounting the in-control-api MCP protocol skin at POST /mcp. See
-// spec section "MCP-as-skin" and the control/controlapi/mcp/ package
-// for the JSON-RPC envelope and tool catalog.
+// Mounting the in-control-api MCP protocol skin at /v1/mcp (POST
+// carries the JSON-RPC messages; GET serves the Streamable HTTP SSE
+// probe). The route is registered on the /v1 sub-router in NewApp, so
+// the externally visible path is /v1/mcp. See the
+// control/controlapi/mcp/ package for the JSON-RPC envelope and tool
+// catalog.
 //
 // @concept: control-api
 

@@ -11,7 +11,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -33,12 +32,12 @@ func (b *publisherSubscriptionsImpl) q(tx persistence.Tx) querier { return (*tab
 const insertPublisherSubscriptionSQL = `
 INSERT INTO rimsky_publisher_subscriptions (
     id, instance_id, publisher_name, kind, resolved_config,
-    target_node, message_kind, started_at, state
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+    target_node, message_kind, started_at, state, failure_reason
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''))`
 
 func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.Tx, row persistence.PublisherSubscriptionRow) error {
 	if row.State == "" {
-		row.State = persistence.PublisherSubscriptionStateActive
+		row.State = persistence.PublisherSubscriptionStateMounting
 	}
 	if row.MessageKind == "" {
 		row.MessageKind = "invalidate"
@@ -46,32 +45,9 @@ func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.
 	_, err := b.q(tx).Exec(ctx, insertPublisherSubscriptionSQL,
 		row.ID, row.InstanceID, row.PublisherName, row.Kind,
 		row.ResolvedConfig, row.TargetNode, row.MessageKind,
-		row.StartedAt, row.State)
+		row.StartedAt, row.State, row.FailureReason)
 	if err != nil {
 		return fmt.Errorf("postgres.PublisherSubscriptions.Insert: %w", err)
-	}
-	return nil
-}
-
-func (b *publisherSubscriptionsImpl) Update(ctx context.Context, tx persistence.Tx, id shared.UUID, upd persistence.PublisherSubscriptionUpdate) error {
-	sets := []string{}
-	args := []any{}
-	if upd.State != nil {
-		args = append(args, *upd.State)
-		sets = append(sets, fmt.Sprintf("state = $%d", len(args)))
-	}
-	if upd.StartedAt != nil {
-		args = append(args, *upd.StartedAt)
-		sets = append(sets, fmt.Sprintf("started_at = $%d", len(args)))
-	}
-	if len(sets) == 0 {
-		return nil
-	}
-	args = append(args, id)
-	sql := fmt.Sprintf(`UPDATE rimsky_publisher_subscriptions SET %s WHERE id = $%d`,
-		strings.Join(sets, ", "), len(args))
-	if _, err := b.q(tx).Exec(ctx, sql, args...); err != nil {
-		return fmt.Errorf("postgres.PublisherSubscriptions.Update: %w", err)
 	}
 	return nil
 }
@@ -87,7 +63,8 @@ func (b *publisherSubscriptionsImpl) Delete(ctx context.Context, tx persistence.
 
 const listPublisherSubscriptionsByInstanceSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_kind, started_at, state
+       target_node, message_kind, started_at, state,
+       COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE instance_id = $1
  ORDER BY publisher_name ASC`
@@ -103,7 +80,8 @@ func (b *publisherSubscriptionsImpl) ListByInstance(ctx context.Context, instanc
 
 const listPublisherSubscriptionsByStateSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_kind, started_at, state
+       target_node, message_kind, started_at, state,
+       COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE state = $1`
 
@@ -118,7 +96,8 @@ func (b *publisherSubscriptionsImpl) ListByState(ctx context.Context, state stri
 
 const getPublisherSubscriptionSQL = `
 SELECT id, instance_id, publisher_name, kind, resolved_config,
-       target_node, message_kind, started_at, state
+       target_node, message_kind, started_at, state,
+       COALESCE(failure_reason, '')
   FROM rimsky_publisher_subscriptions
  WHERE id = $1`
 
@@ -138,6 +117,23 @@ func (b *publisherSubscriptionsImpl) Get(ctx context.Context, tx persistence.Tx,
 	return &out[0], nil
 }
 
+// CompareAndSetState flips state from→to only when the row is still in
+// `from` (guarded single-statement UPDATE; see the interface contract in
+// persistence.PublisherSubscriptionsTable for the race it defends).
+const casPublisherSubscriptionStateSQL = `
+UPDATE rimsky_publisher_subscriptions
+   SET state = $1, failure_reason = NULLIF($2, '')
+ WHERE id = $3 AND state = $4`
+
+func (b *publisherSubscriptionsImpl) CompareAndSetState(ctx context.Context, id shared.UUID, from, to, failureReason string) (bool, error) {
+	tag, err := (*tablesImpl)(b).pool.Exec(ctx, casPublisherSubscriptionStateSQL,
+		to, failureReason, id, from)
+	if err != nil {
+		return false, fmt.Errorf("postgres.PublisherSubscriptions.CompareAndSetState: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func collectPublisherSubscriptions(rows pgx.Rows) ([]persistence.PublisherSubscriptionRow, error) {
 	out := []persistence.PublisherSubscriptionRow{}
 	for rows.Next() {
@@ -145,7 +141,7 @@ func collectPublisherSubscriptions(rows pgx.Rows) ([]persistence.PublisherSubscr
 		if err := rows.Scan(
 			&w.ID, &w.InstanceID, &w.PublisherName, &w.Kind,
 			&w.ResolvedConfig, &w.TargetNode, &w.MessageKind,
-			&w.StartedAt, &w.State,
+			&w.StartedAt, &w.State, &w.FailureReason,
 		); err != nil {
 			return nil, err
 		}

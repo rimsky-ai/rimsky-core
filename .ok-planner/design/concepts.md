@@ -17,6 +17,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `cancel-siblings` — A boolean field on the `strict` aggregation policy that turns on proactive sibling cancellation: when one sub-claim resolves to an aggregate-abandon under a parent whose policy is strict with cancel-siblings on, the runtime walks the parent's other in-flight sub-claims and force-Abandons each via recursive claim-handle terminal-resolution calls.
 - `cascade` (aliases: reactive-cascade) — Cascade is the engine that turns one node-state transition into the set of downstream node-state transitions.
 - `cascade-graph` (aliases: operator dashboard backplane) — The operator-dashboard HTTP-route backplane exposed by the control API: a family of read endpoints covering observability summaries, the event feed, frames, per-instance node state, and dispatches.
+- `child-execution` — Child execution is the run-side primitive by which a parent node-run dispatches one or more child executions into their own execution contexts and settles on their aggregate outcome.
 - `claim` — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
 - `claim-co-holdership` — Multiple node-runs holding the same claim handle via the `holds:` template directive.
 - `claim-handle` — `claim` is the protocol-layer noun returned by a claim producer's open verb; `claim-handle` is the rimsky-persistence-layer noun for the same conceptual thing.
@@ -27,13 +28,13 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `conformance` — A `rimsky conformance <protocol>` subcommand family — one subcommand per protocol — over a shared conformance library in the protocols module (one sub-package per protocol).
 - `control-api` — The operator interface exposed by the control-api binary.
 - `data-processing` — Optional mix-in protocol on a claim producer.
-- `delegation` — Delegation is the relationship between a calling node and a sub-graph: a node carries `delegate: <graph-name>` instead of `executor:`, and dispatches the named sub-graph as its execution unit.
+- `delegation` — Delegation is an invocation pattern over `concept:child-execution`: a node carrying `delegate: <graph-name>` instead of `executor:` dispatches the named sub-graph as exactly one child execution — one child, the carry-verbatim aggregation policy, entry absorbed.
 - `discovery-cache` (aliases: capabilities cache) — An in-memory per-service capabilities cache populated by the observability handshake at startup.
 - `dry-run` — A request mode — preview-without-commit — that asks "what would happen if I did this?" without applying it.
 - `error-policy` (aliases: error-types policy chain) — The template-level `error_types:` block maps per-`error_class` strings to one of four runtime actions: `pass`, `give_up`, `retry`, `discard_claims_then_retry`.
 - `event-log` (aliases: audit log) — Rimsky's internal append-only audit-log ledger.
 - `executor` — An executor is an out-of-process service that implements the gRPC executor's server-streaming execute method plus an optional executor-observability protocol.
-- `fan-out` — Fan-out is a node-level decision to partition a held claim into sub-claims and dispatch one work unit per sub-claim.
+- `fan-out` — Fan-out is an invocation pattern over `concept:child-execution`: a node-level decision to partition a held claim into sub-claims and dispatch one child execution per partition, with an author-specified aggregation policy.
 - `frame` (aliases: cascade-frame) — A frame is one cascade resolution, persisted as a frame row carrying a resolution mode (`coalesce` or `serial_queue`) and a lifecycle state.
 - `graph` — A graph is rimsky's unit of node connectivity.
 - `host-agent` — A long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary and invoked as the `rimsky agent` subcommand.

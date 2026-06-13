@@ -11,7 +11,7 @@ aliases:
 
 Thin HTTP+JSON client over the control-api. The CLI entrypoint is small; a client-builder layer assembles requests and the control-api serves them. Every CLI verb is one or more HTTP calls. Verb groups: `template`, `tag`, `instance`, `node`, `admin`, `messages`, `backfill`, `asset`, `lineage`, `parked`, `compose`, `dev`, `ctx`, `auth` (with verbs `init | login | create-key | list | show | revoke | rotate | status`), and `agent` (with verbs `start | status | stop`). The `agent` group is not a thin HTTP client — the same `rimsky` binary doubles as the `concept:host-agent` daemon when invoked as `rimsky agent start`.
 
-The binary name is `rimsky`; no alias shim or compat symlink is shipped.
+The binary name is `rimsky`.
 
 ## Purpose
 
@@ -29,7 +29,7 @@ Owns: command-line UX, request building, the `compose:` prefix reservation disci
 - **API key resolution**: every verb takes `--key=<token>` and falls back to an API-key environment variable. `auth status` and `auth init` tolerate a missing key (anonymous-mode bootstrap path); other verbs send the key as a Bearer token and surface 401 when missing.
 - **`auth init` is special.** It posts a key-creation request without a Bearer token (anonymous-mode bootstrap) and refuses to run when any active key exists — the server's anonymous-mode predicate is the authoritative gate; the CLI's pre-check is a UX nicety.
 - **`rimsky run` template + param + service flags.** A template is supplied by either a positional `<file>` argument or `--template <name>` (mutually exclusive). Params are supplied by `--params <json>` and/or repeatable `--param k=v` (mixable, later-wins). `--service <name>=<path>` binds a late-bound service.
-- **Per-context api-key.** Each CLI context grows an api-key field alongside its endpoint, populated by `auth login` and consumed by the `concept:host-agent` for outbound authentication. Existing context configs without the field continue to load.
+- **Per-context api-key.** Each CLI context grows an api-key field alongside its endpoint, populated by `auth login` and consumed by the `concept:host-agent` for outbound authentication. The api-key field is optional on a context config.
 
 ## Subcommand groups
 

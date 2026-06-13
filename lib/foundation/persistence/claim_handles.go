@@ -125,7 +125,7 @@ type ClaimHandleRow struct {
 	// for fan-out parents. Set at parent claim_handle Insert time when
 	// the row represents a fan-out parent (sub-claim children expected);
 	// NULL on leaf / non-fan-out claim handles. Drives
-	// `runtime/auto_terminal.go::resolveParentClaimChain`'s Commit /
+	// `runtime/child_execution.go::SettleChildren`'s Commit /
 	// Abandon decision over the children's outcomes.
 	AggregationPolicy json.RawMessage `json:"aggregation_policy,omitempty"`
 	// ExpectedChildrenCount is the number of sub-claim children
@@ -214,14 +214,13 @@ type ClaimHandleTable interface {
 	// ListByNodeRun returns claim_handle rows whose node_run_id equals
 	// nodeRunID. Used by the fan-out leaf-dispatch path
 	// (`runtime/runner_acquire.go`) to find the leaf's OWN sub-claim row
-	// (linked to the leaf run by `fanout_dispatch.go::CreateFanOutChildren`)
+	// (linked to the leaf run by `runtime/child_execution.go::DispatchChildren`)
 	// so its persisted `producer_candidate_handle` rides onto the leaf's
 	// `ExecuteRequest.StoreHandle.candidate_handle` (E4). A leaf run may
 	// own more than one row here (its freshly-Open'd parent-selector claim
 	// plus the linked sub-claim); the caller filters by producer + the
 	// sub-claim marker (`parent_claim_handle_id` set).
 	ListByNodeRun(ctx context.Context, nodeRunID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
-	ListBySupervisor(ctx context.Context, supervisorID string, tx Tx) ([]ClaimHandleRow, error)
 	ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx Tx) error
 	ListExpired(ctx context.Context, tx Tx) ([]ClaimHandleRow, error)
 	Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx Tx) error
@@ -257,7 +256,7 @@ type ClaimHandleTable interface {
 
 	// UpdateNodeRunID repoints a claim_handle row's node_run_id FK.
 	// Used by the fan-out dispatch path
-	// (`runtime/fanout_dispatch.go::CreateFanOutChildren`) to retarget a
+	// (`runtime/child_execution.go::DispatchChildren`) to retarget a
 	// sub-claim from the parent fan-out run (its acquire-time owner) to its
 	// OWN child leaf run, so the leaf can resolve its sub-claim by
 	// `node_run_id = its own dispatch id` and carry the persisted
@@ -266,6 +265,38 @@ type ClaimHandleTable interface {
 	// INSERT, before any other supervisor can observe the row, and the FK
 	// target (the freshly-created child run) is guaranteed to exist in-tx.
 	UpdateNodeRunID(ctx context.Context, id shared.UUID, nodeRunID shared.UUID, tx Tx) error
+
+	// ReassignHolderSupervisor CAS-moves an ACTIVE claim-handle row's
+	// holder_supervisor_id from fromSupervisorID to toSupervisorID:
+	//
+	//   WHERE id = $1 AND state = 'active'
+	//     AND holder_supervisor_id = $fromSupervisorID
+	//
+	// The cross-supervisor claim-handoff primitive. Two call sites:
+	//
+	//   - Leaf acquisition (`runtime/runner_acquire.go::
+	//     restampLinkedSubClaimHolders`): a fan-out sub-claim row is
+	//     INSERTed under the PARENT acquirer's supervisor
+	//     (`AcquireSubClaims`), but any replica can claim the leaf run.
+	//     The acquiring supervisor re-stamps the linked sub-claim onto
+	//     itself, inside the leaf's acquisition tx, so the leaf-terminal
+	//     claimant guards (Promote, heartbeat extension, held-claim
+	//     CheckAndFireResolution) pass on the supervisor actually
+	//     driving the run.
+	//   - Settlement takeover (`runtime/child_execution.go::
+	//     settleClaimChainAggregate`): the supervisor resolving the LAST
+	//     child takes over the parent handle before firing the parent's
+	//     aggregate settlement, under the parent row's SELECT … FOR
+	//     UPDATE.
+	//
+	// The guard discipline (@blessed-invariant 4) is preserved as a CAS:
+	// the caller names the holder it observed (under a row lock or
+	// inside the same tx), and a mismatch — concurrent resolution,
+	// concurrent handoff — returns spec.ErrIllegalClaimHandleTransition
+	// (affected-rows = 0) instead of silently stealing the row. An empty
+	// toSupervisorID is rejected (active rows must carry a holder per
+	// the migration-009 CHECK pair).
+	ReassignHolderSupervisor(ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx Tx) error
 
 	// UpdateRealizedWriteSemantics writes the per-claim ClaimProducer-
 	// declared realized_write_semantics on a claim-scope-kind row,
@@ -372,7 +403,7 @@ type ClaimHandleTable interface {
 	// SetAggregationPolicy writes the parent-claim aggregation policy
 	// snapshot on a claim_handle row. Called once per fan-out parent at
 	// sub-claim acquisition time so the recursive walker
-	// (`runtime/auto_terminal.go::resolveParentClaimChain`) can compute a
+	// (`runtime/child_execution.go::SettleChildren`) can compute a
 	// true aggregate Commit/Abandon decision across all children — not
 	// just the just-resolved seedOutcome. Claimant-guarded on
 	// supervisorID. Empty `policy` bytes clear the column. Spec

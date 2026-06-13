@@ -214,8 +214,15 @@ type ObservabilityCapabilities struct {
 	//
 	// Per concept:signal hierarchical error_class rule.
 	DeclaredErrorClasses []string `protobuf:"bytes,8,rep,name=declared_error_classes,json=declaredErrorClasses,proto3" json:"declared_error_classes,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// validation_supported_roles: set when "validation" is in the
+	// executor's advertised protocols (e.g. ["executor"]). Mirrors
+	// publisher.proto's PublisherCapabilities.validation_supported_roles
+	// — the Validation service has no Capabilities verb, so each peer
+	// kind advertises its supported validation roles on its own
+	// capability surface; this is the executor's.
+	ValidationSupportedRoles []string `protobuf:"bytes,9,rep,name=validation_supported_roles,json=validationSupportedRoles,proto3" json:"validation_supported_roles,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *ObservabilityCapabilities) Reset() {
@@ -300,6 +307,13 @@ func (x *ObservabilityCapabilities) GetDeclaredEvents() []string {
 func (x *ObservabilityCapabilities) GetDeclaredErrorClasses() []string {
 	if x != nil {
 		return x.DeclaredErrorClasses
+	}
+	return nil
+}
+
+func (x *ObservabilityCapabilities) GetValidationSupportedRoles() []string {
+	if x != nil {
+		return x.ValidationSupportedRoles
 	}
 	return nil
 }
@@ -617,7 +631,7 @@ var File_executor_observability_proto protoreflect.FileDescriptor
 const file_executor_observability_proto_rawDesc = "" +
 	"\n" +
 	"\x1cexecutor_observability.proto\x12\trimsky.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x1d\n" +
-	"\x1bExecutorCapabilitiesRequest\"\xbd\x03\n" +
+	"\x1bExecutorCapabilitiesRequest\"\xfb\x03\n" +
 	"\x19ObservabilityCapabilities\x12,\n" +
 	"\x12supports_trace_get\x18\x01 \x01(\bR\x10supportsTraceGet\x122\n" +
 	"\x15supports_trace_stream\x18\x02 \x01(\bR\x13supportsTraceStream\x12G\n" +
@@ -626,7 +640,8 @@ const file_executor_observability_proto_rawDesc = "" +
 	"\x0fhttp_bridge_url\x18\x05 \x01(\tR\rhttpBridgeUrl\x12<\n" +
 	"\x1aexpected_attributes_schema\x18\x06 \x01(\fR\x18expectedAttributesSchema\x12'\n" +
 	"\x0fdeclared_events\x18\a \x03(\tR\x0edeclaredEvents\x124\n" +
-	"\x16declared_error_classes\x18\b \x03(\tR\x14declaredErrorClasses\"\x8a\x01\n" +
+	"\x16declared_error_classes\x18\b \x03(\tR\x14declaredErrorClasses\x12<\n" +
+	"\x1avalidation_supported_roles\x18\t \x03(\tR\x18validationSupportedRoles\"\x8a\x01\n" +
 	"\bCustomUI\x12\x15\n" +
 	"\x06ui_url\x18\x01 \x01(\tR\x05uiUrl\x123\n" +
 	"\n" +

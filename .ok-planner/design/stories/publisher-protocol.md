@@ -27,4 +27,4 @@ Subscribe is acknowledged but messages never reach the message endpoint, OR the 
 
 ## Proof
 
-Example — the examples module's publisher reference extended with a worked walkthrough that drives a real subscribe / publish / reconcile sequence against a running rimsky.
+Example — a shipped publisher reference paired with a worked walkthrough that drives a real subscribe / publish / reconcile sequence against a running rimsky.

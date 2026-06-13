@@ -291,7 +291,7 @@ func assertComposeTemplateDeployed(t *testing.T, ctx context.Context, c *cli.Cli
 // project-scoping assertion.
 func registerAndDeployManualTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	t.Helper()
-	return deploySQLiteTemplate(t, ep, map[string]any{
+	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "manual-keepsake-template",
 			"version":               "1",

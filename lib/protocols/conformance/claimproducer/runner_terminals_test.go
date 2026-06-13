@@ -128,11 +128,11 @@ func (f *fakeProducer) Open(_ context.Context, _ claimproducer.ClaimID, spec cla
 	}, nil
 }
 
-func (f *fakeProducer) Commit(_ context.Context, claimID claimproducer.ClaimID, _ []byte, _ []byte) error {
+func (f *fakeProducer) Commit(_ context.Context, claimID claimproducer.ClaimID, _ []byte, _ []byte) (claimproducer.CommitResult, error) {
 	if f.commitErr != nil {
-		return f.commitErr
+		return claimproducer.CommitResult{}, f.commitErr
 	}
-	return f.recordTerminal(claimID)
+	return claimproducer.CommitResult{}, f.recordTerminal(claimID)
 }
 
 func (f *fakeProducer) Abandon(_ context.Context, claimID claimproducer.ClaimID, _ []byte, _ []byte) error {

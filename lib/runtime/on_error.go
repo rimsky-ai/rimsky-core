@@ -70,7 +70,18 @@ type OnErrorArgs struct {
 	// sweep from a different supervisor can't accidentally drop our row.
 	SupervisorID string
 	ErrorClass   string
-	Payload      map[string]any
+	// PolicyFallbackClass, when non-empty, is a second `error_types:`
+	// key the policy lookup consults when ErrorClass itself has no
+	// declared entry. Set by the acquisition-failure entry points
+	// (handleAcquireUnavailable / handleAcquireProducerError) to the
+	// synthetic acquire/* family class so an operator who declared only
+	// the generic policy (e.g. `acquire/unavailable: retry`) does not
+	// silently lose coverage when a producer starts naming exact
+	// classes (e.g. pg/claim_unavailable). Affects POLICY LOOKUP ONLY:
+	// the emitted signal / audit / payload still carry ErrorClass (the
+	// most specific class), per concept:error-policy.
+	PolicyFallbackClass string
+	Payload             map[string]any
 	// Metrics is the dispatch/terminal/claim instrumentation hook
 	// (plan I3). Retained for symmetry with the wider RunArgs/
 	// MetricsHook plumbing; the historical policy_invalidate fan-out
@@ -131,7 +142,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	}
 
 	// Resolve the per-error-class policy from the template spec.
-	policy, err := lookupPolicy(ctx, sb, nd, args.ErrorClass)
+	policy, err := lookupPolicy(ctx, sb, nd, args.ErrorClass, args.PolicyFallbackClass)
 	if err != nil {
 		return err
 	}
@@ -436,14 +447,31 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	return nil
 }
 
-// lookupPolicy resolves the error_types[ErrorClass] block from the node's
-// template spec. Returns nil (with nil error) when the template does not
-// declare a policy for this error class — node.Evaluate treats that as a
-// give_up("unknown_error_class"). For the attribute-pipeline classes
-// (`template_resolution_failed`, `template_validation_failed`,
-// `executor_schema_unavailable`, `attributes_schema_failed`) this is the
-// §10.4 / §9.4 default chain `[ {give_up} ]`.
-func lookupPolicy(ctx context.Context, sb persistence.Tables, nd *persistence.NodeRow, errorClass string) (*node.ErrorTypePolicy, error) {
+// lookupPolicy resolves the error_types[errorClass] block from the node's
+// template spec.
+//
+// Fallback order (per concept:error-policy, TD-acquire-prefix-fallback):
+//
+//  1. exact key — error_types[errorClass] (e.g. the producer-declared
+//     acquisition-failure class "pg/claim_unavailable");
+//  2. fallback key — error_types[fallbackClass] when fallbackClass is
+//     non-empty and the exact key has no entry. The acquisition-failure
+//     entry points set this to the synthetic acquire/* family class
+//     ("acquire/unavailable" / "acquire/producer_error") so a template
+//     that declares only the generic policy still catches
+//     producer-classified failures;
+//  3. nil (with nil error) when neither key has an entry —
+//     node.Evaluate treats nil as give_up("unknown_error_class"), the
+//     fail-fast unknown-class default. For the attribute-pipeline
+//     classes (`template_resolution_failed`,
+//     `template_validation_failed`, `executor_schema_unavailable`,
+//     `attributes_schema_failed`) this is the §10.4 / §9.4 default
+//     chain `[ {give_up} ]`.
+//
+// An exact-key entry always wins over the fallback: an operator who
+// declares both the specific producer class and the generic family gets
+// the specific policy for classified failures.
+func lookupPolicy(ctx context.Context, sb persistence.Tables, nd *persistence.NodeRow, errorClass, fallbackClass string) (*node.ErrorTypePolicy, error) {
 	var inst *persistence.InstanceRow
 	var tmpl *persistence.TemplateRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -475,6 +503,12 @@ func lookupPolicy(ctx context.Context, sb persistence.Tables, nd *persistence.No
 			// Copy so the caller can take its address without aliasing the map.
 			cp := p
 			return &cp, nil
+		}
+		if fallbackClass != "" && fallbackClass != errorClass {
+			if p, ok := td.ErrorTypes[fallbackClass]; ok {
+				cp := p
+				return &cp, nil
+			}
 		}
 		return nil, nil
 	}

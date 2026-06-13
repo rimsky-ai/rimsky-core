@@ -46,9 +46,12 @@ func (b *messagesImpl) Insert(ctx context.Context, tx persistence.Tx, req persis
 	if req.BackfillOperationID != nil {
 		backfill = req.BackfillOperationID.String()
 	}
+	// received_at goes through formatTime (fixed-width UTC text) — a raw
+	// time.Time bind would store modernc's zone-embedded t.String() form,
+	// which breaks ORDER BY / range comparisons on non-UTC hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertMessageSQL,
 		req.ID.String(), req.InstanceID.String(), req.Kind, req.Sender,
-		req.SenderKind, target, req.Payload, backfill, req.ReceivedAt)
+		req.SenderKind, target, req.Payload, backfill, formatTime(req.ReceivedAt))
 	if err != nil {
 		return fmt.Errorf("sqlite.Messages.Insert: %w", err)
 	}
@@ -61,7 +64,7 @@ UPDATE rimsky_messages
  WHERE id = ? AND delivered_at IS NULL`
 
 func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error) {
-	res, err := b.q(tx).ExecContext(ctx, sqliteMarkDeliveredSQL, deliveredAt, frame.String(), id.String())
+	res, err := b.q(tx).ExecContext(ctx, sqliteMarkDeliveredSQL, formatTime(deliveredAt), frame.String(), id.String())
 	if err != nil {
 		return false, fmt.Errorf("sqlite.Messages.MarkDelivered: %w", err)
 	}
@@ -75,7 +78,7 @@ UPDATE rimsky_messages
  WHERE backfill_operation_id = ? AND delivered_at IS NULL`
 
 func (b *messagesImpl) MarkCancelled(ctx context.Context, tx persistence.Tx, backfillOperationID shared.UUID, at time.Time) (int, error) {
-	res, err := b.q(tx).ExecContext(ctx, sqliteMarkCancelledSQL, at, backfillOperationID.String())
+	res, err := b.q(tx).ExecContext(ctx, sqliteMarkCancelledSQL, formatTime(at), backfillOperationID.String())
 	if err != nil {
 		return 0, fmt.Errorf("sqlite.Messages.MarkCancelled: %w", err)
 	}
@@ -195,7 +198,11 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		var target sql.NullString
 		var backfillStr sql.NullString
 		var frameStr sql.NullString
-		var deliveredAt sql.NullTime
+		// Timestamp columns are fixed-width UTC TEXT; scan as strings and
+		// run through parseTime (per queue_park.go::LoadResumeMetadataInTx)
+		// instead of scanning into time.Time / sql.NullTime.
+		var receivedAtStr string
+		var deliveredAtStr sql.NullString
 		var cancelled int
 		// payload may be NULL (e.g. an invalidate envelope with no body).
 		// The database/sql driver cannot store a NULL driver.Value into a
@@ -206,11 +213,16 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		var payload []byte
 		if err := rows.Scan(
 			&idStr, &instanceStr, &m.Kind, &m.Sender, &m.SenderKind,
-			&target, &payload, &backfillStr, &m.ReceivedAt, &deliveredAt,
+			&target, &payload, &backfillStr, &receivedAtStr, &deliveredAtStr,
 			&frameStr, &cancelled,
 		); err != nil {
 			return nil, err
 		}
+		receivedAt, err := parseTime(receivedAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.Messages: parse received_at: %w", err)
+		}
+		m.ReceivedAt = receivedAt
 		if payload != nil {
 			m.Payload = payload
 		}
@@ -233,8 +245,11 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 				m.FrameID = &u
 			}
 		}
-		if deliveredAt.Valid {
-			t := deliveredAt.Time
+		if deliveredAtStr.Valid {
+			t, err := parseTime(deliveredAtStr.String)
+			if err != nil {
+				return nil, fmt.Errorf("sqlite.Messages: parse delivered_at: %w", err)
+			}
 			m.DeliveredAt = &t
 		}
 		m.Cancelled = cancelled != 0

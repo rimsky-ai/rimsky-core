@@ -33,9 +33,11 @@ type RawQueryRow = map[string]any
 // the application-layer Create paths (e.g. the migration-backfill
 // case for instances.attribute_overrides). The helper is responsible
 // for translating the question-mark placeholders into the driver-
-// native style (`$N` for postgres, `?` for sqlite). Pass nil to skip
-// tests that require it (none currently — both drivers must supply
-// one).
+// native style (`$N` for postgres, `?` for sqlite). rawExec is
+// REQUIRED: several tests call it unconditionally (the
+// instances.attribute_overrides migration-backfill case,
+// FrameSettlement/StuckFrames' last_progress_at backdating) and would
+// nil-panic without it. Both in-tree drivers supply one.
 //
 // rawQuery is the read-side companion. Returns the rows as
 // []RawQueryRow with column-name keys. Same `?` placeholder convention
@@ -58,8 +60,10 @@ func Suite(
 	t.Run("AcquisitionTxAtomicity", func(t *testing.T) { testAcquisitionTxAtomicity(t, factory(t)) })
 	t.Run("HeldClaimAutoTerminalSerialization", func(t *testing.T) { testHeldClaimAutoTerminalSerialization(t, factory(t)) })
 	t.Run("SortOrderCoordination", func(t *testing.T) { testSortOrderCoordination(t, factory(t)) })
+	t.Run("PublisherSubscriptionLifecycle", func(t *testing.T) { testPublisherSubscriptionLifecycle(t, factory(t)) })
 	t.Run("QueueInTxAndDispatchNode", func(t *testing.T) { testQueueInTxAndDispatchNode(t, factory(t)) })
 	t.Run("SelectCandidatesSkipsPausedInstances", func(t *testing.T) { testSelectCandidatesSkipsPausedInstances(t, factory(t)) })
+	t.Run("SelectCandidatesKeysetCursor", func(t *testing.T) { testSelectCandidatesKeysetCursor(t, factory(t)) })
 	t.Run("QueueRebindRunFrameInTx", func(t *testing.T) { testQueueRebindRunFrameInTx(t, factory(t)) })
 	t.Run("ClaimHandlesUpdateClaimScope", func(t *testing.T) { testClaimHandlesUpdateClaimScope(t, factory(t)) })
 	// NodesMarkStaleForCascade conformance retired by spec
@@ -91,11 +95,13 @@ func Suite(
 		t.Run("NoFalsePositiveAcrossScopes", func(t *testing.T) { testInFlightLookup_NoFalsePositiveAcrossScopes(t, factory(t)) })
 		t.Run("ReturnsNoneWhenAbsent", func(t *testing.T) { testInFlightLookup_ReturnsNoneWhenAbsent(t, factory(t)) })
 	})
+	t.Run("ListInFlightRunPhases", func(t *testing.T) {
+		t.Run("PerNodePhases", func(t *testing.T) { testListInFlightRunPhases_PerNodePhases(t, factory(t)) })
+	})
 	t.Run("RunStateWritesIsolated", func(t *testing.T) {
 		t.Run("UpdateState", func(t *testing.T) { testRunStateWritesIsolated_UpdateState(t, factory(t)) })
 		t.Run("UpdateHeartbeat", func(t *testing.T) { testRunStateWritesIsolated_UpdateHeartbeat(t, factory(t)) })
 		t.Run("ClearSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ClearSettlingSignalType(t, factory(t)) })
-		t.Run("ClearSupervisorAssignment", func(t *testing.T) { testRunStateWritesIsolated_ClearSupervisorAssignment(t, factory(t)) })
 		t.Run("ResetFailedTerminalSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t, factory(t)) })
 		t.Run("RemoveForNodeInTx", func(t *testing.T) { testRunStateWritesIsolated_RemoveForNodeInTx(t, factory(t)) })
 		t.Run("GetParkedByNode", func(t *testing.T) { testRunStateWritesIsolated_GetParkedByNode(t, factory(t)) })
@@ -140,6 +146,70 @@ func Suite(
 	// (SchedulesDenseSameTimestampPagination retired by the 2026-05-15
 	// plan B10 / D7 / E16 schedule-retirement cascade.)
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
+	// === Claimant-guard no-op coverage (inv 4) ===
+	// Every ownership mutation must be a provable no-op for the wrong
+	// supervisor; see claimant_guard.go for the operation-family map.
+	t.Run("ClaimantGuard", func(t *testing.T) {
+		t.Run("HandleUpdates", func(t *testing.T) { testClaimantGuardHandleUpdates(t, factory(t)) })
+		t.Run("HandleCounterBumps", func(t *testing.T) { testClaimantGuardHandleCounterBumps(t, factory(t)) })
+		t.Run("HandlePromote", func(t *testing.T) { testClaimantGuardHandlePromote(t, factory(t)) })
+		t.Run("HandleReassignHolder", func(t *testing.T) { testClaimantGuardHandleReassignHolder(t, factory(t)) })
+		t.Run("HandleDelete", func(t *testing.T) { testClaimantGuardHandleDelete(t, factory(t)) })
+		t.Run("HandleDeleteIfExpired", func(t *testing.T) { testClaimantGuardHandleDeleteIfExpired(t, factory(t)) })
+		t.Run("HandleExtendHeartbeat", func(t *testing.T) { testClaimantGuardHandleExtendHeartbeat(t, factory(t)) })
+		t.Run("HolderRelease", func(t *testing.T) { testClaimantGuardHolderRelease(t, factory(t)) })
+		t.Run("RunClaimSteal", func(t *testing.T) { testClaimantGuardRunClaimSteal(t, factory(t)) })
+		t.Run("RunReleaseClaim", func(t *testing.T) { testClaimantGuardRunReleaseClaim(t, factory(t)) })
+		t.Run("RunComplete", func(t *testing.T) { testClaimantGuardRunComplete(t, factory(t)) })
+		t.Run("RunRemoveForNode", func(t *testing.T) { testClaimantGuardRunRemoveForNode(t, factory(t)) })
+		t.Run("RunPark", func(t *testing.T) { testClaimantGuardRunPark(t, factory(t)) })
+		t.Run("RunRefreshHeartbeat", func(t *testing.T) { testClaimantGuardRunRefreshHeartbeat(t, factory(t)) })
+		t.Run("NodeUpdateHeartbeat", func(t *testing.T) { testClaimantGuardNodeUpdateHeartbeat(t, factory(t)) })
+		t.Run("RunEmptyClaimantCarveOut", func(t *testing.T) { testClaimantGuardRunEmptyClaimantCarveOut(t, factory(t)) })
+		t.Run("UnguardedMutationCarveOuts", func(t *testing.T) { testClaimantGuardUnguardedMutationCarveOuts(t, factory(t)) })
+	})
+	// === Driver-parity expansion: runtime-consumed behaviors with
+	// driver-specific SQL idioms (park/resume, frame lifecycle,
+	// retention sweeps, message idempotency). ===
+	t.Run("MessageIdempotency", func(t *testing.T) {
+		t.Run("InsertOrLookup", func(t *testing.T) { testMessageIdempotencyInsertOrLookup(t, factory(t)) })
+		t.Run("DeleteOlderThan", func(t *testing.T) { testMessageIdempotencyDeleteOlderThan(t, factory(t)) })
+	})
+	t.Run("ParkResume", func(t *testing.T) {
+		t.Run("SweepSelection", func(t *testing.T) { testParkResumeSweepSelection(t, factory(t)) })
+		t.Run("MetadataRoundTrip", func(t *testing.T) { testParkResumeMetadataRoundTrip(t, factory(t)) })
+		t.Run("ParkedDiagnostic", func(t *testing.T) { testParkResumeParkedDiagnostic(t, factory(t)) })
+		t.Run("HeldFrameCount", func(t *testing.T) { testParkResumeHeldFrameCount(t, factory(t)) })
+	})
+	t.Run("FrameLifecycle", func(t *testing.T) {
+		t.Run("SerialQueue", func(t *testing.T) { testFrameLifecycleSerialQueue(t, factory(t)) })
+		t.Run("Coalesce", func(t *testing.T) { testFrameLifecycleCoalesce(t, factory(t)) })
+	})
+	// FrameSettlement: the frame engine's settlement core (frame-end
+	// detection, instance termination, source-node binding, stuck-frame
+	// warning, orphan-dispatch reaper) — the most driver-divergent SQL
+	// in the layer (INTERVAL arithmetic vs Go-side window math).
+	t.Run("FrameSettlement", func(t *testing.T) {
+		t.Run("NoPendingNodes", func(t *testing.T) { testFrameSettlementNoPendingNodes(t, factory(t)) })
+		t.Run("HasFailedNode", func(t *testing.T) { testFrameSettlementHasFailedNode(t, factory(t)) })
+		t.Run("InstanceTermination", func(t *testing.T) { testFrameSettlementInstanceTermination(t, factory(t)) })
+		t.Run("MarkSourceNodeStale", func(t *testing.T) { testFrameSettlementMarkSourceNodeStale(t, factory(t)) })
+		t.Run("StuckFrames", func(t *testing.T) { testFrameSettlementStuckFrames(t, factory(t), rawExec) })
+		t.Run("OrphanDispatches", func(t *testing.T) { testFrameSettlementOrphanDispatches(t, factory(t)) })
+	})
+	// ClaimHandleQueries: the runtime-consumed claim-handle read/repoint
+	// surface (named-lock capacity gate, anchor walks, fan-out repoint,
+	// recursive child walk, asset query).
+	t.Run("ClaimHandleQueries", func(t *testing.T) {
+		t.Run("CountByNamedLock", func(t *testing.T) { testClaimHandleCountByNamedLock(t, factory(t)) })
+		t.Run("AnchorsAndRepoint", func(t *testing.T) { testClaimHandleAnchorsAndRepoint(t, factory(t)) })
+		t.Run("ChildWalk", func(t *testing.T) { testClaimHandleChildWalk(t, factory(t)) })
+		t.Run("ListByInstanceAndState", func(t *testing.T) { testClaimHandleListByInstanceAndState(t, factory(t)) })
+	})
+	t.Run("RetentionSweep", func(t *testing.T) {
+		t.Run("ClaimHandles", func(t *testing.T) { testRetentionClaimHandleSweep(t, factory(t)) })
+		t.Run("FrameTrace", func(t *testing.T) { testRetentionFrameTracePrune(t, factory(t)) })
+	})
 	t.Run("LineageQueryByParentRunID", func(t *testing.T) { testLineageQueryByParentRunID(t, factory(t)) })
 	t.Run("LineageCountOlderThanMatchesDelete", func(t *testing.T) { testLineageCountOlderThanMatchesDelete(t, factory(t)) })
 	t.Run("APIKeys", func(t *testing.T) { TestAPIKeys(t, factory(t)) })

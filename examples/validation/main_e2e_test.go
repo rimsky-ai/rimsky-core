@@ -329,6 +329,16 @@ func validatedTemplate(name, selector string) map[string]any {
 			{
 				"type":     "worker",
 				"executor": "exec-stub",
+				// Declaring the acquire/unavailable policy explicitly (give_up
+				// is the default fail-fast behavior anyway) keeps the
+				// acquisition-policy advisory out of the response, so the
+				// accept-case leg's zero-warnings assertion isolates the
+				// example validator's findings.
+				"error_types": map[string]any{
+					"acquire/unavailable": map[string]any{
+						"policy": []map[string]any{{"action": "give_up"}},
+					},
+				},
 				"stores": []map[string]any{
 					{
 						"name":     "validator",

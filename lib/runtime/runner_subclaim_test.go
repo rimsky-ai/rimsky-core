@@ -81,6 +81,47 @@ func TestAcquireSubClaims_UnknownProducerErrors(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestAcquireSubClaims_EmptyPartitionKeyRejected confirms a producer
+// SplitScope descriptor carrying an empty partition_key aborts the
+// whole acquisition: the empty key is the delegation discriminator
+// (the settlement walk skips closing empty-key scopes, and the
+// per-partition uniqueness index exempts them), so a producer-returned
+// empty key would silently leak its partition RunScope open.
+func TestAcquireSubClaims_EmptyPartitionKeyRejected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	reg := locks.NewRegistry()
+	store := storetest.NewFake("ds-store", claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "", ClaimScopeData: []byte(`{"p":"unkeyed"}`)},
+			},
+		}, nil
+	}
+	reg.Add("ds-store", store)
+
+	clk := newTickClock(time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC))
+	args := runtime.RunArgs{
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		Clock:         clk,
+		SupervisorID:  "sup-EK",
+	}
+	_, err := runtime.AcquireSubClaims(ctx, args, nil, runtime.AcquireSubClaimsInput{
+		ParentClaimHandleID: shared.UUID(uuid.New()),
+		ProducerName:        "ds-store",
+		HolderSupervisorID:  "sup-EK",
+		InstanceID:          shared.UUID{},
+		HeartbeatInterval:   30 * time.Second,
+	})
+	require.ErrorContains(t, err, "empty partition_key")
+}
+
 // tickClock is a minimal Clock fixture for the sub-claim tests.
 type tickClock struct{ t time.Time }
 
@@ -397,7 +438,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 
 	// Recursive claim-tree resolution assertion (fix 8 from cycle 3): once
 	// the last sub-claim resolves, `ResolveClaimHandleTerminal`'s non-durable
-	// Delete branch walks `resolveParentClaimChain`, which fires the parent's
+	// Delete branch walks `SettleChildren`, which fires the parent's
 	// terminal verb against the standard `ClaimProducer` surface. Because
 	// the last-resolved sub-claim seeded `AggregateAbandon`, the parent
 	// inherits that seed and Abandon must fire on the parent ClaimID. A
@@ -434,4 +475,187 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 		"parent claim_handle row must be preserved past terminal (Promote-not-delete)")
 	require.Equal(t, spec.ClaimHandleStateAbandoned, parentRow.State,
 		"parent claim_handle row must be promoted to state=abandoned by the recursive resolution walk")
+}
+
+// TestSubClaim_CrossSupervisorSettlementResolvesParent pins the
+// ≥2-supervisor fan-out settlement: the parent claim handle is acquired
+// (and held) by supervisor ONE, the leaf runs are claimed by supervisor
+// TWO (whose acquisition restamps the sub-claim rows onto itself — here
+// simulated via the same `ReassignHolderSupervisor` CAS the acquisition
+// path calls), and both leaves resolve under TWO. The chain must NOT
+// stall: each child row promotes under TWO, the per-outcome counter
+// bumps land on the parent under its ACTUAL holder, and the last
+// child's settlement takes over the parent handle and fires the
+// parent's aggregate Commit — instead of the pre-fix shape where the
+// producer saw the children's Commits while the parent stayed active
+// until the orphan reaper recorded a spurious Abandon.
+func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	backend := d.Tables()
+
+	const storeName = "xsup-store"
+	const supOne = "sup-ONE"
+	const supTwo = "sup-TWO"
+
+	reg := locks.NewRegistry()
+	store := storetest.NewFake(storeName, claimproducer.Capabilities{
+		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
+		SupportsSplitScope:    true,
+	})
+	store.SplitClaimScopeFunc = func(req claimproducer.SplitClaimScopeRequest) (claimproducer.SplitClaimScopeResponse, error) {
+		return claimproducer.SplitClaimScopeResponse{
+			SubClaimScopes: []claimproducer.SubClaimScopeDescriptor{
+				{PartitionKey: "alpha", ClaimScopeData: []byte(`{"p":"alpha"}`)},
+				{PartitionKey: "beta", ClaimScopeData: []byte(`{"p":"beta"}`)},
+			},
+		}, nil
+	}
+	reg.Add(storeName, store)
+
+	clk := newTickClock(time.Date(2026, 6, 11, 0, 0, 0, 0, time.UTC))
+	argsOne := runtime.RunArgs{
+		Persist:       backend,
+		ClaimHandles:  backend.ClaimHandles(),
+		StoreRegistry: reg,
+		Logger:        shared.SilentLogger{},
+		Clock:         clk,
+		SupervisorID:  supOne,
+	}
+	argsTwo := argsOne
+	argsTwo.SupervisorID = supTwo
+
+	tmplRow := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
+		Name: "fanout-cross-supervisor", Version: "1",
+	})
+	ck := "ck-xsup"
+	var inst persistence.InstanceRow
+	var parentNode persistence.NodeRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, _ := seedInstanceWithMainScope(ctx, t, backend, tx, tmplRow.ID, &ck)
+		inst = i
+		p, err := backend.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: shared.UUID(uuid.New()), InstanceID: inst.ID, NodeType: "fanout", Executor: "stub",
+		}, tx)
+		if err != nil {
+			return err
+		}
+		parentNode = p
+		return nil
+	}))
+	frameID := seedFrame(ctx, t, backend, inst.ID, parentNode.ID)
+	parentRunID := seedRunForNode(ctx, t, backend, d.Queue(), parentNode.ID, frameID)
+
+	// Parent claim handle held by supervisor ONE.
+	parentClaimID := shared.UUID(uuid.New())
+	parentScope := json.RawMessage(`"parent-scope"`)
+	intent := "rw"
+	producerName := storeName
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
+			ID:                 parentClaimID,
+			LockKind:           persistence.LockKindScope,
+			ProducerName:       &producerName,
+			ClaimScopeData:     parentScope,
+			Address:            json.RawMessage(`"parent-addr"`),
+			Intent:             &intent,
+			HolderSupervisorID: supOne,
+			HolderNodeID:       parentNode.ID,
+			ExpiresAt:          time.Now().Add(10 * time.Minute),
+			NodeRunID:          &parentRunID,
+		}, tx)
+	}))
+
+	// AcquireSubClaims under supervisor ONE — the rows are stamped with
+	// ONE's holder id, exactly the shape the leaf acquisition later
+	// finds.
+	var subClaims []runtime.SubClaim
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		out, err := runtime.AcquireSubClaims(ctx, argsOne, tx, runtime.AcquireSubClaimsInput{
+			ParentClaimHandleID: parentClaimID,
+			ParentClaimScope:    parentScope,
+			ProducerName:        storeName,
+			NodeRunID:           parentRunID,
+			HolderNodeID:        parentNode.ID,
+			HolderSupervisorID:  supOne,
+			InstanceID:          shared.UUID{},
+			HeartbeatInterval:   30 * time.Second,
+		})
+		subClaims = out
+		return err
+	}))
+	require.Len(t, subClaims, 2)
+
+	// Supervisor TWO claims the leaves: the acquisition path's restamp
+	// (runner_acquire.go::restampLinkedSubClaimHolders) CAS-moves each
+	// sub-claim's holder ONE → TWO. Exercised here through the same
+	// persistence primitive the acquisition calls.
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		for _, sc := range subClaims {
+			if err := backend.ClaimHandles().ReassignHolderSupervisor(ctx, sc.ClaimHandleID, supOne, supTwo, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	// Both leaves resolve with Commit under supervisor TWO.
+	for _, sc := range subClaims {
+		sc := sc
+		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return runtime.ResolveClaimHandleTerminal(ctx, argsTwo, tx, runtime.TerminalDecision{
+				ClaimHandleID:       sc.ClaimHandleID,
+				SupervisorID:        supTwo,
+				Source:              runtime.ActiveTerminal,
+				Outcome:             runtime.AggregateCommit,
+				Producer:            store,
+				Scope:               []byte(sc.ClaimScope),
+				Address:             []byte{},
+				Lifetime:            "subgraph",
+				ProducerName:        storeName,
+				ParentClaimHandleID: &parentClaimID,
+			})
+		}))
+	}
+
+	// Every child row promoted to committed (no silent claimant-guard
+	// no-op leaving an active child behind).
+	for _, sc := range subClaims {
+		var row *persistence.ClaimHandleRow
+		require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			r, err := backend.ClaimHandles().Get(ctx, sc.ClaimHandleID, tx)
+			row = r
+			return err
+		}))
+		require.NotNil(t, row)
+		require.Equal(t, spec.ClaimHandleStateCommitted, row.State,
+			"sub-claim %s must promote under the supervisor that drives the leaf", sc.ClaimHandleID)
+	}
+
+	// The parent settled: counters reflect BOTH children (the bump is
+	// guarded on the parent's actual holder, not the child's
+	// supervisor), the settlement takeover moved the handle, and the
+	// aggregate Commit fired the producer verb on the parent ClaimID.
+	var parentRow *persistence.ClaimHandleRow
+	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := backend.ClaimHandles().Get(ctx, parentClaimID, tx)
+		parentRow = r
+		return err
+	}))
+	require.NotNil(t, parentRow)
+	require.Equal(t, 2, parentRow.CommittedChildrenCount,
+		"both children's outcomes must land on the parent's counters across supervisors")
+	require.Equal(t, spec.ClaimHandleStateCommitted, parentRow.State,
+		"the last child's settlement must take over and settle the parent — not defer to a holder that is never re-driven")
+	require.Nil(t, parentRow.HolderSupervisorID,
+		"Promote must null the holder after the takeover settlement")
+	parentCommits := 0
+	for _, c := range store.Calls() {
+		if string(c.ClaimID) == parentClaimID.String() && c.Verb == "commit" {
+			parentCommits++
+		}
+	}
+	require.Equal(t, 1, parentCommits,
+		"the parent's aggregate Commit must fire exactly once under cross-supervisor settlement")
 }

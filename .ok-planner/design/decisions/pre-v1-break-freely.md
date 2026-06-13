@@ -11,4 +11,4 @@ No backwards-compat guarantee on wire / config / event-log / resource interface;
 
 ## Rationale
 
-No production data yet; cleaner refactors. This rule is replaced by deployed-stage rules when v1 ships.
+No production data yet; cleaner refactors.

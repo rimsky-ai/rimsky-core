@@ -1,0 +1,14 @@
+---
+decision: validator-learns-producer-classes
+status: as-is
+---
+
+# error_types accepts producer vocabularies
+
+## Choice
+
+The template validator range-checks `error_types:` keys against the union of the executor's declared classes, the `acquire/*` synthetic family, and the declared error classes (see `decision:producer-declared-classes-capability`) of every producer reachable from the node's claims. A key attributable to no declared vocabulary becomes an advisory warning (surfaced per `decision:merge-validator-warnings`), not a hard rejection (see `concept:error-policy`).
+
+## Rationale
+
+The runtime already routes acquisition failures by producer-declared class; a validator rejecting what the runtime routes locks operators out of the system's own classification — and producers that declare nothing must not lock their operators out either.

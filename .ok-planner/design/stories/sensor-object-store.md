@@ -7,7 +7,7 @@ status: as-is
 
 ## Role
 
-As an operator wiring an object-store-driven message into a workflow, I can use the bundled `sensor-object-store` to poll a bucket-and-prefix at a fixed interval, emit a message per newly-discovered object (with the object's metadata surfaced into the message payload), and persist discovery state so restarts don't re-emit previously-discovered objects, so that I react to new objects landing in an external store without writing a custom publisher.
+As an operator wiring an object-store-driven message into a workflow, I can use the bundled `sensor-object-store` to poll a bucket-and-prefix at a fixed interval, emit a message per newly-discovered object (with the object's metadata surfaced into the message payload), and persist discovery state so restarts don't re-emit objects already discovered, so that I react to new objects landing in an external store without writing a custom publisher.
 
 ## Capability
 

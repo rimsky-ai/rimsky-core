@@ -1,12 +1,27 @@
 ---
 tension: reaper-vs-bail-abandon-asymmetry
 category: muddy-boundary
-status: open
+status: resolved
 affects:
   - orphan-reaper
   - claim-producer
   - supervisor
   - claim-handle
+resolution:
+  summary: |
+    The verify-before-run bail path is folded into the unified
+    claim-handle resolution engine: the bail resolves each acquired
+    claim through the engine with its own ownership-bail source kind,
+    so the producer Abandon and the claimant-guarded handle delete
+    fire at the single audited verb-then-delete site, with no signal
+    emitted (admin path). The acquire-unavailable path is the single
+    named carve-out outside the engine — its acquisition transaction
+    has already rolled back, leaving no rows to delete — and is
+    pinned by a deterministic injection test. The periodic reaper
+    continues to fire no producer verb: it cannot distinguish a
+    crashed-supervisor state, so producer-side cleanup stays with the
+    producer's own TTL. The asymmetry is thereby a named, tested
+    boundary rather than two adjacent look-alike code paths.
 ---
 
 # Periodic orphan reaper does NOT call `Abandon`; bail path `handleOrphanedClaim` does — annotated asymmetry, easy to miss

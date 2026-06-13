@@ -36,6 +36,8 @@ import (
 )
 
 // TestTerminateAfterRun_EndToEnd proves the opt-in single-run lifecycle.
+//
+// @story: terminate-after-run
 func TestTerminateAfterRun_EndToEnd(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -60,7 +62,7 @@ func TestTerminateAfterRun_EndToEnd(t *testing.T) {
 
 	// The one run lands the worker in `fresh` with a real work_started
 	// dispatch — proving the executor actually ran, not just a default state.
-	waitForSQLiteDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
+	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 
 	// At that frame-end the strict terminal predicate fires (terminate_after_run
 	// gated): GET /instances/{id} shows terminated_at set. Poll because the
@@ -78,7 +80,7 @@ func TestTerminateAfterRun_EndToEnd(t *testing.T) {
 // deploys it. Returns the template id.
 func deployTerminateAfterRunTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	t.Helper()
-	return deploySQLiteTemplate(t, ep, map[string]any{
+	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "terminate-after-run",
 			"version":               "1",

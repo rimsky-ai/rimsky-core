@@ -150,6 +150,9 @@ func (s *Store) Capabilities() claimproducer.Capabilities {
 // standard stores (filesystem, postgres, stub); the filesystem
 // store has no async work that consults it.
 func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer.OpenOutcome, error) {
+	if err := s.checkRootAvailable("Open"); err != nil {
+		return claimproducer.OpenOutcome{}, err
+	}
 	if pp, ok := s.pickPolicies[selector]; ok {
 		// Pick-policy selectors are a configured map-key match — they
 		// intentionally bypass openScoped's glob-metacharacter
@@ -249,12 +252,22 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 //
 // The ledger records the terminal event only after the store-side
 // action succeeds. Failures surface as non-terminal
-// `claim_commit_failed` events; the in-memory claim entry stays put so
-// the supervisor can retry without losing track. The s.claims delete
-// happens up-front because the per-claim path is needed only for
-// findByClaimID, and a failed action keeps the on-disk sentinel intact
-// for the next attempt.
+// `claim_commit_failed` events. The s.claims entry is deleted up-front
+// (the per-claim path is needed only to seed findByClaimID's lookup);
+// retry-ability does not depend on it — a failed action leaves the
+// on-disk sentinel intact, and findByClaimID rediscovers the claim
+// from that sentinel on the next attempt.
+//
+// Like Release, Commit refuses to attest against a backing root it can
+// no longer see or write (classed fs/root_unavailable, mirroring
+// checkRootAvailable's contract) — a direct-mode Commit against a
+// vanished root must not silently ack, and a pick-policy Commit must
+// surface the operator-misconfiguration class rather than a bare os
+// error from the action handler.
 func (s *Store) Commit(_ context.Context, claimID string, _ []byte, _ []byte) error {
+	if err := s.checkRootAvailable("Commit"); err != nil {
+		return err
+	}
 	pp, sel, entry, folder := s.findByClaimID(claimID)
 	s.mu.Lock()
 	delete(s.claims, claimID)
@@ -272,8 +285,13 @@ func (s *Store) Commit(_ context.Context, claimID string, _ []byte, _ []byte) er
 // Abandon delegates to the pick-policy action handler when the claim is
 // in pick-policy state; otherwise no-op (direct mode cannot undo
 // writes). Ledger records terminal only on success; failures surface
-// as a non-terminal `claim_abandon_failed` event.
+// as a non-terminal `claim_abandon_failed` event. Like Release and
+// Commit, Abandon refuses to attest against an unavailable root
+// (classed fs/root_unavailable via checkRootAvailable).
 func (s *Store) Abandon(_ context.Context, claimID string, _ []byte, _ []byte) error {
+	if err := s.checkRootAvailable("Abandon"); err != nil {
+		return err
+	}
 	pp, sel, entry, folder := s.findByClaimID(claimID)
 	s.mu.Lock()
 	delete(s.claims, claimID)
@@ -288,14 +306,47 @@ func (s *Store) Abandon(_ context.Context, claimID string, _ []byte, _ []byte) e
 	return nil
 }
 
-// Release is a no-op: direct mode never registers store-side read
-// state at Open. scope/address are accepted for signature uniformity
-// and ignored.
+// Release drops the store's in-memory claim registration. Direct mode
+// never registers on-disk read state at Open, so there is nothing to
+// undo — but the store still refuses to attest a release against a
+// backing root it can no longer see or write: silently acking while
+// the root is gone/read-only would let rimsky delete the durable
+// claim_handle row and discard the one signal the operator has that
+// the store is misconfigured. scope/address are accepted for signature
+// uniformity and ignored.
 func (s *Store) Release(_ context.Context, claimID string, _ []byte, _ []byte) error {
+	if err := s.checkRootAvailable("Release"); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	delete(s.claims, claimID)
 	s.mu.Unlock()
 	s.ledger.RecordTerminal(claimID, "claim_released", nil)
+	return nil
+}
+
+// checkRootAvailable verifies the configured root still exists and is
+// writable before a producer verb proceeds. Failure is transmitted as
+// the classed `fs/root_unavailable` error (see errors.go) so the
+// operator-misconfiguration case — wrong path, unmounted volume,
+// mount gone read-only — crosses the wire as the store's own class +
+// message rather than an anonymous fault. Property protected:
+// rejecting loudly instead of acking against a vanished root, so no
+// rimsky-side state (claim handles) is mutated on the strength of a
+// no-op the store could not actually honor.
+func (s *Store) checkRootAvailable(verb string) error {
+	if _, err := os.Stat(s.root); err != nil {
+		return &ClassedError{Class: RootUnavailableClass, Err: fmt.Errorf(
+			"filesystem store: %s: configured root %q is not accessible: %v", verb, s.root, err)}
+	}
+	// W_OK (POSIX value 2): the store's state directories and
+	// pick-policy actions live under the root, so a read-only root is
+	// a misconfiguration for any claim-mutating verb. This package is
+	// already POSIX-only (see the syscall.Stat_t use below).
+	if err := syscall.Access(s.root, 0x2); err != nil {
+		return &ClassedError{Class: RootUnavailableClass, Err: fmt.Errorf(
+			"filesystem store: %s: configured root %q is not writable: %v", verb, s.root, err)}
+	}
 	return nil
 }
 

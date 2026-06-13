@@ -18,8 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -61,25 +61,35 @@ func TestSubscriptionCascade_MultipleInvalidatorDrain(t *testing.T) {
 		"r should reach fresh after a, b, c settle")
 }
 
-// TestSubscriptionCascade_EligibilityRespectsMultipleSenders is the
-// regression test for the single-invalidator-assumption bug class. R
-// subscribes to A, B, C (in this scaled-down version of the 5-sender
-// case described in the spec). Invalidate A; while A is still in
-// flight, also invalidate B and C: R must wait for ALL THREE to settle
-// before dispatching, not just A.
+// TestSubscriptionCascade_EligibilityRespectsMultipleSenders pins the
+// upstream-gating eligibility condition within ONE frame: a stale
+// receiver is not dispatch-eligible while ANY subscribed upstream has
+// an in-flight run in the same frame, regardless of how the
+// receiver's staleness arrived.
 //
-// Without the cascade-walk-at-invalidation discipline (per spec Piece
-// 1 / pessimistic-invalidate), R would receive only the wait-set row
-// for A (inserted at A's terminal-complete settlement and immediately
-// drained in the same tx), then dispatch as soon as A re-runs — racing
-// the still-running B and C and observing stale upstream data.
+// Shape: a diamond — B and C subscribe to A; R subscribes to B and C.
+// One invalidation of A opens one frame; A's settlement marks B and C
+// stale in that frame (so both senders are in-flight together —
+// serial_queue invalidates of B and C directly would each open their
+// own frame, which is why this test invalidates only A).
+//
+// The load-bearing midpoint is after B settles while C is still held
+// in-flight: B's settlement walk marks R stale WITHOUT seeding a
+// wait-set gate for C (the settlement walk seeds no next-tier gates —
+// only the invalidation walk does). Eligibility therefore cannot come
+// from the wait-set alone; it is the two-condition dispatch-time
+// predicate: no undrained wait-set rows AND no subscribed upstream
+// with an in-flight run in the frame. With the gate absent, R would
+// dispatch here and compute the frame's result from a half-settled
+// upstream set (fresh B, stale C).
+//
+// Both senders are held open via deterministic stub holds (not
+// wall-clock delays), so each midpoint assertion observes a pinned
+// in-flight set rather than racing the executor.
 func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Initial runs are fast so the harness's waitForRootDispatch is
-	// reliable. Subsequent invalidation cycles will use the slow
-	// scripts queued below so each re-run takes ~2s, giving the test
-	// time to layer multiple invalidations before any sender settles.
+	// Initial runs are fast so the instance settles promptly.
 	h.Stub.WhenType("a").Success(map[string]any{"a": 1}, true, "a")
 	h.Stub.WhenType("b").Success(map[string]any{"b": 1}, true, "b")
 	h.Stub.WhenType("c").Success(map[string]any{"c": 1}, true, "c")
@@ -90,12 +100,17 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"}),
-			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub"}),
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "b", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"}),
+			),
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "c", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"}),
+			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "r", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "a", Type: "terminal/*"},
 					node.SubscriptionEntry{Node: "b", Type: "terminal/*"},
 					node.SubscriptionEntry{Node: "c", Type: "terminal/*"},
 				),
@@ -112,47 +127,105 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	require.NotNil(t, c)
 	require.NotNil(t, r)
 
-	// Initial settle: R reaches fresh after a, b, c.
+	// Initial settle: R reaches fresh after a → (b, c) → r.
 	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
 		"r should reach fresh initially")
 
-	// Slow each subsequent dispatch of A, B, C so we have time to
-	// layer multiple invalidations while at least one upstream is
-	// still running. Delay-then-Success queues a new scripted run.
-	h.Stub.WhenType("a").Delay(2*time.Second).Success(map[string]any{"a": 2}, true, "a")
-	h.Stub.WhenType("b").Delay(2*time.Second).Success(map[string]any{"b": 2}, true, "b")
-	h.Stub.WhenType("c").Delay(2*time.Second).Success(map[string]any{"c": 2}, true, "c")
-
-	invalidate := func(id shared.UUID) {
-		t.Helper()
-		resp, err := http.Post(h.ControlBase+"/v1/nodes/"+id.String()+"/invalidate",
-			"application/json", bytes.NewReader([]byte(`{}`)))
-		require.NoError(t, err)
-		_ = resp.Body.Close()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
+	countRuns := func(nodeType string) int {
+		n := 0
+		for _, obs := range h.Stub.Observed() {
+			if obs.NodeType == nodeType {
+				n++
+			}
+		}
+		return n
 	}
+	baselineRuns := countRuns("r")
+	require.GreaterOrEqual(t, baselineRuns, 1, "r should have run at least once initially")
 
-	// Invalidate A first; B and C are still fresh.
-	invalidate(a.ID)
-	// Layer in B and C while A is in flight. Each invalidation must
-	// also gate R via the cascade walk; otherwise R would race A's
-	// settlement.
-	invalidate(b.ID)
-	invalidate(c.ID)
+	// Re-script: A stays fast; B and C are held in-flight until the
+	// test releases them, pinning the in-flight set at each midpoint.
+	releaseB := make(chan struct{})
+	releaseC := make(chan struct{})
+	h.Stub.WhenType("a").Success(map[string]any{"a": 2}, true, "a")
+	h.Stub.WhenType("b").HoldUntil(releaseB).Success(map[string]any{"b": 2}, true, "b")
+	h.Stub.WhenType("c").HoldUntil(releaseC).Success(map[string]any{"c": 2}, true, "c")
+	h.Stub.WhenType("r").Success(map[string]any{"r": 2}, true, "r")
 
-	// Once all three settle, the wait-set drain releases R and R
-	// re-runs to fresh. With the bug present (cascade walk only at
-	// settlement), R would dispatch as soon as A drained — observing
-	// stale data from still-running B and C; the test would time out
-	// or R's "r" value would reflect the wrong frame's data.
+	// One invalidation, one frame: A re-runs; its settlement marks B
+	// and C stale in the same frame and both dispatch into the holds.
+	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate",
+		"application/json", bytes.NewReader([]byte(`{}`)))
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should re-reach fresh")
+
+	// Wait until both senders are actually in-flight (dispatched into
+	// the stub holds) so the first midpoint observes two held runs.
+	require.Eventually(t, func() bool {
+		return countRuns("b") >= 2 && countRuns("c") >= 2
+	}, 30*time.Second, 25*time.Millisecond, "b and c should both dispatch into their holds")
+
+	// assertReceiverNotDispatchEligible holds the midpoint for a
+	// window and asserts R is never claimed for dispatch: its
+	// in-flight run row (when present) stays pending and unclaimed —
+	// settled rows persist with phase='completed' and are out of
+	// scope — and the stub never observes another `r` execution.
+	assertReceiverNotDispatchEligible := func(midpoint string) {
+		t.Helper()
+		deadline := time.Now().Add(1500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			var ineligibleRowViolations int
+			h.QueryRowSQL(
+				`SELECT COUNT(*) FROM rimsky_node_runs
+				  WHERE node_id = $1
+				    AND phase IN ('pending','active','held','parked')
+				    AND (claimed_by IS NOT NULL OR phase <> 'pending')`,
+				[]any{r.ID}, &ineligibleRowViolations)
+			require.Zerof(t, ineligibleRowViolations,
+				"%s: r's run row was claimed or transitioned out of pending while a subscribed upstream was in-flight", midpoint)
+			require.Equalf(t, baselineRuns, countRuns("r"),
+				"%s: r dispatched while a subscribed upstream was in-flight", midpoint)
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	// Midpoint 1: both B and C in-flight. R must not be dispatch-
+	// eligible (its staleness arrived via the invalidation walk; both
+	// senders are in-flight in the frame).
+	assertReceiverNotDispatchEligible("midpoint 1 (b and c in-flight)")
+
+	// Release B; C stays held. B's settlement marks R stale via the
+	// settlement walk — the propagation path that seeds NO next-tier
+	// wait-set gate for C. This midpoint is the regression pin: only
+	// the in-flight-upstream eligibility condition keeps R parked
+	// here.
+	close(releaseB)
 	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
-		"b should re-reach fresh")
+		"b should re-reach fresh after release")
+
+	// Midpoint 2: C still in-flight; R stale via B's settlement.
+	assertReceiverNotDispatchEligible("midpoint 2 (c in-flight after b settled)")
+
+	// Release C: the last in-flight upstream settles, R becomes
+	// eligible, dispatches, and the frame resolves.
+	close(releaseC)
 	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 30*time.Second),
-		"c should re-reach fresh")
+		"c should re-reach fresh after release")
 	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
-		"r should re-reach fresh after a, b, c all re-run")
+		"r should re-reach fresh after both senders settle")
+
+	// R ran exactly once for the whole diamond re-run: never against a
+	// half-settled upstream set, and not re-fired per sender.
+	require.Eventually(t, func() bool { return countRuns("r") == baselineRuns+1 },
+		10*time.Second, 25*time.Millisecond, "r should run exactly once after the last upstream settles")
+	// Grace window: no straggler second dispatch.
+	time.Sleep(1 * time.Second)
+	require.Equal(t, baselineRuns+1, countRuns("r"),
+		"r must run exactly once per frame, not once per settling sender")
 }
 
 // TestSubscriptionCascade_CrossCuttingPositive covers cross-cutting
@@ -243,6 +316,19 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
 		"monitor should reach fresh from its own initial frame")
 
+	// Snapshot the monitor's ledger before the invalidate (it ran once
+	// in the initial frame). The steady-state sampler below can miss a
+	// spurious re-run that starts and settles between samples — run
+	// rows leave the in-flight phase set at terminal — so quiescence is
+	// additionally asserted on the append-only event log afterwards
+	// (2026-06-11 polling audit).
+	monitorID := monitor.ID
+	monitorDispatchEvents := func() int {
+		return len(eventwait.Events(h.Ctx, t, h.Persist,
+			eventwait.Matcher{NodeID: &monitorID, Kind: "work_started", KindPrefix: "terminal/"}))
+	}
+	monitorEventsBefore := monitorDispatchEvents()
+
 	// Invalidate worker; monitor MUST NOT re-fire because no edge
 	// connects them.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "w-ok-2")
@@ -275,6 +361,12 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+
+	// Durable-record check: the monitor gained no dispatch/terminal
+	// events across the window — a transient run that slipped between
+	// samples cannot hide from the append-only ledger.
+	require.Equal(t, monitorEventsBefore, monitorDispatchEvents(),
+		"monitor must gain no dispatch/terminal events from the worker invalidate (no subscription edge)")
 }
 
 // TestSubscriptionCascade_FrameEndCleansWaitSet verifies that after

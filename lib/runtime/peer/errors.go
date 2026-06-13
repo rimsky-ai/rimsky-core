@@ -21,15 +21,21 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// ProducerCallError is returned by remote claim-producer calls when
-// the underlying gRPC call failed. It carries the rimsky error_class
-// extracted from the gRPC status's ErrorInfo detail (or "" if none).
-// The error-policy chain at applyErrorPolicy reads ErrorClass to
-// consult the template's error_types: chain.
+// ProducerCallError is returned by remote producer-protocol calls
+// (claim-producer verbs, data_processing mix-in verbs) when the
+// underlying gRPC call failed. It carries the rimsky error_class
+// extracted from the gRPC status's ErrorInfo detail (or "" if none)
+// and the producer's own status message. Two consumers read it:
+//   - the supervisor's error-policy chain (applyErrorPolicy) reads
+//     ErrorClass to consult the template's error_types: chain;
+//   - the control-api's writeError reads ProducerName / ErrorClass /
+//     Message so an API-triggered producer failure crosses the HTTP
+//     boundary intact instead of collapsing into a bare 500.
 type ProducerCallError struct {
 	ProducerName string
-	Method       string // "Open", "Commit", etc.
+	Method       string // "Open", "Commit", "DataProcessing.ListVersions", etc.
 	ErrorClass   string // empty if no ErrorInfo on the gRPC status
+	Message      string // the producer-transmitted gRPC status message
 	Underlying   error
 }
 
@@ -38,6 +44,22 @@ func (e *ProducerCallError) Error() string {
 }
 
 func (e *ProducerCallError) Unwrap() error { return e.Underlying }
+
+// NewProducerCallError builds a ProducerCallError from a failed remote
+// producer call, extracting the rimsky error_class (ErrorInfo.Reason)
+// and the producer's own status message from the gRPC status. The
+// single constructor keeps every translation site — claim-producer
+// verbs, data_processing verbs — carrying the same structured fields,
+// so no boundary discards what the producer transmitted.
+func NewProducerCallError(producerName, method string, err error) *ProducerCallError {
+	return &ProducerCallError{
+		ProducerName: producerName,
+		Method:       method,
+		ErrorClass:   extractErrorClass(err),
+		Message:      extractStatusMessage(err),
+		Underlying:   err,
+	}
+}
 
 // extractErrorClass walks the gRPC status details for a
 // google.rpc.ErrorInfo entry and returns its Reason as the
@@ -53,4 +75,19 @@ func extractErrorClass(err error) string {
 		}
 	}
 	return ""
+}
+
+// extractStatusMessage returns the gRPC status message (the
+// producer-authored description) for err, or err.Error() when err is
+// not a gRPC status error. status.FromError never returns a nil
+// status for a non-nil error, so the message is always populated.
+func extractStatusMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return err.Error()
+	}
+	return st.Message()
 }

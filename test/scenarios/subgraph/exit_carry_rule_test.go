@@ -10,154 +10,316 @@
 // .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 // §Sub-graphs / Aggregation / Writeback carry-rule for exit.
 //
-// This is a unit-level smoke against the `CarryExitWriteback` helper:
-// it consults the run-tree row + RunScope to locate the parent and
-// validates the writeback bytes JSON-decode. Per @blessed-invariant 20
-// the helper does not mangle bytes — it round-trips through json.Unmarshal
-// only to enforce the schema contract.
+// The carry is the carry-verbatim settlement shape of the unified
+// settle-children primitive (`runtime.SettleChildren`): it consults the
+// run-tree row + RunScope to locate the parent, validates the writeback
+// bytes JSON-decode, upserts the parent's attribute row, and closes the
+// sub-graph RunScope — all inside the caller's tx. Per
+// @blessed-invariant 20 the primitive does not mangle bytes — it
+// round-trips through json.Unmarshal only to enforce the schema
+// contract. Exercised here against a real SQLite backend so the
+// carry-writeback + scope-close atomicity is asserted against actual
+// persisted rows.
 package subgraph
 
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	persistence "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
-// fakeRunTreeForExit is the minimal RunTreeTable stand-in
-// CarryExitWriteback consults. We only need GetByID; other methods
-// return zero values so the interface satisfies the persistence
-// contract.
-type fakeRunTreeForExit struct {
-	rows map[shared.UUID]*persistence.RunTreeRow
+// carryFixture is the persisted sub-graph shape the carry-rule fires
+// against: a calling-node parent run in the instance's main RunScope,
+// plus an exit leaf run inside a child RunScope whose parent_run_id
+// points back at the parent run.
+type carryFixture struct {
+	tables      persistence.Tables
+	instanceID  shared.UUID
+	parentRunID shared.UUID
+	exitRunID   shared.UUID
+	exitScopeID shared.UUID
+	exitNodeID  shared.UUID
 }
 
-func (f *fakeRunTreeForExit) CreateRootRun(ctx context.Context, tx persistence.Tx, in persistence.CreateRootRunInput) error {
-	return nil
-}
-func (f *fakeRunTreeForExit) CreateChildRun(ctx context.Context, tx persistence.Tx, in persistence.CreateChildRunInput) error {
-	return nil
-}
-func (f *fakeRunTreeForExit) GetByID(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
-	return f.rows[runID], nil
-}
-func (f *fakeRunTreeForExit) LockTreeForUpdate(ctx context.Context, tx persistence.Tx, runID shared.UUID) (*persistence.RunTreeRow, error) {
-	return f.rows[runID], nil
-}
-func (f *fakeRunTreeForExit) ListChildren(ctx context.Context, tx persistence.Tx, parentRunID shared.UUID) ([]persistence.RunTreeRow, error) {
-	return nil, nil
-}
-func (f *fakeRunTreeForExit) UpdateStateAndOutcome(ctx context.Context, tx persistence.Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string) error {
-	return nil
-}
-func (f *fakeRunTreeForExit) UpdateAggregationPolicy(ctx context.Context, tx persistence.Tx, runID shared.UUID, policy tmplspec.AggregationPolicy) error {
-	return nil
+// openSQLiteTables opens a throwaway file-backed SQLite database and
+// migrates it.
+func openSQLiteTables(t *testing.T) persistence.Tables {
+	t.Helper()
+	ctx := context.Background()
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver: "sqlite",
+		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(t.TempDir(), "state.db")},
+	})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d.Tables()
 }
 
-// fakeRunScopeForExit is the minimal RunScopeTable stand-in
-// CarryExitWriteback consults via args.RunScopes.GetByID. Keyed on
-// RunScopeID.
-type fakeRunScopeForExit struct {
-	rows map[shared.UUID]*persistence.RunScopeRow
-}
+// makeFixture seeds template → main RunScope → instance → nodes →
+// frame → parent run → sub-graph RunScope → exit run.
+func makeFixture(t *testing.T) carryFixture {
+	t.Helper()
+	ctx := context.Background()
+	tables := openSQLiteTables(t)
 
-func (f *fakeRunScopeForExit) Create(context.Context, persistence.Tx, persistence.RunScopeRow) error {
-	return nil
-}
-func (f *fakeRunScopeForExit) GetByID(_ context.Context, _ persistence.Tx, id shared.UUID) (*persistence.RunScopeRow, error) {
-	return f.rows[id], nil
-}
-func (f *fakeRunScopeForExit) GetFanoutPartition(context.Context, persistence.Tx, shared.UUID, string) (*persistence.RunScopeRow, error) {
-	return nil, nil
-}
-func (f *fakeRunScopeForExit) Close(context.Context, persistence.Tx, shared.UUID) error {
-	return nil
-}
-func (f *fakeRunScopeForExit) ListChildScopes(context.Context, persistence.Tx, shared.UUID) ([]persistence.RunScopeRow, error) {
-	return nil, nil
-}
-func (f *fakeRunScopeForExit) ListParentChain(context.Context, persistence.Tx, shared.UUID) ([]persistence.RunScopeRow, error) {
-	return nil, nil
-}
-
-// makeFixture builds a (RunTree, RunScopes) pair where exit is in a
-// child RunScope whose parent_run_id points at parentID.
-func makeFixture(parentID, exitID shared.UUID) (*fakeRunTreeForExit, *fakeRunScopeForExit) {
-	parentScopeID := shared.UUID(uuid.New())
+	templateHash := "sha256-" + uuid.NewString()
+	instanceID := shared.UUID(uuid.New())
+	mainScopeID := shared.UUID(uuid.New())
+	callerNodeID := shared.UUID(uuid.New())
+	exitNodeID := shared.UUID(uuid.New())
+	parentRunID := shared.UUID(uuid.New())
 	exitScopeID := shared.UUID(uuid.New())
-	parent := &persistence.RunTreeRow{RunID: parentID, NodeID: shared.UUID(uuid.New()), RunScopeID: parentScopeID, State: cascade.NodeStateRunning}
-	exit := &persistence.RunTreeRow{RunID: exitID, NodeID: shared.UUID(uuid.New()), RunScopeID: exitScopeID, State: cascade.NodeStateRunning}
-	rt := &fakeRunTreeForExit{rows: map[shared.UUID]*persistence.RunTreeRow{parentID: parent, exitID: exit}}
-	scopes := &fakeRunScopeForExit{rows: map[shared.UUID]*persistence.RunScopeRow{
-		parentScopeID: {ID: parentScopeID, GraphName: "main"},
-		exitScopeID:   {ID: exitScopeID, ParentRunScopeID: &parentScopeID, ParentRunID: &parentID, GraphName: "subgraph"},
-	}}
-	return rt, scopes
-}
+	exitRunID := shared.UUID(uuid.New())
 
-func TestCarryExitWriteback_AcceptsValidJSON(t *testing.T) {
-	t.Parallel()
-	parentID := shared.UUID(uuid.New())
-	exitID := shared.UUID(uuid.New())
-	rt, scopes := makeFixture(parentID, exitID)
+	tmpl := tmplspec.TemplateSpec{
+		Name:                "exit-carry-fixture",
+		Version:             "1",
+		FrameResolutionMode: tmplspec.FrameResolutionSerialQueue,
+		FrameTimeoutMs:      600000,
+		Nodes: []tmplspec.TemplateNodeDef{
+			{Type: "caller", Delegate: "inner"},
+			{Type: "inner-exit", Executor: "test-executor"},
+		},
+	}
 
-	writeback := json.RawMessage(`{"version_id":"v42","row_count":1024}`)
-	if err := runtime.CarryExitWriteback(context.Background(),
-		runtime.PropagationArgs{RunTree: rt, RunScopes: scopes}, nil, exitID, writeback); err != nil {
-		t.Fatalf("CarryExitWriteback: %v", err)
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := tables.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID:     templateHash,
+			Spec:   tmpl,
+			State:  persistence.TemplateStateRegistered,
+			Source: "direct",
+		}, tx); err != nil {
+			return err
+		}
+		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         mainScopeID,
+			GraphName:  tmplspec.MainGraphName,
+			InstanceID: instanceID,
+		}); err != nil {
+			return err
+		}
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:             instanceID,
+			TemplateHash:   templateHash,
+			MainRunScopeID: mainScopeID,
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := tables.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: callerNodeID, InstanceID: instanceID,
+			NodeType: "caller",
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := tables.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: exitNodeID, InstanceID: instanceID,
+			NodeType: "inner-exit", Executor: "test-executor",
+		}, tx); err != nil {
+			return err
+		}
+		frameID, err := tables.Frames().EnqueueSerialFrame(ctx, instanceID, callerNodeID, 600000, tx)
+		if err != nil {
+			return err
+		}
+		if _, err := tables.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx); err != nil {
+			return err
+		}
+		// Parent (calling-node) run in the main scope.
+		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
+			RunID: parentRunID, NodeID: callerNodeID, FrameID: frameID,
+			RunScopeID: mainScopeID,
+		}); err != nil {
+			return err
+		}
+		// Sub-graph RunScope rooted under the parent run.
+		parentRunIDCopy := parentRunID
+		mainScopeIDCopy := mainScopeID
+		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               exitScopeID,
+			ParentRunScopeID: &mainScopeIDCopy,
+			ParentRunID:      &parentRunIDCopy,
+			GraphName:        "inner",
+			InstanceID:       instanceID,
+		}); err != nil {
+			return err
+		}
+		// Exit leaf run inside the sub-graph scope.
+		return tables.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
+			RunID: exitRunID, NodeID: exitNodeID, FrameID: frameID,
+			RunScopeID: exitScopeID, ExecutorName: "test-executor",
+		})
+	}); err != nil {
+		t.Fatalf("seed fixture: %v", err)
+	}
+	return carryFixture{
+		tables:      tables,
+		instanceID:  instanceID,
+		parentRunID: parentRunID,
+		exitRunID:   exitRunID,
+		exitScopeID: exitScopeID,
+		exitNodeID:  exitNodeID,
 	}
 }
 
-func TestCarryExitWriteback_RejectsNonJSONBytes(t *testing.T) {
+// settleCarry drives runtime.SettleChildren with the carry-verbatim
+// policy inside one transaction — the same shape the runner-tx wrapper
+// (applyTerminalCompleteSubgraphExit) uses.
+func settleCarry(fx carryFixture, exitRunID shared.UUID, writeback json.RawMessage) error {
+	args := runtime.RunArgs{Persist: fx.tables, Logger: shared.SilentLogger{}}
+	return fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		return runtime.SettleChildren(ctx, args, tx, runtime.ChildSettlementInput{
+			Policy:        tmplspec.AggregationPolicy{Kind: tmplspec.AggregationKindCarryVerbatim},
+			ExitRunID:     exitRunID,
+			ExitNodeID:    fx.exitNodeID,
+			ExitNodeAlias: "inner-exit",
+			InstanceID:    fx.instanceID,
+			Writeback:     writeback,
+		})
+	})
+}
+
+// readParentAttrs loads the parent run's attribute row inside a tx
+// (the sqlite driver enforces the no-nil-tx contract).
+func readParentAttrs(t *testing.T, fx carryFixture) *persistence.NodeAttributesRow {
+	t.Helper()
+	var attrs *persistence.NodeAttributesRow
+	if err := fx.tables.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		attrs, err = fx.tables.NodeAttributes().GetByRun(ctx, fx.parentRunID, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("load parent attributes: %v", err)
+	}
+	return attrs
+}
+
+func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 	t.Parallel()
-	parentID := shared.UUID(uuid.New())
-	exitID := shared.UUID(uuid.New())
-	rt, scopes := makeFixture(parentID, exitID)
+	ctx := context.Background()
+	fx := makeFixture(t)
+
+	writeback := json.RawMessage(`{"version_id":"v42","row_count":1024}`)
+	if err := settleCarry(fx, fx.exitRunID, writeback); err != nil {
+		t.Fatalf("SettleChildren (carry-verbatim): %v", err)
+	}
+
+	// The carry landed verbatim on the PARENT run's attribute row
+	// (@blessed-invariant: exit-node-writeback flows to parent run
+	// writeback).
+	attrs := readParentAttrs(t, fx)
+	if attrs == nil {
+		t.Fatalf("parent run has no attribute row after carry")
+	}
+	if got := attrs.Data["version_id"]; got != "v42" {
+		t.Errorf("carried version_id = %v, want v42", got)
+	}
+	if got := attrs.Data["row_count"]; got != float64(1024) {
+		t.Errorf("carried row_count = %v, want 1024", got)
+	}
+
+	// The child execution context closed atomically with the carry
+	// (carry-rule atomicity: same transaction as the writeback).
+	var scope *persistence.RunScopeRow
+	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		scope, err = fx.tables.RunScopes().GetByID(ctx, tx, fx.exitScopeID)
+		return err
+	}); err != nil {
+		t.Fatalf("load exit scope: %v", err)
+	}
+	if scope == nil || scope.ClosedAt == nil {
+		t.Errorf("sub-graph RunScope not closed after carry settlement")
+	}
+
+	// Forensics: the `subgraph.exit_carry` event was appended.
+	instanceID := fx.instanceID
+	var res persistence.EventListResult
+	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		res, err = fx.tables.Events().List(ctx,
+			persistence.EventListFilter{InstanceID: &instanceID},
+			persistence.ListPagination{Limit: 50}, tx)
+		return err
+	}); err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	found := false
+	for _, e := range res.Events {
+		if e.Kind == events.KindSubgraphExitCarry() {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no subgraph.exit_carry event after carry settlement")
+	}
+}
+
+func TestSettleChildren_CarryVerbatim_RejectsNonJSONBytes(t *testing.T) {
+	t.Parallel()
+	fx := makeFixture(t)
 
 	bogus := json.RawMessage(`not-json{`)
-	err := runtime.CarryExitWriteback(context.Background(),
-		runtime.PropagationArgs{RunTree: rt, RunScopes: scopes}, nil, exitID, bogus)
-	if err == nil {
+	if err := settleCarry(fx, fx.exitRunID, bogus); err == nil {
 		t.Fatalf("expected JSON-decode error for non-JSON writeback bytes")
 	}
 }
 
-func TestCarryExitWriteback_RejectsRunWithoutParent(t *testing.T) {
+func TestSettleChildren_CarryVerbatim_RejectsRunWithoutParent(t *testing.T) {
 	t.Parallel()
-	rootID := shared.UUID(uuid.New())
-	rootScopeID := shared.UUID(uuid.New())
-	root := &persistence.RunTreeRow{RunID: rootID, NodeID: shared.UUID(uuid.New()), RunScopeID: rootScopeID}
-	rt := &fakeRunTreeForExit{rows: map[shared.UUID]*persistence.RunTreeRow{rootID: root}}
-	scopes := &fakeRunScopeForExit{rows: map[shared.UUID]*persistence.RunScopeRow{
-		rootScopeID: {ID: rootScopeID, GraphName: "main"}, // no parent
-	}}
+	fx := makeFixture(t)
 
+	// The PARENT run lives in the main RunScope (no parent_run_id) —
+	// settling it as if it were a sub-graph exit must error.
 	wb := json.RawMessage(`{"a":1}`)
-	err := runtime.CarryExitWriteback(context.Background(),
-		runtime.PropagationArgs{RunTree: rt, RunScopes: scopes}, nil, rootID, wb)
-	if err == nil {
+	if err := settleCarry(fx, fx.parentRunID, wb); err == nil {
 		t.Fatalf("expected error for run without parent (root run cannot carry to a parent)")
 	}
 }
 
-func TestCarryExitWriteback_NoOpOnEmptyWriteback(t *testing.T) {
+func TestSettleChildren_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(t *testing.T) {
 	t.Parallel()
-	parentID := shared.UUID(uuid.New())
-	exitID := shared.UUID(uuid.New())
-	rt, scopes := makeFixture(parentID, exitID)
+	ctx := context.Background()
+	fx := makeFixture(t)
 
-	// Empty writeback is a legal no-op: per spec §Writeback carry-rule
-	// for exit, "if exit never runs ... the parent's writeback row
-	// remains empty." Zero-byte writeback is equivalent.
-	if err := runtime.CarryExitWriteback(context.Background(),
-		runtime.PropagationArgs{RunTree: rt, RunScopes: scopes}, nil, exitID, nil); err != nil {
-		t.Errorf("CarryExitWriteback with empty writeback should be a no-op, got: %v", err)
+	// An empty writeback skips ONLY the attribute upsert: per spec
+	// §Writeback carry-rule for exit, "if exit never runs ... the
+	// parent's writeback row remains empty." Zero-byte writeback is
+	// equivalent — but the REST of the settlement (RunScope close,
+	// exit-carry forensics) must still run, or the scope leaks open.
+	// The runner-wrapper twin of this case lives in
+	// lib/runtime/subgraph_exit_carry_empty_test.go.
+	if err := settleCarry(fx, fx.exitRunID, nil); err != nil {
+		t.Errorf("SettleChildren with empty writeback should succeed, got: %v", err)
+	}
+	attrs := readParentAttrs(t, fx)
+	if attrs != nil && len(attrs.Data) > 0 {
+		t.Errorf("parent writeback row should remain empty on empty carry, got %v", attrs.Data)
+	}
+	// The sub-graph RunScope still closes on the empty carry.
+	var scope *persistence.RunScopeRow
+	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var err error
+		scope, err = fx.tables.RunScopes().GetByID(ctx, tx, fx.exitScopeID)
+		return err
+	}); err != nil {
+		t.Fatalf("load exit scope: %v", err)
+	}
+	if scope == nil || scope.ClosedAt == nil {
+		t.Errorf("sub-graph RunScope must close on the empty-writeback carry")
 	}
 }

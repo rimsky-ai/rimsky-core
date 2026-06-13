@@ -41,24 +41,17 @@
 //     resolution via the calling node's run id).
 //
 //   - Exit-node terminal: copy exit's writeback to the parent's writeback
-//     row in the same transaction as exit's terminal write.
+//     row in the same transaction as exit's terminal write. The carry is
+//     the carry-verbatim settlement shape of the unified settle-children
+//     primitive (`child_execution.go::SettleChildren`, which carries the
+//     `@blessed-invariant: exit-node-writeback` annotation at the carry
+//     site); `applyTerminalCompleteSubgraphExit` below is the thin
+//     runner-tx wrapper.
 //
-//     @blessed-invariant: exit-node-writeback flows to parent run writeback
-//     (per R3 — recorded in the spec, see §Sub-graphs / Aggregation /
-//     Writeback carry-rule for exit).
-//
-// File status — V1 wiring posture:
-//
-// The helpers in this file are pure (no DB-touching glue) so they can
-// be exercised in unit tests against in-memory shapes. The integration
-// into `runtime/runner_terminal.go` (entry-success path → FireInternalCascade,
-// exit-node terminal → CarryExitWriteback) lands when sub-graph
-// canonicalization at the template layer reaches the point of emitting
-// (a) the `IsSubgraphEntryAbsorbed` marker on calling nodes and
-// (b) the `IsSubgraphExit` marker on exit nodes. The D2 canonicalizer
-// landed the graph-flatten path; both markers are now emitted at
+// Both markers the runtime routes on (`IsSubgraphEntryAbsorbed` on
+// calling nodes, `IsSubgraphExit` on exit nodes) are emitted at
 // canonicalization (see graph/node/template_validator_graphs.go::flatten),
-// so the runtime can route on `acq.NodeDef` alone without per-terminal
+// so the runtime routes on `acq.NodeDef` alone without per-terminal
 // template lookups.
 
 package runtime
@@ -68,13 +61,10 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
-
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
@@ -149,137 +139,6 @@ func SubgraphInternalCascade(in SubgraphInternalCascadeArgs) ([]node.TemplateNod
 	return nil, fmt.Errorf(
 		"SubgraphInternalCascade: delegate graph %q not declared in template",
 		in.DelegateGraphName)
-}
-
-// CarryExitWriteback is the dispatch-side helper that implements the
-// exit-node writeback carry-rule. At the exit node's leaf-run terminal
-// write, the supervisor copies exit's writeback bytes onto the parent
-// run's writeback row. Spec §Sub-graphs / Writeback carry-rule for exit:
-// "the parent's writeback IS whatever the exit produced; if exit never
-// runs (e.g. an internal node failed and strict.cancel_siblings
-// cancelled exit before it dispatched), the parent's writeback row
-// remains empty (NULL writeback bytes)."
-//
-// The aggregation engine in `state_propagation.go::PropagateFromChildState`
-// still produces a terminal state for the parent per the standard rule
-// table; only the writeback content is absent.
-//
-// Operates inside the caller's tx for atomicity with exit's terminal
-// write.
-//
-// @blessed-invariant: exit-node-writeback flows to parent run writeback
-// (annotated here; the persistence-layer write is the carry site).
-func CarryExitWriteback(
-	ctx context.Context,
-	args PropagationArgs,
-	tx persistence.Tx,
-	exitRunID shared.UUID,
-	writeback json.RawMessage,
-) error {
-	if args.RunTree == nil {
-		return fmt.Errorf("CarryExitWriteback: RunTree is required")
-	}
-	exit, err := args.RunTree.GetByID(ctx, tx, exitRunID)
-	if err != nil {
-		return fmt.Errorf("CarryExitWriteback: load exit run %s: %w", exitRunID, err)
-	}
-	if exit == nil {
-		return fmt.Errorf("CarryExitWriteback: run %s not found", exitRunID)
-	}
-	if args.RunScopes == nil {
-		return fmt.Errorf("CarryExitWriteback: RunScopes is required")
-	}
-	exitScope, err := args.RunScopes.GetByID(ctx, tx, exit.RunScopeID)
-	if err != nil {
-		return fmt.Errorf("CarryExitWriteback: load exit run scope %s: %w", exit.RunScopeID, err)
-	}
-	if exitScope == nil || exitScope.ParentRunID == nil {
-		// Exit has no parent — not a sub-graph internal. Caller error;
-		// the helper should not be invoked on non-sub-graph terminals.
-		// Surface a precise error so callers don't silently miscarry.
-		return fmt.Errorf("CarryExitWriteback: run %s has no parent; not a sub-graph exit", exitRunID)
-	}
-	// The persistence-layer carry: persistence stores writeback bytes
-	// on the run row via the NodeAttributesTable.Upsert helper (the
-	// generic writeback target). The parent's writeback inherits exit's
-	// final attribute map verbatim — opaque to rimsky per
-	// @blessed-invariant 20.
-	//
-	// Pre-v1: when the writeback column lands on rimsky_node_runs (the
-	// follow-up E1 work), this helper writes to that column. Today the
-	// runtime stores the parent's writeback projection on the parent's
-	// node-attributes row via the same upsert path the leaf terminal
-	// uses. The persistence layer treats both as inert bytes.
-	if len(writeback) == 0 {
-		// Exit produced no writeback bytes; nothing to carry.
-		return nil
-	}
-	var asMap map[string]any
-	if err := json.Unmarshal(writeback, &asMap); err != nil {
-		// Writeback bytes are not JSON-decodable. Per
-		// @blessed-invariant 20 we MUST NOT mangle or log the bytes;
-		// surface a typed error so the caller can fail the terminal at
-		// the standard writeback validation gate.
-		return fmt.Errorf("CarryExitWriteback: exit writeback bytes not JSON-decodable: %w", err)
-	}
-	// The parent run's node id maps to a rimsky_nodes row whose
-	// attribute schema is the calling node's. The caller has already
-	// validated exit's writeback shape against exit's own schema; the
-	// upsert below preserves whatever exit produced. If the calling
-	// node's schema is stricter than exit's, the post-carry validation
-	// (at the parent's terminal commit) will catch the mismatch via
-	// @blessed-invariant 12.
-	parentRunID := *exitScope.ParentRunID
-	parent, err := args.RunTree.GetByID(ctx, tx, parentRunID)
-	if err != nil {
-		return fmt.Errorf("CarryExitWriteback: load parent run %s: %w", parentRunID, err)
-	}
-	if parent == nil {
-		return fmt.Errorf("CarryExitWriteback: parent run %s not found", parentRunID)
-	}
-	// CarryExitWriteback validates the exit's writeback bytes and emits
-	// an audit log. The caller (applyTerminalCompleteSubgraphExit)
-	// performs the actual NodeAttributes().Upsert against the parent
-	// run's row so the subgraph's output is observable through the
-	// calling node's attribute surface per concept:delegation's
-	// "exit-node-writeback flows to parent run writeback" rule.
-	if args.Logger != nil {
-		args.Logger.Info("subgraph: carry exit writeback to parent run",
-			"exit_run_id", exitRunID.String(),
-			"parent_run_id", parentRunID.String(),
-			"parent_node_id", parent.NodeID.String(),
-			"writeback_field_count", len(asMap))
-	}
-	// Close the sub-graph RunScope atomically with the writeback carry.
-	// Per concept:run-scope §"Lifecycle / RunScope closure": a sub-graph
-	// RunScope is closed when the exit node terminates and the
-	// carry-rule fires. closed_at marks the parent-run rendezvous as
-	// having fired; subsequent AffirmNodeRunRow on this scope returns
-	// ErrRunScopeClosed. Close() is idempotent — re-closing is a no-op.
-	//
-	// @concept: run-scope
-	if err := args.RunScopes.Close(ctx, tx, exit.RunScopeID); err != nil {
-		return fmt.Errorf("CarryExitWriteback: close sub-graph run scope %s: %w", exit.RunScopeID, err)
-	}
-	// Fire OnRunScopeTerminal to lifecycle subscribers for this sub-graph
-	// RunScope, atomically with the close above. Resolve the template
-	// spec via the two-step instance → template lookup. No-op when the
-	// supervisor wasn't wired with lifecycle outbound (nil Persist /
-	// LifecycleSubs / LifecyclePeersForSpec) or when the lookups fail —
-	// the close is the load-bearing write and must not roll back on a
-	// fan-out resolution miss. Per spec
-	// 2026-05-24-host-agent-and-proxy-design.md §"Firing sites for
-	// OnRunScopeTerminal".
-	if args.Persist != nil {
-		if inst, err := args.Persist.Instances().Get(ctx, exitScope.InstanceID, tx); err == nil && inst != nil {
-			if tpl, err := args.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx); err == nil && tpl != nil {
-				FanOutRunScopeEvent(ctx, args.Persist, args.LifecycleSubs,
-					args.LifecyclePeersForSpec, tpl.Spec, exit.RunScopeID,
-					exitScope.InstanceID, "subgraph_exit", tx)
-			}
-		}
-	}
-	return nil
 }
 
 // SubgraphParentSuccessCascade is the entry-point the supervisor's
@@ -518,13 +377,17 @@ func applyTerminalCompleteSubgraphCaller(
 		cascade.NodeStateRunning, &settlingSig); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
 	}
-	// Sub-graph internal-cascade dispatch: for each non-entry internal
-	// node, create a child run row keyed to this calling run
-	// (`parent_run_id = acq.DispatchID`, `child_key = node-type alias`)
-	// and stale-mark the rimsky_nodes row so the next scheduler tick /
-	// SweepReady picks the row up for dispatch. State-propagation
-	// aggregates the children's terminals back to this parent on
-	// completion via PropagateFromChildState.
+	// Sub-graph internal-cascade dispatch: delegation is the degenerate
+	// child-execution shape — ONE partition (the sub-graph RunScope,
+	// empty partition key) holding one child run per non-entry internal
+	// node, entry absorbed (the parent's executor terminal WAS the
+	// absorbed entry's, so each child run is stale-marked for the
+	// cascade walker / SweepReady to pick up). The per-partition
+	// RunScope + child-row allocation runs in the unified
+	// `child_execution.go::DispatchChildren` primitive, inside this
+	// caller's tx. State-propagation aggregates the children's
+	// terminals back to this parent on completion via
+	// PropagateFromChildState.
 	if len(internalNodes) > 0 {
 		instNodes, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
 		if err != nil {
@@ -534,56 +397,31 @@ func applyTerminalCompleteSubgraphCaller(
 		for _, n := range instNodes {
 			byType[n.NodeType] = n
 		}
-		// Allocate the subgraph RunScope shared by every internal
-		// node's run. Per concept:run-scope, sub-graph RunScopes are
-		// inserted eagerly at the calling-node success terminal.
-		// `partition_key` is empty for the subgraph kind;
-		// `parent_run_id` is the calling run.
-		parentScope, err := args.Persist.RunScopes().GetByID(ctx, tx, acq.RunScopeID)
-		if err != nil {
-			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: load parent scope: %w", err)
-		}
-		if parentScope == nil {
-			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: parent run scope %s not found", acq.RunScopeID)
-		}
-		subgraphScopeID := shared.UUID(uuid.New())
-		parentScopeIDCopy := parentScope.ID
-		callingRunID := acq.DispatchID
-		if err := args.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
-			ID:               subgraphScopeID,
-			ParentRunScopeID: &parentScopeIDCopy,
-			ParentRunID:      &callingRunID,
-			GraphName:        acq.NodeDef.Delegate,
-			InstanceID:       acq.InstanceID,
-		}); err != nil {
-			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: create subgraph scope: %w", err)
-		}
+		children := make([]ChildRunSpec, 0, len(internalNodes))
 		for _, def := range internalNodes {
 			nrow, ok := byType[def.Type]
 			if !ok {
 				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: internal node %q has no rimsky_nodes row in instance %s",
 					def.Type, acq.InstanceID.String())
 			}
-			if _, err := CreateChildRun(ctx, tx, args.Persist.RunTree(), args.Queue,
-				nrow.ID, acq.FrameID, subgraphScopeID,
-				def.Executor, node.RequiredStores(def),
-				spec.AggregationPolicy{}); err != nil {
-				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: create child run %q: %w", def.Type, err)
-			}
-			// MarkStaleForCascade now keys on (run_id, frame_id);
-			// resolve the just-created run id via the queue helper.
-			// AffirmNodeRunRow is unnecessary because CreateChildRun
-			// above already INSERTed the run row inside the same tx.
-			runID, found, err := args.Queue.GetInFlightRunForNode(ctx, tx, nrow.ID, subgraphScopeID)
-			if err != nil {
-				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: resolve run for %q: %w", def.Type, err)
-			}
-			if !found {
-				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: in-flight run missing for %q", def.Type)
-			}
-			if err := args.Persist.Nodes().MarkStaleForCascade(ctx, runID, acq.FrameID, tx); err != nil {
-				return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: stale-mark %q: %w", def.Type, err)
-			}
+			children = append(children, ChildRunSpec{
+				NodeID:         nrow.ID,
+				Executor:       def.Executor,
+				RequiredStores: node.RequiredStores(def),
+			})
+		}
+		if _, err := DispatchChildren(ctx, args, tx, ChildExecutionInput{
+			ParentRunID:       acq.DispatchID,
+			ParentRunScopeID:  acq.RunScopeID,
+			InstanceID:        acq.InstanceID,
+			FrameID:           acq.FrameID,
+			ChildGraphName:    acq.NodeDef.Delegate,
+			AggregationPolicy: spec.AggregationPolicy{},
+			EntryAbsorbed:     true,
+			Partitions:        []PartitionDescriptor{{PartitionKey: ""}},
+			Children:          children,
+		}); err != nil {
+			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
 		}
 	}
 	// Emit the cascade-fire event for observability + audit. Two events
@@ -662,139 +500,55 @@ func applyTerminalCompleteSubgraphCaller(
 }
 
 // applyTerminalCompleteSubgraphExit is the runner-tx wiring for the
-// sub-graph exit-node's success-branch terminal. Per spec §Sub-graphs
-// / Writeback carry-rule for exit, the parent run's writeback IS
-// whatever the exit produced. The helper invokes `CarryExitWriteback`
-// inside a tx so the parent's writeback bytes commit atomically with
-// the rest of the exit terminal's standard release path.
+// sub-graph exit-node's success-branch terminal — a thin wrapper over
+// the unified settle-children primitive
+// (`child_execution.go::SettleChildren`). Per spec §Sub-graphs /
+// Writeback carry-rule for exit, the parent run's writeback IS
+// whatever the exit produced: delegation settlement is the
+// carry-verbatim degenerate case — the single settlement child's
+// (the exit's) outcome carries verbatim to the parent, the sub-graph
+// RunScope closes, and the parent-settlement cascade bridge fires,
+// all inside the primitive and inside this caller's tx so the carry
+// commits atomically with the rest of the exit terminal's standard
+// release path. Template validation guarantees the N=1 shape
+// (carry_verbatim_requires_single_child).
 //
 //	@concept: sub-graph
+//	@concept: delegation
 //	@concept: run-scope
-//	@blessed-invariant: exit-node-writeback flows to parent run writeback
 func applyTerminalCompleteSubgraphExit(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, tx persistence.Tx,
 ) error {
-	// Encode the merged attributes back to bytes so CarryExitWriteback's
+	// Encode the merged attributes back to bytes so SettleChildren's
 	// JSON-decodable check has something to validate. Per
 	// @blessed-invariant 20 we do not transform the bytes — we ROUND
 	// TRIP through json.Marshal to match the persistence-layer
-	// representation, then CarryExitWriteback validates and records.
-	if len(merged) == 0 {
-		// Exit produced no writeback; nothing to carry.
-		return nil
-	}
-	wb, err := json.Marshal(merged)
-	if err != nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: encode writeback: %w", err)
-	}
-	if err := CarryExitWriteback(ctx, PropagationArgs{
-		RunTree:               args.Persist.RunTree(),
-		RunScopes:             args.Persist.RunScopes(),
-		ClaimHandles:          args.ClaimHandles,
-		Logger:                args.Logger,
-		Persist:               args.Persist,
-		LifecycleSubs:         args.LifecycleSubs,
-		LifecyclePeersForSpec: args.LifecyclePeersForSpec,
-	}, tx, acq.DispatchID, wb); err != nil {
-		return err
-	}
-
-	// Carry the exit's writeback to the parent run's attribute row.
-	// The blessed-invariant ("exit-node-writeback flows to parent
-	// run writeback") requires the parent's row to contain the
-	// exit's bytes so downstream consumers reading
-	// {{nodes.<calling-node>.attribute.<field>}} see the subgraph's
-	// output. CarryExitWriteback only validates + logs; the Upsert
-	// lives here because the caller has NodeAttributeTable in scope.
-	exit, err := args.Persist.RunTree().GetByID(ctx, tx, acq.DispatchID)
-	if err != nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load exit run: %w", err)
-	}
-	if exit == nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: exit run %s not found", acq.DispatchID)
-	}
-	exitScope, err := args.Persist.RunScopes().GetByID(ctx, tx, exit.RunScopeID)
-	if err != nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load exit run scope %s: %w", exit.RunScopeID, err)
-	}
-	if exitScope == nil || exitScope.ParentRunID == nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: exit run %s has no parent", acq.DispatchID)
-	}
-	parent, err := args.Persist.RunTree().GetByID(ctx, tx, *exitScope.ParentRunID)
-	if err != nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load parent run %s: %w", *exitScope.ParentRunID, err)
-	}
-	if parent == nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: parent run %s not found", *exitScope.ParentRunID)
-	}
-	if err := args.Persist.NodeAttributes().Upsert(
-		ctx, parent.RunID, parent.NodeID, merged, tx,
-	); err != nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: upsert parent attributes: %w", err)
-	}
-
-	// Cascade-bridge: fire cascadeSubscribersStaleInTx for the
-	// calling node so main-graph subscribers receive the cascade
-	// when the sub-graph terminates. Without this, downstream nodes
-	// that subscribe to the calling node never get marked stale and
-	// never dispatch — the cascade-traversal regression that S4
-	// pins under the RunScope-first reshape.
+	// representation, then the primitive validates and records.
 	//
-	// Resolve the calling node's node_type via the rimsky_nodes row.
-	// The cascade walker reads from the sender's run (parent.RunID)
-	// to compute the receiver RunScope, so threading through is
-	// straightforward.
-	callingNodeRow, err := args.Persist.Nodes().Get(ctx, parent.NodeID, tx)
-	if err != nil {
-		return fmt.Errorf("applyTerminalCompleteSubgraphExit: load calling node: %w", err)
+	// An empty attribute map produces a nil Writeback, and the primitive
+	// runs the FULL settlement minus the attribute upsert: the sub-graph
+	// RunScope close, OnRunScopeTerminal fan-out, parent-settlement
+	// cascade bridge, in-tx wait-set drain, and the `subgraph.exit_carry`
+	// forensics event all still fire. Early-returning here would skip the
+	// primitive entirely and leak the scope open (the defect class the
+	// settle-children unification removes).
+	var wb []byte
+	if len(merged) > 0 {
+		encoded, err := json.Marshal(merged)
+		if err != nil {
+			return fmt.Errorf("applyTerminalCompleteSubgraphExit: encode writeback: %w", err)
+		}
+		wb = encoded
 	}
-	if callingNodeRow != nil && callingNodeRow.FrameID != nil {
-		// Synthesize the calling-node's settlement signal so the
-		// subscriber-driven cascade walker can apply CEL predicates.
-		// The exit's writeback has just propagated to the parent, so
-		// the calling node is effectively terminal-success-changed
-		// from the perspective of its main-graph subscribers.
-		exitBridgeSig := signalpkg.Signal{
-			Type: signalpkg.TypePath("terminal/success"),
-			Payload: map[string]any{
-				"changed":          true,
-				"attributes_delta": orEmptyMap(merged),
-				"change_summary":   "subgraph_exit_carry",
-			},
-		}
-		if err := cascadeSubscribersStaleInTx(ctx, args, tx,
-			parent.NodeID, callingNodeRow.NodeType, parent.RunID,
-			acq.InstanceID, *callingNodeRow.FrameID, exitBridgeSig); err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphExit: cascade subscribers of calling node: %w", err)
-		}
-		// The wait-set rows the cascade walker just inserted are
-		// gated on parent.RunID (the calling node's run). The
-		// calling node is effectively settled at this point — the
-		// carry-rule's writeback has landed and the run-tree's
-		// state-propagation will transition it to a terminal state
-		// — so drain the wait-set rows here so the freshly-stale
-		// downstream subscribers can advance in this frame.
-		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, *callingNodeRow.FrameID, parent.RunID, tx); err != nil {
-			return fmt.Errorf("applyTerminalCompleteSubgraphExit: drain wait-set for calling node: %w", err)
-		}
-	}
-
-	// Forensics: emit `subgraph.exit_carry` for the carry-rule. The
-	// parent run row is already loaded; reuse instead of re-fetching.
-	nodeID := acq.NodeID
-	instanceID := acq.InstanceID
-	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-		NodeID:     &nodeID,
-		InstanceID: &instanceID,
-		Kind:       events.KindSubgraphExitCarry(),
-		Payload: map[string]any{
-			"parent_run_id":   exitScope.ParentRunID.String(),
-			"exit_run_id":     acq.DispatchID.String(),
-			"exit_node_alias": acq.NodeType,
-			"outcome":         "fresh",
-		},
-	}, tx)
+	return SettleChildren(ctx, args, tx, ChildSettlementInput{
+		Policy:        spec.AggregationPolicy{Kind: spec.AggregationKindCarryVerbatim},
+		ExitRunID:     acq.DispatchID,
+		ExitNodeID:    acq.NodeID,
+		ExitNodeAlias: acq.NodeType,
+		InstanceID:    acq.InstanceID,
+		Writeback:     wb,
+	})
 }
 
 // isSubgraphExitNode is the runtime-side predicate for the carry-rule

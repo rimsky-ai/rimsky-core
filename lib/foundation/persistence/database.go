@@ -50,7 +50,9 @@ type Database interface {
 // scheduler, migration runner, and supervisor's acquisition tx depend on.
 //
 // Postgres impl: pg_(try_)advisory_lock and pg_advisory_xact_lock.
-// SQLite impl: sync.Mutex for the cross-process methods and no-ops for the
+// SQLite impl: flock(2)-based file locks (lock files derived from the
+// database path) for the cross-process methods — exclusion holds across
+// OS processes sharing the database file on one host — and no-ops for the
 // xact-lock methods (the surrounding BEGIN IMMEDIATE writer hold subsumes
 // them — strictly stronger than per-name advisory locking).
 //
@@ -65,7 +67,7 @@ type AdvisoryLocker interface {
 	// AcquireMigrationLock blocks until the migration exclusion is held.
 	// The release fn must be safe to call even after the parent ctx is
 	// cancelled (Postgres impl uses context.Background() internally for
-	// the unlock; SQLite impl is a plain mu.Unlock). Inv 8.
+	// the unlock; SQLite impl is a plain flock-unlock + close). Inv 8.
 	AcquireMigrationLock(ctx context.Context) (release func() error, err error)
 
 	// TakeNamedLockInTx acquires the per-named-lock advisory exclusion

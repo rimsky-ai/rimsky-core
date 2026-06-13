@@ -101,7 +101,7 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	// template lookup, so the rejection does not depend on the template — but
 	// using a real hash keeps the request well-formed in every other respect,
 	// isolating the prefix guard as the sole cause of the 400.
-	foreignTemplateHash := deploySQLiteTemplate(t, ep, map[string]any{
+	foreignTemplateHash := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "compose-prefix-guard-foreign",
 			"version":               "1",
@@ -240,7 +240,7 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	})
 
 	// Need a deployed template the foreign /tags POST can name.
-	templateHash := deploySQLiteTemplateAuth(t, ep, adminKey, map[string]any{
+	templateHash := deployScenarioTemplateAuth(t, ep, adminKey, map[string]any{
 		"spec": map[string]any{
 			"name":                  "compose-prefix-perm-guard",
 			"version":               "1",
@@ -343,10 +343,10 @@ func mintAPIKey(t *testing.T, ep harness.RimskyEndpoint, callerKey, name string,
 	return resp.Plaintext
 }
 
-// deploySQLiteTemplateAuth is deploySQLiteTemplate but authenticated.
+// deployScenarioTemplateAuth is deployScenarioTemplate but authenticated.
 // Authenticated mode is required once a key has been minted (no more
 // anonymous floor).
-func deploySQLiteTemplateAuth(t *testing.T, ep harness.RimskyEndpoint, bearer string, body map[string]any) string {
+func deployScenarioTemplateAuth(t *testing.T, ep harness.RimskyEndpoint, bearer string, body map[string]any) string {
 	t.Helper()
 	authHeader := map[string]string{"Authorization": "Bearer " + bearer}
 	status, raw := ep.PostJSONWithHeaders(t, "/v1/templates", body, authHeader)

@@ -22,12 +22,14 @@
 //     `runtime/runner_subclaim.go::AcquireSubClaims` is the helper.
 //
 //   - Dispatch-phase (this file): post-acquisition, the supervisor
-//     creates one child `rimsky_node_runs` row per sub-claim
-//     (`parent_run_id = <fan-out node's run>`,
-//     `child_key = <partition_key from the SubClaimScopeDescriptor>`). Each
-//     child run dispatches independently to the leaf executor; the
-//     parent run aggregates per its `AggregationPolicy` (the standard
-//     run-tree aggregation engine in `runtime/state_propagation.go`).
+//     projects the acquired sub-claims into partitions and delegates
+//     the run-side allocation (per-partition `fanout_partition`
+//     RunScope + one child `rimsky_node_runs` row per sub-claim +
+//     sub-claim wiring) to the unified
+//     `child_execution.go::DispatchChildren` primitive. Each child run
+//     dispatches independently to the leaf executor; the parent run
+//     aggregates per its `AggregationPolicy` (the standard run-tree
+//     aggregation engine in `runtime/state_propagation.go`).
 //
 //   - Parallelism: when `fan_out.parallelism > 0`, the supervisor
 //     limits concurrent in-flight leaves to that cap. Remaining leaves
@@ -48,14 +50,13 @@
 //
 // File status — V1 wiring posture:
 //
-// The helpers in this file are pure (no DB-touching glue) so they can
-// be exercised in unit tests. The integration into `runner.go`
-// (post-acquisition child-run creation loop, parent-run aggregation
-// rendezvous with auto-terminal) lands as the next staging step in
-// section E. The current acquisition path (E4, runner_acquire.go ~408)
-// already returns `acquisition.SubClaims` when the node declares
-// `fan_out:`; this file picks up from there to enumerate the child
-// runs the dispatcher must create + carry the parallelism semaphore.
+// The run-side allocation lives in the unified
+// `child_execution.go::DispatchChildren` primitive; this file holds
+// the fan-out-specific surface — the sub-claim → partition projection,
+// the parallelism semaphore, and the thin dispatch wrapper. The
+// acquisition path (E4, runner_acquire.go ~408) returns
+// `acquisition.SubClaims` when the node declares `fan_out:`; this file
+// picks up from there.
 
 package runtime
 
@@ -64,8 +65,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/google/uuid"
-
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -73,57 +72,21 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// FanOutChildRunPlan describes one child leaf run the dispatcher must
-// create + dispatch. Caller is `runtime/runner.go` (post-acquisition
-// path): for each plan, INSERT a `rimsky_node_runs` row via
-// `persistence.RunTreeTable.CreateChildRun`, then dispatch through the
-// standard runner path. The child's `ExecuteRequest.stores[<alias>]`
-// carries the sub-claim's address (already bound in the acquisition
-// tx; the dispatcher reads it from `SubClaim.Address`).
-type FanOutChildRunPlan struct {
-	ParentRunID  shared.UUID
-	NodeID       shared.UUID // the leaf node's rimsky_nodes.id (re-uses the parent's node ID for V1; same node-type, different child_key)
-	FrameID      shared.UUID
-	PartitionKey string
-	// SubClaimHandleID is the sub-claim row's id (already INSERTed by
-	// E4). The dispatcher dereferences this when building the leaf's
-	// ExecuteRequest.
-	SubClaimHandleID shared.UUID
-	// Executor is the leaf executor's name — typically same as the
-	// fan-out node's own executor (each sub-scope dispatches against
-	// the same executor implementation, but with a distinct sub-claim).
-	Executor string
-	// RequiredStores carries the leaf's required-store list. For
-	// fan-out, this is the parent's required-store list minus the
-	// fan-out target alias (the leaf holds a sub-claim, not the parent
-	// claim). V1 keeps the list as-is and lets the producer disambiguate.
-	RequiredStores []string
-}
-
-// PlanFanOutChildren is the pure helper that produces the per-sub-claim
-// child-run plans. Caller invokes after `AcquireSubClaims` returns,
-// passing the parent run id + the acquired sub-claim list + the leaf
-// dispatch context (executor name, required stores, frame, node id).
+// FanOutPartitions is the pure projection that turns the acquired
+// sub-claim list into the per-partition descriptors `DispatchChildren`
+// consumes — one partition per sub-claim, carrying the producer's
+// partition key + the sub-claim handle id.
 //
-// The returned slice ordering matches the input ordering. Caller is
-// free to sort by `PartitionKey` for deterministic dispatch (the
-// scenario tests do, to make assertions reproducible).
-func PlanFanOutChildren(
-	parentRunID, parentNodeID, frameID shared.UUID,
-	subClaims []SubClaim,
-	executor string,
-	requiredStores []string,
-) []FanOutChildRunPlan {
-	out := make([]FanOutChildRunPlan, 0, len(subClaims))
+// The returned slice ordering matches the input ordering (the
+// producer's SubScope ordering). Caller is free to sort by
+// `PartitionKey` for deterministic dispatch (the scenario tests do, to
+// make assertions reproducible).
+func FanOutPartitions(subClaims []SubClaim) []PartitionDescriptor {
+	out := make([]PartitionDescriptor, 0, len(subClaims))
 	for _, sc := range subClaims {
-		out = append(out, FanOutChildRunPlan{
-			ParentRunID:      parentRunID,
-			NodeID:           parentNodeID,
-			FrameID:          frameID,
+		out = append(out, PartitionDescriptor{
 			PartitionKey:     sc.PartitionKey,
 			SubClaimHandleID: sc.ClaimHandleID,
-			Executor:         executor,
-			RequiredStores:   requiredStores,
 		})
 	}
 	return out
@@ -235,98 +198,10 @@ func (r *FanOutSemaphoreRegistry) Drop(parentRunID shared.UUID) {
 	delete(r.m, parentRunID)
 }
 
-// CreateFanOutChildren is the dispatch-side helper that, given a slice
-// of `FanOutChildRunPlan`s, allocates a `fanout_partition` RunScope per
-// child and INSERTs one `rimsky_node_runs` child row per plan via
-// `persistence.RunTreeTable.CreateChildRun`. Idempotent per the
-// `(node_id, run_scope_id)` uniqueness constraint — a duplicate plan
-// returns the existing row id (queue lookup in `CreateChildRun`).
-//
-// The parent RunScope id is required so each child's `fanout_partition`
-// RunScope is rooted under the same instance and parent_run_scope
-// chain. The parent run id keys the per-partition uniqueness on
-// rimsky_run_scopes.
-//
-// Aggregation policy snapshotted from the fan-out node's `error_policy`
-// (the caller's responsibility to pass).
-//
-// Operates inside the caller's tx so the RunScope + child INSERTs
-// commit atomically with the parent's acquisition / terminal write.
-//
-// @concept: run-scope
-// @concept: fan-out
-func CreateFanOutChildren(
-	ctx context.Context, tx persistence.Tx,
-	rt persistence.RunTreeTable,
-	scopes persistence.RunScopeTable,
-	queue persistence.Queue,
-	claimHandles persistence.ClaimHandleTable,
-	parentScope persistence.RunScopeRow,
-	parentRunID shared.UUID,
-	instanceID shared.UUID,
-	graphName string,
-	plans []FanOutChildRunPlan,
-	policy spec.AggregationPolicy,
-) ([]shared.UUID, error) {
-	out := make([]shared.UUID, 0, len(plans))
-	parentScopeID := parentScope.ID
-	for _, p := range plans {
-		// First, look up (or create) the fanout_partition RunScope
-		// keyed on (parent_run_id, partition_key).
-		var childScopeID shared.UUID
-		existing, err := scopes.GetFanoutPartition(ctx, tx, parentRunID, p.PartitionKey)
-		if err != nil {
-			return nil, fmt.Errorf("CreateFanOutChildren: lookup partition %q: %w", p.PartitionKey, err)
-		}
-		if existing != nil {
-			childScopeID = existing.ID
-		} else {
-			childScopeID = shared.UUID(uuid.New())
-			parentRun := parentRunID
-			parentScopeIDCopy := parentScopeID
-			if err := scopes.Create(ctx, tx, persistence.RunScopeRow{
-				ID:               childScopeID,
-				ParentRunScopeID: &parentScopeIDCopy,
-				ParentRunID:      &parentRun,
-				GraphName:        graphName,
-				PartitionKey:     p.PartitionKey,
-				InstanceID:       instanceID,
-			}); err != nil {
-				return nil, fmt.Errorf("CreateFanOutChildren: create partition %q: %w", p.PartitionKey, err)
-			}
-		}
-		runID, err := CreateChildRun(
-			ctx, tx, rt, queue,
-			p.NodeID, p.FrameID, childScopeID,
-			p.Executor, p.RequiredStores, policy)
-		if err != nil {
-			return nil, fmt.Errorf("CreateFanOutChildren: child %q: %w", p.PartitionKey, err)
-		}
-		// Repoint the sub-claim's node_run_id from the parent fan-out run
-		// (set at acquire time in AcquireSubClaims) to its OWN child leaf
-		// run. This makes the sub-claim resolvable from the leaf by
-		// `node_run_id = its own dispatch id`, so the leaf-dispatch path can
-		// read back the persisted `producer_candidate_handle` and carry it
-		// onto the wire (E4). It also corrects the fanout_partition RunScope
-		// closure walk in `auto_terminal_chain.go::resolveParentClaimChain`,
-		// which loads each sub-claim's run by node_run_id to find the
-		// partition scope to close — with node_run_id pointed at the parent
-		// (main-scope) run, that walk matched no partition scope. Runs in
-		// the caller's tx, after CreateChildRun so the FK target exists.
-		if claimHandles != nil && p.SubClaimHandleID != (shared.UUID{}) {
-			if err := claimHandles.UpdateNodeRunID(ctx, p.SubClaimHandleID, runID, tx); err != nil {
-				return nil, fmt.Errorf("CreateFanOutChildren: link sub-claim %s to child run %q: %w", p.SubClaimHandleID, p.PartitionKey, err)
-			}
-		}
-		out = append(out, runID)
-	}
-	return out, nil
-}
-
 // IsFanOutNode reports whether a template node-def declares fan-out.
 // Cheap predicate the dispatcher consults post-acquisition: when true,
-// the supervisor invokes `PlanFanOutChildren` + `CreateFanOutChildren`
-// instead of the standard single-run dispatch.
+// the supervisor invokes `dispatchFanOutChildren` (which delegates to
+// `DispatchChildren`) instead of the standard single-run dispatch.
 func IsFanOutNode(def *node.TemplateNodeDef) bool {
 	return def != nil && def.FanOut != nil
 }
@@ -346,21 +221,23 @@ func FanOutAggregationPolicy(def *node.TemplateNodeDef) spec.AggregationPolicy {
 	return def.FanOut.ErrorPolicy
 }
 
-// dispatchFanOutChildren is the runner-tx wiring that creates one
-// child run row per sub-claim and snapshots the parent's aggregation
-// policy. Called post-acquisition by `RunNode` when the node declared
-// `fan_out:` (acquireCandidate's E4 hot path returned non-empty
-// `acq.SubClaims`).
+// dispatchFanOutChildren is the thin fan-out wrapper over the unified
+// `DispatchChildren` primitive. Called post-acquisition by `RunNode`
+// when the node declared `fan_out:` (acquireCandidate's E4 hot path
+// returned non-empty `acq.SubClaims`).
 //
 // The function:
 //
 //  1. Snapshots the aggregation policy from the fan-out spec onto the
 //     parent run row (so PropagateFromChildState sees the right rule
 //     table when children terminate).
-//  2. Projects the sub-claims into per-child plans via
-//     `PlanFanOutChildren`.
-//  3. INSERTs one `rimsky_node_runs` child row per plan via
-//     `CreateFanOutChildren` — idempotent on (parent_run_id, child_key).
+//  2. Builds the `ChildExecutionInput` — N partitions projected from
+//     the `AcquireSubClaims` results via `FanOutPartitions`, one child
+//     run spec (the parent's own node + executor + stores), entry NOT
+//     absorbed.
+//  3. Delegates the per-partition RunScope + child-row allocation and
+//     sub-claim wiring to `DispatchChildren` — idempotent per
+//     (parent_run_id, partition_key).
 //  4. Records the dispatch decision in the event log for operator-
 //     facing observability.
 //
@@ -382,9 +259,24 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		return fmt.Errorf("dispatchFanOutChildren: not a fan-out node")
 	}
 	policy := FanOutAggregationPolicy(acq.NodeDef)
-	plans := PlanFanOutChildren(
-		acq.DispatchID, acq.NodeID, acq.FrameID, acq.SubClaims,
-		acq.Executor, requiredStoresForAcq(acq))
+	in := ChildExecutionInput{
+		ParentRunID:      acq.DispatchID,
+		ParentRunScopeID: acq.RunScopeID,
+		InstanceID:       acq.InstanceID,
+		FrameID:          acq.FrameID,
+		ChildGraphName:   acq.GraphName,
+		// Child run rows carry the zero policy; the author policy
+		// lives on the PARENT row via the snapshot below (that is the
+		// row PropagateFromChildState consults at settlement).
+		AggregationPolicy: spec.AggregationPolicy{},
+		EntryAbsorbed:     false,
+		Partitions:        FanOutPartitions(acq.SubClaims),
+		Children: []ChildRunSpec{{
+			NodeID:         acq.NodeID,
+			Executor:       acq.Executor,
+			RequiredStores: requiredStoresForAcq(acq),
+		}},
+	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		// Snapshot the parent's aggregation policy so PropagateFromChildState
 		// + Aggregate use the right rule table. UpdateAggregationPolicy
@@ -392,22 +284,9 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		if err := args.Persist.RunTree().UpdateAggregationPolicy(ctx, tx, acq.DispatchID, policy); err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: snapshot policy: %w", err)
 		}
-		// Resolve the parent run's RunScope: each fanout child gets a
-		// fresh fanout_partition RunScope rooted under it.
-		parentScope, err := args.Persist.RunScopes().GetByID(ctx, tx, acq.RunScopeID)
+		children, err := DispatchChildren(ctx, args, tx, in)
 		if err != nil {
-			return fmt.Errorf("dispatchFanOutChildren: load parent run scope: %w", err)
-		}
-		if parentScope == nil {
-			return fmt.Errorf("dispatchFanOutChildren: parent run scope %s not found", acq.RunScopeID)
-		}
-		ids, err := CreateFanOutChildren(
-			ctx, tx, args.Persist.RunTree(), args.Persist.RunScopes(), args.Queue,
-			args.Persist.ClaimHandles(),
-			*parentScope, acq.DispatchID, acq.InstanceID, acq.GraphName,
-			plans, spec.AggregationPolicy{})
-		if err != nil {
-			return err
+			return fmt.Errorf("dispatchFanOutChildren: %w", err)
 		}
 		// Audit-log the fan-out wave for operator observability. Two
 		// events fire: the legacy `fan_out_dispatched` (kept for
@@ -415,13 +294,11 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		// kind `fanout.children_created` summarizing the child-run
 		// projection from the parent's perspective. Both honor
 		// @blessed-invariant 20 (no scope bytes in the payload).
-		childKeys := make([]string, 0, len(plans))
-		for _, p := range plans {
-			childKeys = append(childKeys, p.PartitionKey)
-		}
-		childIDs := make([]string, 0, len(ids))
-		for _, id := range ids {
-			childIDs = append(childIDs, id.String())
+		childKeys := make([]string, 0, len(children))
+		childIDs := make([]string, 0, len(children))
+		for _, c := range children {
+			childKeys = append(childKeys, c.PartitionKey)
+			childIDs = append(childIDs, c.RunID.String())
 		}
 		if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 			NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
@@ -443,7 +320,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 			Payload: map[string]any{
 				"parent_run_id":        acq.DispatchID.String(),
 				"parent_node_id":       acq.NodeID.String(),
-				"child_count":          len(plans),
+				"child_count":          len(children),
 				"partition_keys_count": len(childKeys),
 			},
 		}, tx)

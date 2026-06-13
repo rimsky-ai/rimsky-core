@@ -242,7 +242,8 @@ func (s *staticScopeTable) ListParentChain(_ context.Context, _ persistence.Tx, 
 // TestAcquireFanOutIfDeclared_ChildRunsSkipSplitScope is the regression
 // pin for the fan-out recursion bug: children of a fan-out parent
 // re-use the parent's `node_id` (per
-// `runtime/fanout_dispatch.go::PlanFanOutChildren`) and therefore
+// `runtime/fanout_dispatch.go::dispatchFanOutChildren`'s
+// single child-run spec) and therefore
 // inherit the same `nodeDef.FanOut`. Without the run-scope-has-parent
 // guard, every child re-fires `SplitScope` and creates grand-children:
 // a fan-out of 3 partition keys produces 3 → 9 → 27 → … runs without

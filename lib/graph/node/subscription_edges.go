@@ -181,6 +181,49 @@ func (m *SubscriptionEdgeMap) ReceiverNodeTypesForSender(senderNodeType string) 
 	return out
 }
 
+// SenderNodeTypesForReceiver returns the distinct named sender-node-
+// type keys carrying at least one same-frame edge whose
+// ReceiverNodeType equals receiverNodeType. The cross-cutting bucket
+// (empty sender key, `instance: true` subscriptions) is deliberately
+// EXCLUDED: it names no upstream node-type, and treating it as
+// "subscribes to every node in the instance" would let two
+// instance-wide subscribers gate each other into a standstill.
+// `frame: next` edges are EXCLUDED too: they deliver into the next
+// frame, so a sender in-flight in the receiver's CURRENT frame cannot
+// produce a signal the receiver would consume this frame — counting it
+// would over-gate. Used by the supervisor's upstream-gating
+// eligibility condition to derive the candidate's subscribed-sender
+// set from the template.
+//
+// Remaining (deliberate) over-approximation: the sender set ignores
+// each edge's TypePattern / `when:` predicate — a sender whose only
+// matching edges fire on signal types the in-flight run can never emit
+// still gates the receiver. Conservative in the gate's direction
+// (never under-gates), but it widens the starvation/serialization
+// surface; the candidate-selection cursor and the pending-cycle
+// tie-breaker bound the damage.
+func (m *SubscriptionEdgeMap) SenderNodeTypesForReceiver(receiverNodeType string) []string {
+	if m == nil || len(m.bySender) == 0 {
+		return nil
+	}
+	var out []string
+	for sender, root := range m.bySender {
+		if sender == "" {
+			continue
+		}
+		found := false
+		walkAllEdges(root, func(e SubscriptionEdge) {
+			if e.ReceiverNodeType == receiverNodeType && e.Frame != "next" {
+				found = true
+			}
+		})
+		if found {
+			out = append(out, sender)
+		}
+	}
+	return out
+}
+
 // ReceiverEdgesForSender returns every edge keyed under
 // `senderNodeType` plus every cross-cutting edge (under the empty
 // sender-key) — without applying type-pattern matching. Used by the

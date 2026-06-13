@@ -19,11 +19,11 @@ Operators get a cron sensor whose behavior under restart and under multi-replica
 
 ## Acceptance
 
-A `sensor-cron` instance, configured with a state DSN pointing at a real durable store, holds a publisher-subscription whose `next_fire_at` is future; restarting the binary preserves the subscription and the binary fires at the originally-scheduled window without external re-subscribe. With an empty DSN the in-memory default takes over. One running sensor instance with a due subscription POSTs exactly one message per window; two independently-running instances sharing the same subscription POST exactly two per window — no advisory-lock coordination silently leaders-elect.
+A `sensor-cron` instance, configured with a state DSN pointing at a real durable store, holds a publisher-subscription whose next-fire time is future; restarting the binary preserves the subscription and the binary fires at the originally-scheduled window without external re-subscribe. With an empty DSN the in-memory default takes over. One running sensor instance with a due subscription POSTs exactly one message per window; two independently-running instances sharing the same subscription POST exactly two per window — no advisory-lock coordination silently leaders-elect.
 
 ## Falsifier
 
-State persists but the binary refuses to honor it on restart, OR two replicas fire only once per window (silent leader election), OR cron advancement uses wall clock instead of the row's prior `next_fire_at`.
+State persists but the binary refuses to honor it on restart, OR two replicas fire only once per window (silent leader election), OR cron advancement uses wall clock instead of the row's prior next-fire time.
 
 ## Proof
 

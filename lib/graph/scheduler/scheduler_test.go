@@ -10,7 +10,9 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -403,6 +405,63 @@ func TestScheduler_AdvisoryLockBlocksSecondReplica(t *testing.T) {
 		[]any{target.ID}, &phase, &claimedBy)
 	assert.Equal(t, "pending", phase, "tick should have skipped (run row not claimed) under advisory-lock contention")
 	assert.False(t, claimedBy.Valid, "run row should not be claimed under advisory-lock contention")
+}
+
+// erroringAdvisoryLocker is a stub AdvisoryLocker whose TrySchedulerTick
+// always errors. The embedded interface is nil — any other method call
+// panics, which is itself an assertion that the tick touches nothing
+// else on the locker after a lock error.
+type erroringAdvisoryLocker struct {
+	persistence.AdvisoryLocker
+	calls int32
+}
+
+func (l *erroringAdvisoryLocker) TrySchedulerTick(context.Context) (bool, func(), error) {
+	atomic.AddInt32(&l.calls, 1)
+	return false, nil, errors.New("simulated advisory-lock failure")
+}
+
+// TestScheduler_AdvisoryLockErrorSkipsSweepPass pins the lock-error-is-
+// lock-held rule (concept:advisory-lock invariant): when TrySchedulerTick
+// errors, the tick logs and skips the whole sweep pass — it must NOT fall
+// through to running the sweeps unlocked, because under DB flakiness that
+// permits the concurrent multi-replica sweeping the lock exists to
+// prevent (@blessed-invariant 7).
+func TestScheduler_AdvisoryLockErrorSkipsSweepPass(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newSchedFixture(t)
+
+	// Seed a ready node — if the tick erroneously ran its sweeps, the
+	// pending run row would be claimed / advanced.
+	dep := f.createNode(t, "worker", cascade.NodeStateFresh)
+	target := f.createNode(t, "runner", cascade.NodeStateStale, dep.ID)
+
+	cfg := f.schedConfig()
+	locker := &erroringAdvisoryLocker{}
+	cfg.AdvisoryLocker = locker
+
+	// A lock error is treated as lock-held: tick returns nil (skip, not
+	// failure — the next interval retries) without running any sweep.
+	require.NoError(t, tick(ctx, cfg, nil))
+	assert.EqualValues(t, 1, atomic.LoadInt32(&locker.calls),
+		"tick should attempt the lock exactly once")
+
+	// No sweep ran: the seeded in-flight run row is untouched (same
+	// observable as the lock-contention test above).
+	var (
+		phase     string
+		claimedBy sql.NullString
+	)
+	pgtest.QueryRowForTest(ctx, t, f.driver,
+		`SELECT phase, claimed_by FROM rimsky_node_runs
+		   WHERE node_id = $1
+		     AND phase IN ('pending','active','held','parked')`,
+		[]any{target.ID}, &phase, &claimedBy)
+	assert.Equal(t, "pending", phase,
+		"sweep pass must be skipped (run row untouched) when the lock attempt errors")
+	assert.False(t, claimedBy.Valid,
+		"run row must stay unclaimed when the lock attempt errors")
 }
 
 // TestScheduler_BreakpointSweeps pins the Pass-7 wiring: a single tick

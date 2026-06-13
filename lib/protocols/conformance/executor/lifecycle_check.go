@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -36,14 +35,16 @@ const (
 )
 
 // RunLifecycleCheck dials the lifecycle peer at endpoint and runs the
-// six-RPC probe. Returns nil when every RPC returns success; otherwise
-// a wrapped error naming the offending verb.
-func RunLifecycleCheck(parent context.Context, endpoint string, timeout time.Duration) error {
+// six-RPC probe. tlsMode follows Endpoint.TLS semantics ("required" →
+// verified TLS against system roots; else plaintext). Returns nil when
+// every RPC returns success; otherwise a wrapped error naming the
+// offending verb.
+func RunLifecycleCheck(parent context.Context, endpoint, tlsMode string, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	target := stripScheme(endpoint)
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(transportCredsFor(tlsMode)))
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}

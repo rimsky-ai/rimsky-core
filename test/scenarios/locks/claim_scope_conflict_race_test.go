@@ -13,9 +13,10 @@
 //     a scope rw claim against the same selector. NoSupervisor so we
 //     drive RunNode manually with two SupervisorIDs.
 //   - Two goroutines: each calls runtime.RunNode with a distinct
-//     SupervisorID. A sync.WaitGroup releases both at the same instant;
-//     a shared sync.Mutex + counter records concurrent in-acquisition
-//     ownership.
+//     SupervisorID. A shared start channel releases both at the same
+//     instant and a sync.WaitGroup joins them; the post-condition is
+//     asserted against the persisted rimsky_claim_handles rows, not an
+//     in-memory counter.
 //
 // The load-bearing assertion: at no point during acquisition do TWO
 // `rimsky_claim_handles` rows for the contended claim-scope exist
@@ -108,7 +109,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	// concurrency-safe so two RunNode goroutines can share both.
 	dialCtx, dialCancel := context.WithTimeout(h.Ctx, 5*time.Second)
 	defer dialCancel()
-	client, err := peer.Dial(dialCtx, "content", "grpc://"+endpoint)
+	client, err := peer.Dial(dialCtx, "content", "grpc://"+endpoint, peer.TLSModeOff)
 	require.NoError(t, err)
 	t.Cleanup(client.Close)
 	reg := locks.NewRegistry()
@@ -197,21 +198,26 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	require.GreaterOrEqual(t, wins, 1, "at least one supervisor must successfully acquire")
 
 	// Invariant 4b: single-writer-per-scope. After both goroutines
-	// returned, the count of scope-kind rimsky_claim_handles rows for
-	// the contended (store, scope) must be ≤ 1. (≤ rather than == because
-	// the winning runner's terminal handler may have already deleted the
-	// row before we sample.) The 0-case is the common observation (both
-	// terminals fired and released their rows); the 1-case is the rare
-	// one where the second runner's lock-holder row hasn't been
-	// claimant-released yet at sample time.
+	// returned, the count of ACTIVE scope-kind rimsky_claim_handles rows
+	// for the contended (store, scope) must be ≤ 1. The state filter is
+	// load-bearing: post-Stage-3 of the claim-handle state-column
+	// refactor, terminals PROMOTE the row (state='committed', preserved
+	// for forensics / retention) rather than deleting it — and the
+	// both-Ran=true sequential-win shape documented above legitimately
+	// leaves TWO committed rows behind. Those are remnants, not live
+	// holders; the invariant constrains simultaneous ACTIVE ownership
+	// only. The 0-case is the common observation (both terminals fired
+	// and resolved their rows); the 1-case is the rare one where a
+	// runner's row is still mid-release at sample time.
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles
-		  WHERE producer_name = $1 AND lock_kind = 'claim_scope'`,
+		  WHERE producer_name = $1 AND lock_kind = 'claim_scope'
+		    AND state = 'active'`,
 		"content",
 	).Scan(&lhCount))
 	require.LessOrEqual(t, lhCount, 1,
-		"invariant 4b: at most one writer-scope lock-holder row per (store, scope)")
+		"invariant 4b: at most one ACTIVE writer-scope lock-holder row per (store, scope)")
 
 	_ = iidA
 	_ = iidB

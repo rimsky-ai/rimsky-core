@@ -27,4 +27,4 @@ A registered executor advertising a declared error class emits it but the policy
 
 ## Proof
 
-Example — the examples module's executor reference extended with a worked walkthrough that boots a running rimsky and exhibits each protocol surface end-to-end.
+Example — a shipped executor reference paired with a worked walkthrough that boots a running rimsky and exhibits each protocol surface end-to-end.

@@ -128,6 +128,18 @@ type ClaimResult struct {
 	RealizedWriteSemantics WriteSemantics
 }
 
+// CommitResult mirrors the base-protocol CommitResponse wire message.
+// VersionID is the producer-returned canonical version identifier
+// persisted on the claim-handle row's version_id column at Commit;
+// ProducerMetadata is opaque producer-supplied bytes surfaced verbatim
+// in the fan-out parent's writeback at parent terminal. Both are
+// optional and inert in rimsky per blessed invariant 20 — never parsed,
+// transformed, or logged.
+type CommitResult struct {
+	VersionID        string
+	ProducerMetadata []byte
+}
+
 // OpenOutcome mirrors the OpenResponse oneof on the wire.
 // Available == true means the producer returned Acquired{...};
 // Available == false means Unavailable{}. Result is populated only
@@ -170,12 +182,20 @@ type OpenOutcome struct {
 // "validation" mix-in is advertised; lists the role discriminators the
 // service is willing to validate ("executor" | "claim_producer" |
 // "lifecycle_subscriber" | "sensor").
+//
+// DeclaredErrorClasses is the set of error-class paths the producer may
+// name on acquisition-failure responses (OpenOutcome.UnavailableClass
+// and gRPC ErrorInfo.Reason on faulted verbs). Patterns ending in `*`
+// are prefix-pattern leaves; exact strings are fixed leaves. Empty is
+// legal: a producer that declares nothing simply contributes no
+// vocabulary to the template validator's `error_types:` range-check.
 type Capabilities struct {
 	WriteSemanticsAllowed    []WriteSemantics
 	SupportsSplitScope       bool
 	SupportsScopesConflict   bool
 	Protocols                []string
 	ValidationSupportedRoles []string
+	DeclaredErrorClasses     []string
 }
 
 // Contains reports whether the advertised allowed set includes w.

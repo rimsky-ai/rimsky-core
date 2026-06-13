@@ -80,6 +80,9 @@ func (f *fakeQueue) GetByID(_ context.Context, _ shared.UUID) (*persistence.Disp
 func (f *fakeQueue) GetInFlightRunForNode(_ context.Context, _ persistence.Tx, _ shared.UUID, _ shared.UUID) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
 }
+func (f *fakeQueue) ListInFlightRunPhases(context.Context, persistence.Tx, []shared.UUID, shared.UUID, shared.UUID) (map[shared.UUID][]string, error) {
+	return map[shared.UUID][]string{}, nil
+}
 
 // Park-lifecycle helpers for the 2026-05-08 platform-extensions plan.
 // fakeQueue is a fixture used by pure-cascade tests that don't park

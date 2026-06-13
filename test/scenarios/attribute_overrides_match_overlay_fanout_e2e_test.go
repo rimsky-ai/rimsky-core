@@ -93,7 +93,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 	// Per-child stub script: success with a no-op attributes_delta so
 	// the supervisor's commit gate doesn't reject the bag. Each child
 	// dispatch arrives with NodeType="fan-child" (children re-use the
-	// parent's node id + node-type per `PlanFanOutChildren`); the
+	// parent's node id + node-type per the fan-out dispatch wrapper); the
 	// matcher-applied `tag` field is the per-dispatch witness.
 	h.Stub.WhenType("fan-child").Success(map[string]any{"ok": true}, true, "ok")
 

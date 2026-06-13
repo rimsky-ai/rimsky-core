@@ -3,8 +3,9 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Supervisor-side run-scope lifecycle fan-out. The supervisor closes
-// sub-graph and fanout-partition RunScopes at the runtime/ terminal
-// sites (subgraph_dispatch.go, auto_terminal_chain.go); when it does, it
+// sub-graph and fanout-partition RunScopes inside the unified
+// settle-children primitive (child_execution.go::SettleChildren); when
+// it does, it
 // fires OnRunScopeTerminal to the lifecycle subscribers that match the
 // late-bind-extended peer filter for the instance's template. Per spec
 // 2026-05-24-host-agent-and-proxy-design.md §"Firing sites for

@@ -10,9 +10,9 @@ This concept describes the **receiver-side** template-DSL subscription declared 
 
 ## What it is
 
-A node-subscription declares `type:` (a canonical signal type-path, exact or trailing-`*` prefix per `concept:signal`) plus an optional `when:` CEL predicate over the signal payload. Sender-side filters (`node:` selects a specific upstream node-type, `instance: true` is cross-cutting) and the frame modifier (`frame: in | next`) carry forward unchanged. Subscriptions are declared per node under `subscribes:` in the template DSL.
+A node-subscription declares `type:` (a canonical signal type-path, exact or trailing-`*` prefix per `concept:signal`) plus an optional `when:` CEL predicate over the signal payload. Sender-side filters (`node:` selects a specific upstream node-type, `instance: true` is cross-cutting) and the frame modifier (`frame: in | next`) apply. Subscriptions are declared per node under `subscribes:` in the template DSL.
 
-The auto-subscribe rule from substitution refs in a node's attribute schema (`{{nodes.X.attribute.Y}}` or `{{nodes.X.event.Y}}`) carries forward — no orphan reads. The implicit subscriptions become `type: attribute/Y/changed` (or `type: attribute/*` for the bare `{{nodes.X.attribute}}` whole-pull form) and `type: event/Y` respectively.
+The auto-subscribe rule from substitution refs in a node's attribute schema (`{{nodes.X.attribute.Y}}` or `{{nodes.X.event.Y}}`) applies — no orphan reads. The implicit subscriptions become `type: attribute/Y/changed` (or `type: attribute/*` for the bare `{{nodes.X.attribute}}` whole-pull form) and `type: event/Y` respectively.
 
 ## Purpose
 
@@ -22,7 +22,7 @@ Decouple reactive coupling from compound `dependencies:` declarations. Read acce
 - Cascade coupling lives in subscriptions (explicit + implicit).
 - Eligibility gating lives in `concept:wait-set`.
 
-This retires the overloaded `dependencies:` bundle and the send-side `invalidate.targets` slot on lifecycle handlers + error-policy actions; cascade flow is impactee-declared.
+Cascade flow is impactee-declared.
 
 ## Boundaries
 
@@ -42,4 +42,4 @@ Does NOT own:
 - Subscription `type:` and `when:` are validated at registration against the canonical taxonomy (`concept:signal`) and the resolved payload schema.
 - Substitution refs auto-subscribe — no orphan reads.
 - The `frame:` modifier defaults to `in` for per-node subscriptions and `next` for cross-cutting (`instance: true`).
-- **Self-subscription is first-class in both `frame: in` and `frame: next` shapes** — the "drain my own queue" idiom has two equally-valid spellings. `frame: next` opens a fresh frame for the same node-instance on every matching commit (one frame per queue item, clean `frame.start` / `frame.end` markers per iteration). `frame: in` keeps iteration inside the current frame (one long-running frame, supervisor picks up each new pending run as it lands). The cascade walker's insert-then-drain-in-same-tx pattern makes `frame: in` safe: the new pending self-run's wait-set blocker (keyed on the just-committed run) is drained at the end of the terminal-complete handler in the same transaction, before the supervisor sees it. The cascade stale-mark does not touch the per-instance node row's `state` — it only inserts a new run row and re-stamps `frame_id` — so the just-committed `state=fresh` survives intact. Both shapes are the receiver-side replacement for the retired send-side `on_executor_complete: { invalidate: { targets: [self] } }` pattern; the canonical form is `{ node: <self-type>, type: terminal/success, when: payload.changed, frame: <in|next> }`.
+- **Self-subscription is first-class in both `frame: in` and `frame: next` shapes** — the "drain my own queue" idiom has two equally-valid spellings. `frame: next` opens a fresh frame for the same node-instance on every matching commit (one frame per queue item, clean `frame.start` / `frame.end` markers per iteration). `frame: in` keeps iteration inside the current frame (one long-running frame, supervisor picks up each new pending run as it lands). The cascade walker's insert-then-drain-in-same-tx pattern makes `frame: in` safe: the new pending self-run's wait-set blocker (keyed on the just-committed run) is drained at the end of the terminal-complete handler in the same transaction, before the supervisor sees it. The cascade stale-mark does not touch the per-instance node row's `state` — it only inserts a new run row and re-stamps `frame_id` — so the just-committed `state=fresh` survives intact. The canonical form is `{ node: <self-type>, type: terminal/success, when: payload.changed, frame: <in|next> }`.

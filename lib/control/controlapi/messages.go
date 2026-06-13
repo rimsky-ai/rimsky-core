@@ -157,10 +157,14 @@ func toMessageItem(r persistence.MessageRow) messageItem {
 	return out
 }
 
-// errPublisherSubscriptionNotActive is the sentinel returned when a
-// publisher-side request fails the capability check. Mapped to 403
-// Forbidden.
-var errPublisherSubscriptionNotActive = errors.New("publisher-subscription not active for this instance")
+// errPublisherSubscriptionNotLive is the sentinel returned when a
+// publisher-side request fails the capability check: the named
+// publisher-subscription is missing, stopped, failed, or bound to a
+// different instance. "Live" = active OR still mounting — a fast
+// publisher may emit before the reconciler records the mounting→active
+// flip, and rejecting that window would drop a legitimate observation.
+// Mapped to 403 Forbidden.
+var errPublisherSubscriptionNotLive = errors.New("publisher-subscription not live (active or mounting) for this instance")
 
 // handleCreateMessage is POST /instances/{id}/messages.
 //
@@ -257,20 +261,29 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				return errInstanceTerminated
 			}
 			// Publisher capability check: the publisher-subscription must
-			// be active and bound to THIS instance. We look up the row by
-			// id, verify state='active' and instance_id matches, then
-			// derive `sender` from the row's publisher_name.
+			// be live (active, or still mounting) and bound to THIS
+			// instance. We look up the row by id, verify the state and
+			// that instance_id matches, then derive `sender` from the
+			// row's publisher_name. Mounting is accepted because the
+			// reconciler flips mounting→active only AFTER the publisher's
+			// Subscribe RPC returns — a fast publisher can emit its first
+			// message in that window, and rejecting it would drop a
+			// legitimate observation (no-message-loss over the stricter
+			// gate). failed/stopped rows are still rejected.
 			if senderKind == "publisher" {
 				subID, parseErr := uuid.Parse(body.PublisherSubscriptionID)
 				if parseErr != nil {
-					return errPublisherSubscriptionNotActive
+					return errPublisherSubscriptionNotLive
 				}
 				row, err := deps.Persist.PublisherSubscriptions().Get(ctx, tx, shared.UUID(subID))
 				if err != nil {
 					return err
 				}
-				if row == nil || row.State != persistence.PublisherSubscriptionStateActive || row.InstanceID != instUUID {
-					return errPublisherSubscriptionNotActive
+				live := row != nil &&
+					(row.State == persistence.PublisherSubscriptionStateActive ||
+						row.State == persistence.PublisherSubscriptionStateMounting)
+				if !live || row.InstanceID != instUUID {
+					return errPublisherSubscriptionNotLive
 				}
 				sender = row.PublisherName
 				// Publisher path: `sender = publisher_name` already gives
@@ -370,7 +383,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
 				return
 			}
-			if errors.Is(err, errPublisherSubscriptionNotActive) {
+			if errors.Is(err, errPublisherSubscriptionNotLive) {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
 				return
 			}

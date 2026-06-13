@@ -32,11 +32,9 @@ import (
 	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 // parentSettlementSignal maps a propagated parent's new aggregated
@@ -93,26 +91,10 @@ func parentSettlementSignal(state cascade.NodeState, sigType signalpkg.TypePath,
 // PropagationArgs is the in-context dependencies the propagation
 // transaction needs. RunTree handles the lock/read/write on
 // rimsky_node_runs; RunScopes resolves the parent run id from a child
-// run's RunScope (RunTreeRow no longer projects ParentRunID inline);
-// ClaimHandles is required so that strict.cancel_siblings follow-up
-// actions can walk the affected siblings' claim handles. Logger is for
-// audit lines; nil disables.
+// run's RunScope (RunTreeRow no longer projects ParentRunID inline).
 type PropagationArgs struct {
-	RunTree      persistence.RunTreeTable
-	RunScopes    persistence.RunScopeTable
-	ClaimHandles persistence.ClaimHandleTable
-	Logger       shared.Logger
-
-	// Persist, LifecycleSubs, and LifecyclePeersForSpec carry the
-	// run-scope lifecycle fan-out wiring down to the sub-graph close site
-	// in CarryExitWriteback. They are populated from the surrounding
-	// RunArgs / runtime.Config at each PropagationArgs construction site;
-	// nil values make FanOutRunScopeEvent a no-op (the unit-test path).
-	//
-	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
-	Persist               persistence.Tables
-	LifecycleSubs         *locks.LifecycleRegistry
-	LifecyclePeersForSpec func(tplSpec node.TemplateSpec) []string
+	RunTree   persistence.RunTreeTable
+	RunScopes persistence.RunScopeTable
 }
 
 // PropagateFromChildState is the entry-point: a child run has just
@@ -426,13 +408,8 @@ func PropagateIfChildAfterTerminal(
 	var settlements []ParentSettlement
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		outActions, outSettlements, err := PropagateFromChildState(ctx, PropagationArgs{
-			RunTree:               rt,
-			RunScopes:             scopes,
-			ClaimHandles:          args.ClaimHandles,
-			Logger:                args.Logger,
-			Persist:               args.Persist,
-			LifecycleSubs:         args.LifecycleSubs,
-			LifecyclePeersForSpec: args.LifecyclePeersForSpec,
+			RunTree:   rt,
+			RunScopes: scopes,
 		}, tx, runID, newState, settlingSignalType)
 		actions = outActions
 		settlements = outSettlements

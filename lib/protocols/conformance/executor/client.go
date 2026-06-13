@@ -21,11 +21,13 @@ package conformance
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"sync"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -37,7 +39,9 @@ import (
 type Endpoint struct {
 	Transport string // "grpc" | "http"
 	URL       string
-	TLS       string // "off" | "optional" | "required"
+	// TLS is the dial mode: "off" (plaintext, the default) or
+	// "required" (verified TLS against system roots).
+	TLS string
 }
 
 // Client wraps a generated gRPC ExecutorClient.
@@ -62,15 +66,19 @@ type grpcClient struct {
 	api  genv1.ExecutorClient
 }
 
-// NewGRPCClient dials endpoint over gRPC. v1 ships with insecure
-// credentials by default.
+// NewGRPCClient dials endpoint over gRPC. Plaintext by default;
+// Endpoint.TLS "required" dials with verified TLS (system roots).
 //
 // @source: runtime/executor/client.go::NewGRPCClient
+// @diverged: true
+// @reason: the conformance harness keeps the protocols module's
+// dependency budget (no lib/runtime import), so it maps TLS to
+// credentials inline instead of using runtime/peer.TransportCredentials.
 func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("conformance.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
-	conn, err := grpc.NewClient(endpoint.URL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(endpoint.URL, grpc.WithTransportCredentials(transportCredsFor(endpoint.TLS)))
 	if err != nil {
 		return nil, fmt.Errorf("conformance.NewGRPCClient: dial %s: %w", endpoint.URL, err)
 	}
@@ -83,6 +91,19 @@ func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (Ev
 		return nil, err
 	}
 	return &grpcEventStream{s: s}, nil
+}
+
+// transportCredsFor maps an Endpoint.TLS mode to gRPC transport
+// credentials: "required" dials verified TLS against system roots;
+// anything else (including "" and "off") dials plaintext. Shared by
+// every dial in this package (Execute suite, observability probe,
+// lifecycle probe) so a TLS conformance run cannot split mid-suite
+// between encrypted and plaintext checks.
+func transportCredsFor(tlsMode string) credentials.TransportCredentials {
+	if tlsMode == "required" {
+		return credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
+	}
+	return insecure.NewCredentials()
 }
 
 func (c *grpcClient) Close() error { return c.conn.Close() }
@@ -101,7 +122,11 @@ func (e *grpcEventStream) Recv() (*genv1.ExecuteEvent, error) {
 
 func (e *grpcEventStream) Close() error { return nil }
 
-// ClientPool caches Clients by (transport, URL). Thread-safe.
+// ClientPool caches Clients by (transport, TLS mode, URL). Thread-safe.
+// The TLS mode is part of the key so two entries sharing a URL with
+// different `tls:` modes never silently share one client — a
+// `tls: required` entry must never ride a plaintext connection created
+// for a `tls: off` twin.
 //
 // @source: runtime/executor/client.go::ClientPool
 type ClientPool struct {
@@ -118,7 +143,14 @@ func NewClientPool() *ClientPool { return &ClientPool{clients: map[string]Client
 // for the HTTP+JSON wire and external service authors who need it can
 // dial via their own helper.
 func (p *ClientPool) GetOrCreate(ep Endpoint) (Client, error) {
-	key := ep.Transport + "://" + ep.URL
+	// Normalize the empty mode to "off" — the two dial identically
+	// (plaintext; see transportCredsFor), so keying them separately
+	// would mint a redundant second connection to the same endpoint.
+	tlsMode := ep.TLS
+	if tlsMode == "" {
+		tlsMode = "off"
+	}
+	key := ep.Transport + "|" + tlsMode + "|" + ep.URL
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if c, ok := p.clients[key]; ok {

@@ -10,12 +10,14 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,7 +51,40 @@ func (q *queueImpl) q(tx persistence.Tx) querier {
 }
 
 func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest) error {
-	return q.EnqueueInTx(ctx, req, nil)
+	// Multi-process atomicity: EnqueueInTx is a guarded INSERT followed
+	// by a zero-rows re-resolution SELECT. Without a transaction another
+	// process sharing the database file could close the run scope between
+	// the two statements and the re-resolution would misclassify "row
+	// already in-flight" as ErrRunScopeClosed. The internal immediate-mode
+	// transaction (the DSN's _txlock=immediate makes BEGIN hold the
+	// writer slot) keeps the pair atomic across processes.
+	return q.inTx(ctx, func(tx persistence.Tx) error {
+		return q.EnqueueInTx(ctx, req, tx)
+	})
+}
+
+// inTx runs fn inside an immediate-mode transaction opened on the queue's
+// own handle (the DSN's _txlock=immediate makes BEGIN take the writer
+// slot up front). Used by Queue methods that perform multi-statement
+// read-then-write sequences when the caller did not supply a tx, so
+// their atomicity holds across OS processes sharing the database file —
+// connection-level serialization only ever covered one process.
+func (q *queueImpl) inTx(ctx context.Context, fn func(tx persistence.Tx) error) error {
+	sTx, err := q.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlite.queue.inTx: begin: %w", err)
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			_ = sTx.Rollback()
+			panic(p)
+		}
+	}()
+	if err := fn(&sqliteTx{tx: sTx}); err != nil {
+		_ = sTx.Rollback()
+		return err
+	}
+	return sTx.Commit()
 }
 
 // EnqueueInTx inserts a fresh dispatch row when no in-flight row exists
@@ -201,7 +236,7 @@ func (q *queueImpl) SelectCandidates(
 		      WHERE w.frame_id = d.frame_id AND w.receiver_run_id = d.id
 		        AND w.drained_at IS NULL
 		    )
-		  ORDER BY d.enqueued_at`,
+		  ORDER BY d.enqueued_at, d.id`,
 		nowUTC(),
 	)
 	if err != nil {
@@ -292,6 +327,21 @@ func (q *queueImpl) SelectCandidates(
 		}
 		if c.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
 			return nil, err
+		}
+		// Keyset cursor (mirrors the postgres driver's $6/$7 predicate,
+		// applied in Go here because enqueued_at round-trips through a
+		// string column): only rows strictly after the
+		// (enqueued_at, id) cursor pair survive, so the runner can page
+		// past a head-of-line batch whose candidates were all skipped
+		// (e.g. the upstream in-flight gate). Zero cursor = no filter.
+		if !req.CursorEnqueuedAfter.IsZero() {
+			if c.EnqueuedAt.Before(req.CursorEnqueuedAfter) {
+				continue
+			}
+			if c.EnqueuedAt.Equal(req.CursorEnqueuedAfter) &&
+				bytes.Compare(c.DispatchID[:], req.CursorAfterDispatchID[:]) <= 0 {
+				continue
+			}
 		}
 		out = append(out, c)
 		if len(out) >= limit {
@@ -769,6 +819,58 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 		return shared.UUID{}, false, fmt.Errorf("sqlite.GetInFlightRunForNode: parse %q: %w", idStr, err)
 	}
 	return id, true, nil
+}
+
+// ListInFlightRunPhases returns the distinct in-flight phases per node
+// in (frameID, runScopeID). Mirror of the postgres impl — the
+// persistence half of the supervisor's upstream-gating eligibility
+// condition and its pending-cycle tie-breaker.
+//
+// @concept: wait-set
+// @concept: cascade
+func (q *queueImpl) ListInFlightRunPhases(
+	ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID,
+) (map[shared.UUID][]string, error) {
+	out := map[shared.UUID][]string{}
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	if tx == nil {
+		return nil, errors.New("sqlite.ListInFlightRunPhases: tx required")
+	}
+	placeholders := make([]string, len(nodeIDs))
+	args := make([]any, 0, len(nodeIDs)+2)
+	for i, id := range nodeIDs {
+		placeholders[i] = "?"
+		args = append(args, id.String())
+	}
+	args = append(args, frameID.String(), runScopeID.String())
+	rows, err := q.q(tx).QueryContext(ctx,
+		`SELECT DISTINCT node_id, phase FROM rimsky_node_runs
+		  WHERE node_id IN (`+strings.Join(placeholders, ",")+`)
+		    AND frame_id = ?
+		    AND run_scope_id = ?
+		    AND phase IN ('pending','active','held','parked')`,
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.ListInFlightRunPhases: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeIDStr, phase string
+		if err := rows.Scan(&nodeIDStr, &phase); err != nil {
+			return nil, fmt.Errorf("sqlite.ListInFlightRunPhases: scan: %w", err)
+		}
+		nodeID, err := uuid.Parse(nodeIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite.ListInFlightRunPhases: parse node_id: %w", err)
+		}
+		out[shared.UUID(nodeID)] = append(out[shared.UUID(nodeID)], phase)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite.ListInFlightRunPhases: rows: %w", err)
+	}
+	return out, nil
 }
 
 func buildLiveDispatchFilters(filter persistence.DispatchListFilter) (stateClause string, executor any, instanceID any) {

@@ -100,6 +100,39 @@ const (
 	RefValidateNone
 )
 
+// String returns the operator-facing spelling of the mode — the same
+// tokens accepted by the templates.ref_validation_mode config key
+// (all / available / none).
+func (m RefValidationMode) String() string {
+	switch m {
+	case RefValidateAll:
+		return "all"
+	case RefValidateAvailable:
+		return "available"
+	case RefValidateNone:
+		return "none"
+	}
+	return fmt.Sprintf("RefValidationMode(%d)", int(m))
+}
+
+// refValidationModeRejection builds the self-documenting message every
+// reference-validation failure carries: it states the failing
+// reference (refDesc), names the active mode, states that the mode is
+// what made the unvalidatable reference fatal, and names the
+// templates.ref_validation_mode config key with its relaxed settings —
+// so the register-before-provision workflow is discoverable from the
+// error message itself. All four reference legs (executor-declared,
+// store-declared, named-lock-declared, executor-schema) share this
+// builder so the four messages stay consistent.
+func refValidationModeRejection(refDesc string, mode RefValidationMode) string {
+	return fmt.Sprintf(
+		"%s; reference validation failed under mode %q — mode %q makes a reference that "+
+			"cannot be validated at registration fatal; for register-before-provision workflows "+
+			"set templates.ref_validation_mode to \"available\" (skip not-yet-provisioned "+
+			"references) or \"none\" (skip registration-time reference validation entirely)",
+		refDesc, mode, mode)
+}
+
 // RegistryHooks bundles the registry-dependent lookups the validator
 // uses. All fields may be nil; a nil hook short-circuits to "skip the
 // corresponding check," which is useful for unit tests that don't wire
@@ -141,17 +174,26 @@ type RegistryHooks struct {
 	// ExecutorDeclaredErrorClasses returns the set of error-class paths
 	// the named executor advertises via
 	// ObservabilityCapabilities.declared_error_classes. Mirrors
-	// ExecutorDeclaredEvents. Used by the validator's range-check of
-	// terminal/error/* subscriptions against the sender's executor.
-	// nil → skip the check.
-	//
-	// The proto field declared_error_classes is added in Pass 6 of
-	// the 2026-05-23 signal-taxonomy reshape; until then every wired
-	// instance of this hook returns ([], false) and the validator
-	// silent-skips.
+	// ExecutorDeclaredEvents. Used by validateErrorTypes' vocabulary
+	// union and by the validator's range-check of terminal/error/*
+	// subscriptions against the sender's executor. nil → the executor
+	// contributes no vocabulary and the subscription check is skipped.
 	//
 	//	@concept: signal
 	ExecutorDeclaredErrorClasses func(name string) ([]string, bool)
+
+	// StoreDeclaredErrorClasses returns the set of error-class paths
+	// the named claim producer advertises via
+	// claim_producer.proto::CapabilitiesResponse.declared_error_classes
+	// (captured by the startup capabilities handshake). Used by
+	// validateErrorTypes: an `error_types:` key is attributable when it
+	// matches the executor's declared classes, the `acquire/*` synthetic
+	// family, or the declared classes of any producer reachable from the
+	// node's `stores:` block. nil → producers contribute no vocabulary.
+	//
+	//	@concept: signal
+	//	@concept: error-policy
+	StoreDeclaredErrorClasses func(name string) ([]string, bool)
 
 	// ExecutorExpectedAttributesSchema returns the JSON Schema bytes the
 	// named executor advertises via
@@ -425,11 +467,25 @@ func ApplyFrameResolutionDefaults(spec *TemplateSpec) {
 // through the generic check with the new error message. Per
 // `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
 //
-// Also range-checks each error-class key against the node's executor's
-// declared_error_classes (when the executor advertises a non-empty
-// set). Reserved synthetic prefix `acquire/*` is always accepted (it
-// originates runtime-side, not executor-side). Silent-skip when the
-// hook is unwired or the executor is unreachable (returns ok=false).
+// Also range-checks each error-class key against the union of the
+// declared vocabularies a key may legitimately come from:
+//
+//   - the node's executor's declared_error_classes
+//     (executor_observability.proto),
+//   - the reserved synthetic `acquire/*` family and the other
+//     runtime-synthesized classes (they originate rimsky-side),
+//   - the declared_error_classes of every claim producer reachable
+//     from the node's `stores:` block (claim_producer.proto) — the
+//     runtime routes producer-classified acquisition failures by
+//     these, so the validator must accept what the runtime routes.
+//
+// A key attributable to no declared vocabulary is an advisory WARNING
+// (res.Warnings), never a hard rejection: peers MAY declare nothing,
+// and an undeclared vocabulary must not lock operators out of routing
+// classes the system itself emits. Silent-skip only when no vocabulary
+// information is available at all (every hook unwired or every lookup
+// returns ok=false — e.g. unit tests without a registry, or every
+// referenced peer unreachable at registration).
 //
 //	@concept: error-policy
 //	@concept: signal
@@ -440,12 +496,21 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 		"retry":                     true,
 		"discard_claims_then_retry": true,
 	}
-	var declaredClasses []string
-	haveDeclared := false
+	var executorClasses []string
+	vocabularyKnown := false
 	if n.Executor != "" && hooks.ExecutorDeclaredErrorClasses != nil {
 		if classes, ok := hooks.ExecutorDeclaredErrorClasses(n.Executor); ok {
-			declaredClasses = classes
-			haveDeclared = true
+			executorClasses = classes
+			vocabularyKnown = true
+		}
+	}
+	var producerClasses []string
+	if hooks.StoreDeclaredErrorClasses != nil {
+		for _, storeName := range RequiredStores(n) {
+			if classes, ok := hooks.StoreDeclaredErrorClasses(storeName); ok {
+				producerClasses = append(producerClasses, classes...)
+				vocabularyKnown = true
+			}
 		}
 	}
 	for className, policy := range n.ErrorTypes {
@@ -458,18 +523,25 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 				Msg:  fmt.Sprintf("unknown action %q; valid actions are: pass | give_up | retry | discard_claims_then_retry", action.Action),
 			})
 		}
-		if !haveDeclared {
+		if !vocabularyKnown {
 			continue
 		}
 		if isRuntimeSynthesizedErrorClass(className) {
 			continue
 		}
-		if !errorClassMatchesDeclared(className, declaredClasses) {
-			res.Errors = append(res.Errors, ValidationError{
-				Path: fmt.Sprintf("%s.error_types[%s]", base, className),
-				Msg:  fmt.Sprintf("error class %q not declared by executor %q (declared: %v)", className, n.Executor, declaredClasses),
-			})
+		if errorClassMatchesDeclared(className, executorClasses) {
+			continue
 		}
+		if errorClassMatchesDeclared(className, producerClasses) {
+			continue
+		}
+		res.Warnings = append(res.Warnings, ValidationWarning{
+			Path: fmt.Sprintf("%s.error_types[%s]", base, className),
+			Msg: fmt.Sprintf("error class %q is not in any declared vocabulary — not declared by executor %q (declared: %v), "+
+				"not in the acquire/* synthetic family, and not declared by any producer in this node's stores: block (declared: %v); "+
+				"the policy registers but will only match if a peer emits this exact class",
+				className, n.Executor, executorClasses, producerClasses),
+		})
 	}
 }
 
@@ -519,13 +591,12 @@ func errorClassMatchesDeclared(class string, declared []string) bool {
 
 // validateAcquireUnavailablePolicyAdvised emits an advisory warning
 // (not an error) when a node declares `stores:` but does NOT declare an
-// `error_types: { "acquire/unavailable": ... }` policy. Under the
-// 2026-05-23 signal-taxonomy reshape, pre-dispatch acquisition failure
-// routes through the operator's `error_types:` chain via synthetic
-// class `acquire/unavailable`; absent a declared policy the default is
-// fail-fast (give_up("unknown_error_class")) rather than the pre-Pass-4
-// implicit retry behavior. Operators that want retry on contention must
-// opt in explicitly.
+// `error_types: { "acquire/unavailable": ... }` policy. Pre-dispatch
+// acquisition failure routes through the operator's `error_types:`
+// chain via synthetic class `acquire/unavailable`; absent a declared
+// policy the default is fail-fast (give_up("unknown_error_class")), not
+// implicit retry. Operators that want retry on contention must opt in
+// explicitly.
 //
 //	@concept: error-policy
 func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res *ValidationResult) {
@@ -548,8 +619,8 @@ func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res
 	res.Warnings = append(res.Warnings, ValidationWarning{
 		Path: base + ".error_types",
 		Msg: "node uses claim-producers but declares no \"acquire/unavailable\" error_types entry; " +
-			"the default behavior is fail-fast, not implicit retry. " +
-			"See spec .ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-design.md §ErrorPolicy.",
+			"the default behavior on acquisition failure is fail-fast, not implicit retry. " +
+			"Declare error_types: {\"acquire/unavailable\": ...} to choose a policy (e.g. retry).",
 	})
 }
 
@@ -624,33 +695,54 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			}
 		}
 		// Cross-check `terminal/error/<class>` exact-path subscriptions
-		// against the sender's executor declared_error_classes. Match
-		// rule: leaf matches a declared class iff (a) the class is
-		// exact and equals leaf, or (b) the class ends in `*` and is
-		// a prefix of leaf (e.g. `http/server_error/*` matches
-		// `http/server_error/500`). Silent-skip when the hook is
-		// unwired or the executor is unreachable (returns ok=false).
-		if s.Node != "" && hooks.ExecutorDeclaredErrorClasses != nil && tmpl != nil {
+		// against the union of the sender's declared vocabularies: its
+		// executor's declared_error_classes AND every producer in its
+		// stores: block (producer-classified acquisition failures land
+		// as `terminal/error/<producer class>` — e.g.
+		// `terminal/error/pg/claim_unavailable` — so the validator must
+		// accept what the runtime routes). Match rule: leaf matches a
+		// declared class iff (a) the class is exact and equals leaf, or
+		// (b) the class ends in `*` and is a prefix of leaf (e.g.
+		// `http/server_error/*` matches `http/server_error/500`). An
+		// unmatched leaf is an advisory WARNING, never a hard rejection
+		// — same semantics as `validateErrorTypes` above: peers MAY
+		// declare nothing, and an incomplete vocabulary must not lock
+		// operators out of routing classes the system emits.
+		// Silent-skip when no vocabulary information is available at
+		// all (hooks unwired / every lookup ok=false).
+		if s.Node != "" && tmpl != nil && strings.HasPrefix(s.Type, "terminal/error/") &&
+			!strings.HasSuffix(s.Type, "*") {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
-			if sender.Executor != "" && strings.HasPrefix(s.Type, "terminal/error/") &&
-				!strings.HasSuffix(s.Type, "*") {
-				leaf := strings.TrimPrefix(s.Type, "terminal/error/")
-				// Bypass for runtime-synthesized error classes
-				// (`acquire/*` and the attribute-pipeline classes).
-				// These are emitted by rimsky, not by any executor —
-				// no executor declares them — so the executor-range
-				// check would always reject. Mirrors the bypass in
-				// `validateErrorTypes` above.
-				if !isRuntimeSynthesizedErrorClass(leaf) {
+			leaf := strings.TrimPrefix(s.Type, "terminal/error/")
+			// Bypass for runtime-synthesized error classes (`acquire/*`
+			// and the attribute-pipeline classes): emitted by rimsky,
+			// not by any peer — no vocabulary declares them. Mirrors
+			// the bypass in `validateErrorTypes` above.
+			if !isRuntimeSynthesizedErrorClass(leaf) {
+				vocabularyKnown := false
+				matched := false
+				if sender.Executor != "" && hooks.ExecutorDeclaredErrorClasses != nil {
 					if classes, ok := hooks.ExecutorDeclaredErrorClasses(sender.Executor); ok {
-						if !errorClassMatchesDeclared(leaf, classes) {
-							res.Errors = append(res.Errors, ValidationError{
-								Path: sbase + ".type",
-								Msg:  fmt.Sprintf("error class %q not declared by sender %q's executor %q", leaf, s.Node, sender.Executor),
-							})
+						vocabularyKnown = true
+						matched = matched || errorClassMatchesDeclared(leaf, classes)
+					}
+				}
+				if hooks.StoreDeclaredErrorClasses != nil {
+					for _, storeName := range RequiredStores(sender) {
+						if classes, ok := hooks.StoreDeclaredErrorClasses(storeName); ok {
+							vocabularyKnown = true
+							matched = matched || errorClassMatchesDeclared(leaf, classes)
 						}
 					}
+				}
+				if vocabularyKnown && !matched {
+					res.Warnings = append(res.Warnings, ValidationWarning{
+						Path: sbase + ".type",
+						Msg: fmt.Sprintf("error class %q is not in any vocabulary declared by sender %q "+
+							"(executor %q or its stores: producers); the subscription registers but will only "+
+							"fire if a peer emits this exact class", leaf, s.Node, sender.Executor),
+					})
 				}
 			}
 		}
@@ -750,7 +842,9 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 	}
 	res.Errors = append(res.Errors, ValidationError{
 		Path: base + ".executor",
-		Msg:  fmt.Sprintf("executor %q is not declared in the operator's executors: block", n.Executor),
+		Msg: refValidationModeRejection(
+			fmt.Sprintf("executor %q is not declared in the operator's executors: block", n.Executor),
+			hooks.RefValidationMode),
 	})
 }
 
@@ -780,7 +874,9 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 			if !hooks.StoreDeclared(name) && hooks.RefValidationMode != RefValidateAvailable {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: sbase + ".name",
-					Msg:  fmt.Sprintf("unknown store %q", name),
+					Msg: refValidationModeRejection(
+						fmt.Sprintf("store %q is not declared in the operator's stores: block", name),
+						hooks.RefValidationMode),
 				})
 				continue
 			}
@@ -891,7 +987,9 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 				hooks.RefValidationMode != RefValidateAvailable {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: lbase + ".name",
-					Msg:  fmt.Sprintf("named lock %q is not declared in the operator's named_locks: block", name),
+					Msg: refValidationModeRejection(
+						fmt.Sprintf("named lock %q is not declared in the operator's named_locks: block", name),
+						hooks.RefValidationMode),
 				})
 			}
 		}
@@ -1073,9 +1171,9 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		n.Executor != "" && hooks.ExecutorExpectedAttributesSchema != nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: base + ".attributes",
-			Msg: fmt.Sprintf(
-				"executor %q expected_attributes_schema is not visible at registration; under reference-validation mode `all` an executor schema reference must be validatable (provision the executor, or set the operator reference-validation mode to `available`/`none`)",
-				n.Executor),
+			Msg: refValidationModeRejection(
+				fmt.Sprintf("executor %q expected_attributes_schema is not visible at registration", n.Executor),
+				hooks.RefValidationMode),
 		})
 	}
 

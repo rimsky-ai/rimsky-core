@@ -29,10 +29,11 @@
 //
 // @blessed-invariant 7: Advisory lock on scheduler tick. Postgres uses
 // `pg_try_advisory_lock(SCHEDULER_TICK_KEY)`; SQLite uses
-// `sync.Mutex`. Skips the tick when another replica holds it. The
-// caller is responsible for invoking AdvisoryLocker.TrySchedulerTick
-// before calling these sweeps; the foundation primitives do not gate
-// themselves.
+// `sync.Mutex`. Skips the tick when another replica holds it, and a
+// lock-attempt error is treated as lock-held (skip the pass, never run
+// unlocked). The caller is responsible for invoking
+// AdvisoryLocker.TrySchedulerTick before calling these sweeps; the
+// foundation primitives do not gate themselves.
 package runtime
 
 import (
@@ -66,9 +67,25 @@ type ConductorArgs struct {
 	OrphanedClaimTimeout time.Duration
 }
 
+// reapedDispatchIDFor resolves the dispatch id of the zombie run the
+// heartbeat sweep just retired: the in-tx GetInFlightRunForNode result
+// when it landed, else the node row's projected in-flight id, else
+// zero (no pairing event possible — the row was already gone).
+func reapedDispatchIDFor(cur *persistence.NodeRow, priorDispatchID shared.UUID) shared.UUID {
+	if priorDispatchID != (shared.UUID{}) {
+		return priorDispatchID
+	}
+	if cur.InFlightRunID != nil {
+		return *cur.InFlightRunID
+	}
+	return shared.UUID{}
+}
+
 // SweepStaleHeartbeats finds running nodes whose last_heartbeat is
 // older than now - HeartbeatTimeout, transitions them to stale, and
-// re-enqueues them for the next claim cycle.
+// re-enqueues them for the next claim cycle. The retired zombie
+// dispatch's work_started is paired with a
+// work_completed{terminal_kind:"abandoned"} append in the same tx.
 func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 	log := args.Logger
 	if log == nil {
@@ -191,6 +208,25 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 			// row whose holder is gone; no claimant guard.
 			if err := args.Queue.RemoveForNodeInTx(ctx, cur.ID, curScopeID, "", tx); err != nil {
 				return fmt.Errorf("retire zombie run: %w", err)
+			}
+			// Pair the retired dispatch's work_started with a
+			// work_completed{terminal_kind:"abandoned"} so the ledger's
+			// started/completed pairing survives heartbeat loss — the
+			// dispatch never reaches applyTerminal, so this sweep is
+			// the only site that can close the pair. supervisor_id is
+			// the (gone) holder recorded on the node row; dispatch_id
+			// is the retired row (the pairing join key).
+			if reapedDispatchID := reapedDispatchIDFor(cur, priorDispatchID); reapedDispatchID != (shared.UUID{}) {
+				if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+					NodeID: &cur.ID, InstanceID: &cur.InstanceID,
+					Kind: events.KindWorkCompleted(), Payload: map[string]any{
+						"supervisor_id": cur.AssignedSupervisorID,
+						"dispatch_id":   reapedDispatchID.String(),
+						"terminal_kind": "abandoned",
+					},
+				}, tx); err != nil {
+					return fmt.Errorf("append work_completed for reaped dispatch: %w", err)
+				}
 			}
 			if cur.FrameID != nil {
 				if err := walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,

@@ -11,14 +11,13 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 // Client wraps a generated gRPC ExecutorClient for rimsky's supervisor.
-// One Client per (transport, endpoint). Cached by endpoint URL inside the
+// One Client per (transport, TLS mode, endpoint). Cached inside the
 // supervisor so connections are reused across dispatches.
 //
 // @concept: executor (the in-repo Go-side surface of the Executor.Execute
@@ -40,19 +39,24 @@ type grpcClient struct {
 	api  genv1.ExecutorClient
 }
 
-// NewGRPCClient dials the endpoint. v1 ships with insecure credentials by
-// default; TLS support is a post-v1 Plan C concern.
+// NewGRPCClient dials the endpoint, honoring the entry's validated
+// `tls:` mode: "required" → verified TLS (system roots); "off" / empty
+// → plaintext. Under required, Execute-channel failures name the peer
+// (by endpoint URL — the pool may share one client across executor
+// names) and the mode.
 func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	if endpoint.Transport != "grpc" {
 		return nil, fmt.Errorf("executor.NewGRPCClient: transport=%q not grpc", endpoint.Transport)
 	}
 	conn, err := grpc.NewClient(endpoint.URL,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(peer.TransportCredentials(endpoint.TLS)),
 		// Stamp x-rimsky-service-name from the per-call context so a
 		// host-agent-proxy fronting the executor protocol can route by
 		// service name. No-op when the dispatch site set no name.
-		grpc.WithUnaryInterceptor(peer.ServiceNameUnaryInterceptor),
-		grpc.WithStreamInterceptor(peer.ServiceNameStreamInterceptor),
+		// The TLSMode interceptors annotate RPC errors with the peer +
+		// mode under tls: required (no-op otherwise).
+		grpc.WithChainUnaryInterceptor(peer.ServiceNameUnaryInterceptor, peer.TLSModeUnaryInterceptor(endpoint.URL, endpoint.TLS)),
+		grpc.WithChainStreamInterceptor(peer.ServiceNameStreamInterceptor, peer.TLSModeStreamInterceptor(endpoint.URL, endpoint.TLS)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("executor.NewGRPCClient: dial %s: %w", endpoint.URL, err)
@@ -82,7 +86,11 @@ func (e *grpcEventStream) Recv() (*genv1.ExecuteEvent, error) {
 }
 func (e *grpcEventStream) Close() error { return nil }
 
-// ClientPool caches Clients by (transport, URL). Thread-safe.
+// ClientPool caches Clients by (transport, TLS mode, URL). Thread-safe.
+// The TLS mode is part of the key so two entries sharing a URL with
+// different `tls:` modes never silently share one client — a
+// `tls: required` entry must never ride a plaintext connection created
+// for a `tls: off` twin (STORY-peer-tls-enforced falsifier).
 type ClientPool struct {
 	mu      sync.Mutex
 	clients map[string]Client
@@ -91,7 +99,16 @@ type ClientPool struct {
 func NewClientPool() *ClientPool { return &ClientPool{clients: map[string]Client{}} }
 
 func (p *ClientPool) GetOrCreate(ep Endpoint) (Client, error) {
-	key := ep.Transport + "://" + ep.URL
+	// Normalize the empty mode to "off" — the two dial identically
+	// (plaintext), so keying them separately would mint a redundant
+	// second connection to the same endpoint. Unreachable via config
+	// (parseTLSMode normalizes), but ad-hoc Endpoint literals reach
+	// this pool directly.
+	tlsMode := ep.TLS
+	if tlsMode == "" {
+		tlsMode = "off"
+	}
+	key := ep.Transport + "|" + tlsMode + "|" + ep.URL
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if c, ok := p.clients[key]; ok {

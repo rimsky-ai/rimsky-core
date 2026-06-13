@@ -105,7 +105,7 @@ func TestCLIWatch_ChronologicalAcrossSources(t *testing.T) {
 	// node — see the breakpoints-scenario regression that pins that — but the
 	// attributed shape keeps this watch gate on the canonical path rather than
 	// an edge case.)
-	templateID := deploySQLiteTemplate(t, ep, map[string]any{
+	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "cli-watch-chronological",
 			"version":               "1",

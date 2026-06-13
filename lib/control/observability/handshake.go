@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
 // handshakeTimeout bounds each per-peer probe at startup. Per spec §4
@@ -24,20 +24,33 @@ const handshakeTimeout = 30 * time.Second
 // Prober is the seam for testing the handshake without dialing real
 // peers. The default implementation (gRPCProber) dials the supplied
 // endpoint and runs both the executor and store capability RPCs.
+// tlsMode is the peer entry's validated `tls:` mode (off / required;
+// empty → off) — under required the probe dials with verified TLS.
+//
+// ProbeStoreDeclaredErrorClasses runs the ClaimProducer.Capabilities
+// handshake (claim_producer.proto, not the observability service) and
+// returns the producer's declared_error_classes. It targets the
+// store's PRIMARY endpoint — the ClaimProducer service always lives
+// there, whereas the observability service may be split onto a
+// dedicated observability endpoint.
 type Prober interface {
-	ProbeExecutor(ctx context.Context, endpoint string) (*ObservabilityCapabilities, error)
-	ProbeStore(ctx context.Context, endpoint string) (*ObservabilityCapabilities, error)
+	// peerName is the operator-configured peer name from rimsky.yml —
+	// threaded into the dial so required-mode TLS failures name the
+	// peer the operator configured, not just the endpoint string.
+	ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
+	ProbeStore(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
+	ProbeStoreDeclaredErrorClasses(ctx context.Context, peerName, endpoint, tlsMode string) ([]string, error)
 }
 
-// gRPCProber is the default Prober. Always dials with insecure
-// transport — the operator-configured perimeter handles auth in v1.
+// gRPCProber is the default Prober. Dials per the peer's configured
+// `tls:` mode (plaintext for off / empty; verified TLS for required).
 type gRPCProber struct{}
 
 // NewGRPCProber returns the production Prober.
 func NewGRPCProber() Prober { return gRPCProber{} }
 
-func (gRPCProber) ProbeExecutor(ctx context.Context, endpoint string) (*ObservabilityCapabilities, error) {
-	conn, err := dial(ctx, endpoint)
+func (gRPCProber) ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
+	conn, err := dial(ctx, peerName, endpoint, tlsMode)
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +63,8 @@ func (gRPCProber) ProbeExecutor(ctx context.Context, endpoint string) (*Observab
 	return executorCapsFromProto(resp), nil
 }
 
-func (gRPCProber) ProbeStore(ctx context.Context, endpoint string) (*ObservabilityCapabilities, error) {
-	conn, err := dial(ctx, endpoint)
+func (gRPCProber) ProbeStore(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error) {
+	conn, err := dial(ctx, peerName, endpoint, tlsMode)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +75,21 @@ func (gRPCProber) ProbeStore(ctx context.Context, endpoint string) (*Observabili
 		return nil, err
 	}
 	return storeCapsFromProto(resp), nil
+}
+
+func (gRPCProber) ProbeStoreDeclaredErrorClasses(ctx context.Context, peerName, endpoint, tlsMode string) ([]string, error) {
+	conn, err := dial(ctx, peerName, endpoint, tlsMode)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	c := genv1.NewClaimProducerClient(conn)
+	resp, err := c.Capabilities(ctx, &genv1.CapabilitiesRequest{})
+	if err != nil {
+		return nil, err
+	}
+	// Defensive copy: the cache must own a stable snapshot.
+	return append([]string(nil), resp.GetDeclaredErrorClasses()...), nil
 }
 
 func executorCapsFromProto(r *genv1.ObservabilityCapabilities) *ObservabilityCapabilities {
@@ -130,17 +158,30 @@ func customUIFromProto(r *genv1.CustomUI) *CustomUI {
 	}
 }
 
-// dial opens an insecure gRPC client connection to endpoint. Strips a
-// leading grpc:// scheme prefix if present (rimsky.yml store endpoints
-// historically use grpc://host:port). Uses NewClient (the post-1.65
-// supported call) — the connection is lazy, so a Capabilities() call
-// (which is bound by ctx) is the actual reachability gate. The ctx
-// argument is reserved for future blocking-dial wrappers and is not
-// honored by NewClient itself.
-func dial(_ context.Context, endpoint string) (*grpc.ClientConn, error) {
+// dial opens a gRPC client connection to endpoint, honoring the peer's
+// validated `tls:` mode (plaintext for off / empty; verified TLS for
+// required — under which RPC errors are annotated with the endpoint
+// and mode). Strips a leading grpc:// scheme prefix if present
+// (rimsky.yml store endpoints historically use grpc://host:port).
+// Uses NewClient (the post-1.65 supported call) — the connection is
+// lazy, so a Capabilities() call (which is bound by ctx) is the actual
+// reachability gate. The ctx argument is reserved for future
+// blocking-dial wrappers and is not honored by NewClient itself.
+func dial(_ context.Context, peerName, endpoint, tlsMode string) (*grpc.ClientConn, error) {
 	target := stripScheme(endpoint)
+	// Required-mode failures must name the configured peer (the name
+	// the operator can find in rimsky.yml), with the endpoint beside it
+	// for dial-target context.
+	label := peerName
+	if label == "" {
+		label = endpoint
+	} else {
+		label = peerName + " (" + endpoint + ")"
+	}
 	return grpc.NewClient(target,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(peer.TransportCredentials(tlsMode)),
+		grpc.WithUnaryInterceptor(peer.TLSModeUnaryInterceptor(label, tlsMode)),
+		grpc.WithStreamInterceptor(peer.TLSModeStreamInterceptor(label, tlsMode)),
 	)
 }
 
@@ -161,6 +202,9 @@ type PeerSpec struct {
 	Name                  string
 	Endpoint              string
 	ObservabilityEndpoint string
+	// TLS is the peer's validated `tls:` dial mode ("off" / "required";
+	// empty → off). The probe honors it like every other dial site.
+	TLS string
 }
 
 // RunHandshake probes each declared executor and store's observability
@@ -204,10 +248,11 @@ func probeExecutorEntry(ctx context.Context, prober Prober, e PeerSpec, log *slo
 		Name:                  e.Name,
 		Endpoint:              e.Endpoint,
 		ObservabilityEndpoint: probe,
+		TLS:                   e.TLS,
 		LastProbedAt:          time.Now(),
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-	caps, err := prober.ProbeExecutor(probeCtx, probe)
+	caps, err := prober.ProbeExecutor(probeCtx, e.Name, probe, e.TLS)
 	cancel()
 	if err != nil {
 		entry.Reachability = ReachabilityUnreachable
@@ -226,18 +271,41 @@ func probeExecutorEntry(ctx context.Context, prober Prober, e PeerSpec, log *slo
 	return entry
 }
 
-// probeStoreEntry mirrors probeExecutorEntry for store peers.
+// probeStoreEntry mirrors probeExecutorEntry for store peers. Shared
+// by the startup handshake (via PeerSpec) and refreshAll (via the
+// cached PeerEntry) so both paths carry the producer-declared
+// error-class vocabulary identically — a refresh must never silently
+// drop a vocabulary the startup handshake captured.
 func probeStoreEntry(ctx context.Context, prober Prober, s PeerSpec, log *slog.Logger) PeerEntry {
 	probe := chooseObsEndpoint(s.ObservabilityEndpoint, s.Endpoint)
 	entry := PeerEntry{
 		Name:                  s.Name,
 		Endpoint:              s.Endpoint,
 		ObservabilityEndpoint: probe,
+		TLS:                   s.TLS,
 		LastProbedAt:          time.Now(),
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-	caps, err := prober.ProbeStore(probeCtx, probe)
+	caps, err := prober.ProbeStore(probeCtx, s.Name, probe, s.TLS)
 	cancel()
+	// Producer-declared error-class vocabulary (ClaimProducer.Capabilities
+	// on the PRIMARY endpoint — the service the runtime dials, which may
+	// differ from the observability endpoint probed above). Runs
+	// regardless of the observability probe's outcome: the template
+	// validator must see the same vocabulary the runtime routes by even
+	// when the peer exposes no observability surface. Best-effort like
+	// the rest of the handshake — a failed probe leaves the vocabulary
+	// empty (validator falls back to advisory warnings, never hard
+	// rejections).
+	classCtx, classCancel := context.WithTimeout(ctx, handshakeTimeout)
+	declaredClasses, classErr := prober.ProbeStoreDeclaredErrorClasses(classCtx, s.Name, s.Endpoint, s.TLS)
+	classCancel()
+	if classErr != nil {
+		log.Info("observability.handshake.store.declared_error_classes.unavailable",
+			slog.String("name", s.Name),
+			slog.String("endpoint", s.Endpoint),
+			slog.String("error", classErr.Error()))
+	}
 	if err != nil {
 		entry.Reachability = ReachabilityUnreachable
 		entry.LastError = err.Error()
@@ -245,12 +313,21 @@ func probeStoreEntry(ctx context.Context, prober Prober, s PeerSpec, log *slog.L
 			slog.String("name", s.Name),
 			slog.String("endpoint", probe),
 			slog.String("error", err.Error()))
+		if len(declaredClasses) > 0 {
+			entry.Capabilities = &ObservabilityCapabilities{DeclaredErrorClasses: declaredClasses}
+		}
 		return entry
 	}
 	entry.Reachability = ReachabilityReachable
 	entry.Capabilities = caps
 	if caps != nil {
 		entry.HTTPBridgeURL = caps.HTTPBridgeURL
+	}
+	if len(declaredClasses) > 0 {
+		if entry.Capabilities == nil {
+			entry.Capabilities = &ObservabilityCapabilities{}
+		}
+		entry.Capabilities.DeclaredErrorClasses = declaredClasses
 	}
 	return entry
 }
@@ -285,7 +362,7 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 		go func(e PeerEntry) {
 			defer wg.Done()
 			probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-			caps, err := d.prober.ProbeExecutor(probeCtx, e.ObservabilityEndpoint)
+			caps, err := d.prober.ProbeExecutor(probeCtx, e.Name, e.ObservabilityEndpoint, e.TLS)
 			cancel()
 			updated := e
 			updated.LastProbedAt = time.Now()
@@ -309,25 +386,15 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 		wg.Add(1)
 		go func(e PeerEntry) {
 			defer wg.Done()
-			probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-			caps, err := d.prober.ProbeStore(probeCtx, e.ObservabilityEndpoint)
-			cancel()
-			updated := e
-			updated.LastProbedAt = time.Now()
-			if err != nil {
-				updated.Reachability = ReachabilityUnreachable
-				updated.LastError = err.Error()
-				updated.Capabilities = nil
-				updated.HTTPBridgeURL = ""
-			} else {
-				updated.Reachability = ReachabilityReachable
-				updated.Capabilities = caps
-				updated.LastError = ""
-				if caps != nil {
-					updated.HTTPBridgeURL = caps.HTTPBridgeURL
-				}
-			}
-			d.SetStore(updated)
+			// Route through probeStoreEntry (the same path the startup
+			// handshake uses) so the refresh re-captures the producer-
+			// declared error-class vocabulary instead of wiping it.
+			d.SetStore(probeStoreEntry(ctx, d.prober, PeerSpec{
+				Name:                  e.Name,
+				Endpoint:              e.Endpoint,
+				ObservabilityEndpoint: e.ObservabilityEndpoint,
+				TLS:                   e.TLS,
+			}, log))
 		}(e)
 	}
 	wg.Wait()

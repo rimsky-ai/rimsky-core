@@ -159,7 +159,8 @@ func (s *claimHoldersImpl) CompleteByClaimHandleAndRun(
 // Defense-in-depth claimant guard: the EXISTS clause confirms the
 // caller still owns the parent rimsky_claim_handles (matches blessed-
 // invariant 4 — every ownership-bearing UPDATE/DELETE filters on
-// supervisor).
+// supervisor; the predicate is rendered by claim_handles.go's
+// claimantGuard helper, the driver's single written guard site).
 func (s *claimHoldersImpl) FailAllActiveByClaimHandle(
 	ctx context.Context, claimHandleID shared.UUID, supervisorID string, tx persistence.Tx,
 ) error {
@@ -173,7 +174,7 @@ func (s *claimHoldersImpl) FailAllActiveByClaimHandle(
 		    AND EXISTS (
 		      SELECT 1 FROM rimsky_claim_handles
 		       WHERE id = $1
-		         AND holder_supervisor_id = $2
+		         AND `+claimantGuard("", 2)+`
 		    )`,
 		claimHandleID, supervisorID,
 	)

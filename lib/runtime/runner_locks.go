@@ -129,7 +129,7 @@ func buildLockSpecs(
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, locks.NamedLockSpec{Name: nameSub})
+		out = append(out, locks.NamedLockSpec{Name: nameSub, TemplateName: l.Name})
 	}
 	for _, sref := range def.Stores {
 		selectorSub, err := attributes.Substitute(sref.Selector, resolveCtx)

@@ -115,11 +115,18 @@ type ControlAPIConfig struct {
 type ControlAPIHandle interface {
 	Shutdown(ctx context.Context) error
 	Addr() string
+	// ServeErr surfaces a fatal post-start failure of the HTTP serve
+	// loop (anything other than a graceful Shutdown). At most one error
+	// is ever sent; a clean shutdown sends nothing. Callers that
+	// supervise the role (the unified entrypoint, the role mains) select
+	// on it to exit non-zero instead of running on degraded.
+	ServeErr() <-chan error
 }
 
 type controlAPIHandle struct {
 	srv             *http.Server
 	addr            string
+	serveErr        chan error
 	registry        *locks.Registry
 	lifecycleReg    *locks.LifecycleRegistry
 	terminator      *controlapi.InstanceTerminator
@@ -166,12 +173,21 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 }
 func (h *controlAPIHandle) Addr() string { return h.addr }
 
+func (h *controlAPIHandle) ServeErr() <-chan error { return h.serveErr }
+
 // resyncPublishersAtStartup is the startup publisher-subscription
 // reconciliation hook. Production points it at
 // runtime.ResyncPublisherSubscriptions (re-issue dropped subs, tear down
 // orphans). It is a package-level var so the wiring test can override it to
 // inject a fake publisher registry and assert StartControlAPI fires resync.
 var resyncPublishersAtStartup = runtime.ResyncPublisherSubscriptions
+
+// runPublisherSubscriptionReconciler is the background worker that
+// drives the publisher Subscribe handshake for `mounting` subscription
+// rows (no attempt cap — see runtime.RunPublisherSubscriptionReconciler).
+// Package-level var so the wiring test can override it and assert
+// StartControlAPI starts the worker.
+var runPublisherSubscriptionReconciler = runtime.RunPublisherSubscriptionReconciler
 
 // StartControlAPI binds host:port (port=0 for OS-assigned) and starts
 // serving.
@@ -223,6 +239,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			Name:                  name,
 			Endpoint:              e.Endpoint,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
+			TLS:                   e.TLS,
 		})
 	}
 	storePeers := make([]observability.PeerSpec, 0, len(cfg.Stores.Stores))
@@ -231,6 +248,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			Name:                  name,
 			Endpoint:              e.Endpoint,
 			ObservabilityEndpoint: e.ObservabilityEndpoint,
+			TLS:                   e.TLS,
 		})
 	}
 	obsLogger := slogLoggerFor(cfg.Logger)
@@ -313,6 +331,19 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				peer.Capabilities.ExpectedAttributesSchema,
 				true
 		},
+		// StoreDeclaredErrorClasses exposes the discovery cache's
+		// per-store producer-declared error-class vocabulary (captured
+		// from the ClaimProducer.Capabilities handshake) to the
+		// controlapi templates registration validator — the producer
+		// half of the executor ∪ producer ∪ acquire/* union the
+		// `error_types:` range-check accepts.
+		StoreDeclaredErrorClasses: func(storeName string) ([]string, bool) {
+			peer, ok := disc.GetStore(storeName)
+			if !ok || peer.Capabilities == nil {
+				return nil, false
+			}
+			return peer.Capabilities.DeclaredErrorClasses, true
+		},
 		Observability: func(r chi.Router) {
 			observability.Routes(r, observability.Deps{
 				Tables:    persistStore,
@@ -352,6 +383,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	h := &controlAPIHandle{
 		srv:             srv,
 		addr:            listener.Addr().String(),
+		serveErr:        make(chan error, 1),
 		registry:        registry,
 		lifecycleReg:    lifecycleReg,
 		terminator:      terminator,
@@ -360,8 +392,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		peerClosers:     peerClosers,
 	}
 	go func() {
-		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed && cfg.Logger != nil {
-			cfg.Logger.Error("controlapi serve", "error", err.Error())
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			if cfg.Logger != nil {
+				cfg.Logger.Error("controlapi serve", "error", err.Error())
+			}
+			h.serveErr <- err
 		}
 	}()
 	go terminator.Run(loopCtx)
@@ -383,16 +418,24 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	if resyncLog == nil {
 		resyncLog = shared.SilentLogger{}
 	}
+	publisherDeps := runtime.PublisherLifecycleDeps{
+		Persist:    persistStore,
+		Publishers: publisherReg,
+		Clock:      cfg.Clock,
+		Logger:     resyncLog,
+	}
 	go func() {
-		if err := resyncPublishersAtStartup(loopCtx, runtime.PublisherLifecycleDeps{
-			Persist:    persistStore,
-			Publishers: publisherReg,
-			Clock:      cfg.Clock,
-			Logger:     resyncLog,
-		}); err != nil {
+		if err := resyncPublishersAtStartup(loopCtx, publisherDeps); err != nil {
 			resyncLog.Warn("controlapi.publisher_resync.failed", "error", err.Error())
 		}
 	}()
+	// Publisher-subscription reconciler: drives the Subscribe handshake
+	// for rows instance-create persisted in `mounting` — retry-forever
+	// (the tick is the backoff), `failed` reserved for non-retryable
+	// errors. Same registry + persistence handles as resync; bound by
+	// loopCtx so shutdown stops it.
+	go runPublisherSubscriptionReconciler(loopCtx, publisherDeps,
+		runtime.DefaultPublisherSubscriptionReconcileInterval)
 	return h, nil
 }
 

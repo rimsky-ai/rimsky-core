@@ -59,6 +59,11 @@ type templateRegisterRequest struct {
 type templateRegisterResponse struct {
 	TemplateID string   `json:"template_id"` // content hash
 	Tags       []string `json:"tags,omitempty"`
+	// ValidationWarnings carries the merged advisory set (static
+	// validator + Validation-mix-in pipeline) so warnings the system
+	// computed reach the registrant even when registration succeeds
+	// (TD-merge-validator-warnings).
+	ValidationWarnings []runtime.ValidationFinding `json:"validation_warnings,omitempty"`
 }
 
 type templateListItem struct {
@@ -137,6 +142,18 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			return ok
 		}
 	}
+	if deps.StoreDeclaredErrorClasses != nil {
+		hooks.StoreDeclaredErrorClasses = func(name string) ([]string, bool) {
+			if isLateBind(name) {
+				// Late-bound producer: no discovery-cache entry yet; it
+				// contributes no vocabulary at registration. Keys only it
+				// could attribute surface as advisory warnings, never
+				// rejections.
+				return nil, false
+			}
+			return deps.StoreDeclaredErrorClasses(name)
+		}
+	}
 	hooks.NamedLockDeclared = func(name string) bool {
 		_, ok := deps.NamedLocks.Get(name)
 		return ok
@@ -205,12 +222,23 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			for _, e := range res.Errors {
 				errs = append(errs, map[string]string{"path": e.Path, "msg": e.Msg})
 			}
+			// Parity with the pipeline rejection below: the warnings
+			// the validator computed alongside the errors ride the
+			// rejection body too, so an operator fixing the errors sees
+			// the advisories in the same pass.
 			writeJSON(w, http.StatusBadRequest, map[string]any{
-				"error":             shared.ErrTemplateValidation.Error(),
-				"validation_errors": errs,
+				"error":               shared.ErrTemplateValidation.Error(),
+				"validation_errors":   errs,
+				"validation_warnings": staticWarningsToFindings(res.Warnings),
 			})
 			return
 		}
+		// Static-validator advisories merge into the same
+		// validation_warnings stream as the pipeline findings below
+		// (TD-merge-validator-warnings): a warning the validator
+		// computed must reach the response, and warnings_as_errors
+		// must trip on it exactly like a pipeline warning.
+		staticWarnings := staticWarningsToFindings(res.Warnings)
 		// Default-fill frame-resolution fields (FrameTimeoutMs == 0 →
 		// FrameTimeoutDefaultMs). Validator is pure; the boundary handler
 		// applies defaults after validation passes so the persisted spec
@@ -254,11 +282,15 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			writeError(w, vErr)
 			return
 		}
-		if len(outcome.Errors) > 0 || (warningsAsErrors && len(outcome.Warnings) > 0) {
+		// Merged advisory set: static-validator warnings first, then
+		// the pipeline's. Both feed the warnings_as_errors rejection
+		// gate and every response that carries validation_warnings.
+		mergedWarnings := append(staticWarnings, outcome.Warnings...)
+		if len(outcome.Errors) > 0 || (warningsAsErrors && len(mergedWarnings) > 0) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error":               "template validation pipeline rejected the registration",
 				"validation_errors":   outcome.Errors,
-				"validation_warnings": outcome.Warnings,
+				"validation_warnings": mergedWarnings,
 				"warnings_as_errors":  warningsAsErrors,
 			})
 			return
@@ -272,7 +304,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			"template_hash":       hash,
 			"tag":                 tag,
 			"source":              source,
-			"validation_warnings": outcome.Warnings,
+			"validation_warnings": mergedWarnings,
 		}) {
 			return
 		}
@@ -303,8 +335,9 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			}
 			tags := tagsForTemplate(req.Context(), deps, hash)
 			writeJSON(w, http.StatusOK, templateRegisterResponse{
-				TemplateID: hash,
-				Tags:       tags,
+				TemplateID:         hash,
+				Tags:               tags,
+				ValidationWarnings: mergedWarnings,
 			})
 			return
 		}
@@ -352,8 +385,9 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		}
 		tags := tagsForTemplate(req.Context(), deps, hash)
 		writeJSON(w, http.StatusCreated, templateRegisterResponse{
-			TemplateID: hash,
-			Tags:       tags,
+			TemplateID:         hash,
+			Tags:               tags,
+			ValidationWarnings: mergedWarnings,
 		})
 	}
 }
@@ -423,11 +457,17 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		}
 
 		// Merge the pipeline findings (ValidationFinding) into the unified
-		// {path, msg} projection.
+		// {path, msg} projection. Static-validator advisories lead the
+		// warnings array (TD-merge-validator-warnings): a warning the
+		// static validator computed must reach the response and count
+		// toward the warnings_as_errors verdict below.
 		for _, e := range outcome.Errors {
 			validationErrors = append(validationErrors, findingToProjection(e))
 		}
-		validationWarnings := make([]map[string]string, 0, len(outcome.Warnings))
+		validationWarnings := make([]map[string]string, 0, len(res.Warnings)+len(outcome.Warnings))
+		for _, wn := range res.Warnings {
+			validationWarnings = append(validationWarnings, map[string]string{"path": wn.Path, "msg": wn.Msg})
+		}
 		for _, wn := range outcome.Warnings {
 			validationWarnings = append(validationWarnings, findingToProjection(wn))
 		}
@@ -441,6 +481,25 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 			"validation_warnings": validationWarnings,
 		})
 	}
+}
+
+// staticWarningsToFindings projects the static validator's advisory
+// warnings (node.ValidationWarning, {Path, Msg}) into the pipeline's
+// ValidationFinding shape so both warning kinds travel through one
+// validation_warnings array on the register surface. ServiceName/Role
+// name the in-process static validator as the origin — static warnings
+// always carry a Path, so findingToProjection never falls back to them.
+func staticWarningsToFindings(warnings []node.ValidationWarning) []runtime.ValidationFinding {
+	out := make([]runtime.ValidationFinding, 0, len(warnings))
+	for _, w := range warnings {
+		out = append(out, runtime.ValidationFinding{
+			ServiceName: "rimsky",
+			Role:        "static",
+			Path:        w.Path,
+			Message:     w.Msg,
+		})
+	}
+	return out
 }
 
 // findingToProjection flattens a pipeline ValidationFinding into the

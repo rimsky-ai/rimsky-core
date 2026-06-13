@@ -14,9 +14,9 @@ The per-row-type accessor umbrella is the bundle returned by the database interf
 
 Each row kind has its own singular per-row accessor sub-interface — one per persisted ledger (templates and their tags, instances, lifecycle-idempotency rows, nodes, claim-handles, node attributes, claim-holders, events, schedules, supervisor rows, frames, blob-orphans, node-events). The accessor-bag methods that hand these back stay plural; the singular-accessor-vs-plural-bag split mirrors Go-stdlib convention for one-row-of-many APIs.
 
-Two impls: a Postgres adapter (production) and an SQLite adapter (dev). Alongside the per-row accessors, the umbrella exposes an advisory locker and a queue facility; a single shared migration runner keeps migrations from forking across adapters.
+Two impls: a Postgres adapter (the default outside the all-in-one deployment) and an SQLite adapter (the all-in-one default; safe for processes sharing one local database file). Alongside the per-row accessors, the umbrella exposes an advisory locker and a queue facility; a single shared migration runner keeps migrations from forking across adapters.
 
-The adapter selector — a string-valued driver config field ("postgres" / "sqlite") — is distinct from the database interface and stays as-is. "Driver" is correctly used there to name the adapter shape.
+The adapter selector — a string-valued driver config field ("postgres" / "sqlite") — is distinct from the database interface. "Driver" names the adapter shape.
 
 Row-struct convention: row structs stay singular even though the persisted tables are plural — the node, frame, claim-handle, and node-run row structs map to the corresponding pluralized node, frame, claim-handle, and node-run ledgers.
 
@@ -30,7 +30,7 @@ Owns: the top-level database container interface, the per-row-type accessor umbr
 
 ## Invariants
 
-- SQLite is dev-only — multi-host requires Postgres. Documented but NOT gate-rejected.
+- The SQLite driver is safe for multiple rimsky processes sharing one local database file: its read-then-write operations are transactional (immediate-mode transactions hold the writer slot), so cross-process atomicity holds. Separate database files per process and network filesystems are unsupported and undetectable from inside a process. There is no startup gate — the platform defaults to Postgres outside the all-in-one deployment, and an operator overriding to SQLite is presumed to have chosen deliberately.
 - The memory blob backend IS gate-rejected outside the unified single-process role.
 - The raw-Postgres-driver isolation rule restricts direct driver use to the Postgres adapter, its test helpers, the binary entrypoints, the scenario harness, the bundled services, and the smoke-test harness — graph and control code go through the database interface.
 - Pre-v1 migration discipline: filenames are append-only; SQL inside is free to drop+recreate.

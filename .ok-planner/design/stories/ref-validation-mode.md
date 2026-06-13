@@ -23,7 +23,7 @@ With the `all` mode, registering a template whose node references a not-yet-prov
 
 ## Falsifier
 
-Any mode's stated behavior isn't realized (strict accepts missing refs, or available rejects a real-reference-to-provisioned-service), OR the implicit always-on soft-fail heuristic is still present alongside the explicit modes.
+Any mode's stated behavior isn't realized (strict accepts missing refs, or available rejects a real-reference-to-provisioned-service), OR the implicit always-on soft-fail heuristic is present alongside the explicit modes.
 
 ## Proof
 

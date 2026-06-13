@@ -40,9 +40,13 @@ func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persist
 	// `leaf_run` rows carry outcome="" by design; `claim_terminal`
 	// writers (`runtime.WriteClaimTerminalLineage`) reject empty
 	// outcome at the call site. Pass row.Outcome through verbatim.
+	// observed_at goes through formatTime (fixed-width UTC text) — a raw
+	// time.Time bind would store modernc's zone-embedded t.String() form,
+	// which breaks the retention DELETE / ORDER BY / range filters on
+	// non-UTC hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertLineageSQL,
 		row.ID.String(), row.RecordKind, row.InstanceID.String(),
-		row.FrameID.String(), row.ObservedAt, row.Record, row.Outcome)
+		row.FrameID.String(), formatTime(row.ObservedAt), row.Record, row.Outcome)
 	if err != nil {
 		return fmt.Errorf("sqlite.Lineage.Insert: %w", err)
 	}
@@ -92,11 +96,11 @@ func (b *lineageImpl) Query(ctx context.Context, q persistence.LineageQuery, pag
 		conds = append(conds, "record_kind = ?")
 	}
 	if q.ObservedAfter != nil {
-		args = append(args, *q.ObservedAfter)
+		args = append(args, formatTime(*q.ObservedAfter))
 		conds = append(conds, "observed_at > ?")
 	}
 	if q.ObservedBefore != nil {
-		args = append(args, *q.ObservedBefore)
+		args = append(args, formatTime(*q.ObservedBefore))
 		conds = append(conds, "observed_at < ?")
 	}
 	limit := pag.Limit
@@ -161,7 +165,7 @@ const sqliteLineagePruneWhereSQL = `
 const sqliteDeleteOlderThanSQL = `DELETE FROM rimsky_lineage` + sqliteLineagePruneWhereSQL
 
 func (b *lineageImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
-	res, err := (*tablesImpl)(b).db.ExecContext(ctx, sqliteDeleteOlderThanSQL, cutoff)
+	res, err := (*tablesImpl)(b).db.ExecContext(ctx, sqliteDeleteOlderThanSQL, formatTime(cutoff))
 	if err != nil {
 		return 0, fmt.Errorf("sqlite.Lineage.DeleteOlderThan: %w", err)
 	}
@@ -173,7 +177,7 @@ const sqliteCountOlderThanSQL = `SELECT count(*) FROM rimsky_lineage` + sqliteLi
 
 func (b *lineageImpl) CountOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
 	var n int
-	if err := (*tablesImpl)(b).db.QueryRowContext(ctx, sqliteCountOlderThanSQL, cutoff).Scan(&n); err != nil {
+	if err := (*tablesImpl)(b).db.QueryRowContext(ctx, sqliteCountOlderThanSQL, formatTime(cutoff)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("sqlite.Lineage.CountOlderThan: %w", err)
 	}
 	return n, nil
@@ -184,12 +188,21 @@ func scanLineage(rows *sql.Rows) ([]persistence.LineageRow, error) {
 	for rows.Next() {
 		var r persistence.LineageRow
 		var idStr, instanceStr, frameStr string
+		// observed_at is fixed-width UTC TEXT; scan as a string and run
+		// through parseTime (per queue_park.go::LoadResumeMetadataInTx)
+		// instead of scanning into time.Time.
+		var observedAtStr string
 		if err := rows.Scan(
 			&idStr, &r.RecordKind, &instanceStr, &frameStr,
-			&r.ObservedAt, &r.Record, &r.Outcome,
+			&observedAtStr, &r.Record, &r.Outcome,
 		); err != nil {
 			return nil, err
 		}
+		observedAt, err := parseTime(observedAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("scan lineage observed_at: %w", err)
+		}
+		r.ObservedAt = observedAt
 		u, err := uuid.Parse(idStr)
 		if err != nil {
 			return nil, fmt.Errorf("scan lineage uuid (id): %w", err)

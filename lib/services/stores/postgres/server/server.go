@@ -133,6 +133,21 @@ type Server struct {
 	store *pgsstore.Store
 }
 
+// producerDeclaredErrorClasses is the error-class vocabulary the store
+// names on the ClaimProducer surface: the Unavailable.error_class arm
+// of Open (pg/claim_unavailable) and the google.rpc.ErrorInfo Reason
+// stamped on faulted producer verbs by classedStatus (pg/swap_failed).
+// Advertised on CapabilitiesResponse.declared_error_classes so the
+// template validator's `error_types:` range-check accepts these keys.
+// The executor-side vocabulary (declaredErrorClasses in executor.go)
+// is the separate ExecutorObservability surface.
+func producerDeclaredErrorClasses() []string {
+	return []string{
+		pgsstore.ClaimUnavailableClass,
+		pgsstore.SwapFailedClass,
+	}
+}
+
 // Capabilities returns the store's advertised capability struct.
 func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
 	c := s.store.Capabilities()
@@ -140,7 +155,10 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 	for _, ws := range c.WriteSemanticsAllowed {
 		out = append(out, bridge.WriteSemanticsToProto(string(ws)))
 	}
-	return &genv1.CapabilitiesResponse{WriteSemanticsAllowed: out}, nil
+	return &genv1.CapabilitiesResponse{
+		WriteSemanticsAllowed: out,
+		DeclaredErrorClasses:  producerDeclaredErrorClasses(),
+	}, nil
 }
 
 // Open delegates. Validates `intent` against the wire schema (only

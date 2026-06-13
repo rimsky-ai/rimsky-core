@@ -126,7 +126,7 @@ type NodeTable interface {
 	//
 	// `runScopeID` disambiguates which in-flight rimsky_node_runs row to
 	// transition. Fan-out children share a node_id with the parent and
-	// each sibling (per `runtime/fanout_dispatch.go::PlanFanOutChildren`
+	// each sibling (per `runtime/fanout_dispatch.go::dispatchFanOutChildren`
 	// and the split UNIQUE constraints in
 	// `foundation/persistence/postgres/migrations/001-baseline.sql`),
 	// so a SELECT by node_id alone can return any of the in-flight rows
@@ -146,6 +146,12 @@ type NodeTable interface {
 	// unclaimable via SelectCandidates' `claimed_by IS NULL` filter).
 	// Nil `runID` preserves the legacy by-node-id update for paths that
 	// don't face fan-out ambiguity.
+	//
+	// Claimant-guarded (blessed-invariant 4): the write only lands when
+	// the row is unclaimed or already claimed by supervisorID — a row
+	// claimed by a different supervisor is untouched (no ownership
+	// steal, no heartbeat refresh that would defeat the orphan reaper).
+	// An empty supervisorID matches only unclaimed rows.
 	UpdateHeartbeat(ctx context.Context, id shared.UUID, runScopeID shared.UUID, at time.Time, supervisorID string, tx Tx) error
 	SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx Tx) error
 	// ClearSettlingSignalType clears settling_signal_type to NULL on the
@@ -191,15 +197,6 @@ type NodeTable interface {
 	// @concept: run-scope
 	GetFailedTerminalRunScopeID(ctx context.Context, id shared.UUID, tx Tx) (*shared.UUID, error)
 
-	// ClearSupervisorAssignment clears the in-flight run row's
-	// claimed_by + last_heartbeat_at.
-	//
-	// `runID` (when non-nil) narrows the UPDATE to that specific
-	// in-flight row — required for fan-out children that share a
-	// node_id with siblings, to prevent the clear from leaking onto a
-	// sibling's claimed_by. Nil `runID` preserves the legacy
-	// by-node-id update for operator paths with no fan-out ambiguity.
-	ClearSupervisorAssignment(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
 	DeleteByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) error
 	// MarkStaleForCascade transitions the run's state to 'stale' and
 	// pins frame_id. Pure UPDATE keyed by run_id; allocation is the

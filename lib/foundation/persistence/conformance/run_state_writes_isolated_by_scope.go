@@ -16,7 +16,6 @@
 //   - Nodes().UpdateState
 //   - Nodes().UpdateHeartbeat
 //   - Nodes().ClearSettlingSignalType
-//   - Nodes().ClearSupervisorAssignment
 //   - Nodes().ResetFailedTerminalSettlingSignalType
 //   - Queue().RemoveForNodeInTx
 //   - Queue().GetParkedByNode
@@ -222,35 +221,6 @@ func testRunStateWritesIsolated_ClearSettlingSignalType(t *testing.T, d persiste
 	if before.SettlingSignalType != after.SettlingSignalType {
 		t.Fatalf("ClearSettlingSignalType leaked across scope: B.SettlingSignalType before=%q after=%q",
 			before.SettlingSignalType, after.SettlingSignalType)
-	}
-}
-
-// testRunStateWritesIsolated_ClearSupervisorAssignment: claim scope B's
-// run; clear scope A's supervisor assignment; assert B's claimed_by
-// unchanged.
-func testRunStateWritesIsolated_ClearSupervisorAssignment(t *testing.T, d persistence.Database) {
-	ctx := context.Background()
-	f := seedTwoScopeRuns(ctx, t, d)
-	store := d.Tables()
-
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.Nodes().UpdateHeartbeat(ctx, f.fix.NodeID, f.scopeA, time.Now(), "sup-A", tx); err != nil {
-			return err
-		}
-		return store.Nodes().UpdateHeartbeat(ctx, f.fix.NodeID, f.scopeB, time.Now(), "sup-B", tx)
-	}); err != nil {
-		t.Fatalf("seed supervisors: %v", err)
-	}
-	before := snapshotRun(ctx, t, d, f.runB)
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().ClearSupervisorAssignment(ctx, f.fix.NodeID, f.scopeA, tx)
-	}); err != nil {
-		t.Fatalf("ClearSupervisorAssignment(A): %v", err)
-	}
-	after := snapshotRun(ctx, t, d, f.runB)
-	if before.ClaimedBy != after.ClaimedBy {
-		t.Fatalf("ClearSupervisorAssignment leaked across scope: B before=%q after=%q",
-			before.ClaimedBy, after.ClaimedBy)
 	}
 }
 

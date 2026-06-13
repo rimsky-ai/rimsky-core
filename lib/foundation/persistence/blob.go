@@ -14,8 +14,8 @@ import (
 //
 // Implementations are typically out-of-process (Postgres LOBs, filesystem
 // on a shared volume); the in-process "memory" backend is dev-only and
-// is rejected at startup unless RIMSKY_PROCESS_ROLE=unified (see
-// ValidateBlobConfig).
+// is rejected at startup outside the single-process mode
+// (RIMSKY_PROCESS_ROLE=unified; see ValidateBlobConfig).
 //
 // The Driver constructs exactly one BlobBackend at startup based on
 // BlobConfig.Backend; multiple concurrent backends are not supported in

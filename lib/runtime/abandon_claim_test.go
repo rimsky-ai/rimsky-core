@@ -38,8 +38,8 @@ func (s *abandonStub) Open(context.Context, claimproducer.ClaimID, claimproducer
 	return claimproducer.OpenOutcome{}, errors.New("Open not implemented in stub")
 }
 
-func (s *abandonStub) Commit(context.Context, claimproducer.ClaimID, []byte, []byte) error {
-	return errors.New("Commit not implemented in stub")
+func (s *abandonStub) Commit(context.Context, claimproducer.ClaimID, []byte, []byte) (claimproducer.CommitResult, error) {
+	return claimproducer.CommitResult{}, errors.New("Commit not implemented in stub")
 }
 
 func (s *abandonStub) Abandon(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {

@@ -146,11 +146,15 @@ func (f *authFixture) Close() { f.teardown() }
 // project persisted runtime state, so no real peer probe is needed.
 type nopObsProber struct{}
 
-func (*nopObsProber) ProbeExecutor(context.Context, string) (*observability.ObservabilityCapabilities, error) {
+func (*nopObsProber) ProbeExecutor(context.Context, string, string, string) (*observability.ObservabilityCapabilities, error) {
 	return nil, errObsProbeUnreachable
 }
 
-func (*nopObsProber) ProbeStore(context.Context, string) (*observability.ObservabilityCapabilities, error) {
+func (*nopObsProber) ProbeStore(context.Context, string, string, string) (*observability.ObservabilityCapabilities, error) {
+	return nil, errObsProbeUnreachable
+}
+
+func (*nopObsProber) ProbeStoreDeclaredErrorClasses(context.Context, string, string, string) ([]string, error) {
 	return nil, errObsProbeUnreachable
 }
 

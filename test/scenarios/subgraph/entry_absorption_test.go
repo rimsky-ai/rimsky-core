@@ -91,7 +91,7 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 }
 
 // IsSubgraphExit is consulted by the supervisor's terminal handler to
-// route exit-node terminals through the CarryExitWriteback carry-rule.
+// route exit-node terminals through the SettleChildren carry-rule.
 // Verify the predicate aligns with the canonicalized template's
 // declared exit.
 func TestEntryAbsorption_ExitNodeIdentified(t *testing.T) {

@@ -554,10 +554,13 @@ func TestValidateErrorTypes_AcceptsUndeclaredWhenHookUnavailable(t *testing.T) {
 	}
 }
 
-// TestValidateErrorTypes_RejectsUndeclaredWhenHookAvailable confirms
-// that when the hook returns a declared set, an undeclared class
-// (e.g. `foo`) is rejected. The mirror of the silent-skip case above.
-func TestValidateErrorTypes_RejectsUndeclaredWhenHookAvailable(t *testing.T) {
+// TestValidateErrorTypes_WarnsUndeclaredWhenHookAvailable confirms
+// that when the hook returns a declared set, a key attributable to no
+// declared vocabulary (e.g. `foo`) registers as an advisory WARNING —
+// never a hard rejection. Per TD-validator-learns-producer-classes
+// the union check (executor ∪ producer ∪ acquire/*) downgrades
+// unattributable keys from errors to warnings.
+func TestValidateErrorTypes_WarnsUndeclaredWhenHookAvailable(t *testing.T) {
 	spec := &TemplateSpec{
 		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{
@@ -572,8 +575,96 @@ func TestValidateErrorTypes_RejectsUndeclaredWhenHookAvailable(t *testing.T) {
 		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
 	}
 	res := ValidateTemplate(spec, hooks)
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "nodes[1].error_types[foo]")
+	require.True(t, res.Ok(), "unattributable error_types key must not hard-reject; errors: %+v", res.Errors)
+	found := false
+	for _, w := range res.Warnings {
+		if w.Path == "nodes[1].error_types[foo]" {
+			found = true
+			if !strings.Contains(w.Msg, "not in any declared vocabulary") {
+				t.Fatalf("warning must state no declared vocabulary contains the key; got %q", w.Msg)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected advisory warning at nodes[1].error_types[foo]; warnings: %+v", res.Warnings)
+	}
+}
+
+// TestValidateErrorTypes_AcceptsProducerDeclaredClass confirms an
+// `error_types:` key declared by a producer reachable from the node's
+// stores: block is hard-valid — no error, no warning. Per
+// TD-producer-declared-classes-capability +
+// TD-validator-learns-producer-classes: the runtime routes
+// producer-classified acquisition failures (e.g. pg/claim_unavailable)
+// by these classes, so the validator must accept what the runtime
+// routes.
+func TestValidateErrorTypes_AcceptsProducerDeclaredClass(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "http"},
+			{Type: "b", Executor: "http",
+				Stores: []NodeStoreRef{{Name: "items-store", Alias: "items", Intent: "rw", Selector: "items?category=alpha"}},
+				ErrorTypes: map[string]ErrorTypePolicy{
+					"pg/claim_unavailable": {Policy: []PolicyAction{{Action: "retry", Count: 3}}},
+				}},
+		},
+	}
+	hooks := RegistryHooks{
+		ExecutorDeclared:             func(string) bool { return true },
+		StoreDeclared:                func(string) bool { return true },
+		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
+		StoreDeclaredErrorClasses: func(name string) ([]string, bool) {
+			if name == "items-store" {
+				return []string{"pg/claim_unavailable", "pg/swap_failed"}, true
+			}
+			return nil, false
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.True(t, res.Ok(), "producer-declared key must validate; errors: %+v", res.Errors)
+	for _, w := range res.Warnings {
+		if w.Path == "nodes[1].error_types[pg/claim_unavailable]" {
+			t.Fatalf("producer-declared key must be hard-valid, not a warning: %+v", w)
+		}
+	}
+}
+
+// TestValidateErrorTypes_ProducerClassUnreachableFromNode confirms
+// producer vocabularies are scoped to the producers reachable from the
+// node's stores: block — a class declared only by a producer the node
+// does NOT reference warns (the node's acquisition path can never
+// produce it).
+func TestValidateErrorTypes_ProducerClassUnreachableFromNode(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "http"},
+			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
+				"pg/claim_unavailable": {Policy: []PolicyAction{{Action: "retry", Count: 3}}},
+			}},
+		},
+	}
+	hooks := RegistryHooks{
+		ExecutorDeclared:             func(string) bool { return true },
+		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
+		// Producer declares the class, but node b references no stores —
+		// the producer is not reachable from b's claims block.
+		StoreDeclaredErrorClasses: func(string) ([]string, bool) {
+			return []string{"pg/claim_unavailable"}, true
+		},
+	}
+	res := ValidateTemplate(spec, hooks)
+	require.True(t, res.Ok(), "must warn, not reject; errors: %+v", res.Errors)
+	found := false
+	for _, w := range res.Warnings {
+		if w.Path == "nodes[1].error_types[pg/claim_unavailable]" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning for producer class unreachable from node; warnings: %+v", res.Warnings)
+	}
 }
 
 // TestValidateSubscribes_Ok covers the happy path: a terminal-prefix

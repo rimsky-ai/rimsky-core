@@ -33,7 +33,11 @@ import (
 func checkTerminals(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 	out := make([]CheckResult, 0, 4)
 	out = append(out, checkTerminalVerb(ctx, c, "Commit", func(id claimproducer.ClaimID, scope, addr []byte) error {
-		return c.Commit(ctx, id, scope, addr)
+		// The base CommitResponse body (version_id / producer_metadata)
+		// is optional producer output; the conformance probe asserts
+		// only that the verb is accepted.
+		_, err := c.Commit(ctx, id, scope, addr)
+		return err
 	}))
 	out = append(out, checkTerminalVerb(ctx, c, "Abandon", func(id claimproducer.ClaimID, scope, addr []byte) error {
 		return c.Abandon(ctx, id, scope, addr)
@@ -90,10 +94,10 @@ func checkTerminalIdempotency(ctx context.Context, c claimproducer.ClaimProducer
 		return CheckResult{Name: name + "Skipped"}
 	}
 	scope, addr := out.Result.ClaimScope, out.Result.Address
-	if err := c.Commit(ctx, claimID, scope, addr); err != nil {
+	if _, err := c.Commit(ctx, claimID, scope, addr); err != nil {
 		return CheckResult{Name: name, Err: fmt.Errorf("first Commit failed: %w", err)}
 	}
-	if err := c.Commit(ctx, claimID, scope, addr); err != nil {
+	if _, err := c.Commit(ctx, claimID, scope, addr); err != nil {
 		return CheckResult{
 			Name: name,
 			Err: fmt.Errorf("retried (duplicate) Commit on the same claim rejected with %v: "+

@@ -14,8 +14,11 @@
 //	managed in this file.
 //
 // @blessed-invariant 4: claimant-guarded release. Every DELETE / UPDATE
-// against rimsky_claim_handles carries `AND holder_supervisor_id =
-// supervisor_id`. Stale orphan sweeps cannot null or delete live ownership.
+// against rimsky_claim_handles carries the claimant guard
+// (`holder_supervisor_id = <supervisor>`), rendered exclusively by the
+// claimantGuard helper in this file — the predicate is written exactly
+// once per driver, so no mutation site can drift to an unguarded form.
+// Stale orphan sweeps cannot null or delete live ownership.
 //
 // FrameID handling: ClaimHandleInsertInput carries an optional FrameID
 // that is plumbed through into the postgres row. Per v3 spec §12, frame_id
@@ -51,6 +54,28 @@ const lockHolderCols = `
   committed_children_count, abandoned_children_count,
   state, resolved_at
 `
+
+// claimantGuard renders the @blessed-invariant 4 ownership predicate —
+// `holder_supervisor_id = $n` — as a SQL fragment. This is the single
+// written site of the guard for the postgres driver: every claimant-
+// guarded UPDATE / DELETE in this file and in claim_holders.go
+// (FailAllActiveByClaimHandle's EXISTS sub-query) splices this fragment
+// into its WHERE clause, so a wrong-supervisor mutation can never match
+// a row. alias qualifies the column for statements that alias the table
+// ("" for unqualified); n is the 1-based placeholder ordinal the caller
+// binds the supervisor id at.
+//
+// Load-bearing property protected: no mutation statement may lose its
+// guard — call sites must splice this fragment rather than hand-writing
+// (or omitting) the predicate, even where a caller seems to guarantee
+// ownership.
+func claimantGuard(alias string, n int) string {
+	col := "holder_supervisor_id"
+	if alias != "" {
+		col = alias + "." + col
+	}
+	return fmt.Sprintf("%s = $%d", col, n)
+}
 
 // Insert writes a new lock-holder row inside the caller-provided
 // transaction. The dispatch-acquisition transaction (§7.3) holds the tx;
@@ -106,7 +131,7 @@ func (s *claimHandlesImpl) UpdateAddress(
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET address = $1
-		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		  WHERE id = $2 AND `+claimantGuard("", 3),
 		nullableJSONB(address), id, supervisorID,
 	)
 	if err != nil {
@@ -123,7 +148,7 @@ func (s *claimHandlesImpl) UpdatePayload(
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET payload = $1
-		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		  WHERE id = $2 AND `+claimantGuard("", 3),
 		nullableJSONB(payload), id, supervisorID,
 	)
 	if err != nil {
@@ -147,7 +172,7 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET realized_write_semantics = $1
-		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		  WHERE id = $2 AND `+claimantGuard("", 3),
 		v, id, supervisorID,
 	)
 	if err != nil {
@@ -165,7 +190,7 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET claim_scope_data = $1
-		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		  WHERE id = $2 AND `+claimantGuard("", 3),
 		nullableJSONB(scope), id, supervisorID,
 	)
 	if err != nil {
@@ -191,6 +216,38 @@ func (s *claimHandlesImpl) UpdateNodeRunID(
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.UpdateNodeRunID: %w", err)
+	}
+	return nil
+}
+
+// ReassignHolderSupervisor CAS-moves an ACTIVE row's
+// holder_supervisor_id from fromSupervisorID to toSupervisorID. The
+// cross-supervisor claim-handoff primitive (leaf-acquisition restamp +
+// settlement takeover); see the interface doc on
+// persistence.ClaimHandleTable for the call sites and the guard
+// rationale. Affected-rows = 0 (state not active, or the observed
+// holder lost a race) returns spec.ErrIllegalClaimHandleTransition.
+func (s *claimHandlesImpl) ReassignHolderSupervisor(
+	ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx persistence.Tx,
+) error {
+	if toSupervisorID == "" {
+		// Active rows must carry a holder (migration-009 CHECK pair); an
+		// empty target would be a disguised release.
+		return fmt.Errorf("lockholders.ReassignHolderSupervisor: empty toSupervisorID")
+	}
+	cmd, err := s.q(tx).Exec(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET holder_supervisor_id = $1
+		  WHERE id = $2
+		    AND state = 'active'
+		    AND `+claimantGuard("", 3),
+		toSupervisorID, id, fromSupervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.ReassignHolderSupervisor: %w", err)
+	}
+	if cmd.RowsAffected() == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -362,7 +419,7 @@ func (s *claimHandlesImpl) Promote(
 		        resolved_at = now()
 		  WHERE id = $1
 		    AND state = 'active'
-		    AND holder_supervisor_id = $2`,
+		    AND `+claimantGuard("", 2),
 		id, supervisorID, string(newState))
 	if err != nil {
 		return fmt.Errorf("lockholders.Promote: %w", err)
@@ -428,7 +485,7 @@ func (s *claimHandlesImpl) SetVersionID(
 	}
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles SET version_id = $1
-		 WHERE id = $2 AND holder_supervisor_id = $3`,
+		 WHERE id = $2 AND `+claimantGuard("", 3),
 		v, id, supervisorID)
 	if err != nil {
 		return fmt.Errorf("lockholders.SetVersionID: %w", err)
@@ -456,20 +513,6 @@ func qualifiedLockHolderCols(alias string) string {
 		alias + `.state, ` + alias + `.resolved_at`
 }
 
-// ListBySupervisor returns every row owned by supervisorID.
-func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
-	rows, err := s.q(tx).Query(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
-		 WHERE holder_supervisor_id = $1
-		 ORDER BY claimed_at ASC`, supervisorID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListBySupervisor: %w", err)
-	}
-	defer rows.Close()
-	return collectClaimHandles(rows)
-}
-
 // ExtendHeartbeat updates last_heartbeat_at and expires_at for every row
 // owned by supervisorID whose lifetime should currently be active. Per
 // spec §7.5; the heartbeat keeps lock-holder rows alive against the
@@ -491,7 +534,7 @@ func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID str
 		`UPDATE rimsky_claim_handles lh
 		   SET last_heartbeat_at = now(),
 		       expires_at = now() + ($2 * interval '1 second')
-		 WHERE lh.holder_supervisor_id = $1
+		 WHERE `+claimantGuard("lh", 1)+`
 		   AND lh.state = 'active'
 		   AND (
 		        EXISTS (
@@ -544,7 +587,7 @@ func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) (
 func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handles
-		 WHERE id = $1 AND holder_supervisor_id = $2`,
+		 WHERE id = $1 AND `+claimantGuard("", 2),
 		id, expectedSupervisorID,
 	)
 	if err != nil {
@@ -630,7 +673,7 @@ func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, 
 	tag, err := s.q(tx).Exec(ctx,
 		`DELETE FROM rimsky_claim_handles
 		 WHERE id = $1
-		   AND holder_supervisor_id = $2
+		   AND `+claimantGuard("", 2)+`
 		   AND expires_at < now()
 		   AND state = 'active'`,
 		id, supervisorID,
@@ -756,7 +799,7 @@ func (s *claimHandlesImpl) SetAggregationPolicy(
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET aggregation_policy = $1
-		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		  WHERE id = $2 AND `+claimantGuard("", 3),
 		nullableJSONB(policy), id, supervisorID,
 	)
 	if err != nil {
@@ -774,7 +817,7 @@ func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET expected_children_count = expected_children_count + $1
-		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		  WHERE id = $2 AND `+claimantGuard("", 3),
 		delta, id, supervisorID,
 	)
 	if err != nil {
@@ -786,7 +829,7 @@ func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 // BumpChildOutcomeCount adds delta to either
 // `committed_children_count` (outcome="commit") or
 // `abandoned_children_count` (outcome="abandon"). Used by the recursive
-// walker (`runtime/auto_terminal.go::resolveParentClaimChain`) before
+// walker (`runtime/child_execution.go::SettleChildren`) before
 // firing the parent's terminal verb. Claimant-guarded on supervisorID.
 func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	ctx context.Context, id shared.UUID, supervisorID string, outcome string, delta int, tx persistence.Tx,
@@ -803,7 +846,7 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	_, err := s.q(tx).Exec(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET `+column+` = `+column+` + $1
-		  WHERE id = $2 AND holder_supervisor_id = $3`,
+		  WHERE id = $2 AND `+claimantGuard("", 3),
 		delta, id, supervisorID,
 	)
 	if err != nil {

@@ -91,12 +91,18 @@ type ObservabilityCapabilities struct {
 	// events." Plumbed from ObservabilityCapabilities.declared_events.
 	DeclaredEvents []string `json:"declared_events,omitempty"`
 
-	// DeclaredErrorClasses is the set of error-class paths this executor
-	// may emit on Error.error_class. Patterns ending in `*` indicate
-	// prefix-pattern leaves (e.g., `http/server_error/*`); exact strings
-	// indicate fixed leaves. Empty/absent means "executor does not
-	// declare; skip validator range-check for this executor." Plumbed
-	// from ObservabilityCapabilities.declared_error_classes.
+	// DeclaredErrorClasses is the set of error-class paths this peer
+	// may emit. For executor entries: classes emitted on
+	// Error.error_class, plumbed from
+	// ObservabilityCapabilities.declared_error_classes. For store
+	// entries: classes the producer may name on acquisition-failure
+	// responses, plumbed from the ClaimProducer.Capabilities
+	// handshake's declared_error_classes (claim_producer.proto).
+	// Patterns ending in `*` indicate prefix-pattern leaves (e.g.,
+	// `http/server_error/*`); exact strings indicate fixed leaves.
+	// Empty/absent means "peer does not declare"; the validator then
+	// surfaces unattributable `error_types:` keys as advisory
+	// warnings rather than rejecting them.
 	//
 	//	@concept: signal
 	DeclaredErrorClasses []string `json:"declared_error_classes,omitempty"`
@@ -116,6 +122,10 @@ type PeerEntry struct {
 	Capabilities  *ObservabilityCapabilities `json:"observability_capabilities,omitempty"`
 	LastProbedAt  time.Time                  `json:"last_probed_at"`
 	LastError     string                     `json:"last_error,omitempty"`
+	// TLS is the peer's validated `tls:` dial mode ("off" / "required";
+	// empty → off), carried so RefreshLoop re-probes dial with the same
+	// mode the startup handshake used.
+	TLS string `json:"tls,omitempty"`
 }
 
 // Discovery is a thread-safe cache mapping peer name → observability

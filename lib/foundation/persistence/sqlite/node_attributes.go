@@ -213,10 +213,11 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 // nil-delta is a no-op merge: bumps updated_at if the row exists, silent
 // no-op if absent. Mirrors postgres impl semantics.
 //
-// Atomicity: when tx != nil the read-then-write runs inside the caller's
-// BEGIN IMMEDIATE tx (writer-slot held for the duration). When tx == nil
-// the SQLite driver's MaxOpenConns=1 (see sqliteMaxOpenConns in
-// driver.go) serializes any concurrent caller at the connection level.
+// Atomicity: the read-then-write runs inside the caller's tx — a tx is
+// mandatory on every Table method (tablesImpl.q panics on nil), and the
+// DSN's _txlock=immediate makes the tx a BEGIN IMMEDIATE whose
+// writer-slot hold keeps the merge atomic across OS processes sharing
+// the database file, not just across goroutines.
 func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any, tx persistence.Tx) error {
 	if delta == nil {
 		_, err := s.q(tx).ExecContext(ctx,

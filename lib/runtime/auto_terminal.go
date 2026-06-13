@@ -105,7 +105,7 @@ func CheckAndFireResolution(
 	// `ResolveClaimHandleTerminal`); a late sibling terminal re-entering
 	// CheckAndFireResolution would otherwise re-fire Commit and emit a
 	// duplicate `claim_terminal` lineage row. The recursive
-	// `resolveParentClaimChain` already treats committed-durable children
+	// `SettleChildren` already treats committed-durable children
 	// as resolved-and-deleted; this matches that posture. Spec
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Held-durable claim lifecycle.
@@ -194,7 +194,7 @@ func CheckAndFireResolution(
 	// `committed_children_count == 0` mid-flight → Abandon despite
 	// pending Commits). Defer when the counters don't yet cover the
 	// expected children; the next child's terminal will re-invoke
-	// `resolveParentClaimChain`, which performs the same children-
+	// `SettleChildren`, which performs the same children-
 	// completeness check via `ListChildClaimHandles` row presence and
 	// re-evaluates the parent's verdict through the same counters via
 	// `aggregateParentOutcome`. The two paths converge on the same
@@ -226,8 +226,9 @@ func CheckAndFireResolution(
 	}
 	// Recursive claim-tree resolution is now driven by
 	// `ResolveClaimHandleTerminal` itself: after it promotes the row to
-	// terminal it runs the parent-claim recursion (`bumpParentAndRecurse`).
-	// Forwarding `ParentClaimHandleID` here keeps the held path firing the
+	// terminal it settles the parent through `SettleChildren` (counter
+	// bump + sibling cancel + aggregation walk). Forwarding
+	// `ParentClaimHandleID` here keeps the held path firing the
 	// parent walk after the resolution commits. Spec
 	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 	// §Recursive claim-tree resolution + §Fan-out template DSL.
@@ -235,8 +236,17 @@ func CheckAndFireResolution(
 	// Outcome propagation: a sub-claim that aggregated Abandon
 	// signals "this partition's holding subgraph failed." The fan-out
 	// parent must Abandon to match — partial success leaks bytes the
-	// caller's aggregator wasn't expecting. resolveParentClaimChain
+	// caller's aggregator wasn't expecting. SettleChildren
 	// honors `seedOutcome` to carry the aggregate-failed verdict up.
+	// Test-only seam: the check has decided to fire; the verb + Promote
+	// have not run yet. An injection test interleaves a second contender
+	// here to prove the SELECT … FOR UPDATE serialization + the
+	// state='active' guard make the loser a no-op (the producer verb
+	// fires exactly once per @blessed-invariant 13). Nil in production
+	// (no behavior change); see RunArgs.CheckAndFireHook.
+	if args.CheckAndFireHook != nil {
+		args.CheckAndFireHook(ctx)
+	}
 	td := TerminalDecision{
 		ClaimHandleID:       claimHandleID,
 		SupervisorID:        args.SupervisorID,

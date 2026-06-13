@@ -3,15 +3,15 @@ story: substitution-doc-accuracy
 status: as-is
 ---
 
-# Substitution module header matches resolver
+# Substitution doc matches resolver
 
 ## Role
 
-As a template author reading the substitution module documentation, I can trust that the listed source kinds match exactly what the resolver actually recognizes, so that I don't silently miss a supported source.
+As a template author reading the substitution documentation, I can trust that the listed source kinds match exactly what the resolver actually recognizes, so that I don't silently miss a supported source.
 
 ## Capability
 
-Automated accuracy gate: parses the substitution module's header enumeration of source kinds and asserts it matches the set of source kinds the resolver actually dispatches on (the live `case` arms).
+Automated accuracy gate: the documented list of substitution source kinds matches the runtime resolver's dispatch set.
 
 ## Business value
 
@@ -19,11 +19,11 @@ Template authors don't silently miss supported substitution sources because the 
 
 ## Acceptance
 
-An automated accuracy check parses the substitution module's header enumeration of source kinds and asserts it matches the set of source kinds the resolver actually dispatches on (the live `case` arms). The check fails when the header undercounts, omits a real kind (trigger, child), or lists a kind the resolver doesn't handle.
+An automated accuracy check asserts the documented list of substitution source kinds matches the runtime resolver's dispatch set. The check fails when the documented list undercounts, omits a real kind (trigger, child), or lists a kind the resolver doesn't handle.
 
 ## Falsifier
 
-The check is informational only (doesn't fail CI), OR text-matches the doc without ASTs over the resolver code.
+The check is informational only (doesn't fail CI), OR text-matches the doc without inspecting the resolver's runtime dispatch set.
 
 ## Proof
 

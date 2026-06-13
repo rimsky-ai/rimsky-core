@@ -19,7 +19,7 @@ Template authors exercise the assembled product against local code without rebui
 
 ## Acceptance
 
-With `rimsky agent` connected to a deployed `rimsky-host-agent-proxy` and bindings declared for each protocol, instance dispatches reach spawned local binaries: a validation binding's rejecting validator causes registration rejection at the validation surface; a publisher binding publishes real messages into the instance; a data-processing binding performs a real typed-data operation; executor and claim-producer bindings already-worked continue to work. Every dispatch is served by a real spawned binary; none returns gRPC `Unimplemented`.
+With `rimsky agent` connected to a deployed `rimsky-host-agent-proxy` and bindings declared for each protocol, instance dispatches reach spawned local binaries: a validation binding's rejecting validator causes registration rejection at the validation surface; a publisher binding publishes real messages into the instance; a data-processing binding performs a real typed-data operation; executor and claim-producer bindings work. Every dispatch is served by a real spawned binary; none returns gRPC `Unimplemented`.
 
 ## Falsifier
 

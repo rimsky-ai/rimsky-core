@@ -25,18 +25,31 @@ type Store struct {
 	caps         claimproducer.Capabilities
 	pickPolicies map[string]*pickPolicy
 
+	// commitVersionID / commitProducerMetadata are stamped on every
+	// CommitResponse by the gRPC server layer (see Config).
+	commitVersionID        string
+	commitProducerMetadata []byte
+
 	mu     sync.Mutex
 	calls  []Call
 	claims map[string]string // claim_id → item_id (pick-policy claims)
 }
 
+// CommitResponseFields returns the configured base-Commit response
+// stamps (version_id, producer_metadata). Read by the server layer
+// when building CommitResponse.
+func (s *Store) CommitResponseFields() (string, []byte) {
+	return s.commitVersionID, s.commitProducerMetadata
+}
+
 // pickPolicy is an in-memory FIFO queue + in-flight set.
 type pickPolicy struct {
-	queue           []item
-	inFlight        map[string]item
-	defaultOnCommit action.Action
-	defaultOnGiveUp action.Action
-	nextSeq         int
+	queue            []item
+	inFlight         map[string]item
+	defaultOnCommit  action.Action
+	defaultOnGiveUp  action.Action
+	unavailableClass string
+	nextSeq          int
 }
 
 type item struct {
@@ -58,13 +71,30 @@ type Call struct {
 type Config struct {
 	Capabilities claimproducer.Capabilities
 	PickPolicies map[string]PickPolicyConfig
+	// CommitVersionID / CommitProducerMetadata, when set, are stamped
+	// on every base-protocol CommitResponse the stub's server emits —
+	// the fixture for scenarios proving rimsky honors the Commit
+	// response body (version_id persisted on the claim-handle row,
+	// producer_metadata surfaced in the fan-out parent's writeback).
+	// Zero values = empty response (the default producer behavior).
+	CommitVersionID        string
+	CommitProducerMetadata []byte
 }
 
 // PickPolicyConfig is the per-policy config (store-internal).
+//
+// UnavailableClass, when non-empty, is the producer-declared
+// acquisition-failure class (e.g. "pg/claim_unavailable") this policy
+// names on its Unavailable arm when the queue is empty — mirroring a
+// real producer that classifies its acquisition failures
+// (OpenOutcome.UnavailableClass). Tests that set it should also
+// declare the class in Config.Capabilities.DeclaredErrorClasses so
+// the registration validator's vocabulary check sees it.
 type PickPolicyConfig struct {
-	OnCommit     action.Action
-	OnGiveUp     action.Action
-	InitialItems []json.RawMessage
+	OnCommit         action.Action
+	OnGiveUp         action.Action
+	InitialItems     []json.RawMessage
+	UnavailableClass string
 }
 
 // New constructs a Store from cfg. The stub store declares a singleton
@@ -76,15 +106,18 @@ func New(cfg Config) *Store {
 		caps.WriteSemanticsAllowed = []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}
 	}
 	s := &Store{
-		caps:         caps,
-		pickPolicies: make(map[string]*pickPolicy),
-		claims:       make(map[string]string),
+		caps:                   caps,
+		pickPolicies:           make(map[string]*pickPolicy),
+		claims:                 make(map[string]string),
+		commitVersionID:        cfg.CommitVersionID,
+		commitProducerMetadata: cfg.CommitProducerMetadata,
 	}
 	for selector, pc := range cfg.PickPolicies {
 		pp := &pickPolicy{
-			inFlight:        make(map[string]item),
-			defaultOnCommit: pc.OnCommit,
-			defaultOnGiveUp: pc.OnGiveUp,
+			inFlight:         make(map[string]item),
+			defaultOnCommit:  pc.OnCommit,
+			defaultOnGiveUp:  pc.OnGiveUp,
+			unavailableClass: pc.UnavailableClass,
 		}
 		for _, payload := range pc.InitialItems {
 			pp.nextSeq++
@@ -114,7 +147,10 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer
 	rws := s.realizedSemantics()
 	if pp, ok := s.pickPolicies[selector]; ok {
 		if len(pp.queue) == 0 {
-			return claimproducer.OpenOutcome{Available: false}, nil
+			// Carry the producer-declared class on the Unavailable arm
+			// when configured (mirrors OpenOutcome.UnavailableClass on
+			// a classifying producer); empty otherwise.
+			return claimproducer.OpenOutcome{Available: false, UnavailableClass: pp.unavailableClass}, nil
 		}
 		head := pp.queue[0]
 		pp.queue = pp.queue[1:]

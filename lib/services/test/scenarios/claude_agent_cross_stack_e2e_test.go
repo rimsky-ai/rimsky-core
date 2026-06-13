@@ -153,12 +153,12 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 	// Clause 1a: sign-off gate accepts the real bound output signature
 	// ----------------------------------------------------------------
 	t.Run("signoff gate accepts signed bound output", func(t *testing.T) {
-		tid := deploySQLiteTemplate(t, ep, buildClaudeAgentTemplate(
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-signoff-ok",
 			"scenario:signoff_ok",
 			withSignoffGate(pubPEM, "endpoints", 0),
 		))
-		iid := createSQLiteInstance(t, ep, tid, "ck-claude-agent-signoff-ok")
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-signoff-ok")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", "", 90*time.Second)
 	})
@@ -168,7 +168,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 	// declared error class.
 	// ----------------------------------------------------------------
 	t.Run("signoff gate rejects unsigned bound output", func(t *testing.T) {
-		tid := deploySQLiteTemplate(t, ep, buildClaudeAgentTemplate(
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-signoff-missing",
 			"scenario:signoff_missing",
 			// max_signoff_attempts=1 keeps the retry budget short so the
@@ -176,7 +176,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 			// a non-rejected status only after the budget is exhausted.
 			withSignoffGate(pubPEM, "endpoints", 1),
 		))
-		iid := createSQLiteInstance(t, ep, tid, "ck-claude-agent-signoff-missing")
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-signoff-missing")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/signoff_unobtained", 90*time.Second)
 	})
@@ -185,7 +185,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 	// Clause 2: allow_inline=false rejects an inline cli.mcp_servers
 	// ----------------------------------------------------------------
 	t.Run("inline mcp_servers refused when allow_inline=false", func(t *testing.T) {
-		tid := deploySQLiteTemplate(t, ep, buildClaudeAgentTemplate(
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-inline-refused",
 			// Any prompt — the dispatch never spawns the CLI because the
 			// inline rejection fires at parse/resolve time inside the
@@ -193,7 +193,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 			"scenario:signoff_ok",
 			withInlineMcpServer("inline-bad", "http://example.invalid/mcp"),
 		))
-		iid := createSQLiteInstance(t, ep, tid, "ck-claude-agent-inline-refused")
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-inline-refused")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/attribute_invalid", 90*time.Second)
 	})
@@ -202,11 +202,11 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 	// Clause 3: declared rate-limited error class lands on the node row
 	// ----------------------------------------------------------------
 	t.Run("declared error class agent/rate_limited routes verbatim", func(t *testing.T) {
-		tid := deploySQLiteTemplate(t, ep, buildClaudeAgentTemplate(
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-rate-limited",
 			"scenario:rate_limited",
 		))
-		iid := createSQLiteInstance(t, ep, tid, "ck-claude-agent-rate-limited")
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-rate-limited")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/rate_limited", 90*time.Second)
 	})
@@ -215,13 +215,13 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 	// Clause 4: env-var-referenced credential never persists plaintext
 	// ----------------------------------------------------------------
 	t.Run("env-var-referenced credential resolved at spawn but not persisted plaintext", func(t *testing.T) {
-		tid := deploySQLiteTemplate(t, ep, buildClaudeAgentTemplate(
+		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-env-ref-witness",
 			"scenario:env_ref_witness",
 			withSignoffGate(pubPEM, "cli_observation", 0),
 			withCatalogMcpServerRef("validator"),
 		))
-		iid := createSQLiteInstance(t, ep, tid, "ck-claude-agent-env-ref-witness")
+		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-env-ref-witness")
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", "", 120*time.Second)
 

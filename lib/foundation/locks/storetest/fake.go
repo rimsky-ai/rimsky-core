@@ -60,6 +60,12 @@ type Fake struct {
 	// behavior is byte-equal (the trivial @blessed-invariant 4b
 	// default).
 	ScopesConflictFunc func(a, b []byte) (bool, error)
+
+	// CommitResult, when set, is returned from every Commit call —
+	// the fake's stand-in for a producer that stamps version_id /
+	// producer_metadata on the base-protocol CommitResponse. Zero
+	// value = empty response (the default producer behavior).
+	CommitResult claimproducer.CommitResult
 }
 
 type fakeState struct {
@@ -164,7 +170,7 @@ func (f *Fake) Open(_ context.Context, claimID claimproducer.ClaimID, spec claim
 // User-supplied ErrorFunc runs AFTER f.mu is released so a callback that
 // itself calls Calls() / Reset() / etc. on the same Fake won't deadlock.
 // Mirrors the Open lock-discipline pattern.
-func (f *Fake) Commit(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) error {
+func (f *Fake) Commit(_ context.Context, claimID claimproducer.ClaimID, scope, address []byte) (claimproducer.CommitResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, FakeCall{
 		Verb: "commit", ClaimID: claimID,
@@ -172,17 +178,18 @@ func (f *Fake) Commit(_ context.Context, claimID claimproducer.ClaimID, scope, a
 		Sequence: nextFakeSequence(),
 	})
 	errFn := f.ErrorFunc
+	res := f.CommitResult
 	f.mu.Unlock()
 
 	if errFn != nil {
 		if err := errFn("commit", claimID); err != nil {
-			return err
+			return claimproducer.CommitResult{}, err
 		}
 	}
 	f.mu.Lock()
 	delete(f.state, claimID)
 	f.mu.Unlock()
-	return nil
+	return res, nil
 }
 
 // Abandon records the call.

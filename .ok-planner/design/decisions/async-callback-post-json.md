@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-HTTP POST with JSON `AsyncCallbackBody` to `${callback_url}/v1/callback/{async_ack_id}`.
+HTTP POST with a JSON outcome body to `${callback_url}/v1/callback/{async_ack_id}`.
 
 ## Rationale
 

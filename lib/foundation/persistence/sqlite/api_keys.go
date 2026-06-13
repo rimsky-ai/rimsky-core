@@ -62,7 +62,7 @@ func (b *apiKeysImpl) Insert(ctx context.Context, k persistence.APIKey, tx persi
 	if len(perms) == 0 {
 		perms = []byte("[]")
 	}
-	createdAt := k.CreatedAt.UTC().Format(time.RFC3339Nano)
+	createdAt := k.CreatedAt.UTC().Format(timeLayoutFixedNanos)
 	_, err := b.run(tx).ExecContext(ctx, sqliteInsertAPIKeySQL,
 		k.ID.String(), k.KeyHash, k.Name, string(perms), createdAt,
 		uuidPtrStr(k.CreatedByKeyID),
@@ -159,7 +159,7 @@ func (b *apiKeysImpl) List(ctx context.Context, includeRevoked bool, nameFilter 
 }
 
 func (b *apiKeysImpl) ActiveCount(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {
-	nowStr := now.UTC().Format(time.RFC3339Nano)
+	nowStr := now.UTC().Format(timeLayoutFixedNanos)
 	var n int
 	row := b.run(tx).QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM rimsky_api_keys
@@ -173,7 +173,26 @@ func (b *apiKeysImpl) ActiveCount(ctx context.Context, now time.Time, tx persist
 }
 
 func (b *apiKeysImpl) MarkRevoked(ctx context.Context, id shared.UUID, now time.Time, tx persistence.Tx) (changed bool, found bool, err error) {
-	nowStr := now.UTC().Format(time.RFC3339Nano)
+	// Multi-process atomicity: the guarded UPDATE and the zero-rows
+	// EXISTS re-resolution must observe one consistent row state — a
+	// concurrent process sharing the database file could delete or
+	// revoke the row between the two statements and skew the
+	// (changed, found) split. When the caller holds no tx, open an
+	// internal immediate-mode transaction (the DSN's _txlock=immediate
+	// makes BEGIN hold the writer slot) around the pair.
+	if tx == nil {
+		txErr := (*tablesImpl)(b).Transaction(ctx, func(ctx context.Context, itx persistence.Tx) error {
+			var ierr error
+			changed, found, ierr = b.markRevokedInTx(ctx, id, now, itx)
+			return ierr
+		})
+		return changed, found, txErr
+	}
+	return b.markRevokedInTx(ctx, id, now, tx)
+}
+
+func (b *apiKeysImpl) markRevokedInTx(ctx context.Context, id shared.UUID, now time.Time, tx persistence.Tx) (changed bool, found bool, err error) {
+	nowStr := now.UTC().Format(timeLayoutFixedNanos)
 	res, err := b.run(tx).ExecContext(ctx,
 		`UPDATE rimsky_api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
 		nowStr, id.String())
@@ -198,7 +217,7 @@ func (b *apiKeysImpl) MarkRevoked(ctx context.Context, id shared.UUID, now time.
 func (b *apiKeysImpl) SetRevokeAt(ctx context.Context, id shared.UUID, at time.Time, tx persistence.Tx) error {
 	_, err := b.run(tx).ExecContext(ctx,
 		`UPDATE rimsky_api_keys SET revoke_at = ? WHERE id = ?`,
-		at.UTC().Format(time.RFC3339Nano), id.String())
+		at.UTC().Format(timeLayoutFixedNanos), id.String())
 	if err != nil {
 		return fmt.Errorf("sqlite.APIKeys.SetRevokeAt: %w", err)
 	}
@@ -206,7 +225,7 @@ func (b *apiKeysImpl) SetRevokeAt(ctx context.Context, id shared.UUID, at time.T
 }
 
 func (b *apiKeysImpl) SweepRotationGrace(ctx context.Context, now time.Time, tx persistence.Tx) ([]persistence.APIKey, error) {
-	nowStr := now.UTC().Format(time.RFC3339Nano)
+	nowStr := now.UTC().Format(timeLayoutFixedNanos)
 	// sqlite supports RETURNING since 3.35.
 	rows, err := b.run(tx).QueryContext(ctx,
 		`UPDATE rimsky_api_keys
@@ -238,7 +257,7 @@ func (b *apiKeysImpl) SweepRotationGrace(ctx context.Context, now time.Time, tx 
 func (b *apiKeysImpl) UpdateLastUsed(ctx context.Context, id shared.UUID, now time.Time, tx persistence.Tx) error {
 	_, err := b.run(tx).ExecContext(ctx,
 		`UPDATE rimsky_api_keys SET last_used_at = ? WHERE id = ?`,
-		now.UTC().Format(time.RFC3339Nano), id.String())
+		now.UTC().Format(timeLayoutFixedNanos), id.String())
 	if err != nil {
 		return fmt.Errorf("sqlite.APIKeys.UpdateLastUsed: %w", err)
 	}
@@ -304,7 +323,7 @@ func scanAPIKeyRow(rows *sql.Rows) (persistence.APIKey, error) {
 	}
 	k.ID = u
 	k.Permissions = []byte(permsStr)
-	t, err := parseSQLiteTime(createdAtStr)
+	t, err := parseTime(createdAtStr)
 	if err != nil {
 		return persistence.APIKey{}, fmt.Errorf("sqlite.APIKeys.scan.created_at: %w", err)
 	}
@@ -317,28 +336,28 @@ func scanAPIKeyRow(rows *sql.Rows) (persistence.APIKey, error) {
 		k.CreatedByKeyID = &cu
 	}
 	if lastUsedAtStr.Valid {
-		t, err := parseSQLiteTime(lastUsedAtStr.String)
+		t, err := parseTime(lastUsedAtStr.String)
 		if err != nil {
 			return persistence.APIKey{}, fmt.Errorf("sqlite.APIKeys.scan.last_used_at: %w", err)
 		}
 		k.LastUsedAt = &t
 	}
 	if expiresAtStr.Valid {
-		t, err := parseSQLiteTime(expiresAtStr.String)
+		t, err := parseTime(expiresAtStr.String)
 		if err != nil {
 			return persistence.APIKey{}, fmt.Errorf("sqlite.APIKeys.scan.expires_at: %w", err)
 		}
 		k.ExpiresAt = &t
 	}
 	if revokeAtStr.Valid {
-		t, err := parseSQLiteTime(revokeAtStr.String)
+		t, err := parseTime(revokeAtStr.String)
 		if err != nil {
 			return persistence.APIKey{}, fmt.Errorf("sqlite.APIKeys.scan.revoke_at: %w", err)
 		}
 		k.RevokeAt = &t
 	}
 	if revokedAtStr.Valid {
-		t, err := parseSQLiteTime(revokedAtStr.String)
+		t, err := parseTime(revokedAtStr.String)
 		if err != nil {
 			return persistence.APIKey{}, fmt.Errorf("sqlite.APIKeys.scan.revoked_at: %w", err)
 		}
@@ -358,7 +377,7 @@ func timePtrStr(p *time.Time) any {
 	if p == nil {
 		return nil
 	}
-	return p.UTC().Format(time.RFC3339Nano)
+	return p.UTC().Format(timeLayoutFixedNanos)
 }
 
 // globToLike translates a shell-style glob (`*`, `?`) into the SQL

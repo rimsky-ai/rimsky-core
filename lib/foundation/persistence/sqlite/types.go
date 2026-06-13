@@ -9,7 +9,9 @@
 //   - JSONB columns -> TEXT (we marshal at write, unmarshal at read)
 //   - UUID columns -> TEXT (we stringify at write, uuid.Parse at read)
 //   - UUID[]/TEXT[] columns -> TEXT (JSON-encoded array)
-//   - TIMESTAMPTZ columns -> TEXT (RFC3339Nano)
+//   - TIMESTAMPTZ columns -> TEXT (fixed-width UTC layout
+//     timeLayoutFixedNanos, whose lexicographic order matches
+//     chronological order)
 //   - NOW() -> caller passes time.Now().UTC().Format(...)
 //
 // These helpers keep the per-feature SQL terse without duplicating the
@@ -28,42 +30,56 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// nowUTC returns time.Now().UTC() formatted RFC3339Nano. SQLite has no
-// NOW() that gives sub-second precision; we pass the formatted string as
-// a parameter so timestamp comparisons (`< ?`) round-trip cleanly.
+// timeLayoutFixedNanos is RFC3339 with a FIXED nine-digit fractional-
+// second field (".000000000" pads with zeros; RFC3339Nano's ".999999999"
+// trims them). SQLite compares the TEXT column lexicographically in
+// `ORDER BY` / `<= ?`, and trimmed fractions break that: "…00.5Z" sorts
+// before "…00Z" although it is chronologically later (`.` < `Z` in
+// ASCII). Fixed-width UTC strings make lexicographic order equal to
+// chronological order, which the SelectCandidates keyset cursor (and
+// every timestamp predicate pushed into SQL) depends on. parseTime
+// accepts both shapes, so rows written by older builds still read back.
+const timeLayoutFixedNanos = "2006-01-02T15:04:05.000000000Z07:00"
+
+// nowUTC returns time.Now().UTC() formatted with timeLayoutFixedNanos.
+// SQLite has no NOW() that gives sub-second precision; we pass the
+// formatted string as a parameter so timestamp comparisons (`< ?`)
+// round-trip cleanly.
 func nowUTC() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+	return time.Now().UTC().Format(timeLayoutFixedNanos)
 }
 
-// formatTime formats t as RFC3339Nano. Empty-zero times are accepted; the
-// caller decides whether to pass nil or formatTime via nullableTime.
+// formatTime formats t with timeLayoutFixedNanos. Empty-zero times are
+// accepted; the caller decides whether to pass nil or formatTime via
+// nullableTime.
+//
+// NOTE: dev SQLite files predating the fixed-width format should be
+// recreated (delete the .db). Mixed old/new-format rows mis-order
+// within one second (trimmed fractions sort after fixed-width ones);
+// there is deliberately no compat code for old rows.
 func formatTime(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
+	return t.UTC().Format(timeLayoutFixedNanos)
 }
 
-// parseTime parses an RFC3339Nano-formatted string. SQLite's text time
-// columns occasionally come back with a slightly different sub-second
-// precision; time.Parse(time.RFC3339Nano, ...) handles all valid RFC3339
-// variants we produce.
+// parseTime parses a TEXT timestamp read back from SQLite: the
+// fixed-width timeLayoutFixedNanos we write (or any other RFC3339
+// variant — RFC3339Nano accepts everything RFC3339 does, including
+// trimmed or absent fractions), with a fallback for SQLite's own
+// `datetime('now')` default ("YYYY-MM-DD HH:MM:SS").
 func parseTime(s string) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}
-	// Try RFC3339Nano first (the format we write).
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t, nil
 	}
 	// Fall back to SQLite's `datetime('now')` default ("YYYY-MM-DD HH:MM:SS").
 	const sqliteDefault = "2006-01-02 15:04:05"
-	if t, err := time.Parse(sqliteDefault, s); err == nil {
-		return t.UTC(), nil
-	}
-	// Final attempt: RFC3339 (no nanos).
-	t, err := time.Parse(time.RFC3339, s)
+	t, err := time.Parse(sqliteDefault, s)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parseTime: %q: %w", s, err)
 	}
-	return t, nil
+	return t.UTC(), nil
 }
 
 // nullableJSONB returns nil for empty []byte; otherwise the bytes (which

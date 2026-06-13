@@ -144,8 +144,16 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	templateID := deployObjectStoreSensorTemplate(t, ep)
 	instanceID := createObjectStoreSensorInstance(t, ep, templateID, "ck-sensor-object-store-e2e")
 
-	// 5. Wait until the sensor has PERSISTED the subscription before
-	//    we start dropping objects. Without this, a PutObject racing
+	// 5. Wait on OBSERVABLE subscription state first: mounting is
+	//    asynchronous (the create returns 201 with the row in
+	//    `mounting`; the reconciler drives Subscribe to `active`), so
+	//    the sensor-side assertion below must not race the mount under
+	//    load — the instance surface, not a wall-clock budget, says
+	//    when Subscribe has landed.
+	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
+
+	//    Then confirm the sensor PERSISTED the subscription before we
+	//    start dropping objects. Without this, a PutObject racing
 	//    Subscribe could drop a file BEFORE the watch is registered,
 	//    and the first poll would observe it but the test's wait-for-
 	//    emit would still pass — masking the durability gate.

@@ -51,8 +51,13 @@ type ClaimProducer interface {
 
 	// Commit signals that the consumer of the claim succeeded. The
 	// producer decides what to do with its own state per its own
-	// configuration.
-	Commit(ctx context.Context, claimID ClaimID, scope []byte, address []byte) error
+	// configuration. The returned CommitResult mirrors the base-protocol
+	// CommitResponse wire message: producers MAY stamp a canonical
+	// version_id (persisted on the claim-handle row) and opaque
+	// producer_metadata bytes (surfaced in the fan-out parent's
+	// writeback at parent terminal). Both fields are optional; a
+	// producer with nothing to report returns the zero CommitResult.
+	Commit(ctx context.Context, claimID ClaimID, scope []byte, address []byte) (CommitResult, error)
 
 	// Abandon signals that the consumer of the claim failed. The
 	// producer decides what to do with its own state per its own

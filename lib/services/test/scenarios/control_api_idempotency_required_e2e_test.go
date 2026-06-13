@@ -75,7 +75,7 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 	// A single worker node gives the message-emit path a real node to source
 	// a delivery frame on (resolveMessageFrameSource needs at least one node)
 	// and a real target for the invalidate envelope.
-	templateID := deploySQLiteTemplate(t, ep, map[string]any{
+	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "idempotency-required-e2e",
 			"version":               "1",
@@ -85,7 +85,7 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 			},
 		},
 	})
-	instanceID := createSQLiteInstance(t, ep, templateID, "ck-idempotency-required-e2e")
+	instanceID := createScenarioInstance(t, ep, templateID, "ck-idempotency-required-e2e")
 
 	messagesPath := "/v1/instances/" + instanceID + "/messages"
 

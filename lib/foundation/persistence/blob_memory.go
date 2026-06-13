@@ -14,10 +14,12 @@ import (
 
 // MemoryBackend is an in-process map[Handle][]byte BlobBackend used for
 // development and testing. It is REJECTED at startup unless
-// RIMSKY_PROCESS_ROLE=unified (set by rimsky-entrypoint), because the
-// per-process binaries (rimsky-scheduler, rimsky-supervisor,
-// rimsky-control-api) cannot share state through an in-process map —
-// the Driver in each replica would hold an independent map, silently
+// RIMSKY_PROCESS_ROLE=unified — the single-process mode, set only by
+// rimsky-entrypoint's no-command all-in-one path, where all three
+// roles share one process and the production construction path hands
+// every role's driver the same process-shared instance. A per-role
+// process cannot share an in-process map with its siblings — the
+// Driver in each process would hold an independent map, silently
 // breaking cross-process attribute reads.
 //
 // The reject gate lives in ValidateBlobConfig; the constructor here

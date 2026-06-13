@@ -280,7 +280,7 @@ func exerciseReleaseLeg(t *testing.T, prod *Producer, prodPort int) {
 
 	dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	client, err := peer.Dial(dialCtx, "example", fmt.Sprintf("127.0.0.1:%d", prodPort))
+	client, err := peer.Dial(dialCtx, "example", fmt.Sprintf("127.0.0.1:%d", prodPort), peer.TLSModeOff)
 	if err != nil {
 		t.Fatalf("peer.Dial against the in-process example producer: %v", err)
 	}
@@ -341,7 +341,7 @@ func exerciseUnadvertisedWriteSemanticsLeg(t *testing.T, prodPort int) {
 	// peer.Dial is the same function lib/control/config/stores.go calls
 	// at startup. It runs the Capabilities handshake and caches the
 	// advertised envelope on the Client.
-	client, err := peer.Dial(dialCtx, "example", fmt.Sprintf("127.0.0.1:%d", prodPort))
+	client, err := peer.Dial(dialCtx, "example", fmt.Sprintf("127.0.0.1:%d", prodPort), peer.TLSModeOff)
 	if err != nil {
 		t.Fatalf("peer.Dial against the in-process example producer: %v (the dial must succeed — the registration refusal we are proving happens at ValidateCapabilities, AFTER Capabilities returns successfully)", err)
 	}

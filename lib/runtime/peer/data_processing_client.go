@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
@@ -38,7 +37,7 @@ func (c *DataProcessingClient) BeginCandidate(ctx context.Context, in clientifac
 		IdempotencyKey:     in.IdempotencyKey,
 	})
 	if err != nil {
-		return clientiface.BeginCandidateOutput{}, fmt.Errorf("remote data_processing %q: BeginCandidate: %w", c.name, err)
+		return clientiface.BeginCandidateOutput{}, NewProducerCallError(c.name, "DataProcessing.BeginCandidate", err)
 	}
 	return clientiface.BeginCandidateOutput{CandidateHandle: resp.GetCandidateHandle()}, nil
 }
@@ -52,7 +51,7 @@ func (c *DataProcessingClient) CommitCandidate(ctx context.Context, in clientifa
 		CandidateHandle: in.CandidateHandle,
 	})
 	if err != nil {
-		return clientiface.CommitCandidateOutput{}, fmt.Errorf("remote data_processing %q: CommitCandidate: %w", c.name, err)
+		return clientiface.CommitCandidateOutput{}, NewProducerCallError(c.name, "DataProcessing.CommitCandidate", err)
 	}
 	return clientiface.CommitCandidateOutput{
 		CandidateMetadata: resp.GetCandidateMetadata(),
@@ -65,7 +64,7 @@ func (c *DataProcessingClient) AbandonCandidate(ctx context.Context, in clientif
 		CandidateHandle: in.CandidateHandle,
 	})
 	if err != nil {
-		return fmt.Errorf("remote data_processing %q: AbandonCandidate: %w", c.name, err)
+		return NewProducerCallError(c.name, "DataProcessing.AbandonCandidate", err)
 	}
 	return nil
 }
@@ -76,7 +75,7 @@ func (c *DataProcessingClient) ListVersions(ctx context.Context, in clientiface.
 		ClaimHandleId: in.ClaimHandleID,
 	})
 	if err != nil {
-		return clientiface.ListVersionsOutput{}, fmt.Errorf("remote data_processing %q: ListVersions: %w", c.name, err)
+		return clientiface.ListVersionsOutput{}, NewProducerCallError(c.name, "DataProcessing.ListVersions", err)
 	}
 	out := clientiface.ListVersionsOutput{}
 	for _, v := range resp.GetVersions() {
@@ -100,7 +99,7 @@ func (c *DataProcessingClient) ListPartitions(ctx context.Context, in clientifac
 		VersionId:     in.VersionID,
 	})
 	if err != nil {
-		return clientiface.ListPartitionsOutput{}, fmt.Errorf("remote data_processing %q: ListPartitions: %w", c.name, err)
+		return clientiface.ListPartitionsOutput{}, NewProducerCallError(c.name, "DataProcessing.ListPartitions", err)
 	}
 	out := clientiface.ListPartitionsOutput{}
 	for _, p := range resp.GetPartitions() {
@@ -119,7 +118,7 @@ func (c *DataProcessingClient) GetVersionSchema(ctx context.Context, in clientif
 		VersionId:     in.VersionID,
 	})
 	if err != nil {
-		return clientiface.GetVersionSchemaOutput{}, fmt.Errorf("remote data_processing %q: GetVersionSchema: %w", c.name, err)
+		return clientiface.GetVersionSchemaOutput{}, NewProducerCallError(c.name, "DataProcessing.GetVersionSchema", err)
 	}
 	return clientiface.GetVersionSchemaOutput{Schema: resp.GetSchema()}, nil
 }
@@ -132,15 +131,19 @@ func (c *DataProcessingClient) Close() {
 }
 
 // DialDataProcessing connects to a peer that implements the
-// DataProcessing service. Insecure credentials by default; mTLS is a
-// deployment-layer follow-up.
-func DialDataProcessing(_ context.Context, name, endpoint string) (*DataProcessingClient, error) {
+// DataProcessing service. tlsMode is the peer entry's validated `tls:`
+// mode (TLSModeOff / TLSModeRequired; empty → off).
+func DialDataProcessing(_ context.Context, name, endpoint, tlsMode string) (*DataProcessingClient, error) {
 	target, err := stripScheme(name, endpoint)
 	if err != nil {
 		return nil, err
 	}
 	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
-	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(target,
+		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
+		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
+		grpc.WithStreamInterceptor(TLSModeStreamInterceptor(name, tlsMode)),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("remote data_processing %q: dial %q: %w", name, endpoint, err)
 	}

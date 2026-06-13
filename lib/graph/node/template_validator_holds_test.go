@@ -5,6 +5,7 @@
 package node
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -231,6 +232,48 @@ func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.cancel_siblings")
+}
+
+// Carry-verbatim is the delegation settlement shape and requires
+// exactly one child by construction (TD-carry-verbatim-requires-one).
+// `fan_out:` declares N children, so declaring
+// `error_policy.kind: carry_verbatim` on a fan-out is rejected at
+// canonicalization with `carry_verbatim_requires_single_child`, naming
+// the node.
+func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:                "demo",
+		Version:             "1.0.0",
+		FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{
+				Type:     "fan",
+				Executor: "handler.fan",
+				Stores: []NodeStoreRef{
+					{Name: "content", Alias: "items", Intent: "r", Selector: "{{params.s}}"},
+				},
+				FanOut: &FanOutSpec{
+					Claim:            "items",
+					PartitionRequest: "{{trigger.message.payload.x}}",
+					ErrorPolicy: AggregationPolicy{
+						Kind: "carry_verbatim",
+					},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].fan_out.error_policy.kind")
+	// The rejection must carry the named class AND name the node.
+	found := false
+	for _, e := range res.Errors {
+		if strings.HasPrefix(e.Msg, "carry_verbatim_requires_single_child:") {
+			found = true
+			require.Contains(t, e.Msg, `"fan"`, "rejection must name the violating node")
+		}
+	}
+	require.True(t, found, "expected carry_verbatim_requires_single_child rejection, got %+v", res.Errors)
 }
 
 // A calling node (`delegate:`) cannot itself declare `fan_out:`. The

@@ -36,7 +36,7 @@ State transitions are claimant-guarded via the promote operation: the update set
 
 Row deletion has two shapes:
 
-- **Active-row deletion** (the abandon-on-acquire carve-outs): claimant-guarded — the delete predicate matches both the row id and the holding supervisor.
+- **Active-row deletion** (the verify-before-run ownership bail, performed inside the unified resolution engine under its ownership-bail source): claimant-guarded — the delete predicate matches both the row id and the holding supervisor.
 - **Non-active-row deletion** (retention sweep, asset Release path): absence-guarded — the row has a null holder-supervisor reference by construction, so no per-row claimant guard is meaningful. Serialized across replicas via the scheduler-tick advisory lock (for the retention sweep) or via the operator-driven asset-release endpoint (for the asset Release path).
 
 ## Purpose
@@ -49,7 +49,7 @@ Owns: the lock-state ledger, claimant-guarded mutation predicates, the held-flag
 
 ## Invariants
 
-- Every active-row mutation (promote, heartbeat-extend, the carve-out delete paths on abandon) matches the holding supervisor in its predicate (`@blessed-invariant 4` — claimant-guarded release).
+- Every active-row mutation (promote, heartbeat-extend, the ownership-bail delete) matches the holding supervisor in its predicate (`@blessed-invariant 4` — claimant-guarded release).
 - Non-active-row deletion (retention sweep, asset Release path) is absence-guarded: the row has a null holder-supervisor reference by construction; the row-discovery query filter (committed-durable rows for Release; committed-or-abandoned rows for the retention sweep) substitutes for the per-row claimant check.
 - The holder-supervisor reference is set on active rows (per the first CHECK constraint), null on terminal rows (per the second CHECK constraint).
 - The node-run reference nulls on the parent's deletion (rather than cascading) so terminal handles survive their parent's deletion until either the retention sweep reaps them or (for durable-committed) the asset Release path fires.

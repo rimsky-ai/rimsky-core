@@ -89,6 +89,11 @@ type script struct {
 	// Named-event emissions scripted before the terminal. Emitted in
 	// order, between heartbeats and the terminal event.
 	namedEvents []namedEventEmit
+	// holdUntil, when non-nil, blocks the run after its first
+	// heartbeat until the channel closes (or the stream context
+	// cancels). Lets eligibility tests hold a sender in-flight at a
+	// deterministic midpoint instead of racing wall-clock delays.
+	holdUntil <-chan struct{}
 }
 
 // Stub is a scripted Executor server for tests.
@@ -254,6 +259,19 @@ func (b *TypeBuilder) Heartbeats(n int) *TypeBuilder {
 	return b
 }
 
+// HoldUntil blocks each run of this node type after its first
+// heartbeat until ch closes (or the stream context cancels). The run
+// stays in-flight (active, claimed, heartbeated by the supervisor's
+// own refresh loop) for as long as the test holds the channel —
+// giving dispatch-eligibility tests a deterministic midpoint, unlike
+// Delay's wall-clock race.
+func (b *TypeBuilder) HoldUntil(ch <-chan struct{}) *TypeBuilder {
+	b.s.mu.Lock()
+	defer b.s.mu.Unlock()
+	b.s.scripts[b.typ].holdUntil = ch
+	return b
+}
+
 // Delay sleeps for d before emitting each event. Useful for silence-detection
 // scenarios and context-cancellation tests.
 func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
@@ -348,6 +366,15 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 			Note:        fmt.Sprintf("stub heartbeat %d", i+1),
 		}}}); err != nil {
 			return err
+		}
+	}
+
+	// Deterministic in-flight hold (see TypeBuilder.HoldUntil).
+	if sc.holdUntil != nil {
+		select {
+		case <-sc.holdUntil:
+		case <-stream.Context().Done():
+			return stream.Context().Err()
 		}
 	}
 

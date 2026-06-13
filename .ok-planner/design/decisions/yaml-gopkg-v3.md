@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`gopkg.in/yaml.v3`.
+The yaml.v3 YAML parser library.
 
 ## Rationale
 

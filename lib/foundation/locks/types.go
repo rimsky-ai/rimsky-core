@@ -33,5 +33,14 @@ package locks
 // NamedLockSpec is rimsky-internal — it has no protocol-layer
 // equivalent because named locks never cross the wire to a producer.
 type NamedLockSpec struct {
+	// Name is the concrete, post-substitution lock name (e.g.
+	// "review:item-42" from a "review:{{nodes.x.attribute.id}}"
+	// template directive). It keys the advisory lock, the counter
+	// semaphore, and the claim-handle row.
 	Name string
+	// TemplateName is the pre-substitution name as declared in the
+	// template (the directive text). Bounded cardinality — one value
+	// per template declaration — so it is the metrics label; the
+	// concrete Name stays in the events ledger only.
+	TemplateName string
 }

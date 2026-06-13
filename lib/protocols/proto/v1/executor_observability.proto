@@ -69,6 +69,14 @@ message ObservabilityCapabilities {
   //
   // Per concept:signal hierarchical error_class rule.
   repeated string declared_error_classes = 8;
+
+  // validation_supported_roles: set when "validation" is in the
+  // executor's advertised protocols (e.g. ["executor"]). Mirrors
+  // publisher.proto's PublisherCapabilities.validation_supported_roles
+  // — the Validation service has no Capabilities verb, so each peer
+  // kind advertises its supported validation roles on its own
+  // capability surface; this is the executor's.
+  repeated string validation_supported_roles = 9;
 }
 
 message CustomUI {

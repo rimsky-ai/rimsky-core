@@ -22,8 +22,8 @@
 //     `WithExecutor` options).
 //  3. Spin up the `rimsky-all-in-one:latest` container on the same docker
 //     network, mounting the rendered config at `/etc/rimsky/rimsky.yml`.
-//     The unified image's entrypoint runs migrations then spawns
-//     scheduler + supervisor + control-api.
+//     The unified image's entrypoint runs migrations then runs
+//     scheduler + supervisor + control-api in a single process.
 //  4. Poll `GET /health` on the control-api's mapped host port until it
 //     returns 200.
 //  5. Register `t.Cleanup` for both containers + the docker network.
@@ -51,6 +51,7 @@ import (
 	"testing"
 	"time"
 
+	mobyclient "github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	pgmodule "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcnet "github.com/testcontainers/testcontainers-go/network"
@@ -101,6 +102,12 @@ type configBuilder struct {
 	namedLocks      map[string]int
 	hostAccessPorts []int
 	existingNetwork string
+	// blob, when non-nil, renders a `persistence.blob:` block (backend,
+	// spill threshold, orphan-sweep retention tuning). See WithBlobConfig.
+	blob *blobCfg
+	// extraEnv is merged into the rimsky/all container's environment on
+	// top of the harness defaults. See WithContainerEnv.
+	extraEnv map[string]string
 	// sqlite selects the image's baked SQLite default instead of a
 	// Postgres testcontainer. When true BringUpRimsky brings up no
 	// Postgres and renders a `driver: sqlite` config pointing at the
@@ -123,6 +130,16 @@ type configBuilder struct {
 // dockerfiles/Dockerfile.rimsky), so the three roles can all open it
 // read-write without an extra mount.
 const sqliteStatePath = "/var/lib/rimsky/state.db"
+
+// blobCfg carries the `persistence.blob:` block rendered by
+// WithBlobConfig. Durations are rendered in Go duration syntax, which
+// the config loader's yaml.v3 time.Duration decoding accepts.
+type blobCfg struct {
+	backend                    string
+	spillThresholdBytes        int
+	orphanSweepInterval        time.Duration
+	retentionAfterUnreferenced time.Duration
+}
 
 type producerCfg struct {
 	endpoint              string
@@ -206,19 +223,19 @@ func WithExecutor(name, endpoint string) Option {
 }
 
 // WithExecutorProtocols extends an already-registered executor peer's
-// `protocols:` list with mix-in protocols (currently the only sanctioned
-// mix-in on an executor entry is `lifecycle_subscriber`). The peer MUST
-// have been registered with WithExecutor earlier in the option chain;
-// the helper panics on an unknown name so a test that forgets the prior
-// WithExecutor call fails loudly instead of silently producing a
-// rimsky.yml without the mix-in.
+// `protocols:` list with mix-in protocols (`lifecycle_subscriber`,
+// `validation`). The peer MUST have been registered with WithExecutor
+// earlier in the option chain; the helper panics on an unknown name so
+// a test that forgets the prior WithExecutor call fails loudly instead
+// of silently producing a rimsky.yml without the mix-in.
 //
 // Mix-in advertisement requires two things to line up: the peer's
 // `protocols:` block in rimsky.yml must list the mix-in (so
-// DialLifecycleSubscribers dials the matching client), AND the peer's
-// observability Capabilities response must list the mix-in in its
-// `protocols` field. The harness owns the first; the peer's binary owns
-// the second.
+// DialLifecycleSubscribers / DialPublisherAndValidationRegistries dials
+// the matching client), AND the peer's observability Capabilities
+// response must list the mix-in in its `protocols` field AND populate
+// `validation_supported_roles` when the mix-in is `validation`. The
+// harness owns the first; the peer's binary owns the second.
 //
 // Use this in preference to WithClaimProducerProtocols for cross-stack
 // lifecycle-subscriber proofs whose in-process peer is exposed via
@@ -264,6 +281,39 @@ func WithNamedLock(name string, limit int) Option {
 func WithSQLite() Option {
 	return func(cb *configBuilder) {
 		cb.sqlite = true
+	}
+}
+
+// WithBlobConfig renders a `persistence.blob:` block into the rimsky.yml
+// the harness mounts: backend selection ("inline" | "pg-largeobject" |
+// "filesystem" | "memory"), the spill threshold in bytes, and the
+// orphan-sweep retention tuning. Zero-valued durations are omitted so the
+// loader's defaults (1h sweep / 24h retention) apply. The "memory"
+// backend is gated by rimsky to the single-process all-in-one mode
+// (RIMSKY_PROCESS_ROLE=unified, set only by the entrypoint's no-command
+// path) — a split or single-role deployment configured with "memory"
+// refuses to start.
+func WithBlobConfig(backend string, spillThresholdBytes int, orphanSweepInterval, retentionAfterUnreferenced time.Duration) Option {
+	return func(cb *configBuilder) {
+		cb.blob = &blobCfg{
+			backend:                    backend,
+			spillThresholdBytes:        spillThresholdBytes,
+			orphanSweepInterval:        orphanSweepInterval,
+			retentionAfterUnreferenced: retentionAfterUnreferenced,
+		}
+	}
+}
+
+// WithContainerEnv sets an extra environment variable on the rimsky/all
+// container, merged over the harness defaults (so a test can, e.g., set
+// RIMSKY_LOG_LEVEL=debug to make the scheduler's per-sweep debug lines
+// visible in the container logs).
+func WithContainerEnv(key, value string) Option {
+	return func(cb *configBuilder) {
+		if cb.extraEnv == nil {
+			cb.extraEnv = map[string]string{}
+		}
+		cb.extraEnv[key] = value
 	}
 }
 
@@ -380,6 +430,52 @@ func (h *RimskyHandle) DumpRimskyLogs(t testing.TB) {
 	dumpLogsForFailure(t, h.container)
 }
 
+// TopProcesses returns the rimsky/all container's live process table as
+// reported by the Docker daemon (`docker top` over the daemon API):
+// one entry per process, each entry being the daemon's column values
+// with the command line last. The daemon inspects the container's PID
+// namespace from the host, so this works against the distroless image
+// (which carries no ps/shell to exec). Used by topology proofs to
+// assert the single-process all-in-one mode: exactly one
+// rimsky-entrypoint process and zero spawned role children.
+func (h *RimskyHandle) TopProcesses(ctx context.Context, t testing.TB) [][]string {
+	t.Helper()
+	if h.container == nil {
+		t.Fatalf("harness: TopProcesses: no live rimsky container")
+	}
+	cli, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		t.Fatalf("harness: TopProcesses: docker client: %v", err)
+	}
+	defer cli.Close()
+	res, err := cli.ContainerTop(ctx, h.container.GetContainerID(), mobyclient.ContainerTopOptions{})
+	if err != nil {
+		t.Fatalf("harness: TopProcesses: ContainerTop: %v", err)
+	}
+	return res.Processes
+}
+
+// ReadLogs returns the rimsky/all container's combined stdout/stderr as
+// a string. Unlike DumpRimskyLogs (which writes to t.Log for failure
+// forensics) this is for assertions over log content — e.g. the
+// orphan-blob sweep's per-handle debug lines.
+func (h *RimskyHandle) ReadLogs(ctx context.Context, t testing.TB) string {
+	t.Helper()
+	if h.container == nil {
+		t.Fatalf("harness: ReadLogs: no live rimsky container")
+	}
+	rc, err := h.container.Logs(ctx)
+	if err != nil {
+		t.Fatalf("harness: ReadLogs: %v", err)
+	}
+	defer rc.Close()
+	out, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("harness: ReadLogs: read: %v", err)
+	}
+	return string(out)
+}
+
 // Restart terminates the current rimsky/all container and brings up a
 // fresh one with the SAME config + peer wiring against the SAME
 // persistence backend (Postgres testcontainer or baked SQLite file).
@@ -453,41 +549,15 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 	if cb.sqlite {
 		yamlBytes = []byte(renderRimskyYAMLSQLite(cb))
 	} else {
-		pgContainer, err := pgmodule.Run(ctx,
-			"postgres:15-alpine",
-			pgmodule.WithDatabase("rimsky"),
-			pgmodule.WithUsername("rimsky"),
-			pgmodule.WithPassword("rimsky"),
-			testcontainers.WithWaitStrategy(
-				wait.ForAll(
-					wait.ForLog("database system is ready to accept connections").
-						WithOccurrence(2).WithStartupTimeout(120*time.Second),
-					wait.ForListeningPort("5432/tcp").WithStartupTimeout(120*time.Second),
-				),
-			),
-			tcnet.WithNetworkName([]string{"rimsky-pg"}, networkName),
-		)
-		if err != nil {
-			t.Fatalf("harness: start postgres: %v", err)
-		}
-		t.Cleanup(func() {
-			termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			_ = pgContainer.Terminate(termCtx)
-		})
-		hostDSN, err = pgContainer.ConnectionString(ctx, "sslmode=disable")
-		if err != nil {
-			t.Fatalf("harness: postgres host DSN: %v", err)
-		}
-		// In-network DSN; siblings on the same network reach Postgres at hostname `rimsky-pg`.
-		internalDSN = "postgres://rimsky:rimsky@rimsky-pg:5432/rimsky?sslmode=disable"
+		hostDSN, internalDSN = startPostgresOnNetwork(ctx, t, networkName)
 
 		// 3. Render rimsky.yml referencing the in-network DSN.
 		yamlBytes = []byte(renderRimskyYAML(internalDSN, cb))
 	}
 
 	// 4. Bring up rimsky/all. The unified entrypoint runs migrations
-	//    then spawns scheduler + supervisor + control-api. Extracted to
+	//    then runs scheduler + supervisor + control-api in one
+	//    process. Extracted to
 	//    runRimskyContainer so RimskyHandle.Restart can re-run only the
 	//    rimsky/all bring-up step (the persistence container persists).
 	rimsky, baseURL := runRimskyContainer(ctx, t, cb, yamlBytes, networkName)
@@ -508,6 +578,45 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 	}
 }
 
+// startPostgresOnNetwork brings up the harness's standard Postgres
+// testcontainer (postgres:15-alpine, db/user/password all "rimsky") on
+// the given docker network under the in-network alias `rimsky-pg`.
+// Returns the host-reachable DSN and the in-network DSN. Cleanup is
+// registered on t.Cleanup. Shared by the all-in-one bring-up and the
+// split-topology bring-up (rimsky_split.go).
+func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName string) (hostDSN, internalDSN string) {
+	t.Helper()
+	pgContainer, err := pgmodule.Run(ctx,
+		"postgres:15-alpine",
+		pgmodule.WithDatabase("rimsky"),
+		pgmodule.WithUsername("rimsky"),
+		pgmodule.WithPassword("rimsky"),
+		testcontainers.WithWaitStrategy(
+			wait.ForAll(
+				wait.ForLog("database system is ready to accept connections").
+					WithOccurrence(2).WithStartupTimeout(120*time.Second),
+				wait.ForListeningPort("5432/tcp").WithStartupTimeout(120*time.Second),
+			),
+		),
+		tcnet.WithNetworkName([]string{"rimsky-pg"}, networkName),
+	)
+	if err != nil {
+		t.Fatalf("harness: start postgres: %v", err)
+	}
+	t.Cleanup(func() {
+		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = pgContainer.Terminate(termCtx)
+	})
+	hostDSN, err = pgContainer.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		t.Fatalf("harness: postgres host DSN: %v", err)
+	}
+	// In-network DSN; siblings on the same network reach Postgres at hostname `rimsky-pg`.
+	internalDSN = "postgres://rimsky:rimsky@rimsky-pg:5432/rimsky?sslmode=disable"
+	return hostDSN, internalDSN
+}
+
 // runRimskyContainer starts a rimsky/all container with the given
 // rendered rimsky.yml on the given docker network, waits for /health
 // 200, and returns the container plus its host-mapped base URL. Used
@@ -516,19 +625,23 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 // this helper.
 func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string) {
 	t.Helper()
+	env := map[string]string{
+		"RIMSKY_CONFIG":            "/etc/rimsky/rimsky.yml",
+		"RIMSKY_SUPERVISOR_CONFIG": "/etc/rimsky/supervisor-config.yml",
+		"RIMSKY_CONTROL_API_HOST":  "0.0.0.0",
+		"RIMSKY_CONTROL_API_PORT":  "8080",
+		// In a docker-network deployment the supervisor binds 0.0.0.0
+		// for its callback listener; executors need a service-
+		// reachable hostname to dial back.
+		"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": "rimsky",
+	}
+	for k, v := range cb.extraEnv {
+		env[k] = v
+	}
 	rimskyOpts := []testcontainers.ContainerCustomizer{
 		testcontainers.WithExposedPorts("8080/tcp"),
 		tcnet.WithNetworkName([]string{"rimsky"}, networkName),
-		testcontainers.WithEnv(map[string]string{
-			"RIMSKY_CONFIG":            "/etc/rimsky/rimsky.yml",
-			"RIMSKY_SUPERVISOR_CONFIG": "/etc/rimsky/supervisor-config.yml",
-			"RIMSKY_CONTROL_API_HOST":  "0.0.0.0",
-			"RIMSKY_CONTROL_API_PORT":  "8080",
-			// In a docker-network deployment the supervisor binds 0.0.0.0
-			// for its callback listener; executors need a service-
-			// reachable hostname to dial back.
-			"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": "rimsky",
-		}),
+		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
 			Reader:            strings.NewReader(string(yamlBytes)),
 			ContainerFilePath: "/etc/rimsky/rimsky.yml",
@@ -638,6 +751,61 @@ func (e RimskyEndpoint) GetJSON(t testing.TB, path, bearer string) (int, []byte)
 	return resp.StatusCode, out
 }
 
+// WaitForSubscriptionsActive polls GET /v1/instances/{id} until every
+// publisher subscription on the instance-detail response reports
+// state=active, or fails on the bounded deadline. Subscription mounting
+// is asynchronous (instance-create returns 201 with rows in `mounting`;
+// the reconciler drives Subscribe to `active`), so tests that assert
+// sensor-side effects MUST wait on this observable state instead of a
+// wall-clock budget. A subscription in `failed` is non-retryable by
+// contract, so the helper fails fast with the surfaced reason rather
+// than burning the deadline.
+func (e RimskyEndpoint) WaitForSubscriptionsActive(t testing.TB, instanceID string, deadline time.Duration) {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	var last string
+	for time.Now().Before(end) {
+		status, raw := e.GetJSON(t, "/v1/instances/"+instanceID, "")
+		if status == http.StatusOK {
+			var resp struct {
+				Subscriptions []struct {
+					ID            string `json:"id"`
+					PublisherName string `json:"publisher_name"`
+					State         string `json:"state"`
+					FailureReason string `json:"failure_reason"`
+				} `json:"subscriptions"`
+			}
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				t.Fatalf("harness: decode GET /v1/instances/%s: %v: %s", instanceID, err, string(raw))
+			}
+			allActive := len(resp.Subscriptions) > 0
+			states := make([]string, 0, len(resp.Subscriptions))
+			for _, s := range resp.Subscriptions {
+				states = append(states, s.PublisherName+"="+s.State)
+				if s.State == "failed" {
+					t.Fatalf("harness: subscription %s (publisher %q) on instance %s is "+
+						"state=failed (reason: %s) — failed is reserved for non-retryable "+
+						"errors, waiting longer cannot recover it",
+						s.ID, s.PublisherName, instanceID, s.FailureReason)
+				}
+				if s.State != "active" {
+					allActive = false
+				}
+			}
+			last = strings.Join(states, ", ")
+			if allActive {
+				return
+			}
+		} else {
+			last = fmt.Sprintf("GET /v1/instances/%s returned %d", instanceID, status)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("harness: subscriptions on instance %s never all reached state=active within "+
+		"%v (last observed: %s) — the mounting reconciler is not converging",
+		instanceID, deadline, last)
+}
+
 // waitForHealth polls baseURL+"/v1/health" until it returns 200 or the
 // deadline elapses.
 func waitForHealth(ctx context.Context, baseURL string, deadline time.Duration) error {
@@ -687,8 +855,33 @@ func renderRimskyYAML(internalDSN string, cb *configBuilder) string {
 	b.WriteString("  driver: postgres\n")
 	b.WriteString("  postgres:\n")
 	fmt.Fprintf(&b, "    dsn: %q\n", internalDSN)
+	writeBlobBlock(&b, cb)
 	writePeerBlocks(&b, cb)
 	return b.String()
+}
+
+// writeBlobBlock appends the `blob:` sub-block (still inside the
+// `persistence:` mapping — two-space indent) when WithBlobConfig was
+// supplied. Shared by the Postgres and SQLite renderers so blob tuning
+// is identical regardless of the persistence backend.
+func writeBlobBlock(b *strings.Builder, cb *configBuilder) {
+	if cb.blob == nil {
+		return
+	}
+	b.WriteString("  blob:\n")
+	fmt.Fprintf(b, "    backend: %s\n", cb.blob.backend)
+	if cb.blob.spillThresholdBytes > 0 {
+		fmt.Fprintf(b, "    spill_threshold_bytes: %d\n", cb.blob.spillThresholdBytes)
+	}
+	if cb.blob.orphanSweepInterval > 0 || cb.blob.retentionAfterUnreferenced > 0 {
+		b.WriteString("    retention:\n")
+		if cb.blob.orphanSweepInterval > 0 {
+			fmt.Fprintf(b, "      orphan_sweep_interval: %s\n", cb.blob.orphanSweepInterval)
+		}
+		if cb.blob.retentionAfterUnreferenced > 0 {
+			fmt.Fprintf(b, "      retention_after_unreferenced: %s\n", cb.blob.retentionAfterUnreferenced)
+		}
+	}
 }
 
 // renderRimskyYAMLSQLite builds the rimsky.yml content for the
@@ -703,6 +896,7 @@ func renderRimskyYAMLSQLite(cb *configBuilder) string {
 	b.WriteString("  driver: sqlite\n")
 	b.WriteString("  sqlite:\n")
 	fmt.Fprintf(&b, "    path: %q\n", sqliteStatePath)
+	writeBlobBlock(&b, cb)
 	writePeerBlocks(&b, cb)
 	return b.String()
 }

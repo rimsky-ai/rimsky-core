@@ -464,9 +464,12 @@ const defaultRetryAfter = 30 * time.Second
 //     "Wed, 21 Oct 2026 07:28:00 GMT") → that instant.
 //
 // `now` is injected (rather than calling time.Now directly) so the
-// delta-seconds branch is deterministically testable. An empty, malformed,
-// or past-dated header falls back to now + defaultRetryAfter — a finite,
-// future resume_at is required for the supervisor's auto-wake sweep to fire.
+// delta-seconds branch is deterministically testable. An empty or
+// malformed header (including a negative delta) falls back to
+// now + defaultRetryAfter; a parseable HTTP-date that is not in the
+// future returns now itself (the upstream is explicitly clearing the
+// wait). Either way the result is a finite resume_at, which the
+// supervisor's auto-wake sweep requires to fire.
 func parseRetryAfter(header string, now func() time.Time) time.Time {
 	header = strings.TrimSpace(header)
 	base := now()

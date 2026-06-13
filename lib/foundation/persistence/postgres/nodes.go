@@ -606,6 +606,14 @@ func (s *nodesImpl) UpdateError(ctx context.Context, id foundationshared.UUID, e
 // doesn't leak across siblings sharing a node_id (which would render
 // the unclaimed siblings invisible to SelectCandidates' `claimed_by IS
 // NULL` filter).
+//
+// @blessed-invariant 4: claimant-guarded release. The `claimed_by IS
+// NULL OR claimed_by = $3` predicate means a supervisor can stamp an
+// unclaimed row or refresh its own, but never overwrite another
+// supervisor's claim — without it, a stale supervisor's heartbeat would
+// steal ownership AND defeat the orphan reaper. An empty supervisorID
+// ($3 NULL) matches only unclaimed rows: an identity-less call cannot
+// keep someone else's claim alive.
 func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
@@ -614,7 +622,8 @@ func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUI
 		       claimed_by = COALESCE($3, claimed_by)
 		 WHERE node_id = $1
 		   AND run_scope_id = $4
-		   AND phase IN ('pending','active','held','parked')`,
+		   AND phase IN ('pending','active','held','parked')
+		   AND (claimed_by IS NULL OR claimed_by = $3)`,
 		id, at, nullableString(supervisorID), runScopeID,
 	)
 	return err
@@ -718,25 +727,6 @@ func (s *nodesImpl) GetFailedTerminalRunScopeID(ctx context.Context, id foundati
 		return nil, fmt.Errorf("nodes.GetFailedTerminalRunScopeID: %w", err)
 	}
 	return &scope, nil
-}
-
-// ClearSupervisorAssignment clears the in-flight run row's claimed_by +
-// last_heartbeat_at. Post-stage-3 cutover: claimed_by lives on the run
-// row. No-op when no in-flight row exists.
-//
-// `runID` (when non-nil) targets the specific in-flight row — required
-// for fan-out children to prevent the clear from leaking onto a sibling's
-// claimed_by. Nil `runID` preserves the legacy by-node-id update.
-func (s *nodesImpl) ClearSupervisorAssignment(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
-	ex := s.q(tx)
-	_, err := ex.Exec(ctx,
-		`UPDATE rimsky_node_runs
-		   SET claimed_by = NULL,
-		       last_heartbeat_at = NULL
-		 WHERE node_id = $1
-		   AND run_scope_id = $2
-		   AND phase IN ('pending','active','held','parked')`, id, runScopeID)
-	return err
 }
 
 func (s *nodesImpl) DeleteByInstance(ctx context.Context, instanceID foundationshared.UUID, tx persistence.Tx) error {

@@ -52,7 +52,7 @@ lives in `.ok-planner/design/concepts/`.
 | sweeps | `lib/runtime/sweep_*.go`, `lib/runtime/conductor.go` | persistence | Scheduler-driven sweeps: orphan claim reaping, stale heartbeats, orphaned node-runs, parked nodes ready-for-resume, parked-overdue (timeout to failed), claim-handle retention (committed/abandoned cutoff). |
 | run-tree state propagation | `lib/runtime/state_propagation.go`, `lib/runtime/run_tree.go` | persistence, cascade | Child→parent aggregation policies (`strict` / `min_quorum` / etc.); leaf-run terminal → parent-run state aggregation. |
 | lineage writer | `lib/runtime/lineage_writer.go` | persistence, graph/node | Append-only emit path for `leaf_run` + `claim_terminal` lineage rows; hash helpers; SubstitutionRef collection. |
-| messages + publishers | `lib/runtime/message_delivery.go`, `lib/runtime/publishers.go`, `lib/runtime/backfill.go` | persistence | Frame-boundary message delivery; publisher Subscribe/Unsubscribe lifecycle + resync sweep; backfill operation orchestration. |
+| messages + publishers | `lib/runtime/message_delivery.go`, `lib/runtime/publishers.go`, `lib/runtime/backfill.go` | persistence | Frame-boundary message delivery; publisher-subscription desired-state lifecycle (mounting rows at instance-create, the retry-forever Subscribe reconciler, Unsubscribe teardown, startup resync sweep); backfill operation orchestration. |
 | peer | `lib/runtime/peer/` | protocols | The only concrete gRPC `ClaimProducer` / `LifecycleSubscriber` / `Publisher` / `Validation` / `DataProcessing` client. Renamed from `lib/runtime/remote/` in spec `2026-05-24-repo-reorganization-design` phase P2 — "peer" matches the `concept:service` vocabulary better. Also owns the `x-rimsky-service-name` client-side gRPC interceptor (`WithServiceName` + unary/stream interceptors in `service_name_interceptor.go`) installed on the executor + claim-producer dials for host-agent-proxy routing, and `ProducerCallError` (`errors.go`) translating gRPC `ErrorInfo.Reason` into the rimsky error_class. |
 | executor pool | `lib/runtime/executor/` | protocols, peer | Executor gRPC client pool; installs `peer`'s `x-rimsky-service-name` interceptor on its dial. |
 | host-agent daemon | `lib/runtime/hostagent/` | protocols | Importable dev-machine daemon main loop (`@concept: host-agent`), the agent end of `HostAgent.Connect`. Dials the proxy with reconnect-backoff (`run.go`), binds a local HTTP forward listener (`local_http.go`), validates+exec()s spawned binaries (injecting `RIMSKY_AGENT_PORT`), runs the Capabilities handshake, and reaps (`spawn.go`), tunnels executor server-stream + claim-producer unary dispatch to the child (`dispatch.go`). Run by the `cmd/rimsky-host-agent` binary and the `rimsky agent` CLI subcommand. |
@@ -76,8 +76,8 @@ lives in `.ok-planner/design/concepts/`.
 | rimsky-control-api | `cmd/rimsky-control-api/` | Control-plane HTTP server. |
 | rimsky-migrate | `cmd/rimsky-migrate/` | Migration runner. |
 | rimsky-entrypoint | `cmd/rimsky-entrypoint/` | Unified PID-1 (the `rimsky` image). |
-| rimsky | `cmd/rimsky/` | Thin client CLI (renamed from `rimsky-cli` per the 2026-05-15 control-plane MCP and auth spec). The verb dispatcher lives in `cmd/rimsky/main.go`; all verb handlers (including `auth init|login|create-key|list|show|revoke|rotate|status`, the `agent start|status|stop` host-agent group, the bundled role JSONs at `cmd/rimsky/cli/roles/`, and the `conformance <protocol>` subcommands — `executor`, `claim-producer`, `data-processing`, `validation`, `publisher`, `blob-backend`, `probe`) live in `cmd/rimsky/cli/` and `cmd/rimsky/conformance*.go`. |
-| rimsky-host-agent-proxy | `cmd/rimsky-host-agent-proxy/` | Late-bound dev-machine service proxy (`@concept: host-agent-proxy`). Serves the agent-facing `HostAgent.Connect` bidi stream + the supervisor-facing `Executor`/`ClaimProducer`(+observability)/`LifecycleSubscriber`(consumer role) protocols on one gRPC port; `Publisher`/`Validation`/`DataProcessing` registered UNIMPLEMENTED. Resolves a dispatch to an owner's connected agent, lazily spawns the named binding, rewrites callbacks onto the agent's local listener, and reaps on run-scope-terminal. |
+| rimsky | `cmd/rimsky/` | Thin client CLI. The verb dispatcher lives in `cmd/rimsky/main.go`; all verb handlers (including `auth init|login|create-key|list|show|revoke|rotate|status`, the `agent start|status|stop` host-agent group, the bundled role JSONs at `cmd/rimsky/cli/roles/`, and the `conformance <protocol>` subcommands — `executor`, `claim-producer`, `data-processing`, `validation`, `publisher`, `blob-backend`, `probe`) live in `cmd/rimsky/cli/` and `cmd/rimsky/conformance*.go`. |
+| rimsky-host-agent-proxy | `cmd/rimsky-host-agent-proxy/` | Late-bound dev-machine service proxy (`@concept: host-agent-proxy`). Serves the agent-facing `HostAgent.Connect` bidi stream + the supervisor-facing `Executor`/`ClaimProducer`(+observability)/`LifecycleSubscriber`(consumer role) protocols on one gRPC port; `Publisher`/`Validation`/`DataProcessing` are likewise real transparent-forwarding handlers (no fronted protocol ships as an Unimplemented stub). Resolves a dispatch to an owner's connected agent, lazily spawns the named binding, rewrites callbacks onto the agent's local listener, and reaps on run-scope-terminal. |
 | rimsky-host-agent | `cmd/rimsky-host-agent/` | Dev-machine daemon (`@concept: host-agent`), the agent end of `HostAgent.Connect`. Thin signal-handled wrapper over the importable `lib/runtime/hostagent` main loop; also linked as the `rimsky agent` CLI subcommand (`cmd/rimsky/cli/agent.go`). Dials the proxy outbound, exec()s local binaries (injecting `RIMSKY_AGENT_PORT`), runs the Capabilities handshake, tunnels gRPC dispatch + local HTTP callbacks back through the stream, and reaps children on `Reap`/stream-close. |
 
 Docs build tooling is not part of this repo. Rimsky carries no docs
@@ -145,7 +145,18 @@ No dashboard reference impls are part of this repo.
 
 ## Reference impls (examples)
 
-No example reference impls are part of this repo.
+The `examples/` directory is a standalone Apache-2.0 Go module of minimal copy-and-modify protocol reference servers (it depends only on `lib/protocols` plus stdlib and permissive third-party packages). See `examples/README.md` for the per-protocol guarantees.
+
+| Example | Path | Protocol |
+| --- | --- | --- |
+| executor | `examples/executor/` | `Executor` (+ `ExecutorObservability` handshake) |
+| claimproducer | `examples/claimproducer/` | `ClaimProducer` (read-only) |
+| atomic-staging-fs-producer | `examples/atomic-staging-fs-producer/` | `ClaimProducer` (staged-write over a POSIX filesystem) |
+| lifecyclesubscriber | `examples/lifecyclesubscriber/` | `LifecycleSubscriber` |
+| publisher | `examples/publisher/` | `Publisher` (in-memory subscriptions) |
+| validation | `examples/validation/` | `Validation` (registration-time mix-in) |
+| data-processing | `examples/data-processing/` | `DataProcessing` (fan-out candidate lifecycle) |
+| compose | `examples/compose/` | `rimsky compose` manifest (not a protocol server) |
 
 ## Test harnesses (`test/`)
 
@@ -155,3 +166,4 @@ No example reference impls are part of this repo.
 | smoke | `test/smoke/` | full stack | Reference smoke fixture (boots producer-services on ephemeral ports, drives a sustained dispatch loop) used to harden new invariant coverage. |
 | support/scenario | `test/support/scenario/` | full stack | End-to-end scenario test harness (boots scheduler + supervisor + control-api against testcontainers Postgres). Moved out of the graph layer in the 2026-05-27 root-folder reorg. |
 | support/testpg | `test/support/testpg/` | (test-only, testcontainers) | Postgres-testcontainer helper. Demoted from a standalone Go module to a plain package under `test/support/` in the 2026-05-27 reorg; consumed by `test/support/pgmigrate`. |
+| support/eventwait | `test/support/eventwait/` | foundation/persistence | Event-ledger test waits (`@agent-contract`): `WaitForEvent` blocks until a matcher is satisfied over the append-only `rimsky_events` ledger (or fails fatally with a scope dump); `Events` is the non-blocking read used for absence assertions over the same durable record. |

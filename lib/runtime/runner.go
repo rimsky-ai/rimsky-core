@@ -245,6 +245,30 @@ type RunArgs struct {
 	// the rare cross-transaction handoff verifyBeforeRun catches. No
 	// production behavior change: the hook is invoked only when non-nil.
 	PostCommitHook func(ctx context.Context)
+
+	// PreAcquireUnavailableHook, if non-nil, runs inside
+	// handleAcquireUnavailable after the acquisition tx has rolled back
+	// and immediately before abandonPartialLocks fires the store-side
+	// Abandon for each partially-Open'd claim. Test-only seam (production
+	// passes nil). It exists solely so a deterministic injection test of
+	// the acquire-unavailable cleanup path can observe the
+	// post-rollback / pre-Abandon window — proving the tx-side rows are
+	// already gone while the producer-side Abandon has not yet fired,
+	// and that it then fires exactly once. No production behavior
+	// change: the hook is invoked only when non-nil.
+	PreAcquireUnavailableHook func(ctx context.Context)
+
+	// CheckAndFireHook, if non-nil, runs inside CheckAndFireResolution
+	// after the holding-subgraph aggregate check has decided to fire
+	// (every holder non-active, no expected inheritor missing) and
+	// immediately before the producer verb + Promote sequence
+	// (ResolveClaimHandleTerminal). Test-only seam (production passes
+	// nil). It exists solely so a deterministic injection test of
+	// @blessed-invariant 13 can interleave a second contender in the
+	// check→fire window and prove the SELECT … FOR UPDATE + state
+	// guard make the loser a no-op (the verb fires exactly once). No
+	// production behavior change: the hook is invoked only when non-nil.
+	CheckAndFireHook func(ctx context.Context)
 }
 
 // MetricsHook is the metric-instrumentation surface foundation calls
@@ -271,6 +295,11 @@ type MetricsHook interface {
 	// IncClaimAcquisition records a claim acquisition (producer name +
 	// intent: "acquired" | "unavailable" | "abandon").
 	IncClaimAcquisition(producer, intent string)
+	// IncNamedLockAcquisition records a named-lock acquisition attempt
+	// (lock name + intent: "acquired" | "unavailable"). A sibling of
+	// IncClaimAcquisition so named-lock activity is distinguishable
+	// from producer-claim activity on the metrics endpoint.
+	IncNamedLockAcquisition(lockName, intent string)
 	// IncNamedEvent records a NamedEvent persistence write.
 	IncNamedEvent(executor, eventName string)
 	// ObserveDispatchLatency observes the wall-clock dispatch duration.
@@ -294,6 +323,7 @@ func (noopMetrics) IncDispatch(string, string)                     {}
 func (noopMetrics) IncTerminal(string, string)                     {}
 func (noopMetrics) IncInvalidate(string)                           {}
 func (noopMetrics) IncClaimAcquisition(string, string)             {}
+func (noopMetrics) IncNamedLockAcquisition(string, string)         {}
 func (noopMetrics) IncNamedEvent(string, string)                   {}
 func (noopMetrics) ObserveDispatchLatency(string, float64)         {}
 func (noopMetrics) ObserveClaimAcquisitionLatency(string, float64) {}
@@ -388,7 +418,7 @@ type AcquiredLock struct {
 	// own sub-claim. Empty for the parent fan-out run, for non-fan-out
 	// runs, and for named locks. Populated at leaf acquisition by
 	// resolving the sub-claim row whose `node_run_id` equals this leaf's
-	// dispatch id (linked in `fanout_dispatch.go::CreateFanOutChildren`),
+	// dispatch id (linked in `child_execution.go::DispatchChildren`),
 	// then carried onto the wire by `makeClaimHandle` as
 	// `StoreHandle.candidate_handle` (E4). Inert in rimsky per
 	// @blessed-invariant 20.

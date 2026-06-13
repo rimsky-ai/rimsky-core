@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`go-chi/chi/v5`.
+The chi HTTP router, v5 line.
 
 ## Rationale
 

@@ -5,7 +5,11 @@
 // claim_handles.go — SQLite-backed persistence.ClaimHandleTable.
 //
 // @blessed-invariant 9a: lock state lives only in the persistence layer.
-// @blessed-invariant 4: claimant-guarded release.
+// @blessed-invariant 4: claimant-guarded release. The guard predicate
+// (`holder_supervisor_id = ?`) is rendered exclusively by the
+// claimantGuardClause constant in this file — every claimant-guarded
+// UPDATE / DELETE in this driver splices it in, so no mutation site can
+// drift to an unguarded form.
 package sqlite
 
 import (
@@ -36,6 +40,19 @@ const lockHolderCols = `
   committed_children_count, abandoned_children_count,
   state, resolved_at
 `
+
+// claimantGuardClause is the @blessed-invariant 4 ownership predicate.
+// This constant is the single written site of the guard for the sqlite
+// driver: every claimant-guarded UPDATE / DELETE in this file and in
+// claim_holders.go (FailAllActiveByClaimHandle's EXISTS sub-query)
+// splices it into its WHERE clause, so a wrong-supervisor mutation can
+// never match a row.
+//
+// Load-bearing property protected: no mutation statement may lose its
+// guard — call sites must splice this clause rather than hand-writing
+// (or omitting) the predicate, even where a caller seems to guarantee
+// ownership.
+const claimantGuardClause = `holder_supervisor_id = ?`
 
 func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandleInsertInput, tx persistence.Tx) error {
 	now := nowUTC()
@@ -98,7 +115,7 @@ func (s *claimHandlesImpl) UpdateRealizedWriteSemantics(
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET realized_write_semantics = ?
-		  WHERE id = ? AND holder_supervisor_id = ?`,
+		  WHERE id = ? AND `+claimantGuardClause,
 		v, id.String(), supervisorID,
 	)
 	if err != nil {
@@ -113,7 +130,7 @@ func (s *claimHandlesImpl) UpdateAddress(
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET address = ?
-		  WHERE id = ? AND holder_supervisor_id = ?`,
+		  WHERE id = ? AND `+claimantGuardClause,
 		nullableJSONB(address), id.String(), supervisorID,
 	)
 	if err != nil {
@@ -128,7 +145,7 @@ func (s *claimHandlesImpl) UpdatePayload(
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET payload = ?
-		  WHERE id = ? AND holder_supervisor_id = ?`,
+		  WHERE id = ? AND `+claimantGuardClause,
 		nullableJSONB(payload), id.String(), supervisorID,
 	)
 	if err != nil {
@@ -143,7 +160,7 @@ func (s *claimHandlesImpl) UpdateClaimScope(
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET claim_scope_data = ?
-		  WHERE id = ? AND holder_supervisor_id = ?`,
+		  WHERE id = ? AND `+claimantGuardClause,
 		nullableJSONB(scope), id.String(), supervisorID,
 	)
 	if err != nil {
@@ -163,6 +180,41 @@ func (s *claimHandlesImpl) UpdateNodeRunID(
 	)
 	if err != nil {
 		return fmt.Errorf("lockholders.UpdateNodeRunID: %w", err)
+	}
+	return nil
+}
+
+// ReassignHolderSupervisor CAS-moves an ACTIVE row's
+// holder_supervisor_id from fromSupervisorID to toSupervisorID. Mirror
+// of the postgres impl — the cross-supervisor claim-handoff primitive
+// (leaf-acquisition restamp + settlement takeover); see the interface
+// doc on persistence.ClaimHandleTable. Affected-rows = 0 returns
+// spec.ErrIllegalClaimHandleTransition.
+func (s *claimHandlesImpl) ReassignHolderSupervisor(
+	ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx persistence.Tx,
+) error {
+	if toSupervisorID == "" {
+		// Active rows must carry a holder (migration-009 CHECK pair); an
+		// empty target would be a disguised release.
+		return fmt.Errorf("lockholders.ReassignHolderSupervisor: empty toSupervisorID")
+	}
+	res, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_claim_handles
+		    SET holder_supervisor_id = ?
+		  WHERE id = ?
+		    AND state = 'active'
+		    AND `+claimantGuardClause,
+		toSupervisorID, id.String(), fromSupervisorID,
+	)
+	if err != nil {
+		return fmt.Errorf("lockholders.ReassignHolderSupervisor: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("lockholders.ReassignHolderSupervisor: rows-affected: %w", err)
+	}
+	if n == 0 {
+		return spec.ErrIllegalClaimHandleTransition
 	}
 	return nil
 }
@@ -325,15 +377,26 @@ func (s *claimHandlesImpl) Promote(
 	ctx context.Context, id shared.UUID, supervisorID string,
 	newState spec.ClaimHandleState, tx persistence.Tx,
 ) error {
+	// resolved_at is stamped Go-side in the driver's canonical
+	// fixed-width UTC text format (timeLayoutFixedNanos, whose
+	// lexicographic order matches chronological order) — NOT via
+	// CURRENT_TIMESTAMP, whose "YYYY-MM-DD HH:MM:SS" shape sorts
+	// lexically BEFORE any 'T'-separated string of the same date
+	// (' ' < 'T'), which made
+	// DeleteResolvedOlderThan's `resolved_at < cutoff` text comparison
+	// treat every freshly-resolved row as already past the cutoff.
+	// Property protected: the retention sweep must never reap a row
+	// younger than the TTL (cross-driver parity with postgres, pinned
+	// by the RetentionSweep conformance area).
 	res, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET state = ?,
 		        holder_supervisor_id = NULL,
-		        resolved_at = CURRENT_TIMESTAMP
+		        resolved_at = ?
 		  WHERE id = ?
 		    AND state = 'active'
-		    AND holder_supervisor_id = ?`,
-		string(newState), id.String(), supervisorID)
+		    AND `+claimantGuardClause,
+		string(newState), formatTime(time.Now()), id.String(), supervisorID)
 	if err != nil {
 		return fmt.Errorf("lockholders.Promote: %w", err)
 	}
@@ -395,7 +458,7 @@ func (s *claimHandlesImpl) SetVersionID(
 	}
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles SET version_id = ?
-		 WHERE id = ? AND holder_supervisor_id = ?`,
+		 WHERE id = ? AND `+claimantGuardClause,
 		v, id.String(), supervisorID)
 	if err != nil {
 		return fmt.Errorf("lockholders.SetVersionID: %w", err)
@@ -415,7 +478,7 @@ func (s *claimHandlesImpl) SetAggregationPolicy(
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET aggregation_policy = ?
-		  WHERE id = ? AND holder_supervisor_id = ?`,
+		  WHERE id = ? AND `+claimantGuardClause,
 		v, id.String(), supervisorID,
 	)
 	if err != nil {
@@ -432,7 +495,7 @@ func (s *claimHandlesImpl) BumpExpectedChildrenCount(
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET expected_children_count = expected_children_count + ?
-		  WHERE id = ? AND holder_supervisor_id = ?`,
+		  WHERE id = ? AND `+claimantGuardClause,
 		delta, id.String(), supervisorID,
 	)
 	if err != nil {
@@ -459,7 +522,7 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		    SET `+column+` = `+column+` + ?
-		  WHERE id = ? AND holder_supervisor_id = ?`,
+		  WHERE id = ? AND `+claimantGuardClause,
 		delta, id.String(), supervisorID,
 	)
 	if err != nil {
@@ -486,19 +549,6 @@ func qualifiedLockHolderCols(alias string) string {
 		alias + `.state, ` + alias + `.resolved_at`
 }
 
-func (s *claimHandlesImpl) ListBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.ClaimHandleRow, error) {
-	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+lockHolderCols+` FROM rimsky_claim_handles
-		 WHERE holder_supervisor_id = ?
-		 ORDER BY claimed_at ASC`, supervisorID,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("lockholders.ListBySupervisor: %w", err)
-	}
-	defer rows.Close()
-	return collectClaimHandles(rows)
-}
-
 // ExtendHeartbeat updates last_heartbeat_at and expires_at for every row
 // owned by supervisorID whose lifetime should currently be active.
 // Post-stage-3 / stage-5 the predicate sources from rimsky_node_runs;
@@ -511,7 +561,7 @@ func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID str
 		`UPDATE rimsky_claim_handles
 		   SET last_heartbeat_at = ?,
 		       expires_at = ?
-		 WHERE holder_supervisor_id = ?
+		 WHERE `+claimantGuardClause+`
 		   AND state = 'active'
 		   AND (
 		        EXISTS (
@@ -555,7 +605,7 @@ func (s *claimHandlesImpl) ListExpired(ctx context.Context, tx persistence.Tx) (
 func (s *claimHandlesImpl) Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_claim_handles
-		 WHERE id = ? AND holder_supervisor_id = ?`,
+		 WHERE id = ? AND `+claimantGuardClause,
 		id.String(), expectedSupervisorID,
 	)
 	if err != nil {
@@ -610,7 +660,7 @@ func (s *claimHandlesImpl) DeleteIfExpired(ctx context.Context, id shared.UUID, 
 	res, err := s.q(tx).ExecContext(ctx,
 		`DELETE FROM rimsky_claim_handles
 		 WHERE id = ?
-		   AND holder_supervisor_id = ?
+		   AND `+claimantGuardClause+`
 		   AND expires_at < ?
 		   AND state = 'active'`,
 		id.String(), supervisorID, nowUTC(),
