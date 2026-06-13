@@ -30,6 +30,7 @@ Actionable conventions for this codebase under the Plumbline methodology. The fu
 - Projects may extend the vocabulary with their own structured tags (e.g. design-model citations); plain prose is never allowed
 - Machine directives exempt (build tags, generate directives, lint suppressions, license headers including Copyright/SPDX/Licensed-under lines)
 - For Go, GoDoc-style comments (comment's first word names the declaration on the next non-comment line, or the program-name doc preceding `package main`) are exempt
+- For TypeScript/JavaScript, block comments that open with a capitalized word and immediately precede a declaration are recognized as JSDoc-style and exempt
 - All other prose comments are generation residue — clean up after writing, delete on sight
 - `@agent-contract` = guarantees + what it does NOT handle; no usage tutorials
 
