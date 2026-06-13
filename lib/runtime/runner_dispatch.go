@@ -834,7 +834,8 @@ func computeEffectiveAttributeSchema(args RunArgs, acq *acquisition) (map[string
 // extractReadOnlyPropsLocal mirrors graph/node/template_validator.go::
 // extractReadOnlyProps. Kept private because the runtime only needs the
 // names-of-readOnly-props set when reapplying the unified-attribute-
-// surface check. @source: graph/node/template_validator.go:extractReadOnlyProps
+// surface check.
+// @source: lib/graph/node/template_validator.go::extractReadOnlyProps
 func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
 	out := map[string]bool{}
 	if schema == nil {

@@ -62,7 +62,7 @@ func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 // without applying any migrations. Caller MUST invoke the returned
 // teardown func. Used by tests that exercise the migration runner itself.
 //
-// @source: testpg/testpg.go::StartFreshPostgresDSN
+// @source: test/support/testpg/testpg.go::StartFreshPostgresDSN
 // @diverged: false
 // @reason: foundation/ does not import testpg because that would add a
 // foundation→testpg cross-module test dependency (a `replace` directive
@@ -126,7 +126,7 @@ func StartFreshPostgresDSN(ctx context.Context, t *testing.T) (string, func()) {
 // becomes observable in CI logs. Production-fast tests (port mapping
 // resolves on first attempt) log nothing.
 //
-// @source: testpg/testpg.go::resolveConnectionString
+// @source: test/support/testpg/testpg.go::resolveConnectionString
 // @diverged: false
 // @reason: foundation/ does not import testpg (avoids a foundation→testpg
 // cross-module test dependency). See StartFreshPostgresDSN above for the

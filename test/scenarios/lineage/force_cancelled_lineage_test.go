@@ -197,7 +197,7 @@ func seedForceCancelScenario(
 // under it, with the supplied aggregation policy snapshotted on the
 // parent. Returns the parent id + sub-claim ids in insertion order.
 //
-// @source: runtime/auto_terminal_test.go::seedFanOutParentAndSubclaims
+// @source: lib/runtime/auto_terminal_test.go::seedFanOutParentAndSubclaims
 func seedFanOutTree(
 	ctx context.Context, t *testing.T, backend persistence.Tables,
 	parentRunID, parentNodeID, frameID shared.UUID,

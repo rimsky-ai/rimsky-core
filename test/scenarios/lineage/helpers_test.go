@@ -4,7 +4,7 @@
 
 // Shared helpers for the forensics lineage scenarios.
 //
-// @source: runtime/auto_terminal_test.go (seedRunForNode, seedFrame,
+// @source: lib/runtime/auto_terminal_test.go (seedRunForNode, seedFrame,
 // insertDeployedTemplate, countCallsOnID). Tracked duplication: the
 // scenario package cannot import the runtime_test package directly.
 
@@ -28,7 +28,7 @@ import (
 // seedDeployedTemplate inserts a template row in 'deployed' state with a
 // deterministic content hash derived from the supplied tag.
 //
-// @source: runtime/auto_terminal_test.go::insertDeployedTemplate
+// @source: lib/runtime/auto_terminal_test.go::insertDeployedTemplate
 func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence.Tables, tag string) persistence.TemplateRow {
 	t.Helper()
 	sum := sha256.Sum256([]byte("lineage-forensics:" + tag))
@@ -57,7 +57,7 @@ func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence
 
 // seedFrameRow enqueues a running frame for the instance + source node.
 //
-// @source: runtime/auto_terminal_test.go::seedFrame
+// @source: lib/runtime/auto_terminal_test.go::seedFrame
 func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
 	var frameID shared.UUID
@@ -116,7 +116,7 @@ func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, n
 
 // countCallsOnID counts producer-side verbs against a specific claim_id.
 //
-// @source: runtime/auto_terminal_test.go::countCallsOnID
+// @source: lib/runtime/auto_terminal_test.go::countCallsOnID
 func countCallsOnID(calls []storetest.FakeCall, claimID, verb string) int {
 	n := 0
 	for _, c := range calls {

@@ -201,7 +201,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 // with a deterministic content hash. Duplicated from the auto_terminal
 // fixture so the scenario package stays self-contained.
 //
-// @source: runtime/auto_terminal_test.go::insertDeployedTemplate
+// @source: lib/runtime/auto_terminal_test.go::insertDeployedTemplate
 // @diverged: false
 func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persistence.Tables, tmplSpec node.TemplateSpec) persistence.TemplateRow {
 	t.Helper()
@@ -227,7 +227,7 @@ func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persisten
 
 // seedFrameAsset creates a 'running' frame for the instance.
 //
-// @source: runtime/auto_terminal_test.go::seedFrame
+// @source: lib/runtime/auto_terminal_test.go::seedFrame
 // @diverged: false
 func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
@@ -249,7 +249,7 @@ func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, in
 // seedRunForNodeAsset enqueues a fresh rimsky_node_runs row for the
 // given node and returns the run id.
 //
-// @source: runtime/auto_terminal_test.go::seedRunForNode
+// @source: lib/runtime/auto_terminal_test.go::seedRunForNode
 // @diverged: false
 func seedRunForNodeAsset(
 	ctx context.Context, t *testing.T, sb persistence.Tables, q persistence.Queue,

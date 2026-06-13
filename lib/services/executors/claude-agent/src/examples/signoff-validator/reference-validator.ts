@@ -26,7 +26,7 @@
 // message builder so this reference file is self-contained (an operator can lift
 // it wholesale). If the executor's signing contract changes, this copy must be
 // updated in lockstep.
-// @source: src/signoff.ts::buildSignoffMessage
+// @source: lib/services/executors/claude-agent/src/signoff.ts::buildSignoffMessage
 // @diverged: false
 
 import { sign as edSign, createPublicKey } from "node:crypto";
@@ -38,7 +38,7 @@ import * as canonicalizeModule from "canonicalize";
 // import non-callable at type-check time even though it is callable at runtime.
 // Normalize both layers here: prefer the synthesized `default`, fall back to the
 // namespace object itself (the CJS function under esModuleInterop's runtime).
-// @source: src/signoff.ts (canonicalize import normalization)
+// @source: lib/services/executors/claude-agent/src/signoff.ts (canonicalize import normalization)
 type Canonicalize = (input: unknown) => string | undefined;
 const canonicalizeAny = canonicalizeModule as unknown as {
   default?: Canonicalize;
@@ -49,7 +49,7 @@ const canonicalize: Canonicalize = canonicalizeAny.default ?? canonicalizeAny;
  * The signing domain separator. Must match the executor's `SIGNOFF_DOMAIN`
  * exactly — it is part of the signed bytes and binds the signature to this
  * gate's purpose (anti cross-protocol signature reuse).
- * @source: src/signoff.ts::SIGNOFF_DOMAIN
+ * @source: lib/services/executors/claude-agent/src/signoff.ts::SIGNOFF_DOMAIN
  */
 export const SIGNOFF_DOMAIN = "rimsky/claude-agent/signoff/v1";
 
@@ -60,7 +60,7 @@ export const SIGNOFF_DOMAIN = "rimsky/claude-agent/signoff/v1";
  * `value` is JCS/RFC-8785-canonicalized so signer and verifier agree on the
  * byte representation regardless of key order or whitespace; a `null`/undefined
  * value canonicalizes to the literal string `"null"` (matching the executor).
- * @source: src/signoff.ts::buildSignoffMessage
+ * @source: lib/services/executors/claude-agent/src/signoff.ts::buildSignoffMessage
  */
 export function buildSignoffMessage(dispatchId: string, value: unknown): Buffer {
   const canonical = canonicalize(value) ?? "null";

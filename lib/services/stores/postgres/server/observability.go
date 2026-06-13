@@ -190,7 +190,7 @@ func (s *ObservabilityServer) ListClaims(_ context.Context, req *genv1.ListClaim
 // the wire ClaimDetail. Mirrors the filesystem store's helper of the
 // same name; intentional duplication tracked via @source.
 //
-//	@source: stores/filesystem/server/observability.go:claimRecordToDetail
+//	@source: lib/services/stores/filesystem/server/observability.go:claimRecordToDetail
 func claimRecordToDetail(rec *pgsstore.ClaimRecord) *genv1.ClaimDetail {
 	d := &genv1.ClaimDetail{
 		ClaimId: rec.ClaimID,
@@ -227,7 +227,7 @@ func claimRecordToDetail(rec *pgsstore.ClaimRecord) *genv1.ClaimDetail {
 // claimEventToProto mirrors the filesystem store's helper of the same
 // name; intentional duplication tracked via @source.
 //
-//	@source: stores/filesystem/server/observability.go:claimEventToProto
+//	@source: lib/services/stores/filesystem/server/observability.go:claimEventToProto
 func claimEventToProto(ev pgsstore.ClaimEvent) *genv1.ClaimEvent {
 	out := &genv1.ClaimEvent{
 		EventId:   ev.EventID,
@@ -246,7 +246,7 @@ func claimEventToProto(ev pgsstore.ClaimEvent) *genv1.ClaimEvent {
 
 // claimStateToProto mirrors the filesystem store's helper of the same name.
 //
-//	@source: stores/filesystem/server/observability.go:claimStateToProto
+//	@source: lib/services/stores/filesystem/server/observability.go:claimStateToProto
 func claimStateToProto(st pgsstore.ClaimState) genv1.ClaimState {
 	switch st {
 	case pgsstore.ClaimStateOpen:
@@ -264,7 +264,7 @@ func claimStateToProto(st pgsstore.ClaimState) genv1.ClaimState {
 
 // severityFromString mirrors the filesystem store's helper.
 //
-//	@source: stores/filesystem/server/observability.go:severityFromString
+//	@source: lib/services/stores/filesystem/server/observability.go:severityFromString
 func severityFromString(s string) genv1.Severity {
 	switch s {
 	case "DEBUG":

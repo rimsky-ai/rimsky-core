@@ -229,7 +229,7 @@ func applyTerminalPark(
 // spill-decision; both sites must agree so a value spilled at write time
 // can be read back without ambiguity.
 //
-// @source: foundation/persistence/blob_spill.go:ShouldSpillBlob
+// @source: lib/foundation/persistence/blob_spill.go:ShouldSpillBlob
 func shouldSpillBlob(args RunArgs, size int) bool {
 	return persistence.ShouldSpillBlob(args.Blob, args.BlobSpillThreshold, size)
 }

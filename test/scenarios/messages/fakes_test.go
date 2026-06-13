@@ -7,7 +7,7 @@
 // — duplicated here per cold-read rule "tracked duplication over
 // hidden coupling".
 //
-// @source: runtime/message_delivery_test.go::fakeMessagesTable
+// @source: lib/runtime/message_delivery_test.go::fakeMessagesTable
 // @diverged: false
 package messages
 

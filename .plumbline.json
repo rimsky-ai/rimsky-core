@@ -3,7 +3,7 @@
   "ignore": ["lib/protocols/proto/v1/gen/"],
   "checks": {
     "comment_hygiene": false,
-    "source_validity": false,
+    "source_validity": true,
     "blessed_invariant_test_coverage": false
   }
 }

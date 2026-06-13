@@ -16,7 +16,7 @@
 // satisfied; until it is, divergence is tracked via @source on each
 // method-level near-duplicate.
 //
-//	@source: stores/filesystem/store/ledger.go
+//	@source: lib/services/stores/filesystem/store/ledger.go
 package store
 
 import (
@@ -361,9 +361,9 @@ func (l *ClaimLedger) List(stateFilter, cursor string, limit int) ([]*ClaimRecor
 // evictIfNeeded enforces the ledger bound. Prefers evicting terminal
 // records first; falls back to dropping the oldest record regardless
 // of state once the soft pass can't reduce size further. See the
-// matching @source: stores/filesystem/store/ledger.go:evictIfNeeded.
+// matching @source: lib/services/stores/filesystem/store/ledger.go:evictIfNeeded.
 //
-//	@source: stores/filesystem/store/ledger.go:evictIfNeeded
+//	@source: lib/services/stores/filesystem/store/ledger.go:evictIfNeeded
 func (l *ClaimLedger) evictIfNeeded() {
 	for len(l.records) > l.max {
 		evicted := ""

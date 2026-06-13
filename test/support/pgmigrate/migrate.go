@@ -34,7 +34,7 @@ import (
 // Wraps OpenDriver and returns the underlying pool via the test-only
 // PoolFromDatabaseForTest helper. Prefer OpenDriver for new code.
 //
-// @source: foundation/internal/pgtest/pgtest.go::StartPostgres
+// @source: lib/foundation/internal/pgtest/pgtest.go::StartPostgres
 // @diverged: false
 // @reason: depguard visibility — pkg:internal/pgmigrate is reachable from
 // rimsky-root callers (test/scenarios/, cmd/), pkg:foundation/internal/pgtest
@@ -66,7 +66,7 @@ func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 // the pgx-isolation depguard rule by importing pgmigrate instead of pgx
 // directly.
 //
-// @source: foundation/internal/pgtest/pgtest.go::ExecForTest
+// @source: lib/foundation/internal/pgtest/pgtest.go::ExecForTest
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above.
 func ExecForTest(ctx context.Context, t *testing.T, d persistence.Database, sql string, args ...any) {
@@ -85,7 +85,7 @@ func ExecForTest(ctx context.Context, t *testing.T, d persistence.Database, sql 
 // hatch in the same vein as ExecForTest. Fatals on driver-mismatch or
 // SQL error.
 //
-// @source: foundation/internal/pgtest/pgtest.go::QueryRowForTest
+// @source: lib/foundation/internal/pgtest/pgtest.go::QueryRowForTest
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above.
 func QueryRowForTest(ctx context.Context, t *testing.T, d persistence.Database, sql string, args []any, dest ...any) {
@@ -106,7 +106,7 @@ func QueryRowForTest(ctx context.Context, t *testing.T, d persistence.Database, 
 // driver-mismatch or SQL error; the scan callback returns its own
 // error which is reported via t.Fatalf.
 //
-// @source: foundation/internal/pgtest/pgtest.go::QueryForTest
+// @source: lib/foundation/internal/pgtest/pgtest.go::QueryForTest
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above.
 func QueryForTest(ctx context.Context, t *testing.T, d persistence.Database,
@@ -137,7 +137,7 @@ func QueryForTest(ctx context.Context, t *testing.T, d persistence.Database,
 // peer replica holding the per-tick lock). Fatals on driver-mismatch or
 // SQL error.
 //
-// @source: foundation/internal/pgtest/pgtest.go::HoldAdvisoryLock
+// @source: lib/foundation/internal/pgtest/pgtest.go::HoldAdvisoryLock
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above.
 func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database, key int64) (release func()) {
@@ -179,7 +179,7 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 // Used by tests that target the persistence.Database surface directly
 // (conformance suite, scenario harness, post-Task-22 cmd binaries).
 //
-// @source: foundation/internal/pgtest/pgtest.go::OpenDriver
+// @source: lib/foundation/internal/pgtest/pgtest.go::OpenDriver
 // @diverged: false
 // @reason: depguard visibility — see StartPostgres above. Note that
 // internal/pgmigrate's OpenDriver delegates to testpg for the

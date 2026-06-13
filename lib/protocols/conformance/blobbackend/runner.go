@@ -28,7 +28,7 @@ import (
 
 // Backend is the minimal interface the conformance suite exercises.
 //
-// @source: foundation/persistence/blob.go::BlobBackend
+// @source: lib/foundation/persistence/blob.go::BlobBackend
 // @diverged: true
 // @reason: rimsky's internal BlobBackend takes a typed BlobKey
 // argument and returns an opaque Handle. The conformance suite

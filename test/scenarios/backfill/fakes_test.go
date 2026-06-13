@@ -4,7 +4,7 @@
 
 // Shared fakes for the N9 backfill scenarios.
 //
-// @source: runtime/message_delivery_test.go::fakeMessagesTable
+// @source: lib/runtime/message_delivery_test.go::fakeMessagesTable
 // @diverged: false
 package backfill
 

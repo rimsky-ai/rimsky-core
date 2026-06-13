@@ -43,7 +43,7 @@ import (
 // node so park transitions (which require phase='active' under a
 // claimant) can be exercised.
 //
-// @source: conformance/claimant_guard.go:seedClaimedGuardRun
+// @source: lib/foundation/persistence/conformance/claimant_guard.go:seedClaimedGuardRun
 // @diverged: true
 // @reason: takes the node id as a parameter so one test can hold
 // several concurrently-parked runs (the in-flight unique index allows

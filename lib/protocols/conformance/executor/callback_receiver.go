@@ -165,7 +165,7 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 // `complete | blocked | errored | park_requested` per-terminal keys
 // are no longer accepted.
 //
-// @source: runtime/callback.go::parseAsyncCallback
+// @source: lib/runtime/callback.go::parseAsyncCallback
 // @diverged: true
 // @reason: The supervisor parses a typed body via json.Unmarshal into
 // asyncCallbackBody. The conformance receiver operates on a

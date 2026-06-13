@@ -10,7 +10,7 @@
 // rimsky-side tx and roll back together with the rest of tryAcquire
 // on any returned error.
 //
-// @source: runtime/runner_acquire.go::tryAcquire (cycle-7 extraction)
+// @source: lib/runtime/runner_acquire.go::tryAcquire (cycle-7 extraction)
 
 package runtime
 

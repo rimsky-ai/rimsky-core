@@ -782,7 +782,7 @@ export function parseCliConfig(v: unknown): {
   return Object.keys(out!).length > 0 ? out : undefined;
 }
 
-// @source: src/server.ts (parseMcpServers) — mirrored in http-bridge.ts.
+// @source: lib/services/executors/claude-agent/src/server.ts (parseMcpServers) — mirrored in http-bridge.ts.
 // Parses cli.mcp_servers into the executor's host-server shape. Two entry
 // shapes (S-executors-mcp-catalog-transports):
 //   - `{ ref: <name> }` — a catalog reference resolved at dispatch against
@@ -845,7 +845,7 @@ function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-// @source: src/server.ts (parseRequiredSignoffs) — mirrored in http-bridge.ts.
+// @source: lib/services/executors/claude-agent/src/server.ts (parseRequiredSignoffs) — mirrored in http-bridge.ts.
 // Parses cli.required_signoffs, mapping snake_case public_key → publicKey
 // and carrying through the optional path. A present-but-malformed entry
 // (missing / non-string / empty public_key) throws CliConfigError rather
@@ -880,7 +880,7 @@ function parseRequiredSignoffs(
   return out.length > 0 ? out : undefined;
 }
 
-// @source: src/server.ts (parseStringRecord) — mirrored in http-bridge.ts.
+// @source: lib/services/executors/claude-agent/src/server.ts (parseStringRecord) — mirrored in http-bridge.ts.
 // Parses a flat string→string map (e.g. mcp_servers[].headers). Non-string
 // values are dropped; an empty/absent map ⇒ undefined.
 function parseStringRecord(v: unknown): Record<string, string> | undefined {

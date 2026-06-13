@@ -388,7 +388,7 @@ function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
   return auth;
 }
 
-// @source: src/server.ts (unwrapStruct + unwrapStructValue + toRecord)
+// @source: lib/services/executors/claude-agent/src/server.ts (unwrapStruct + unwrapStructValue + toRecord)
 // Mirror of the gRPC server's attributes unwrap. The HTTP bridge usually
 // receives plain JSON (no Struct envelope) but accepts the proto-Struct
 // shape too so behavior stays consistent across transports. Both snake_case
@@ -441,7 +441,7 @@ function toRecord(v: unknown): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 
-// @source: src/server.ts (unwrapStores)
+// @source: lib/services/executors/claude-agent/src/server.ts (unwrapStores)
 // Mirror of the gRPC server's store-handle unwrap.
 function unwrapStores(stores: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -467,7 +467,7 @@ function stringOrUndefined(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
-// @source: src/server.ts (parseCliConfig + helpers)
+// @source: lib/services/executors/claude-agent/src/server.ts (parseCliConfig + helpers)
 // Mirror of the gRPC path's attributes.cli reader.
 function boolOrUndefined(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
@@ -526,7 +526,7 @@ export function parseCliConfig(v: unknown): {
   return Object.keys(out!).length > 0 ? out : undefined;
 }
 
-// @source: src/server.ts (parseMcpServers)
+// @source: lib/services/executors/claude-agent/src/server.ts (parseMcpServers)
 // Two entry shapes (S-executors-mcp-catalog-transports): a catalog reference
 // `{ ref: <name> }` (resolved in agent-run.ts against the startup catalog) or
 // an inline `{ name, url, headers, allowed_tools }` server (permitted only
@@ -581,7 +581,7 @@ function parseMcpServers(v: unknown): HostMcpServerInput[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-// @source: src/server.ts (parseRequiredSignoffs)
+// @source: lib/services/executors/claude-agent/src/server.ts (parseRequiredSignoffs)
 // A present-but-malformed entry (missing / non-string / empty public_key)
 // throws CliConfigError rather than being silently dropped: required_signoffs
 // is a security gate, and a dropped entry would silently weaken (or disable)
@@ -613,7 +613,7 @@ function parseRequiredSignoffs(
   return out.length > 0 ? out : undefined;
 }
 
-// @source: src/server.ts (parseStringRecord)
+// @source: lib/services/executors/claude-agent/src/server.ts (parseStringRecord)
 function parseStringRecord(v: unknown): Record<string, string> | undefined {
   if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
   const out: Record<string, string> = {};
@@ -627,7 +627,7 @@ function numberOrUndefined(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-// @source: src/server.ts (parseResumeContext)
+// @source: lib/services/executors/claude-agent/src/server.ts (parseResumeContext)
 function parseResumeContext(v: unknown): {
   payload?: Uint8Array;
   sessionToken?: string;

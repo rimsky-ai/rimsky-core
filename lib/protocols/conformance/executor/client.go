@@ -35,7 +35,7 @@ import (
 
 // Endpoint identifies one peer executor's wire address.
 //
-// @source: runtime/executor/resolver.go::Endpoint
+// @source: lib/runtime/executor/resolver.go::Endpoint
 type Endpoint struct {
 	Transport string // "grpc" | "http"
 	URL       string
@@ -46,7 +46,7 @@ type Endpoint struct {
 
 // Client wraps a generated gRPC ExecutorClient.
 //
-// @source: runtime/executor/client.go::Client
+// @source: lib/runtime/executor/client.go::Client
 type Client interface {
 	Execute(ctx context.Context, req *genv1.ExecuteRequest) (EventStream, error)
 	Close() error
@@ -55,7 +55,7 @@ type Client interface {
 // EventStream abstracts gRPC streaming + HTTP-bridge newline-delimited
 // JSON so scenarios are transport-agnostic.
 //
-// @source: runtime/executor/client.go::EventStream
+// @source: lib/runtime/executor/client.go::EventStream
 type EventStream interface {
 	Recv() (*genv1.ExecuteEvent, error) // returns io.EOF when stream ends
 	Close() error
@@ -69,7 +69,7 @@ type grpcClient struct {
 // NewGRPCClient dials endpoint over gRPC. Plaintext by default;
 // Endpoint.TLS "required" dials with verified TLS (system roots).
 //
-// @source: runtime/executor/client.go::NewGRPCClient
+// @source: lib/runtime/executor/client.go::NewGRPCClient
 // @diverged: true
 // @reason: the conformance harness keeps the protocols module's
 // dependency budget (no lib/runtime import), so it maps TLS to
@@ -128,7 +128,7 @@ func (e *grpcEventStream) Close() error { return nil }
 // `tls: required` entry must never ride a plaintext connection created
 // for a `tls: off` twin.
 //
-// @source: runtime/executor/client.go::ClientPool
+// @source: lib/runtime/executor/client.go::ClientPool
 type ClientPool struct {
 	mu      sync.Mutex
 	clients map[string]Client

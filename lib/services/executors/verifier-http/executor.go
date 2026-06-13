@@ -236,7 +236,7 @@ func truncate(s string, max int) string {
 // network-timeout errors (which operators typically want to retry with
 // backoff) from generic network errors.
 //
-//	@source: executors/http-node/server.go::classifyTransportErr
+//	@source: lib/services/executors/http-node/server.go::classifyTransportErr
 func classifyTransportErr(err error) string {
 	if err == nil {
 		return "verifier/network_error"

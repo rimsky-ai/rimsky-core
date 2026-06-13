@@ -106,7 +106,7 @@ func (s *ObservabilityServer) GetClaim(_ context.Context, req *genv1.GetClaimReq
 // idle timeout fires per spec §3.5). Mirrors the postgres store impl;
 // see stores/postgres/server/observability.go::StreamClaim.
 //
-//	@source: stores/postgres/server/observability.go:StreamClaim
+//	@source: lib/services/stores/postgres/server/observability.go:StreamClaim
 func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream genv1.ClaimProducerObservability_StreamClaimServer) error {
 	history, rec, ch, unsub := s.store.Ledger().SubscribeWithSnapshot(req.GetClaimId())
 	defer unsub()
@@ -371,7 +371,7 @@ func countDir(path string) (int, error) {
 // stores/filesystem/store/store.go (intentional duplication; the helper
 // is package-private there).
 //
-//	@source: stores/filesystem/store/store.go:trimAtPrefix
+//	@source: lib/services/stores/filesystem/store/store.go:trimAtPrefix
 func trimAt(s string) string {
 	if len(s) > 0 && s[0] == '@' {
 		return s[1:]

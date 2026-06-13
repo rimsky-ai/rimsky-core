@@ -6,7 +6,7 @@
 // runtime/lineage_writer_test.go::fakeLineageTable; duplicated per
 // cold-read rule "tracked duplication over hidden coupling".
 //
-// @source: runtime/lineage_writer_test.go::fakeLineageTable
+// @source: lib/runtime/lineage_writer_test.go::fakeLineageTable
 // @diverged: false
 package lineage
 

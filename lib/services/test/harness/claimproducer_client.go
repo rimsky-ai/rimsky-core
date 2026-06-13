@@ -36,7 +36,7 @@ import (
 // The caller is responsible for calling Close on the returned adapter
 // to release the gRPC channel.
 //
-// @source: runtime/peer/dial.go::Dial
+// @source: lib/runtime/peer/dial.go::Dial
 // @diverged: true
 // @reason: consumption-side-isolation bars runtime/peer; the
 // lib/services test harness owns its own wire-adapter copy until the

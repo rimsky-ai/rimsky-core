@@ -12,7 +12,7 @@
 // This is the canonical implementation; the postgres store carries a
 // near-identical copy.
 //
-//	@source: stores/postgres/store/ledger.go
+//	@source: lib/services/stores/postgres/store/ledger.go
 package store
 
 import (
@@ -58,7 +58,7 @@ type ClaimRecord struct {
 
 // subscriber is a per-claim live-event listener.
 //
-//	@source: stores/postgres/store/ledger.go:subscriber
+//	@source: lib/services/stores/postgres/store/ledger.go:subscriber
 type subscriber struct {
 	ch chan ClaimEvent
 }
@@ -196,7 +196,7 @@ func (l *ClaimLedger) RecordTerminal(claimID, category string, attrs map[string]
 // SubscribeWithSnapshot atomically returns the current history plus a
 // channel of new events. Eliminates the snapshot/subscribe race.
 //
-//	@source: stores/postgres/store/ledger.go:SubscribeWithSnapshot
+//	@source: lib/services/stores/postgres/store/ledger.go:SubscribeWithSnapshot
 func (l *ClaimLedger) SubscribeWithSnapshot(claimID string) ([]ClaimEvent, *ClaimRecord, <-chan ClaimEvent, func()) {
 	if l == nil {
 		ch := make(chan ClaimEvent)
@@ -235,7 +235,7 @@ func (l *ClaimLedger) SubscribeWithSnapshot(claimID string) ([]ClaimEvent, *Clai
 
 // broadcast pushes ev to each live subscriber. Caller MUST hold l.mu.
 //
-//	@source: stores/postgres/store/ledger.go:broadcast
+//	@source: lib/services/stores/postgres/store/ledger.go:broadcast
 func (l *ClaimLedger) broadcast(claimID string, ev ClaimEvent) {
 	for sub := range l.subs[claimID] {
 		select {
@@ -266,7 +266,7 @@ func (l *ClaimLedger) Get(claimID string) (*ClaimRecord, bool) {
 // Cursor encodes the last-returned claim_id (stable across concurrent
 // eviction).
 //
-//	@source: stores/postgres/store/ledger.go:List
+//	@source: lib/services/stores/postgres/store/ledger.go:List
 func (l *ClaimLedger) List(stateFilter string, cursor string, limit int) ([]*ClaimRecord, string) {
 	if l == nil {
 		return nil, ""

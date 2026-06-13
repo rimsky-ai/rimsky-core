@@ -12,7 +12,7 @@ import {
 import { CliConfigError } from "./cli-config-error.js";
 
 // The gRPC server and the HTTP bridge each carry a copy of parseCliConfig
-// (the bridge's is `@source: src/server.ts`). The sign-off feature adds
+// (the bridge's is `@source: lib/services/executors/claude-agent/src/server.ts`). The sign-off feature adds
 // three cli fields — exercise both copies so the tracked duplication can
 // only pass when the two stay identical.
 const PARSERS: { name: string; parse: typeof parseCliConfigServer }[] = [
