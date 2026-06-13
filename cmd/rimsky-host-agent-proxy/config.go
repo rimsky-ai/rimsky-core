@@ -11,9 +11,8 @@ import (
 )
 
 // Config is the proxy's startup configuration, read once from the
-// environment. Configuration-as-visible-object per the cold-read
-// conventions: every env read lives here, not scattered through the
-// handlers.
+// environment. Configuration-as-visible-object: every env read lives
+// here, not scattered through the handlers.
 type Config struct {
 	// GRPCPort serves HostAgent.Connect (agent-facing) AND the rimsky
 	// service protocols (supervisor-facing) on the same port.

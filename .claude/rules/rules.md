@@ -23,7 +23,7 @@ Run **every** check that could be affected by the change. This is mandatory, not
 - **If any check fails, fix it before moving on.** A passing test in one package does not guarantee others pass — interface changes, proto regenerations, and shared-type changes propagate across packages and across the Go ↔ TS boundary.
 
 ### Update documentation
-1. **Cold-read annotations** (`@source`, `@diverged`, `@agent-contract`, `@blessed-invariant`) — update when modifying annotated code.
+1. **Plumbline annotations** (`@source`, `@diverged`, `@agent-contract`, `@blessed-invariant`) — update when modifying annotated code.
 2. **`CLAUDE.md`** — only if the change affects something a future session would otherwise trip over (a new blessed invariant, a new gotcha, a new build step). Most changes don't need a CLAUDE.md update.
 3. **Dead code** — remove anything the change has rendered unreachable.
 
@@ -38,7 +38,7 @@ Do not use workarounds. If a function doesn't persist a field, fix the function 
 Rimsky is a self-contained orchestration platform intended to be embedded by many consumers (as a Go module, as Docker images, or as a git submodule). No code, doc, comment, test fixture, or example may name or assume a specific consumer. Templates and examples must use generic, illustrative names (`project-alpha`, `analytics_production`, `items`, `category`). If a real consumer's terminology has leaked in, scrub it.
 
 ## Code Style
-All new code must follow cold-read conventions (see `cold-read-cheatsheet.md` and the longer-form docs in `cold-read/`).
+All new code must follow Plumbline conventions — see `plumbline-cheatsheet.md` in this directory for the actionable rules (materialized by the [Plumbline plugin](https://github.com/fallguyconsulting/plumbline) via `/plumbline:affirm`).
 
 The Go-specific lint set is enforced by `.golangci.yml` (`make lint`): gofmt, goimports, govet, staticcheck, unused, ineffassign, errcheck, revive (without the `exported` rule). Logging is stdlib `log/slog` only — no Zap, no Zerolog. HTTP routing is `go-chi/chi`. Postgres is `jackc/pgx/v5`. Cron parsing is `robfig/cron/v3`. Resist adding heavier alternatives (Viper, Cobra, Gin, Echo).
 

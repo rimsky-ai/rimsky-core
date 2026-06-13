@@ -1,0 +1,9 @@
+{
+  "tags_extend": ["@concept:", "@story:", "@decision:"],
+  "ignore": ["lib/protocols/proto/v1/gen/"],
+  "checks": {
+    "comment_hygiene": false,
+    "source_validity": false,
+    "blessed_invariant_test_coverage": false
+  }
+}

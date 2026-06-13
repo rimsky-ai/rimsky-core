@@ -210,9 +210,13 @@ strip it.
 - Other artifact slugs across catalogs (`see also:
   claim-handle`, `concept:claim-handle`, `story:claim-co-holder`,
   `decision:persistence`).
-- Annotation IDs the codebase uses (`@blessed-invariant: N`,
-  `@agent-contract: X`) — IDs are stable across file moves;
-  paths are not.
+- Invariant IDs the codebase uses (`@blessed-invariant: N`) —
+  IDs are stable across file moves; paths are not.
+  Coding-style annotations whose referent is the code itself
+  (`@agent-contract`, `@source:`, `@constraint:`,
+  `@deliberate:`) are not citable: a tag belongs to whichever
+  layer owns its referent, and the design docs cite only
+  design-owned identities.
 
 **Disallowed in artifact body** (concepts / stories /
 decisions):

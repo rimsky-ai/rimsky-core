@@ -25,8 +25,7 @@
 apache:
   - lib/protocols/   # wire IDL + generated bindings + protocol kit/helper packages + conformance libraries — the implement/link surface
   - lib/services/executors/claude-agent/   # TS executor reference impl; independently Apache-licensed
-  # Edge carve-outs — not the wire contract, but deliberately permissive:
-  - cold-read/   # documentation (style guide); docs ship Apache
+  # Edge carve-out — not the wire contract, but deliberately permissive:
   - examples/   # copy-and-modify protocol examples; permissive so consumers can build on them
 
 agpl:

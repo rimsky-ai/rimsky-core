@@ -1,6 +1,6 @@
 # feature-index
 
-Per-feature index for cold-read onboarding. Each entry names a feature's
+Per-feature index for fresh-session onboarding. Each entry names a feature's
 canonical directory + a one-line purpose + the layer it sits in + the
 features it depends on. The repo root holds four top-level code
 directories: `cmd/` (binaries), `lib/` (shippable library code), `test/`

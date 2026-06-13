@@ -86,12 +86,17 @@ assignment.
 - **Open an issue first** for non-trivial changes. A short note describing
   the problem and your proposed approach saves rework if the design or
   scope needs adjustment.
-- **Follow the cold-read conventions** documented in
-  `cold-read/cold-read-style-guide.md` and the cheatsheet at
-  `.claude/rules/cold-read-cheatsheet.md`. The short version: organize by
-  feature not layer, keep files under ~500 lines and functions under
-  ~100, max 3 levels of nesting, prefer tracked duplication
-  (`@source:` annotations) over hidden coupling.
+- **Follow the Plumbline coding conventions** materialized at
+  `.claude/rules/plumbline-cheatsheet.md` (installed and refreshed by
+  the [Plumbline plugin](https://github.com/fallguyconsulting/plumbline)
+  via `/plumbline:affirm`). The short version: organize by feature not
+  layer, keep files under ~500 lines and functions under ~100, max 3
+  levels of nesting, strict DRY through named searchable abstractions
+  (no logic copied between sites; `@source:` annotations only mark
+  intentionally divergent mirrors), every constraint backed by a lint
+  rule, test, or type, and comments only where they carry a structured
+  tag (`@constraint:`, `@deliberate:`, `@agent-contract`,
+  `@blessed-invariant:`, ...).
 - **Run `make license-lint` locally** before submitting. The license-check
   binary verifies that no Apache-classified package imports an
   AGPL-classified package and that every source file carries the correct

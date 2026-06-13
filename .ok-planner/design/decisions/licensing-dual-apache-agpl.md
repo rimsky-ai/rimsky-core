@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The protocols module + the services module's claude-agent executor (the TS reference executor) + the examples module + the cold-read style guide are Apache-2.0; everything else (the foundation module, graph layer, runtime layer, control layer, the other bundled services, the cmd group, the test group, the tools group) is AGPL-3.0-or-later with a commercial alternative.
+The protocols module + the services module's claude-agent executor (the TS reference executor) + the examples module are Apache-2.0; everything else (the foundation module, graph layer, runtime layer, control layer, the other bundled services, the cmd group, the test group, the tools group) is AGPL-3.0-or-later with a commercial alternative.
 
 ## Rationale
 
