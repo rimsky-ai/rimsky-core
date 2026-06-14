@@ -21,9 +21,7 @@ In the proxy case, the user's agent not being connected is a normal transient st
 
 ## Resolution candidates (do NOT pick)
 
-- A new synthetic error class `acquire/unreachable` fired after a threshold age on the row.
-- A watchdog that flips rows from `queued` to `failed` with a configured class after a timeout.
-- A per-template `min_admissible_age:` field.
+- Extend `concept:error-policy` so that dispatch rows targeting unreachable services are escalated into a documented error class after a threshold, and capture in `concept:claim-producer` / `concept:executor` that an acquire-side reachability outcome is observable on the row. The threshold knob lives on the template per `concept:template`.
 
 ## Evidence
 

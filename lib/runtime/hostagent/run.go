@@ -62,7 +62,7 @@ type liveChild struct {
 	cmd     *exec.Cmd
 	conn    *grpc.ClientConn
 	port    int
-	exited  chan struct{}
+	exited  <-chan struct{}
 }
 
 // agent is the per-connection state shared by the daemon's goroutines and

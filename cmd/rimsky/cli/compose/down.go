@@ -164,7 +164,7 @@ func runComposeDownWithManifest(ctx context.Context, m *Manifest, c *cli.Client,
 	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
 		return 2
 	}
-	if err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout}); err != nil {
+	if _, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout}); err != nil {
 		return reportApplyError(err)
 	}
 	fmt.Fprintln(os.Stdout, "compose down complete")

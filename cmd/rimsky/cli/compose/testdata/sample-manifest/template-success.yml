@@ -1,0 +1,11 @@
+# template-success.yml — single-node template whose worker resolves
+# to the stub executor with no `outcome` attribute set, landing the
+# stub's default Success terminal. Paired with template-failure-runtime
+# .yml in the active rimsky-compose.yml so a one-shot run exhibits the
+# mixed-outcome shape STORY-one-shot-to-terminal's Proof field requires.
+name: template-success
+version: "1"
+frame_resolution_mode: serial_queue
+nodes:
+  - type: worker
+    executor: stub

@@ -28,7 +28,7 @@ func TestMergeParams_JSONOnly(t *testing.T) {
 }
 
 func TestMergeParams_KVOnly(t *testing.T) {
-	got, err := mergeParams("", repeatedFlag{"count=3", "enabled=true", "name=foo"})
+	got, err := mergeParams("", RepeatedFlag{"count=3", "enabled=true", "name=foo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestMergeParams_KVOnly(t *testing.T) {
 
 func TestMergeParams_KVOverridesJSON(t *testing.T) {
 	// --param applies after --params; later wins.
-	got, err := mergeParams(`{"a":1,"b":2}`, repeatedFlag{"b=99"})
+	got, err := mergeParams(`{"a":1,"b":2}`, RepeatedFlag{"b=99"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,16 +53,16 @@ func TestMergeParams_KVOverridesJSON(t *testing.T) {
 }
 
 func TestMergeParams_BadKV(t *testing.T) {
-	if _, err := mergeParams("", repeatedFlag{"missing-eq"}); err == nil {
+	if _, err := mergeParams("", RepeatedFlag{"missing-eq"}); err == nil {
 		t.Fatal("want error for k=v without '='")
 	}
-	if _, err := mergeParams("", repeatedFlag{"=novalue"}); err == nil {
+	if _, err := mergeParams("", RepeatedFlag{"=novalue"}); err == nil {
 		t.Fatal("want error for empty key")
 	}
 }
 
 func TestResolveServiceBindings_Explicit(t *testing.T) {
-	got, err := resolveServiceBindings(repeatedFlag{"codegen=/usr/bin/cg", "fs=/bin/fs"})
+	got, err := resolveServiceBindings(RepeatedFlag{"codegen=/usr/bin/cg", "fs=/bin/fs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestResolveServiceBindings_BareWithAlias(t *testing.T) {
 	// Run from a directory with no project-local alias file.
 	chdir(t, t.TempDir())
 
-	got, err := resolveServiceBindings(repeatedFlag{"codegen"})
+	got, err := resolveServiceBindings(RepeatedFlag{"codegen"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestResolveServiceBindings_BareWithAlias(t *testing.T) {
 func TestResolveServiceBindings_BareWithoutAlias(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	chdir(t, t.TempDir())
-	if _, err := resolveServiceBindings(repeatedFlag{"nope"}); err == nil {
+	if _, err := resolveServiceBindings(RepeatedFlag{"nope"}); err == nil {
 		t.Fatal("want error for bare name with no alias")
 	}
 }

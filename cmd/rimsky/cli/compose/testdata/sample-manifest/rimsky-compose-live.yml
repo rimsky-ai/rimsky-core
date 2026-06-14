@@ -1,0 +1,31 @@
+# Sample compose manifest for the STORY-live-progress proof.
+#
+# Two instances:
+#   - `fast` targeting the success template (instant terminal);
+#   - `slow` targeting the slow template (the stub's delay_ms
+#     attribute holds the dispatch for 3 seconds before terminal).
+#
+# The live-progress demo asserts that the per-instance summary line
+# for `fast` appears in the timestamped transcript before the one for
+# `slow` — proving the verb emits progress lines as nodes settle,
+# not buffered to the end of the run.
+project: live-pipeline
+
+templates:
+  - path: ./template-success.yml
+    tag: succeed
+    state: deployed
+  - path: ./template-slow.yml
+    tag: slow
+    state: deployed
+
+instances:
+  - template: succeed
+    name: fast
+  - template: slow
+    name: slow
+
+executors:
+  stub:
+    transport: grpc
+    endpoint: "127.0.0.1:9091"

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -100,15 +101,21 @@ func (f *failureReporter) Close() {
 	close(f.ch)
 }
 
-// RunScheduler wires and starts the scheduler role: rimsky.yml load,
-// persistence open, blob-backend install, config.StartScheduler, the
-// metrics gauge refresher, and the optional /metrics listener. Errors
-// are logged on the supplied logger (matching the standalone binary's
-// output) and returned. The returned StopFunc shuts the role down.
+// RunScheduler wires and starts the scheduler role: blob-backend
+// install, config.StartScheduler, the metrics gauge refresher, and
+// the optional /metrics listener. The persistence driver and parsed
+// rimsky.yml config are supplied by the caller — see
+// OpenDriverFromEnv. Errors are logged on the supplied logger
+// (matching the standalone binary's output) and returned. The
+// returned StopFunc shuts the role down.
+//
+// The runner does NOT open, close, or otherwise own the driver;
+// that is the caller's responsibility. In unified mode a single
+// driver is shared across all three Run* runners so the persistence
+// writer slot is not contended across roles.
 //
 // Environment variables (identical to the rimsky-scheduler binary):
 //
-//	RIMSKY_CONFIG               optional; default /etc/rimsky/rimsky.yml.
 //	RIMSKY_SCHEDULER_TICK_MS    optional; default 1500.
 //	RIMSKY_HEARTBEAT_TIMEOUT_MS optional; default 15000.
 //	RIMSKY_SCHEDULER_ID         optional; default scheduler-<hostname>.
@@ -116,7 +123,7 @@ func (f *failureReporter) Close() {
 //	                            metricsPortFor for the unified-mode and
 //	                            per-role override rules).
 //	RIMSKY_METRICS_HOST         optional; default 127.0.0.1.
-func RunScheduler(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan error, error) {
+func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
 	tickMs := atoiDefault(os.Getenv("RIMSKY_SCHEDULER_TICK_MS"), 1500)
 	heartbeatMs := atoiDefault(os.Getenv("RIMSKY_HEARTBEAT_TIMEOUT_MS"), 15000)
 	log := shared.NewSlogLogger(logger)
@@ -126,22 +133,6 @@ func RunScheduler(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan er
 	metricsPort, err := metricsPortFor("scheduler")
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
-		return nil, nil, err
-	}
-
-	configPath := os.Getenv("RIMSKY_CONFIG")
-	if configPath == "" {
-		configPath = defaultRimskyConfigPath
-	}
-	rimskyCfg, err := config.LoadRimskyConfigYAML(configPath)
-	if err != nil {
-		log.Error("load rimsky config", "error", err.Error(), "path", configPath)
-		return nil, nil, err
-	}
-
-	driver, err := persistence.Open(ctx, rimskyCfg.Persistence)
-	if err != nil {
-		log.Error("persistence.Open", "error", err.Error())
 		return nil, nil, err
 	}
 
@@ -155,7 +146,6 @@ func RunScheduler(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan er
 	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
-		_ = driver.Close()
 		return nil, nil, err
 	}
 
@@ -198,7 +188,6 @@ func RunScheduler(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan er
 	})
 	if err != nil {
 		log.Error("StartScheduler", "error", err.Error())
-		_ = driver.Close()
 		return nil, nil, err
 	}
 
@@ -230,7 +219,7 @@ func RunScheduler(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan er
 			}
 		}
 		cancelGauges()
-		_ = driver.Close()
+		// The driver is caller-owned — RunScheduler MUST NOT close it.
 		// Close the fail channel so monitor goroutines reading it exit;
 		// RunScheduler is embeddable and must not leak a monitor per
 		// start/stop cycle.
@@ -303,25 +292,39 @@ func metricsPortFor(role string) (int, error) {
 
 // startMetricsServer opens the optional Prometheus /metrics listener
 // for the named role on the caller-resolved port (see metricsPortFor;
-// <= 0 = disabled, returns nil). Shared by all three role runners. A
-// listener failure (bind conflict, serve-loop death) is reported on the
-// role's failureReporter — silent metrics loss is what the per-role
-// port resolution exists to prevent, so a failure that slips through
-// anyway surfaces as a role failure.
+// <= 0 = disabled, returns nil). Shared by all three role runners.
+//
+// @constraint: net.Listen runs up-front BEFORE the serve goroutine
+// launches, so a bind failure surfaces synchronously and the caller
+// observes it on the next line. Calling srv.ListenAndServe from the
+// goroutine would race the caller's failureReporter wiring — a fast
+// bind-fail could push onto the reporter before the caller's monitor
+// goroutine consumed it; for the scheduler's reporter (capacity 1) a
+// concurrent serve-loop fail and a real role-fail would compete for
+// the slot. Pre-binding pulls the bind error out of that race.
 func startMetricsServer(host, role string, metricsPort int, mreg *observability.MetricsRegistry, log shared.Logger, report *failureReporter) *http.Server {
 	if metricsPort <= 0 {
 		return nil
 	}
 	metricsRouter := chi.NewRouter()
 	observability.MountMetrics(metricsRouter, mreg)
+	addr := fmt.Sprintf("%s:%d", host, metricsPort)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Error("metrics endpoint bind", "error", err.Error(), "role", role, "addr", addr)
+		if report != nil {
+			report.Report(fmt.Errorf("%s metrics endpoint bind %s: %w", role, addr, err))
+		}
+		return nil
+	}
 	srv := &http.Server{
-		Addr:              fmt.Sprintf("%s:%d", host, metricsPort),
+		Addr:              addr,
 		Handler:           metricsRouter,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
 		log.Info("metrics endpoint listening", "addr", srv.Addr, "role", role)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Error("metrics endpoint", "error", err.Error(), "role", role)
 			if report != nil {
 				report.Report(fmt.Errorf("%s metrics endpoint: %w", role, err))

@@ -17,7 +17,7 @@ The template-level `error_types:` block maps per-`error_class` strings to one of
 
 Three vocabulary surfaces describe the same mechanism — distinguish them by context:
 
-- **Design-log noun** — `concept:error-policy` (this file).
+- **Design-log noun** — `concept:error-policy`.
 - **Operator-facing YAML field** — `error_types:` (the map of `error_class` → action declared inside a template).
 - **Implementation** — the runtime policy-chain resolver, entered from the terminal-error dispatch.
 

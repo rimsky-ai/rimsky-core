@@ -27,13 +27,38 @@ import (
 // ApplyOpts controls how ApplyPlan runs. Confirmation is gated upstream
 // in runComposeUpWithManifest / runComposeDownWithManifest via
 // confirmDestructive — ApplyPlan does not consult any --yes flag, so
-// this struct only carries the writer for step-by-step progress logs.
+// this struct carries only the writer for step-by-step progress logs
+// and the per-verb behavior toggles ApplyPlan needs to thread into
+// CreateInstance.
 type ApplyOpts struct {
 	Logger io.Writer
+	// TerminateAfterRun, when true, sets terminate_after_run=true on
+	// every CreateInstance the engine issues. Used by `compose run` so
+	// manifest-declared instances self-terminate after their first run
+	// reaches terminal — the same `--no-keep` knob the existing
+	// `rimsky run` verb sets. The other compose verbs (up/down/plan/
+	// status) leave this false so durable-by-default instances remain
+	// the deployment shape.
+	//
+	// @decision: instance-self-termination
+	TerminateAfterRun bool
 }
 
-// ApplyPlan executes plan.Steps serially against c. Returns immediately
-// on the first step error, wrapping the failed step.
+// CreatedInstance records one instance the apply created so the
+// caller — most importantly the `compose run` verb's terminal-wait
+// loop — can resolve the server-assigned instance UUID without
+// re-listing. Key is the manifest-prefixed instance key
+// (compose:<project>:<name>); ID is the control-api-returned UUID.
+type CreatedInstance struct {
+	Key string
+	ID  string
+}
+
+// ApplyPlan executes plan.Steps serially against c. Returns
+// immediately on the first step error, wrapping the failed step. The
+// returned created slice records every InstanceCreate step the apply
+// successfully landed; the existing up/down callers ignore it, the
+// compose-run verb consumes it to drive its terminal-wait loop.
 //
 // Pre-2026-05-02 the CLI computed plan-time hashes against the typed
 // TemplateSpec while the control-api stored hashes computed against the
@@ -42,17 +67,22 @@ type ApplyOpts struct {
 // The 2026-05-02 json-tags cleanup unified them — both sides now hash
 // the same lowercase-snake-case bytes — so ApplyPlan no longer needs
 // the hash-rewrite defense it carried during the rimsky rollout.
-func ApplyPlan(ctx context.Context, c *cli.Client, plan *Plan, opts ApplyOpts) error {
+func ApplyPlan(ctx context.Context, c *cli.Client, plan *Plan, opts ApplyOpts) ([]CreatedInstance, error) {
 	w := opts.Logger
 	if w == nil {
 		w = os.Stdout
 	}
+	var created []CreatedInstance
 	for _, step := range plan.Steps {
-		if err := applyStep(ctx, c, step, w); err != nil {
-			return fmt.Errorf("step %s %s: %w", step.Action, stepTarget(step), err)
+		ci, err := applyStep(ctx, c, step, w, opts)
+		if err != nil {
+			return created, fmt.Errorf("step %s %s: %w", step.Action, stepTarget(step), err)
+		}
+		if ci != nil {
+			created = append(created, *ci)
 		}
 	}
-	return nil
+	return created, nil
 }
 
 func stepTarget(s Step) string {
@@ -66,37 +96,42 @@ func stepTarget(s Step) string {
 	}
 }
 
-// applyStep executes one plan step against the control-api and logs the
-// outcome. Returns the control-api error, if any.
-func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer) error {
+// applyStep executes one plan step against the control-api and logs
+// the outcome. Returns (created, err): a non-nil created handle on a
+// successful ActionInstanceCreate so ApplyPlan can build its
+// CreatedInstance roster; nil on every other step. opts carries the
+// caller's per-verb behavior toggles (currently TerminateAfterRun);
+// the parameter is by-value because Step iterators inside ApplyPlan
+// share one opts and applyStep never mutates it.
+func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts ApplyOpts) (*CreatedInstance, error) {
 	logf := func(verb, target, status string) {
 		fmt.Fprintf(w, "  %s %s %s\n", verb, target, status)
 	}
 	switch step.Action {
 	case ActionRegister:
 		if step.SpecBody == nil {
-			return fmt.Errorf("register step missing spec body")
+			return nil, fmt.Errorf("register step missing spec body")
 		}
 		body := cli.RegisterTemplateRequest{Spec: *step.SpecBody, Source: step.Source}
 		resp, err := c.RegisterTemplate(ctx, body)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		logf("register", cli.TruncHash(resp.Hash()), "ok")
-		return nil
+		return nil, nil
 	case ActionTagCreate:
 		if _, err := c.CreateTag(ctx, cli.CreateTagRequest{Tag: step.Tag, Template: step.TemplateHash}); err != nil {
 			// Conflict: tag already exists pointing at the same hash → ignore.
 			if cli.IsConflict(err) {
 				logf("tag", step.Tag, "skipped (already exists)")
-				return nil
+				return nil, nil
 			}
-			return err
+			return nil, err
 		}
 		logf("tag", step.Tag, "ok")
 	case ActionTagMove:
 		if _, err := c.MoveTag(ctx, step.Tag, cli.MoveTagRequest{Template: step.TemplateHash}); err != nil {
-			return err
+			return nil, err
 		}
 		logf("tag-move", step.Tag, "ok")
 	case ActionDeploy:
@@ -105,34 +140,34 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer) error
 			ref = step.Tag
 		}
 		if _, err := c.DeployTemplate(ctx, ref); err != nil {
-			return err
+			return nil, err
 		}
 		logf("deploy", ref, "ok")
 	case ActionInstanceDelete:
 		if err := c.DeleteInstance(ctx, step.InstanceID); err != nil {
 			if cli.IsNotFound(err) {
 				logf("instance-delete", step.InstanceKey, "skipped (already gone)")
-				return nil
+				return nil, nil
 			}
-			return err
+			return nil, err
 		}
 		logf("instance-delete", step.InstanceKey, "ok")
 	case ActionUndeploy:
 		if _, err := c.UndeployTemplate(ctx, step.TemplateHash); err != nil {
 			if cli.IsConflict(err) {
 				logf("undeploy", cli.TruncHash(step.TemplateHash), "skipped (still has active instances or already undeployed)")
-				return nil
+				return nil, nil
 			}
-			return err
+			return nil, err
 		}
 		logf("undeploy", cli.TruncHash(step.TemplateHash), "ok")
 	case ActionTagDelete:
 		if err := c.DeleteTag(ctx, step.Tag); err != nil {
 			if cli.IsNotFound(err) {
 				logf("tag-rm", step.Tag, "skipped (already gone)")
-				return nil
+				return nil, nil
 			}
-			return err
+			return nil, err
 		}
 		logf("tag-rm", step.Tag, "ok")
 	case ActionInstanceCreate:
@@ -142,23 +177,33 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer) error
 			InstanceKey: &key,
 			Params:      step.Params,
 		}
-		if _, err := c.CreateInstance(ctx, body); err != nil {
-			return err
+		// @decision: instance-self-termination — `compose run` opts every
+		// instance into self-termination so the verb's terminal-wait
+		// loop sees `terminated_at` flip once the nodes settle. The
+		// other compose verbs leave opts.TerminateAfterRun false and
+		// thus produce durable instances unchanged.
+		if opts.TerminateAfterRun {
+			body.TerminateAfterRun = true
+		}
+		resp, err := c.CreateInstance(ctx, body)
+		if err != nil {
+			return nil, err
 		}
 		logf("create", step.InstanceKey, "ok")
+		return &CreatedInstance{Key: step.InstanceKey, ID: resp.UUID()}, nil
 	case ActionTemplateDelete:
 		if err := c.DeleteTemplate(ctx, step.TemplateHash); err != nil {
 			if cli.IsConflict(err) || cli.IsNotFound(err) {
 				logf("template-delete", cli.TruncHash(step.TemplateHash), "skipped (still referenced)")
-				return nil
+				return nil, nil
 			}
-			return err
+			return nil, err
 		}
 		logf("template-delete", cli.TruncHash(step.TemplateHash), "ok")
 	default:
-		return fmt.Errorf("unknown action %s", step.Action)
+		return nil, fmt.Errorf("unknown action %s", step.Action)
 	}
-	return nil
+	return nil, nil
 }
 
 // EmitPlan prints plan in human or JSON form per spec §3.2.
@@ -446,7 +491,7 @@ func runComposeUpWithManifest(ctx context.Context, m *Manifest, c *cli.Client, f
 	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
 		return 2
 	}
-	if err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout}); err != nil {
+	if _, err := ApplyPlan(ctx, c, plan, ApplyOpts{Logger: os.Stdout}); err != nil {
 		return reportApplyError(err)
 	}
 	if plan.Summary.Changes == 0 {

@@ -1,0 +1,40 @@
+# Sample compose manifest for the Pass 6 acceptance proofs of
+# STORY-one-shot-to-terminal and STORY-audit-artifact.
+#
+# Two instances: `ok` targets template-success (the stub executor's
+# default Success terminal), `oops` targets template-failure-runtime
+# (the stub executor's outcome="fail" terminal — error_class
+# `stub/failed`, settled via the runner's default fail-fast policy).
+# The mixed-outcome shape is the literal Proof field from
+# STORY-one-shot-to-terminal: "drive a two-instance manifest where one
+# succeeds and one fails; the run completes on its own and reports both
+# outcomes". The verb's classifier maps the mixed roster to
+# ReasonAnyFailure and exits with code 1; the per-instance summary
+# surfaces `instance sample-pipeline/ok: success` and
+# `instance sample-pipeline/oops: failure` lines by name; the audit
+# artifact records one rimsky_node_runs row in phase 'completed' and
+# one in phase 'failed'.
+#
+# The endpoint stanza below is a placeholder; the verb's spawn overlay
+# replaces it with the stub's actual loopback address before writing
+# the synthetic rimsky.yml the role runners read.
+project: sample-pipeline
+
+templates:
+  - path: ./template-success.yml
+    tag: succeed
+    state: deployed
+  - path: ./template-failure-runtime.yml
+    tag: fail
+    state: deployed
+
+instances:
+  - template: succeed
+    name: ok
+  - template: fail
+    name: oops
+
+executors:
+  stub:
+    transport: grpc
+    endpoint: "127.0.0.1:9091"

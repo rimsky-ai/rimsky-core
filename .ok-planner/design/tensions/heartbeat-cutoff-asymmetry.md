@@ -25,9 +25,7 @@ A future tuning of the multiplier (`5 ×` → `3 ×`) needs to be applied in two
 
 ## Resolution candidates (do NOT pick)
 
-- Unify on one representation (computed-at-refresh for both, or runtime-comparison for both).
-- Centralize the multiplier in one constant referenced by both reapers.
-- Add a regression test that pins the cutoff equality.
+- State in `concept:orphan-reaper` (cross-referenced from `concept:claim-handle` and `concept:node-run`) that the `5 × heartbeat_interval` cutoff is a single invariant whose value is canonical at one source-of-truth site, so the cutoff cannot drift across row types as the heartbeat-refresh path evolves.
 
 ## Evidence
 

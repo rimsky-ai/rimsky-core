@@ -21,12 +21,12 @@ import (
 	"time"
 )
 
-// repeatedFlag collects a string flag that may be passed multiple times,
+// RepeatedFlag collects a string flag that may be passed multiple times,
 // preserving declaration order. Used by `run`'s --param and --service.
-type repeatedFlag []string
+type RepeatedFlag []string
 
-func (r *repeatedFlag) String() string { return strings.Join(*r, ",") }
-func (r *repeatedFlag) Set(v string) error {
+func (r *RepeatedFlag) String() string { return strings.Join(*r, ",") }
+func (r *RepeatedFlag) Set(v string) error {
 	*r = append(*r, v)
 	return nil
 }
@@ -92,8 +92,8 @@ func RunRun(ctx context.Context, args []string) int {
 		terminateAfterRun bool
 		pollInterval      time.Duration
 		timeout           time.Duration
-		paramKV           repeatedFlag
-		services          repeatedFlag
+		paramKV           RepeatedFlag
+		services          RepeatedFlag
 	)
 	fs, common, endpoint, code := runWithCommon("run", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&params, "params", "", "JSON object or @file path")
@@ -226,7 +226,7 @@ func RunRun(ctx context.Context, args []string) int {
 // mergeParams builds the params map from the --params JSON blob (applied
 // first) then overlays each --param k=v in declaration order (later wins).
 // Returns nil when neither source contributes anything.
-func mergeParams(paramsJSON string, kvs repeatedFlag) (map[string]any, error) {
+func mergeParams(paramsJSON string, kvs RepeatedFlag) (map[string]any, error) {
 	base, err := parseParams(paramsJSON)
 	if err != nil {
 		return nil, err
@@ -271,7 +271,7 @@ func coerceParamValue(v string) any {
 // resolveServiceBindings turns each --service flag value into a binding.
 // `name=path` is explicit; a bare `name` resolves via the alias files
 // (Task 53). Returns nil when no --service flags were supplied.
-func resolveServiceBindings(values repeatedFlag) (map[string]bindingSpec, error) {
+func resolveServiceBindings(values RepeatedFlag) (map[string]bindingSpec, error) {
 	if len(values) == 0 {
 		return nil, nil
 	}

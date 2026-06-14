@@ -1,0 +1,21 @@
+# template-slow.yml — single-node template whose worker node pins a
+# `delay_ms` attribute to 3000. The stub executor reads the attribute
+# and sleeps for the configured duration before emitting its Success
+# terminal. Paired with template-success.yml in the live-progress
+# demo so a fast instance reaches terminal long before the slow one,
+# letting the demo observe the verb's progress lines as they happen
+# rather than batched at the end.
+name: template-slow
+version: "1"
+frame_resolution_mode: serial_queue
+nodes:
+  - type: worker
+    executor: stub
+    attributes:
+      schema:
+        type: object
+        properties:
+          delay_ms:
+            type: integer
+            const: 3000
+            default: 3000

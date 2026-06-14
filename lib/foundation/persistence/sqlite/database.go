@@ -28,8 +28,22 @@ import (
 )
 
 // sqliteMaxOpenConns is the connection-pool size for the SQLite driver.
-// MUST stay at 1 — see the comment in open() for the load-bearing details.
-const sqliteMaxOpenConns = 1
+// See the comment in open() for the load-bearing details.
+//
+// @decision: persistence-driver — the in-process unified stack
+// (compose-run verb) and the supervisor's settle tx + control-api's
+// request handlers all open their own Begin against the same driver.
+// At MaxOpenConns=1, a long-running tx (the supervisor's dispatch
+// settle, typically tens of ms) blocks every other goroutine's Begin
+// in the process; under the verb's terminal-wait poll loop this
+// manifests as control-api handlers and the wait-loop polls they
+// back receiving context-deadline-exceeded errors after ~30s. The
+// SQLite writer slot at the FILE level is still 1 (writers serialize
+// via busy_timeout=5000ms), so widening the pool does not break the
+// writer-slot invariant; read-only paths under WAL run lock-free and
+// benefit from the wider pool. The pool size is decoupled from the
+// writer-slot count.
+const sqliteMaxOpenConns = 8
 
 func init() {
 	persistence.RegisterSQLite(open)
@@ -134,10 +148,20 @@ func open(ctx context.Context, cfg persistence.SQLiteConfig) (persistence.Databa
 	// internal immediate-mode transaction around their multi-statement
 	// sequences (queueImpl.Enqueue, apiKeysImpl.MarkRevoked). Atomicity
 	// therefore holds across OS processes sharing the database file, not
-	// just across goroutines. The limit stays at 1 for throughput and
-	// simplicity: SQLite admits a single writer per database file, so a
-	// wider pool would only add SQLITE_BUSY contention and busy_timeout
-	// churn between this process's own connections.
+	// just across goroutines.
+	//
+	// The value is 8 — wider than 1 so concurrent goroutines that each
+	// open their own Persist.Transaction (the supervisor's dispatch tx
+	// + the control-api's read paths + the scheduler's tick polls)
+	// don't serialize at the connection pool. SQLite admits one writer
+	// per file at a time and writes contend at that file-level slot via
+	// busy_timeout=5000ms, but read-only paths run lock-free under WAL
+	// and benefit from the wider pool. At 1 conn, a single long-running
+	// tx blocks every other Begin in the process — under the unified
+	// in-process stack this manifests as the supervisor's settle tx
+	// starving control-api request handlers and the wait-loop polls
+	// they back, producing context-deadline-exceeded errors on every
+	// goroutine after ~30s.
 	db.SetMaxOpenConns(sqliteMaxOpenConns)
 	if got := db.Stats().MaxOpenConnections; got != sqliteMaxOpenConns {
 		_ = db.Close()

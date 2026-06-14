@@ -704,15 +704,33 @@ func parseTLSMode(block, name, raw string) (string, error) {
 	}
 }
 
+// ValidProtocols returns the canonical set of protocol values accepted
+// by the rimsky.yml loader's per-entry `protocols:` field. Exported so
+// the `rimsky compose run` manifest validator (cmd/rimsky/cli/compose)
+// can consult the SAME set rather than duplicate the switch — a
+// silent drift between the two would let the manifest validator
+// reject manifests the loader would accept (or vice versa).
+//
+// The returned map is a fresh copy on each call; callers may freely
+// mutate it without affecting subsequent lookups.
+func ValidProtocols() map[string]bool {
+	return map[string]bool{
+		ProtocolClaimProducer:                     true,
+		ProtocolExecutor:                          true,
+		ProtocolPublisher:                         true,
+		claimproducer.ProtocolLifecycleSubscriber: true,
+		claimproducer.ProtocolValidation:          true,
+		claimproducer.ProtocolDataProcessing:      true,
+	}
+}
+
 // validateProtocols rejects unknown protocol values. Known set: the
 // declared protocol constants in this package. Unknown protocols fail
 // at startup with a precise error.
 func validateProtocols(name string, protocols []string) error {
+	known := ValidProtocols()
 	for _, p := range protocols {
-		switch p {
-		case ProtocolClaimProducer, ProtocolExecutor, claimproducer.ProtocolLifecycleSubscriber,
-			ProtocolPublisher, claimproducer.ProtocolValidation, claimproducer.ProtocolDataProcessing:
-		default:
+		if !known[p] {
 			return fmt.Errorf("peer %q: unknown protocol %q", name, p)
 		}
 	}

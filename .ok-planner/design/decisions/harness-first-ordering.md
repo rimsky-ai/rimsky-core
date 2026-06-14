@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-When a stabilization campaign mixes test-harness hardening (race gates, deterministic race-injection hooks, polling audits) with consolidation refactors of concurrency seams (the claim spine, child execution), the harness work lands first, and the largest-blast-radius consolidation lands last among the consolidations.
+A stabilization campaign that mixes test-harness hardening (race gates, deterministic race-injection hooks, polling audits) with consolidation refactors of concurrency seams (the claim spine, child execution) is sequenced harness-first: harness hardening precedes any consolidation, and the largest-blast-radius consolidation is the last consolidation in the sequence.
 
 ## Rationale
 

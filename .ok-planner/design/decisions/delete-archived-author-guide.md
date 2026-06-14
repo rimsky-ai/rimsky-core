@@ -3,11 +3,11 @@ decision: delete-archived-author-guide
 status: as-is
 ---
 
-# The obsolete archived claim-producer author guide is deleted
+# Archived author guides are deleted, not retained
 
 ## Choice
 
-The archived claim-producer author guide is removed from the tree; git history retains it.
+Obsolete archived author guides are removed from the tree; git history retains them.
 
 ## Rationale
 

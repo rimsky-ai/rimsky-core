@@ -20,9 +20,7 @@ Anyone building tooling that re-derives template hashes (subscribers, third-part
 
 ## Resolution candidates (do NOT pick)
 
-- v1 commits to: JCS library version + canonical-form algorithm + spec-shape => hash bytes pinned indefinitely.
-- v1 commits to a defined migration path for hash changes (e.g., dual-publish under both hashes).
-- v1 introduces a hash-version prefix (`sha256-v1-<hex>`) for future flexibility.
+- State in `concept:template` the post-v1 commitment for hash byte stability: whether the canonical-hash function is pinned for the indefinite life of v1, whether the template id carries a version prefix that lets the canonical form evolve, or whether breaking hash changes ride a defined migration path.
 
 ## Evidence
 

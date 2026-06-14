@@ -42,25 +42,30 @@ type supervisorYAMLCallback struct {
 }
 
 // RunSupervisor wires and starts the supervisor role: supervisor-tuning
-// YAML load (RIMSKY_SUPERVISOR_CONFIG), rimsky.yml load, persistence
-// open, blob-backend install, the executor observability handshake,
-// config.StartSupervisor, the metrics gauge refresher, the capability
-// refresh loop, and the optional /metrics listener. Errors are logged
-// on the supplied logger / written to stderr (matching the standalone
-// binary's output) and returned. The returned StopFunc shuts the role
-// down.
+// YAML load (RIMSKY_SUPERVISOR_CONFIG), blob-backend install, the
+// executor observability handshake, config.StartSupervisor, the
+// metrics gauge refresher, the capability refresh loop, and the
+// optional /metrics listener. The persistence driver and parsed
+// rimsky.yml config are supplied by the caller — see
+// OpenDriverFromEnv. Errors are logged on the supplied logger /
+// written to stderr (matching the standalone binary's output) and
+// returned. The returned StopFunc shuts the role down.
+//
+// The runner does NOT open, close, or otherwise own the driver;
+// that is the caller's responsibility. In unified mode a single
+// driver is shared across all three Run* runners so the persistence
+// writer slot is not contended across roles.
 //
 // Environment variables (identical to the rimsky-supervisor binary):
 //
 //	RIMSKY_SUPERVISOR_CONFIG  required; path to the supervisor YAML.
-//	RIMSKY_CONFIG             optional; default /etc/rimsky/rimsky.yml.
 //	RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST / _PORT  optional overrides.
 //	RIMSKY_METRICS_PORT       optional; default 0 = disabled (see
 //	                          metricsPortFor: per-role override via
 //	                          RIMSKY_METRICS_PORT_SUPERVISOR; offset
 //	                          base+1 in unified mode).
 //	RIMSKY_METRICS_HOST       optional; default 127.0.0.1.
-func RunSupervisor(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan error, error) {
+func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
 	cfgPath := os.Getenv("RIMSKY_SUPERVISOR_CONFIG")
 	if cfgPath == "" {
 		err := fmt.Errorf("missing RIMSKY_SUPERVISOR_CONFIG (path to YAML)")
@@ -83,15 +88,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan e
 		return nil, nil, err
 	}
 
-	configPath := os.Getenv("RIMSKY_CONFIG")
-	if configPath == "" {
-		configPath = defaultRimskyConfigPath
-	}
-	rimskyCfg, err := config.LoadRimskyConfigYAML(configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
-		return nil, nil, err
-	}
 	if err := rimskyCfg.Executors.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky-supervisor: %v\n", err)
 		return nil, nil, err
@@ -178,12 +174,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan e
 			"advertise_port", advertisePort)
 	}
 
-	driver, err := persistence.Open(ctx, rimskyCfg.Persistence)
-	if err != nil {
-		log.Error("persistence.Open", "error", err.Error())
-		return nil, nil, err
-	}
-
 	// Construct the BlobBackend selected by rimsky.yml's persistence.blob
 	// block and install it on the driver. The attribute write/read path
 	// consults the driver-installed backend directly; the named-event /
@@ -192,7 +182,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan e
 	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
-		_ = driver.Close()
 		return nil, nil, err
 	}
 
@@ -258,7 +247,6 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan e
 	})
 	if err != nil {
 		log.Error("StartSupervisor", "error", err.Error())
-		_ = driver.Close()
 		return nil, nil, err
 	}
 	log.Info("supervisor started", "id", supID, "callback_addr", h.CallbackAddr())
@@ -308,7 +296,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan e
 			}
 		}
 		cancelGauges()
-		_ = driver.Close()
+		// The driver is caller-owned — RunSupervisor MUST NOT close it.
 		// Close the fail channel so monitor goroutines reading it exit;
 		// RunSupervisor is embeddable and must not leak a monitor per
 		// start/stop cycle.

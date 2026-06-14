@@ -85,10 +85,12 @@ func main() {
 	}
 }
 
-// dispatchCompose routes `rimsky compose <up|down|plan|status>` to the
-// app-layer compose engine. Compose reconciles a rimsky-compose.yml
-// against an already-running rimsky; it starts nothing and invokes no
-// infra command.
+// dispatchCompose routes `rimsky compose <up|down|plan|status|run>` to
+// the app-layer compose engine. The up/down/plan/status verbs reconcile
+// a rimsky-compose.yml against an already-running rimsky and never
+// start one. The run verb is the embedded one-shot orchestrator: it
+// self-hosts the rimsky runtime stack in-process and drives the
+// manifest to terminal (see @decision: cli-verb).
 func dispatchCompose(args []string) int {
 	return compose.Dispatch(context.Background(), args)
 }
@@ -395,6 +397,8 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "Compose:")
 	fmt.Fprintln(w, "  compose up | down | plan | status   Reconcile a rimsky-compose.yml")
 	fmt.Fprintln(w, "                                      against an already-running rimsky")
+	fmt.Fprintln(w, "  compose run <manifest>              Self-host rimsky in-process and drive")
+	fmt.Fprintln(w, "                                      the manifest to terminal (one-shot)")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Host agent:")
 	fmt.Fprintln(w, "  agent start | status | stop      Manage the local host-agent daemon")

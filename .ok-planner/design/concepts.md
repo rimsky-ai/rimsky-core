@@ -38,7 +38,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `frame` (aliases: cascade-frame) — A frame is one cascade resolution, persisted as a frame row carrying a resolution mode (`coalesce` or `serial_queue`) and a lifecycle state.
 - `graph` — A graph is rimsky's unit of node connectivity.
 - `host-agent` — A long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary and invoked as the `rimsky agent` subcommand.
-- `host-agent-proxy` — A rimsky-stack `concept:service` implementing the multi-protocol composition pattern, presenting the executor and claim-producer gRPC protocols on the supervisor-facing side and maintaining agent connections on the dev-facing side.
+- `host-agent-proxy` — A rimsky-stack `concept:service` implementing the multi-protocol composition pattern, presenting the rimsky gRPC service protocols on the supervisor-facing side and maintaining agent connections on the dev-facing side via a long-lived bidi-stream protocol.
 - `inertness` (aliases: inert bytes) — A uniform discipline applied across two overlapping lists of carrier streams that rimsky neither inspects nor interprets beyond a narrowly defined set of read sites.
 - `instance` — An instance is one live deployment of a template, identified by a rimsky-generated UUID.
 - `invalidate` — `invalidate` is the sole graph-level message that the scheduler / control-api emits to mark a node `stale`.
@@ -60,7 +60,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `publisher` — A publisher is a peer service that publishes messages into rimsky.
 - `publisher-subscription` (aliases: sensor-watch) — A publisher-subscription is the rimsky↔publisher binding state for one (instance, publisher, kind) triple.
 - `replica` — A replica is one running pod/process of a rimsky-platform binary, behind a deployment-tier load-balancing layer.
-- `rimsky` (aliases: rimsky-cli) — Thin HTTP+JSON client over the control-api.
+- `rimsky` (aliases: rimsky-cli) — Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus an embedded one-shot orchestration mode that self-hosts the runtime stack to drive a manifest to terminal without standing up rimsky infrastructure.
 - `rimsky-yml` (aliases: unified config) — A single YAML file at a well-known default path (overridable by a config-path environment variable) read by all three runtime processes plus the migrate step.
 - `role-template` (aliases: bundled role) — A CLI-bundled JSON resource that expands into a `concept:permission` grant at key-creation time.
 - `run-scope` — RunScope is the first-class execution context for one graph instantiation (main / subgraph / fanout_partition).

@@ -178,13 +178,201 @@ func TestValidate_MultiError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	// errors.Join produces a multi-error; the wrapped slice is visible.
+	// @constraint: errors.Join produces a multi-error; the wrapped slice is visible via the Unwrap() []error interface.
 	var joined interface{ Unwrap() []error }
 	if !errors.As(err, &joined) {
 		t.Fatalf("expected a joined error, got %T", err)
 	}
 	if len(joined.Unwrap()) < 3 {
 		t.Errorf("want >=3 errors, got %d: %v", len(joined.Unwrap()), err)
+	}
+}
+
+func TestManifest_ValidExecutorsBlock(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		Templates: []TemplateRef{
+			{Path: "x.yml", Tag: "a"},
+		},
+		Executors: map[string]ManifestExecutorEntry{
+			"stub": {
+				Transport:             "grpc",
+				Endpoint:              "127.0.0.1:9091",
+				TLS:                   "off",
+				ObservabilityEndpoint: "127.0.0.1:9092",
+			},
+		},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("expected valid manifest, got %v", err)
+	}
+}
+
+func TestManifest_ExecutorTransportInvalid(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		Executors: map[string]ManifestExecutorEntry{
+			"stub": {
+				Transport: "foo",
+				Endpoint:  "127.0.0.1:9091",
+			},
+		},
+	}
+	err := m.Validate()
+	if err == nil || !strings.Contains(err.Error(), "transport") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestManifest_ClaimProducerMissingWriteSemantics(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		ClaimProducers: map[string]ManifestClaimProducerEntry{
+			"items": {
+				Endpoint: "127.0.0.1:9095",
+			},
+		},
+	}
+	err := m.Validate()
+	if err == nil || !strings.Contains(err.Error(), "write_semantics_allowed: required") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestManifest_ServiceNameInvalid(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		Executors: map[string]ManifestExecutorEntry{
+			"Foo": {
+				Transport: "grpc",
+				Endpoint:  "127.0.0.1:9091",
+			},
+		},
+	}
+	err := m.Validate()
+	if err == nil || !strings.Contains(err.Error(), "service name") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestManifest_ClaimProducerValid(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		ClaimProducers: map[string]ManifestClaimProducerEntry{
+			"items": {
+				Endpoint:              "127.0.0.1:9095",
+				WriteSemanticsAllowed: []string{"sync"},
+			},
+		},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("expected valid manifest, got %v", err)
+	}
+}
+
+func TestManifest_ClaimProducerBadProtocol(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		ClaimProducers: map[string]ManifestClaimProducerEntry{
+			"items": {
+				Endpoint:              "127.0.0.1:9095",
+				WriteSemanticsAllowed: []string{"sync"},
+				Protocols:             []string{"bogus-protocol"},
+			},
+		},
+	}
+	err := m.Validate()
+	if err == nil || !strings.Contains(err.Error(), "is not a known protocol") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestManifest_ExecutorBadProtocol(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		Executors: map[string]ManifestExecutorEntry{
+			"stub": {
+				Transport: "grpc",
+				Endpoint:  "127.0.0.1:9091",
+				Protocols: []string{"bogus-protocol"},
+			},
+		},
+	}
+	err := m.Validate()
+	if err == nil || !strings.Contains(err.Error(), "is not a known protocol") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestManifest_ExecutorMultiProtocolValid(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		Executors: map[string]ManifestExecutorEntry{
+			"multi": {
+				Transport: "grpc",
+				Endpoint:  "127.0.0.1:9091",
+				Protocols: []string{"executor", "lifecycle_subscriber"},
+			},
+		},
+	}
+	if err := m.Validate(); err != nil {
+		t.Fatalf("expected valid manifest, got %v", err)
+	}
+}
+
+func TestManifest_ClaimProducerBadWriteSemantics(t *testing.T) {
+	m := &Manifest{
+		Project: "p",
+		ClaimProducers: map[string]ManifestClaimProducerEntry{
+			"items": {
+				Endpoint:              "127.0.0.1:9095",
+				WriteSemanticsAllowed: []string{"bogus"},
+			},
+		},
+	}
+	err := m.Validate()
+	if err == nil || !strings.Contains(err.Error(), "must be one of") {
+		t.Errorf("got %v", err)
+	}
+}
+
+func TestSiblingRimskyYMLPath_Present(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "rimsky-compose.yml")
+	if err := os.WriteFile(manifestPath, []byte("project: p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	siblingPath := filepath.Join(dir, "rimsky.yml")
+	if err := os.WriteFile(siblingPath, []byte("persistence:\n  driver: sqlite\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := SiblingRimskyYMLPath(manifestPath)
+	if err != nil {
+		t.Fatalf("SiblingRimskyYMLPath: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("expected sibling path, got empty")
+	}
+	// @constraint: the returned path resolves to the same file as the sibling we just wrote.
+	gotAbs, _ := filepath.Abs(got)
+	wantAbs, _ := filepath.Abs(siblingPath)
+	if gotAbs != wantAbs {
+		t.Errorf("got %q, want %q", gotAbs, wantAbs)
+	}
+}
+
+func TestSiblingRimskyYMLPath_Absent(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "rimsky-compose.yml")
+	if err := os.WriteFile(manifestPath, []byte("project: p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := SiblingRimskyYMLPath(manifestPath)
+	if err != nil {
+		t.Fatalf("SiblingRimskyYMLPath: %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected empty (no sibling), got %q", got)
 	}
 }
 

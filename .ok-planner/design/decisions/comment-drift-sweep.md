@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Comments and doc rows that misdescribe their code are corrected in mechanical sweeps rather than tolerated as drift.
+Comments and doc rows that misdescribe their code are corrected as defects, not tolerated as drift.
 
 ## Rationale
 

@@ -1,0 +1,27 @@
+# rimsky-compose-success.yml — all-success two-instance manifest used
+# by STORY-script-friendly-outcome's exit-code-0 subtest. Both
+# instances target template-success, so both reach terminal as
+# success and the verb classifies the run as ReasonAllSuccess and
+# returns exit 0. Distinct from the active rimsky-compose.yml
+# (mixed-outcome → exit 1) and rimsky-compose-failure.yml
+# (registration-time failure → exit 1); the three subtests of
+# TestComposeRunExitCodes_ThreeClasses each pin a manifest whose
+# outcome class is unambiguous, so a flake in one leg does not blur
+# the exit-code distinguishability the story is proving.
+project: sample-pipeline
+
+templates:
+  - path: ./template-success.yml
+    tag: succeed
+    state: deployed
+
+instances:
+  - template: succeed
+    name: ok
+  - template: succeed
+    name: also-ok
+
+executors:
+  stub:
+    transport: grpc
+    endpoint: "127.0.0.1:9091"

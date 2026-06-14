@@ -22,7 +22,7 @@ Row-struct convention: row structs stay singular even though the persisted table
 
 ## Purpose
 
-Single abstraction so graph and control code (and the supervisor's integration runner) never touch the raw Postgres driver directly — an enforced import boundary keeps the driver isolated behind the database interface. Lets SQLite back testing-fast scenarios and lets a future third driver plug in.
+Single abstraction so graph and control code (and the supervisor's integration runner) never touch the raw Postgres driver directly — an enforced import boundary keeps the driver isolated behind the database interface. Lets SQLite back testing-fast scenarios and admits additional drivers behind the same interface.
 
 ## Boundaries
 

@@ -3,7 +3,7 @@ decision: parallel-cap-removal
 status: as-is
 ---
 
-# Test-parallelism caps lifted
+# Test-all runs without a test-parallelism cap
 
 ## Choice
 
@@ -11,4 +11,4 @@ The test-all gate runs each module's tests without a test-parallelism cap; the s
 
 ## Rationale
 
-With `mounting` observable (see `decision:subscription-mounting-state`), the services tests have no synchronous publisher-Subscribe budget to throttle around, and an uncommented cap is decay risk.
+With `mounting` observable (see `decision:subscription-mounting-state`), the services tests have no synchronous publisher-Subscribe budget to throttle around. A test-parallelism cap is admitted only when accompanied by a comment naming the contention it guards.

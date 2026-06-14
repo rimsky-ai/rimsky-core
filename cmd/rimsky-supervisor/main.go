@@ -53,11 +53,24 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	stop, failCh, err := launch.RunSupervisor(context.Background(), logger)
+	ctx := context.Background()
+	driver, cfg, err := launch.OpenDriverFromEnv(ctx, logger)
+	if err != nil {
+		// OpenDriverFromEnv already logged the failure with full context.
+		os.Exit(1)
+	}
+	defer func() { _ = driver.Close() }()
+
+	stop, failCh, err := launch.RunSupervisor(ctx, logger, driver, cfg)
 	if err != nil {
 		// RunSupervisor already logged / printed the failure with full
 		// context (config errors go to stderr with the rimsky-supervisor
 		// prefix; wiring errors go to the structured logger).
+		// @constraint: os.Exit does not run deferred functions, so the
+		// `defer driver.Close()` above would leak the driver — its sqlite
+		// WAL would not checkpoint and the file lock would survive until
+		// kernel reap. Close inline before exit.
+		_ = driver.Close()
 		os.Exit(1)
 	}
 
@@ -67,6 +80,8 @@ func main() {
 	_ = stop(shutdownCtx)
 	if roleErr != nil {
 		// A dead role must restart the container, not linger degraded.
+		// @constraint: as above, os.Exit skips defers — close inline.
+		_ = driver.Close()
 		os.Exit(1)
 	}
 }

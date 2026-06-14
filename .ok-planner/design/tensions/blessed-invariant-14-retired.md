@@ -20,9 +20,8 @@ A grep for `@blessed-invariant 14` should return zero hits (or only a documented
 
 ## Resolution candidates (do NOT pick)
 
-- Grep-audit for `@blessed-invariant 14` references and remove any stale citations.
+- Record in `concept:claim-handle` that invariant slot 14 is permanently retired and the slot number is reserved (must not be reused), so a reader scanning the numbered invariant list interprets the gap as deliberate.
 - Renumber the invariants (would break every external reference to specific numbers).
-- Annotate the retired invariant slot as "explicitly retired; do not reuse the number."
 
 ## Evidence
 

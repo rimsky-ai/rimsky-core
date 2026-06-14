@@ -9,7 +9,7 @@ aliases:
 
 ## What it is
 
-Thin HTTP+JSON client over the control-api. The CLI entrypoint is small; a client-builder layer assembles requests and the control-api serves them. Every CLI verb is one or more HTTP calls. Verb groups: `template`, `tag`, `instance`, `node`, `admin`, `messages`, `backfill`, `asset`, `lineage`, `parked`, `compose`, `dev`, `ctx`, `auth` (with verbs `init | login | create-key | list | show | revoke | rotate | status`), and `agent` (with verbs `start | status | stop`). The `agent` group is not a thin HTTP client — the same `rimsky` binary doubles as the `concept:host-agent` daemon when invoked as `rimsky agent start`.
+Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus an embedded one-shot orchestration mode that self-hosts the runtime stack to drive a manifest to terminal without standing up rimsky infrastructure. The CLI is the binary operators invoke directly; the embedded stack reuses the same role implementations as the deployed binaries, configured for a single ephemeral run rooted at a per-run artifact directory.
 
 The binary name is `rimsky`.
 

@@ -57,6 +57,140 @@ func (a *agent) runSpawn(ctx context.Context, sp *genv1.Spawn) {
 	a.send(&genv1.ClientFrame{Body: &genv1.ClientFrame_SpawnAck{SpawnAck: ack}})
 }
 
+// SpawnServiceParams configures one binary spawn for late-bound service
+// hosting. The fields capture only what the port-pick + exec + ready-poll
+// mechanism needs; the gRPC wire surface (Spawn proto, capabilities
+// handshake, child-registration tracker) is the caller's concern.
+type SpawnServiceParams struct {
+	// BinaryPath is the absolute path to the binary to exec.
+	BinaryPath string
+	// Args are extra positional arguments passed to the binary (may be nil).
+	Args []string
+	// Cwd is the working directory for the spawned process (empty → inherit).
+	Cwd string
+	// Env is the base environment for the spawned process. SpawnService
+	// appends RIMSKY_AGENT_PORT=<picked> as the last entry so it always wins
+	// over any duplicate key the caller supplied (the child MUST bind the
+	// agent-allocated port and the env must never be able to shadow it).
+	Env []string
+	// ReadyTimeout bounds the poll-dial after exec; defaults to 30s when 0.
+	ReadyTimeout time.Duration
+}
+
+// SpawnedService is the handle returned by SpawnService. The caller owns
+// the child's lifecycle and MUST either Kill the process or Wait on the
+// Exited channel.
+type SpawnedService struct {
+	// Cmd is the running child process. The caller drives lifecycle.
+	Cmd *exec.Cmd
+	// Port is the localhost port the child bound.
+	Port int
+	// Exited is closed when cmd.Wait returns; lets the caller select on
+	// child-exit alongside its own signals.
+	Exited <-chan struct{}
+}
+
+// SpawnService picks a free localhost port, exec()s BinaryPath with
+// RIMSKY_AGENT_PORT set in its environment, and poll-dials
+// 127.0.0.1:<port> until the child binds a TCP listener there or the
+// ReadyTimeout elapses. On readiness timeout, the child is killed and
+// reaped before the function returns (no leak).
+//
+// @agent-contract guarantees: returns nil error iff the child process
+// is running, its port is reachable on 127.0.0.1, and the caller owns
+// its lifecycle. Does NOT perform any capabilities handshake or
+// protocol registration — that is the caller's concern.
+//
+// SECURITY / TRUST MODEL — `params.BinaryPath` is exec'd directly,
+// unvalidated. The primitive is path-trust-by-caller: every caller is
+// responsible for validating the binary path against the caller's own
+// trust model BEFORE invoking SpawnService. Today's callers do this in
+// two different ways:
+//
+//   - the host-agent daemon (handleSpawn) gates the path through
+//     `agent.pathAllowed`, an operator-configured allow-list of file
+//     trees (`RIMSKY_AGENT_ALLOW_PATHS`);
+//   - `rimsky compose run`'s --service flag treats the operator as the
+//     trust boundary — the operator typed the binary path on the CLI,
+//     so operator-as-attacker is out of scope.
+//
+// A future caller that wires SpawnService into a context where the
+// path is operator-untrusted (e.g. a server endpoint accepting a
+// remote `--service` directive, or a CI runner whose job spec might
+// contain an injected --service value) MUST add its own validation
+// before SpawnService is reached. The `//nolint:gosec` below is for
+// the lint suppression's audit trail; it does NOT bless arbitrary
+// paths at any future call site.
+//
+// Lifecycle obligation: the caller is REQUIRED to drive teardown via
+// Cmd.Process.Signal / Cmd.Process.Kill (or wait on the returned
+// Exited channel for natural exit). The ctx passed into SpawnService
+// is consumed ONLY for bounding the ready-poll (readiness timeout +
+// early-cancel during boot); ctx cancellation AFTER readiness is
+// intentionally NOT propagated to the spawned child. This is
+// load-bearing for the host-agent's reap path (which owns SIGTERM
+// timing via the reap-grace contract) and equally load-bearing for
+// compose-run's shutdown coordinator (which walks every SpawnedService
+// and signals each in priority order during graceful drain). Callers
+// that supply a request-scoped ctx and expect ctx cancellation to take
+// down the child must wrap their own teardown around the returned
+// handle.
+//
+// @blessed-invariant: spawn-no-leak-on-readiness-timeout
+func SpawnService(ctx context.Context, params SpawnServiceParams) (*SpawnedService, error) {
+	port, err := FreeLocalPort()
+	if err != nil {
+		return nil, fmt.Errorf("allocate port: %w", err)
+	}
+
+	// Use exec.Command (NOT exec.CommandContext): the caller owns the child's
+	// lifecycle and must drive teardown explicitly via the returned handle.
+	// exec.CommandContext would race the agent's SIGTERM-based reap path by
+	// sending SIGKILL on ctx cancellation, which the host-agent's reap-grace
+	// contract forbids (the stubchild's signal handler would never observe
+	// the SIGTERM and the agent's reap-clean ack would be wrong).
+	cmd := exec.Command(params.BinaryPath, params.Args...) //nolint:gosec // path trust is the caller's posture (host-agent enforces allow-paths via pathAllowed; future callers MUST validate the binary path against their own trust model before invoking SpawnService)
+	if params.Cwd != "" {
+		cmd.Dir = params.Cwd
+	}
+
+	// RIMSKY_AGENT_PORT is appended LAST so it always wins on duplicate-key
+	// resolution: exec uses the last occurrence of a duplicated key, and
+	// the agent's contract is that the child MUST bind on the
+	// agent-allocated port — no caller-supplied env may shadow it.
+	env := append([]string(nil), params.Env...)
+	env = append(env, fmt.Sprintf("%s=%d", agentPortEnvVar, port))
+	cmd.Env = env
+	cmd.Stdout = os.Stderr // surface child logs without polluting the parent's stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("exec start: %w", err)
+	}
+
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+
+	readyTimeout := params.ReadyTimeout
+	if readyTimeout <= 0 {
+		readyTimeout = 30 * time.Second
+	}
+
+	if !waitPortReady(ctx, port, exited, readyTimeout) {
+		// Reap the partial spawn before returning so callers never see a
+		// leaked child on readiness failure
+		// (@blessed-invariant: spawn-no-leak-on-readiness-timeout).
+		killProcess(cmd)
+		<-exited
+		return nil, fmt.Errorf("child did not bind port %d within %s", port, readyTimeout)
+	}
+
+	return &SpawnedService{Cmd: cmd, Port: port, Exited: exited}, nil
+}
+
 // handleSpawn validates, exec()s, handshakes, and registers a spawned child.
 func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAck {
 	path := sp.GetBinding().GetPath()
@@ -67,87 +201,67 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		return spawnFailed(sp.GetSpawnId(), fmt.Sprintf("path %q not permitted by --allow-paths", path))
 	}
 
-	port, err := freeLocalPort()
-	if err != nil {
-		return spawnFailed(sp.GetSpawnId(), "allocate port: "+err.Error())
-	}
-
 	// Per-binding exec() overrides (story S-hostagent-per-binding-exec-overrides):
 	// argv, working directory, and env are carried on the Binding wire message.
 	// A binding that declares none of them spawns exactly as before (no extra
 	// args, the instance-level cwd, inherited env), so this stays backward
 	// compatible.
-	cmd := exec.Command(path, sp.GetBinding().GetArgs()...) //nolint:gosec // path trust is the agent's documented posture (allow-paths is the knob)
-
-	// Per-binding cwd overrides the instance-level cwd only when set; otherwise
-	// fall back to the Spawn frame's instance-level cwd (today's behavior).
-	if bindingCwd := sp.GetBinding().GetCwd(); bindingCwd != "" {
-		cmd.Dir = bindingCwd
-	} else if cwd := sp.GetCwd(); cwd != "" {
-		cmd.Dir = cwd
+	//
+	// Per-binding cwd overrides the instance-level cwd only when set;
+	// otherwise fall back to the Spawn frame's instance-level cwd
+	// (today's behavior).
+	cwd := sp.GetBinding().GetCwd()
+	if cwd == "" {
+		cwd = sp.GetCwd()
 	}
 
 	// Env layering: inherited environment first, then each per-binding env
 	// entry (so a binding key overrides the inherited value on collision —
-	// exec uses the LAST occurrence of a duplicated key), then RIMSKY_AGENT_PORT
-	// last so it always wins (the child MUST bind the agent-allocated port and
-	// a binding must never be able to shadow it).
+	// exec uses the LAST occurrence of a duplicated key). SpawnService
+	// appends RIMSKY_AGENT_PORT itself, after this list, so the agent port
+	// always wins over any binding key.
 	env := os.Environ()
 	for k, v := range sp.GetBinding().GetEnv() {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
-	env = append(env, fmt.Sprintf("%s=%d", agentPortEnvVar, port))
-	cmd.Env = env
-	cmd.Stdout = os.Stderr // surface child logs without polluting the agent's stdout
-	cmd.Stderr = os.Stderr
 
-	if err := cmd.Start(); err != nil {
-		return spawnFailed(sp.GetSpawnId(), "exec start: "+err.Error())
-	}
-
-	exited := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(exited)
-	}()
-
-	readyTimeout := time.Duration(sp.GetReadyTimeoutSeconds()) * time.Second
-	if readyTimeout <= 0 {
-		readyTimeout = 30 * time.Second
-	}
-
-	if !waitPortReady(ctx, port, exited, readyTimeout) {
-		killProcess(cmd)
-		<-exited
-		return spawnFailed(sp.GetSpawnId(), fmt.Sprintf("child did not bind port %d within %s", port, readyTimeout))
-	}
-
-	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", port), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	spawned, err := SpawnService(ctx, SpawnServiceParams{
+		BinaryPath:   path,
+		Args:         sp.GetBinding().GetArgs(),
+		Cwd:          cwd,
+		Env:          env,
+		ReadyTimeout: time.Duration(sp.GetReadyTimeoutSeconds()) * time.Second,
+	})
 	if err != nil {
-		killProcess(cmd)
-		<-exited
+		return spawnFailed(sp.GetSpawnId(), err.Error())
+	}
+
+	conn, err := grpc.NewClient(fmt.Sprintf("127.0.0.1:%d", spawned.Port), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		killProcess(spawned.Cmd)
+		<-spawned.Exited
 		return spawnFailed(sp.GetSpawnId(), "dial child: "+err.Error())
 	}
 
 	caps, err := handshakeCapabilities(ctx, conn, sp.GetExpectedProtocols())
 	if err != nil {
 		_ = conn.Close()
-		killProcess(cmd)
-		<-exited
+		killProcess(spawned.Cmd)
+		<-spawned.Exited
 		return spawnFailed(sp.GetSpawnId(), err.Error())
 	}
 
 	a.childMu.Lock()
 	a.children[sp.GetSpawnId()] = &liveChild{
 		spawnID: sp.GetSpawnId(),
-		cmd:     cmd,
+		cmd:     spawned.Cmd,
 		conn:    conn,
-		port:    port,
-		exited:  exited,
+		port:    spawned.Port,
+		exited:  spawned.Exited,
 	}
 	a.childMu.Unlock()
 
-	slog.Info("hostagent: spawned child", "spawn_id", sp.GetSpawnId(), "path", path, "port", port, "protocols", sp.GetExpectedProtocols())
+	slog.Info("hostagent: spawned child", "spawn_id", sp.GetSpawnId(), "path", path, "port", spawned.Port, "protocols", sp.GetExpectedProtocols())
 	return &genv1.SpawnAck{
 		SpawnId:      sp.GetSpawnId(),
 		Status:       genv1.SpawnAck_SPAWN_STATUS_READY,
@@ -367,10 +481,10 @@ func spawnFailed(spawnID, msg string) *genv1.SpawnAck {
 	}
 }
 
-// freeLocalPort opens a listener on an OS-assigned port, reads it back, and
+// FreeLocalPort opens a listener on an OS-assigned port, reads it back, and
 // closes immediately. The brief race window (another process grabbing the
 // port before the child binds) is accepted per the spec's spawn contract.
-func freeLocalPort() (int, error) {
+func FreeLocalPort() (int, error) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err

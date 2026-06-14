@@ -1,0 +1,36 @@
+# template-failure-runtime.yml — single-node template whose worker
+# pins an `outcome` attribute to "fail". The stub executor reads the
+# attribute and emits a StreamClose.Error terminal (error_class
+# `stub/failed`); under the runner's default fail-fast policy the node
+# settles as ColorFailed in one shot. The wait loop's classifier maps
+# that to OutcomeFailure, producing an
+# `instance .../<name>: failure (frames=N)` summary line.
+#
+# Paired with template-success.yml in the active rimsky-compose.yml so
+# the one-shot run exhibits the mixed-outcome shape STORY-one-shot-to-
+# terminal's Proof field requires: "drive a two-instance manifest where
+# one succeeds and one fails; the run completes on its own and reports
+# both outcomes".
+#
+# Distinct from template-failure.yml, which is a registration-time
+# failure (malformed schema rejected by the validator); this template
+# registers cleanly and fails at dispatch time.
+name: template-failure-runtime
+version: "1"
+frame_resolution_mode: serial_queue
+nodes:
+  - type: worker
+    executor: stub
+    attributes:
+      schema:
+        type: object
+        properties:
+          outcome:
+            type: string
+            const: fail
+            default: fail
+    # No `error_types:` block — the default unknown-error-class policy
+    # is fail-fast (give_up), which is exactly what this template wants:
+    # the stub emits error_class `stub/failed`, the runner has no
+    # matching policy chain entry, and the node settles as
+    # ColorFailed in one shot.

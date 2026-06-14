@@ -18,15 +18,21 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// RunControlAPI wires and starts the control-api role: rimsky.yml load,
-// persistence open, blob-backend install, config.StartControlAPI, the
-// metrics gauge refresher, and the optional /metrics listener. Errors
-// are logged on the supplied logger (matching the standalone binary's
-// output) and returned. The returned StopFunc shuts the role down.
+// RunControlAPI wires and starts the control-api role: blob-backend
+// install, config.StartControlAPI, the metrics gauge refresher, and
+// the optional /metrics listener. The persistence driver and parsed
+// rimsky.yml config are supplied by the caller — see
+// OpenDriverFromEnv. Errors are logged on the supplied logger
+// (matching the standalone binary's output) and returned. The
+// returned StopFunc shuts the role down.
+//
+// The runner does NOT open, close, or otherwise own the driver;
+// that is the caller's responsibility. In unified mode a single
+// driver is shared across all three Run* runners so the persistence
+// writer slot is not contended across roles.
 //
 // Environment variables (identical to the rimsky-control-api binary):
 //
-//	RIMSKY_CONFIG            optional; default /etc/rimsky/rimsky.yml.
 //	RIMSKY_CONTROL_API_HOST  optional; default 127.0.0.1.
 //	RIMSKY_CONTROL_API_PORT  optional; default 8080. An explicit "0" also
 //	                         selects the default; a non-numeric value
@@ -36,7 +42,7 @@ import (
 //	                         per-role override via
 //	                         RIMSKY_METRICS_PORT_CONTROL_API; offset
 //	                         base+2 in unified mode).
-func RunControlAPI(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan error, error) {
+func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
 	host := os.Getenv("RIMSKY_CONTROL_API_HOST")
 	if host == "" {
 		host = "127.0.0.1"
@@ -67,29 +73,12 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan e
 		return nil, nil, err
 	}
 
-	configPath := os.Getenv("RIMSKY_CONFIG")
-	if configPath == "" {
-		configPath = defaultRimskyConfigPath
-	}
-	rimskyCfg, err := config.LoadRimskyConfigYAML(configPath)
-	if err != nil {
-		log.Error("load rimsky config", "error", err.Error(), "path", configPath)
-		return nil, nil, err
-	}
-
-	driver, err := persistence.Open(ctx, rimskyCfg.Persistence)
-	if err != nil {
-		log.Error("persistence.Open", "error", err.Error())
-		return nil, nil, err
-	}
-
 	// Install BlobBackend on the driver so attribute writes from
 	// control-api (e.g. instance-create-time fixture seeding via raw
 	// store calls) honor the spill threshold. Validation is identical
 	// across the three roles via ValidateBlobConfig.
 	if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver); err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
-		_ = driver.Close()
 		return nil, nil, err
 	}
 
@@ -128,7 +117,6 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan e
 	})
 	if err != nil {
 		log.Error("StartControlAPI", "error", err.Error())
-		_ = driver.Close()
 		return nil, nil, err
 	}
 	log.Info("control api listening", "addr", h.Addr())
@@ -182,7 +170,7 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger) (StopFunc, <-chan e
 			}
 		}
 		cancelGauges()
-		_ = driver.Close()
+		// The driver is caller-owned — RunControlAPI MUST NOT close it.
 		// Release the serve-loop monitor, then close the fail channel so
 		// monitor goroutines reading it exit; RunControlAPI is embeddable
 		// and must not leak goroutines per start/stop cycle.

@@ -198,71 +198,57 @@ func runMigrateIfOwned(selected []string, sigCh <-chan os.Signal) {
 	slog.Info("migrations complete")
 }
 
-// runUnified starts all three roles in this process via the launch role
-// runners, waits for SIGTERM/SIGINT or a fatal role failure, then stops
-// every role within the shutdown deadline. A role that fails to start
-// tears down the roles already running and exits non-zero; a role whose
-// serve loop dies after start (surfaced on the runner's fail channel)
-// does the same — any dead role must restart the container rather than
-// leave a degraded process running. sigCh is the entrypoint-wide signal
-// channel registered at the top of main (before migrate), so a SIGTERM
-// during slow role startup is already queued for the graceful path.
+// runUnified starts all three roles in this process via the launch
+// role runners (delegated to launch.StartUnifiedStack — the shared
+// helper the compose-run verb also uses), waits for SIGTERM/SIGINT or
+// a fatal role failure, then stops every role within the shutdown
+// deadline. A role that fails to start tears down the roles already
+// running and exits non-zero; a role whose serve loop dies after start
+// (surfaced on the unified stack's fail channel) does the same — any
+// dead role must restart the container rather than leave a degraded
+// process running. sigCh is the entrypoint-wide signal channel
+// registered at the top of main (before migrate), so a SIGTERM during
+// slow role startup is already queued for the graceful path.
 func runUnified(sigCh <-chan os.Signal) {
 	level := parseLogLevel(os.Getenv("RIMSKY_LOG_LEVEL"))
 	base := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	type roleRunner struct {
-		name string
-		run  func(context.Context, *slog.Logger) (launch.StopFunc, <-chan error, error)
-	}
-	runners := []roleRunner{
-		{"scheduler", launch.RunScheduler},
-		{"supervisor", launch.RunSupervisor},
-		{"control-api", launch.RunControlAPI},
-	}
-
-	type roleFailure struct {
-		role string
-		err  error
-	}
-	failCh := make(chan roleFailure, len(runners))
-
 	ctx := context.Background()
-	stops := make([]launch.StopFunc, 0, len(runners))
-	stopAll := func() {
-		// Stop in reverse start order (control-api first, scheduler
-		// last) so the operator-facing surface drains before the
-		// engines under it, bounded by one shared deadline.
-		stopCtx, cancel := context.WithTimeout(context.Background(), shutdownDeadline)
-		defer cancel()
-		for i := len(stops) - 1; i >= 0; i-- {
-			_ = stops[i](stopCtx)
-		}
+
+	// One driver, shared across all three Run* runners. Opening per-
+	// role would give each role its own connection pool against the
+	// same backing file, which under sqlite re-introduces writer-slot
+	// contention even though all three roles run inside one process.
+	// See @blessed-invariant: one-driver-per-process at
+	// lib/control/launch/open_driver.go.
+	driver, cfg, err := launch.OpenDriverFromEnv(ctx, base)
+	if err != nil {
+		slog.Error("open persistence driver", "err", err)
+		os.Exit(1)
 	}
-	for _, r := range runners {
-		stop, roleFailCh, err := r.run(ctx, base.With("binary", r.name))
-		if err != nil {
-			slog.Error("role failed to start", "role", r.name, "err", err)
-			stopAll()
-			os.Exit(1)
-		}
-		stops = append(stops, stop)
-		go func(name string, ch <-chan error) {
-			if err, ok := <-ch; ok && err != nil {
-				failCh <- roleFailure{role: name, err: err}
-			}
-		}(r.name, roleFailCh)
-		slog.Info("role started in-process", "role", r.name)
+	// runUnified exits via os.Exit on every path, so the defer wouldn't
+	// fire — call Close inline at each exit point instead. The process
+	// death also releases the file lock, but an explicit Close ensures
+	// pending writes flush cleanly first.
+	closeDriver := func() { _ = driver.Close() }
+
+	stack, err := launch.StartUnifiedStack(ctx, base, driver, cfg)
+	if err != nil {
+		slog.Error("role failed to start", "err", err)
+		closeDriver()
+		os.Exit(1)
 	}
 
 	select {
 	case sig := <-sigCh:
 		slog.Info("received signal; shutting down", "signal", sig.String())
-		stopAll()
+		stack.Drain(context.Background(), shutdownDeadline)
+		closeDriver()
 		os.Exit(0)
-	case rf := <-failCh:
-		slog.Error("role failed; shutting down", "role", rf.role, "err", rf.err)
-		stopAll()
+	case rf := <-stack.FailCh():
+		slog.Error("role failed; shutting down", "role", rf.Role, "err", rf.Err)
+		stack.Drain(context.Background(), shutdownDeadline)
+		closeDriver()
 		os.Exit(1)
 	}
 }
@@ -373,7 +359,13 @@ func shutdownChild(cmd *exec.Cmd, exitCh chan childExit) {
 // inherit the unified marker (see spawnRole).
 func envWithoutProcessRole() []string {
 	env := os.Environ()
-	out := env[:0]
+	// @constraint: allocate a fresh backing slice rather than reusing
+	// env's via env[:0]. os.Environ() currently returns a freshly-
+	// allocated slice (so in-place reuse would be safe today), but
+	// future Go runtime changes that share the backing array between
+	// callers would have this loop clobber the shared state. The
+	// explicit allocation is a one-line cost that pins the invariant.
+	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "RIMSKY_PROCESS_ROLE=") {
 			continue

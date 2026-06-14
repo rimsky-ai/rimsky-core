@@ -71,6 +71,17 @@ func (c *Client) SetAPIKey(key string) { c.apiKey = key }
 // default.
 func (c *Client) SetComposeOrigin(v bool) { c.composeOrigin = v }
 
+// SetTimeout overrides the per-request HTTP timeout. The default 30s
+// is conservative for an over-the-network deployed-stack client; tighter
+// per-request timeouts are appropriate for callers polling a loopback
+// endpoint (e.g., the `compose run` verb's terminal-wait loop, where a
+// downed control-api should surface as a fast connection-refused rather
+// than waiting on the OS dial timeout). Pass d <= 0 to disable the
+// per-request timeout entirely.
+func (c *Client) SetTimeout(d time.Duration) {
+	c.httpClient.Timeout = d
+}
+
 // NewClientWithKey is a convenience constructor that installs the
 // Bearer token in one call. Equivalent to NewClient(endpoint) +
 // SetAPIKey(key).

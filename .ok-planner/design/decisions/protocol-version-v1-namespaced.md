@@ -11,7 +11,7 @@ status: as-is
 
 ## Rationale
 
-Consistent versioned contract surface across the whole control-API; aligns the URL layer with the already-versioned proto package. Pre-v1 freedom (per `decision:pre-v1-break-freely`) means no transition window.
+Consistent versioned contract surface across the whole control-API; aligns the URL layer with the already-versioned proto package (see `decision:pre-v1-break-freely`).
 
 ## Alternatives
 

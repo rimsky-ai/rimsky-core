@@ -5,9 +5,15 @@
 package compose_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -196,4 +202,110 @@ instances:
 	if got := compose.RunComposeUp(context.Background(), []string{"-f", mf}); got != 2 {
 		t.Errorf("exit %d", got)
 	}
+}
+
+// captureInstanceServer is a minimal httptest.Server that accepts
+// POST /v1/instances and records the decoded request body for the
+// TerminateAfterRun-propagation tests. The harness lets the tests
+// drive ApplyPlan with a hand-crafted Plan (one ActionInstanceCreate
+// step) without going through manifest parsing — the unit under test
+// is the body-shape contract between ApplyPlan and the control-api,
+// nothing more.
+type captureInstanceServer struct {
+	mu       sync.Mutex
+	bodies   []map[string]any
+	httptest *httptest.Server
+}
+
+func newCaptureInstanceServer(t *testing.T) *captureInstanceServer {
+	t.Helper()
+	cs := &captureInstanceServer{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/instances", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cs.mu.Lock()
+		cs.bodies = append(cs.bodies, body)
+		cs.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"instance_id":"inst-1","template_hash":"h","node_count":1}`))
+	})
+	cs.httptest = httptest.NewServer(mux)
+	t.Cleanup(cs.httptest.Close)
+	return cs
+}
+
+func (c *captureInstanceServer) URL() string { return c.httptest.URL }
+
+func (c *captureInstanceServer) lastBody(t *testing.T) map[string]any {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.bodies) == 0 {
+		t.Fatal("no instance bodies captured")
+	}
+	return c.bodies[len(c.bodies)-1]
+}
+
+// TestApplyPlan_TerminateAfterRunPropagates is the load-bearing test
+// for @decision: instance-self-termination — the verb's terminal-
+// wait loop sees terminated_at flip only when CreateInstance carries
+// terminate_after_run=true, so ApplyOpts.TerminateAfterRun must
+// reach the wire body. With ApplyOpts{} (default), the field stays
+// false (and `omitempty` keeps it absent from the encoded JSON).
+func TestApplyPlan_TerminateAfterRunPropagates(t *testing.T) {
+	srv := newCaptureInstanceServer(t)
+	c := cli.NewClient(srv.URL())
+	c.SetComposeOrigin(true)
+	step := compose.Step{
+		Action:      compose.ActionInstanceCreate,
+		Kind:        compose.KindInstance,
+		TemplateTag: "compose:p:a@1.0",
+		InstanceKey: "compose:p:hello",
+		Params:      map[string]any{"k": "v"},
+	}
+	plan := &compose.Plan{Project: "p", Steps: []compose.Step{step}}
+
+	t.Run("on=true sets terminate_after_run=true", func(t *testing.T) {
+		var sink bytes.Buffer
+		created, err := compose.ApplyPlan(context.Background(), c, plan, compose.ApplyOpts{Logger: &sink, TerminateAfterRun: true})
+		if err != nil {
+			t.Fatalf("ApplyPlan: %v", err)
+		}
+		if len(created) != 1 || created[0].ID != "inst-1" || created[0].Key != "compose:p:hello" {
+			t.Errorf("created = %+v, want one entry with key=compose:p:hello id=inst-1", created)
+		}
+		body := srv.lastBody(t)
+		got, ok := body["terminate_after_run"].(bool)
+		if !ok || !got {
+			t.Fatalf("terminate_after_run: want true, got %v (body=%+v)", body["terminate_after_run"], body)
+		}
+	})
+
+	t.Run("default leaves field absent (omitempty)", func(t *testing.T) {
+		var sink bytes.Buffer
+		if _, err := compose.ApplyPlan(context.Background(), c, plan, compose.ApplyOpts{Logger: &sink}); err != nil {
+			t.Fatalf("ApplyPlan: %v", err)
+		}
+		body := srv.lastBody(t)
+		if v, present := body["terminate_after_run"]; present {
+			// json `omitempty` on a false bool keeps the field absent
+			// from the wire — preserving the durable-by-default
+			// semantics of the existing up/down/plan/status verbs.
+			t.Fatalf("default ApplyOpts must omit terminate_after_run; got %v", v)
+		}
+	})
 }

@@ -26,7 +26,7 @@ Clarifying note on subgraph sealing: subgraphs are sealed. Internal nodes can re
 
 ## Non-goals
 
-Patterns considered carefully during platform design and **decided against**. These are positions, not deferrals — future agents reaching for these patterns should argue against this section's rationale rather than treating them as open backlog.
+Patterns considered carefully during platform design and **decided against** — positions, not deferrals.
 
 - **Cross-frame attribute caching.** A `{{nodes.X.attribute.Y}}` read at receiver R's dispatch resolves only against the X-run that contributed to R's dispatch via this frame's wait-set. Reads of X-runs from earlier frames return a missing-source error. The per-run attribute rows are the persistent record of what each node-run produced — not a cache. State that must be available across frames belongs in `params`, claim payloads, or threaded subgraph inputs.
 - **Function-form substitution grammar.** No `{{coalesce(X, Y)}}`, `{{newest(X, Y)}}`, `{{merge(X, Y)}}`, or other in-grammar functions. The grammar stays a closed enumeration of source-kind directives plus an optional literal fallback. Aggregation and transformation logic lives in receiver executors, not in the substitution layer.
