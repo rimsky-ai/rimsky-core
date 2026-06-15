@@ -47,8 +47,8 @@ import (
 //	@story: uncovered-substitution-rejected
 func TestSubstitutionCoverage_PerFieldAttributeRefUncovered(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{Type: "foo", Executor: "h"},
 			{
@@ -89,8 +89,8 @@ func TestSubstitutionCoverage_PerFieldAttributeRefUncovered(t *testing.T) {
 //	@story: uncovered-substitution-rejected
 func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{Type: "foo", Executor: "h"},
 			{
@@ -137,8 +137,8 @@ func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 //	@story: uncovered-substitution-rejected
 func TestSubstitutionCoverage_EventRefUncovered(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{Type: "foo", Executor: "h"},
 			{

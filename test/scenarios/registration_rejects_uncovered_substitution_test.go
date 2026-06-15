@@ -153,8 +153,8 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 // source: directive but declares no covering subscription.
 func perFieldUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               version,
+		"name":    name,
+		"version": version,
 		"nodes": []map[string]any{
 			{"type": "foo", "executor": "stub"},
 			{
@@ -183,8 +183,8 @@ func perFieldUncoveredSpec(name, version string) map[string]any {
 // asymmetry rule rejects this: the wildcard attribute/* is required.
 func wholePullUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               version,
+		"name":    name,
+		"version": version,
 		"nodes": []map[string]any{
 			{"type": "foo", "executor": "stub"},
 			{
@@ -219,8 +219,8 @@ func wholePullUncoveredSpec(name, version string) map[string]any {
 // no covering event/something_happened subscription on foo.
 func eventUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               version,
+		"name":    name,
+		"version": version,
 		"nodes": []map[string]any{
 			{"type": "foo", "executor": "stub"},
 			{

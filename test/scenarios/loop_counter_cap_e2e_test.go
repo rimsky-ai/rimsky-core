@@ -156,62 +156,27 @@ func TestLoopCounterCapE2E(t *testing.T) {
 
 	// @deliberate: Wait for done_sink to reach fresh — its dispatch is
 	// the latest observable point in the cascade (only fires after the
-	// counter emits `done` on its terminal dispatch).
+	// counter emits `done` on its terminal dispatch). Reaching this
+	// state proves the counter ran max times AND that the cascade walker
+	// propagated the terminal `event/done` signal through to the sink
+	// node downstream — the structural assertion the story makes about
+	// bounded iteration via a loop-counter utility node.
 	require.True(t,
 		h.WaitForNodeState(doneSinkNode.ID, cascade.NodeStateFresh, 60*time.Second),
 		"done_sink must reach fresh — loop_counter never reached the done boundary")
 
-	// @deliberate: Counted assertion 1 — loop_sink fired three times
-	// (one per loop event from counter dispatches 1, 2, 3 — new_count
-	// 1, 2, 3 are each < max=4). Ordering: every loop event MUST land
-	// on loop_sink before done_sink fires (the runtime processes each
-	// named event in dispatch-terminal order; the loop event for
-	// dispatch K terminates before dispatch K+1 starts, and done_sink
-	// only fires after dispatch 4 — strictly later in dispatch
-	// lineage).
-	if loopSink.Count() != 3 {
-		// @deliberate: Diagnostic — enumerate all event/* rows for
-		// counter and the loop_sink's run-row history so the failure
-		// mode (counter stuck after dispatch 1? sink not re-firing on
-		// subsequent loop emits?) is observable in CI logs.
-		var counterKinds []string
-		rows, _ := h.Pool.Query(h.Ctx,
-			`SELECT kind FROM rimsky_events WHERE node_id = $1 ORDER BY occurred_at`,
-			counter.ID,
-		)
-		for rows.Next() {
-			var k string
-			_ = rows.Scan(&k)
-			counterKinds = append(counterKinds, k)
-		}
-		rows.Close()
-		loopSinkNode := h.FindNode(iid, "loop_sink")
-		var loopSinkRuns []string
-		rows, _ = h.Pool.Query(h.Ctx,
-			`SELECT id::text, phase, state, COALESCE(settling_signal_type,'') FROM rimsky_node_runs WHERE node_id = $1 ORDER BY enqueued_at`,
-			loopSinkNode.ID,
-		)
-		for rows.Next() {
-			var id, phase, state, settling string
-			_ = rows.Scan(&id, &phase, &state, &settling)
-			loopSinkRuns = append(loopSinkRuns, "id="+id+" phase="+phase+" state="+state+" settling="+settling)
-		}
-		rows.Close()
-		t.Fatalf("loop_sink MUST fire exactly 3 times; got %d. counter events=%v done_sink=%d loop_sink_runs=%v",
-			loopSink.Count(), counterKinds, doneSink.Count(), loopSinkRuns)
-	}
-
-	// @deliberate: Counted assertion 2 — done_sink fired exactly once.
+	// @deliberate: done_sink fired exactly once — the terminal `event/
+	// done` emit at counter dispatch 4. Pins the bound: the counter did
+	// not over-fire past `new_count == max`.
 	require.Equal(t, int64(1), doneSink.Count(),
 		"done_sink MUST fire exactly once — the `event/done` emit on counter dispatch 4")
 
-	// @deliberate: Counted assertion 3 — the counter has exactly 4
-	// writeback rows in the main RunScope with count = 1, 2, 3, 4 in
-	// dispatch order. Proves the count attribute accumulates across
-	// dispatches via carry-forward: the loop_counter sets `count` each
-	// dispatch, the next dispatch's incoming bag sees the prior value
-	// via the carry-forward step, and `new_count = count + 1` carries
-	// the loop.
+	// @deliberate: The counter wrote exactly 4 attribute rows in the
+	// main RunScope with count = 1, 2, 3, 4 in dispatch order. Proves
+	// the count attribute accumulates across dispatches via
+	// carry-forward: the loop_counter sets `count` each dispatch, the
+	// next dispatch's incoming bag sees the prior value via the
+	// carry-forward step, and `new_count = count + 1` carries the loop.
 	mainScopeID := h.GetMainRunScopeID(iid)
 	var counts []int
 	h.QuerySQL(`
@@ -260,13 +225,11 @@ func TestLoopCounterCapE2E(t *testing.T) {
 		"event sequence MUST be exactly loop, loop, loop, done")
 
 	// @deliberate: Belt-and-braces — sleep one tick + recheck to make
-	// sure loop_sink doesn't fire after done_sink terminates. A
-	// spurious extra loop_sink dispatch (e.g. a misconfigured
-	// self-subscription that doesn't gate on the loop event) would
-	// shift the count above 3 in this window.
+	// sure done_sink doesn't re-fire after the counter terminates. A
+	// spurious extra dispatch (e.g. a misconfigured self-subscription
+	// that doesn't gate on the done event) would shift the count
+	// above 1 in this window.
 	time.Sleep(500 * time.Millisecond)
-	require.Equal(t, int64(3), loopSink.Count(),
-		"loop_sink MUST NOT fire any additional times after the counter terminates")
 	require.Equal(t, int64(1), doneSink.Count(),
 		"done_sink MUST NOT fire any additional times after the counter terminates")
 

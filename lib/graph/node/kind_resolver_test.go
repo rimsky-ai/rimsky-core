@@ -54,8 +54,8 @@ func TestKindAliasMap_RegisterAndResolve(t *testing.T) {
 func TestValidateKindDeclaration_HappyPath(t *testing.T) {
 	aliases := newSeededAliases(t, "loop_counter", "rimsky.loop_counter")
 	spec := &TemplateSpec{
-		Name:                "t",
-		Version:             "1",
+		Name:    "t",
+		Version: "1",
 		Nodes: []TemplateNodeDef{{
 			Type: "lc",
 			Kind: "loop_counter",
@@ -70,8 +70,8 @@ func TestValidateKindDeclaration_HappyPath(t *testing.T) {
 func TestValidateKindDeclaration_RejectsMixedKindAndExecutor(t *testing.T) {
 	aliases := newSeededAliases(t, "loop_counter", "rimsky.loop_counter")
 	spec := &TemplateSpec{
-		Name:                "t",
-		Version:             "1",
+		Name:    "t",
+		Version: "1",
 		Nodes: []TemplateNodeDef{{
 			Type:     "n",
 			Kind:     "loop_counter",
@@ -90,8 +90,8 @@ func TestValidateKindDeclaration_RejectsMixedKindAndExecutor(t *testing.T) {
 func TestValidateKindDeclaration_RejectsUnknownKind(t *testing.T) {
 	aliases := newSeededAliases(t, "loop_counter", "rimsky.loop_counter")
 	spec := &TemplateSpec{
-		Name:                "t",
-		Version:             "1",
+		Name:    "t",
+		Version: "1",
 		Nodes: []TemplateNodeDef{{
 			Type: "n",
 			Kind: "unknown_kind",
@@ -108,8 +108,8 @@ func TestValidateKindDeclaration_RejectsUnknownKind(t *testing.T) {
 
 func TestValidateKindDeclaration_NilAliasesRejectsAnyKind(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "t",
-		Version:             "1",
+		Name:    "t",
+		Version: "1",
 		Nodes: []TemplateNodeDef{{
 			Type: "n",
 			Kind: "loop_counter",
@@ -129,8 +129,8 @@ func TestValidateKindDeclaration_NoKindNoExecutorIsLegal(t *testing.T) {
 	// the kind-validator must not regress existing behavior. Validate
 	// without seeded aliases.
 	spec := &TemplateSpec{
-		Name:                "t",
-		Version:             "1",
+		Name:    "t",
+		Version: "1",
 		Nodes: []TemplateNodeDef{{
 			Type: "pure",
 		}},

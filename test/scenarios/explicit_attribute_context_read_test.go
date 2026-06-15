@@ -52,9 +52,6 @@
 package scenarios
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -91,8 +88,8 @@ func TestStoryReadWithoutWaking(t *testing.T) {
 		map[string]any{"summary": "boot"}, true, "boot")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name:                "explicit-attribute-context-read",
-		Version:             "1",
+		Name:    "explicit-attribute-context-read",
+		Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			// trigger is a root. When invalidated, its terminal/success
 			// fan-outs to both senders in ONE frame via the subscriptions
@@ -347,19 +344,17 @@ func countObservedReceiverRuns(h *scenario.Harness) int {
 	return n
 }
 
-// postAdminInvalidate POSTs an admin invalidate against the given node.
-// Local copy (not shared with multi_hard_dep_test.go's
-// adminInvalidateMultiHardDep) so this proof artifact stays
-// self-contained per cold-read discipline.
+// postAdminInvalidate routes through the harness's InvalidateNode
+// primitive, which enqueues a synthetic `node/invalidate` envelope and
+// the frame that delivers it. The messaging-schema-layer reshape
+// retired the operator-invalidate HTTP route (`/v1/admin/instances/{
+// id}/nodes/{id}/invalidate`) along with the entire UnifiedInvalidate /
+// InvalidateAdapter chain; the synthetic-envelope chokepoint is the
+// supported wake mechanism for re-firing a fresh node from inside a
+// test scenario.
 //
-// @source: test/scenarios/multi_hard_dep_test.go::adminInvalidateMultiHardDep
+// @story: upstream-pull-on-invalidate
 func postAdminInvalidate(t *testing.T, h *scenario.Harness, instanceID, nodeID shared.UUID) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{})
-	resp, err := http.Post(
-		h.ControlBase+"/v1/admin/instances/"+instanceID.String()+"/nodes/"+nodeID.String()+"/invalidate",
-		"application/json", bytes.NewReader(body),
-	)
-	require.NoError(t, err)
-	resp.Body.Close()
+	h.InvalidateNode(instanceID, nodeID)
 }

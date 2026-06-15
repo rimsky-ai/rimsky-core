@@ -291,6 +291,11 @@ func advanceOneFrame(
 		if inst == nil {
 			return nil
 		}
+		// @deliberate: capture per-node-id the affirmed in-flight run id
+		// so the upstream-refresh wait-set pre-install below can map
+		// (receiver_id, upstream_id) pairs into their run ids without a
+		// second resolver loop.
+		runIDByNode := make(map[shared.UUID]shared.UUID, len(ids))
 		for _, raw := range ids {
 			s, ok := raw.(string)
 			if !ok {
@@ -327,6 +332,53 @@ func advanceOneFrame(
 			}
 			if err := store.Nodes().MarkStaleForCascade(ctx, runID, shared.UUID(frameID), tx); err != nil {
 				return fmt.Errorf("advanceOneFrame: stale-mark wake node: %w", err)
+			}
+			runIDByNode[nodeID] = runID
+		}
+		// @deliberate: pre-install wait-set rows for every
+		// `wait_set_pairs` entry the synthetic envelope embedded. Each
+		// pair maps a receiver to a force_upstream_refresh upstream the
+		// receiver depends on; both are in this frame's wake_node_ids
+		// (the synthetic-envelope chokepoint auto-expanded them). The
+		// pre-installed wait-set row keys (frame, receiver_run,
+		// upstream_run) so the supervisor's existing eligibility
+		// predicate gates the receiver until the upstream settles +
+		// drains its wait-set; the cascade walker drains the row in the
+		// upstream's terminal tx; the substitution context builder
+		// reads the drained row at the receiver's dispatch — all
+		// existing machinery, no race window between stale-mark and
+		// gate install.
+		//
+		// @story: upstream-pull-on-invalidate
+		// @concept: wait-set
+		// @concept: cascade
+		if pairs, ok := payloadMap["wait_set_pairs"].([]any); ok {
+			for _, raw := range pairs {
+				m, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				rStr, _ := m["receiver"].(string)
+				uStr, _ := m["upstream"].(string)
+				rUUID, rerr := uuid.Parse(rStr)
+				uUUID, uerr := uuid.Parse(uStr)
+				if rerr != nil || uerr != nil {
+					continue
+				}
+				receiverRun, rOK := runIDByNode[shared.UUID(rUUID)]
+				upstreamRun, uOK := runIDByNode[shared.UUID(uUUID)]
+				if !rOK || !uOK {
+					continue
+				}
+				if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
+					FrameID:           shared.UUID(frameID),
+					ReceiverRunID:     receiverRun,
+					SenderRunID:       upstreamRun,
+					TopicKind:         "attribute",
+					SubscriptionScope: "direct",
+				}, tx); err != nil {
+					return fmt.Errorf("advanceOneFrame: install upstream-refresh wait-set: %w", err)
+				}
 			}
 		}
 		return nil

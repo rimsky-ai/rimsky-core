@@ -235,9 +235,19 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
+						// @deliberate: a_val source uses the `?` lenient
+						// marker — c's direct invalidate drags only b
+						// (force_upstream_refresh: true) into the new
+						// frame, NOT a, so a's drained wait-set row is
+						// absent at c's re-dispatch. Without lenient
+						// recovery the strict source would fail c with
+						// `template_resolution_failed` before the b_val
+						// assertion below could fire. Carry-forward of
+						// a_val's prior value is the substitution
+						// engine's lenient-recovery behaviour.
 						"a_val": map[string]any{
 							"type":   "string",
-							"source": "{{nodes.a.attribute.a_value}}",
+							"source": "{{nodes.a.attribute.a_value?}}",
 						},
 						"b_val": map[string]any{
 							"type":   "string",

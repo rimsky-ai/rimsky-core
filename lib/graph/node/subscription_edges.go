@@ -1007,4 +1007,3 @@ func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) (Subscr
 		ForceUpstreamRefresh: *s.ForceUpstreamRefresh,
 	}, nil
 }
-
