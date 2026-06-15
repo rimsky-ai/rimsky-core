@@ -130,14 +130,15 @@ type TemplateNodeDef struct {
 
 	// Subscribes declares the node's reactive surface. Each entry names an
 	// upstream node (or instance: true for cross-cutting) plus a signal
-	// type-path (`type:`) and optional CEL `when:` predicate over the
-	// signal payload. Plus implicit subscriptions inferred by the template
-	// validator from substitution refs in Attributes (see
-	// graph/node/subscription_edges.go). Per spec
-	// .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
-	// Piece 1 and the 2026-05-23 signal-taxonomy reshape.
+	// type-path (`type:`), optional CEL `when:` predicate over the signal
+	// payload, and the two required cascade-shape booleans
+	// (`wake_on_change`, `force_upstream_refresh`). The subscribes block is
+	// the SOLE source of cascade edges; substitution refs in Attributes
+	// must each be matched by an entry here (registration rejects
+	// uncovered refs).
 	//
 	//	@concept: node-subscription
+	//	@concept: cascade
 	Subscribes []SubscriptionEntry `yaml:"subscribes,omitempty" json:"subscribes,omitempty"`
 
 	// @deliberate: no lifecycle-handler slots

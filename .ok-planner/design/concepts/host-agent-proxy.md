@@ -12,7 +12,7 @@ A rimsky-stack `concept:service` implementing the multi-protocol composition pat
 
 ## Purpose
 
-Lets rimsky dispatch work to dev-machine binaries declared per-instance, without changing any supervisor or graph-processing code path. The proxy is the single architectural addition; supervisors, dispatch resolution, error vocabulary, and callback handling are unchanged.
+Lets rimsky dispatch work to dev-machine binaries declared per-instance, while the supervisor and graph-processing layers see only the standard service protocols. The proxy implements the dispatcher and the URL-rewriting boundary; the supervisor, dispatch resolution, error vocabulary, and callback handling traffic in the platform's standard vocabulary.
 
 ## Boundaries
 

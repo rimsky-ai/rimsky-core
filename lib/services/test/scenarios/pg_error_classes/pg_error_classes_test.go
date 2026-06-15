@@ -171,9 +171,11 @@ func testClaimUnavailableDelivered(t *testing.T) {
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance": true,
-							"type":     "terminal/error/*",
-							"frame":    "in",
+							"instance":               true,
+							"type":                   "terminal/error/*",
+							"frame":                  "in",
+							"wake_on_change":         true,
+							"force_upstream_refresh": false,
 						},
 					},
 				},
@@ -278,7 +280,7 @@ func testSwapFailedDelivered(t *testing.T) {
 						"held": map[string]any{"from": "acquirer"},
 					},
 					"subscribes": []map[string]any{
-						{"node": "acquirer", "type": "terminal/*"},
+						{"node": "acquirer", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false},
 					},
 				},
 				{
@@ -286,9 +288,11 @@ func testSwapFailedDelivered(t *testing.T) {
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance": true,
-							"type":     "terminal/error/*",
-							"frame":    "in",
+							"instance":               true,
+							"type":                   "terminal/error/*",
+							"frame":                  "in",
+							"wake_on_change":         true,
+							"force_upstream_refresh": false,
 						},
 					},
 				},

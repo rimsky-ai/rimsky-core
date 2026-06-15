@@ -2,13 +2,15 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Multi-hard-dep rendezvous — the two-hard-dep shape.
+// Multi-upstream-refresh rendezvous — the two-`force_upstream_refresh:true`
+// shape.
 //
-// Receiver `c` declares TWO `hard_dep: true` upstream attribute sources
-// (`a` and `b`) whose upstreams settle independently in one frame. The
-// suspected livelock: when the later upstream settles, its cascade walk
-// reaches `c` and pullHardDepUpstreams re-affirms the EARLIER upstream
-// (which already settled this frame and so has no in-flight run row) —
+// Receiver `c` declares TWO `subscribes:` entries naming distinct
+// upstreams (`a` and `b`) with `force_upstream_refresh: true`. Those
+// upstreams settle independently in one frame. The suspected livelock:
+// when the later upstream settles, its cascade walk reaches `c` and
+// the upstream-refresh pull re-affirms the EARLIER upstream (which
+// already settled this frame and so has no in-flight run row) —
 // creating a fresh pending run for it. That re-run settles, walks back
 // to `c`, and re-affirms the OTHER settled upstream: mutual re-seeding.
 // Each re-seed also inserts a new wait-set blocker on `c`, so the
@@ -26,7 +28,7 @@
 //
 // Phase 2 (one invalidation-driven frame — the story's acceptance
 // frame) asserts the exact-once rendezvous: invalidating the trigger
-// opens ONE frame whose cascade seeds both hard-dep upstreams; each
+// opens ONE frame whose cascade seeds both upstream-refresh upstreams; each
 // upstream runs exactly once, the receiver runs exactly once, after
 // both, and the frame terminates within the deadline.
 package scenarios
@@ -95,19 +97,26 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "trigger", Type: "terminal/*"}),
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{Node: "trigger", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					// Migrated from attribute-field hard_dep: true on a_val
+					// (sender a). Carries force_upstream_refresh: true so the
+					// receiver's invalidation drags a into the same frame.
+					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
+					// Migrated from attribute-field hard_dep: true on b_val
+					// (sender b). Same rationale as a above.
+					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
+				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"a_val": map[string]any{
-							"type":     "string",
-							"source":   "{{nodes.a.attribute.a_value}}",
-							"hard_dep": true,
+							"type":   "string",
+							"source": "{{nodes.a.attribute.a_value}}",
 						},
 						"b_val": map[string]any{
-							"type":     "string",
-							"source":   "{{nodes.b.attribute.b_value}}",
-							"hard_dep": true,
+							"type":   "string",
+							"source": "{{nodes.b.attribute.b_value}}",
 						},
 					},
 					"required": []any{"a_val", "b_val"},
@@ -131,7 +140,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	// within the 30s window, receiver count zero).
 	frameDone := h.WaitForNodeState(cN.ID, cascade.NodeStateFresh, 30*time.Second)
 	require.True(t, frameDone,
-		"boot must terminate: c should reach fresh after both hard-dep upstreams settle "+
+		"boot must terminate: c should reach fresh after both force_upstream_refresh upstreams settle "+
 			"(a never-fresh c means the frame is livelocked on mutual upstream re-seeding); "+
 			"per-type dispatch counts at timeout: %v", dispatchCountsByType(h))
 
@@ -147,7 +156,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 
 	// @deliberate: Phase 2: ONE invalidation-driven frame — the story's
 	// acceptance frame. Invalidate the trigger; its cascade affirms c,
-	// whose hard-dep pull seeds BOTH upstreams into the same frame;
+	// whose upstream-refresh pull seeds BOTH upstreams into the same frame;
 	// they settle independently (b delayed past a).
 	h.Stub.WhenType("trigger").Success(map[string]any{"t_value": "t-2"}, true, "ok")
 	h.Stub.WhenType("a").Success(map[string]any{"a_value": "from-a-2"}, true, "ok")
@@ -177,7 +186,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	for _, typ := range []string{"trigger", "a", "b", "c"} {
 		require.Equal(t, bootCounts[typ]+1, frame2Counts[typ],
 			"acceptance frame: node type %q must run exactly once — "+
-				"a settled hard-dep upstream must not be re-affirmed (mutual re-seeding)", typ)
+				"a settled force_upstream_refresh upstream must not be re-affirmed (mutual re-seeding)", typ)
 	}
 
 	// @deliberate: Rendezvous ordering: the receiver's acceptance-frame dispatch

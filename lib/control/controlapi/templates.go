@@ -220,17 +220,28 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
 		log.Debug("register.validate.done", "elapsed_ms", time.Since(tValidate).Milliseconds())
 		if !res.Ok() {
-			errs := make([]map[string]string, 0, len(res.Errors))
+			// @deliberate: build the validation_errors array as a flat slice carrying
+			// two entry shapes:
+			//   - legacy {path, msg} entries from res.Errors (first).
+			//   - structured entries from res.StructuredErrors (second);
+			//     each carries a `kind` discriminator field — currently
+			//     `substitution_ref_uncovered` from the coverage check.
+			// Append order is deterministic (slice iteration), so
+			// downstream assertions on position remain stable. Per
+			// decision:validation-errors-additive-not-uniform and
+			// decision:uncovered-substitution-error-shape.
+			entries := make([]map[string]any, 0, len(res.Errors)+len(res.StructuredErrors))
 			for _, e := range res.Errors {
-				errs = append(errs, map[string]string{"path": e.Path, "msg": e.Msg})
+				entries = append(entries, map[string]any{"path": e.Path, "msg": e.Msg})
 			}
+			entries = append(entries, res.StructuredErrors...)
 			// @constraint: parity with the pipeline rejection below: the warnings
 			// the validator computed alongside the errors ride the
 			// rejection body too, so an operator fixing the errors sees
 			// the advisories in the same pass.
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error":               shared.ErrTemplateValidation.Error(),
-				"validation_errors":   errs,
+				"validation_errors":   entries,
 				"validation_warnings": staticWarningsToFindings(res.Warnings),
 			})
 			return
@@ -420,11 +431,18 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		spec := *specBody
 		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
 
-		// @constraint: project static findings into the unified {path, msg} shape.
-		validationErrors := make([]map[string]string, 0, len(res.Errors))
+		// @deliberate: project static findings into the unified `validation_errors`
+		// array. Carry two entry shapes side by side:
+		//   - legacy {path, msg} entries from res.Errors (first).
+		//   - structured entries from res.StructuredErrors (second);
+		//     each carries a `kind` discriminator — currently
+		//     `substitution_ref_uncovered` from the coverage check.
+		// Per decision:validation-errors-additive-not-uniform.
+		validationErrors := make([]map[string]any, 0, len(res.Errors)+len(res.StructuredErrors))
 		for _, e := range res.Errors {
-			validationErrors = append(validationErrors, map[string]string{"path": e.Path, "msg": e.Msg})
+			validationErrors = append(validationErrors, map[string]any{"path": e.Path, "msg": e.Msg})
 		}
+		validationErrors = append(validationErrors, res.StructuredErrors...)
 
 		// @constraint: default-fill frame-resolution fields before the pipeline, exactly
 		// as register does, so the spec the validators see matches what
@@ -464,7 +482,7 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		// static validator computed must reach the response and count
 		// toward the warnings_as_errors verdict below.
 		for _, e := range outcome.Errors {
-			validationErrors = append(validationErrors, findingToProjection(e))
+			validationErrors = append(validationErrors, findingToProjectionAny(e))
 		}
 		validationWarnings := make([]map[string]string, 0, len(res.Warnings)+len(outcome.Warnings))
 		for _, wn := range res.Warnings {
@@ -517,6 +535,15 @@ func findingToProjection(f runtime.ValidationFinding) map[string]string {
 		}
 	}
 	return map[string]string{"path": path, "msg": f.Message}
+}
+
+// findingToProjectionAny is findingToProjection retyped as
+// map[string]any so the merged validation_errors array can carry both
+// legacy {path, msg} string entries and the static validator's
+// structured `substitution_ref_uncovered` entries side by side.
+func findingToProjectionAny(f runtime.ValidationFinding) map[string]any {
+	p := findingToProjection(f)
+	return map[string]any{"path": p["path"], "msg": p["msg"]}
 }
 
 // handleListTemplates is GET /templates: paginated list of registry rows.

@@ -25,4 +25,4 @@ In the proxy case, the user's agent not being connected is a normal transient st
 
 ## Evidence
 
-- This spec: `.ok-planner/specs/2026-05-24-host-agent-and-proxy-design.md` §"Error handling".
+- No synthetic error class for the "unreachable service" condition is defined on `concept:executor` or `concept:claim-producer`; the supervisor's dispatch path treats the unmatched-row case as a queue-state condition rather than a terminal error.

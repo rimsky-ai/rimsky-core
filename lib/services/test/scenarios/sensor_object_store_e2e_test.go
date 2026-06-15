@@ -546,9 +546,11 @@ func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 					"type": objectStoreReactorNode,
 					"subscribes": []map[string]any{
 						{
-							"instance": true,
-							"type":     "message/invalidate/publisher/" + objectStoreReactorNode,
-							"frame":    "in",
+							"instance":               true,
+							"type":                   "message/invalidate/publisher/" + objectStoreReactorNode,
+							"frame":                  "in",
+							"wake_on_change":         true,
+							"force_upstream_refresh": false,
 						},
 					},
 				},

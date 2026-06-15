@@ -2,19 +2,19 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Hard-dep edge map. Computed at template registration alongside the
-// subscription-edge map (subscription_edges.go); consumed by the
-// cascade walker at runtime to proactively invalidate upstreams for
-// hard_dep attribute reads.
+// Upstream-refresh edge map. Computed at template registration alongside
+// the subscription-edge map (subscription_edges.go); consumed by the
+// cascade walker at runtime to proactively invalidate upstreams that a
+// receiver names in a subscribes: entry with force_upstream_refresh: true.
 //
 // Note the key-direction difference from SubscriptionEdgeMap:
 // subscription edges are keyed by SENDER (downstream lookup from a
-// transitioning sender); hard-dep edges are keyed by RECEIVER (upstream
-// lookup from a freshly-invalidated receiver). The divergence is
-// intentional per spec §"hard-dep cascade extension".
+// transitioning sender); these edges are keyed by RECEIVER (upstream
+// lookup from a freshly-invalidated receiver).
 //
 //	@concept: attribute
 //	@concept: cascade
+//	@concept: node-subscription
 package node
 
 import (
@@ -29,24 +29,22 @@ import (
 // the same frame.
 type HardDepEdgeMap map[string][]string
 
-// BuildHardDepEdges walks every node's attribute schema looking for
-// fields with `hard_dep: true` and a `source:` referencing
-// `{{nodes.X.attribute.Y}}`. Produces a map from receiver node-type
-// to the set of sender node-types. Performs cycle detection on the
-// resulting graph; returns an error describing every cycle found
-// (multiple disjoint cycles are collected into a single error so
-// template authors can fix all topology issues in one round).
-// Soft-dep cycles (without hard_dep) are not in this graph.
+// BuildHardDepEdges walks every node's subscribes: entries looking for
+// entries that carry force_upstream_refresh: true. Produces a map from
+// receiver node-type to the set of sender node-types. Performs cycle
+// detection on the resulting graph; returns an error describing every
+// cycle found (multiple disjoint cycles are collected into a single
+// error so template authors can fix all topology issues in one round).
 //
-// Also rejects hard_dep targets that fan out: the runtime
-// pullHardDepUpstreams picks a single upstream node per type per
+// Also rejects force-refresh targets that fan out: the runtime
+// pullForceRefreshUpstreams picks a single upstream node per type per
 // instance, which is ambiguous for a fan-out sender (multiple
 // `rimsky_nodes` rows of the same NodeType in the same instance). A
 // future spec extension could iterate, but today we reject at
 // registration so the wait-set semantics stay unambiguous.
 func BuildHardDepEdges(tmpl spec.TemplateSpec) (HardDepEdgeMap, error) {
 	// @deliberate: Index node-types that declare `fan_out:` so we can
-	// reject hard_dep edges pointing at them.
+	// reject force_upstream_refresh edges pointing at them.
 	fanoutTypes := make(map[string]struct{})
 	for _, n := range tmpl.Nodes {
 		if n.FanOut != nil {
@@ -69,7 +67,7 @@ func BuildHardDepEdges(tmpl spec.TemplateSpec) (HardDepEdgeMap, error) {
 	}
 	if len(fanoutViolations) > 0 {
 		return nil, fmt.Errorf(
-			"hard_dep targets a fan-out node-type (not supported — single-instance "+
+			"force_upstream_refresh targets a fan-out node-type (not supported — single-instance "+
 				"per template required): %s",
 			strings.Join(fanoutViolations, "; "))
 	}
@@ -79,60 +77,39 @@ func BuildHardDepEdges(tmpl spec.TemplateSpec) (HardDepEdgeMap, error) {
 	return out, nil
 }
 
-// hardDepSendersOf returns the upstream node-types referenced by
-// `hard_dep: true` attribute reads in n's schema. Excludes
-// self-references (trivially cyclic).
+// hardDepSendersOf returns the upstream node-types named by subscription
+// entries on n that carry force_upstream_refresh: true. Excludes self-
+// references (a node doesn't pull itself) and cross-cutting
+// (Instance=true) entries (sender-agnostic; rejected at registration).
+//
+//	@concept: cascade
+//	@concept: node-subscription
 func hardDepSendersOf(n TemplateNodeDef) []string {
-	if n.Attributes == nil || len(n.Attributes.Schema) == 0 {
-		return nil
-	}
-	props, _ := n.Attributes.Schema["properties"].(map[string]any)
-	if props == nil {
+	if len(n.Subscribes) == 0 {
 		return nil
 	}
 	seen := make(map[string]struct{})
 	var out []string
-	for _, raw := range props {
-		propMap, ok := raw.(map[string]any)
-		if !ok {
+	for _, s := range n.Subscribes {
+		if s.ForceUpstreamRefresh == nil || !*s.ForceUpstreamRefresh {
 			continue
 		}
-		hd, _ := propMap["hard_dep"].(bool)
-		if !hd {
+		// @deliberate: Cross-cutting subscriptions (Instance=true) cannot
+		// carry force_upstream_refresh; the validator rejects that
+		// combination. Skip defensively so this builder doesn't produce
+		// sender-agnostic edges if a malformed input slips past validation.
+		if s.Instance {
 			continue
 		}
-		src, _ := propMap["source"].(string)
-		if src == "" {
+		// @constraint: a node doesn't pull itself — skip empty/self-target entries.
+		if s.Node == "" || s.Node == n.Type {
 			continue
 		}
-		refs := substitutionDirectiveRe.FindAllStringSubmatch(src, -1)
-		for _, m := range refs {
-			body := strings.TrimSpace(m[1])
-			// @deliberate: strip an optional fallback `| <literal>`
-			// suffix so the hard-dep walker can still parse the upstream
-			// reference.
-			if idx := strings.Index(body, "|"); idx >= 0 {
-				body = strings.TrimSpace(body[:idx])
-			}
-			ref, ok := parseSubstitutionDirective(body)
-			if !ok {
-				continue
-			}
-			if ref.SenderNodeType == "" || ref.SenderNodeType == n.Type {
-				continue
-			}
-			// @constraint: only attribute reads create a hard-dep edge;
-			// state and message topics do not establish a topological
-			// dependency between the consumer and the named sender.
-			if ref.TopicKind != "attribute" {
-				continue
-			}
-			if _, dup := seen[ref.SenderNodeType]; dup {
-				continue
-			}
-			seen[ref.SenderNodeType] = struct{}{}
-			out = append(out, ref.SenderNodeType)
+		if _, dup := seen[s.Node]; dup {
+			continue
 		}
+		seen[s.Node] = struct{}{}
+		out = append(out, s.Node)
 	}
 	return out
 }
@@ -218,9 +195,9 @@ func detectHardDepCycle(edges HardDepEdgeMap) error {
 // cycle path always has at least two entries (the starting node and
 // its closing repetition). Single-node self-cycles can't reach this
 // function because `hardDepSendersOf` filters self-references
-// upstream (`ref.SenderNodeType == n.Type` is skipped). The guard
-// stays in case a future refactor changes that filter or the DFS
-// starts emitting one-node paths through some other route.
+// upstream (`s.Node == n.Type` is skipped). The guard stays in case
+// a future refactor changes that filter or the DFS starts emitting
+// one-node paths through some other route.
 func canonicalCycleKey(path []string) string {
 	if len(path) < 2 {
 		return strings.Join(path, "→")

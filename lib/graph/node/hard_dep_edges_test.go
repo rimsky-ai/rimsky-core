@@ -11,29 +11,35 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// hardDepSchema is a tiny helper for assembling an attributes schema
-// with a `hard_dep` flag on one field.
-func hardDepSchema(field, source string, hardDep bool) *spec.NodeAttributesDef {
-	prop := map[string]any{
-		"source": source,
-	}
-	if hardDep {
-		prop["hard_dep"] = true
-	}
-	return &spec.NodeAttributesDef{
-		Schema: map[string]any{
-			"properties": map[string]any{
-				field: prop,
+// makeNodeWithRefresh assembles a TemplateNodeDef with a single
+// subscribes: entry naming `sender` with force_upstream_refresh: true.
+// The signal type is irrelevant to BuildHardDepEdges — only the flag
+// and the sender node-type matter.
+func makeNodeWithRefresh(receiverType, sender string) spec.TemplateNodeDef {
+	return spec.TemplateNodeDef{
+		Type:     receiverType,
+		Executor: "stub",
+		Subscribes: []spec.SubscriptionEntry{
+			{
+				Node:                 sender,
+				Type:                 "attribute/foo/changed",
+				WakeOnChange:         spec.BoolPtr(true),
+				ForceUpstreamRefresh: spec.BoolPtr(true),
 			},
 		},
 	}
 }
 
-func TestBuildHardDepEdges_NoHardDep(t *testing.T) {
+func TestBuildHardDepEdges_NoForceRefresh(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "a", Executor: "stub"},
 		{Type: "b", Executor: "stub",
-			Attributes: hardDepSchema("x", "{{nodes.a.attribute.foo}}", false),
+			Subscribes: []spec.SubscriptionEntry{{
+				Node:                 "a",
+				Type:                 "attribute/foo/changed",
+				WakeOnChange:         spec.BoolPtr(true),
+				ForceUpstreamRefresh: spec.BoolPtr(false),
+			}},
 		},
 	}}
 	out, err := BuildHardDepEdges(tmpl)
@@ -45,12 +51,10 @@ func TestBuildHardDepEdges_NoHardDep(t *testing.T) {
 	}
 }
 
-func TestBuildHardDepEdges_SimpleHardDep(t *testing.T) {
+func TestBuildHardDepEdges_SimpleForceRefresh(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "a", Executor: "stub"},
-		{Type: "b", Executor: "stub",
-			Attributes: hardDepSchema("x", "{{nodes.a.attribute.foo}}", true),
-		},
+		makeNodeWithRefresh("b", "a"),
 	}}
 	out, err := BuildHardDepEdges(tmpl)
 	if err != nil {
@@ -67,9 +71,10 @@ func TestBuildHardDepEdges_SimpleHardDep(t *testing.T) {
 
 func TestBuildHardDepEdges_SelfReferenceIgnored(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "a", Executor: "stub",
-			Attributes: hardDepSchema("x", "{{nodes.a.attribute.foo}}", true),
-		},
+		// @deliberate: a node that names itself in a
+		// force_upstream_refresh entry is silently skipped (it doesn't
+		// pull itself).
+		makeNodeWithRefresh("a", "a"),
 	}}
 	out, err := BuildHardDepEdges(tmpl)
 	if err != nil {
@@ -80,14 +85,35 @@ func TestBuildHardDepEdges_SelfReferenceIgnored(t *testing.T) {
 	}
 }
 
+func TestBuildHardDepEdges_CrossCuttingIgnored(t *testing.T) {
+	// @deliberate: a cross-cutting subscription cannot carry
+	// force_upstream_refresh: true (the validator rejects the
+	// combination); the edge builder defensively skips it so a
+	// malformed input that slipped past validation does not produce
+	// a sender-agnostic edge.
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "watcher", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{{
+				Instance:             true,
+				Type:                 "terminal/error/*",
+				WakeOnChange:         spec.BoolPtr(true),
+				ForceUpstreamRefresh: spec.BoolPtr(true),
+			}},
+		},
+	}}
+	out, err := BuildHardDepEdges(tmpl)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("cross-cutting entries must be excluded, got %v", out)
+	}
+}
+
 func TestBuildHardDepEdges_CycleDetected(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "a", Executor: "stub",
-			Attributes: hardDepSchema("y", "{{nodes.b.attribute.foo}}", true),
-		},
-		{Type: "b", Executor: "stub",
-			Attributes: hardDepSchema("x", "{{nodes.a.attribute.foo}}", true),
-		},
+		makeNodeWithRefresh("a", "b"),
+		makeNodeWithRefresh("b", "a"),
 	}}
 	_, err := BuildHardDepEdges(tmpl)
 	if err == nil {
@@ -99,23 +125,17 @@ func TestBuildHardDepEdges_CycleDetected(t *testing.T) {
 }
 
 func TestBuildHardDepEdges_MultipleCyclesReported(t *testing.T) {
-	// @deliberate: Two disjoint hard-dep cycles in a single template. The cycle
-	// The cycle detector must surface both cycles in one error so
-	// template authors can fix all topology issues in one round (rather
-	// than playing whack-a-mole with one cycle at a time).
+	// @deliberate: two disjoint upstream-refresh cycles in a single
+	// template. The cycle detector must surface both cycles in one error
+	// so template authors can fix all topology issues in one round
+	// (rather than playing whack-a-mole with one cycle at a time).
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "a", Executor: "stub",
-			Attributes: hardDepSchema("y", "{{nodes.b.attribute.foo}}", true),
-		},
-		{Type: "b", Executor: "stub",
-			Attributes: hardDepSchema("x", "{{nodes.a.attribute.foo}}", true),
-		},
-		{Type: "c", Executor: "stub",
-			Attributes: hardDepSchema("y", "{{nodes.d.attribute.foo}}", true),
-		},
-		{Type: "d", Executor: "stub",
-			Attributes: hardDepSchema("x", "{{nodes.c.attribute.foo}}", true),
-		},
+		// @deliberate: cycle 1 — a ↔ b.
+		makeNodeWithRefresh("a", "b"),
+		makeNodeWithRefresh("b", "a"),
+		// @deliberate: cycle 2 — c ↔ d, disjoint from cycle 1.
+		makeNodeWithRefresh("c", "d"),
+		makeNodeWithRefresh("d", "c"),
 	}}
 	_, err := BuildHardDepEdges(tmpl)
 	if err == nil {
@@ -143,9 +163,9 @@ func TestBuildHardDepEdges_MultipleCyclesReported(t *testing.T) {
 }
 
 func TestBuildHardDepEdges_RejectsFanoutTarget(t *testing.T) {
-	// @deliberate: a hard_dep edge pointing at a fan-out node-type is
-	// ambiguous — the runtime pullHardDepUpstreams picks a single
-	// upstream per type per instance, which is undefined for
+	// @deliberate: a force-refresh edge pointing at a fan-out node-type
+	// is ambiguous — the runtime pullForceRefreshUpstreams picks a
+	// single upstream per type per instance, which is undefined for
 	// multi-instance fan-out. The validator must reject this at
 	// registration.
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
@@ -156,9 +176,7 @@ func TestBuildHardDepEdges_RejectsFanoutTarget(t *testing.T) {
 				ErrorPolicy:      spec.AggregationPolicy{Kind: spec.AggregationKindStrict},
 			},
 		},
-		{Type: "b", Executor: "stub",
-			Attributes: hardDepSchema("x", "{{nodes.a.attribute.foo}}", true),
-		},
+		makeNodeWithRefresh("b", "a"),
 	}}
 	_, err := BuildHardDepEdges(tmpl)
 	if err == nil {
@@ -166,24 +184,5 @@ func TestBuildHardDepEdges_RejectsFanoutTarget(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fan-out") {
 		t.Fatalf("error %q does not mention fan-out", err.Error())
-	}
-}
-
-func TestBuildHardDepEdges_NonAttributeKindIgnored(t *testing.T) {
-	// @deliberate: defensively — hard_dep on a claim-payload source
-	// must not produce an edge. The validator separately rejects this
-	// shape, but the edge builder is robust against it.
-	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "a", Executor: "stub"},
-		{Type: "b", Executor: "stub",
-			Attributes: hardDepSchema("x", "{{claim.alias.payload.foo}}", true),
-		},
-	}}
-	out, err := BuildHardDepEdges(tmpl)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(out) != 0 {
-		t.Fatalf("expected empty map (non-attribute source kind ignored), got %v", out)
 	}
 }

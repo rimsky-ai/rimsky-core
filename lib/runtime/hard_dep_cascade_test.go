@@ -2,11 +2,12 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Unit tests for the hard-dep cascade extension's parked-upstream
-// branch in pullHardDepUpstreams. Exercises the wake primitive in
-// isolation: a parked upstream + an in-frame cascade walk to a
-// hard-dep'd receiver must route through wakeParkedReceiverInTx and
-// emit parked_resume_started.
+// Unit tests for the upstream-refresh cascade extension's parked-
+// upstream branch in pullForceRefreshUpstreams. Exercises the wake
+// primitive in isolation: a parked upstream + an in-frame cascade walk
+// to a receiver that declares `force_upstream_refresh: true` on that
+// upstream must route through wakeParkedReceiverInTx and emit
+// parked_resume_started.
 
 package runtime_test
 
@@ -25,17 +26,18 @@ import (
 )
 
 // TestPullHardDepUpstreams_WakesParkedUpstream verifies the
-// parked-upstream branch of pullHardDepUpstreams when the upstream
+// parked-upstream branch of pullForceRefreshUpstreams when the upstream
 // is parked IN AN EARLIER FRAME (case 2). Setup:
 //
 //   - Template: a (sender), b (parked upstream), c (receiver). c
-//     subscribes to a (state) and declares hard_dep on b's attribute.
+//     subscribes to a (state) and carries a `force_upstream_refresh:
+//     true` subscription on b's attribute.
 //   - F1 is the running frame. a has an in-flight 'active' run id
 //     in F1. b has a parked node-run row pinned to an earlier frame
 //     F0. c has no in-flight row yet.
 //   - Invoke `runtime.CascadeSubscribersStaleInTxForTest` for sender=a.
 //     The BFS visits c (subscriber), MarkStaleForCascade(c) inserts
-//     c's pending run, then pullHardDepUpstreams(c) runs.
+//     c's pending run, then pullForceRefreshUpstreams(c) runs.
 //     `GetInFlightRunForNode(b, F1)` returns hasRun=false (b's parked
 //     row is in F0, not F1). The parked-branch probe fires:
 //     GetParkedByNode(b) → parked, wakeParkedReceiverInTx wakes b
@@ -162,23 +164,24 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 		}
 	}
 	require.True(t, wokeUp,
-		"pullHardDepUpstreams must wake b's parked run and emit parked_resume_started; events: %+v",
+		"pullForceRefreshUpstreams must wake b's parked run and emit parked_resume_started; events: %+v",
 		events.Events)
 	_ = cN // @deliberate: silence unused warning if c never gets touched
 }
 
 // TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight verifies
-// that when a hard-dep upstream already has an in-flight run pinned to
-// senderFrameID (pending/active/held — i.e. GetInFlightRunForNode
-// returns hasRun=true), pullHardDepUpstreams MUST NOT re-probe
-// GetParkedByNode and fire wakeParkedReceiverInTx.
+// that when an upstream-refresh upstream already has an in-flight run
+// pinned to senderFrameID (pending/active/held — i.e.
+// GetInFlightRunForNode returns hasRun=true), pullForceRefreshUpstreams
+// MUST NOT re-probe GetParkedByNode and fire wakeParkedReceiverInTx.
 // The existing wait-set blocker keys on the existing run id; an
 // extra wake would emit a duplicate `parked_resume_started` event
 // and churn state-transition surface.
 //
 // Setup: a (sender), b (upstream already pending in current frame),
-// c (receiver with hard_dep on b). After the cascade walk we assert
-// that NO parked_resume_started event fires for b.
+// c (receiver with `force_upstream_refresh: true` on b). After the
+// cascade walk we assert that NO parked_resume_started event fires
+// for b.
 func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -274,14 +277,15 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	}))
 	for _, e := range events.Events {
 		require.NotEqualf(t, "parked_resume_started", e.Kind,
-			"pullHardDepUpstreams must not fire wake on a non-parked in-flight upstream; events: %+v",
+			"pullForceRefreshUpstreams must not fire wake on a non-parked in-flight upstream; events: %+v",
 			events.Events)
 	}
 	_ = cN // @deliberate: silence unused warning if c never gets touched
 }
 
 // makeHardDepTemplate builds a 3-node template (a, b, c) where c
-// declares hard_dep on b's attribute and subscribes to a.
+// declares `force_upstream_refresh: true` on b's attribute
+// subscription and subscribes to a's terminal/attribute signals.
 func makeHardDepTemplate() nodepkg.TemplateSpec {
 	mkSchema := func(field string) map[string]any {
 		return map[string]any{
@@ -300,9 +304,8 @@ func makeHardDepTemplate() nodepkg.TemplateSpec {
 				"source": "{{nodes.a.attribute.a_value}}",
 			},
 			"b_val": map[string]any{
-				"type":     "string",
-				"source":   "{{nodes.b.attribute.b_value}}",
-				"hard_dep": true,
+				"type":   "string",
+				"source": "{{nodes.b.attribute.b_value}}",
 			},
 		},
 		"required": []any{"a_val", "b_val"},
@@ -315,7 +318,15 @@ func makeHardDepTemplate() nodepkg.TemplateSpec {
 			{Type: "b", Executor: "stub", Attributes: &nodepkg.NodeAttributesDef{Schema: mkSchema("b_value")}},
 			{
 				Type: "c", Executor: "stub",
-				Subscribes: []nodepkg.SubscriptionEntry{{Node: "a", Type: "terminal/*"}},
+				Subscribes: []nodepkg.SubscriptionEntry{
+					{Node: "a", Type: "terminal/*", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(false)},
+					// @deliberate: Covers the {{nodes.a.attribute.a_value}} read.
+					{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(false)},
+					// @deliberate: Migrated from attribute-field hard_dep: true on b_val.
+					// Covers the {{nodes.b.attribute.b_value}} read AND drags
+					// b into the frame on c's invalidation.
+					{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(true)},
+				},
 				Attributes: &nodepkg.NodeAttributesDef{Schema: cSchema},
 			},
 		},

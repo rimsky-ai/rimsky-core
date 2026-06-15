@@ -8,9 +8,12 @@
 // Migrated to the post-2026-05-14 subscription-cascade template grammar:
 // nodes are built via scenario.MakeNode + scenario.WithAttributes. Data
 // flow between nodes uses the substitution grammar
-// `source: "{{nodes.<X>.attribute.<Y>}}"`, which auto-subscribes the
-// receiver to the sender's `attribute` topic at template-registration
-// time (see graph/node/subscription_edges.go).
+// `source: "{{nodes.<X>.attribute.<Y>}}"` to read upstream values; the
+// cascade coupling itself is declared explicitly via the receiver's
+// `subscribes:` block (the 2026-06-14 explicit-substitution-cascade
+// spec retired the auto-subscribe-from-substitution-ref inference and
+// added a registration-time coverage check that rejects substitution
+// refs without a covering subscription entry).
 //
 // The behavioural intent (chain reaches fresh; invalidate-A cascades to
 // B and C) is preserved; the redesign-shaped assertion ("this node's
@@ -52,6 +55,7 @@ func TestCascadeInvalidate(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "b", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "attribute/a/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -62,6 +66,7 @@ func TestCascadeInvalidate(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "b", Type: "attribute/b/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

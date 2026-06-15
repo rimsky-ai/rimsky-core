@@ -82,7 +82,7 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 					Type:     "monitor",
 					Executor: "stub",
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", Type: "terminal/*"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "worker", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 			),
 		},
 	})

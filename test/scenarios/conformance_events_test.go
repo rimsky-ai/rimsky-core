@@ -49,10 +49,12 @@ func TestConformanceEvents(t *testing.T) {
 			}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "b", Executor: "stub"},
-				// @deliberate: The {{nodes.a.event.ready.value}} ref below auto-subscribes
-				// b to a's `event` topic with name="ready"; explicit
-				// subscription kept here for clarity.
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "event/ready"}),
+				// @deliberate: explicit `subscribes:` entry required on b
+				// for a's `event/ready` topic — the
+				// explicit-substitution-cascade spec retired auto-subscribe
+				// inference; absent the entry, registration would fail
+				// with `substitution_ref_uncovered`.
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "event/ready", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

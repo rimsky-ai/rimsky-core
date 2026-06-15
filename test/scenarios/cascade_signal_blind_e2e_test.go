@@ -119,6 +119,8 @@ func testCascadeTerminalSuccessPerSender(t *testing.T) {
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
@@ -152,6 +154,8 @@ func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Instance: true, Type: "terminal/success", Frame: "next",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
@@ -205,6 +209,8 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 				// signals emitted by the named sender.
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "terminal/error/*",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
@@ -247,9 +253,11 @@ func testCascadeTerminalErrorGiveUpCrossCutting(t *testing.T) {
 				// @deliberate: Per the plan: `instance: true` + exact
 				// `terminal/error/<class>` for the cross-cutting variant.
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance: true,
-					Type:     "terminal/error/stub/giveup_class_cc",
-					Frame:    "next",
+					Instance:             true,
+					Type:                 "terminal/error/stub/giveup_class_cc",
+					Frame:                "next",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
@@ -291,6 +299,8 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "terminal/error/*",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
@@ -335,9 +345,11 @@ func testCascadeTerminalErrorPassCrossCutting(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance: true,
-					Type:     "terminal/error/stub/pass_class_cc",
-					Frame:    "next",
+					Instance:             true,
+					Type:                 "terminal/error/stub/pass_class_cc",
+					Frame:                "next",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
@@ -392,6 +404,8 @@ func testCascadeTransientRetryPerSender(t *testing.T) {
 				// throughout the retry window.)
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "transient/retry/*", Frame: "next",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
@@ -455,6 +469,8 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "attribute/score/changed",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
@@ -495,6 +511,8 @@ func testCascadeEventNamedPerSender(t *testing.T) {
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "event/ready",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},

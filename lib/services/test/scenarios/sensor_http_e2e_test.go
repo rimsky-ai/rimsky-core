@@ -538,9 +538,11 @@ func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedUR
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance": true,
-							"type":     "message/invalidate/publisher/" + httpReactorNode,
-							"frame":    "in",
+							"instance":               true,
+							"type":                   "message/invalidate/publisher/" + httpReactorNode,
+							"frame":                  "in",
+							"wake_on_change":         true,
+							"force_upstream_refresh": false,
 						},
 					},
 				},

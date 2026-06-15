@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-The dispatch-children primitive accepts already-acquired sub-claims as input; it does not call the producer's partition-split itself, and the claim-tree machinery (sub-claim acquisition and relatives, see `concept:claim-tree`) is unchanged by this decision.
+Sub-claim acquisition is owned by the claim-tree machinery (see `concept:claim-tree`); the dispatch-children primitive consumes already-acquired sub-claims as input rather than calling the producer's partition-split itself.
 
 ## Rationale
 
-Preserves the existing factoring; the unification's win is run-side.
+Keeps acquisition concerns in `concept:claim-tree` and run-side dispatch concerns in the dispatch primitive; the two surfaces compose without coupling.

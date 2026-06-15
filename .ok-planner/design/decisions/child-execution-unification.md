@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-A single dispatch-children primitive performs the run-side dispatch of child executions, and a single settle-children primitive performs their settlement, for both delegation and fan-out (see `concept:child-execution`). Delegation wraps the pair with one partition / carry-verbatim policy / entry absorbed; fan-out with N partitions / author policy. No schema change; the `delegate:` and `fan_out:` template surfaces are unchanged.
+A single dispatch-children primitive performs the run-side dispatch of child executions, and a single settle-children primitive performs their settlement, for both delegation and fan-out (see `concept:child-execution`). Delegation wraps the pair with one partition / carry-verbatim policy / entry absorbed; fan-out with N partitions / author policy. Both the `delegate:` and `fan_out:` template surfaces author over the same dispatch / settle pair.
 
 ## Rationale
 

@@ -47,7 +47,7 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 				Executor: "stub",
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "event/ready"})),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "event/ready", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-on-event-stream", map[string]any{})
@@ -142,9 +142,11 @@ func TestOnEventUndeclaredEventNameRejectedAtRegistration(t *testing.T) {
 					"type":     "receiver",
 					"executor": "stub",
 					"subscribes": []map[string]any{{
-						"node": "emitter",
-						"on":   "event",
-						"name": "undeclared_event",
+						"node":                   "emitter",
+						"on":                     "event",
+						"name":                   "undeclared_event",
+						"wake_on_change":         true,
+						"force_upstream_refresh": false,
 					}},
 				},
 			},

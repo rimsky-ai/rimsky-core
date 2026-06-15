@@ -12,11 +12,12 @@
 //     by the cascade walker (runtime/runner_terminal.go::cascadeSubscribersStaleInTx)
 //     to route invalidations from a transitioning sender to its
 //     subscribed receivers.
-//   - templateHardDepEdges: the hard-dep edge map produced by
-//     graph/node/hard_dep_edges.go::BuildHardDepEdges (attribute schema
-//     fields with hard_dep: true). Consumed by
-//     runtime/runner_terminal.go::pullHardDepUpstreams to proactively
-//     stale-mark upstream node-types when a receiver enters the cascade.
+//   - templateHardDepEdges: the upstream-refresh edge map produced by
+//     graph/node/hard_dep_edges.go::BuildHardDepEdges (subscribes:
+//     entries with force_upstream_refresh: true). Consumed by
+//     runtime/runner_terminal.go::pullForceRefreshUpstreams to
+//     proactively stale-mark upstream node-types when a receiver enters
+//     the cascade.
 //
 // Receiver-side attribute substitution does NOT route through this
 // file. The substitution context's Deps map is populated by
@@ -72,8 +73,7 @@ func subscriptionEdgesForTemplate(
 	if row == nil {
 		return nil, fmt.Errorf("subscriptionEdgesForTemplate: template %s not found", templateHash)
 	}
-	subs := node.ExtractSubstitutionRefsFromTemplate(row.Spec)
-	edges, err := node.BuildSubscriptionEdges(row.Spec, subs)
+	edges, err := node.BuildSubscriptionEdges(row.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("subscriptionEdgesForTemplate: build edges for %s: %w", templateHash, err)
 	}
@@ -82,14 +82,13 @@ func subscriptionEdgesForTemplate(
 	return actual.(*node.SubscriptionEdgeMap), nil
 }
 
-// templateHardDepEdges caches the per-template hard-dep edge map
-// (computed from attribute schema fields with hard_dep: true) keyed
-// by templateHash, holding node.HardDepEdgeMap values, so the
-// cascade walker can look up hard deps without re-parsing the
-// template spec on every walk.
+// templateHardDepEdges caches the per-template upstream-refresh edge
+// map (computed from subscribes: entries with force_upstream_refresh:
+// true) so the cascade walker can look up upstream-refresh edges
+// without re-parsing the template spec on every walk.
 //
-// @concept: attribute
-// @concept: cascade
+//	@concept: cascade
+//	@concept: node-subscription
 var templateHardDepEdges sync.Map
 
 // hardDepEdgesForTemplate returns the cached or freshly-built

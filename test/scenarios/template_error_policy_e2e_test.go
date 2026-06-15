@@ -108,6 +108,8 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "downstream"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "worker", Type: "terminal/*",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				})),
 		},
 	})
@@ -192,6 +194,8 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 			},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "worker", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				})),
 		},
 	})
@@ -446,6 +450,8 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 				},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "acquirer", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},

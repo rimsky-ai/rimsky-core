@@ -443,9 +443,11 @@ func deployExampleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance": true,
-							"type":     "message/" + exampleMessageKind + "/publisher/" + reactorNodeType,
-							"frame":    "in",
+							"instance":               true,
+							"type":                   "message/" + exampleMessageKind + "/publisher/" + reactorNodeType,
+							"frame":                  "in",
+							"wake_on_change":         true,
+							"force_upstream_refresh": false,
 						},
 					},
 				},

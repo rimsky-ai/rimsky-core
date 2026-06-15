@@ -70,7 +70,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "b", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -81,7 +81,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -93,8 +93,11 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "d", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "b", Type: "terminal/*"},
-					node.SubscriptionEntry{Node: "c", Type: "terminal/*"},
+					node.SubscriptionEntry{Node: "b", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "c", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					// Cover the substitution reads explicitly (today-equivalent flags).
+					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "c", Type: "attribute/c_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",

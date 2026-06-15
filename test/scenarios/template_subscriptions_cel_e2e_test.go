@@ -210,10 +210,12 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver_strict", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance: true,
-					Type:     "message/invalidate/operator/frame_anchor",
-					When:     `payload.message_payload.tenant == "alpha"`,
-					Frame:    "in",
+					Instance:             true,
+					Type:                 "message/invalidate/operator/frame_anchor",
+					When:                 `payload.message_payload.tenant == "alpha"`,
+					Frame:                "in",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 			// @deliberate: receiver_prefix: trailing-`*` prefix. Matches every
@@ -221,9 +223,11 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver_prefix", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance: true,
-					Type:     "message/invalidate/*",
-					Frame:    "in",
+					Instance:             true,
+					Type:                 "message/invalidate/*",
+					Frame:                "in",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 			// @deliberate: receiver_other: exact-type targeting a DIFFERENT segment.
@@ -231,9 +235,11 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver_other", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance: true,
-					Type:     "message/invalidate/operator/some_other_target",
-					Frame:    "in",
+					Instance:             true,
+					Type:                 "message/invalidate/operator/some_other_target",
+					Frame:                "in",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},

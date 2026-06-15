@@ -66,8 +66,10 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 						// @deliberate: Match any message envelope with kind=invalidate,
 						// regardless of sender_kind / target. Prefix-bind
 						// payload as dyn; CEL filter narrows by kind.
-						Type:  "message/invalidate/*",
-						Frame: "in",
+						Type:                 "message/invalidate/*",
+						Frame:                "in",
+						WakeOnChange:         spec.BoolPtr(true),  // today-equivalent
+						ForceUpstreamRefresh: spec.BoolPtr(false), // today-equivalent
 					},
 				},
 			},
@@ -81,8 +83,10 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 						// to receiver's own alias via payload.target.
 						// An empty broadcast envelope (payload.target ==
 						// "") never matches.
-						Type:  "message/invalidate/operator/self_receiver",
-						Frame: "in",
+						Type:                 "message/invalidate/operator/self_receiver",
+						Frame:                "in",
+						WakeOnChange:         spec.BoolPtr(true),  // today-equivalent
+						ForceUpstreamRefresh: spec.BoolPtr(false), // today-equivalent
 					},
 				},
 			},

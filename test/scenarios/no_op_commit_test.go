@@ -61,7 +61,7 @@ func TestNoOpCommit(t *testing.T) {
 					Type:     "dependent",
 					Executor: "stub",
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "producer", Type: "terminal/*"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "producer", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

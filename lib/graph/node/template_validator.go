@@ -32,13 +32,34 @@ type ValidationWarning struct {
 
 // ValidationResult is returned by ValidateTemplate. Ok() is true when
 // no errors were found (warnings are allowed).
+//
+// StructuredErrors carries entries whose shape is richer than the
+// flat `{path, msg}` of `Errors` — currently the substitution-ref
+// coverage check emits `substitution_ref_uncovered` entries here so
+// operators receive a drop-in copy-pasteable `suggested_subscribes_entry`
+// alongside the human-readable explanation. Per
+// decision:validation-errors-additive-not-uniform and
+// decision:uncovered-substitution-error-shape.
+//
+// Note for future contributors: there is no `StructuredWarnings`
+// counterpart by design — every structured entry kind introduced so
+// far is a hard rejection (the structured shape's reason for existing
+// is to carry a copy-pasteable fix for a registration-blocking
+// problem). When a future structured entry kind needs to be advisory
+// rather than rejecting, add the symmetric `StructuredWarnings`
+// `[]map[string]any` slice at the same time and update `Ok()` to
+// match the existing rejection contract.
 type ValidationResult struct {
-	Errors   []ValidationError
-	Warnings []ValidationWarning
+	Errors           []ValidationError
+	Warnings         []ValidationWarning
+	StructuredErrors []map[string]any
 }
 
 // Ok reports whether the template passed validation (no errors).
-func (r ValidationResult) Ok() bool { return len(r.Errors) == 0 }
+// Both `Errors` and `StructuredErrors` count as rejecting findings.
+func (r ValidationResult) Ok() bool {
+	return len(r.Errors) == 0 && len(r.StructuredErrors) == 0
+}
 
 // instantiationPlaceholderRe matches `{params.<key>}` placeholders.
 var instantiationPlaceholderRe = regexp.MustCompile(`\{params\.[a-zA-Z_][a-zA-Z0-9_]*\}`)
@@ -299,57 +320,19 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	// violation at instance-create time.
 	validatePublishers(spec, declared, &res)
 
-	// @deliberate: post-pass substitution-ref cross-check — iterate
-	// every `{{nodes.<X>.<kind>.<name>}}` directive in the attribute
-	// schemas and confirm the sender + attribute/event name are defined
-	// on the upstream node.
+	// @deliberate: post-pass substitution-ref cross-checks. Both checks
+	// consume the same parsed `{{nodes.<X>.<kind>.<name>}}` directives
+	// extracted from the attribute schemas. They emit independent
+	// rejections so an operator sees the full set in one round-trip.
+	//
+	// - validateSubstitutionRefExistence — does the named sender exist?
+	//   does the named attribute/event exist on the sender?
+	// - validateSubstitutionRefCoverage — does the receiver carry an
+	//   explicit subscribes: entry whose (sender, type) would deliver
+	//   the implied signal? Per decision:substitution-ref-coverage-required.
 	refs := ExtractSubstitutionRefsFromTemplate(*spec)
-	for receiverType, list := range refs {
-		for _, ref := range list {
-			path := fmt.Sprintf("nodes[%s].attributes.schema (substitution ref)", receiverType)
-			senderIdx, declaredOk := declared[ref.SenderNodeType]
-			if !declaredOk {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: path,
-					Msg:  fmt.Sprintf("substitution ref `nodes.%s.%s.%s` references unknown node %q", ref.SenderNodeType, ref.TopicKind, ref.Name, ref.SenderNodeType),
-				})
-				continue
-			}
-			sender := spec.Nodes[senderIdx]
-			switch ref.TopicKind {
-			case "attribute":
-				if ref.Name == "" {
-					continue
-				}
-				if !attributeKeyDeclared(sender, ref.Name) {
-					res.Errors = append(res.Errors, ValidationError{
-						Path: path,
-						Msg:  fmt.Sprintf("substitution ref `nodes.%s.attribute.%s` references an attribute key not declared on the sender", ref.SenderNodeType, ref.Name),
-					})
-				}
-			case "event":
-				if hooks.ExecutorDeclaredEvents != nil && sender.Executor != "" {
-					if names, ok := hooks.ExecutorDeclaredEvents(sender.Executor); ok {
-						found := false
-						for _, name := range names {
-							if name == ref.Name {
-								found = true
-								break
-							}
-						}
-						if !found {
-							res.Errors = append(res.Errors, ValidationError{
-								Path: path,
-								Msg:  fmt.Sprintf("substitution ref `nodes.%s.event.%s` references an event not declared by executor %q", ref.SenderNodeType, ref.Name, sender.Executor),
-							})
-						}
-					}
-					// @deliberate: silent skip when executor capabilities
-					// are not visible.
-				}
-			}
-		}
-	}
+	validateSubstitutionRefExistence(spec, declared, hooks, refs, &res)
+	validateSubstitutionRefCoverage(spec, refs, &res)
 
 	// @deliberate: Hard-dep cycle detection. The cascade walker assumes the hard-dep
 	// assumes the hard-dep edge graph is acyclic; surface cycles at
@@ -625,7 +608,36 @@ func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res
 func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
-		// @deliberate: node and Instance are mutually exclusive.
+		// @deliberate: cascade-shape flags are required — no defaults
+		// apply. Record missing-flag rejections but DO NOT short-circuit
+		// the rest of the per-entry checks: the operator should see every
+		// problem in one round-trip (node-declared, type-canonical,
+		// when-CEL, terminal/event vocabulary), not peel them one
+		// resubmit at a time. The downstream cross-cutting-incoherence
+		// check below guards on `refreshKnown` so it only fires when the
+		// ForceUpstreamRefresh pointer is non-nil. Per
+		// decision:cascade-flags-required-no-defaults.
+		wakeKnown := s.WakeOnChange != nil
+		refreshKnown := s.ForceUpstreamRefresh != nil
+		if !wakeKnown {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".wake_on_change",
+				Msg:  "wake_on_change is required (true or false); no default applies",
+			})
+		}
+		if !refreshKnown {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase + ".force_upstream_refresh",
+				Msg:  "force_upstream_refresh is required (true or false); no default applies",
+			})
+		}
+		// @deliberate: node and Instance are mutually exclusive. Check
+		// the structural mutex BEFORE the cross-cutting +
+		// force_upstream_refresh coherence check — an entry carrying
+		// both `node:` and `instance: true` is not actually
+		// cross-cutting; surfacing the mutex violation first gives the
+		// operator the fundamental problem rather than a derived
+		// "incoherent combination" message.
 		if s.Node == "" && !s.Instance {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase,
@@ -637,6 +649,20 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase,
 				Msg:  "`node:` and `instance: true` are mutually exclusive",
+			})
+			continue
+		}
+		// @deliberate: cross-cutting + force_upstream_refresh is
+		// incoherent — a cross-cutting (instance: true) subscription
+		// names no specific sender, so there is no upstream to refresh.
+		// Reject the combination at registration. Only fire when the
+		// flag is known (refreshKnown); the missing-flag rejection above
+		// is the right diagnosis when ForceUpstreamRefresh is nil. Per
+		// decision:cross-cutting-no-force-upstream-refresh.
+		if refreshKnown && s.Instance && *s.ForceUpstreamRefresh {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: sbase,
+				Msg:  "force_upstream_refresh: true cannot be combined with instance: true (cross-cutting subscriptions are sender-agnostic; there is no specific upstream to refresh)",
 			})
 			continue
 		}
@@ -764,6 +790,264 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			}
 		}
 	}
+	// @deliberate: duplicate-key conflict detection. Two entries with
+	// the same (sender, type, when, scope, frame) but different
+	// cascade-shape flag values would silently dedup in the edge map
+	// (containsEdge is a full-equality check including the flags) —
+	// leaving the first-written entry's flags in force and dropping the
+	// second's without an operator-visible diagnostic. That's exactly
+	// the kind of invisible behavior
+	// decision:cascade-flags-required-no-defaults set out to eliminate,
+	// so we reject conflicting flag values at registration.
+	// Exact-duplicate entries (same key, same flags) are permitted and
+	// collapse harmlessly at the edge builder.
+	type subKey struct {
+		node     string
+		instance bool
+		typ      string
+		when     string
+		frame    string
+	}
+	type subEntry struct {
+		idx     int
+		wake    bool
+		refresh bool
+	}
+	groups := map[subKey][]subEntry{}
+	for i, s := range n.Subscribes {
+		if s.WakeOnChange == nil || s.ForceUpstreamRefresh == nil {
+			// @deliberate: missing-flag entries already rejected above;
+			// skip the conflict pass for them (no flag value to compare).
+			continue
+		}
+		k := subKey{
+			node:     s.Node,
+			instance: s.Instance,
+			typ:      s.Type,
+			when:     s.When,
+			frame:    s.Frame,
+		}
+		groups[k] = append(groups[k], subEntry{
+			idx: i, wake: *s.WakeOnChange, refresh: *s.ForceUpstreamRefresh,
+		})
+	}
+	for k, entries := range groups {
+		if len(entries) < 2 {
+			continue
+		}
+		first := entries[0]
+		for _, e := range entries[1:] {
+			if e.wake == first.wake && e.refresh == first.refresh {
+				continue
+			}
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.subscribes[%d]", base, e.idx),
+				Msg: fmt.Sprintf(
+					"conflicting cascade-shape flags for subscription key "+
+						"(node:%q instance:%t type:%q when:%q frame:%q): entry %d has "+
+						"wake_on_change=%t force_upstream_refresh=%t but entry %d has "+
+						"wake_on_change=%t force_upstream_refresh=%t — a single subscription "+
+						"key must declare one coherent cascade contract",
+					k.node, k.instance, k.typ, k.when, k.frame,
+					first.idx, first.wake, first.refresh,
+					e.idx, e.wake, e.refresh),
+			})
+		}
+	}
+}
+
+// validateSubstitutionRefExistence walks every parsed substitution ref
+// and confirms (a) the named sender node-type exists in the template
+// and (b) the named attribute key / event name is declared on that
+// sender. Sibling to validateSubstitutionRefCoverage: both consume the
+// same `refs` map but answer different questions — does the ref name a
+// real symbol on a real upstream (this function) vs. does the receiver
+// declare a covering subscription for that symbol
+// (validateSubstitutionRefCoverage). Both checks emit independent
+// rejections so an operator sees the full set in one round-trip.
+//
+//	@concept: attribute
+//	@concept: node-subscription
+func validateSubstitutionRefExistence(
+	spec *TemplateSpec,
+	declared map[string]int,
+	hooks RegistryHooks,
+	refs map[string][]substitutionRef,
+	res *ValidationResult,
+) {
+	for receiverType, list := range refs {
+		for _, ref := range list {
+			path := fmt.Sprintf("nodes[%s].attributes.schema (substitution ref)", receiverType)
+			senderIdx, declaredOk := declared[ref.SenderNodeType]
+			if !declaredOk {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg:  fmt.Sprintf("substitution ref `nodes.%s.%s.%s` references unknown node %q", ref.SenderNodeType, ref.TopicKind, ref.Name, ref.SenderNodeType),
+				})
+				continue
+			}
+			sender := spec.Nodes[senderIdx]
+			switch ref.TopicKind {
+			case "attribute":
+				if ref.Name == "" {
+					continue
+				}
+				if !attributeKeyDeclared(sender, ref.Name) {
+					res.Errors = append(res.Errors, ValidationError{
+						Path: path,
+						Msg:  fmt.Sprintf("substitution ref `nodes.%s.attribute.%s` references an attribute key not declared on the sender", ref.SenderNodeType, ref.Name),
+					})
+				}
+			case "event":
+				if hooks.ExecutorDeclaredEvents != nil && sender.Executor != "" {
+					if names, ok := hooks.ExecutorDeclaredEvents(sender.Executor); ok {
+						found := false
+						for _, name := range names {
+							if name == ref.Name {
+								found = true
+								break
+							}
+						}
+						if !found {
+							res.Errors = append(res.Errors, ValidationError{
+								Path: path,
+								Msg:  fmt.Sprintf("substitution ref `nodes.%s.event.%s` references an event not declared by executor %q", ref.SenderNodeType, ref.Name, sender.Executor),
+							})
+						}
+					}
+					// @deliberate: silent skip when executor capabilities
+					// are not visible.
+				}
+			}
+		}
+	}
+}
+
+// validateSubstitutionRefCoverage walks every substitution ref per
+// receiver and rejects refs that no `subscribes:` entry matches. Emits
+// one structured `substitution_ref_uncovered` entry into
+// `res.StructuredErrors` per uncovered ref so the operator receives a
+// drop-in copy-pasteable `suggested_subscribes_entry` alongside the
+// human-readable note.
+//
+// Coverage rules (per decision:coverage-wildcard-asymmetry):
+//
+//	{{nodes.X.attribute.Y}} <- attribute/Y/changed OR attribute/*
+//	{{nodes.X.attribute}}   <- attribute/* only (wildcard required)
+//	{{nodes.X.event.Y}}     <- event/Y
+//
+// The asymmetry — per-field reads are covered by the wildcard but the
+// whole-pull is NOT covered by a per-field subscription — keeps the
+// coverage check conservative: a whole-pull read sees every field on
+// the sender, so the subscription has to be the wildcard that fires on
+// any field change. Symmetric coverage would silently miss field
+// additions to the sender that the receiver's whole-pull would then
+// see uncovered.
+//
+//	@concept: node-subscription
+//	@concept: attribute
+//	@decision: substitution-ref-coverage-required
+//	@decision: coverage-wildcard-asymmetry
+//	@decision: uncovered-substitution-error-shape
+func validateSubstitutionRefCoverage(tmpl *TemplateSpec, refs map[string][]substitutionRef, res *ValidationResult) {
+	if tmpl == nil {
+		return
+	}
+	// @deliberate: build a per-receiver index of subscribes: entries
+	// keyed by (sender node-type, signal type). The receiver's coverage
+	// check reads only this index; cross-cutting entries (Instance=true)
+	// name no specific sender and never cover a per-sender substitution
+	// ref.
+	indexByReceiver := make(map[string]map[coverageEntryKey]struct{}, len(tmpl.Nodes))
+	for _, n := range tmpl.Nodes {
+		idx := map[coverageEntryKey]struct{}{}
+		for _, s := range n.Subscribes {
+			if s.Instance {
+				continue
+			}
+			if s.Node == "" {
+				continue
+			}
+			idx[coverageEntryKey{sender: s.Node, typ: s.Type}] = struct{}{}
+		}
+		indexByReceiver[n.Type] = idx
+	}
+	for receiverType, list := range refs {
+		idx := indexByReceiver[receiverType]
+		for _, ref := range list {
+			suggestedType, covered := coverageMatch(idx, ref)
+			if covered {
+				continue
+			}
+			res.StructuredErrors = append(res.StructuredErrors, map[string]any{
+				"kind":               "substitution_ref_uncovered",
+				"receiver_node_type": receiverType,
+				"ref":                ref.RefLiteral,
+				"attribute_property": ref.AttributeProperty,
+				"suggested_subscribes_entry": map[string]any{
+					"node":                   ref.SenderNodeType,
+					"type":                   suggestedType,
+					"wake_on_change":         false,
+					"force_upstream_refresh": false,
+				},
+				"suggested_subscribes_note": fmt.Sprintf(
+					"set wake_on_change: true if this ref should also fire this receiver; set force_upstream_refresh: true if %s should be re-evaluated when this receiver is invalidated",
+					ref.SenderNodeType,
+				),
+			})
+		}
+	}
+}
+
+// coverageEntryKey is the (sender node-type, signal type-path) tuple
+// used to index a receiver's subscribes: block for the coverage check.
+type coverageEntryKey struct {
+	sender string
+	typ    string
+}
+
+// coverageMatch reports whether `idx` (the receiver's per-sender,
+// per-type subscription index) covers `ref`. Returns the canonical
+// "suggested" type-path the operator should add when the ref is
+// uncovered.
+//
+// Per decision:coverage-wildcard-asymmetry:
+//
+//	{{nodes.X.attribute.Y}} → required attribute/Y/changed; covered by
+//	                          exact attribute/Y/changed OR attribute/*
+//	{{nodes.X.attribute}}   → required attribute/*; covered only by
+//	                          exact attribute/* (wildcard required)
+//	{{nodes.X.event.Y}}     → required event/Y; covered by exact event/Y
+func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (suggestedType string, covered bool) {
+	switch ref.TopicKind {
+	case "attribute":
+		if ref.Name == "" {
+			// @deliberate: whole-pull — only the wildcard covers it.
+			suggestedType = "attribute/*"
+			if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "attribute/*"}]; ok {
+				return suggestedType, true
+			}
+			return suggestedType, false
+		}
+		suggestedType = fmt.Sprintf("attribute/%s/changed", ref.Name)
+		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: suggestedType}]; ok {
+			return suggestedType, true
+		}
+		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: "attribute/*"}]; ok {
+			return suggestedType, true
+		}
+		return suggestedType, false
+	case "event":
+		suggestedType = fmt.Sprintf("event/%s", ref.Name)
+		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: suggestedType}]; ok {
+			return suggestedType, true
+		}
+		return suggestedType, false
+	}
+	// @deliberate: unknown topic kind — treat as covered to avoid
+	// spurious rejections; the directive parser admits only
+	// attribute/event so this is unreachable.
+	return "", true
 }
 
 func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationResult) {
@@ -1071,28 +1355,6 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 				continue
 			}
 			checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, heldAliases, res)
-
-			if hd, present := propMap["hard_dep"]; present {
-				hdBool, ok := hd.(bool)
-				if !ok {
-					res.Errors = append(res.Errors, ValidationError{
-						Path: fmt.Sprintf("%s.properties.%s.hard_dep", sbase, fname),
-						Msg:  "hard_dep must be a boolean",
-					})
-				} else if hdBool {
-					// @deliberate: hard_dep only applies to
-					// nodes.<X>.attribute.<Y> reads. Reject the flag on
-					// other source kinds (claim, params, trigger, child,
-					// event) — those are intrinsically per-frame or
-					// instance-scoped and the flag is meaningless.
-					if !isAttributeSourceDirective(src) {
-						res.Errors = append(res.Errors, ValidationError{
-							Path: fmt.Sprintf("%s.properties.%s.hard_dep", sbase, fname),
-							Msg:  "hard_dep applies only to nodes.<X>.attribute.<Y> sources; other source kinds are intrinsically per-frame or instance-scoped and don't admit hard_dep",
-						})
-					}
-				}
-			}
 		}
 	}
 
@@ -1399,26 +1661,6 @@ func isValidFallbackLiteral(s string) bool {
 	}
 	var n float64
 	return json.Unmarshal([]byte(s), &n) == nil
-}
-
-// isAttributeSourceDirective returns true if src is a {{...}} directive
-// whose body starts with "nodes.<X>.attribute". Used by the validator
-// to gate the hard_dep flag.
-func isAttributeSourceDirective(src string) bool {
-	trimmed := strings.TrimSpace(src)
-	m := dispatchDirectiveRe.FindStringSubmatch(trimmed)
-	if m == nil {
-		return false
-	}
-	body := strings.TrimSpace(m[1])
-	// @deliberate: strip an optional fallback `| <literal>` suffix —
-	// the hard-dep gate looks at the directive's source-kind, not the
-	// fallback.
-	if idx := strings.Index(body, "|"); idx >= 0 {
-		body = strings.TrimSpace(body[:idx])
-	}
-	parts := strings.Split(body, ".")
-	return len(parts) >= 3 && parts[0] == "nodes" && parts[2] == "attribute"
 }
 
 // checkAttributeSource enforces directive syntax + reference validity

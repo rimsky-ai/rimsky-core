@@ -67,7 +67,7 @@ Held-variant invariants:
 - Aggregate outcome is strict: all-completed → `Commit`; any-failed → `Abandon` (`@blessed-invariant 13`).
 - Auto-terminal fires exactly once per held claim, race-safe via a row-level select-for-update.
 - Held handles persist across the node-run parent's deletion (the reference nulls rather than cascading).
-- The co-holder state field forbids values outside {active, completed, failed}; once a holder is `failed`, the aggregate is `failed` (no discard-then-retry recovery in scope).
+- The co-holder state field forbids values outside {active, completed, failed}; once a holder is `failed`, the aggregate is `failed`; the held variant does not support discard-then-retry recovery.
 - **Held-durable claim handles persist across instance dispatches** (`@blessed-invariant 22`). A committed-durable claim handle is not reaped by the retention sweep; released only by explicit operator action (the asset-release endpoint) or instance termination (the held-durable-release path). The orphan-claim reaper skips non-`active` rows.
 
 ### Authoring: held vs unheld

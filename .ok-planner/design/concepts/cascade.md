@@ -27,11 +27,11 @@ A reactive graph orchestrator only earns its keep if a single executor's "I chan
 
 Owns: the firing-gate predicate, the downstream walk, the two node-level behaviors (propagation vs fallthrough). Does NOT own: invalidate emission (see `concept:invalidate`), frame scheduling (see `concept:frame`), terminal-handler resolution (see `concept:terminal-resolution`). Adjacent: `concept:invalidate`, `concept:signal`, `concept:transition-reason`, `concept:frame`, `concept:terminal-resolution`.
 
-The cascade walker consults two edge maps — the subscription-edge map and the hard-dep edge map. Both feed the wait-set with the same row shape. Subscription edges are keyed by sender node-type (downstream lookup from a transitioning sender); hard-dep edges are keyed by receiver node-type (upstream lookup from a freshly-invalidated receiver), so the walker can proactively invalidate upstreams that a receiver declares `hard_dep: true` on.
+The cascade walker consults two edge maps — the subscription-edge map and the upstream-refresh edge map. Both feed the wait-set with the same row shape. Subscription edges are keyed by sender node-type (downstream lookup from a transitioning sender); upstream-refresh edges are keyed by receiver node-type (upstream lookup from a freshly-invalidated receiver), so the walker can proactively invalidate upstreams that a receiver names in a `subscribes:` entry with `force_upstream_refresh: true`.
 
 ## Invariants
 
-- Cascade fires iff a subscription edge matches the emitted signal's type AND the subscriber's CEL `when:` predicate evaluates true.
+- A cascade walk inserts a wait-set row for the receiver iff a subscription edge matches the emitted signal's type AND the subscriber's CEL `when:` predicate evaluates true. The receiver is additionally stale-marked iff the matching subscription's `wake_on_change` field is `true`.
 - Cascade always happens in a frame.
 - The walk + per-node behaviors are scheduler actions; they are NOT configurable via the per-emit `frame: in | next` discipline.
 - Settled-color is informational. The functional equivalent of suppressing downstream auto-fire on a failed sender is expressed receiver-side via subscribers' `when:` predicates or via not subscribing to `terminal/error/*` at all.

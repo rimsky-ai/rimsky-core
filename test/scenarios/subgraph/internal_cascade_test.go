@@ -45,9 +45,9 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
 					{Type: "transform", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 					{Type: "promote", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},
 		},
@@ -120,7 +120,7 @@ func TestInternalCascade_RejectsMissingGraph(t *testing.T) {
 				Exit:  "x",
 				Nodes: []node.TemplateNodeDef{
 					{Type: "v"},
-					{Type: "x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "v", Type: "terminal/*"}}},
+					{Type: "x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "v", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},
 		},

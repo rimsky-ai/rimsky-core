@@ -74,6 +74,15 @@ type FrameRow struct {
 	FrameTimeoutMs int64               `json:"frame_timeout_ms"`
 }
 
+// FrameRunningSources is the running-frames-with-sources row returned by
+// ListRunningFramesWithSources. Used by the runtime upstream-refresh
+// pre-stage sweep.
+type FrameRunningSources struct {
+	FrameID       shared.UUID
+	InstanceID    shared.UUID
+	SourceNodeIDs []shared.UUID
+}
+
 // FrameListFilter is the observability browse filter.
 type FrameListFilter struct {
 	InstanceID *shared.UUID
@@ -172,6 +181,20 @@ type FrameTable interface {
 	// row for the instance. Returns the frame_id of the row that received
 	// the source.
 	EnqueueCoalesceFrame(ctx context.Context, instanceID, sourceNodeID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
+
+	// @agent-contract AppendSourceToQueuedFrame: adds nodeID to the
+	// queued frame's source_node_ids array if not already present. No-op
+	// when the frame is not in 'queued' state or the node id is already
+	// a source. Used by invalidateNextFrame to attach upstream-refresh
+	// upstreams to the same frame as the receiver
+	// (`@concept: upstream-pull-on-invalidate`).
+	AppendSourceToQueuedFrame(ctx context.Context, frameID, nodeID shared.UUID, tx Tx) error
+
+	// @agent-contract ListRunningFramesWithSources: returns running
+	// frames along with their source_node_ids list. Used by the runtime
+	// upstream-refresh pre-stage sweep which iterates multi-source
+	// running frames to install wait-set rows between sources.
+	ListRunningFramesWithSources(ctx context.Context, tx Tx) ([]FrameRunningSources, error)
 
 	// @agent-contract ListForObservability: returns frames matching
 	// filter, cursor-paginated by created_at DESC. Backs the

@@ -108,7 +108,7 @@ func TestTemplateRegister_RejectsDelegateCycleOverRoute(t *testing.T) {
 					"exit":  "g1x",
 					"nodes": []map[string]any{
 						{"type": "g1n", "delegate": "g2"},
-						{"type": "g1x", "subscribes": []map[string]any{{"node": "g1n", "type": "terminal/*"}}},
+						{"type": "g1x", "subscribes": []map[string]any{{"node": "g1n", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}}},
 					},
 				},
 				{
@@ -117,7 +117,7 @@ func TestTemplateRegister_RejectsDelegateCycleOverRoute(t *testing.T) {
 					"exit":  "g2x",
 					"nodes": []map[string]any{
 						{"type": "g2n", "delegate": "g1"},
-						{"type": "g2x", "subscribes": []map[string]any{{"node": "g2n", "type": "terminal/*"}}},
+						{"type": "g2x", "subscribes": []map[string]any{{"node": "g2n", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}}},
 					},
 				},
 			},

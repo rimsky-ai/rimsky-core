@@ -79,13 +79,13 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 
 ## Retired concepts
 
-See `concepts/_retired/` for the full retirement notes.
+The slugs below are not live concept entries — each has been replaced by one or more current concepts. The retirement notes live under `concepts/_retired/<slug>.md`.
 
-- `last-outcome` — Per-resolution cascade-gate projection on the node-run. → `concept:signal` (cascade-fire is subscriber-driven via a settling-signal-type field carrying a canonical signal type-path).
-- `lifecycle-handler` (aliases: reactive handler) — The three per-node template slots (acquire-unavailable, executor-complete, executor-errored). → `concept:error-policy` (acquisition failure folds in via synthetic class `acquire/*`, with `pass` an action in the error-policy chain), `concept:node-subscription` (cascade-fire selectivity expressed as receiver-side CEL predicates).
-- `node-state` — The five-state node enum. → `concept:node-run` (the enum lives entirely on the node-run rather than the node row).
-- `on-event-handler` — The `on_event:` map. → `concept:node-subscription` (subscription-to-event entries subsume both the substitution and the invalidate-downstream paths).
-- `quality-rule` — The verifier-executor pattern (a regular executor that co-holds the upstream claim, runs checks, and returns success or error) is documentation only; no successor concept.
-- `schedule` — Cron-style firing is expressed as the bundled cron sensor. → `concept:sensor` plus `concept:message` (preserving the missed-fires-not-backfilled semantic).
-- `sdk` — For Go there is no separate SDK; the protocols module is the single public surface (implementer scaffolding, action vocabulary, and the conformance library). The ops glue is a rimsky-internal package and the Postgres testcontainer helper is a rimsky-internal test-support package. A separate development kit is a different-purpose, Python-first authoring layer, not a Go SDK successor.
-- `userdata` — Collapsed into `concept:attribute`; per-node executor configuration uses static-default attribute properties, with per-instance overrides exposed as attribute-overrides.
+- See `concepts/_retired/last-outcome.md` — per-resolution cascade-gate projection on the node-run, replaced by `concept:signal` (cascade-fire is subscriber-driven via a settling-signal-type field carrying a canonical signal type-path).
+- See `concepts/_retired/lifecycle-handler.md` — the three per-node template slots (acquire-unavailable, executor-complete, executor-errored), replaced by `concept:error-policy` (acquisition failure folds in via synthetic class `acquire/*`, with `pass` an action in the error-policy chain) and `concept:node-subscription` (cascade-fire selectivity expressed as receiver-side CEL predicates).
+- See `concepts/_retired/node-state.md` — the five-state node enum, replaced by `concept:node-run` (the enum lives entirely on the node-run rather than the node row).
+- See `concepts/_retired/on-event-handler.md` — the `on_event:` map, replaced by `concept:node-subscription` (subscription-to-event entries subsume both the substitution and the invalidate-downstream paths).
+- See `concepts/_retired/quality-rule.md` — superseded by the verifier-executor pattern (a regular executor that co-holds the upstream claim, runs checks, and returns success or error); documentation only, no successor concept.
+- See `concepts/_retired/schedule.md` — cron-style firing is expressed as the bundled cron sensor; replaced by `concept:sensor` plus `concept:message` (preserving the missed-fires-not-backfilled semantic).
+- See `concepts/_retired/sdk.md` — for Go there is no separate SDK; the protocols module is the single public surface (implementer scaffolding, action vocabulary, and the conformance library). The ops glue is a rimsky-internal package and the Postgres testcontainer helper is a rimsky-internal test-support package. A separate development kit is a different-purpose, Python-first authoring layer, not a Go SDK successor.
+- See `concepts/_retired/userdata.md` — collapsed into `concept:attribute`; per-node executor configuration uses static-default attribute properties, with per-instance overrides exposed as attribute-overrides.

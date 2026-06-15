@@ -369,8 +369,8 @@ type Queue interface {
 	// programmer errors. Returns `ErrRunRowMissing` so callers can
 	// distinguish "row missing" from generic DB errors.
 	//
-	// Per the 2026-05-20 hard-dep cascade extension; supports the
-	// parked-upstream branch of `runtime/runner_terminal.go::pullHardDepUpstreams`
+	// Per the 2026-05-20 upstream-refresh cascade extension; supports the
+	// parked-upstream branch of `runtime/runner_terminal.go::pullForceRefreshUpstreams`
 	// and the standard cascade-subscription path's parked-receiver wake.
 	RebindRunFrameInTx(ctx context.Context, tx Tx, dispatchID, newFrameID shared.UUID) error
 

@@ -193,21 +193,39 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		if err != nil || row == nil {
 			return err
 		}
-		subs := nodepkg.ExtractSubstitutionRefsFromTemplate(row.Spec)
-		edges, err := nodepkg.BuildSubscriptionEdges(row.Spec, subs)
+		edges, err := nodepkg.BuildSubscriptionEdges(row.Spec)
 		if err != nil {
 			return err
 		}
 		if edges == nil {
 			return nil
 		}
-		receiverTypeList := edges.ReceiverNodeTypesForSender(n.NodeType)
-		if len(receiverTypeList) == 0 {
+		// @concept: cascade
+		// @blessed-invariant: wake-up effects (affirm + propagate-
+		// frame-id + recalculate) gate on wake_on_change. A receiver
+		// reachable only via subscription edges with wake_on_change:
+		// false is NOT woken by the pure-cascade source's settle —
+		// matches the wake-up-gating property the terminal-driven
+		// cascade walker enforces (runner_terminal.go::cascadeSubscribers-
+		// StaleInTx). Pure-cascade has no wait-set surface (the
+		// scheduler-flip is a settled-fresh transition, not a sender
+		// settle through the wait-set), so there is no analogous
+		// wait-set insert to preserve outside the gate.
+		//
+		// @decision: wake-on-change-wait-set-only
+		allEdges := edges.ReceiverEdgesForSender(n.NodeType)
+		if len(allEdges) == 0 {
 			return nil
 		}
-		want := make(map[string]struct{}, len(receiverTypeList))
-		for _, t := range receiverTypeList {
-			want[t] = struct{}{}
+		want := make(map[string]struct{})
+		for _, e := range allEdges {
+			if !e.WakeOnChange {
+				continue
+			}
+			want[e.ReceiverNodeType] = struct{}{}
+		}
+		if len(want) == 0 {
+			return nil
 		}
 		instNodes, err := sb.Nodes().ListByInstance(ctx, n.InstanceID, tx)
 		if err != nil {

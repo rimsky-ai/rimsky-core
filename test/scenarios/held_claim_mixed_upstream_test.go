@@ -94,8 +94,8 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 					},
 				},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "a", Type: "terminal/*"},
-					node.SubscriptionEntry{Node: "c", Type: "terminal/*"},
+					node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					node.SubscriptionEntry{Node: "c", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",

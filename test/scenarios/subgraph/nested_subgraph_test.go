@@ -43,9 +43,9 @@ func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "outer-entry", Executor: "stub"},
 					{Type: "outer-mid", Delegate: "inner",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "outer-entry", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "outer-entry", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 					{Type: "outer-exit", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "outer-mid", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "outer-mid", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},
 			{
@@ -55,7 +55,7 @@ func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "inner-entry", Executor: "stub"},
 					{Type: "inner-exit", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},
 		},
@@ -97,7 +97,7 @@ func TestNestedSubgraph_CycleRejected(t *testing.T) {
 				Exit:  "g1x",
 				Nodes: []node.TemplateNodeDef{
 					{Type: "g1n", Delegate: "g2"},
-					{Type: "g1x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g1n", Type: "terminal/*"}}},
+					{Type: "g1x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g1n", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},
 			{
@@ -106,7 +106,7 @@ func TestNestedSubgraph_CycleRejected(t *testing.T) {
 				Exit:  "g2x",
 				Nodes: []node.TemplateNodeDef{
 					{Type: "g2n", Delegate: "g1"}, // @deliberate: cycle: g1 → g2 → g1
-					{Type: "g2x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g2n", Type: "terminal/*"}}},
+					{Type: "g2x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g2n", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},
 		},

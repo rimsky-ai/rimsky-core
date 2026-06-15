@@ -334,9 +334,11 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance": true,
-							"type":     "message/invalidate/publisher/" + reactorTargetNode,
-							"frame":    "in",
+							"instance":               true,
+							"type":                   "message/invalidate/publisher/" + reactorTargetNode,
+							"frame":                  "in",
+							"wake_on_change":         true,
+							"force_upstream_refresh": false,
 						},
 					},
 				},
@@ -349,8 +351,10 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 							// @deliberate: different message kind — the invalidate envelope
 							// never produces this signal type, so this node must never go
 							// stale on the sensor fire (negative control).
-							"type":  "message/refresh/publisher/" + reactorTargetNode,
-							"frame": "in",
+							"type":                   "message/refresh/publisher/" + reactorTargetNode,
+							"frame":                  "in",
+							"wake_on_change":         true,
+							"force_upstream_refresh": false,
 						},
 					},
 				},

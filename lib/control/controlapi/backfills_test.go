@@ -90,7 +90,7 @@ func fanOutBackfillTemplateBody(name string) map[string]any {
 						"error_policy":      map[string]any{"kind": "best_effort"},
 					},
 				},
-				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*"}}},
+				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}}},
 			},
 		},
 	}
@@ -121,7 +121,7 @@ func unwiredFanOutBackfillTemplateBody(name string) map[string]any {
 						"error_policy":      map[string]any{"kind": "best_effort"},
 					},
 				},
-				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*"}}},
+				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}}},
 			},
 		},
 	}

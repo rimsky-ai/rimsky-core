@@ -91,7 +91,13 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 				// attribute, so the node genuinely dispatches and we observe
 				// the lenient recovery at dispatch time rather than never
 				// firing because `attribute/maybe/changed` never emits.
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "upstream", Type: "terminal/*"}),
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{Node: "upstream", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					// Cover the {{nodes.upstream.attribute.maybe?}} read.
+					// wake_on_change is true (today-equivalent) but since
+					// `maybe` never emits, this edge never fires the receiver.
+					node.SubscriptionEntry{Node: "upstream", Type: "attribute/maybe/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -113,7 +119,11 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 						},
 					},
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "upstream", Type: "terminal/*"}),
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{Node: "upstream", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+					// Cover the {{nodes.upstream.attribute.maybe}} read.
+					node.SubscriptionEntry{Node: "upstream", Type: "attribute/maybe/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
+				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{

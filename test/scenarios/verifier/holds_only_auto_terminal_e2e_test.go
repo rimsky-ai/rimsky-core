@@ -99,7 +99,7 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 						"held": {From: "acquirer"},
 					},
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 			),
 		},
 	})

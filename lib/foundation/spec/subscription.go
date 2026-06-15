@@ -41,6 +41,36 @@ type SubscriptionEntry struct {
 	// subscriptions and "next" for cross-cutting (Instance=true).
 	Frame string `yaml:"frame,omitempty" json:"frame,omitempty"`
 
+	// WakeOnChange governs whether a matching emission from the sender
+	// dispatches the receiver. true: the cascade walker inserts a wait-
+	// set row AND stale-marks the receiver. false: wait-set row only;
+	// the receiver is not stale-marked from this edge (it dispatches only
+	// when other subscriptions fire it; its substitution context still
+	// sees the sender's data if the sender settled in this frame).
+	//
+	// Required field — no default. Registration rejects entries without
+	// an explicit value. See decision:cascade-flags-required-no-defaults.
+	//
+	//	@concept: cascade
+	//	@concept: node-subscription
+	WakeOnChange *bool `yaml:"wake_on_change" json:"wake_on_change"`
+
+	// ForceUpstreamRefresh governs whether the receiver's invalidation
+	// drags the sender into the same frame for re-evaluation. true: when
+	// this receiver is invalidated, the cascade walker also invalidates
+	// the sender so it re-runs in the same frame before the receiver
+	// dispatches. false: no pull; the receiver dispatches with whatever
+	// sender state happens to be in this frame.
+	//
+	// Required field — no default. Registration rejects entries without
+	// an explicit value. A cross-cutting subscription (Instance=true)
+	// cannot carry ForceUpstreamRefresh=true; the combination is rejected
+	// at registration. See decision:cross-cutting-no-force-upstream-refresh.
+	//
+	//	@concept: cascade
+	//	@concept: node-subscription
+	ForceUpstreamRefresh *bool `yaml:"force_upstream_refresh" json:"force_upstream_refresh"`
+
 	// ResolvesViaCallingNode is set by the canonicalizer on
 	// subscription edges from non-entry internal sub-graph nodes that
 	// reference the entry alias. At runtime the cascade walker
@@ -73,3 +103,10 @@ const (
 	NodeStateFailed  = "failed"
 	NodeStateParked  = "parked"
 )
+
+// BoolPtr is the canonical helper for SubscriptionEntry's pointer-bool
+// fields. Construction sites pass `spec.BoolPtr(true)` or
+// `spec.BoolPtr(false)` inline rather than hoisting a local *bool
+// variable. Kept in this file (not in a generic ptr-helper package) so
+// its referent is unambiguous in cold reads.
+func BoolPtr(v bool) *bool { return &v }

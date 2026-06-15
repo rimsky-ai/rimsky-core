@@ -301,8 +301,7 @@ func cascadeMessageSubscribersInTx(
 	if tmpl == nil {
 		return nil
 	}
-	subRefs := node.ExtractSubstitutionRefsFromTemplate(tmpl.Spec)
-	edges, err := node.BuildSubscriptionEdges(tmpl.Spec, subRefs)
+	edges, err := node.BuildSubscriptionEdges(tmpl.Spec)
 	if err != nil {
 		return fmt.Errorf("cascadeMessageSubscribersInTx: build edges: %w", err)
 	}
@@ -356,6 +355,26 @@ func cascadeMessageSubscribersInTx(
 				// a subscription pattern ending in `/self` matches only
 				// envelopes whose target equals the receiver's own alias.
 				if strings.HasSuffix(string(e.TypePattern), "/self") && msg.Target != r.NodeType {
+					continue
+				}
+				// @concept: cascade
+				// @constraint: wake-up effects (affirm + mark-stale +
+				// enqueue-frame) gate on wake_on_change. A subscription
+				// with wake_on_change: false skips the wake-up path here —
+				// the message is still routed via the signal-emit above
+				// for audit, but the receiver is not stale-marked or
+				// enqueued.
+				//
+				// @deliberate: message cascade has no wait-set surface (the
+				// receiver reads from the delivered message envelope itself,
+				// not from a sender node's attribute), so there is no wait-
+				// set insert to preserve outside this gate. The equivalent
+				// "still needs to read the sender's value" property for
+				// messages is automatic: the message row stays
+				// delivered_at/frame_id stamped and is readable via the
+				// receiver's substitution context whenever the receiver
+				// eventually dispatches via another edge.
+				if !e.WakeOnChange {
 					continue
 				}
 				// @deliberate: default to the instance's main RunScope
@@ -416,10 +435,9 @@ type coalesceConflictResolver func(msg persistence.MessageRow) (matchedReceiverT
 // buildCoalesceConflictResolver loads the per-template subscription edges
 // once and returns a resolver that maps a message to the receiver node
 // types it would invalidate. It reuses the exact match path
-// (`ExtractSubstitutionRefsFromTemplate` → `BuildSubscriptionEdges` →
-// `edges.Match` + CEL `when:` eval) that `cascadeMessageSubscribersInTx`
-// runs after delivery, so the conflict decision and the stale-mark agree
-// on which nodes a message touches.
+// (`BuildSubscriptionEdges` → `edges.Match` + CEL `when:` eval) that
+// `cascadeMessageSubscribersInTx` runs after delivery, so the conflict
+// decision and the stale-mark agree on which nodes a message touches.
 func buildCoalesceConflictResolver(
 	ctx context.Context, persist persistence.Tables, tx persistence.Tx, templateHash string,
 ) (coalesceConflictResolver, error) {
@@ -430,8 +448,7 @@ func buildCoalesceConflictResolver(
 	if tmpl == nil {
 		return nil, nil
 	}
-	subRefs := node.ExtractSubstitutionRefsFromTemplate(tmpl.Spec)
-	edges, err := node.BuildSubscriptionEdges(tmpl.Spec, subRefs)
+	edges, err := node.BuildSubscriptionEdges(tmpl.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("buildCoalesceConflictResolver: build edges: %w", err)
 	}

@@ -64,7 +64,7 @@ func TestValidateTemplate_Error_SubscribeToUnknownNode(t *testing.T) {
 			Type:     "a",
 			Executor: "handler.a",
 			Subscribes: []SubscriptionEntry{
-				{Node: "ghost", Type: "terminal/*"},
+				{Node: "ghost", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 			},
 		}},
 	}
@@ -168,7 +168,7 @@ func TestHoldingSubgraphsForTemplate_HeldChain(t *testing.T) {
 			},
 			{
 				Type:       "process",
-				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*"}},
+				Subscribes: []SubscriptionEntry{{Node: "pick", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}},
 				Holds: map[string]HoldsBinding{
 					"queue": {From: "pick"},
 				},
@@ -676,7 +676,7 @@ func TestValidateSubscribes_Ok(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "terminal/*"},
+					{Node: "a", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -694,7 +694,7 @@ func TestValidateSubscribes_MutexNodeAndInstance(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Instance: true, Type: "terminal/*"},
+					{Node: "a", Instance: true, Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -713,7 +713,7 @@ func TestValidateSubscribes_SelfWithFrameNextOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "drainer", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "drainer", Type: "terminal/success", When: "payload.changed", Frame: "next"},
+					{Node: "drainer", Type: "terminal/success", When: "payload.changed", Frame: "next", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -735,7 +735,7 @@ func TestValidateSubscribes_SelfWithFrameInOK(t *testing.T) {
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
 					// @deliberate: frame defaults to "in".
-					{Node: "loopy", Type: "terminal/success"},
+					{Node: "loopy", Type: "terminal/success", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -752,7 +752,7 @@ func TestValidateSubscribes_SelfWithFrameInExplicitOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "loopy", Type: "terminal/success", Frame: "in"},
+					{Node: "loopy", Type: "terminal/success", Frame: "in", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -770,7 +770,7 @@ func TestValidateSubscribes_RejectsBareEvent(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "event"},
+					{Node: "a", Type: "event", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -788,7 +788,7 @@ func TestValidateSubscribes_RejectsUnknownType(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "garbage/foo"},
+					{Node: "a", Type: "garbage/foo", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -805,13 +805,168 @@ func TestValidateSubscribes_RejectsMalformedCEL(t *testing.T) {
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "a", Type: "terminal/success", When: "payload.foo &&&"},
+					{Node: "a", Type: "terminal/success", When: "payload.foo &&&", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
 	require.False(t, res.Ok())
+}
+
+// TestValidateSubscribes_RejectsMissingWakeOnChange pins Pass 2 Task 12:
+// an entry without an explicit wake_on_change is rejected — no default
+// applies. Per decision:cascade-flags-required-no-defaults.
+func TestValidateSubscribes_RejectsMissingWakeOnChange(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					// @deliberate: wake_on_change deliberately nil;
+					// force_upstream_refresh set so only the missing flag
+					// fires.
+					{Node: "a", Type: "terminal/success", ForceUpstreamRefresh: BoolPtr(false)},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok(), "missing wake_on_change must be rejected")
+	found := false
+	for _, e := range res.Errors {
+		if strings.HasSuffix(e.Path, ".wake_on_change") && strings.Contains(e.Msg, "required") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected an error whose path ends in .wake_on_change with a required message; got %+v", res.Errors)
+}
+
+// TestValidateSubscribes_RejectsMissingForceUpstreamRefresh pins Pass 2
+// Task 12: an entry without an explicit force_upstream_refresh is
+// rejected — no default applies. Per
+// decision:cascade-flags-required-no-defaults.
+func TestValidateSubscribes_RejectsMissingForceUpstreamRefresh(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					// @deliberate: force_upstream_refresh deliberately nil;
+					// wake_on_change set so only the missing flag fires.
+					{Node: "a", Type: "terminal/success", WakeOnChange: BoolPtr(true)},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok(), "missing force_upstream_refresh must be rejected")
+	found := false
+	for _, e := range res.Errors {
+		if strings.HasSuffix(e.Path, ".force_upstream_refresh") && strings.Contains(e.Msg, "required") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected an error whose path ends in .force_upstream_refresh with a required message; got %+v", res.Errors)
+}
+
+// TestValidateSubscribes_RejectsCrossCuttingWithForceUpstreamRefresh
+// pins Pass 2 Task 12: instance: true + force_upstream_refresh: true is
+// rejected because a cross-cutting subscription names no specific
+// upstream to refresh. Per
+// decision:cross-cutting-no-force-upstream-refresh.
+func TestValidateSubscribes_RejectsCrossCuttingWithForceUpstreamRefresh(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Instance: true, Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(true)},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok(), "cross-cutting + force_upstream_refresh must be rejected")
+	found := false
+	for _, e := range res.Errors {
+		// @constraint: the message must mention both fields so the
+		// operator sees the pair-level incoherence in one rejection line.
+		if strings.Contains(e.Msg, "force_upstream_refresh") && strings.Contains(e.Msg, "instance") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected an error mentioning both force_upstream_refresh and instance; got %+v", res.Errors)
+}
+
+// TestValidateSubscribes_RejectsConflictingFlagsOnSameKey pins that two
+// subscription entries matching on (node, type, when, frame) but
+// declaring CONFLICTING cascade-shape flag values are rejected at
+// registration. Without this, the edge-builder's dedup would land the
+// first-declared flags in force and silently drop the second's,
+// contradicting the call-site-clarity guarantee in
+// decision:cascade-flags-required-no-defaults.
+func TestValidateSubscribes_RejectsConflictingFlagsOnSameKey(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", Type: "attribute/x/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					// @deliberate: same key — different ForceUpstreamRefresh value.
+					{Node: "a", Type: "attribute/x/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(true)},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	require.False(t, res.Ok(), "conflicting cascade-shape flag values on the same subscription key must be rejected")
+	found := false
+	for _, e := range res.Errors {
+		// @constraint: the message must name the conflicting indices and
+		// the flag values so the operator can find both entries from one
+		// rejection.
+		if strings.Contains(e.Msg, "conflicting cascade-shape flags") &&
+			strings.HasSuffix(e.Path, ".subscribes[1]") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected a conflicting-cascade-shape-flags error on subscribes[1]; got %+v", res.Errors)
+}
+
+// TestValidateSubscribes_AllowsExactDuplicateFlags pins that two
+// content-equal subscription entries (same key AND same flag values)
+// are NOT rejected by the conflict-detection check — exact duplicates
+// collapse harmlessly at the edge-builder's containsEdge dedup. Only
+// flag-disagreement is the operator-visible footgun.
+func TestValidateSubscribes_AllowsExactDuplicateFlags(t *testing.T) {
+	spec := &TemplateSpec{
+		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Nodes: []TemplateNodeDef{
+			{Type: "a", Executor: "h"},
+			{Type: "b", Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					{Node: "a", Type: "attribute/x/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					// @deliberate: exact duplicate — no flag conflict.
+					{Node: "a", Type: "attribute/x/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+				},
+			},
+		},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{})
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "conflicting cascade-shape flags") {
+			t.Fatalf("exact-duplicate entries must not trigger the conflict check; got %+v", res.Errors)
+		}
+	}
 }
 
 func TestValidateMaxParkDuration_Ok(t *testing.T) {
@@ -1019,6 +1174,13 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 				{
 					Type:     "verify",
 					Executor: "h",
+					Subscribes: []SubscriptionEntry{
+						// @deliberate: covering subscription for the
+						// bare-form whole-pull; the wildcard is required
+						// (per the coverage asymmetry rule, no per-field
+						// entry covers a whole-pull).
+						{Node: "stage", Type: "attribute/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -1098,6 +1260,11 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 				{
 					Type:     "receive",
 					Executor: "h",
+					Subscribes: []SubscriptionEntry{
+						// @deliberate: covering subscription for the
+						// bare-form event pull.
+						{Node: "emit", Type: "event/progress", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -1161,6 +1328,11 @@ func TestValidator_FallbackOperator_Valid(t *testing.T) {
 			{
 				Type:     "verify",
 				Executor: "h",
+				Subscribes: []SubscriptionEntry{
+					// @deliberate: covering subscription for the per-field
+					// attribute pull.
+					{Node: "stage", Type: "attribute/out/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+				},
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1175,7 +1347,7 @@ func TestValidator_FallbackOperator_Valid(t *testing.T) {
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	if !res.Ok() {
-		t.Fatalf("expected ok, got errors: %+v", res.Errors)
+		t.Fatalf("expected ok, got errors: %+v structured: %+v", res.Errors, res.StructuredErrors)
 	}
 }
 
@@ -1278,6 +1450,11 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				},
 				{
 					Type: "generate", Executor: "h",
+					Subscribes: []SubscriptionEntry{
+						// @deliberate: covering subscription for the
+						// per-field attribute pull.
+						{Node: "verify", Type: "attribute/warnings_block/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -1314,6 +1491,11 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 				},
 				{
 					Type: "generate", Executor: "h",
+					Subscribes: []SubscriptionEntry{
+						// @deliberate: covering subscription for the
+						// per-field attribute pull.
+						{Node: "verify", Type: "attribute/warnings_block/changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{

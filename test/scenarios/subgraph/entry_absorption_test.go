@@ -48,9 +48,9 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "validate", Executor: "validator"},
 					{Type: "transform", Executor: "transformer",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 					{Type: "promote", Executor: "promoter",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},
 		},
@@ -111,9 +111,9 @@ func TestEntryAbsorption_ExitNodeIdentified(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
 					{Type: "transform", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "validate", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 					{Type: "promote", Executor: "stub",
-						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
+						Subscribes: []tmplspec.SubscriptionEntry{{Node: "transform", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 				},
 			},
 		},

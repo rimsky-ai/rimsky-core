@@ -220,7 +220,7 @@ func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 					// @deliberate: orphan has no subscriptions and is
 					// unreachable.
 					{Type: "orphan"},
-					{Type: "z", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*"}}},
+					{Type: "z", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 		},
@@ -246,8 +246,8 @@ func TestCanonicalizeGraphs_ReachabilityHappyPath(t *testing.T) {
 				Exit:  "c",
 				Nodes: []TemplateNodeDef{
 					{Type: "a"},
-					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*"}}},
-					{Type: "c", Subscribes: []SubscriptionEntry{{Node: "b", Type: "terminal/*"}}},
+					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
+					{Type: "c", Subscribes: []SubscriptionEntry{{Node: "b", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 		},
@@ -280,7 +280,7 @@ func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 				Exit:  "g1x",
 				Nodes: []TemplateNodeDef{
 					{Type: "g1n", Delegate: "g2"},
-					{Type: "g1x", Subscribes: []SubscriptionEntry{{Node: "g1n", Type: "terminal/*"}}},
+					{Type: "g1x", Subscribes: []SubscriptionEntry{{Node: "g1n", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 			{
@@ -290,7 +290,7 @@ func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 				Nodes: []TemplateNodeDef{
 					// @deliberate: closes the g1 -> g2 -> g1 cycle.
 					{Type: "g2n", Delegate: "g1"},
-					{Type: "g2x", Subscribes: []SubscriptionEntry{{Node: "g2n", Type: "terminal/*"}}},
+					{Type: "g2x", Subscribes: []SubscriptionEntry{{Node: "g2n", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 		},
@@ -321,7 +321,7 @@ func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
 				Exit:  "b",
 				Nodes: []TemplateNodeDef{
 					{Type: "a"},
-					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "outer", Type: "terminal/*"}}},
+					{Type: "b", Subscribes: []SubscriptionEntry{{Node: "outer", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 		},
@@ -347,7 +347,7 @@ func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 				// node.
 				Entry: "shared",
 				Exit:  "b",
-				Nodes: []TemplateNodeDef{{Type: "shared"}, {Type: "b", Subscribes: []SubscriptionEntry{{Node: "shared", Type: "terminal/*"}}}},
+				Nodes: []TemplateNodeDef{{Type: "shared"}, {Type: "b", Subscribes: []SubscriptionEntry{{Node: "shared", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}}},
 			},
 		},
 	}
@@ -380,7 +380,7 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 				Exit:  "promote",
 				Nodes: []TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
-					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 		},
@@ -429,7 +429,7 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
 				Exit:  "promote",
 				Nodes: []TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
-					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 		},
@@ -470,11 +470,11 @@ func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
 		FrameResolutionMode: FrameResolutionCoalesce,
 		Nodes: []TemplateNodeDef{
 			{Type: "alpha", Executor: "stub"},
-			{Type: "beta", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "alpha", Type: "terminal/*"}}},
-			// @deliberate: A node literally named "exit" — the marker is keyed on
+			{Type: "beta", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "alpha", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
+			// @deliberate: A node literally named "exit" — the marker
 			// is keyed on `graphs[i].Exit`, not on the type name, so
 			// even this node must stay unmarked under flat shape.
-			{Type: "exit", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "beta", Type: "terminal/*"}}},
+			{Type: "exit", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "beta", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 		},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{})
@@ -509,8 +509,8 @@ func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 				Exit:  "promote",
 				Nodes: []TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
-					{Type: "transform", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
-					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
+					{Type: "transform", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "transform", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 		},
@@ -568,7 +568,7 @@ func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t
 				Exit:  "promote",
 				Nodes: []TemplateNodeDef{
 					{Type: "validate"},
-					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
+					{Type: "promote", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "validate", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
 				},
 			},
 		},

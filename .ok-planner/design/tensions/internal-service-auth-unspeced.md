@@ -26,4 +26,4 @@ Production deployments may want mTLS or service-tokens between rimsky processes.
 
 ## Evidence
 
-- This spec: `.ok-planner/specs/2026-05-24-host-agent-and-proxy-design.md` §"Multi-process behavior" and §"Cache freshness".
+- No internal-auth surface is declared on `concept:supervisor`, `concept:control-api`, or `concept:host-agent-proxy`; the cross-process call paths rely on deployment-level network isolation.

@@ -391,9 +391,11 @@ func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 					"type": cronReactorNode,
 					"subscribes": []map[string]any{
 						{
-							"instance": true,
-							"type":     "message/invalidate/publisher/" + cronReactorNode,
-							"frame":    "in",
+							"instance":               true,
+							"type":                   "message/invalidate/publisher/" + cronReactorNode,
+							"frame":                  "in",
+							"wake_on_change":         true,
+							"force_upstream_refresh": false,
 						},
 					},
 				},

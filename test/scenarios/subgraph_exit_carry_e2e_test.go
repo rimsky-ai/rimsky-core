@@ -75,7 +75,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 					),
 					scenario.MakeNode(
 						node.TemplateNodeDef{Type: "inner-exit", Executor: "stub",
-							Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", Type: "terminal/*"}},
+							Subscribes: []tmplspec.SubscriptionEntry{{Node: "inner-entry", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}},
 						},
 						openAttrs,
 					),

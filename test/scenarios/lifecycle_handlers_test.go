@@ -63,7 +63,7 @@ func TestAlwaysPropagateResolution_NewShape(t *testing.T) {
 				// @deliberate: No `when:` → fire on every terminal/success, regardless
 				// of payload.changed. This replaces the pre-reshape
 				// `on_executor_complete: { resolve: always_propagate }`.
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-always", map[string]any{})
@@ -131,9 +131,11 @@ func TestNeverPropagateResolution_NewShape(t *testing.T) {
 				Type:     "b",
 				Executor: "stub",
 			}, scenario.WithSubscribes(node.SubscriptionEntry{
-				Node: "a",
-				Type: "terminal/success",
-				When: "payload.changed",
+				Node:                 "a",
+				Type:                 "terminal/success",
+				When:                 "payload.changed",
+				WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+				ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 			})),
 		},
 	})
@@ -185,6 +187,8 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 				Executor: "stub",
 			}, scenario.WithSubscribes(node.SubscriptionEntry{
 				Node: "a", Type: "terminal/*", When: "payload.changed",
+				WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+				ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 			})),
 		},
 	})
@@ -255,7 +259,7 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "b",
 				Executor: "stub",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-fail-freeze", map[string]any{})
@@ -403,10 +407,14 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "a", Type: "terminal/*", When: "payload.changed",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				})),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "b", Type: "terminal/*", When: "payload.changed",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				})),
 		},
 	})
@@ -528,7 +536,7 @@ func TestPureCascadeOutcomeColumn(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "p",
-			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*"})),
+			}, scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)})),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-pure-cascade", map[string]any{})

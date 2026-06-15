@@ -16,7 +16,7 @@ Used at template-registration time to give services a say in whether a node's at
 
 ## Boundaries
 
-Owns: the validate RPC surface, the role discriminator + per-role context types, the registration-time pipeline integration (run after the static `expected_attributes_schema` JSON-Schema check against the merged effective schema). Does NOT own: the per-service domain logic (lives in each service's implementation), runtime per-call validation (registration-only V1). Adjacent: `concept:executor`, `concept:claim-producer`, `concept:lifecycle-subscriber`, `concept:sensor`, `concept:template`.
+Owns: the validate RPC surface, the role discriminator + per-role context types, the registration-time pipeline integration (run after the static `expected_attributes_schema` JSON-Schema check against the merged effective schema). Does NOT own: the per-service domain logic (lives in each service's implementation), runtime per-call validation (validation runs only at registration). Adjacent: `concept:executor`, `concept:claim-producer`, `concept:lifecycle-subscriber`, `concept:sensor`, `concept:template`.
 
 ## Invariants
 

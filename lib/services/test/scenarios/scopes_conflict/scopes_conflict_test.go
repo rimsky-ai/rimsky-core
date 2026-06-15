@@ -123,7 +123,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 						"held": map[string]any{"from": "acquirer"},
 					},
 					"subscribes": []map[string]any{
-						{"node": "acquirer", "type": "terminal/*"},
+						{"node": "acquirer", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false},
 					},
 				},
 				// @deliberate: contender acquires the CHILD scope `tenant/a/x`
@@ -141,7 +141,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 						},
 					},
 					"subscribes": []map[string]any{
-						{"node": "verifier", "type": "terminal/*"},
+						{"node": "verifier", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false},
 					},
 				},
 			},

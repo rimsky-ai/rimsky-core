@@ -171,7 +171,7 @@ func validTemplateBody(name string) map[string]any {
 			"frame_resolution_mode": "serial_queue",
 			"nodes": []map[string]any{
 				{"type": "root", "executor": "worker"},
-				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*"}}},
+				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}}},
 			},
 		},
 	}
@@ -220,7 +220,7 @@ func templateWithStoresAndLocks(name string) map[string]any {
 				{
 					"type":       "review",
 					"executor":   "worker",
-					"subscribes": []map[string]any{{"node": "claim-topic", "type": "terminal/*"}},
+					"subscribes": []map[string]any{{"node": "claim-topic", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}},
 					"stores": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "r"},
 					},

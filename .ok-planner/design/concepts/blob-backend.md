@@ -22,5 +22,5 @@ Owns: the abstraction, the four impls, the spill threshold, the orphan-blob ledg
 
 - Blob content is inert in rimsky (`@blessed-invariant 21`). It is read only at the substitution path-walk leaf and at the persistence-layer fetch on read.
 - The in-memory backend is legal only in the single-process deployment mode — all roles running in one process, where one in-process map is genuinely shared, cross-role blob reads work, and the orphan-blob sweep reaps spilled blobs. It is startup-rejected in any per-role process, because separate processes cannot share an in-process map.
-- Handles are self-describing strings carrying a backend prefix (inline, Postgres large-object, filesystem, in-memory); current single-backend-per-process means cross-prefix reads fail.
+- Handles are self-describing strings carrying a backend prefix (inline, Postgres large-object, filesystem, in-memory); the single-backend-per-process configuration means cross-prefix reads fail.
 - Orphan blobs go to a persisted orphan-blob ledger and are swept after a retention window.

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Both Postgres and SQLite, selected by `persistence.driver` config.
+Both Postgres and SQLite, selected by a driver-selector field in the unified config.
 
 ## Rationale
 

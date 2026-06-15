@@ -154,10 +154,14 @@ func TestLineageExploration(t *testing.T) {
 	//     child carries `parent_run_id = <producer-parent.run_id>` so the
 	//     descendant walker can find them via `record->>'parent_run_id'`.
 	//   - `consumer` consumes `{{nodes.producer.attribute.ok}}` via the
-	//     substitution layer, which (a) auto-subscribes consumer to
-	//     producer's `attribute` topic for cascade plumbing, and (b)
-	//     causes the lineage writer's `CollectSubstitutionRefsForEmit`
-	//     to populate consumer's `substitution_refs` with a
+	//     substitution layer, which (a) requires an explicit
+	//     `subscribes:` entry on consumer naming producer's `attribute`
+	//     topic for cascade plumbing — the registration-time coverage
+	//     check in the 2026-06-14 explicit-substitution-cascade spec
+	//     rejects substitution refs without a matching subscription —
+	//     and (b) causes the lineage writer's
+	//     `CollectSubstitutionRefsForEmit` to populate consumer's
+	//     `substitution_refs` with a
 	//     `source_kind="run", source_version_or_id=<producer-run-id>`
 	//     entry — the ancestor walker's link material.
 	const claimAlias = "data"
@@ -197,7 +201,9 @@ func TestLineageExploration(t *testing.T) {
 				// substitution_refs population path (`CollectSubstitutionRefsForEmit`)
 				// fires at consumer-terminal-emit time.
 				scenario.WithSubscribes(
-					tmplspec.SubscriptionEntry{Node: "producer", Type: "terminal/*"},
+					tmplspec.SubscriptionEntry{Node: "producer", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
+					// Cover the {{nodes.producer.attribute.ok}} read.
+					tmplspec.SubscriptionEntry{Node: "producer", Type: "attribute/ok/changed", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",

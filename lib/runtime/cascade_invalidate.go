@@ -19,6 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
+	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
 // invalidationCascadeSignal is the synthetic signal cascade-from-
@@ -204,21 +205,104 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 // relies on the receiver-side cascade-on-fresh_changed chain rather
 // than seeding the queued frame eagerly.
 //
+// Upstream-refresh pull (force_upstream_refresh: true): the target's
+// declared upstream-refresh upstreams are appended to the SAME queued
+// frame as additional sources via AppendSourceToQueuedFrame. When the
+// frame opens, the frame engine stale-marks every source; the
+// upstream-refresh pre-staging sweep
+// (runtime.SweepUpstreamRefreshForRunningFrames) then walks
+// walkCascadeForInvalidatedNode for the receiver to install wait-set
+// rows gating the receiver on its upstream-refresh upstreams' pending
+// runs. Without the same-frame placement, the upstream's value can't
+// reach the receiver's substitution context (BuildAttributeDeps reads
+// only same-frame wait-set rows); without the pre-stage sweep, the
+// receiver can dispatch before the upstream settles and reads stale
+// data.
+//
 //	@concept: cascade
 //	@concept: wait-set
+//	@story: upstream-pull-on-invalidate
 func invalidateNextFrame(ctx context.Context, args InvalidateArgs, target *persistence.NodeRow, log shared.Logger) error {
+	// Resolve target's upstream-refresh upstream node ids OUTSIDE the
+	// enqueue tx so the resolve's own tx doesn't deadlock with ours.
+	upstreamNodeIDs, err := resolveUpstreamRefreshNodeIDsForTarget(ctx, args.Persist, target)
+	if err != nil {
+		log.Warn("InvalidateNode: resolve upstream-refresh upstreams failed",
+			"target_node_id", target.ID.String(), "error", err.Error())
+		// Continue — failing the pull resolve must not block the
+		// target's own invalidate.
+	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		fid, err := frame.EnqueueOrCoalesce(ctx, args.Persist, tx, target.InstanceID, target.ID)
 		if err != nil {
 			return err
 		}
+		for _, upstreamID := range upstreamNodeIDs {
+			if upstreamID == target.ID {
+				continue
+			}
+			if err := args.Persist.Frames().AppendSourceToQueuedFrame(ctx, fid, upstreamID, tx); err != nil {
+				return fmt.Errorf("InvalidateNode: append upstream-refresh source %s to frame %s: %w",
+					upstreamID, fid, err)
+			}
+		}
 		log.Debug("InvalidateNode: frame enqueued/coalesced",
 			"frame_id", fid.String(),
 			"instance_id", target.InstanceID.String(),
 			"target_node_id", target.ID.String(),
+			"upstream_refresh_sources", len(upstreamNodeIDs),
 			"reason", args.Reason)
 		return nil
 	})
+}
+
+// resolveUpstreamRefreshNodeIDsForTarget loads the per-template
+// upstream-refresh edge map and returns the per-instance node ids of
+// every upstream the target's node-type declares with
+// `force_upstream_refresh: true`. Empty result when the template has
+// no upstream-refresh edges, when no upstream-refresh upstreams are
+// declared for this node-type, or when the instance / template cannot
+// be loaded.
+func resolveUpstreamRefreshNodeIDsForTarget(
+	ctx context.Context, sb persistence.Tables, target *persistence.NodeRow,
+) ([]shared.UUID, error) {
+	var out []shared.UUID
+	err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		inst, err := sb.Instances().Get(ctx, target.InstanceID, tx)
+		if err != nil || inst == nil {
+			return err
+		}
+		args := RunArgs{Persist: sb}
+		refreshEdges, err := hardDepEdgesForTemplate(ctx, args, inst.TemplateHash, tx)
+		if err != nil {
+			return err
+		}
+		upstreamTypes := refreshEdges[target.NodeType]
+		if len(upstreamTypes) == 0 {
+			return nil
+		}
+		want := make(map[string]struct{}, len(upstreamTypes))
+		for _, t := range upstreamTypes {
+			want[t] = struct{}{}
+		}
+		instNodes, err := sb.Nodes().ListByInstance(ctx, target.InstanceID, tx)
+		if err != nil {
+			return err
+		}
+		idByType := make(map[string]shared.UUID, len(upstreamTypes))
+		for _, n := range instNodes {
+			if _, ok := want[n.NodeType]; ok {
+				idByType[n.NodeType] = n.ID
+			}
+		}
+		for _, t := range upstreamTypes {
+			if id, ok := idByType[t]; ok {
+				out = append(out, id)
+			}
+		}
+		return nil
+	})
+	return out, err
 }
 
 // invalidateInFrame is the frame: in path. Bypasses
@@ -338,11 +422,140 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 	})
 }
 
+// SweepUpstreamRefreshForRunningFrames is the post-frame-open sweep
+// that complements invalidateNextFrame's same-frame upstream-refresh
+// source placement. For each running frame, the sweep walks each
+// source node and — if the source's node-type has
+// `force_upstream_refresh: true` upstreams declared — calls
+// walkCascadeForInvalidatedNode to install wait-set rows gating the
+// receiver on its upstream-refresh upstreams' in-flight runs.
+//
+// Without this sweep, the multi-source frame opened by
+// invalidateNextFrame would race: both the receiver and the upstreams
+// are stale-marked at frame open, but no wait-set rows exist yet, so
+// ListReadyForDispatch can pick up the receiver before the upstream
+// settles. With the sweep, the wait-set row pins the receiver's
+// dispatch to after its upstream's settlement, satisfying
+// story:upstream-pull-on-invalidate's "context contains the freshest
+// value" acceptance.
+//
+// Idempotent: walkCascadeForInvalidatedNode's affirms / wait-set
+// inserts are all idempotent against existing rows; a re-fire of this
+// sweep on the same running frame is a no-op.
+//
+//	@concept: cascade
+//	@concept: wait-set
+//	@story: upstream-pull-on-invalidate
+func SweepUpstreamRefreshForRunningFrames(
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue, logger shared.Logger,
+) error {
+	if persist == nil {
+		return nil
+	}
+	if logger == nil {
+		logger = shared.SilentLogger{}
+	}
+	var frames []persistence.FrameRunningSources
+	if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		rows, err := persist.Frames().ListRunningFramesWithSources(ctx, tx)
+		frames = rows
+		return err
+	}); err != nil {
+		return fmt.Errorf("SweepUpstreamRefreshForRunningFrames: list: %w", err)
+	}
+	for _, f := range frames {
+		// A frame with only one source has nothing to pre-stage — the
+		// standard cascade chain covers single-source frames.
+		if len(f.SourceNodeIDs) < 2 {
+			continue
+		}
+		if err := preStageFrame(ctx, persist, queue, logger, f); err != nil {
+			logger.Warn("SweepUpstreamRefreshForRunningFrames: pre-stage failed",
+				"frame_id", f.FrameID.String(),
+				"instance_id", f.InstanceID.String(),
+				"error", err.Error())
+			continue
+		}
+	}
+	return nil
+}
+
+// preStageFrame walks one running frame's sources and, for each source
+// that has upstream-refresh edges declared in this template, fires
+// walkCascadeForInvalidatedNode in a fresh tx to install the wait-set
+// rows. Bails on the first source that has nothing to pre-stage; the
+// idempotent affirms / inserts inside walkCascadeForInvalidatedNode
+// make a re-fire harmless if this sweep races with an in-progress
+// dispatch.
+func preStageFrame(
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue, logger shared.Logger,
+	f persistence.FrameRunningSources,
+) error {
+	inst, err := loadInstanceForPreStage(ctx, persist, f.InstanceID)
+	if err != nil || inst == nil {
+		return err
+	}
+	hardDepArgs := RunArgs{Persist: persist}
+	var refreshEdges node.HardDepEdgeMap
+	if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		edges, err := hardDepEdgesForTemplate(ctx, hardDepArgs, inst.TemplateHash, tx)
+		refreshEdges = edges
+		return err
+	}); err != nil {
+		return err
+	}
+	if len(refreshEdges) == 0 {
+		return nil
+	}
+	for _, sourceID := range f.SourceNodeIDs {
+		if err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			src, err := persist.Nodes().Get(ctx, sourceID, tx)
+			if err != nil || src == nil {
+				return err
+			}
+			if len(refreshEdges[src.NodeType]) == 0 {
+				return nil
+			}
+			return walkCascadeForInvalidatedNode(ctx, persist, queue, tx,
+				logger, sourceID, f.InstanceID, f.FrameID)
+		}); err != nil {
+			return fmt.Errorf("pre-stage source %s: %w", sourceID, err)
+		}
+	}
+	return nil
+}
+
+// loadInstanceForPreStage reads the instance row in its own tx so the
+// per-source pre-stage tx is short and isolated.
+func loadInstanceForPreStage(
+	ctx context.Context, persist persistence.Tables, instanceID shared.UUID,
+) (*persistence.InstanceRow, error) {
+	var inst *persistence.InstanceRow
+	err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		i, err := persist.Instances().Get(ctx, instanceID, tx)
+		inst = i
+		return err
+	})
+	return inst, err
+}
+
 // walkCascadeForInvalidatedNode invokes the runtime cascade walk for a
 // node that just transitioned from a settled state into stale/running.
 // Loads the node's type via a tx-bound read (the persistence-side
 // MarkStaleForCascade does not return the type) then drives the BFS
 // walk over the subscription edge map.
+//
+// Before the downstream walk, the invalidated node's OWN
+// `force_upstream_refresh: true` upstreams are pulled into the same
+// frame via pullForceRefreshUpstreams — so an admin invalidate against
+// A (or any other direct-invalidate path that lands here) drags A's
+// declared upstream-refresh sources into the frame, matching the
+// story:upstream-pull-on-invalidate acceptance ("when A is invalidated
+// and X has not been independently invalidated, A's substitution
+// context at dispatch contains X's freshest value"). Without this, the
+// upstream-refresh pull would fire only when A is reached as a receiver
+// of some OTHER sender's cascade walk — direct invalidation against A
+// would leave X stale and A would dispatch with the prior value.
 //
 // Placed in cascade_invalidate.go so the cascade-on-invalidation entry
 // points can call it without depending on runtime/runner_terminal.go's
@@ -353,6 +566,7 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 //
 //	@concept: cascade
 //	@concept: wait-set
+//	@story: upstream-pull-on-invalidate
 func walkCascadeForInvalidatedNode(
 	ctx context.Context, sb persistence.Tables, queue persistence.Queue, tx persistence.Tx,
 	logger shared.Logger,
@@ -381,6 +595,41 @@ func walkCascadeForInvalidatedNode(
 	if !ok {
 		return nil
 	}
+	// Pull the just-invalidated node's own force_upstream_refresh
+	// upstreams into the frame before the downstream walk. This is the
+	// honest implementation of story:upstream-pull-on-invalidate — the
+	// invalidate path is the only direct entry point for "A is
+	// invalidated"; without this site the upstream-refresh edges A
+	// declared would fire only when A is reached as a receiver of some
+	// OTHER sender's cascade walk. We load the instance once to resolve
+	// the template hash and the instance's node-by-type index, then
+	// invoke pullForceRefreshUpstreams in this same tx. Errors propagate
+	// — pulling A's upstreams is part of the invalidate's contract, not
+	// a best-effort hint. The pull uses its own fresh `visited` set
+	// because the downstream BFS in cascadeSubscribersStaleInTx below
+	// owns a separate one rooted at A.
+	inst, err := sb.Instances().Get(ctx, instanceID, tx)
+	if err != nil {
+		return fmt.Errorf("walkCascadeForInvalidatedNode: get instance: %w", err)
+	}
+	if inst != nil {
+		instNodes, err := sb.Nodes().ListByInstance(ctx, instanceID, tx)
+		if err != nil {
+			return fmt.Errorf("walkCascadeForInvalidatedNode: list instance nodes: %w", err)
+		}
+		byType := make(map[string][]persistence.NodeRow, len(instNodes))
+		for _, in := range instNodes {
+			byType[in.NodeType] = append(byType[in.NodeType], in)
+		}
+		visited := map[shared.UUID]struct{}{senderNodeID: {}}
+		if err := pullForceRefreshUpstreams(
+			ctx, args, tx, *n, byType,
+			senderRunID, *n.RunScopeID, frameID,
+			inst.TemplateHash, visited,
+		); err != nil {
+			return err
+		}
+	}
 	return cascadeSubscribersStaleInTx(ctx, args, tx,
 		senderNodeID, n.NodeType, senderRunID, instanceID, frameID,
 		invalidationCascadeSignal)
@@ -405,9 +654,10 @@ func resolveInFlightRunForTarget(
 
 // stalemarkAndEnqueueInFrame stale-marks `target` in `frameID` inside
 // the caller-owned tx, emits a `state_transition` audit event with
-// reason `hard_dep_pull` (only when the stale-mark actually inserted a
-// new run row), then recursively walks the cascade so the just-stale
-// upstream's own subscribers (within this frame) are gated on it too.
+// reason `upstream_refresh_pull` (only when the stale-mark actually
+// inserted a new run row), then recursively walks the cascade so the
+// just-stale upstream's own subscribers (within this frame) are gated
+// on it too.
 //
 // Canonical in-tx sequence mirrors invalidateInFrame (#212-#268), but
 // accepts a pre-existing tx rather than opening its own — the hard-dep
@@ -453,7 +703,7 @@ func stalemarkAndEnqueueInFrame(
 		Payload: map[string]any{
 			"from":     "fresh",
 			"to":       "stale",
-			"reason":   "hard_dep_pull",
+			"reason":   "upstream_refresh_pull",
 			"frame_id": frameID.String(),
 		},
 	}, tx); err != nil {

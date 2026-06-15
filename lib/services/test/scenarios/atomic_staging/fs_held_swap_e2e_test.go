@@ -190,7 +190,7 @@ func deployHeldSwapTemplate(t *testing.T, ep harness.RimskyEndpoint, name, selec
 			"held": map[string]any{"from": "acquirer"},
 		},
 		"subscribes": []map[string]any{
-			{"node": "acquirer", "type": "terminal/*"},
+			{"node": "acquirer", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false},
 		},
 	}
 	if verifierExecutor == "err" {

@@ -65,9 +65,9 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 				Nodes: []node.TemplateNodeDef{
 					{Type: "validate", Executor: "stub"},
 					{Type: "transform", Executor: "stub",
-						Subscribes: []spec.SubscriptionEntry{{Node: "validate", Type: "terminal/*"}}},
+						Subscribes: []spec.SubscriptionEntry{{Node: "validate", Type: "terminal/*", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)}}},
 					{Type: "promote", Executor: "stub",
-						Subscribes: []spec.SubscriptionEntry{{Node: "transform", Type: "terminal/*"}}},
+						Subscribes: []spec.SubscriptionEntry{{Node: "transform", Type: "terminal/*", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)}}},
 				},
 			},
 		},

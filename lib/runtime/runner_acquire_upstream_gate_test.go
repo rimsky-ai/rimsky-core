@@ -217,11 +217,11 @@ func (fx gateFixture) lowestNodeType(members ...string) string {
 func threeCycleNodes() []tmplspec.TemplateNodeDef {
 	return []tmplspec.TemplateNodeDef{
 		{Type: "alpha", Executor: "stub",
-			Subscribes: []tmplspec.SubscriptionEntry{{Node: "beta", Type: "terminal/*"}}},
+			Subscribes: []tmplspec.SubscriptionEntry{{Node: "beta", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 		{Type: "beta", Executor: "stub",
-			Subscribes: []tmplspec.SubscriptionEntry{{Node: "gamma", Type: "terminal/*"}}},
+			Subscribes: []tmplspec.SubscriptionEntry{{Node: "gamma", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 		{Type: "gamma", Executor: "stub",
-			Subscribes: []tmplspec.SubscriptionEntry{{Node: "alpha", Type: "terminal/*"}}},
+			Subscribes: []tmplspec.SubscriptionEntry{{Node: "alpha", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)}}},
 	}
 }
 
@@ -353,7 +353,7 @@ func TestUpstreamGate_PendingSenderOutsideCycleStillGates(t *testing.T) {
 	// lowest in its pending cycle.
 	nodes := threeCycleNodes()
 	nodes[0].Subscribes = append(nodes[0].Subscribes,
-		tmplspec.SubscriptionEntry{Node: "delta", Type: "terminal/*"})
+		tmplspec.SubscriptionEntry{Node: "delta", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)})
 	nodes = append(nodes, tmplspec.TemplateNodeDef{Type: "delta", Executor: "stub"})
 	fx := makeGateFixture(t, nodes)
 

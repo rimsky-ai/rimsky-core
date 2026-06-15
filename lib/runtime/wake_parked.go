@@ -177,10 +177,10 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 // (rather than waiting for a separate next-frame open).
 //
 // Used by `cascadeSubscribersStaleInTx` when the cascade walk visits a
-// parked receiver, and by `pullHardDepUpstreams` when a hard-dep
-// upstream is parked. The parent caller (the cascade walk) then inserts
-// the wait-set row that gates the newly-stale receiver on the
-// invalidating sender.
+// parked receiver, and by `pullForceRefreshUpstreams` when an
+// upstream-refresh upstream is parked. The parent caller (the cascade
+// walk) then inserts the wait-set row that gates the newly-stale
+// receiver on the invalidating sender.
 //
 // Frame stamp: After `ResumeParkedInTx` transitions the run row from
 // `parked` to `pending`, an in-flight run row exists for this node,

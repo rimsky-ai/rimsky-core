@@ -698,12 +698,12 @@ func cascadeSubscribersStaleInTxWithVisited(
 		runID    foundationshared.UUID
 	}
 	cur := walkItem{nodeID: senderID, nodeType: senderNodeType, runID: senderRunID}
-	// @deliberate: `visited` is retained for the hard-dep walk's cycle guard. Under
-	// the 2026-05-23 signal-taxonomy reshape the BFS-recursion over
-	// subscription edges is gone — each receiver's own terminal fires
-	// its own cascadeSubscribersStaleInTx — but the hard-dep walk
-	// still recurses synchronously and needs the visited set to bound
-	// pathological soft+hard topologies.
+	// @deliberate: `visited` is retained for the upstream-refresh walk's cycle
+	// guard. Under the 2026-05-23 signal-taxonomy reshape the BFS-
+	// recursion over subscription edges is gone — each receiver's own
+	// terminal fires its own cascadeSubscribersStaleInTx — but the
+	// upstream-refresh walk still recurses synchronously and needs the
+	// visited set to bound pathological soft+force-refresh topologies.
 	visited := map[foundationshared.UUID]struct{}{senderID: {}}
 	{
 		for _, edge := range candidateEdges {
@@ -721,6 +721,19 @@ func cascadeSubscribersStaleInTxWithVisited(
 			for _, r := range receivers {
 				switch edge.Frame {
 				case node.FrameNext:
+					// @deliberate: FrameNext's wake-up effect (enqueue the
+					// next frame, wake parked receiver) is gated on
+					// wake_on_change. When false, the matching
+					// emission does not fire the receiver — and for
+					// frame:next there is no wait-set row to insert at
+					// the current sender's frame either (by the time
+					// the new frame opens, the sender has settled), so
+					// wake_on_change: false on a frame:next edge is a
+					// no-op at this site. See decision:wake-on-change-
+					// wait-set-only.
+					if !edge.WakeOnChange {
+						continue
+					}
 					// @deliberate: open a new frame for the receiver's instance.
 					// Per spec Piece 1 "frame: next wait-set
 					// placement," frame:next subscriptions fire the
@@ -845,7 +858,44 @@ func cascadeSubscribersStaleInTxWithVisited(
 					// receiver is never re-gated on a late-settling
 					// upstream in the same frame.
 					skipAffirm := false
-					if _, seen := visitedReceivers[r.ID]; seen {
+					// @deliberate: wake_on_change: false skips the affirm-and-mark-
+					// stale path. The wait-set insert below still runs
+					// against an existing in-flight row (if any) so
+					// the receiver's substitution context picks up the
+					// sender's data when the receiver eventually
+					// dispatches via some other edge. If no in-flight
+					// row exists for the receiver, the skipAffirm
+					// branch below `continue`s past the wait-set
+					// insert (no receiver to gate).
+					//
+					// Ordering caveat: the wait-set row lands only when
+					// the receiver already has an in-flight row in the
+					// sender's RunScope at the time of the sender's
+					// settle. If the sender settles before the receiver
+					// has been pulled into the frame by any other edge,
+					// no wait-set row is recorded for this (sender,
+					// receiver) pair. When the receiver later wakes via
+					// another subscription, its substitution ref for
+					// the sender resolves to ErrMissingSource and the
+					// existing fallback / lenient / optional routing
+					// governs the dispatch outcome (see
+					// decision:substitution-grammar-fallback-unchanged).
+					// Authors who require deterministic carry-through
+					// regardless of intra-frame ordering use
+					// force_upstream_refresh: true on the receiving
+					// subscription instead.
+					//
+					// Do NOT mark the receiver as visited when
+					// wake_on_change: false — a later wake_on_change:
+					// true edge in the same terminal must still be
+					// able to consume the affirm-once slot and wake
+					// the receiver. The visited set is the affirm-
+					// once guard, not a "any matching edge" guard.
+					//
+					//	@decision: wake-on-change-wait-set-only
+					if !edge.WakeOnChange {
+						skipAffirm = true
+					} else if _, seen := visitedReceivers[r.ID]; seen {
 						skipAffirm = true
 					} else {
 						visitedReceivers[r.ID] = struct{}{}
@@ -943,22 +993,22 @@ func cascadeSubscribersStaleInTxWithVisited(
 					}, tx); err != nil {
 						return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
 					}
-					// @deliberate: hard-dep pull — for each hard_dep attribute read the
-					// receiver declares, ensure the upstream has an
-					// in-flight run in this frame and a wait-set blocker
-					// on the receiver. The outer BFS's `visited` set is
-					// threaded down so the hard-dep walk skips upstreams
-					// already covered by the subscription BFS — pathological
-					// mixed soft+hard topologies stay bounded.
-					// The upstream lives in the same RunScope as the
-					// receiver (hard-dep is intra-scope; cross-scope
-					// hard-deps are not expressible).
-					// Note: no deeper-BFS recursion here — under the
-					// 2026-05-23 signal-taxonomy reshape, each receiver's
-					// own terminal fires its own cascadeSubscribersStaleInTx
-					// with its real signal, gating downstream subscribers
-					// one signal at a time.
-					if err := pullHardDepUpstreams(ctx, args, tx, r, byType, receiverRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, visited); err != nil {
+					// @deliberate: upstream-refresh pull — for each receiver-declared
+					// `force_upstream_refresh: true` subscription, ensure
+					// the upstream has an in-flight run in this frame and
+					// a wait-set blocker on the receiver. The outer BFS's
+					// `visited` set is threaded down so the upstream-
+					// refresh walk skips upstreams already covered by the
+					// subscription BFS — pathological mixed soft+refresh
+					// topologies stay bounded. The upstream lives in the
+					// same RunScope as the receiver (upstream-refresh is
+					// intra-scope; cross-scope refresh is not
+					// expressible). No deeper-BFS recursion here — under
+					// the 2026-05-23 signal-taxonomy reshape, each
+					// receiver's own terminal fires its own
+					// cascadeSubscribersStaleInTx with its real signal,
+					// gating downstream subscribers one signal at a time.
+					if err := pullForceRefreshUpstreams(ctx, args, tx, r, byType, receiverRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, visited); err != nil {
 						return err
 					}
 				}
@@ -968,8 +1018,9 @@ func cascadeSubscribersStaleInTxWithVisited(
 	return nil
 }
 
-// pullHardDepUpstreams consults the per-template hard-dep edge map for
-// receiver `r` and, for each declared upstream X, ensures X has an
+// pullForceRefreshUpstreams consults the per-template upstream-refresh
+// edge map (subscribes: entries with `force_upstream_refresh: true`)
+// for receiver `r` and, for each declared upstream X, ensures X has an
 // in-flight run in this frame and a wait-set blocker installed on the
 // receiver. When X has no current-frame run, the helper proactively
 // stale-marks + cascade-walks X within the same tx. All work happens
@@ -978,13 +1029,13 @@ func cascadeSubscribersStaleInTxWithVisited(
 //
 // The `visited` set is the outer BFS's cycle-guard (in
 // `cascadeSubscribersStaleInTx`). Upstreams already visited by that BFS
-// are skipped to bound work in pathological mixed soft+hard topologies.
-// Upstreams newly pulled by this helper are added to `visited` so the
-// outer BFS sees them as already-processed.
+// are skipped to bound work in pathological mixed soft+force-refresh
+// topologies. Upstreams newly pulled by this helper are added to
+// `visited` so the outer BFS sees them as already-processed.
 //
 //	@concept: cascade
 //	@concept: attribute
-func pullHardDepUpstreams(
+func pullForceRefreshUpstreams(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	receiver persistence.NodeRow,
 	byType map[string][]persistence.NodeRow,
@@ -994,17 +1045,17 @@ func pullHardDepUpstreams(
 	templateHash string,
 	visited map[foundationshared.UUID]struct{},
 ) error {
-	hardEdges, err := hardDepEdgesForTemplate(ctx, args, templateHash, tx)
+	refreshEdges, err := hardDepEdgesForTemplate(ctx, args, templateHash, tx)
 	if err != nil {
-		return fmt.Errorf("cascadeSubscribersStaleInTx: hard-dep edges: %w", err)
+		return fmt.Errorf("cascadeSubscribersStaleInTx: upstream-refresh edges: %w", err)
 	}
-	if len(hardEdges) == 0 {
+	if len(refreshEdges) == 0 {
 		return nil
 	}
-	if len(hardEdges[receiver.NodeType]) == 0 {
+	if len(refreshEdges[receiver.NodeType]) == 0 {
 		return nil
 	}
-	for _, upstreamType := range hardEdges[receiver.NodeType] {
+	for _, upstreamType := range refreshEdges[receiver.NodeType] {
 		upstreamNodes := byType[upstreamType]
 		// @constraint: the template validator rejects templates with
 		// hard-edge upstream types that have no instantiated node, so
@@ -1017,11 +1068,12 @@ func pullHardDepUpstreams(
 		// invariant; the [0] index is total under that invariant.
 		upstreamNode := upstreamNodes[0]
 
-		// @deliberate: outer-BFS visited-set check: if the subscription BFS already
-		// processed this upstream, skip the hard-dep pull. The wait-set
-		// row that the outer walk inserted (or skipped) is already the
-		// gate for this frame; redoing the wake / stale-mark would
-		// duplicate work and could surface as repeated audit events.
+		// @deliberate: outer-BFS visited-set check — if the subscription BFS already
+		// processed this upstream, skip the upstream-refresh pull. The
+		// wait-set row that the outer walk inserted (or skipped) is
+		// already the gate for this frame; redoing the wake / stale-mark
+		// would duplicate work and could surface as repeated audit
+		// events.
 		if _, seen := visited[upstreamNode.ID]; seen {
 			continue
 		}
@@ -1051,35 +1103,44 @@ func pullHardDepUpstreams(
 			// @deliberate: `wakeParkedReceiverInTx` rebinds the run's frame_id
 			// internally — no separate RebindRunFrameInTx call here.
 			if err := wakeParkedReceiverInTx(ctx, args, tx, upstreamNode, senderFrameID); err != nil {
-				return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked hard-dep upstream %s: %w",
+				return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked upstream-refresh upstream %s: %w",
 					upstreamType, err)
 			}
 		}
 
 		// @concept: cascade
-		// @deliberate: settled-this-frame guard. With two or more hard-dep upstreams
-		// settling independently in one frame, the later settler's own
-		// cascade walk re-visits the receiver, and this pull would
-		// otherwise re-affirm the EARLIER upstream — which already
-		// settled this frame and so has no in-flight row. The re-affirm
-		// creates a fresh pending run; that re-run settles, walks back
-		// to the receiver, and re-affirms the OTHER settled upstream:
-		// mutual re-seeding, the frame never terminates (regression pin:
+		// @deliberate: settled-this-frame guard — with two or more upstream-refresh
+		// upstreams settling independently in one frame, the later
+		// settler's own cascade walk re-visits the receiver, and this
+		// pull would otherwise re-affirm the EARLIER upstream — which
+		// already settled this frame and so has no in-flight row. The
+		// re-affirm creates a fresh pending run; that re-run settles,
+		// walks back to the receiver, and re-affirms the OTHER settled
+		// upstream: mutual re-seeding, the frame never terminates
+		// (regression pin:
 		// test/scenarios/multi_hard_dep_test.go). An upstream that
 		// already has a run row in this frame but NO in-flight row is
-		// settled-this-frame: its value is already in the receiver's
-		// drained wait-set (inserted when it was first pulled into the
-		// frame, or by its own settle walk via the attribute
-		// auto-subscribe edge), so there is nothing to gate on and
-		// nothing to re-run. Skip. The in-flight probe comes first so a
-		// still-running (or just-woken parked) upstream in this frame
-		// falls through to the normal gate-insert path — the guard
-		// protects frame termination without weakening the rendezvous.
+		// settled-this-frame: in the common path its value is already in
+		// the receiver's drained wait-set (inserted when it was first
+		// pulled into the frame by `pullForceRefreshUpstreams`, or by its
+		// own settle walk via the matching explicit `subscribes:` entry
+		// when the receiver was already in-flight at that settle). Skip
+		// in either case — there is nothing to gate on and nothing to
+		// re-run. The wait-set row may be absent when the upstream
+		// settled BEFORE the receiver entered the frame on a
+		// `wake_on_change: false` edge — `BuildAttributeDeps` then
+		// returns ErrMissingSource and the substitution grammar's
+		// fallback / lenient / optional routing governs the dispatch
+		// outcome (see decision:substitution-grammar-fallback-unchanged).
+		// The in-flight probe comes first so a still-running (or just-
+		// woken parked) upstream in this frame falls through to the
+		// normal gate-insert path — the guard protects frame termination
+		// without weakening the rendezvous.
 		_, hasInFlightRun, err := args.Queue.GetInFlightRunForNode(
 			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
 		)
 		if err != nil {
-			return fmt.Errorf("cascadeSubscribersStaleInTx: probe in-flight upstream %s: %w",
+			return fmt.Errorf("cascadeSubscribersStaleInTx: probe in-flight upstream-refresh upstream %s: %w",
 				upstreamType, err)
 		}
 		if !hasInFlightRun {
@@ -1087,7 +1148,7 @@ func pullHardDepUpstreams(
 				ctx, upstreamNode.ID, senderFrameID, tx,
 			)
 			if err != nil {
-				return fmt.Errorf("cascadeSubscribersStaleInTx: probe settled upstream %s: %w",
+				return fmt.Errorf("cascadeSubscribersStaleInTx: probe settled upstream-refresh upstream %s: %w",
 					upstreamType, err)
 			}
 			if settledThisFrame {
@@ -1099,16 +1160,16 @@ func pullHardDepUpstreams(
 		// @concept: run-scope
 		// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 		// @deliberate: affirm-then-read — the upstream lives in the same RunScope as
-		// the receiver (hard-dep is intra-scope by construction —
-		// cross-scope hard-deps are not expressible). AffirmNodeRunRow
-		// INSERTs a pending row keyed on (upstream_node_id,
-		// target_run_scope_id) when none exists.
+		// the receiver (upstream-refresh is intra-scope by construction
+		// — cross-scope upstream-refresh is not expressible).
+		// AffirmNodeRunRow INSERTs a pending row keyed on
+		// (upstream_node_id, target_run_scope_id) when none exists.
 		if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, upstreamNode.ID, upstreamRunScopeID, senderFrameID, tx); err != nil {
 			// @deliberate: defensive — a closed RunScope means the upstream's scope
-			// rendezvous has fired. Hard-dep upstreams in closed scopes
-			// cannot be reactivated — skip; the receiver's wait-set is
-			// not populated for this upstream, and the receiver
-			// re-evaluates substitutions when it next dispatches.
+			// rendezvous has fired. Upstream-refresh upstreams in closed
+			// scopes cannot be reactivated — skip; the receiver's
+			// wait-set is not populated for this upstream, and the
+			// receiver re-evaluates substitutions when it next dispatches.
 			if errors.Is(err, persistence.ErrRunScopeClosed) {
 				continue
 			}
@@ -1147,7 +1208,8 @@ func pullHardDepUpstreams(
 		}
 
 		// @deliberate: mark this upstream visited so the outer BFS (and a subsequent
-		// hard-dep pull during the same walk) doesn't re-process it.
+		// upstream-refresh pull during the same walk) doesn't re-process
+		// it.
 		visited[upstreamNode.ID] = struct{}{}
 
 		// @deliberate: insert wait-set blocker for the receiver on this upstream's run.
@@ -1158,7 +1220,7 @@ func pullHardDepUpstreams(
 			TopicKind:         "attribute",
 			SubscriptionScope: "direct",
 		}, tx); err != nil {
-			return fmt.Errorf("cascadeSubscribersStaleInTx: insert hard-dep wait-set: %w", err)
+			return fmt.Errorf("cascadeSubscribersStaleInTx: insert upstream-refresh wait-set: %w", err)
 		}
 	}
 	return nil

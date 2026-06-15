@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-5-value taxonomy (terminal, transient, attribute, event, message) + legacy `state` fallback.
+5-value taxonomy (terminal, transient, attribute, event, message); `state` admitted as a defensive fallback for unrecognized rows.
 
 ## Rationale
 

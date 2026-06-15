@@ -16,7 +16,7 @@ The grant comprises four pieces: the grant-entry types and their parser, the wil
 
 ## Purpose
 
-The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode` and `scope` today) without a schema migration — so entries are JSONB with a parser that preserves unknown fields.
+The auth middleware needs a small, predictable grammar for "what this key is allowed to do." Forward-compatibility matters — entries grow new fields (`mode` and `scope`) without a schema migration — so entries are JSONB with a parser that preserves unknown fields.
 
 ## Boundaries
 

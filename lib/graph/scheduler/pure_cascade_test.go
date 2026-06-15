@@ -496,7 +496,7 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 		Nodes: []nodepkg.TemplateNodeDef{
 			{Type: "pure-a"},
 			{Type: "worker-b", Executor: "worker",
-				Subscribes: []nodepkg.SubscriptionEntry{{Node: "pure-a", Type: "terminal/*"}}},
+				Subscribes: []nodepkg.SubscriptionEntry{{Node: "pure-a", Type: "terminal/*", WakeOnChange: nodepkg.BoolPtr(true), ForceUpstreamRefresh: nodepkg.BoolPtr(false)}}},
 		},
 	})
 	inst := pcCreateInstance(ctx, t, f.persist, tpl.ID, "ck-1")

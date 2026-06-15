@@ -86,7 +86,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 					Executor: "stub",
 					Holds:    map[string]node.HoldsBinding{"held": {From: "acquirer"}},
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/success"}),
+				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
 			),
 		},
 	})

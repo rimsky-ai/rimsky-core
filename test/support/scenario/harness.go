@@ -962,6 +962,17 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 			if s.Frame != "" {
 				item["frame"] = s.Frame
 			}
+			// wake_on_change and force_upstream_refresh are required
+			// per decision:cascade-flags-required-no-defaults; emit
+			// them whenever the test constructor populated them. A nil
+			// pointer means the test omitted the field, which is a
+			// test-bug; let the server's validator surface it.
+			if s.WakeOnChange != nil {
+				item["wake_on_change"] = *s.WakeOnChange
+			}
+			if s.ForceUpstreamRefresh != nil {
+				item["force_upstream_refresh"] = *s.ForceUpstreamRefresh
+			}
 			subs = append(subs, item)
 		}
 		nd["subscribes"] = subs

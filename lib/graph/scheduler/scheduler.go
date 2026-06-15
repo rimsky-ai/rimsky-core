@@ -431,6 +431,30 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
+	// @deliberate: upstream-refresh pre-stage sweep — for each
+	// newly-promoted running frame with multiple sources, pre-stage
+	// wait-set rows between any source that has force_upstream_refresh
+	// upstreams declared and its upstream sources in the same frame.
+	// This complements invalidateNextFrame's same-frame source
+	// placement: without the pre-stage, a multi-source frame's
+	// receiver could dispatch before its upstream settles. Idempotent
+	// re-fire is safe; the per-source walkCascadeForInvalidatedNode
+	// call's affirms and wait-set inserts no-op against existing rows.
+	// Per spec 2026-06-14-explicit-substitution-cascade-behavior,
+	// STORY-pull-upstream-fresh-on-read direct-invalidate branch.
+	if cfg.Persist != nil && cfg.Queue != nil {
+		if err := runtime.SweepUpstreamRefreshForRunningFrames(ctx, cfg.Persist, cfg.Queue, log); err != nil {
+			log.Warn("tick: SweepUpstreamRefreshForRunningFrames failed", "error", err.Error())
+		}
+	}
+
+	// @deliberate: message-delivery sweep — for each running frame,
+	// deliver pending messages per the per-instance
+	// frame_delivery_mode. Fired after frame.RunTick so newly-promoted
+	// running frames pick up their messages on the same tick.
+	// Idempotent re-fire is safe: a row that's already delivered_at +
+	// frame_id is filtered out by ListPendingForInstance. Per spec
+	// §Unified message layer.
 	if cfg.Persist != nil && cfg.Clock != nil {
 		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, cfg.Queue, log, cfg.Clock.Now()); err != nil {
 			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())

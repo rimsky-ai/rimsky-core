@@ -22,7 +22,7 @@ The Go workspace ties five modules into one build. The repo root holds four idio
 
 Layer ordering: foundation → graph → runtime → control. The control layer reads everything below it; the graph layer never reads the runtime or control layers (one-way, lint-enforced); the runtime layer never reads the control layer (lint-enforced); the foundation layer never reads the graph, runtime, or control layers (lint-enforced). The protocols module imports only the standard library plus the RPC transport runtime, the protobuf runtime, the UUID generator, and the YAML parser (lint-enforced); it is the public contract surface and never consumes rimsky-internal layers.
 
-One documented residual (a per-site lint exemption; flagged for separate follow-up):
+One documented residual (a per-site lint exemption):
 
 - The scheduler in the graph layer imports the runtime layer for the sweep entry points the scheduler tick orchestrates.
 

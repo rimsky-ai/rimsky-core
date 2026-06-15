@@ -11,7 +11,7 @@ As a template author building a fan-in shape (a node subscribing to several upst
 
 ## Capability
 
-The dispatch-eligibility predicate carries a propagation-path-independent condition: a stale run is not eligible while any subscribed upstream has an in-flight run in the same frame, whether the staleness arrived by invalidation walk or by sender settlement. The wait-set ledger and its drained-rows substitution role are unchanged; self-edge and cycle idioms keep working (see `concept:wait-set`, `concept:cascade`, `decision:upstream-gating-at-eligibility`).
+The dispatch-eligibility predicate carries a propagation-path-independent condition: a stale run is not eligible while any subscribed upstream has an in-flight run in the same frame, whether the staleness arrived by invalidation walk or by sender settlement. The wait-set ledger's drained-rows role continues to feed substitution; self-edge and cycle idioms are first-class under the present-state predicate (see `concept:wait-set`, `concept:cascade`, `decision:upstream-gating-at-eligibility`).
 
 ## Business value
 

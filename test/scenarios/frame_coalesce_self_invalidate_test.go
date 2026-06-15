@@ -56,8 +56,10 @@ func TestFrameCoalesceSelfInvalidate(t *testing.T) {
 				node.TemplateNodeDef{Type: "drainer", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "drainer", Type: "terminal/success",
-					When:  "payload.changed",
-					Frame: "next",
+					When:                 "payload.changed",
+					Frame:                "next",
+					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},

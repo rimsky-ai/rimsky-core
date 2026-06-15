@@ -19,7 +19,7 @@ Operators get a filesystem-backed store with the same lifecycle and atomicity gu
 
 ## Acceptance
 
-A template referencing `store-filesystem`: `Open` returns the local directory path; `Commit` performs an atomic POSIX rename swap of the staging dir into the canonical view; `Abandon` discards the staging dir; with `sync_strategy: explicit` and an empty queue, a POST to the admin sync route picks up a newly-dropped folder and the next `Open` returns it; `SplitScope` partitions on the configured partition key.
+A template referencing `store-filesystem`: `Open` returns the local directory path; `Commit` performs an atomic POSIX rename swap of the staging dir into the canonical view; `Abandon` discards the staging dir; with `sync_strategy: explicit` and an empty queue, a call to the admin sync route picks up a newly-dropped folder and the next `Open` returns it; `SplitScope` partitions on the configured partition key.
 
 ## Falsifier
 

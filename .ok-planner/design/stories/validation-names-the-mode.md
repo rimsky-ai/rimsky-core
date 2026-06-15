@@ -11,7 +11,7 @@ As an operator registering a template whose service references cannot be validat
 
 ## Capability
 
-Reference-validation failure messages name the active validation mode, state that the mode is what made the failure fatal, and name the `templates.ref_validation_mode` config key with its relaxed settings (see `decision:validation-error-names-mode`).
+Reference-validation failure messages name the active validation mode, state that the mode is what made the failure fatal, and name the reference-validation mode config key with its relaxed settings (see `decision:validation-error-names-mode`).
 
 ## Business value
 

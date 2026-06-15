@@ -16,11 +16,14 @@
 //   - {{trigger.message.payload.<field>}} — the bound trigger message's payload at named path
 //   - {{child.partition_key}} — the per-child-run partition key (fan-out leaf dispatch context only)
 //
-// The post-2026-05-14 `nodes.X.attribute.Y` form replaces the legacy
-// `deps.X.Y` form: per the subscription-cascade resolution, substitution
-// refs auto-subscribe the receiver to (sender=X, topic=attribute, name=Y).
-// `deps.X.Y` is now rejected with a migration-pointer error — a retired
-// form, not one of the five live source kinds above.
+// Substitution refs do not generate edges in the subscription map. The
+// receiver must declare an explicit `subscribes:` entry whose sender
+// and type cover the ref; the template validator rejects any ref not
+// covered by a `subscribes:` entry at registration.
+//
+// (The retired `deps.X.Y` form, replaced by `nodes.X.attribute.Y`, is
+// rejected at resolveDirectiveValueRaw with a migration-pointer error;
+// see the `case "deps"` arm below.)
 //
 // @blessed-invariant 20 — Claim content is inert in Rimsky.
 //

@@ -47,7 +47,7 @@ Emitted when an executor produces a non-terminal named event (`concept:named-eve
 
 ### `message/<kind>/<sender_kind>/<target>` — boundary-crossing messages
 
-Emitted when a `concept:message` arrives at an instance. The three structured filter dimensions that today live as separate fields on the subscription entry (`kind`, `sender_kind`, `target`) collapse into the type-path leaves.
+Emitted when a `concept:message` arrives at an instance. The three structured filter dimensions (`kind`, `sender_kind`, `target`) live on the type-path leaves, not as separate subscription-entry fields.
 
 ## Payload schemas
 

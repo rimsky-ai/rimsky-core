@@ -129,13 +129,13 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "term_receiver", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "term_sender", Type: "terminal/*", Frame: "in"},
+					node.SubscriptionEntry{Node: "term_sender", Type: "terminal/*", Frame: "in", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "transient_receiver", Executor: "stub"},
 				scenario.WithSubscribes(
-					node.SubscriptionEntry{Node: "transient_sender", Type: "transient/retry/*", Frame: "in"},
+					node.SubscriptionEntry{Node: "transient_sender", Type: "transient/retry/*", Frame: "in", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 			),
 		},

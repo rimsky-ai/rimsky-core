@@ -486,6 +486,55 @@ func (s *framesImpl) EnqueueCoalesceFrame(
 	return frameID, nil
 }
 
+// ListRunningFramesWithSources returns running frames along with their
+// source_node_ids. Used by the runtime upstream-refresh pre-stage sweep.
+func (s *framesImpl) ListRunningFramesWithSources(
+	ctx context.Context, tx persistence.Tx,
+) ([]persistence.FrameRunningSources, error) {
+	rows, err := s.q(tx).Query(ctx, `
+        SELECT frame_id, instance_id, source_node_ids
+          FROM rimsky_frames
+         WHERE state = 'running'
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("frames.ListRunningFramesWithSources: %w", err)
+	}
+	defer rows.Close()
+	var out []persistence.FrameRunningSources
+	for rows.Next() {
+		var r persistence.FrameRunningSources
+		if err := rows.Scan(&r.FrameID, &r.InstanceID, &r.SourceNodeIDs); err != nil {
+			return nil, fmt.Errorf("frames.ListRunningFramesWithSources: scan: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// AppendSourceToQueuedFrame appends a node id to a queued frame's
+// source_node_ids array (idempotent — no-op if the id is already
+// present). The WHERE clause restricts the update to queued frames
+// only, so a frame that has since been promoted to running or marked
+// terminal silently no-ops. Used by invalidateNextFrame to attach
+// upstream-refresh upstreams to the same frame as the receiver.
+func (s *framesImpl) AppendSourceToQueuedFrame(
+	ctx context.Context, frameID, nodeID shared.UUID, tx persistence.Tx,
+) error {
+	_, err := s.q(tx).Exec(ctx, `
+        UPDATE rimsky_frames
+        SET source_node_ids = (
+            CASE WHEN $2 = ANY(source_node_ids) THEN source_node_ids
+                 ELSE array_append(source_node_ids, $2)
+            END
+        )
+        WHERE frame_id = $1 AND state = 'queued'
+    `, frameID, nodeID)
+	if err != nil {
+		return fmt.Errorf("frames.AppendSourceToQueuedFrame: %w", err)
+	}
+	return nil
+}
+
 // ListForObservability returns frames matching filter for the
 // /v1/observability/frames endpoint. Cursor pagination over (queued_at
 // DESC, frame_id DESC). Cursor is a base64-JSON encoding of the last

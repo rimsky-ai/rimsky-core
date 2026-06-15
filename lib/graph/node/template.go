@@ -62,6 +62,12 @@ type (
 	TemplateAttributeDefaults = spec.TemplateAttributeDefaults
 )
 
+// BoolPtr re-exports spec.BoolPtr so test fixtures importing only the
+// node package can construct WakeOnChange and ForceUpstreamRefresh
+// inline without adding a foundation/spec import. Behavior identical to
+// spec.BoolPtr.
+var BoolPtr = spec.BoolPtr
+
 // @deliberate: Frame-resolution constants re-exported from foundation/spec.
 const (
 	FrameResolutionCoalesce    = spec.FrameResolutionCoalesce

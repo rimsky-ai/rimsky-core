@@ -12,7 +12,7 @@ import (
 )
 
 func TestBuildSubscriptionEdges_Empty(t *testing.T) {
-	out, err := BuildSubscriptionEdges(spec.TemplateSpec{}, nil)
+	out, err := BuildSubscriptionEdges(spec.TemplateSpec{})
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -26,11 +26,11 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", Type: "terminal/success"},
+				{Node: "sender", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil)
+	out, err := BuildSubscriptionEdges(tmpl)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -47,17 +47,23 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 	if matched[0].Frame != "in" {
 		t.Errorf("Frame: got %q want in", matched[0].Frame)
 	}
+	if !matched[0].WakeOnChange {
+		t.Errorf("WakeOnChange: got false, want true")
+	}
+	if matched[0].ForceUpstreamRefresh {
+		t.Errorf("ForceUpstreamRefresh: got true, want false")
+	}
 }
 
 func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "cleanup", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Instance: true, Type: "terminal/error/*"},
+				{Instance: true, Type: "terminal/error/*", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil)
+	out, err := BuildSubscriptionEdges(tmpl)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -79,77 +85,112 @@ func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 	}
 }
 
-func TestBuildSubscriptionEdges_ImplicitFromSubstitutionRefs(t *testing.T) {
+// TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef pins
+// the post-2026-06-14 model: a substitution ref in a receiver's
+// attribute schema produces NO edge in the inverse map. The receiver
+// must declare an explicit `subscribes:` entry naming the sender for
+// the cascade to wire. The registration-time coverage check (Pass 2)
+// rejects a template with an uncovered ref; in this test we just
+// confirm the edge map is empty when no explicit entry exists.
+//
+//	@decision: subscription-edges-only-from-explicit-block
+func TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "stage", Executor: "stub",
 			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"out": map[string]any{
-						"type":   "string",
-						"source": "out_value",
-					},
+					"out": map[string]any{"type": "string", "source": "out_value"},
 				},
 			}}},
 		{Type: "verify", Executor: "stub",
+			// @deliberate: no Subscribes block — the substitution ref
+			// alone must not register an edge.
 			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"in": map[string]any{
-						"type":   "string",
-						"source": "{{nodes.stage.attribute.out}}",
-					},
+					"in": map[string]any{"type": "string", "source": "{{nodes.stage.attribute.out}}"},
 				},
 			}}},
 	}}
-	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
-	out, err := BuildSubscriptionEdges(tmpl, refs)
+	out, err := BuildSubscriptionEdges(tmpl)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
 	matched := out.Match("stage", signal.TypePath("attribute/out/changed"))
-	if len(matched) != 1 {
-		t.Fatalf("implicit attribute-edge match: want 1, got %d", len(matched))
-	}
-	if matched[0].ReceiverNodeType != "verify" {
-		t.Errorf("implicit receiver: got %q want verify", matched[0].ReceiverNodeType)
-	}
-	if matched[0].TypePattern != signal.TypePath("attribute/out/changed") {
-		t.Errorf("implicit pattern: got %q", matched[0].TypePattern)
+	if len(matched) != 0 {
+		t.Fatalf("substitution ref alone must not register an edge; got %d matched", len(matched))
 	}
 }
 
-func TestBuildSubscriptionEdges_UnionAndDedup(t *testing.T) {
+// TestBuildSubscriptionEdges_Dedup pins that two explicit entries with
+// the same (sender, type, when=nil, scope, frame, flags) tuple dedup to
+// one edge. Both flag values must match for content-equality; entries
+// that differ only in flag values are NOT deduped (see
+// TestBuildSubscriptionEdges_FlagsDistinguishEdges below) — the
+// validator rejects flag-conflicting duplicates so by the time this
+// builder runs, only flag-coherent duplicates exist to collapse.
+func TestBuildSubscriptionEdges_Dedup(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", Type: "attribute/out/changed"},
-				// @deliberate: Duplicate of the implicit ref below.
-				{Node: "sender", Type: "attribute/out/changed"},
+				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				// @deliberate: Content-equal duplicate — collapses at insert time.
+				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
-			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"v": map[string]any{
-						"type":   "string",
-						"source": "{{nodes.sender.attribute.out}}",
-					},
-				},
-			}}},
+		},
 	}}
-	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
-	out, err := BuildSubscriptionEdges(tmpl, refs)
+	out, err := BuildSubscriptionEdges(tmpl)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
 	matched := out.Match("sender", signal.TypePath("attribute/out/changed"))
-	// @deliberate: Dedup happens at insert time: the explicit-dup of the same
-	// the same (sender, type, when=nil, scope, frame) tuple collapses to
-	// one entry; the implicit ref produces the same tuple and is also
-	// deduped. Result: a single matched edge.
 	if len(matched) != 1 {
 		t.Fatalf("expected dedup → 1 matched edge, got %d", len(matched))
+	}
+}
+
+// TestBuildSubscriptionEdges_FlagsDistinguishEdges pins that two
+// entries matching on (sender, type, when, scope, frame) but DIFFERING
+// in either cascade-shape flag (WakeOnChange or ForceUpstreamRefresh)
+// land as two distinct edges rather than silently deduping to the
+// first. Without this, an author-declared flag value would be dropped
+// invisibly — exactly the invisible behavior
+// decision:cascade-flags-required-no-defaults set out to eliminate.
+// The validator rejects this combination as a flag-conflict at
+// registration; this test exercises the edge builder directly to
+// confirm full-edge-equality is the dedup contract.
+func TestBuildSubscriptionEdges_FlagsDistinguishEdges(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "sender", Executor: "stub"},
+		{Type: "receiver", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				// @deliberate: same key — different ForceUpstreamRefresh flag value.
+				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(true)},
+				// @deliberate: same key — different WakeOnChange flag value.
+				{Node: "sender", Type: "attribute/out/changed", WakeOnChange: spec.BoolPtr(false), ForceUpstreamRefresh: spec.BoolPtr(false)},
+			},
+		},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := out.Match("sender", signal.TypePath("attribute/out/changed"))
+	if len(matched) != 3 {
+		t.Fatalf("expected 3 distinct edges (one per flag combination), got %d", len(matched))
+	}
+	// @deliberate: confirm each combination is present — order is implementation-defined.
+	seen := map[[2]bool]bool{}
+	for _, e := range matched {
+		seen[[2]bool{e.WakeOnChange, e.ForceUpstreamRefresh}] = true
+	}
+	for _, want := range [][2]bool{{true, false}, {true, true}, {false, false}} {
+		if !seen[want] {
+			t.Errorf("missing edge with WakeOnChange=%t ForceUpstreamRefresh=%t", want[0], want[1])
+		}
 	}
 }
 
@@ -160,14 +201,14 @@ func TestBuildSubscriptionEdges_FrameDefaults(t *testing.T) {
 			// matrix — per-node defaults to "in", cross-cutting defaults
 			// to "next", and an explicit override stays as written.
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "y", Type: "terminal/success"},
-				{Instance: true, Type: "terminal/success"},
-				{Node: "y", Type: "terminal/success", Frame: "next"},
+				{Node: "y", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Instance: true, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				{Node: "y", Type: "terminal/success", Frame: "next", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 		{Type: "y", Executor: "stub"},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil)
+	out, err := BuildSubscriptionEdges(tmpl)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -189,68 +230,21 @@ func TestBuildSubscriptionEdges_FrameDefaults(t *testing.T) {
 	}
 }
 
-// TestBuildSubscriptionEdges_BareAttributePull — spec 2026-05-19 §Item 3
-// "Empty trailing path". A receiver with `source: "{{nodes.stage.attribute}}"`
-// (no field path) pulls the whole upstream attribute object. The
-// inverse-edge map emits a prefix-wildcard auto-subscribe entry
-// (`attribute/*`) so the cascade walk fires on any attribute change on
-// the sender.
-func TestBuildSubscriptionEdges_BareAttributePull(t *testing.T) {
-	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		{Type: "stage", Executor: "stub",
-			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"out": map[string]any{"type": "string"},
-				},
-			}}},
-		{Type: "verify", Executor: "stub",
-			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"whole": map[string]any{
-						"type":   "object",
-						"source": "{{nodes.stage.attribute}}",
-					},
-				},
-			}}},
-	}}
-	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
-	out, err := BuildSubscriptionEdges(tmpl, refs)
-	if err != nil {
-		t.Fatalf("BuildSubscriptionEdges: %v", err)
-	}
-	// @deliberate: bare-attribute auto-subscribe expands to
-	// attribute/*/changed so the implicit subscription scopes to delta
-	// signals only.
-	matched := out.Match("stage", signal.TypePath("attribute/anykey/changed"))
-	if len(matched) != 1 {
-		t.Fatalf("bare-attr prefix match: want 1, got %d", len(matched))
-	}
-	if matched[0].ReceiverNodeType != "verify" {
-		t.Errorf("ReceiverNodeType: got %q want verify", matched[0].ReceiverNodeType)
-	}
-	if matched[0].TypePattern != signal.TypePath("attribute/*/changed") {
-		t.Errorf("TypePattern: got %q want attribute/*/changed", matched[0].TypePattern)
-	}
-}
-
-// TestBuildSubscriptionEdges_BareEventPullRejected — bare-form event
+// TestParseSubstitutionDirective_BareEventRejected — bare-form event
 // pulls still require the event name. A `{{nodes.X.event}}` directive
 // (no event name) is malformed; parseSubstitutionDirective returns
-// ok=false and no inverse-edge is emitted.
-func TestBuildSubscriptionEdges_BareEventPullRejected(t *testing.T) {
+// ok=false. Tests the parsing primitive used by the coverage check.
+func TestParseSubstitutionDirective_BareEventRejected(t *testing.T) {
 	got, ok := parseSubstitutionDirective("nodes.emit.event")
 	if ok {
 		t.Fatalf("parseSubstitutionDirective(`nodes.emit.event`) expected ok=false; got %+v", got)
 	}
 }
 
-// TestBuildSubscriptionEdges_BareEventWithNamePull — `{{nodes.X.event.<name>}}`
-// (no trailing path) is the bare-event form. The inverse-edge map
-// records (sender=X, kind=event, Name=<name>) so the cascade walk fires
-// on any emission of that event.
-func TestBuildSubscriptionEdges_BareEventWithNamePull(t *testing.T) {
+// TestParseSubstitutionDirective_BareEventWithName — `{{nodes.X.event.<name>}}`
+// (no trailing path) is the bare-event form. The parser yields
+// (sender=X, kind=event, Name=<name>).
+func TestParseSubstitutionDirective_BareEventWithName(t *testing.T) {
 	ref, ok := parseSubstitutionDirective("nodes.emit.event.progress")
 	if !ok {
 		t.Fatalf("parseSubstitutionDirective: expected ok=true for bare-event form")
@@ -268,11 +262,11 @@ func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
 		{Type: "sender", Executor: "stub"},
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "sender", Type: "terminal/error/*"},
+				{Node: "sender", Type: "terminal/error/*", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl, nil)
+	out, err := BuildSubscriptionEdges(tmpl)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}

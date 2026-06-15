@@ -89,7 +89,7 @@ func testClaimHandoffAcrossFrames_FrameNextPerNode(t *testing.T) {
 		// @deliberate: Per-node subscription with explicit Frame: "next" forces the
 		// cascade walk to open a new frame for the co-holder.
 		subscribes: []node.SubscriptionEntry{
-			{Node: "acquirer", Type: "terminal/success", Frame: "next"},
+			{Node: "acquirer", Type: "terminal/success", Frame: "next", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 		},
 		// @constraint: Delay the co-holder enough to observe the gap between the
 		// acquirer's settlement and the co-holder's: while the co-holder
@@ -145,7 +145,7 @@ func testClaimHandoffAcrossFrames_InstanceTrue(t *testing.T) {
 		// defaults instance:true to "next" so the cascade walk opens a
 		// new frame for the co-holder.
 		subscribes: []node.SubscriptionEntry{
-			{Instance: true, Type: "terminal/success"},
+			{Instance: true, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 		},
 		coHolderDelay: 2 * time.Second,
 	})
@@ -236,6 +236,8 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 				},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "acquirer", Type: "terminal/success", Frame: "next",
+					WakeOnChange:         spec.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: spec.BoolPtr(false), // today-equivalent
 				}),
 				scenario.WithAttributes(holdAttrs),
 			),
@@ -258,6 +260,8 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 				},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "co-holder-1", Type: "terminal/success", Frame: "next",
+					WakeOnChange:         spec.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: spec.BoolPtr(false), // today-equivalent
 				}),
 				scenario.WithAttributes(holdAttrs),
 			),

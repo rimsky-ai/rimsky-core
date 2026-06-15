@@ -656,6 +656,86 @@ func (s *framesImpl) EnqueueCoalesceFrame(
 	return frameID, nil
 }
 
+// ListRunningFramesWithSources returns running frames along with their
+// source_node_ids. Used by the runtime upstream-refresh pre-stage sweep.
+func (s *framesImpl) ListRunningFramesWithSources(
+	ctx context.Context, tx persistence.Tx,
+) ([]persistence.FrameRunningSources, error) {
+	rows, err := s.q(tx).QueryContext(ctx, `
+        SELECT frame_id, instance_id, source_node_ids
+          FROM rimsky_frames
+         WHERE state = 'running'
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("frames.ListRunningFramesWithSources: %w", err)
+	}
+	defer rows.Close()
+	var out []persistence.FrameRunningSources
+	for rows.Next() {
+		var (
+			frameID, instanceID, idsJSON string
+		)
+		if err := rows.Scan(&frameID, &instanceID, &idsJSON); err != nil {
+			return nil, fmt.Errorf("frames.ListRunningFramesWithSources: scan: %w", err)
+		}
+		fid, err := uuid.Parse(frameID)
+		if err != nil {
+			return nil, fmt.Errorf("frames.ListRunningFramesWithSources: parse frame_id: %w", err)
+		}
+		iid, err := uuid.Parse(instanceID)
+		if err != nil {
+			return nil, fmt.Errorf("frames.ListRunningFramesWithSources: parse instance_id: %w", err)
+		}
+		ids, err := unmarshalUUIDArray(idsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("frames.ListRunningFramesWithSources: unmarshal sources: %w", err)
+		}
+		out = append(out, persistence.FrameRunningSources{
+			FrameID: fid, InstanceID: iid, SourceNodeIDs: ids,
+		})
+	}
+	return out, nil
+}
+
+// AppendSourceToQueuedFrame appends a node id to a queued frame's
+// source_node_ids JSON array (idempotent — no-op if the id is already
+// present). The WHERE clause restricts the read+update to queued
+// frames only, so a frame that has since been promoted to running or
+// marked terminal silently no-ops. Used by invalidateNextFrame to
+// attach upstream-refresh upstreams to the same frame as the receiver.
+func (s *framesImpl) AppendSourceToQueuedFrame(
+	ctx context.Context, frameID, nodeID shared.UUID, tx persistence.Tx,
+) error {
+	var existingJSON string
+	err := s.q(tx).QueryRowContext(ctx, `
+        SELECT source_node_ids FROM rimsky_frames
+         WHERE frame_id = ? AND state = 'queued'
+    `, frameID.String()).Scan(&existingJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // not queued anymore (or never existed) — silent no-op
+	}
+	if err != nil {
+		return fmt.Errorf("frames.AppendSourceToQueuedFrame: select: %w", err)
+	}
+	ids, err := unmarshalUUIDArray(existingJSON)
+	if err != nil {
+		return fmt.Errorf("frames.AppendSourceToQueuedFrame: unmarshal: %w", err)
+	}
+	for _, id := range ids {
+		if id == nodeID {
+			return nil // already present — idempotent no-op
+		}
+	}
+	ids = append(ids, nodeID)
+	if _, err := s.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_frames SET source_node_ids = ? WHERE frame_id = ? AND state = 'queued'`,
+		marshalUUIDArray(ids), frameID.String(),
+	); err != nil {
+		return fmt.Errorf("frames.AppendSourceToQueuedFrame: update: %w", err)
+	}
+	return nil
+}
+
 // ListForObservability returns frames matching filter for the
 // observability /v1/observability/frames endpoint. Cursor pagination
 // over (queued_at DESC, frame_id DESC).

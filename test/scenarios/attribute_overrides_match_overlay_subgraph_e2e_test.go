@@ -76,7 +76,7 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 						node.TemplateNodeDef{
 							Type: "inner-exit", Executor: "stub",
 							Subscribes: []tmplspec.SubscriptionEntry{
-								{Node: "inner-entry", Type: "terminal/*"},
+								{Node: "inner-entry", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
 							},
 						},
 						openAttrs,

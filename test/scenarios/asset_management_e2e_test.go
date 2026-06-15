@@ -173,8 +173,10 @@ func TestAssetManagement(t *testing.T) {
 					// matches when the invalidate envelope's target equals
 					// the producer's own type. The materialize endpoint
 					// sets Target = "producer" so this binds.
-					Type:  "message/invalidate/operator/self",
-					Frame: "in",
+					Type:                 "message/invalidate/operator/self",
+					Frame:                "in",
+					WakeOnChange:         fspec.BoolPtr(true),  // today-equivalent
+					ForceUpstreamRefresh: fspec.BoolPtr(false), // today-equivalent
 				}),
 			),
 		},
