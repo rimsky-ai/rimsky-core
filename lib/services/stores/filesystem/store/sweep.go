@@ -64,13 +64,12 @@ func (s *Store) sweepOnce() error {
 			src := filepath.Join(inProg, e.Name())
 			dst := filepath.Join(avail, folder)
 			if err := os.Rename(src, dst); err != nil {
-				// ENOENT: a concurrent terminal RPC removed the in-progress
-				// sentinel just before sweep tried to rename it. Nothing
-				// was returned to available/, so reclaimed must NOT be
-				// set — see spec §5.3 case #2 (sweep returns the sentinel
-				// to available/) which only covers the actual-rename
-				// path. Setting reclaimed=true on ENOENT would clobber a
-				// still-needed drained sentinel and burn an extra
+				// @deliberate: ENOENT means a concurrent terminal RPC removed the
+				// in-progress sentinel just before sweep tried to rename it. Nothing
+				// was returned to available/, so reclaimed must NOT be set — spec
+				// §5.3 case #2 (sweep returns the sentinel to available/) only covers
+				// the actual-rename path. Setting reclaimed=true on ENOENT would
+				// clobber a still-needed drained sentinel and burn an extra
 				// Unavailable cycle on the next Open.
 				if !errors.Is(err, fs.ErrNotExist) {
 					slog.Warn("filesystem store: sweep reclaim", "selector", selector, "folder", folder, "error", err.Error())

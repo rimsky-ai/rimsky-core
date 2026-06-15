@@ -32,20 +32,17 @@ func parseInterspersed(fs *flag.FlagSet, args []string) error {
 			positionals = append(positionals, args[i+1:]...)
 			break
 		}
-		// Non-flag token (including a bare "-") is a positional.
 		if len(a) < 2 || a[0] != '-' {
 			positionals = append(positionals, a)
 			continue
 		}
 		flags = append(flags, a)
-		// `--flag=value` carries its own value.
 		if strings.Contains(a, "=") {
 			continue
 		}
-		// A value-taking flag consumes the next token. Boolean flags and
-		// unknown flags do not (unknown is left standalone so fs.Parse
-		// surfaces the "not defined" error rather than swallowing a
-		// positional).
+		// @constraint: unknown flags must NOT consume the next token —
+		// leaving them standalone lets fs.Parse surface the "not defined"
+		// error instead of silently swallowing a positional.
 		name := strings.TrimLeft(a, "-")
 		if flagTakesValue(fs, name) && i+1 < len(args) {
 			flags = append(flags, args[i+1])

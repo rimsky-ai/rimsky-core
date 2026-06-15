@@ -4,12 +4,6 @@
 
 //go:build !windows
 
-// advisory_flock_unix.go — flock(2)-based file-lock primitives backing
-// the SQLite advisory locker on unix-like systems. The Windows twin
-// (advisory_flock_windows.go) implements the same three-function
-// surface via LockFileEx so the foundation module builds for every
-// GOOS an embedding consumer might target.
-
 package sqlite
 
 import (

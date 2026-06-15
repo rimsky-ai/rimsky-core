@@ -34,9 +34,10 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// Bring up the shared network first; the fs-store and executor-
-	// stub peers must be reachable when rimsky/all starts (rimsky's
-	// control-api fires a Capabilities handshake at startup).
+	// @constraint: shared network must exist before peers start — the
+	// fs-store and executor-stub peers must be reachable when rimsky/all
+	// starts because rimsky's control-api fires a Capabilities handshake
+	// at startup.
 	netName := harness.NewNetwork(ctx, t)
 
 	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",

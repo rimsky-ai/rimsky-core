@@ -72,7 +72,7 @@ describe("HTTP bridge stub-mode /execute", () => {
     await waitFor(() => posts.length > 0, 2000);
     expect(posts[0]!.url).toBe("http://supervisor.invalid/cb");
     const cb0 = posts[0]!.body as Record<string, unknown>;
-    // AsyncCallbackBody oneof shape the supervisor's parseAsyncCallback
+    // @deliberate: AsyncCallbackBody oneof shape the supervisor's parseAsyncCallback
     // requires (success | error | park). The legacy `{type: ...}` / `kind`
     // discriminators are rejected with HTTP 400.
     expect(cb0.type).toBeUndefined();
@@ -80,13 +80,13 @@ describe("HTTP bridge stub-mode /execute", () => {
     expect(cb0.async_ack_id).toBe(body.async_ack_id);
     const success = cb0.success as Record<string, unknown>;
     expect(success).toBeDefined();
-    // Legacy `result` retired in favour of `attributes_delta`.
+    // @deliberate: legacy `result` retired in favour of `attributes_delta`.
     expect(success.attributes_delta).toEqual({ stub: true });
     expect(success.changed).toBe(true);
   });
 });
 
-// A present-but-malformed cli.required_signoffs (a host typo'd / forgot the
+// @deliberate: a present-but-malformed cli.required_signoffs (a host typo'd / forgot the
 // public_key) must NOT silently degrade to an ungated run. It must terminal-
 // ERROR with agent/attribute_invalid — the same fail-loud failure mode as the
 // empty-dispatch_id gate path in agent-run.ts — and never resolve to success.
@@ -136,7 +136,7 @@ describe("HTTP bridge /execute rejects a malformed sign-off gate config (no sile
         dispatch_id: "d-gate",
         attributes: {
           model: "sonnet",
-          // Host forgot/typo'd public_key — only `path` present. Silently
+          // @deliberate: host forgot/typo'd public_key — only `path` present. Silently
           // dropping this entry would yield an empty (⇒ no) gate and let
           // unsigned output through; the parser must reject it instead.
           cli: { required_signoffs: [{ path: "endpoints" }] },
@@ -145,14 +145,14 @@ describe("HTTP bridge /execute rejects a malformed sign-off gate config (no sile
         callback_url: "http://supervisor.invalid/cb",
       }),
     });
-    // The /execute handler still acks immediately (async handoff); the
+    // @deliberate: the /execute handler still acks immediately (async handoff); the
     // terminal verdict rides the callback POST.
     expect(res.status).toBe(202);
 
     await waitFor(() => posts.length > 0, 2000);
     expect(posts).toHaveLength(1);
     const body = posts[0]!.body as Record<string, unknown>;
-    // The dispatch must NOT have reached terminal success.
+    // @deliberate: the dispatch must NOT have reached terminal success.
     expect(body.success).toBeUndefined();
     expect(body.error).toBeDefined();
     const error = body.error as { error_class: string };
@@ -178,7 +178,7 @@ describe("HTTP bridge /execute rejects a malformed sign-off gate config (no sile
     expect(res.status).toBe(202);
     await waitFor(() => posts.length > 0, 2000);
     const body = posts[0]!.body as Record<string, unknown>;
-    // A well-formed gate config parses cleanly — stub run reaches success
+    // @deliberate: a well-formed gate config parses cleanly — stub run reaches success
     // (the gate itself only enforces inside onComplete, not parsed here).
     expect(body.success).toBeDefined();
   });
@@ -195,7 +195,7 @@ async function waitFor(
   }
 }
 
-// HTTP /execute observability ledger coverage. The bridge keys traces
+// @deliberate: HTTP /execute observability ledger coverage. The bridge keys traces
 // by the supervisor-supplied dispatch_id; the dashboard fetches via
 // GET /observability/v1/trace/{dispatch_id} so the ledger must end up
 // in the complete + step_completed shape after a successful run.
@@ -262,7 +262,7 @@ describe("HTTP bridge /execute observability ledger", () => {
   });
 });
 
-// The HTTP bridge body must also ride the per-dispatch named-event buffer on
+// @deliberate: the HTTP bridge body must also ride the per-dispatch named-event buffer on
 // the `events[]` array (the Go supervisor's callback parser reads `events`
 // regardless of transport). Payloads are base64-encoded per the proto-JSON
 // `bytes` rule.
@@ -281,7 +281,7 @@ describe("http-bridge outcomeToCallbackBody named-event surfacing", () => {
     expect(body.events).toEqual([
       { name: "progress", payload: payload.toString("base64") },
     ]);
-    // AsyncCallbackBody oneof shape the supervisor requires (success |
+    // @deliberate: AsyncCallbackBody oneof shape the supervisor requires (success |
     // error | park) — not the legacy `{type: ...}` discriminator.
     expect(body.success).toBeDefined();
   });
@@ -298,7 +298,7 @@ describe("http-bridge outcomeToCallbackBody named-event surfacing", () => {
   });
 });
 
-// Positive coverage for the third AsyncCallbackBody outcome branch. The
+// @deliberate: positive coverage for the third AsyncCallbackBody outcome branch. The
 // sign-off gate never emits `park` (it only resolves success/errored), so the
 // gate e2e can only assert park-ABSENT; the park wire mapping itself
 // (outcomeToCallbackBody's park_requested branch) otherwise had no test that a
@@ -318,7 +318,7 @@ describe("http-bridge outcomeToCallbackBody park outcome", () => {
     };
     const body = outcomeToCallbackBody(outcome, "ack-park");
     expect(body.async_ack_id).toBe("ack-park");
-    // Exactly one outcome key, and it is `park` — not success/error.
+    // @deliberate: exactly one outcome key, and it is `park` — not success/error.
     expect(["success", "error", "park"].filter((k) => k in body)).toEqual([
       "park",
     ]);
@@ -326,7 +326,7 @@ describe("http-bridge outcomeToCallbackBody park outcome", () => {
     expect(park.reason).toBe("snooze");
     expect(park.reason_note).toBe("rate-limited; retry after window");
     expect(park.session_token).toBe("sess-park-1");
-    // bytes ride as base64 per the proto-JSON convention.
+    // @deliberate: bytes ride as base64 per the proto-JSON convention.
     expect(park.payload).toBe(payload.toString("base64"));
     expect(park.resume_at).toBe(resumeAt.toISOString());
   });
@@ -351,32 +351,27 @@ describe("http-bridge outcomeToCallbackBody park outcome", () => {
   });
 });
 
-// S-executors-claude-agent-error-classes (Pass EXECUTORS-3): the claude-agent
-// executor declares four error classes — agent/context_exceeded, agent/refused,
-// agent/tool_use_failed/<tool>, and agent/rate_limited — but today emits NONE of
-// them. A subprocess that dies non-zero with a context-exceeded / refusal /
-// tool-use-failure stderr collapses into the generic
-// `agent/subprocess_exit/before_complete` leaf, and a rate-limit stderr under
-// `cli.handle_rate_limits=false` collapses there too (the auto-park branch is
-// skipped when handle_rate_limits is false, and the non-zero exit then falls
-// through to the generic before_complete fallback). A subscriber wildcard-keyed
-// on `agent/tool_use_failed/*` or exact-keyed on `agent/context_exceeded`
-// therefore never fires.
-//
-// This is the RED proof: it drives the REAL HTTP-bridge `/execute` entry point
-// (NO stub mode — runAgent's real subprocess-exit classification path runs)
-// with four fake-CLI handles, each surfacing one of the four error signatures,
-// and asserts the AsyncCallbackBody.error.error_class is the precise declared
-// leaf for each. It MUST fail today (all four collapse to the generic class) and
-// pass only once the GREEN pass adds the classifier that maps subprocess output
-// to the hierarchical leaves. The membership sub-assertion confirms each emitted
-// class is covered by the executor's advertised declaredErrorClasses (the
-// `agent/tool_use_failed/*` wildcard covers the tool leaf).
+// @deliberate: the claude-agent executor declares four hierarchical error
+// classes — agent/context_exceeded, agent/refused, agent/tool_use_failed/<tool>,
+// and agent/rate_limited — that subscribers prefix-key or exact-key on. A
+// subprocess that dies non-zero with a context-exceeded / refusal /
+// tool-use-failure stderr must surface one of those declared leaves on the
+// terminal error_class, not collapse into the generic
+// `agent/subprocess_exit/before_complete` fallback; and a rate-limit stderr
+// under `cli.handle_rate_limits=false` likewise must surface
+// `agent/rate_limited` (the auto-park branch only fires when handle_rate_limits
+// is true). This test drives the REAL HTTP-bridge `/execute` entry point (NO
+// stub mode — runAgent's real subprocess-exit classification path runs) with
+// four fake-CLI handles, each surfacing one of the four error signatures, and
+// asserts the AsyncCallbackBody.error.error_class is the precise declared leaf
+// for each. The membership sub-assertion confirms each emitted class is covered
+// by the executor's advertised declaredErrorClasses (the `agent/tool_use_failed/*`
+// wildcard covers the tool leaf).
 describe("HTTP bridge /execute emits the four declared agent error classes", () => {
   let cb: CallbackServerHandle;
 
   beforeEach(async () => {
-    // NOT stub mode — the real runAgent CLI-classification path must run so
+    // @deliberate: NOT stub mode — the real runAgent CLI-classification path must run so
     // the subprocess stderr/exit drives the terminal error_class.
     delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
     cb = await startInternalMcpServer({ logger });
@@ -386,7 +381,7 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
     await cb.close();
   });
 
-  // A fake CLI handle that emits `stderr` then exits with `exitCode` (non-zero
+  // @deliberate: a fake CLI handle that emits `stderr` then exits with `exitCode` (non-zero
   // so the exit-0 resume-recovery branch is skipped). No `resume` is provided
   // on the runner, so the recovery path cannot fire — the run resolves purely
   // from the subprocess exit + stderr classification.
@@ -403,7 +398,7 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
         let exited = false;
         let result: { exitCode: number | null; signal: NodeJS.Signals | null } | null =
           null;
-        // Emit the stderr signature, then exit non-zero on the next ticks.
+        // @deliberate: emit the stderr signature, then exit non-zero on the next ticks.
         setTimeout(() => {
           for (const c of stderrCbs) c(stderr);
         }, 2);
@@ -433,7 +428,7 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
     };
   }
 
-  // Drive one /execute dispatch end to end against a bridge wired to a fake CLI
+  // @deliberate: drive one /execute dispatch end to end against a bridge wired to a fake CLI
   // that surfaces `stderr` + a non-zero exit, returning the single
   // AsyncCallbackBody the bridge POSTs back.
   async function dispatchAndCaptureError(opts: {
@@ -477,13 +472,13 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
     }
   }
 
-  // Membership check against the hierarchical declared list: an exact entry, or
+  // @deliberate: membership check against the hierarchical declared list: an exact entry, or
   // a `prefix/*` wildcard entry whose prefix the emitted class extends.
   function isDeclared(errorClass: string): boolean {
     return declaredErrorClasses.some((decl) => {
       if (decl === errorClass) return true;
       if (decl.endsWith("/*")) {
-        const prefix = decl.slice(0, -1); // keep trailing slash, drop '*'
+        const prefix = decl.slice(0, -1);
         return errorClass.startsWith(prefix);
       }
       return false;
@@ -491,7 +486,7 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
   }
 
   it("emits agent/context_exceeded, agent/refused, agent/tool_use_failed/<tool>, and agent/rate_limited (handle_rate_limits=false) as terminal Error.error_class", async () => {
-    // 1. Context-window exceeded.
+    // @deliberate: 1. Context-window exceeded.
     const ctxBody = await dispatchAndCaptureError({
       stderr:
         "API Error: prompt is too long: 215000 tokens > 200000 maximum context window (context_length_exceeded)\n",
@@ -502,7 +497,7 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
     expect(ctxErr.error_class).toBe("agent/context_exceeded");
     expect(isDeclared(ctxErr.error_class)).toBe(true);
 
-    // 2. Model refusal.
+    // @deliberate: 2. Model refusal.
     const refusalBody = await dispatchAndCaptureError({
       stderr:
         "API Error: model declined to respond: this request was refused by the model (refusal)\n",
@@ -513,7 +508,7 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
     expect(refusalErr.error_class).toBe("agent/refused");
     expect(isDeclared(refusalErr.error_class)).toBe(true);
 
-    // 3. Tool-invocation failure — the offending tool name rides the
+    // @deliberate: 3. Tool-invocation failure — the offending tool name rides the
     //    hierarchical leaf.
     const toolBody = await dispatchAndCaptureError({
       stderr:
@@ -523,13 +518,13 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
     expect(toolBody.success).toBeUndefined();
     const toolErr = toolBody.error as { error_class: string };
     expect(toolErr.error_class).toBe("agent/tool_use_failed/Bash");
-    // The hierarchical leaf must carry the offending tool name as its final
+    // @deliberate: the hierarchical leaf must carry the offending tool name as its final
     // segment.
     expect(toolErr.error_class.startsWith("agent/tool_use_failed/")).toBe(true);
     expect(toolErr.error_class.split("/").pop()).toBe("Bash");
     expect(isDeclared(toolErr.error_class)).toBe(true);
 
-    // 4. Rate limit WITH handle_rate_limits=false — the auto-park path is
+    // @deliberate: 4. Rate limit WITH handle_rate_limits=false — the auto-park path is
     //    suppressed, so the rate-limit surfaces as the agent/rate_limited
     //    Error class rather than a Park (and rather than the generic
     //    before_complete leaf).
@@ -539,7 +534,7 @@ describe("HTTP bridge /execute emits the four declared agent error classes", () 
       exitCode: 1,
       cli: { handle_rate_limits: false },
     });
-    // It must be an Error, NOT a Park (the suppressed auto-park path).
+    // @deliberate: it must be an Error, NOT a Park (the suppressed auto-park path).
     expect(rlBody.park).toBeUndefined();
     expect(rlBody.success).toBeUndefined();
     const rlErr = rlBody.error as { error_class: string };

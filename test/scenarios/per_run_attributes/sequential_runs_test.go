@@ -60,7 +60,6 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)
 
-	// First run.
 	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second))
 	var first *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -72,13 +71,11 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	firstRunID := first.NodeRunID
 	require.Equal(t, "first", first.Data["value"])
 
-	// Re-prime stub for second run.
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "second"}, true, "ok")
 
-	// Trigger a fresh run via admin invalidate.
 	adminInvalidate(t, h, iid, w.ID)
 
-	// Wait until the latest attribute row has a different run id and
+	// @deliberate: Wait until the latest attribute row has a different run id and
 	// reflects the second invocation's value.
 	deadline := time.Now().Add(15 * time.Second)
 	var latest *persistence.NodeAttributesRow
@@ -101,7 +98,7 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	require.Equal(t, "second", latest.Data["value"],
 		"second run's attribute data should be persisted independently")
 
-	// The first row should still be readable via GetByRun (per-run
+	// @deliberate: The first row should still be readable via GetByRun (per-run
 	// keying preserves history within a node).
 	var firstByRun *persistence.NodeAttributesRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {

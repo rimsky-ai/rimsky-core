@@ -92,7 +92,7 @@ func selectRoles(args []string) ([]string, error) {
 func shouldMigrate(selected []string) (bool, error) {
 	switch v := os.Getenv("RIMSKY_ENTRYPOINT_MIGRATE"); v {
 	case "":
-		// No override; fall through to the default heuristic below.
+		// @deliberate: empty falls through to the default heuristic below.
 	case "1":
 		return true, nil
 	case "0":
@@ -100,8 +100,8 @@ func shouldMigrate(selected []string) (bool, error) {
 	default:
 		return false, fmt.Errorf("invalid RIMSKY_ENTRYPOINT_MIGRATE=%q: must be \"1\" (force migrate), \"0\" (skip migrate), or unset", v)
 	}
-	// No override: all-in-one (all three) migrates; single-role migrates only
-	// for the designated control-api role.
+	// @constraint: with no override, all-in-one (all three) migrates;
+	// single-role migrates only for the designated control-api role.
 	if len(selected) == len(roles) {
 		return true, nil
 	}
@@ -111,19 +111,19 @@ func shouldMigrate(selected []string) (bool, error) {
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("binary", "entrypoint"))
 
-	// Register the signal handler FIRST — before migrate and before any
-	// role starts. As container PID-1 this process gets default-ignored
-	// SIGTERM until Notify runs, so a `docker stop` during a long migrate
-	// (or slow role startup) would otherwise be silently dropped and the
-	// container would hang until SIGKILL. The buffered channel queues a
-	// signal received during any startup phase; every later phase
-	// (migrate, unified roles, single-role child) consumes this one
-	// channel.
+	// @constraint: register the signal handler FIRST — before migrate
+	// and before any role starts. As container PID-1 this process gets
+	// default-ignored SIGTERM until Notify runs, so a `docker stop`
+	// during a long migrate (or slow role startup) would otherwise be
+	// silently dropped and the container would hang until SIGKILL. The
+	// buffered channel queues a signal received during any startup phase;
+	// every later phase (migrate, unified roles, single-role child)
+	// consumes this one channel.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	// Resolve the role argument first so an unknown role fails before we touch
-	// the store with a migrate run.
+	// @constraint: resolve the role argument first so an unknown role
+	// fails before we touch the store with a migrate run.
 	args := os.Args[1:]
 	selected, err := selectRoles(args)
 	if err != nil {
@@ -133,9 +133,9 @@ func main() {
 	slog.Info("selected roles", "roles", selected)
 
 	if len(args) == 0 {
-		// No-command path: the single-process all-in-one. Mark the
-		// process as the unified single-process mode BEFORE migrate and
-		// role startup — the memory-blob gate
+		// @constraint: no-command path is the single-process all-in-one.
+		// Mark the process as the unified single-process mode BEFORE
+		// migrate and role startup — the memory-blob gate
 		// (persistence.ValidateBlobConfig) admits the "memory" backend
 		// only under this marker, and only this path may set it: here
 		// every role shares this one process, so an in-process blob map
@@ -149,10 +149,10 @@ func main() {
 		return
 	}
 
-	// Single-role path: spawn the role binary as a child process,
-	// unchanged from the multi-container contract. RIMSKY_PROCESS_ROLE
-	// is NOT set here — a per-role process is not the single-process
-	// mode, and the memory-blob gate must reject it.
+	// @constraint: single-role path spawns the role binary as a child
+	// process, unchanged from the multi-container contract.
+	// RIMSKY_PROCESS_ROLE is NOT set here — a per-role process is not
+	// the single-process mode, and the memory-blob gate must reject it.
 	runMigrateIfOwned(selected, sigCh)
 	runSingleRole(selected[0], sigCh)
 }
@@ -215,21 +215,20 @@ func runUnified(sigCh <-chan os.Signal) {
 
 	ctx := context.Background()
 
-	// One driver, shared across all three Run* runners. Opening per-
-	// role would give each role its own connection pool against the
-	// same backing file, which under sqlite re-introduces writer-slot
-	// contention even though all three roles run inside one process.
-	// See @blessed-invariant: one-driver-per-process at
-	// lib/control/launch/open_driver.go.
+	// @constraint: one driver, shared across all three Run* runners.
+	// Opening per-role would give each role its own connection pool
+	// against the same backing file, which under sqlite re-introduces
+	// writer-slot contention even though all three roles run inside one
+	// process. See @blessed-invariant: one-driver-per-process.
 	driver, cfg, err := launch.OpenDriverFromEnv(ctx, base)
 	if err != nil {
 		slog.Error("open persistence driver", "err", err)
 		os.Exit(1)
 	}
-	// runUnified exits via os.Exit on every path, so the defer wouldn't
-	// fire — call Close inline at each exit point instead. The process
-	// death also releases the file lock, but an explicit Close ensures
-	// pending writes flush cleanly first.
+	// @constraint: runUnified exits via os.Exit on every path, so the
+	// defer wouldn't fire — call Close inline at each exit point instead.
+	// The process death also releases the file lock, but an explicit
+	// Close ensures pending writes flush cleanly first.
 	closeDriver := func() { _ = driver.Close() }
 
 	stack, err := launch.StartUnifiedStack(ctx, base, driver, cfg)
@@ -272,7 +271,7 @@ func runSingleRole(name string, sigCh <-chan os.Signal) {
 		shutdownChild(cmd, exitCh)
 		os.Exit(0)
 	case ce := <-exitCh:
-		// A clean child exit (code 0) is still a reason for PID-1 to exit
+		// @constraint: a clean child exit (code 0) is still a reason for PID-1 to exit
 		// — the container's one role is gone — but it is not an error.
 		if ce.err == nil {
 			slog.Info("child exited", "binary", ce.name)
@@ -289,7 +288,7 @@ func runSingleRole(name string, sigCh <-chan os.Signal) {
 // full PID-1 lifecycle.
 func spawnRole(name string) (*exec.Cmd, chan childExit, error) {
 	c := exec.Command(binaryDir + "/" + name)
-	// RIMSKY_PROCESS_ROLE is deliberately NOT set for a spawned role —
+	// @constraint: RIMSKY_PROCESS_ROLE is deliberately NOT set for a spawned role —
 	// the single-process mode marker belongs only to the no-command
 	// in-process path (see runUnified), and the memory-blob gate
 	// (persistence.ValidateBlobConfig) must reject a per-role process.

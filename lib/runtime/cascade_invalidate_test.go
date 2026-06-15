@@ -25,7 +25,7 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// --- In-memory fake persistence.Queue ----------------------------------
+// invTestQueue In-memory fake persistence.Queue ----------------------------------
 // Named invTestQueue to avoid colliding with fakeQueue in pure_cascade_test.go
 // (same package). This variant additionally records RemoveForNode calls.
 
@@ -116,7 +116,7 @@ func (f *invTestQueue) ListInFlightRunPhases(ctx context.Context, tx persistence
 	return map[shared.UUID][]string{}, nil
 }
 
-// Park-lifecycle helpers for the 2026-05-08 platform-extensions plan.
+// ParkActiveInTx helpers for the 2026-05-08 platform-extensions plan.
 // invTestQueue is the cascade-invalidate test fixture; the parked
 // helpers are no-ops since these tests don't park nodes.
 func (f *invTestQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persistence.ParkActiveInput) error {
@@ -170,8 +170,6 @@ func (f *invTestQueue) snapshot() ([]persistence.DispatchRequest, []shared.UUID)
 }
 
 var _ persistence.Queue = (*invTestQueue)(nil)
-
-// --- Fixtures ---------------------------------------------------------
 
 type fixture struct {
 	driver   persistence.Database
@@ -242,7 +240,7 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	ctx := context.Background()
 	var n persistence.NodeRow
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_ = deps // legacy: dependency-edge resolution is now via subscription-edge map
+		_ = deps // @deliberate: legacy: dependency-edge resolution is now via subscription-edge map
 		row, err := f.persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID: uuid.New(), InstanceID: f.instance.ID, NodeType: "t",
 			Executor: executor,
@@ -256,7 +254,7 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	if state == cascade.NodeStateFresh {
 		return n
 	}
-	// Reuse existing running frame for this instance if any; otherwise
+	// @deliberate: Reuse existing running frame for this instance if any; otherwise
 	// insert a fresh one.
 	var count int
 	pgtest.QueryRowForTest(ctx, t, f.driver,
@@ -280,7 +278,7 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, n.ID)
 	n.FrameID = &frameID
-	// Insert the in-flight run row in the requested state.
+	// @deliberate: Insert the in-flight run row in the requested state.
 	runPhase := "pending"
 	if state == cascade.NodeStateRunning {
 		runPhase = "active"
@@ -294,7 +292,7 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	return n
 }
 
-// --- InvalidateNode tests ---------------------------------------------
+// TestInvalidateNode_EnqueuesFrameAndEmitsEvents InvalidateNode tests ---------------------------------------------
 //
 // Under the frame-resolution model
 // (docs/history/2026-04-26-frame-resolution-design.md), InvalidateNode no
@@ -317,7 +315,7 @@ func TestInvalidateNode_EnqueuesFrameAndEmitsEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Source node remains fresh until the frame engine advances the frame.
+	// @deliberate: Source node remains fresh until the frame engine advances the frame.
 	var p *persistence.NodeRow
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := f.persist.Nodes().Get(ctx, parent.ID, tx)
@@ -326,7 +324,7 @@ func TestInvalidateNode_EnqueuesFrameAndEmitsEvents(t *testing.T) {
 	}))
 	require.Equal(t, cascade.NodeStateFresh, p.State)
 
-	// A queued frame row exists with this node as source.
+	// @deliberate: A queued frame row exists with this node as source.
 	var (
 		count   int
 		state   string
@@ -340,7 +338,7 @@ func TestInvalidateNode_EnqueuesFrameAndEmitsEvents(t *testing.T) {
 	require.Equal(t, "queued", state)
 	require.True(t, hasNode)
 
-	// Audit events were appended.
+	// @deliberate: Audit events were appended.
 	var events persistence.EventListResult
 	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{NodeID: &parent.ID},
@@ -374,8 +372,6 @@ func TestInvalidateNode_TargetMissing_NoOp(t *testing.T) {
 		[]any{f.instance.ID}, &count)
 	require.Equal(t, 0, count)
 }
-
-// --- RecalculateNode tests --------------------------------------------
 
 func TestRecalculateNode_FreshTarget_IsNoOp(t *testing.T) {
 	t.Parallel()
@@ -415,7 +411,7 @@ func TestRecalculateNode_StaleWithPendingWaitSet_IsNoOp(t *testing.T) {
 	dep := f.createNodeInState(t, "worker", cascade.NodeStateStale)
 	target := f.createNodeInState(t, "worker", cascade.NodeStateStale)
 
-	// Seed a wait-set row gating target on dep in the running frame.
+	// @deliberate: Seed a wait-set row gating target on dep in the running frame.
 	// Post-stage-5 the wait-set keys on run id, so resolve each node's
 	// in-flight run id via the queue.
 	require.NotNil(t, target.FrameID)
@@ -457,7 +453,7 @@ func TestRecalculateNode_StaleWithEmptyWaitSetAndExecutor_EnqueuesDispatch(t *te
 
 	target := f.createNodeInState(t, "runner", cascade.NodeStateStale)
 	require.NotNil(t, target.FrameID)
-	// No wait-set rows seeded — empty by default.
+	// @deliberate: No wait-set rows seeded — empty by default.
 
 	err := runtime.RecalculateNode(ctx, runtime.RecalculateArgs{
 		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,

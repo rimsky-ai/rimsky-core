@@ -36,7 +36,7 @@ import (
 // scheduler.Config.Retention, which the production wiring now populates.
 func TestRetentionSweepsReapOnTick(t *testing.T) {
 	t.Parallel()
-	// NoScheduler so the harness's own tick loop doesn't race our seeded
+	// @constraint: NoScheduler so the harness's own tick loop doesn't race our seeded
 	// rows; NoSupervisor so the created instance never spawns real frames /
 	// run rows that would pollute the retention assertions. We drive
 	// scheduler.Tick synchronously below.
@@ -54,13 +54,13 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	instanceID := h.CreateInstance(tplHash, "", map[string]any{})
 	scopeID := h.GetMainRunScopeID(instanceID)
 
-	// A node to hang the seeded run rows off (node.frame_id stays NULL;
+	// @constraint: A node to hang the seeded run rows off (node.frame_id stays NULL;
 	// the run rows carry frame_id directly).
 	nodeID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_nodes (id, instance_id, node_type, executor)
 	           VALUES ($1, $2, 'retention-node', 'worker')`, nodeID, instanceID)
 
-	// --- Seed terminal frames + run rows ---------------------------------
+	// @deliberate: Seed terminal frames + run rows
 	//
 	// Five completed frames per instance with distinct ended_at. With
 	// RecentFramesKept=2 (no TraceTrailing here), PruneTraceForRetention
@@ -76,7 +76,7 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	base := time.Now().Add(-24 * time.Hour)
 	for i := 0; i < totalFrames; i++ {
 		frameID := uuid.New()
-		// ended_at increases with i so the highest-i frames are the most
+		// @deliberate: ended_at increases with i so the highest-i frames are the most
 		// recent terminal frames (the survivors).
 		endedAt := base.Add(time.Duration(i) * time.Hour)
 		h.ExecSQL(`INSERT INTO rimsky_frames
@@ -92,7 +92,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 		    VALUES ($1, $2, 'worker', $3, 'completed', 'failed', $4, $5)`,
 			runID, nodeID, endedAt, frameID, scopeID)
 
-		// rank 1..keepFrames (most recent) survive; the rest are pruned.
 		if i >= totalFrames-keepFrames {
 			survivingRunIDs[runID.String()] = true
 		} else {
@@ -102,7 +101,7 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	require.Len(t, survivingRunIDs, keepFrames)
 	require.Len(t, prunedRunIDs, totalFrames-keepFrames)
 
-	// --- Seed lineage rows -----------------------------------------------
+	// @deliberate: Seed lineage rows
 	//
 	// Stale rows: observed_at well past the 1h LineageTrailing cutoff, with
 	// record run_id/claim_handle_id pointing at rows that don't exist, so
@@ -125,7 +124,7 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 			lid, instanceID, staleFrameID, base, uuid.NewString(), uuid.NewString())
 	}
 
-	// Fresh lineage row: observed_at is now, so it's inside the trailing
+	// @constraint: Fresh lineage row: observed_at is now, so it's inside the trailing
 	// window and must survive.
 	freshLineageID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_lineage
@@ -134,7 +133,7 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	            jsonb_build_object('run_id', $4::text, 'claim_handle_id', $5::text), '')`,
 		freshLineageID, instanceID, staleFrameID, uuid.NewString(), uuid.NewString())
 
-	// --- Drive one tick with retention configured ------------------------
+	// @deliberate: Drive one tick with retention configured
 	cfg := scheduler.Config{
 		Persist:        h.Persist,
 		Queue:          h.Queue,
@@ -149,7 +148,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	}
 	require.NoError(t, scheduler.Tick(h.Ctx, cfg))
 
-	// --- Assert lineage retention ----------------------------------------
 	for _, lid := range staleLineageIDs {
 		var n int
 		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_lineage WHERE id = $1`,
@@ -161,7 +159,6 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 		[]any{freshLineageID}, &freshN)
 	assert.Equal(t, 1, freshN, "fresh lineage row inside the trailing window must survive")
 
-	// --- Assert run-tree retention ---------------------------------------
 	for runID := range survivingRunIDs {
 		var n int
 		h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_node_runs WHERE id = $1`,

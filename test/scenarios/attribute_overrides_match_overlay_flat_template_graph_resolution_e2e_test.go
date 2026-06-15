@@ -57,7 +57,6 @@ func TestAttributeOverridesMatchOverlayFlatTemplateGraphResolution_ResolvesToMai
 
 	overrides := map[string]any{
 		"by_match": []any{
-			// graph=main fires for every dispatch in a flat template.
 			map[string]any{
 				"matcher": map[string]any{"graph": "main"},
 				"overlay": map[string]any{"cli": map[string]any{"where": "outer"}},
@@ -92,7 +91,7 @@ func TestAttributeOverridesMatchOverlayFlatTemplateGraphResolution_ResolvesToMai
 	require.Equal(t, "outer", cli["where"],
 		"matcher graph=main MUST fire for flat-Nodes template")
 
-	// Counter increment landed.
+	// @deliberate: Counter increment landed.
 	var inst *persistence.InstanceRow
 	require.Eventually(t, func() bool {
 		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

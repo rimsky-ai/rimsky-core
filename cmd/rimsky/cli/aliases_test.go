@@ -13,7 +13,7 @@ import (
 func TestLoadServiceAliases_GlobalOnly(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	chdir(t, t.TempDir()) // no project-local file
+	chdir(t, t.TempDir())
 	writeAliasFile(t, filepath.Join(home, ".rimsky", "aliases.yml"),
 		"aliases:\n  codegen: /opt/codegen\n  fs: /opt/fs\n")
 

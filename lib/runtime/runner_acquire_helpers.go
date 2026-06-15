@@ -45,7 +45,7 @@ func acquireFanOutIfDeclared(
 	if nodeDef == nil || nodeDef.FanOut == nil {
 		return nil
 	}
-	// Only the root run of a fan-out tree splits. Children re-use the
+	// @constraint: only the root run of a fan-out tree splits. Children re-use the
 	// parent's node_id (per `runtime/fanout_dispatch.go::dispatchFanOutChildren`)
 	// and therefore inherit the same `nodeDef.FanOut` block; without this
 	// guard each child re-fires SplitScope and creates grand-children
@@ -60,7 +60,7 @@ func acquireFanOutIfDeclared(
 			return nil
 		}
 	}
-	// Locate the acquiredLocks entry whose Alias matches the
+	// @constraint: locate the acquiredLocks entry whose Alias matches the
 	// FanOut.Claim reference. The validator (D4) rejects fan_out blocks
 	// that reference an unknown alias, so this lookup is best-effort
 	// safe at runtime.
@@ -75,7 +75,7 @@ func acquireFanOutIfDeclared(
 	if parent == nil {
 		return nil
 	}
-	// `parent.Spec` is `any` — narrow to ClaimSpec; named locks
+	// @constraint: `parent.Spec` is `any` — narrow to ClaimSpec; named locks
 	// can't be fan-out targets (no producer name).
 	parentClaimSpec, ok := parent.Spec.(claimproducer.ClaimSpec)
 	if !ok {
@@ -85,20 +85,19 @@ func acquireFanOutIfDeclared(
 		return nil
 	}
 	frameID := cand.FrameID
-	// Substitute partition_request with the runtime-resolved trigger
+	// @constraint: substitute partition_request with the runtime-resolved trigger
 	// payload before handing it to SplitScope. The fan-out node's
 	// partition_request is authored to pull the backfill's
 	// partition_request_override off the triggering message (canonical
 	// form `{{trigger.message.payload.partition_request_override |
 	// <template-default>}}`); the override rides the delivered
-	// invalidate message's payload keyed to this frame.
-	//
-	// Load-bearing property: the bytes that reach AcquireSubClaims /
-	// SplitScope are the SUBSTITUTED bytes (the override genuinely
-	// binds), not the literal template. Passing the literal verbatim —
-	// the prior behaviour — silently dropped every backfill override
-	// because the `{{trigger…}}` directive was never resolved and the
-	// `|`-fallback to the template default always fired.
+	// invalidate message's payload keyed to this frame. The bytes that
+	// reach AcquireSubClaims / SplitScope must be the SUBSTITUTED bytes
+	// (the override genuinely binds), not the literal template. Passing
+	// the literal verbatim — the prior behaviour — silently dropped
+	// every backfill override because the `{{trigger…}}` directive was
+	// never resolved and the `|`-fallback to the template default
+	// always fired.
 	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, tx, frameID, out, nodeDef.FanOut.PartitionRequest)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out partition_request substitution failed",
@@ -117,18 +116,18 @@ func acquireFanOutIfDeclared(
 		FrameID:             &frameID,
 		HeartbeatInterval:   heartbeatInterval,
 		PartitionRequest:    partitionRequest,
-		// Sub-claims inherit the parent claim's lifetime. parentClaimSpec.Lifetime
+		// @constraint: sub-claims inherit the parent claim's lifetime. parentClaimSpec.Lifetime
 		// is the rimsky-internal plain-string carried on the ClaimSpec (lib/protocols
 		// may not import lib/foundation/spec); convert to spec.ClaimLifetime here.
 		// AcquireSubClaims defaults an empty value to "subgraph". @concept: claim-lifetime
 		Lifetime: spec.ClaimLifetime(parentClaimSpec.Lifetime),
-		// Sub-claims inherit the parent's is_held so the rows survive
+		// @constraint: sub-claims inherit the parent's is_held so the rows survive
 		// the leaf's active terminal until the parent's recursive
 		// resolution walks them. Without this, non-held sub-claim
 		// rows drop at active terminal and the parent's aggregation
 		// sees an empty children set, Committing prematurely.
 		ParentIsHeld: parent.IsHeld,
-		// AggregationPolicy is snapshotted onto the parent claim
+		// @constraint: AggregationPolicy is snapshotted onto the parent claim
 		// handle so the recursive walker computes a true aggregate
 		// Commit/Abandon decision over all children's outcomes
 		// (cycle 4 issue C).
@@ -273,7 +272,7 @@ func loadResumeMetadataIfParked(
 	if rm.PayloadHandle != "" {
 		payload = readResumePayloadBlob(ctx, args, rm, cand)
 	}
-	// resume_reason is read from the persisted wake_reason column,
+	// @deliberate: resume_reason is read from the persisted wake_reason column,
 	// populated by ResumeParkedInTx at wake time. Empty wake_reason
 	// (NULL) falls back to external_invalidate — covers older rows
 	// upgraded in place pre-v1 and any wake path that forgot to set
@@ -287,7 +286,7 @@ func loadResumeMetadataIfParked(
 		SessionToken: rm.SessionToken,
 		Reason:       wakeReason,
 	}
-	// Observe parked duration on resume — measured from when the
+	// @deliberate: observe parked duration on resume — measured from when the
 	// node-run entered phase='parked' (rm.ParkedAt) to now. Skipped
 	// when ParkedAt is zero (legacy rows or callers that haven't
 	// backfilled the field).

@@ -121,7 +121,7 @@ func TestCompile_PKUnique(t *testing.T) {
 
 	t.Run("interpret zero rows scanned → pass", func(t *testing.T) {
 		c, _ := Compile(CheckSpec{Kind: "pk_unique", Config: map[string]any{"fields": []any{"id"}}}, "s", "t")
-		// Runner passes false when no row returned.
+		// @deliberate: Runner passes false when no row returned; Interpret must treat that as pass.
 		res := c.Interpret(false)
 		if !res.Pass {
 			t.Fatalf("expected pass when no duplicate, got %+v", res)
@@ -141,13 +141,14 @@ func TestCompile_InvalidIdentifiers(t *testing.T) {
 	tests := []struct {
 		schema, table string
 	}{
-		{"BadCase", "items"}, // uppercase rejected
+		{"BadCase", "items"},
 		{"s", "ITEMS"},
 		{"", "items"},
 		{"s", ""},
-		{"123start", "items"}, // digit-leading rejected
+		{"123start", "items"},
 		{"s", "with-dash"},
-		{"s; DROP TABLE", "items"}, // SQL-injection attempt rejected
+		// @constraint: identifier validator rejects SQL-injection attempts in schema names.
+		{"s; DROP TABLE", "items"},
 	}
 	for _, tc := range tests {
 		_, err := Compile(CheckSpec{Kind: "row_count_absolute", Config: map[string]any{"min": 1}}, tc.schema, tc.table)
@@ -224,7 +225,7 @@ func TestRun_AllPass(t *testing.T) {
 	conn := &fakeConn{responses: map[string][][]any{
 		"SELECT count(*) FROM s.t":                                             {{int64(1500)}},
 		"SELECT count(*) FILTER (WHERE id IS NULL) FROM s.t":                   {{int64(0)}},
-		"SELECT id, count(*) FROM s.t GROUP BY id HAVING count(*) > 1 LIMIT 1": nil, // no rows
+		"SELECT id, count(*) FROM s.t GROUP BY id HAVING count(*) > 1 LIMIT 1": nil,
 	}}
 	specs := []CheckSpec{
 		{Kind: "row_count_absolute", Config: map[string]any{"min": 1000}},
@@ -244,7 +245,7 @@ func TestRun_AllPass(t *testing.T) {
 
 func TestRun_AnyFailFails(t *testing.T) {
 	conn := &fakeConn{responses: map[string][][]any{
-		"SELECT count(*) FROM s.t": {{int64(999)}}, // below min
+		"SELECT count(*) FROM s.t": {{int64(999)}},
 	}}
 	specs := []CheckSpec{
 		{Kind: "row_count_absolute", Config: map[string]any{"min": 1000}},
@@ -263,13 +264,12 @@ func TestRun_EmptySpecsRejected(t *testing.T) {
 }
 
 func TestSelectOnlyEnforcement(t *testing.T) {
-	// Construct a Compiled with non-SELECT SQL by hand and verify the
-	// regex catches it. This pins the SELECT-only invariant for future
-	// regressions.
+	// @constraint: selectOnlyRegex must reject non-SELECT SQL and leading comments
+	// to keep the check executor read-only.
 	sqls := []string{
 		"DROP TABLE s.t",
 		"INSERT INTO s.t VALUES (1)",
-		"  -- comment\nSELECT count(*) FROM s.t", // leading comments not allowed
+		"  -- comment\nSELECT count(*) FROM s.t",
 	}
 	for _, sql := range sqls {
 		if selectOnlyRegex.MatchString(sql) {

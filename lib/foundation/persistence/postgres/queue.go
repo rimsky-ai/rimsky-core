@@ -110,18 +110,17 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.RunScopeID == (shared.UUID{}) {
 		return fmt.Errorf("postgres.Enqueue: run_scope_id required for node %s", req.NodeID)
 	}
-	// Recovery-aware fields: $7 / $8 carry the predecessor dispatch
-	// id + disposition for retries / heartbeat-stale recovery /
-	// recalculates. Both NULL for initial dispatches. Per spec
-	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+	// @constraint: $7 / $8 carry the predecessor dispatch id + disposition for
+	// retries / heartbeat-stale recovery / recalculates; both NULL for initial
+	// dispatches. Per spec:2026-05-22-fan-out-safety-scope-first-design
 	// §Recovery-aware executor protocol.
 	var priorID any
 	if req.PriorDispatchID != nil {
 		priorID = *req.PriorDispatchID
 	}
 	priorDisposition := nullableText(req.PriorDispatchDisposition)
-	// Single-branch NOT EXISTS guard keyed on (node_id, run_scope_id) —
-	// unambiguous per uq_node_runs_in_flight_per_run_scope. The
+	// @constraint: single-branch NOT EXISTS guard keyed on (node_id, run_scope_id)
+	// is unambiguous per uq_node_runs_in_flight_per_run_scope; the
 	// rimsky_run_scopes JOIN enforces closed_at IS NULL at INSERT time.
 	tag, err := q.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition)
@@ -144,9 +143,9 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if tag.RowsAffected() > 0 {
 		return nil
 	}
-	// Zero rows: (a) in-flight row already exists (silent success),
-	// (b) scope closed (return ErrRunScopeClosed), or (c) scope absent
-	// (error). Re-resolve via separate SELECTs.
+	// @constraint: zero rows must disambiguate (a) in-flight row already exists
+	// (silent success), (b) scope closed (return ErrRunScopeClosed), or
+	// (c) scope absent (error); re-resolve via separate SELECTs.
 	var closedAt *time.Time
 	err = q.q(tx).QueryRow(ctx,
 		`SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`,
@@ -161,8 +160,8 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if closedAt != nil {
 		return persistence.ErrRunScopeClosed
 	}
-	// Scope is open: zero rows means an in-flight row already exists;
-	// silent success per the existing no-op contract.
+	// @deliberate: scope is open and zero rows means an in-flight row already
+	// exists; return nil for silent success per the existing no-op contract.
 	return nil
 }
 
@@ -192,38 +191,41 @@ func (q *queueImpl) SelectCandidates(
 		acceptedExecutors = []string{}
 	}
 
-	// SELECT predicates: claimed_by IS NULL is the legacy unclaimed-row
-	// gate, but parked rows ALSO have claimed_by=NULL (cleared during
-	// the park transition so the orphan-claim reaper skips them per E2).
-	// Without phase='pending' the supervisor would claim parked rows
-	// directly and skip the wake path. Per the 2026-05-08 platform-
-	// extensions plan E2/E3.
-	// Post-stage-3 cutover: pure-cascade nodes (no executor, no stores
-	// in the template) have a run row only for state tracking; they
-	// are not dispatch candidates. The template-lookup at insert time
-	// populates required_stores for native-claim-only nodes (NULL
-	// executor, non-empty stores). The supervisor's native-claim path
-	// remains reachable for those rows; pure-cascade rows are
-	// excluded here via the non-empty required_stores guard.
-	// Join rimsky_instances via rimsky_nodes (rimsky_node_runs has no
-	// instance_id of its own) and filter out paused instances. Per
-	// concept:breakpoint §5.2 soft-pause semantics: the supervisor stops
-	// claiming new dispatches for paused instances while in-flight work
-	// runs to terminal naturally.
-	// Late-bind admit-list extension (concept:host-agent / spec
-	// 2026-05-24-host-agent-and-proxy-design.md): when a proxy peer is
-	// configured for a protocol, dispatch rows whose executor_name (or
-	// required_stores) are NOT in the supervisor's static accept-lists
-	// may still be claimable if the proxy name IS in the accept-list AND
-	// the instance's service_bindings JSONB carries the named binding.
-	// The `<> ''` guards keep the new OR-branches inert when no proxy is
-	// configured ($4/$5 empty), so existing call sites behave identically.
-	// Keyset cursor ($6/$7): the runner pages past a batch whose
-	// candidates were all skipped in Go (e.g. the upstream in-flight
-	// gate) by re-selecting strictly after the last (enqueued_at, id)
-	// pair — without it, ≥ LIMIT long-gated old candidates would hold
-	// the window every poll and starve younger ungated rows. Zero
-	// values (year-1 time, zero uuid) match everything.
+	// @constraint: claimed_by IS NULL is the legacy unclaimed-row gate, but
+	// parked rows ALSO have claimed_by=NULL (cleared during the park transition
+	// so the orphan-claim reaper skips them per E2); without phase='pending'
+	// the supervisor would claim parked rows directly and skip the wake path.
+	// Per the 2026-05-08 platform-extensions plan E2/E3.
+	//
+	// @constraint: post-stage-3 cutover — pure-cascade nodes (no executor, no
+	// stores in the template) have a run row only for state tracking and are
+	// not dispatch candidates. The template-lookup at insert time populates
+	// required_stores for native-claim-only nodes (NULL executor, non-empty
+	// stores); the supervisor's native-claim path remains reachable for those
+	// rows, while pure-cascade rows are excluded here via the non-empty
+	// required_stores guard.
+	//
+	// @constraint: join rimsky_instances via rimsky_nodes (rimsky_node_runs has
+	// no instance_id of its own) and filter out paused instances. Per
+	// concept:breakpoint §5.2 soft-pause semantics — the supervisor stops
+	// claiming new dispatches for paused instances while in-flight work runs
+	// to terminal naturally.
+	//
+	// @constraint: late-bind admit-list extension (concept:host-agent / spec
+	// 2026-05-24-host-agent-and-proxy-design) — when a proxy peer is configured
+	// for a protocol, dispatch rows whose executor_name (or required_stores)
+	// are NOT in the supervisor's static accept-lists may still be claimable
+	// if the proxy name IS in the accept-list AND the instance's
+	// service_bindings JSONB carries the named binding. The `<> ''` guards
+	// keep the new OR-branches inert when no proxy is configured ($4/$5 empty),
+	// so existing call sites behave identically.
+	//
+	// @constraint: keyset cursor ($6/$7) — the runner pages past a batch whose
+	// candidates were all skipped in Go (e.g. the upstream in-flight gate) by
+	// re-selecting strictly after the last (enqueued_at, id) pair. Without it,
+	// ≥ LIMIT long-gated old candidates would hold the window every poll and
+	// starve younger ungated rows. Zero values (year-1 time, zero uuid) match
+	// everything.
 	rows, err := pgT.Query(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition
@@ -574,8 +576,8 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	if filter.InstanceID != nil {
 		instanceID = *filter.InstanceID
 	}
-	// Post-stage-1 lifecycle flip: terminal rows survive past active
-	// terminal; the "live" observability surface filters to in-flight
+	// @constraint: post-stage-1 lifecycle flip — terminal rows survive past
+	// active terminal; the "live" observability surface filters to in-flight
 	// phases so the listing keeps its prior shape.
 	rows, err := q.pool.Query(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
@@ -772,8 +774,6 @@ func (q *queueImpl) ListInFlightRunPhases(
 	}
 	return out, nil
 }
-
-// ---- dispatch cursor encoding ----
 
 func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {
 	c := struct {

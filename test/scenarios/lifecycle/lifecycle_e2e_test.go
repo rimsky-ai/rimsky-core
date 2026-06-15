@@ -53,7 +53,7 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	t.Cleanup(teardown)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		// Skip the supervisor and scheduler; we don't need them for
+		// @deliberate: Skip the supervisor and scheduler; we don't need them for
 		// lifecycle event coverage and dropping them speeds the test up.
 		NoSupervisor:     true,
 		NoScheduler:      true,
@@ -71,7 +71,6 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Register + deploy: harness's DeployTemplate handles both steps.
 	spec := node.TemplateSpec{
 		Name: "lifecycle-e2e", Version: "v1",
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
@@ -85,38 +84,37 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	}
 	templateHash := h.DeployTemplate(spec)
 
-	// Post-DeployTemplate: register + deploy fired, so the
+	// @constraint: Post-DeployTemplate: register + deploy fired, so the
 	// template-scope lifecycle row should be at state='deployed'.
 	tplRow := getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash)
 	require.NotNil(t, tplRow, "template-scope lifecycle row must exist after deploy")
 	require.Equal(t, persistence.LifecycleIdempotencyStateDeployed, tplRow.State)
 
-	// Instantiate: triggers OnInstanceCreated.
+	// @constraint: Instantiate: triggers OnInstanceCreated.
 	instanceID := h.CreateInstance(templateHash, "ck-1", nil)
 	instRow := getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeInstance, instanceID.String())
 	require.NotNil(t, instRow, "instance-scope lifecycle row must exist after create")
 	require.Equal(t, persistence.LifecycleIdempotencyStateCreated, instRow.State)
 
-	// Drive instance terminal — manual SQL bypass; lifecycle test
+	// @deliberate: Drive instance terminal — manual SQL bypass; lifecycle test
 	// doesn't depend on the frame engine.
 	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
 	}))
 
-	// DELETE /instances triggers OnInstanceTerminated fan-out, which
+	// @deliberate: DELETE /instances triggers OnInstanceTerminated fan-out, which
 	// deletes the per-store lifecycle row before dropping the
 	// instance row. We verify both outcomes below.
 	deleteAndExpect(t, h, "/v1/instances/"+instanceID.String(), http.StatusOK)
 	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeInstance, instanceID.String()),
 		"instance-scope lifecycle row must be deleted by terminate fan-out")
 
-	// Undeploy: template-scope row state='undeployed'.
 	postAndExpect(t, h, "/v1/templates/"+templateHash+"/undeploy", http.StatusOK)
 	tplRow = getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash)
 	require.NotNil(t, tplRow)
 	require.Equal(t, persistence.LifecycleIdempotencyStateUndeployed, tplRow.State)
 
-	// Deregister: DELETE /templates/{hash}; lifecycle row must be gone.
+	// @constraint: Deregister: DELETE /templates/{hash}; lifecycle row must be gone.
 	deleteAndExpect(t, h, "/v1/templates/"+templateHash, http.StatusOK)
 	require.Nil(t, getLifecycleRow(t, h, "alpha", persistence.LifecycleIdempotencyScopeTemplate, templateHash),
 		"template-scope lifecycle row must be deleted by deregister fan-out")

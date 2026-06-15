@@ -59,7 +59,7 @@ import (
 func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	t.Parallel()
 
-	// Fake lifecycle subscriber on an ephemeral loopback port. Self-
+	// @constraint: Fake lifecycle subscriber on an ephemeral loopback port. Self-
 	// contained: includes a minimal `claim_producer` Capabilities
 	// stub so rimsky's startup handshake at `runtime/peer/dial.go::Dial`
 	// passes (the runtime claim verbs are never invoked because the
@@ -68,7 +68,7 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	t.Cleanup(fake.stop)
 
 	h := scenario.Start(t, scenario.HarnessOpts{
-		// Lifecycle events fire from control-api regardless of the
+		// @deliberate: Lifecycle events fire from control-api regardless of the
 		// supervisor/scheduler state — drop both to speed the test.
 		NoSupervisor:     true,
 		NoScheduler:      true,
@@ -86,7 +86,7 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Template references the lifecycle-subscriber peer via a store
+	// @deliberate: Template references the lifecycle-subscriber peer via a store
 	// ref so rimsky's per-template scope inclusion picks it up for
 	// fan-out at registration time.
 	spec := node.TemplateSpec{
@@ -104,7 +104,7 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 		}},
 	}
 
-	// Step 1: DeployTemplate fires OnTemplateRegistered + OnTemplateDeployed.
+	// @constraint: Step 1: DeployTemplate fires OnTemplateRegistered + OnTemplateDeployed.
 	templateHash := h.DeployTemplate(spec)
 	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
 
@@ -113,12 +113,11 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	require.True(t, fake.waitFor("OnTemplateDeployed", templateHash, "", 5*time.Second),
 		"fake LifecycleSubscriber did not receive OnTemplateDeployed for %s", templateHash)
 
-	// Step 2: CreateInstance fires OnInstanceCreated.
 	instanceID := h.CreateInstance(templateHash, "canary-lifecycle-ck", nil)
 	require.True(t, fake.waitFor("OnInstanceCreated", templateHash, instanceID.String(), 5*time.Second),
 		"fake LifecycleSubscriber did not receive OnInstanceCreated for %s", instanceID)
 
-	// Step 3: Mark the instance terminated (lifecycle test, not frame
+	// @deliberate: Step 3: Mark the instance terminated (lifecycle test, not frame
 	// engine) then DELETE /instances fires OnInstanceTerminated.
 	require.NoError(t, h.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.Instances().MarkTerminated(ctx, instanceID, tx)
@@ -127,17 +126,15 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	require.True(t, fake.waitFor("OnInstanceTerminated", templateHash, instanceID.String(), 5*time.Second),
 		"fake LifecycleSubscriber did not receive OnInstanceTerminated for %s", instanceID)
 
-	// Step 4: POST /templates/{hash}/undeploy fires OnTemplateUndeployed.
 	postAndExpectOK(t, h, "/v1/templates/"+templateHash+"/undeploy")
 	require.True(t, fake.waitFor("OnTemplateUndeployed", templateHash, "", 5*time.Second),
 		"fake LifecycleSubscriber did not receive OnTemplateUndeployed for %s", templateHash)
 
-	// Step 5: DELETE /templates/{hash} fires OnTemplateDeregistered.
 	deleteAndExpectOK(t, h, "/v1/templates/"+templateHash)
 	require.True(t, fake.waitFor("OnTemplateDeregistered", templateHash, "", 5*time.Second),
 		"fake LifecycleSubscriber did not receive OnTemplateDeregistered for %s", templateHash)
 
-	// Idempotency surface: each event landed exactly once. (The
+	// @deliberate: Idempotency surface: each event landed exactly once. (The
 	// rimsky-side `rimsky_lifecycle_idempotencies` table guarantees
 	// this on rimsky's side; this canary pins the per-peer arrival
 	// count from the wire perspective.)
@@ -180,7 +177,7 @@ func newFakeLifecycleServer(t *testing.T) *fakeLifecycleServer {
 	genv1.RegisterLifecycleSubscriberServer(f.grpcSrv, f)
 	genv1.RegisterClaimProducerServer(f.grpcSrv, f)
 	go func() { _ = f.grpcSrv.Serve(lis) }()
-	// Loopback dial check — wait for the listener to accept.
+	// @deliberate: Loopback dial check — wait for the listener to accept.
 	require.Eventually(t, func() bool {
 		conn, dErr := net.DialTimeout("tcp", f.addr, 200*time.Millisecond)
 		if dErr != nil {
@@ -232,7 +229,7 @@ func (f *fakeLifecycleServer) countFor(verb string) int {
 	return n
 }
 
-// LifecycleSubscriber methods ---------------------------------------------------
+// @deliberate: LifecycleSubscriber methods
 
 func (f *fakeLifecycleServer) OnTemplateRegistered(_ context.Context, req *genv1.OnTemplateRegisteredRequest) (*genv1.LifecycleAck, error) {
 	f.record(lifecycleEvent{verb: "OnTemplateRegistered", templateHash: req.GetTemplateHash()})
@@ -272,7 +269,7 @@ func (f *fakeLifecycleServer) OnInstanceTerminated(_ context.Context, req *genv1
 	return &genv1.LifecycleAck{}, nil
 }
 
-// ClaimProducer surface ---------------------------------------------------------
+// @deliberate: ClaimProducer surface
 
 // Capabilities is the only ClaimProducer verb rimsky calls on this
 // fake at startup. Advertises both `claim_producer` and
@@ -286,7 +283,7 @@ func (f *fakeLifecycleServer) Capabilities(_ context.Context, _ *genv1.Capabilit
 	}, nil
 }
 
-// HTTP helpers ------------------------------------------------------------------
+// @deliberate: HTTP helpers
 
 func postAndExpectOK(t *testing.T, h *scenario.Harness, path string) {
 	t.Helper()

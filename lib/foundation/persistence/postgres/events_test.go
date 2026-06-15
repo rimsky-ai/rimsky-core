@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// events_test.go — exercises the postgres impls of
-// persistence.EventTable for the typed-Kind discipline introduced by
-// spec:2026-06-08-design-corpus-bootstrap Pass 2. Two load-bearing
-// behaviors are pinned here:
-//
-//   - Write/read round-trip through events.Kind: an emit-site value
-//     constructed via the typed constructors lands in the TEXT
-//     column and reads back as a Kind whose String() matches.
-//   - Unmarshal-boundary defense: a deliberately-corrupted kind
-//     value inserted via raw SQL is rejected by the read path with
-//     an ErrUnknownKind error — never silently coerced to a synthetic
-//     "unknown" kind (per decision:event-log-kind-enum).
-
 package postgres_test
 
 import (
@@ -31,9 +18,6 @@ func TestPGEvents_TypedKindRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
-	// One operational kind and one signal-class kind — the column
-	// only sees the wire string, but the read path must reconstruct
-	// the typed Kind for either family.
 	cases := []events.Kind{
 		events.KindWorkStarted(),
 		events.KindAuthAccessAttempted(),
@@ -102,20 +86,12 @@ func TestPGEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 	store := d.Tables()
-	// First insert a legitimate row so the table is exercised and
-	// any kind-validation surface around the write path is honored
-	// by inserting a real kind first.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.Events().Append(ctx,
 			persistence.EventAppendInput{Kind: events.KindWorkStarted()}, tx)
 	}); err != nil {
 		t.Fatalf("Append legitimate: %v", err)
 	}
-	// Now corrupt the row: write a deliberately-broken kind string
-	// directly via the raw SQL escape hatch the test infrastructure
-	// exposes for these defensive-error tests. The kind has no
-	// slash (so it doesn't look like a signal path) and doesn't
-	// match any canonical operational name.
 	pgtest.ExecForTest(ctx, t, d, `UPDATE rimsky_events SET kind = $1`, "totally_made_up_kind")
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := store.Events().List(ctx,

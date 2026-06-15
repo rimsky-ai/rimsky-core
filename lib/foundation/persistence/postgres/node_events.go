@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// node_events.go is the postgres accessor for the rimsky_node_events
-// ledger (migration C6). Append-only; LatestByName lookup and
-// per-instance bulk delete (returning orphan handles for blob cleanup).
 package postgres
 
 import (
@@ -184,8 +181,8 @@ func (b *nodeEventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) 
 		return 0, nil, fmt.Errorf("postgres.NodeEvents.DeleteOlderThan: rows.Err: %w", err)
 	}
 
-	// Queue spilled handles in the same tx as the DELETE so the reclamation
-	// record commits atomically with the row removal.
+	// @constraint: queue spilled handles in the same tx as the DELETE so the
+	// reclamation record commits atomically with the row removal.
 	pTx := &pgTx{tx: pgT}
 	for _, o := range orphans {
 		if qerr := persistence.QueueBlobOrphan(

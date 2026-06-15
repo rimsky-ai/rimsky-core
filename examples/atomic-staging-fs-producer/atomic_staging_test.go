@@ -53,9 +53,10 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 
 	const scope = "tenant-a"
 
-	// Capabilities advertises staged_async — this producer's whole point
-	// is to give downstream verifiers a staging area to inspect before
-	// Commit fires.
+	// @deliberate: assert STAGED_ASYNC up front — downstream verifiers
+	// rely on the staging area existing before Commit fires; a producer
+	// that advertised a different semantics here would silently break
+	// the stage-then-swap pattern this whole test pins.
 	caps, err := client.Capabilities(ctx, &genv1.CapabilitiesRequest{})
 	if err != nil {
 		t.Fatalf("capabilities: %v", err)
@@ -64,7 +65,6 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 		t.Fatalf("Capabilities must advertise STAGED_ASYNC, got %v", caps.GetWriteSemanticsAllowed())
 	}
 
-	// --- Open reserves a private staging dir; canonical view absent. ---
 	openResp, err := client.Open(ctx, &genv1.OpenRequest{
 		ClaimId:  "claim-1",
 		Selector: scope,
@@ -92,21 +92,18 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 		t.Fatalf("canonical view %q must be absent until Commit", canonicalPath)
 	}
 
-	// --- The executor writes its work product into staging. ---
 	const fileName = "result.txt"
 	const payload = "committed-bytes"
 	if err := os.WriteFile(filepath.Join(stagingPath, fileName), []byte(payload), 0o644); err != nil {
 		t.Fatalf("write into staging: %v", err)
 	}
 
-	// --- Commit: atomic rename of staging into the canonical view. ---
 	if _, err := client.Commit(ctx, &genv1.CommitRequest{
 		ClaimId:    "claim-1",
 		ClaimScope: []byte(scope),
 	}); err != nil {
 		t.Fatalf("commit claim-1: %v", err)
 	}
-	// The file is now visible at the canonical path with its exact bytes.
 	got, err := os.ReadFile(filepath.Join(canonicalPath, fileName))
 	if err != nil {
 		t.Fatalf("read committed file at canonical path: %v", err)
@@ -114,13 +111,15 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 	if string(got) != payload {
 		t.Fatalf("committed bytes = %q, want %q", string(got), payload)
 	}
-	// The swap was a real rename, not a copy: the staging directory is
-	// gone after Commit.
+	// @deliberate: Commit must rename (move), not copy — assert staging
+	// is gone afterwards. A copy-instead-of-rename implementation would
+	// leave the test passing on the canonical-bytes check above while
+	// silently breaking the atomicity guarantee this whole pattern exists
+	// to provide.
 	if dirExists(stagingPath) {
 		t.Fatalf("staging dir %q must be gone after Commit (rename, not copy)", stagingPath)
 	}
 
-	// --- A fresh claim's Abandon leaves the committed view untouched. ---
 	openResp2, err := client.Open(ctx, &genv1.OpenRequest{
 		ClaimId:  "claim-2",
 		Selector: scope,
@@ -133,8 +132,6 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 	if !dirExists(staging2) {
 		t.Fatalf("Open claim-2 did not reserve staging %q", staging2)
 	}
-	// Write a would-be-clobbering payload into the second staging area,
-	// then Abandon it.
 	if err := os.WriteFile(filepath.Join(staging2, fileName), []byte("abandoned-bytes"), 0o644); err != nil {
 		t.Fatalf("write into staging2: %v", err)
 	}
@@ -144,11 +141,9 @@ func TestAtomicStaging_StageThenSwap(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("abandon claim-2: %v", err)
 	}
-	// Abandon discarded the staged work...
 	if dirExists(staging2) {
 		t.Fatalf("staging dir %q must be discarded after Abandon", staging2)
 	}
-	// ...and the committed canonical view is unchanged.
 	after, err := os.ReadFile(filepath.Join(canonicalPath, fileName))
 	if err != nil {
 		t.Fatalf("read canonical file after Abandon: %v", err)

@@ -60,24 +60,22 @@ func main() {
 
 	svc := NewSensorService(rimskyEndpoint, slogAdapter{l: slog.Default()})
 
-	// Register the in-memory backend — the always-registered default.
-	// After this call Capabilities advertises and Subscribe accepts
-	// "memory" at minimum; s3/gcs/azure are still rejected unless a
-	// production build wires them via SetBackend before svc.Run.
+	// @deliberate: in-memory backend is the always-registered default so
+	// Capabilities advertises and Subscribe accepts "memory" at minimum;
+	// s3/gcs/azure stay rejected unless a production build wires them via
+	// SetBackend before svc.Run.
 	svc.SetBackend("memory", NewMemoryLister())
 
-	// Conditionally register the filesystem backend. Env
-	// RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT — when set — names the host-
-	// (or volume-) provided base directory the lister treats as the
-	// object-store root. Buckets map to first-level subdirectories
-	// under it. Leaving the env empty omits "filesystem" from
-	// Capabilities and Subscribe rejects it; setting it makes
+	// @story: sensor-object-store — env RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT,
+	// when set, names the host- (or volume-) provided base directory the
+	// lister treats as the object-store root, with buckets mapping to
+	// first-level subdirectories under it. Empty env omits "filesystem"
+	// from Capabilities and Subscribe rejects it; setting it makes
 	// "filesystem" a first-class backend (advertised, accepted, polled
-	// through the real loop) on this binary without dragging in any
-	// cloud SDKs. The cross-stack STORY-sensor-object-store proof
-	// uses this path because it exhibits the pluggable-backend
-	// contract end-to-end with a backend the test process can mutate
-	// externally (drop a file into the mounted volume).
+	// through the real loop) on this binary without dragging in cloud
+	// SDKs. The cross-stack proof uses this path because it exhibits the
+	// pluggable-backend contract end-to-end with a backend the test
+	// process can mutate externally (drop a file into the mounted volume).
 	if fsRoot := os.Getenv("RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT"); fsRoot != "" {
 		svc.SetBackend("filesystem", NewFilesystemLister(fsRoot))
 		slog.Info("sensor-object-store filesystem backend registered", "root", fsRoot)
@@ -86,7 +84,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Optional state-DB persistence. Empty env → in-memory mode.
+	// @deliberate: state-DB persistence is optional — empty env leaves the
+	// sensor in in-memory mode rather than failing startup.
 	state, err := openStateDB(ctx)
 	if err != nil {
 		slog.Error("open state db", "error", err.Error())

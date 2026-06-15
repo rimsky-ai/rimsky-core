@@ -2,20 +2,21 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// claimant_guard.go — ClaimantGuard conformance area.
+// Package conformance — claimant-guard area.
 //
-// Inv 4: claimant-guarded release. Every ownership mutation against
-// rimsky_claim_handles / rimsky_claim_holders (holder_supervisor_id
-// guard) and rimsky_node_runs (claimed_by guard) must be a provable
-// no-op for the wrong supervisor on BOTH drivers. Each test seeds a row
-// owned by supervisor A, performs the mutation as supervisor B
-// (asserting the row is byte-for-byte intact: state, holder, heartbeat,
-// payload columns), then performs it as A and asserts it succeeded.
+// @constraint: Inv 4 (claimant-guarded release). Every ownership
+// mutation against rimsky_claim_handles / rimsky_claim_holders
+// (holder_supervisor_id guard) and rimsky_node_runs (claimed_by
+// guard) must be a provable no-op for the wrong supervisor on BOTH
+// drivers. Each test seeds a row owned by supervisor A, performs the
+// mutation as supervisor B (asserting the row is byte-for-byte
+// intact: state, holder, heartbeat, payload columns), then performs
+// it as A and asserts it succeeded.
 //
 // Operation families covered (one test func per family):
-//   - claim-handle guarded column UPDATEs (UpdateAddress, UpdatePayload,
-//     UpdateRealizedWriteSemantics, UpdateClaimScope, SetVersionID,
-//     SetAggregationPolicy)
+//   - claim-handle guarded column UPDATEs (UpdateAddress,
+//     UpdatePayload, UpdateRealizedWriteSemantics, UpdateClaimScope,
+//     SetVersionID, SetAggregationPolicy)
 //   - claim-handle counter bumps (BumpExpectedChildrenCount,
 //     BumpChildOutcomeCount)
 //   - claim-handle Promote
@@ -26,8 +27,10 @@
 //     an active owned row)
 //   - claim-handle DeleteIfExpired (claimant guard AND expiry gate)
 //   - claim-handle ExtendHeartbeat
-//   - claim-holder release (FailAllActiveByClaimHandle's EXISTS guard)
-//   - node-run claim steal (ClaimDispatchRow's claimed_by IS NULL gate)
+//   - claim-holder release (FailAllActiveByClaimHandle's EXISTS
+//     guard)
+//   - node-run claim steal (ClaimDispatchRow's claimed_by IS NULL
+//     gate)
 //   - node-run ReleaseClaim
 //   - node-run Complete
 //   - node-run RemoveForNode / RemoveForNodeInTx
@@ -35,38 +38,33 @@
 //   - node-run RefreshHeartbeat
 //   - node-run Nodes().UpdateHeartbeat (claimed_by stamp + refresh)
 //
-// Named carve-out (pinned, not exempted silently): Queue.Complete /
-// ReleaseClaim / RemoveForNode(InTx) each accept expectedClaimedBy==""
-// as an identity-free admin mode that mutates regardless of the current
-// owner — used by the park-timeout sweep and the conductor's
-// stale-cleanup, which act on rows they never claimed, and by the
-// scheduler's pure-cascade settle
-// (lib/graph/scheduler/pure_cascade.go::transitionPureCascade), which
-// calls RemoveForNodeInTx(..., "") to retire the node's run row in the
-// same tx as the fresh settle — that row is pending+unclaimed by
-// construction (nothing on the scheduler path claims pure-cascade
-// rows), so there is no owner identity to assert. That mode is
-// intentionally unguarded; testClaimantGuardRunEmptyClaimantCarveOut
-// pins it so a future change cannot flip its semantics unnoticed.
+// @constraint: Queue.Complete / ReleaseClaim / RemoveForNode(InTx)
+// each accept expectedClaimedBy=="" as an identity-free admin mode
+// that mutates regardless of the current owner — used by the
+// park-timeout sweep and the conductor's stale-cleanup, which act on
+// rows they never claimed, and by the scheduler's pure-cascade
+// settle, which calls RemoveForNodeInTx(..., "") to retire the
+// node's run row in the same tx as the fresh settle (that row is
+// pending+unclaimed by construction, so there is no owner identity
+// to assert). testClaimantGuardRunEmptyClaimantCarveOut pins this
+// mode so a future change cannot flip its semantics unnoticed.
 // Queue.ResumeParkedInTx clears claimed_by but is gated on
 // phase='parked', and parked rows are unclaimed by construction
 // (ParkActiveInTx clears the claim — asserted in
 // testClaimantGuardRunPark), so it carries no ownership to steal.
 //
-// Two further named carve-outs (pinned by
-// testClaimantGuardUnguardedMutationCarveOuts):
-//   - ClaimHandles.UpdateNodeRunID carries no claimant guard: the
-//     fan-out dispatch path calls it inside the same tx as the
-//     child-run INSERT, before any other supervisor can observe the
-//     sub-claim, so ownership cannot yet be contested.
-//   - ClaimHolders.Complete / CompleteByClaimHandleAndRun carry no
-//     claimant guard (only the state='active' idempotency gate): a
-//     holder row is retired by the run that holds it, addressed by
-//     holder id / (handle, run) pair rather than supervisor identity.
+// @constraint: ClaimHandles.UpdateNodeRunID carries no claimant
+// guard — the fan-out dispatch path calls it inside the same tx as
+// the child-run INSERT, before any other supervisor can observe the
+// sub-claim, so ownership cannot yet be contested. Pinned by
+// testClaimantGuardUnguardedMutationCarveOuts.
 //
-// Both mutate ownership-adjacent rows without a guard; the pin test
-// keeps them named exceptions rather than silent holes in the "every
-// ownership mutation is provably guarded" claim.
+// @constraint: ClaimHolders.Complete /
+// CompleteByClaimHandleAndRun carry no claimant guard (only the
+// state='active' idempotency gate) — a holder row is retired by the
+// run that holds it, addressed by holder id / (handle, run) pair
+// rather than supervisor identity. Pinned by
+// testClaimantGuardUnguardedMutationCarveOuts.
 package conformance
 
 import (
@@ -266,8 +264,6 @@ func assertRunOwnedBy(ctx context.Context, t *testing.T, d persistence.Database,
 	}
 }
 
-// ---- claim-handle families ----
-
 // testClaimantGuardHandleUpdates covers the guarded column-UPDATE
 // family: UpdateAddress, UpdatePayload, UpdateRealizedWriteSemantics,
 // UpdateClaimScope, SetVersionID, SetAggregationPolicy.
@@ -283,7 +279,6 @@ func testClaimantGuardHandleUpdates(t *testing.T, d persistence.Database) {
 		t.Fatalf("seeded handle missing")
 	}
 
-	// Wrong claimant: every guarded UPDATE is a no-op.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ch := store.ClaimHandles()
 		if err := ch.UpdateAddress(ctx, in.ID, guardSupB, json.RawMessage(`{"addr":"stolen"}`), tx); err != nil {
@@ -307,7 +302,6 @@ func testClaimantGuardHandleUpdates(t *testing.T, d persistence.Database) {
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "guarded UPDATEs")
 
-	// Owning claimant: every UPDATE lands.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ch := store.ClaimHandles()
 		if err := ch.UpdateAddress(ctx, in.ID, guardSupA, json.RawMessage(`{"addr":"updated"}`), tx); err != nil {
@@ -372,7 +366,6 @@ func testClaimantGuardHandleCounterBumps(t *testing.T, d persistence.Database) {
 	seedGuardClaimHandle(ctx, t, d, in)
 	before := getGuardClaimHandle(ctx, t, d, in.ID)
 
-	// Wrong claimant: counters stay zero.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ch := store.ClaimHandles()
 		if err := ch.BumpExpectedChildrenCount(ctx, in.ID, guardSupB, 3, tx); err != nil {
@@ -387,7 +380,6 @@ func testClaimantGuardHandleCounterBumps(t *testing.T, d persistence.Database) {
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "counter bumps")
 
-	// Owning claimant: counters move.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ch := store.ClaimHandles()
 		if err := ch.BumpExpectedChildrenCount(ctx, in.ID, guardSupA, 3, tx); err != nil {
@@ -417,8 +409,6 @@ func testClaimantGuardHandlePromote(t *testing.T, d persistence.Database) {
 	seedGuardClaimHandle(ctx, t, d, in)
 	before := getGuardClaimHandle(ctx, t, d, in.ID)
 
-	// Wrong claimant: Promote rejects with the illegal-transition error
-	// and the row stays active under A.
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Promote(ctx, in.ID, guardSupB, spec.ClaimHandleStateCommitted, tx)
 	})
@@ -427,8 +417,6 @@ func testClaimantGuardHandlePromote(t *testing.T, d persistence.Database) {
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "Promote")
 
-	// Owning claimant: Promote lands — state flips, holder nulls,
-	// resolved_at stamps.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Promote(ctx, in.ID, guardSupA, spec.ClaimHandleStateCommitted, tx)
 	}); err != nil {
@@ -461,7 +449,6 @@ func testClaimantGuardHandleReassignHolder(t *testing.T, d persistence.Database)
 	seedGuardClaimHandle(ctx, t, d, in)
 	before := getGuardClaimHandle(ctx, t, d, in.ID)
 
-	// Wrong `from` (B does not hold the row): CAS rejects, row intact.
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().ReassignHolderSupervisor(ctx, in.ID, guardSupB, "guard-supervisor-C", tx)
 	})
@@ -470,7 +457,8 @@ func testClaimantGuardHandleReassignHolder(t *testing.T, d persistence.Database)
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "ReassignHolderSupervisor")
 
-	// Empty `to`: rejected outright (active rows must carry a holder).
+	// @constraint: ReassignHolderSupervisor must reject empty `to` —
+	// active rows must always carry a holder.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().ReassignHolderSupervisor(ctx, in.ID, guardSupA, "", tx)
 	}); err == nil {
@@ -478,7 +466,6 @@ func testClaimantGuardHandleReassignHolder(t *testing.T, d persistence.Database)
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "ReassignHolderSupervisor(empty to)")
 
-	// Correct `from`: the holder moves A → B; nothing else changes.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().ReassignHolderSupervisor(ctx, in.ID, guardSupA, guardSupB, tx)
 	}); err != nil {
@@ -492,8 +479,8 @@ func testClaimantGuardHandleReassignHolder(t *testing.T, d persistence.Database)
 		t.Fatalf("ReassignHolderSupervisor must not change state: got %q", after.State)
 	}
 
-	// Non-active row: Promote under the new holder, then a further CAS
-	// rejects (the state='active' gate).
+	// @constraint: ReassignHolderSupervisor is gated state='active' —
+	// Promote out of active, then assert a further CAS rejects.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Promote(ctx, in.ID, guardSupB, spec.ClaimHandleStateCommitted, tx)
 	}); err != nil {
@@ -519,7 +506,6 @@ func testClaimantGuardHandleDelete(t *testing.T, d persistence.Database) {
 	seedGuardClaimHandle(ctx, t, d, in)
 	before := getGuardClaimHandle(ctx, t, d, in.ID)
 
-	// Wrong claimant: Delete is a silent no-op; the row survives intact.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Delete(ctx, in.ID, guardSupB, tx)
 	}); err != nil {
@@ -527,8 +513,9 @@ func testClaimantGuardHandleDelete(t *testing.T, d persistence.Database) {
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "Delete")
 
-	// Absence-guard companion: DeleteResolved must reject the still-
-	// active owned row (the holder IS NULL predicate cannot match).
+	// @constraint: DeleteResolved's absence-guard (holder IS NULL) must
+	// reject a still-active owned row — pinned here alongside Delete so
+	// the non-claimant path cannot become an alternate steal vector.
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().DeleteResolved(ctx, in.ID, tx)
 	})
@@ -537,7 +524,6 @@ func testClaimantGuardHandleDelete(t *testing.T, d persistence.Database) {
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "DeleteResolved")
 
-	// Owning claimant: Delete removes the row.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Delete(ctx, in.ID, guardSupA, tx)
 	}); err != nil {
@@ -571,7 +557,6 @@ func testClaimantGuardHandleDeleteIfExpired(t *testing.T, d persistence.Database
 	}
 	seedGuardClaimHandle(ctx, t, d, fresh)
 
-	// Wrong claimant on the expired row: no-op (deleted=false).
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		deleted, err := store.ClaimHandles().DeleteIfExpired(ctx, expired.ID, guardSupB, tx)
 		if err != nil {
@@ -586,8 +571,9 @@ func testClaimantGuardHandleDeleteIfExpired(t *testing.T, d persistence.Database
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, expired.ID), *beforeExpired, "DeleteIfExpired")
 
-	// Right claimant but un-expired row: the expiry gate blocks it (a
-	// fresh heartbeat must defeat the reaper).
+	// @constraint: DeleteIfExpired's expiry gate blocks deletion of a
+	// fresh-heartbeat row even by the rightful claimant — a fresh
+	// heartbeat must defeat the reaper.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		deleted, err := store.ClaimHandles().DeleteIfExpired(ctx, fresh.ID, guardSupA, tx)
 		if err != nil {
@@ -604,7 +590,6 @@ func testClaimantGuardHandleDeleteIfExpired(t *testing.T, d persistence.Database
 		t.Fatalf("un-expired row removed by DeleteIfExpired")
 	}
 
-	// Right claimant + expired: the delete lands.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		deleted, err := store.ClaimHandles().DeleteIfExpired(ctx, expired.ID, guardSupA, tx)
 		if err != nil {
@@ -629,8 +614,10 @@ func testClaimantGuardHandleExtendHeartbeat(t *testing.T, d persistence.Database
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// The heartbeat predicate requires a running node-run claimed by
-	// the supervisor against the handle's holder node — seed it for A.
+	// @constraint: ExtendHeartbeat's predicate requires a running
+	// node-run claimed by the supervisor against the handle's holder
+	// node — seed it for A so the owner-side assertion exercises the
+	// full predicate rather than tripping over a missing precondition.
 	_ = seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
@@ -643,7 +630,6 @@ func testClaimantGuardHandleExtendHeartbeat(t *testing.T, d persistence.Database
 	seedGuardClaimHandle(ctx, t, d, in)
 	before := getGuardClaimHandle(ctx, t, d, in.ID)
 
-	// Wrong claimant: expiry unchanged.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().ExtendHeartbeat(ctx, guardSupB, time.Now().Add(1*time.Hour), tx)
 	}); err != nil {
@@ -651,7 +637,6 @@ func testClaimantGuardHandleExtendHeartbeat(t *testing.T, d persistence.Database
 	}
 	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "ExtendHeartbeat")
 
-	// Owning claimant: expiry extends past the seeded one-minute window.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().ExtendHeartbeat(ctx, guardSupA, time.Now().Add(1*time.Hour), tx)
 	}); err != nil {
@@ -662,11 +647,12 @@ func testClaimantGuardHandleExtendHeartbeat(t *testing.T, d persistence.Database
 		t.Fatalf("owner ExtendHeartbeat did not extend expires_at: before=%v after=%v",
 			before.ExpiresAt, after.ExpiresAt)
 	}
-	// The seeded heartbeat comes from the Go clock while ExtendHeartbeat
-	// stamps the database server's now() — on postgres those are
-	// different clock sources, so allow small skew rather than requiring
-	// strict monotonicity. The owner-success proof is the expires_at
-	// extension above; this only guards against gross regression.
+	// @deliberate: The seeded heartbeat comes from the Go clock while
+	// ExtendHeartbeat stamps the database server's now() — on postgres
+	// those are different clock sources, so allow small skew rather
+	// than requiring strict monotonicity. The owner-success proof is
+	// the expires_at extension above; this only guards against gross
+	// regression.
 	if after.LastHeartbeatAt.Before(before.LastHeartbeatAt.Add(-2 * time.Second)) {
 		t.Fatalf("owner ExtendHeartbeat moved last_heartbeat_at backwards: before=%v after=%v",
 			before.LastHeartbeatAt, after.LastHeartbeatAt)
@@ -715,7 +701,6 @@ func testClaimantGuardHolderRelease(t *testing.T, d persistence.Database) {
 		return *row
 	}
 
-	// Wrong claimant: every holder row stays active, completed_at NULL.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.ClaimHolders().FailAllActiveByClaimHandle(ctx, in.ID, guardSupB, tx)
 	}); err != nil {
@@ -726,7 +711,6 @@ func testClaimantGuardHolderRelease(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant holder release mutated the row: state=%q completed_at=%v", h.State, h.CompletedAt)
 	}
 
-	// Owning claimant: the holder flips to failed with completed_at set.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.ClaimHolders().FailAllActiveByClaimHandle(ctx, in.ID, guardSupA, tx)
 	}); err != nil {
@@ -737,8 +721,6 @@ func testClaimantGuardHolderRelease(t *testing.T, d persistence.Database) {
 		t.Fatalf("owner holder release did not land: state=%q completed_at=%v", h.State, h.CompletedAt)
 	}
 }
-
-// ---- node-run families ----
 
 // testClaimantGuardRunClaimSteal covers ClaimDispatchRow's
 // claimed_by-IS-NULL gate: a second supervisor cannot steal an
@@ -776,7 +758,6 @@ func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetByID before: row=%v err=%v", beforeRow, err)
 	}
 
-	// Wrong claimant: ownership AND heartbeat untouched.
 	if err := q.ReleaseClaim(ctx, dispatchID, guardSupB); err != nil {
 		t.Fatalf("wrong-claimant ReleaseClaim: %v", err)
 	}
@@ -790,7 +771,6 @@ func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant ReleaseClaim mutated last_heartbeat_at")
 	}
 
-	// Owning claimant: the row releases back to unclaimed/pending.
 	if err := q.ReleaseClaim(ctx, dispatchID, guardSupA); err != nil {
 		t.Fatalf("owner ReleaseClaim: %v", err)
 	}
@@ -811,8 +791,6 @@ func testClaimantGuardRunComplete(t *testing.T, d persistence.Database) {
 	q := d.Queue()
 	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
-	// Wrong claimant: the row stays in-flight, claimed by A, heartbeat
-	// intact.
 	if err := q.Complete(ctx, dispatchID, guardSupB); err != nil {
 		t.Fatalf("wrong-claimant Complete: %v", err)
 	}
@@ -828,7 +806,6 @@ func testClaimantGuardRunComplete(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant Complete cleared last_heartbeat_at")
 	}
 
-	// Owning claimant: the row leaves the in-flight phases.
 	if err := q.Complete(ctx, dispatchID, guardSupA); err != nil {
 		t.Fatalf("owner Complete: %v", err)
 	}
@@ -849,7 +826,6 @@ func testClaimantGuardRunRemoveForNode(t *testing.T, d persistence.Database) {
 	q := d.Queue()
 	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
-	// Wrong claimant (in-tx variant): the row stays in-flight under A.
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, guardSupB, tx)
 	}); err != nil {
@@ -867,7 +843,6 @@ func testClaimantGuardRunRemoveForNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant RemoveForNodeInTx cleared last_heartbeat_at")
 	}
 
-	// Owning claimant (auto-commit wrapper): the row retires.
 	if err := q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, guardSupA); err != nil {
 		t.Fatalf("owner RemoveForNode: %v", err)
 	}
@@ -897,8 +872,10 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// Wrong claimant: both drivers reject (RowsAffected != 1 is an
-	// error for this transition) and the row stays active under A.
+	// @constraint: ParkActiveInTx surfaces wrong-claimant as an error
+	// on both drivers (RowsAffected != 1 is fatal for this transition),
+	// not a silent no-op — the park-timeout sweep must distinguish a
+	// guard rejection from a successful park.
 	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.ParkActiveInTx(ctx, tx, parkInput(guardSupB))
 	})
@@ -914,7 +891,6 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 		t.Fatalf("wrong-claimant ParkActiveInTx parked the row")
 	}
 
-	// Owning claimant: the park lands (phase parked, claim cleared).
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.ParkActiveInTx(ctx, tx, parkInput(guardSupA))
 	}); err != nil {
@@ -950,7 +926,6 @@ func testClaimantGuardRunRefreshHeartbeat(t *testing.T, d persistence.Database) 
 		t.Fatalf("GetByID before refresh: row=%v err=%v", before, err)
 	}
 
-	// Wrong supervisor: A's heartbeat is untouched.
 	if err := q.RefreshHeartbeat(ctx, guardSupB); err != nil {
 		t.Fatalf("wrong-claimant RefreshHeartbeat: %v", err)
 	}
@@ -963,9 +938,9 @@ func testClaimantGuardRunRefreshHeartbeat(t *testing.T, d persistence.Database) 
 			before.LastHeartbeatAt, mid.LastHeartbeatAt)
 	}
 
-	// Owning supervisor: the heartbeat advances. The short sleep
-	// guarantees a strictly-later timestamp at the drivers' stored
-	// precision (microseconds on postgres).
+	// @deliberate: The short sleep guarantees a strictly-later
+	// timestamp at the drivers' stored precision (microseconds on
+	// postgres) so the owner-side .After() assertion below is reliable.
 	time.Sleep(20 * time.Millisecond)
 	if err := q.RefreshHeartbeat(ctx, guardSupA); err != nil {
 		t.Fatalf("owner RefreshHeartbeat: %v", err)
@@ -998,8 +973,10 @@ func testClaimantGuardNodeUpdateHeartbeat(t *testing.T, d persistence.Database) 
 		t.Fatalf("GetByID before: row=%v err=%v", before, err)
 	}
 
-	// Wrong supervisor: claimed_by stays A, last_heartbeat_at untouched
-	// — even with a deliberately-future timestamp.
+	// @deliberate: Pass a future timestamp (before+1h) under the wrong
+	// supervisor — if the guard ever leaks, the value would advance
+	// visibly, making this a tighter wrong-claimant assertion than
+	// passing time.Now().
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().UpdateHeartbeat(ctx, fix.NodeID, fix.MainRunScopeID,
 			before.LastHeartbeatAt.Add(1*time.Hour), guardSupB, tx)
@@ -1016,7 +993,6 @@ func testClaimantGuardNodeUpdateHeartbeat(t *testing.T, d persistence.Database) 
 			before.LastHeartbeatAt, mid.LastHeartbeatAt)
 	}
 
-	// Owning supervisor: the refresh lands and ownership is unchanged.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().UpdateHeartbeat(ctx, fix.NodeID, fix.MainRunScopeID,
 			before.LastHeartbeatAt.Add(1*time.Hour), guardSupA, tx)
@@ -1033,8 +1009,10 @@ func testClaimantGuardNodeUpdateHeartbeat(t *testing.T, d persistence.Database) 
 	}
 	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "owner Nodes.UpdateHeartbeat")
 
-	// Unclaimed row: the initial-stamp arm (claimed_by IS NULL) still
-	// works — release as A, then B stamps the now-unclaimed row.
+	// @constraint: Nodes.UpdateHeartbeat's initial-stamp arm
+	// (claimed_by IS NULL) still admits any supervisor — release as A,
+	// then assert B successfully stamps the now-unclaimed row, which
+	// is the post-acquisition first-stamp path.
 	if err := q.ReleaseClaim(ctx, dispatchID, guardSupA); err != nil {
 		t.Fatalf("ReleaseClaim(A): %v", err)
 	}
@@ -1064,7 +1042,9 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 	q := d.Queue()
 	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 
-	// ReleaseClaim(""): releases A's claim despite carrying no identity.
+	// @constraint: ReleaseClaim("") MUST release A's claim despite
+	// carrying no identity — the empty-claimant carve-out lets sweep
+	// paths retire rows without forging an owner.
 	if err := q.ReleaseClaim(ctx, dispatchID, ""); err != nil {
 		t.Fatalf("empty-claimant ReleaseClaim: %v", err)
 	}
@@ -1076,8 +1056,9 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 		t.Fatalf("empty-claimant ReleaseClaim did not release A's row: %s/%s", owner.Kind, owner.SupervisorID)
 	}
 
-	// Complete(""): retires A's re-claimed row despite carrying no
-	// identity.
+	// @constraint: Complete("") MUST retire A's re-claimed row
+	// despite carrying no identity — same empty-claimant carve-out
+	// as ReleaseClaim above.
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ok, err := q.ClaimDispatchRow(ctx, tx, dispatchID, guardSupA)
 		if err != nil {
@@ -1101,8 +1082,9 @@ func testClaimantGuardRunEmptyClaimantCarveOut(t *testing.T, d persistence.Datab
 		t.Fatalf("empty-claimant Complete did not retire A's row")
 	}
 
-	// RemoveForNodeInTx(""): retires a fresh claimed row despite
-	// carrying no identity (the sweep-path shape).
+	// @constraint: RemoveForNodeInTx("") MUST retire a fresh claimed
+	// row despite carrying no identity — the sweep-path shape of the
+	// empty-claimant carve-out.
 	dispatchID2 := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, "", tx)
@@ -1131,8 +1113,9 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
-	// ClaimHandles.UpdateNodeRunID: repoints the FK on a handle owned by
-	// A without any claimant identity.
+	// @constraint: ClaimHandles.UpdateNodeRunID is intentionally
+	// unguarded — repoint the FK on a handle owned by A without any
+	// claimant identity and assert success.
 	in := guardScopeHandleInput(fix, guardSupA, time.Now().Add(1*time.Hour))
 	seedGuardClaimHandle(ctx, t, d, in)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -1145,8 +1128,9 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 		t.Fatalf("UpdateNodeRunID carve-out did not repoint node_run_id: %+v", h)
 	}
 
-	// ClaimHolders.Complete: retires an active holder under A's handle
-	// without any claimant identity.
+	// @constraint: ClaimHolders.Complete is intentionally unguarded —
+	// retire an active holder under A's handle without any claimant
+	// identity and assert success.
 	holderID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
@@ -1175,9 +1159,10 @@ func testClaimantGuardUnguardedMutationCarveOuts(t *testing.T, d persistence.Dat
 		t.Fatalf("Complete carve-out did not retire the holder: %+v", holder)
 	}
 
-	// ClaimHolders.CompleteByClaimHandleAndRun: same family, addressed
-	// by the (handle, run) pair. Seeded under a second handle —
-	// (claim_handle_id, holder_run_id) is unique.
+	// @constraint: ClaimHolders.CompleteByClaimHandleAndRun is the
+	// same unguarded family, addressed by the (handle, run) pair. Seed
+	// under a second handle because the (claim_handle_id,
+	// holder_run_id) uniqueness constraint forbids reusing the first.
 	in2 := guardScopeHandleInput(fix, guardSupA, time.Now().Add(1*time.Hour))
 	in2.ClaimScopeData = json.RawMessage(`{"path":"/guard/b"}`)
 	seedGuardClaimHandle(ctx, t, d, in2)

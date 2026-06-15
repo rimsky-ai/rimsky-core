@@ -114,7 +114,7 @@ func postJSON(t *testing.T, url string, body any) (int, map[string]any) {
 	var out map[string]any
 	if len(raw) > 0 && raw[0] == '{' {
 		if err := json.Unmarshal(raw, &out); err != nil {
-			// Decode failure on a JSON body is unusual — surface for
+			// @deliberate: Decode failure on a JSON body is unusual — surface for
 			// diagnosis. Don't fatal: the caller may be pinning a
 			// non-JSON 4xx path.
 			t.Logf("postJSON: decode warn (status %d body=%s): %v", resp.StatusCode, string(raw), err)

@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-`rimskyai` (no hyphen).
+Use a hyphenless namespace on the Docker registry, distinct from the hyphenated GitHub organization name.
 
 ## Rationale
 
-Hub disallows hyphens; GitHub org `rimsky-ai` is different.
+The Docker registry disallows hyphens; the GitHub organization name is hyphenated and therefore cannot be reused verbatim.

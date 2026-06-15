@@ -87,7 +87,7 @@ import (
 func TestAssetManagement(t *testing.T) {
 	t.Parallel()
 
-	// Remote stub store-service advertising `data_processing` + SplitScope.
+	// @constraint: Remote stub store-service advertising `data_processing` + SplitScope.
 	// The asset construction per `concept:asset` requires the producer to
 	// advertise data_processing; the harness wires the supervisor's
 	// DataProcessing client registry off this advertisement so per-child
@@ -110,7 +110,7 @@ func TestAssetManagement(t *testing.T) {
 					Capabilities: claimproducer.Capabilities{
 						WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 					},
-					// Protocols MUST include `data_processing` so the
+					// @constraint: Protocols MUST include `data_processing` so the
 					// supervisor + control-api dial the DataProcessing client
 					// at startup (`DialPublisherAndValidationRegistries`). Without
 					// this, the `versions` proxy 503s and the candidate-handle
@@ -122,14 +122,14 @@ func TestAssetManagement(t *testing.T) {
 		},
 	})
 
-	// Scripted executor: every dispatch settles Success. The fan-out leaf
+	// @deliberate: Scripted executor: every dispatch settles Success. The fan-out leaf
 	// child is the only node type actually dispatched to the executor —
 	// the parent's fan-out acquisition fires per-child BeginCandidate +
 	// child runs settle Success → per-child terminal fires CommitCandidate
 	// → version rows grow on the producer's data_processing fixture.
 	h.Stub.WhenType("producer").Success(map[string]any{"ok": true}, true, "ok")
 
-	// Template: one producer node declaring a single durable claim against
+	// @deliberate: Template: one producer node declaring a single durable claim against
 	// the data_processing-capable `content` store. Fan-out with a fixed
 	// partition_request `{"partition_keys":["asset"]}` so one child run
 	// fires per materialization → one CommitCandidate per materialization
@@ -169,7 +169,7 @@ func TestAssetManagement(t *testing.T) {
 				}),
 				scenario.WithSubscribes(fspec.SubscriptionEntry{
 					Instance: true,
-					// `target: self` semantics — the cascade walker only
+					// @deliberate: `target: self` semantics — the cascade walker only
 					// matches when the invalidate envelope's target equals
 					// the producer's own type. The materialize endpoint
 					// sets Target = "producer" so this binds.
@@ -185,11 +185,11 @@ func TestAssetManagement(t *testing.T) {
 	producerNode := h.FindNode(iid, "producer")
 	require.NotNil(t, producerNode, "producer node missing on the instance")
 
-	// The asset alias is the dotted `{node_type}.{claim_alias}` form per
+	// @deliberate: The asset alias is the dotted `{node_type}.{claim_alias}` form per
 	// `code:assets.go::parseAssetAlias`.
 	const assetAlias = "producer.dataset"
 
-	// Drive the initial materialization to completion: wait for the
+	// @deliberate: Drive the initial materialization to completion: wait for the
 	// producer's first `work_started` event (initial dispatch fired) and
 	// for the asset row to surface — the durable claim has been Promoted
 	// to (state='committed', lifetime='durable') by the auto-terminal
@@ -199,7 +199,7 @@ func TestAssetManagement(t *testing.T) {
 	}, 60*time.Second, 100*time.Millisecond,
 		"initial producer dispatch must fire work_started")
 
-	// (1) GET /v1/instances/{id}/assets — the durable-committed claim
+	// @deliberate: (1) GET /v1/instances/{id}/assets — the durable-committed claim
 	// surfaces with its alias. The list is keyed on
 	// `ListByInstanceAndState(committed, durable)` filtered to producers
 	// advertising data_processing per `concept:asset`. We wait because
@@ -216,7 +216,7 @@ func TestAssetManagement(t *testing.T) {
 	}, 60*time.Second, 200*time.Millisecond,
 		"the producer's durable claim must surface as an asset with alias %q after the initial materialization", assetAlias)
 
-	// (2) GET /v1/instances/{id}/assets/{alias} — the single-asset surface
+	// @deliberate: (2) GET /v1/instances/{id}/assets/{alias} — the single-asset surface
 	// returns the same row; alias resolution walks the template's stores:
 	// entry.
 	{
@@ -228,12 +228,12 @@ func TestAssetManagement(t *testing.T) {
 		require.Equal(t, "committed", item["state"])
 		require.Equal(t, "durable", item["lifetime"])
 		require.Equal(t, producerName, item["producer_name"])
-		// Address bytes are intentionally omitted per @blessed-invariant 20
+		// @constraint: Address bytes are intentionally omitted per @blessed-invariant 20
 		// (the asset surface reads scope/producer/version; never address).
 		require.NotContains(t, item, "address")
 	}
 
-	// (3) Versions: GET /v1/instances/{id}/assets/{alias}/versions proxies
+	// @deliberate: (3) Versions: GET /v1/instances/{id}/assets/{alias}/versions proxies
 	// `DataProcessing.ListVersions` against the resolved claim handle. The
 	// stub-store fixture stores versions keyed by sub-claim claim_handle_id;
 	// the asset's resolved row is the PARENT (the producer's top-level
@@ -251,7 +251,7 @@ func TestAssetManagement(t *testing.T) {
 		require.True(t, ok, "versions surface must return a `versions` array")
 	}
 
-	// (4) Materialization-history: GET …/materialization-history joins
+	// @constraint: (4) Materialization-history: GET …/materialization-history joins
 	// `claim_terminal` lineage rows for the resolved claim handle. The
 	// initial materialization has run terminal through the real engine's
 	// `WriteClaimTerminalLineage` at the parent's auto-terminal Promote,
@@ -270,7 +270,7 @@ func TestAssetManagement(t *testing.T) {
 	}, 60*time.Second, 200*time.Millisecond,
 		"materialization-history must surface at least one claim_terminal row for the initial materialization")
 
-	// (5) LOAD-BEARING FALSIFIER CHECK: the materialize endpoint must cause
+	// @constraint: (5) LOAD-BEARING FALSIFIER CHECK: the materialize endpoint must cause
 	// a NEW producing dispatch — observable via a STRICTLY HIGHER
 	// `work_started` event count for the producer node post-trigger.
 	// Capture the baseline first.
@@ -278,7 +278,7 @@ func TestAssetManagement(t *testing.T) {
 	require.GreaterOrEqual(t, baselineWorkStarted, 1,
 		"baseline must include the initial producer dispatch's work_started")
 
-	// Capture the baseline lineage row count for this instance — the
+	// @deliberate: Capture the baseline lineage row count for this instance — the
 	// version-history projection's source of truth that the
 	// materialization-history surface joins through. Post-materialize the
 	// count MUST grow: that's the falsifier's "version-history surface
@@ -295,7 +295,7 @@ func TestAssetManagement(t *testing.T) {
 	require.GreaterOrEqual(t, baselineLineage, 1,
 		"baseline lineage must hold at least one claim_terminal row from the initial materialization")
 
-	// POST /v1/instances/{id}/assets/{alias}/materialize — operator
+	// @deliberate: POST /v1/instances/{id}/assets/{alias}/materialize — operator
 	// triggers re-materialization. Body carries the `reason` field that
 	// the producer node's runtime substitution context could read off
 	// `trigger.message.payload.reason`.
@@ -315,7 +315,7 @@ func TestAssetManagement(t *testing.T) {
 		require.NotEmpty(t, out["message_id"], "materialize response must carry the enqueued message_id")
 	}
 
-	// The decisive falsifier-busting assertion: a NEW work_started event
+	// @constraint: The decisive falsifier-busting assertion: a NEW work_started event
 	// for the producer node must appear strictly AFTER the materialize
 	// POST. The supervisor must dispatch the producer again through the
 	// real assembled product. The cheaper shape (writing a new version
@@ -327,7 +327,7 @@ func TestAssetManagement(t *testing.T) {
 			"work_started for producer node must rise above the baseline (%d)",
 		baselineWorkStarted)
 
-	// And: the version-history projection that powers the
+	// @constraint: And: the version-history projection that powers the
 	// materialization-history surface MUST grow as a result of the
 	// re-materialization's real terminal — pinning the second half of
 	// the falsifier brief ("the version-history surface returns rows that
@@ -346,7 +346,7 @@ func TestAssetManagement(t *testing.T) {
 	}, 60*time.Second, 250*time.Millisecond,
 		"materialization-history projection must grow above baseline (%d) after re-materialization", baselineLineage)
 
-	// (6) DELETE /v1/instances/{id}/assets/{alias} — removes the alias.
+	// @deliberate: (6) DELETE /v1/instances/{id}/assets/{alias} — removes the alias.
 	// `ClaimProducer.Release` fires on the producer; the claim_handle row
 	// is deleted. We DELETE the asset that resolves through the alias
 	// (the engine's resolveAsset returns the first matching row); the
@@ -375,7 +375,7 @@ func TestAssetManagement(t *testing.T) {
 			"DELETE response must carry deleted=true")
 	}
 
-	// The deleted claim_handle row is gone — pinned via the underlying
+	// @deliberate: The deleted claim_handle row is gone — pinned via the underlying
 	// table to keep the assertion specific to the DELETE's effect (the
 	// alias-resolution surface may re-resolve to another row from prior
 	// materializations).

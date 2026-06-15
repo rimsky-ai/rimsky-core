@@ -42,7 +42,7 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// Empty queue — Open returns Unavailable.
+				// @deliberate: Empty queue — Open returns Unavailable.
 			},
 		},
 	})
@@ -93,16 +93,16 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, monitor)
 
-	// Worker should pass.
+	// @constraint: Worker should pass.
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
 		"worker should record settling_signal_type=terminal/error/<class> via error_types: { acquire/unavailable: [pass] }")
 
-	// Monitor must run at least once in response to worker's resolve;
+	// @constraint: monitor must run at least once in response to worker's resolve;
 	// the wait-set drain on worker's settle releases monitor.
 	require.True(t, waitForEventCount(t, h, monitor.ID, "terminal/success", 1, 30*time.Second),
 		"monitor must run after worker reaches fresh (subscription-driven)")
 
-	// Worker's executor must NOT have been invoked.
+	// @deliberate: Worker's executor must NOT have been invoked.
 	var workerObserved int
 	for _, o := range h.Stub.Observed() {
 		if o.NodeType == "worker" {
@@ -112,7 +112,6 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 	require.Equal(t, 0, workerObserved,
 		"worker's executor must not be invoked when error_types: { acquire/unavailable: [pass] } fires")
 
-	// Worker is fresh.
 	var wRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().Get(h.Ctx, worker.ID, tx)

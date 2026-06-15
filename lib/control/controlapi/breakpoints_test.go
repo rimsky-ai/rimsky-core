@@ -4,8 +4,6 @@
 
 // breakpoints_test.go — HTTP-level integration tests for the
 // instance-debugger breakpoint surface per spec
-// .ok-planner/specs/2026-05-24-instance-debugger-design.md §4.
-//
 // Tests exercise the four endpoints end-to-end against the pgtest
 // harness. The resume-validation domain logic is tested separately in
 // runtime/breakpoint_resume_test.go; here we focus on the transport
@@ -59,7 +57,7 @@ func TestBreakpoint_CreateListDelete(t *testing.T) {
 
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	// Create with explicit pause mode and the default overflow_policy
+	// @constraint: create with explicit pause mode and the default overflow_policy
 	// (empty body → block_dispatch).
 	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
@@ -72,17 +70,17 @@ func TestBreakpoint_CreateListDelete(t *testing.T) {
 	require.Equal(t, "block_dispatch", out["overflow_policy"])
 	require.Equal(t, "before_dispatch", out["checkpoint"])
 
-	// List → 1 row.
+	// @constraint: list → 1 row.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), nil)
 	require.Equal(t, http.StatusOK, status)
 	bps, _ := out["breakpoints"].([]any)
 	require.Len(t, bps, 1)
 
-	// Delete → 204.
+	// @constraint: delete → 204.
 	status, _ = h.httpJSON(t, "DELETE", fmt.Sprintf("/v1/instances/%s/breakpoints/%s", instID, bpID), nil)
 	require.Equal(t, http.StatusNoContent, status)
 
-	// List → empty.
+	// @constraint: list → empty.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), nil)
 	require.Equal(t, http.StatusOK, status)
 	bps, _ = out["breakpoints"].([]any)
@@ -209,7 +207,7 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	ctx := context.Background()
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 
-	// Create a breakpoint via HTTP.
+	// @constraint: create a breakpoint via HTTP.
 	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
 		"checkpoint": "before_dispatch",
 	})
@@ -221,7 +219,7 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	instUUID, err := uuid.Parse(instID)
 	require.NoError(t, err)
 
-	// Seed a hit directly so the resume handler has something to act on.
+	// @deliberate: seed a hit directly so the resume handler has something to act on.
 	var hitID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, _, err := h.persist.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
@@ -242,7 +240,7 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 		return nil
 	}))
 
-	// First resume call returns first_resume=true.
+	// @constraint: first resume call returns first_resume=true.
 	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
 		"hit_id": hitID.String(),
 	})
@@ -250,7 +248,7 @@ func TestBreakpoint_ResumeHitHappyPath(t *testing.T) {
 	require.Equal(t, true, out["resumed"])
 	require.Equal(t, true, out["first_resume"])
 
-	// Replay returns first_resume=false (idempotent).
+	// @constraint: replay returns first_resume=false (idempotent).
 	status, out = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints/%s/resume", instID, bpID), map[string]any{
 		"hit_id": hitID.String(),
 	})
@@ -272,7 +270,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 	instUUID := shared.UUID(uuid.MustParse(instID))
 
-	// Seed a breakpoint + 3 hits with strictly increasing seq.
+	// @constraint: seed a breakpoint + 3 hits with strictly increasing seq.
 	bpID := createBreakpointForRead(t, h, instID)
 	base := time.Now().UTC().Add(-3 * time.Minute)
 	_, seq1 := seedBPHit(t, h, bpID, instUUID, base)
@@ -281,7 +279,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.Less(t, seq1, seq2)
 	require.Less(t, seq2, seq3)
 
-	// Full page: all 3 hits, next_since == last seq, not truncated.
+	// @constraint: full page: all 3 hits, next_since == last seq, not truncated.
 	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ := out["hits"].([]any)
@@ -289,7 +287,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.EqualValues(t, seq3, int64(out["next_since"].(float64)))
 	require.Equal(t, false, out["truncated"])
 
-	// Each row carries the same flattened envelope hitToWireShape
+	// @constraint: each row carries the same flattened envelope hitToWireShape
 	// produces (row-identity fields + snapshot fields). Cross-check the
 	// HTTP route against the MCP resource read for byte-identical rows.
 	first, _ := hits[0].(map[string]any)
@@ -305,7 +303,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.Nil(t, rpcErr, "mcp read failed: %+v", rpcErr)
 	var mcpBody map[string]any
 	require.NoError(t, json.Unmarshal([]byte(contents.Text), &mcpBody))
-	// The HTTP body marshals to the same JSON object the MCP resource
+	// @constraint: the HTTP body marshals to the same JSON object the MCP resource
 	// serializes (both flow through writeJSON/json.Marshal of the same
 	// map shape). Compare round-tripped.
 	httpJSONBytes, err := json.Marshal(out)
@@ -314,7 +312,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.NoError(t, json.Unmarshal(httpJSONBytes, &httpBody))
 	require.Equal(t, mcpBody, httpBody, "HTTP route and MCP resource must return identical breakpoint-hits payloads")
 
-	// since cursor: ?since=seq1 drops the first hit, keeps seq2 + seq3.
+	// @constraint: since cursor: ?since=seq1 drops the first hit, keeps seq2 + seq3.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?since=%d", instID, seq1), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	hits, _ = out["hits"].([]any)
@@ -322,7 +320,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.EqualValues(t, seq3, int64(out["next_since"].(float64)))
 	require.Equal(t, false, out["truncated"])
 
-	// limit truncation: ?limit=2 over 3 hits → 2 returned, truncated
+	// @constraint: limit truncation: ?limit=2 over 3 hits → 2 returned, truncated
 	// true (the handler fetches limit+1 and observes the third row),
 	// next_since advances to the last returned seq (seq2).
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?limit=2", instID), nil)
@@ -332,7 +330,7 @@ func TestBreakpoint_ListHits_HTTPMirrorsMCPResource(t *testing.T) {
 	require.EqualValues(t, seq2, int64(out["next_since"].(float64)))
 	require.Equal(t, true, out["truncated"])
 
-	// Bad query param → 400 (parseSinceLimit error mapped to badRequest).
+	// @constraint: bad query param → 400 (parseSinceLimit error mapped to badRequest).
 	status, _ = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/breakpoint-hits?since=-1", instID), nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }

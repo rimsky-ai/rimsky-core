@@ -42,8 +42,8 @@ func TestTemplateRegister_ExecutorAccepted(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	// validTemplateBody references "worker" which is wired into
-	// newHarness's AppDeps.Executors.
+	// @constraint: validTemplateBody references "worker" which is wired
+	// into newHarness's AppDeps.Executors.
 	body := validTemplateBody("exec-ok-" + uuid.NewString())
 	status, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status, out)
@@ -86,10 +86,10 @@ func TestTemplateRegister_RejectsDelegateCycleOverRoute(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	// graphs: main → g1 → g2 → g1, mirroring the struct cycle in
-	// node.TestCanonicalizeGraphs_RejectDelegateCycle. Each non-main
-	// graph declares entry/exit and its exit subscribes to its entry on
-	// terminal/*.
+	// @constraint: graphs main → g1 → g2 → g1, mirroring the struct
+	// cycle in node.TestCanonicalizeGraphs_RejectDelegateCycle. Each
+	// non-main graph declares entry/exit and its exit subscribes to its
+	// entry on terminal/*.
 	reqBody := map[string]any{
 		"spec": map[string]any{
 			"name":                  "delegate-cycle-" + uuid.NewString(),
@@ -116,7 +116,7 @@ func TestTemplateRegister_RejectsDelegateCycleOverRoute(t *testing.T) {
 					"entry": "g2n",
 					"exit":  "g2x",
 					"nodes": []map[string]any{
-						{"type": "g2n", "delegate": "g1"}, // cycle: g1 → g2 → g1
+						{"type": "g2n", "delegate": "g1"},
 						{"type": "g2x", "subscribes": []map[string]any{{"node": "g2n", "type": "terminal/*"}}},
 					},
 				},
@@ -161,7 +161,8 @@ func TestTemplateValidate_RejectsButDoesNotPersist(t *testing.T) {
 	nodes[0]["executor"] = "ghost-executor"
 	spec["nodes"] = nodes
 
-	// Count templates before validate so we can assert nothing changed.
+	// @constraint: count templates before validate so we can assert
+	// nothing changed.
 	_, listBefore := h.httpJSON(t, "GET", "/v1/templates", nil)
 	beforeCount := len(listBefore["templates"].([]any))
 
@@ -173,7 +174,7 @@ func TestTemplateValidate_RejectsButDoesNotPersist(t *testing.T) {
 	require.True(t, ok, "validation_errors must be present")
 	require.NotEmpty(t, errs, "validation_errors must be non-empty for an invalid spec")
 
-	// Nothing was persisted: template count is unchanged.
+	// @constraint: nothing was persisted — template count is unchanged.
 	_, listAfter := h.httpJSON(t, "GET", "/v1/templates", nil)
 	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
 		"validate must not persist a template row")
@@ -196,7 +197,7 @@ func TestTemplateValidate_CleanSpecOk(t *testing.T) {
 	require.Equal(t, true, out["ok"], "valid spec must lint as ok")
 	require.Empty(t, out["validation_errors"], "valid spec must have no errors")
 
-	// Validate-only must not register the template.
+	// @constraint: validate-only must not register the template.
 	_, listAfter := h.httpJSON(t, "GET", "/v1/templates", nil)
 	require.Equal(t, beforeCount, len(listAfter["templates"].([]any)),
 		"validate must not persist even for a clean spec")
@@ -212,14 +213,15 @@ func TestTemplateRegister_Idempotent(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	// validTemplateBody references no stores, so the fan-out call set
-	// is empty even on first register. Use a body that does reference
-	// a store so the count assertion has teeth.
+	// @constraint: validTemplateBody references no stores, so the
+	// fan-out call set is empty even on first register. Use a body that
+	// does reference a store so the count assertion has teeth.
 	body := templateWithStoresAndLocks("idem-" + uuid.NewString())
 	status1, out1 := h.httpJSON(t, "POST", "/v1/templates", body)
 	require.Equal(t, http.StatusCreated, status1, out1)
 
-	// Snapshot per-store call counts after the first register.
+	// @constraint: snapshot per-store call counts after the first
+	// register.
 	storeNames := []string{"content", "topics-ring"}
 	preCounts := make(map[string]int, len(storeNames))
 	for _, name := range storeNames {
@@ -234,9 +236,9 @@ func TestTemplateRegister_Idempotent(t *testing.T) {
 	require.Equal(t, http.StatusOK, status2, out2)
 	require.Equal(t, out1["template_id"], out2["template_id"])
 
-	// Re-register must NOT trigger an additional fan-out call to any
-	// of the referenced stores (the lifecycle row is already at
-	// target state from the first register).
+	// @constraint: re-register must NOT trigger an additional fan-out
+	// call to any of the referenced stores (the lifecycle row is
+	// already at target state from the first register).
 	for _, name := range storeNames {
 		s, _ := h.stores.Get(name)
 		fake := s.(*storetest.Fake)
@@ -297,25 +299,25 @@ func TestTemplateDeploy_StateTransitions(t *testing.T) {
 	_, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	tplID := out["template_id"].(string)
 
-	// registered → deployed.
+	// @constraint: registered → deployed.
 	status, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
 
-	// deployed → deployed (idempotent no-op).
+	// @constraint: deployed → deployed (idempotent no-op).
 	status, out2 := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, true, out2["no_op"])
 
-	// deployed → undeployed.
+	// @constraint: deployed → undeployed.
 	status, _ = h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/undeploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
 
-	// undeployed → undeployed (idempotent no-op).
+	// @constraint: undeployed → undeployed (idempotent no-op).
 	status, out3 := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/undeploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, true, out3["no_op"])
 
-	// undeployed → deployed.
+	// @constraint: undeployed → deployed.
 	status, _ = h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
 }
@@ -333,14 +335,14 @@ func TestTemplateUndeploy_RefusedWithActiveInstances(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, status)
 
-	// Spawn an instance.
+	// @constraint: spawn an instance.
 	status, _ = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-" + uuid.NewString(),
 	})
 	require.Equal(t, http.StatusCreated, status)
 
-	// Undeploy is now refused.
+	// @constraint: undeploy is now refused.
 	status, _ = h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/undeploy", map[string]any{})
 	require.Equal(t, http.StatusConflict, status)
 }
@@ -377,20 +379,21 @@ func TestTemplateDelete_TagOnlyVsLastTag(t *testing.T) {
 	_, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	tplID := out["template_id"].(string)
 
-	// Add a second tag.
+	// @constraint: add a second tag.
 	status, _ := h.httpJSON(t, "POST", "/v1/tags", map[string]any{
 		"tag": tag2, "template": tplID,
 	})
 	require.Equal(t, http.StatusCreated, status)
 
-	// Delete tag1: tag_only=true and the template must persist.
+	// @constraint: delete tag1 — tag_only=true and the template must
+	// persist.
 	status, deleteOut := h.httpJSON(t, "DELETE", "/v1/templates/"+tag1, nil)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, true, deleteOut["tag_only"])
 	status, _ = h.httpJSON(t, "GET", "/v1/templates/"+tplID, nil)
 	require.Equal(t, http.StatusOK, status)
 
-	// Delete tag2 (last tag): drops the template entirely.
+	// @constraint: delete tag2 (last tag) — drops the template entirely.
 	status, _ = h.httpJSON(t, "DELETE", "/v1/templates/"+tag2, nil)
 	require.Equal(t, http.StatusOK, status)
 	status, _ = h.httpJSON(t, "GET", "/v1/templates/"+tplID, nil)
@@ -412,7 +415,8 @@ func TestTemplateDelete_DirectHashDropsAllTags(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/v1/tags", map[string]any{"tag": tag2, "template": tplID})
 	require.Equal(t, http.StatusCreated, status)
 
-	// Direct-hash delete drops all tags atomically with the template row.
+	// @constraint: direct-hash delete drops all tags atomically with the
+	// template row.
 	status, _ = h.httpJSON(t, "DELETE", "/v1/templates/"+tplID, nil)
 	require.Equal(t, http.StatusOK, status)
 
@@ -443,14 +447,14 @@ func TestInstanceCreate_RequiresDeployedTemplate(t *testing.T) {
 	_, out := h.httpJSON(t, "POST", "/v1/templates", body)
 	tplID := out["template_id"].(string)
 
-	// State is 'registered'.
+	// @constraint: state is 'registered'.
 	status, _ := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template": tplID, "instance_key": "ck-1",
 	})
 	require.Equal(t, http.StatusConflict, status,
 		"instance creation against state='registered' must be refused")
 
-	// Move to deployed → should succeed.
+	// @constraint: move to deployed → should succeed.
 	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 	status, createdOut := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
@@ -460,19 +464,20 @@ func TestInstanceCreate_RequiresDeployedTemplate(t *testing.T) {
 	instID := createdOut["instance_id"].(string)
 	require.NotEmpty(t, instID)
 
-	// Drive the instance to terminal so undeploy is permitted (the
-	// active-instances guard would otherwise mask the test's intent).
-	// Setting terminated_at directly bypasses the frame engine; this
-	// test is targeted at the undeploy → instance-create state guard,
-	// not at terminal-state detection.
+	// @deliberate: drive the instance to terminal so undeploy is permitted
+	// (the active-instances guard would otherwise mask the test's intent).
+	// Setting terminated_at directly bypasses the frame engine; this test
+	// targets the undeploy → instance-create state guard, not terminal-state
+	// detection.
 	pgtest.ExecForTest(context.Background(), t, h.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
 
-	// Move to undeployed.
+	// @constraint: move to undeployed.
 	undeployStatus, undeployOut := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/undeploy", map[string]any{})
 	require.Equal(t, http.StatusOK, undeployStatus, undeployOut)
 
-	// Instance creation against state='undeployed' returns 409.
+	// @constraint: instance creation against state='undeployed' returns
+	// 409.
 	status, _ = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template": tplID, "instance_key": "ck-3",
 	})
@@ -514,20 +519,23 @@ func newRefModeHarness(t *testing.T, mode node.RefValidationMode) (*harness, fun
 		Logger:        capLog,
 		Stores:        reg,
 		LifecycleSubs: lcReg,
-		// Only "constrained" is provisioned. The not-yet-provisioned
-		// executor referenced by the test template is intentionally absent.
+		// @constraint: only "constrained" is provisioned — the
+		// not-yet-provisioned executor referenced by the test template
+		// is intentionally absent.
 		Executors: map[string]ExecutorEntry{
 			"constrained": {Transport: "grpc", Endpoint: "localhost:0"},
 		},
-		// The constrained executor's schema is visible; everything else
-		// reports ok=false (schema not visible / not provisioned).
+		// @constraint: the constrained executor's schema is visible;
+		// everything else reports ok=false (schema not visible / not
+		// provisioned).
 		ExecutorCapabilities: func(name string) ([]string, []string, []byte, bool) {
 			if name == "constrained" {
 				return nil, nil, []byte(constrainedSchema), true
 			}
 			return nil, nil, nil, false
 		},
-		// The operator-set registration-time reference-validation mode.
+		// @constraint: the operator-set registration-time
+		// reference-validation mode.
 		RefValidationMode: mode,
 	})
 	srv := httptest.NewServer(app)
@@ -620,14 +628,15 @@ func TestRegisterTemplate_RefMode(t *testing.T) {
 		h, teardown := newRefModeHarness(t, node.RefValidateAvailable)
 		t.Cleanup(teardown)
 
-		// Not-provisioned ref: registration succeeds under `available`.
+		// @constraint: not-provisioned ref — registration succeeds under
+		// `available`.
 		okBody := refModeTemplateNotProvisioned("refmode-avail-ok-" + uuid.NewString())
 		okStatus, okOut := h.httpJSON(t, "POST", "/v1/templates", okBody)
 		require.Equal(t, http.StatusCreated, okStatus,
 			"mode available must accept a not-yet-provisioned executor reference; body: %v", okOut)
 
-		// Genuinely-invalid provisioned ref: still rejected (count: -1 vs
-		// the executor schema's minimum: 0).
+		// @constraint: genuinely-invalid provisioned ref — still
+		// rejected (count: -1 vs the executor schema's minimum: 0).
 		badBody := refModeTemplateProvisionedInvalid("refmode-avail-bad-" + uuid.NewString())
 		badStatus, badOut := h.httpJSON(t, "POST", "/v1/templates", badBody)
 		require.Equal(t, http.StatusBadRequest, badStatus,
@@ -641,14 +650,15 @@ func TestRegisterTemplate_RefMode(t *testing.T) {
 		h, teardown := newRefModeHarness(t, node.RefValidateNone)
 		t.Cleanup(teardown)
 
-		// Not-provisioned ref succeeds.
+		// @constraint: not-provisioned ref succeeds.
 		okBody := refModeTemplateNotProvisioned("refmode-none-ghost-" + uuid.NewString())
 		okStatus, okOut := h.httpJSON(t, "POST", "/v1/templates", okBody)
 		require.Equal(t, http.StatusCreated, okStatus,
 			"mode none must accept a not-yet-provisioned executor reference; body: %v", okOut)
 
-		// Even the provisioned-invalid ref registers clean under `none`:
-		// registration-time reference validation is off entirely.
+		// @constraint: even the provisioned-invalid ref registers clean
+		// under `none` — registration-time reference validation is off
+		// entirely.
 		invalidBody := refModeTemplateProvisionedInvalid("refmode-none-invalid-" + uuid.NewString())
 		invalidStatus, invalidOut := h.httpJSON(t, "POST", "/v1/templates", invalidBody)
 		require.Equal(t, http.StatusCreated, invalidStatus,
@@ -744,7 +754,7 @@ func TestTemplateRegister_StaticWarningAsErrorsRejects(t *testing.T) {
 	require.True(t, warningsContainAdvisory(t, out),
 		"rejection body must carry the static advisory in validation_warnings; got: %v", out)
 
-	// Nothing persisted on rejection.
+	// @constraint: nothing persisted on rejection.
 	_, listAfter := h.httpJSON(t, "GET", "/v1/templates", nil)
 	afterCount := 0
 	if l, ok := listAfter["templates"].([]any); ok {

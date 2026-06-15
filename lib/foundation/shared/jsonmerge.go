@@ -2,18 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// JSON deep-merge helper used by per-instance attribute overrides
-// (`runner_dispatch.go::applyAttributeOverrides`).
-//
-// Why it lives here: the merge is a shape-blind composition of two
-// `map[string]any` JSON-decoded payloads. Both rimsky-internal layers
-// (graph, runtime) need it, so it sits in shared/
-// where both can import without crossing a feature boundary.
-//
-// @concept:inertness alignment: the merge does not inspect, validate,
-// or transform any value — it walks shapes and replaces leaves. The
-// fragment values stay inert to rimsky (structural-inertness
-// discipline).
+// @concept: inertness alignment — the merge does not inspect, validate, or transform the payload.
+
 package shared
 
 // DeepMergeJSON merges `over` into a copy of `base` and returns the
@@ -42,9 +32,6 @@ func DeepMergeJSON(base, over any) any {
 	bm, baseIsMap := base.(map[string]any)
 	om, overIsMap := over.(map[string]any)
 	if !baseIsMap || !overIsMap {
-		// Disagreement on shape, or both non-objects: `over` wins
-		// wholesale (cloned so callers can mutate the result without
-		// affecting the source).
 		return cloneJSON(over)
 	}
 	out := make(map[string]any, len(bm)+len(om))

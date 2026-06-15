@@ -2,8 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.LineageTable — mirror of the postgres
-// impl. SQLite is dev-only.
+// @source: lib/foundation/persistence/postgres/lineage.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
 
 package sqlite
 
@@ -20,6 +21,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// lineageImpl is the SQLite-backed persistence.LineageTable — the
+// content lineage projection per spec §Content lineage.
 type lineageImpl tablesImpl
 
 var _ persistence.LineageTable = (*lineageImpl)(nil)
@@ -37,13 +40,13 @@ func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persist
 	if row.ObservedAt.IsZero() {
 		row.ObservedAt = time.Now().UTC()
 	}
-	// `leaf_run` rows carry outcome="" by design; `claim_terminal`
-	// writers (`runtime.WriteClaimTerminalLineage`) reject empty
-	// outcome at the call site. Pass row.Outcome through verbatim.
-	// observed_at goes through formatTime (fixed-width UTC text) — a raw
-	// time.Time bind would store modernc's zone-embedded t.String() form,
-	// which breaks the retention DELETE / ORDER BY / range filters on
-	// non-UTC hosts.
+	// @constraint: `leaf_run` rows carry outcome="" by design; `claim_terminal`
+	// writers (`runtime.WriteClaimTerminalLineage`) reject empty outcome at the
+	// call site. Pass row.Outcome through verbatim.
+	// @constraint: observed_at goes through formatTime (fixed-width UTC text) —
+	// a raw time.Time bind would store modernc's zone-embedded t.String() form,
+	// which breaks the retention DELETE / ORDER BY / range filters on non-UTC
+	// hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertLineageSQL,
 		row.ID.String(), row.RecordKind, row.InstanceID.String(),
 		row.FrameID.String(), formatTime(row.ObservedAt), row.Record, row.Outcome)
@@ -53,7 +56,7 @@ func (b *lineageImpl) Insert(ctx context.Context, tx persistence.Tx, row persist
 	return nil
 }
 
-// GetByRunID queries by JSON extraction; SQLite supports json_extract.
+// sqliteGetByRunIDSQL queries by JSON extraction; SQLite supports json_extract.
 const sqliteGetByRunIDSQL = `
 SELECT id, record_kind, instance_id, frame_id, observed_at, record, outcome
   FROM rimsky_lineage
@@ -188,8 +191,8 @@ func scanLineage(rows *sql.Rows) ([]persistence.LineageRow, error) {
 	for rows.Next() {
 		var r persistence.LineageRow
 		var idStr, instanceStr, frameStr string
-		// observed_at is fixed-width UTC TEXT; scan as a string and run
-		// through parseTime (per queue_park.go::LoadResumeMetadataInTx)
+		// @constraint: observed_at is fixed-width UTC TEXT; scan as a string and
+		// run through parseTime (per queue_park.go::LoadResumeMetadataInTx)
 		// instead of scanning into time.Time.
 		var observedAtStr string
 		if err := rows.Scan(

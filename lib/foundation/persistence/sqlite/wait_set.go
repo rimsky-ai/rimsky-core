@@ -2,10 +2,12 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.WaitSetTable — mirrors the postgres impl
-// under wait_set.go. UUID columns are TEXT and JSONB is TEXT.
-//
-//	@concept: wait-set
+// @source: lib/foundation/persistence/postgres/wait_set.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
+
+// @concept: wait-set
+
 package sqlite
 
 import (
@@ -23,6 +25,9 @@ func (s *tablesImpl) WaitSet() persistence.WaitSetTable {
 	return (*waitSetImpl)(s)
 }
 
+// waitSetImpl is the SQLite-backed persistence.WaitSetTable — the
+// per-frame ledger that records which observations a wait-set is
+// blocked on.
 type waitSetImpl tablesImpl
 
 func (b *waitSetImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }

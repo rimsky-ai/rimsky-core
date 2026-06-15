@@ -45,7 +45,7 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// CreateInstance auto-enqueues a frame for the root. Clear it so the
+	// @deliberate: CreateInstance auto-enqueues a frame for the root. Clear it so the
 	// test's own inserts have full control.
 	_, err := h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	require.NoError(t, err)
@@ -54,14 +54,13 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 	require.NoError(t, err)
 
-	// First running insert: should succeed.
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
 	`, uuid.UUID(iid), uuid.UUID(worker.ID))
 	require.NoError(t, err, "first running insert should succeed")
 
-	// Second running insert: must fail (uq_rimsky_frames_running).
+	// @constraint: Second running insert: must fail (uq_rimsky_frames_running).
 	_, err = h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
 		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
@@ -87,7 +86,7 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Fire 10 invalidates concurrently.
+	// @deliberate: Fire 10 invalidates concurrently.
 	const N = 10
 	var wg sync.WaitGroup
 	wg.Add(N)
@@ -99,7 +98,7 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Poll the rimsky_frames table over a 5-second window asserting at most one
+	// @deliberate: Poll the rimsky_frames table over a 5-second window asserting at most one
 	// row in 'running' at any time.
 	var maxRunning atomic.Int32
 	deadline := time.Now().Add(5 * time.Second)
@@ -113,7 +112,6 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// And eventually all queued+running frames drain to terminal states.
 	require.True(t,
 		waitForFramesByState(t, h, iid, "completed", N+1, 30*time.Second) ||
 			eventuallyAllTerminal(h, iid, 30*time.Second),

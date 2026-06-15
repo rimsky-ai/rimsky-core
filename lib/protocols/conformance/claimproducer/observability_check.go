@@ -71,7 +71,8 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 		if err != nil {
 			return fmt.Errorf("GetClaim probe: %w", err)
 		}
-		// Spec §3.6: missing claims surface as ClaimDetail{state=UNKNOWN}.
+		// @constraint: spec §3.6 — missing claims surface as
+		// ClaimDetail{state=UNKNOWN}.
 		if detail.GetState() != genv1.ClaimState_UNKNOWN {
 			return fmt.Errorf("GetClaim on missing claim returned state=%v, want UNKNOWN (spec §3.6)", detail.GetState())
 		}

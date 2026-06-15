@@ -107,7 +107,7 @@ func main() {
 	}
 
 	if os.Getenv("STUBCHILD_NO_BIND") != "" {
-		// Never bind; sleep until killed so the agent's port-probe times out.
+		// @deliberate: never bind; sleep until killed so the agent's port-probe times out.
 		sleepUntilSignal()
 		return
 	}
@@ -132,7 +132,7 @@ func main() {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
 	if path := os.Getenv("STUBCHILD_TERM_LOG"); path != "" {
-		// Touch the marker so a reap-scenario test can assert the agent
+		// @deliberate: touch the marker so a reap-scenario test can assert the agent
 		// actually signalled this child (i.e. the reap reached the agent).
 		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
 			_, _ = f.WriteString("term\n")

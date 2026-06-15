@@ -12,8 +12,8 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres" // register driver
-	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"   // register driver
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 

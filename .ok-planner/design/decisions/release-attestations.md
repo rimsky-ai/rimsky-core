@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`docker buildx build --push --provenance=mode=max --sbom=true`.
+Build-tool attestations with both provenance (max mode) and SBOM enabled.
 
 ## Rationale
 

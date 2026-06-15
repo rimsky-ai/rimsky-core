@@ -66,7 +66,7 @@ import (
 func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 	t.Parallel()
 
-	// Remote stub store. Its ClaimProducer surface advertises
+	// @deliberate: Remote stub store. Its ClaimProducer surface advertises
 	// SupportsSplitScope=true and decodes {"partition_keys":[...]} into
 	// one SubScopeDescriptor per key — the producer that turns the
 	// override into sub-claims.
@@ -86,7 +86,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 		},
 	})
 
-	// Each partition child returns Success so its leaf-run settles to
+	// @deliberate: Each partition child returns Success so its leaf-run settles to
 	// state=fresh. best_effort tolerates any per-child outcome — this
 	// scenario asserts the override binds and the partitions materialize,
 	// not aggregation policy semantics.
@@ -99,7 +99,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 		},
 	})
 
-	// Fan-out node wired for the backfill override: its partition_request
+	// @deliberate: Fan-out node wired for the backfill override: its partition_request
 	// pulls partition_request_override off the trigger message, with a
 	// quoted-string `"all"` default (see the authoring-form note above).
 	// On instance creation the node's first run has no trigger message, so
@@ -129,7 +129,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	// Sanity baseline: the template default materializes NO partition
+	// @constraint: Sanity baseline: the template default materializes NO partition
 	// RunScope. The fan-out node's creation run has no trigger message, so
 	// its partition_request resolves to the inert `"all"` fallback, which
 	// is not a {"partition_keys":[…]} request the stub producer can split;
@@ -148,7 +148,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 	}, 4*time.Second, 200*time.Millisecond,
 		"template default must materialize no partition RunScope (the override, not the default, must drive the fan-out)")
 
-	// Start a backfill against fan-parent with a two-key
+	// @deliberate: Start a backfill against fan-parent with a two-key
 	// partition_request_override. The override object is JSON-marshaled
 	// through substituteFanOutPartitionRequest into the
 	// {"partition_keys":["region-x","region-y"]} bytes SplitScope decodes.
@@ -167,7 +167,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 	require.True(t, resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusOK,
 		"backfill POST must succeed: status=%d body=%s", resp.StatusCode, backfillBody.String())
 
-	// Through the REAL dispatch: exactly TWO new partition RunScopes keyed
+	// @deliberate: Through the REAL dispatch: exactly TWO new partition RunScopes keyed
 	// region-x/region-y appear — the count rises to the override's 2, NOT
 	// the template default's 0. The supervisor materialized runs against
 	// the OVERRIDDEN selector.
@@ -183,7 +183,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 	}, 60*time.Second, 100*time.Millisecond,
 		"the backfill override must materialize exactly two partition RunScopes keyed region-x/region-y")
 
-	// And no partition RunScope keyed by anything else exists — the
+	// @deliberate: And no partition RunScope keyed by anything else exists — the
 	// override fully governed the partition set (no template-default key
 	// leaked through).
 	var totalPartitions int
@@ -195,7 +195,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 	require.Equal(t, 2, totalPartitions,
 		"only the override's two partitions should exist (no template-default partition leaked through)")
 
-	// Two fan-parent child dispatches for those keys are Observed via the
+	// @deliberate: Two fan-parent child dispatches for those keys are Observed via the
 	// stub — the partition children really ran through the executor.
 	require.Eventually(t, func() bool {
 		count := 0
@@ -208,7 +208,7 @@ func TestBackfillPartitionOverrideFullStack(t *testing.T) {
 	}, 60*time.Second, 100*time.Millisecond,
 		"expected two fan-parent child dispatches via the override's SplitScope")
 
-	// Both partition children reach state=fresh on their Success terminals
+	// @deliberate: Both partition children reach state=fresh on their Success terminals
 	// — the override-materialized runs drive to completion.
 	require.Eventually(t, func() bool {
 		var freshRuns int

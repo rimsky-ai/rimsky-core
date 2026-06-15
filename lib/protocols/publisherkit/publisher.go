@@ -93,9 +93,6 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 		sleep = time.Sleep
 	}
 	const maxAttempts = 3
-	// Backoff schedule: 200ms after attempt 1, ~566ms after attempt 2.
-	// Cumulative sleep before attempt 3 ≈ 766ms (the wall-clock issue
-	// time also includes the first two attempts' own round-trip time).
 	delays := []time.Duration{
 		200 * time.Millisecond,
 		566 * time.Millisecond,
@@ -127,8 +124,8 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 			return Result{Status: resp.StatusCode, Attempts: attempt}
 		}
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			// 4xx is terminal — rimsky rejected the capability or the
-			// envelope. Operators need to see this distinctly from
+			// @constraint: 4xx is terminal — rimsky rejected the capability
+			// or the envelope. Operators need to see this distinctly from
 			// transient transport failures.
 			log.Warn("publisher.message.rejected",
 				"sensor", req.SensorName,
@@ -143,7 +140,7 @@ func Send(ctx context.Context, client *http.Client, log Logger, sleep Sleeper, r
 				Attempts: attempt,
 			}
 		}
-		// 5xx — retryable.
+		// @constraint: 5xx is retryable.
 		lastErr = fmt.Errorf("rimsky %s → %d", req.URL, resp.StatusCode)
 		if !shouldRetry(attempt, maxAttempts, ctx, sleep, delays) {
 			return Result{Err: lastErr, Status: resp.StatusCode, Attempts: attempt}

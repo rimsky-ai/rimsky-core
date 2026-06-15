@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Postgres impl of persistence.APIKeyTable — Bearer-token API keys for
-// control-api auth. See spec
-// .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md.
-//
 // @concept: api-key
 
 package postgres
@@ -24,6 +20,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// apiKeysImpl is the Postgres-backed persistence.APIKeyTable —
+// Bearer-token API keys for control-api auth.
 type apiKeysImpl tablesImpl
 
 var _ persistence.APIKeyTable = (*apiKeysImpl)(nil)
@@ -68,10 +66,9 @@ func (b *apiKeysImpl) Insert(ctx context.Context, k persistence.APIKey, tx persi
 			case "rimsky_api_keys_active_name_idx":
 				return persistence.ErrAPIKeyNameTaken
 			case "rimsky_api_keys_key_hash_unique":
-				// Return the typed sentinel so writeError can map
-				// it to a precise client message (and an operator
-				// dashboard can distinguish the "stale row from a
-				// previous deploy" case from a generic 500).
+				// @deliberate: typed sentinel so writeError maps to a precise
+				// client message and operator dashboards can distinguish the
+				// "stale row from a previous deploy" case from a generic 500.
 				return persistence.ErrAPIKeyHashCollision
 			}
 		}
@@ -124,10 +121,9 @@ func (b *apiKeysImpl) List(ctx context.Context, includeRevoked bool, nameFilter 
 	}
 	if nameFilter != "" {
 		args = append(args, globToLike(nameFilter))
-		// `ESCAPE '\'` lets globToLike's backslash-escaping protect
-		// literal `%` / `_` / `\` in the filter from acting as LIKE
-		// wildcards. Without this the operator's filter would match
-		// rows it shouldn't.
+		// @constraint: `ESCAPE '\'` lets globToLike's backslash-escaping protect
+		// literal `%` / `_` / `\` in the filter from acting as LIKE wildcards;
+		// without it the operator's filter would match rows it shouldn't.
 		sql += fmt.Sprintf(` AND name LIKE $%d ESCAPE '\'`, len(args))
 	}
 	sql += ` ORDER BY created_at DESC`
@@ -163,9 +159,9 @@ func (b *apiKeysImpl) MarkRevoked(ctx context.Context, id shared.UUID, now time.
 	if tag.RowsAffected() == 1 {
 		return true, true, nil
 	}
-	// Either already revoked (idempotent no-op) or row missing. Probe
-	// existence so the caller can distinguish 404 from "already done"
-	// — the latter must NOT re-emit auth.key_revoked.
+	// @constraint: either already revoked (idempotent no-op) or row missing.
+	// Probe existence so the caller can distinguish 404 from "already
+	// done" — the latter must NOT re-emit auth.key_revoked.
 	var exists bool
 	if err := b.run(tx).QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM rimsky_api_keys WHERE id = $1)`, id).Scan(&exists); err != nil {
@@ -295,10 +291,10 @@ func timePtrArg(p *time.Time) any {
 // defend itself). Pair with `LIKE ... ESCAPE '\\'` in the query
 // builder; callers that bypass globToLike must escape themselves.
 func globToLike(glob string) string {
-	// Two-phase: first escape the LIKE meta-characters, then map the
-	// glob meta-characters to their LIKE equivalents. Doing this in
-	// one pass via strings.NewReplacer would map an already-escaped
-	// `%` back to `%`. Order matters.
+	// @deliberate: two-phase — first escape the LIKE meta-characters, then map
+	// the glob meta-characters to their LIKE equivalents. A single-pass
+	// strings.NewReplacer would map an already-escaped `%` back to `%`, so
+	// order matters.
 	escaped := strings.NewReplacer(
 		`\`, `\\`,
 		`%`, `\%`,

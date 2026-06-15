@@ -2,9 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// verify.go — VerifyBeforeRunRead conformance area.
-//
-// Inv 5: verify-before-run.
+// @constraint: Inv 5 (VerifyBeforeRunRead) — verify-before-run.
 package conformance
 
 import (
@@ -59,7 +57,6 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 		t.Fatalf("claim tx: %v", err)
 	}
 
-	// Re-read via GetClaimedBy returns current owner.
 	owner, err := q.GetClaimedBy(ctx, dispatchID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy: %v", err)
@@ -68,7 +65,6 @@ func testVerifyBeforeRunRead(t *testing.T, d persistence.Database) {
 		t.Fatalf("expected claimed_by/%s, got kind=%s sup=%s", supID, owner.Kind, owner.SupervisorID)
 	}
 
-	// Manually clear the claim, then re-read returns "unclaimed".
 	if err := q.ReleaseClaim(ctx, dispatchID, supID); err != nil {
 		t.Fatalf("ReleaseClaim: %v", err)
 	}

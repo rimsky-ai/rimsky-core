@@ -193,10 +193,11 @@ func (s *Store) Open(ctx context.Context, claimID, selector string) (claimproduc
 		}
 		return out, err
 	}
-	// Staged_async scope-bytes claim: reserve a per-claim staging schema
-	// (atomic-staging substrate). Address names the staging schema the
-	// executor writes into; ClaimScope stays the canonical selector so
-	// byte-equality / conflict detection is unchanged. See staging.go.
+	// @deliberate: staged_async scope-bytes claim reserves a per-claim
+	// staging schema (atomic-staging substrate). Address names the
+	// staging schema the executor writes into; ClaimScope stays the
+	// canonical selector so byte-equality / conflict detection is
+	// unchanged. See staging.go.
 	if s.stagedScopeBytes(selector) {
 		addr, scope, err := s.openStaging(ctx, claimID, selector)
 		if err != nil {
@@ -233,8 +234,8 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 	if err != nil {
 		return claimproducer.OpenOutcome{}, fmt.Errorf("postgres store: begin tx: %w", err)
 	}
-	// Deferred Rollback tolerates "tx already closed" — Commit returns
-	// before the defer runs on the success path.
+	// @constraint: deferred Rollback tolerates "tx already closed" —
+	// Commit returns before the defer runs on the success path.
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := fmt.Sprintf(`UPDATE %s
 		   SET state = 'in_progress', claim_token = $1, claimed_at = now()
@@ -255,10 +256,11 @@ func (s *Store) openPickPolicy(ctx context.Context, claimID string, pp *PickPoli
 	)
 	if err := row.Scan(&itemID, &rawJSON); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Items table empty (or every row in-flight). Signal to rimsky as
-			// Unavailable, but name the producer-declared class so rimsky's
-			// acquisition-failure routing keys the operator's `error_types:`
-			// chain on `pg/claim_unavailable` rather than only the synthetic
+			// @deliberate: items table empty (or every row in-flight).
+			// Signal to rimsky as Unavailable, but name the producer-
+			// declared class so rimsky's acquisition-failure routing keys
+			// the operator's `error_types:` chain on
+			// `pg/claim_unavailable` rather than only the synthetic
 			// `acquire/unavailable`. The Available=false wire shape is
 			// unchanged; the class is an out-of-band routing hint.
 			return claimproducer.OpenOutcome{Available: false, UnavailableClass: ClaimUnavailableClass}, nil
@@ -303,10 +305,11 @@ func (s *Store) Commit(ctx context.Context, claimID string, claimScope []byte, a
 		return err
 	}
 	if swap {
-		// Atomic-staging cutover: swap the staging schema into the
-		// canonical view in one tx. A collision (populated/depended-upon
-		// canonical) surfaces a pg/swap_failed-classed error and leaves the
-		// staging intact, so the claim's recorded state stays OPEN.
+		// @deliberate: atomic-staging cutover swaps the staging schema
+		// into the canonical view in one tx. A collision (populated /
+		// depended-upon canonical) surfaces a pg/swap_failed-classed
+		// error and leaves the staging intact, so the claim's recorded
+		// state stays OPEN.
 		if err := s.commitStagingSwap(ctx, canonical, staging); err != nil {
 			s.ledger.RecordEvent(claimID, "claim_commit_failed", "ERROR", map[string]any{"error": err.Error()})
 			return err
@@ -335,8 +338,9 @@ func (s *Store) Abandon(ctx context.Context, claimID string, claimScope []byte, 
 		return err
 	}
 	if swap {
-		// Atomic-staging discard: drop the staging schema, leaving the
-		// canonical untouched. Ledger records terminal only on success.
+		// @deliberate: atomic-staging discard drops the staging schema,
+		// leaving the canonical untouched. Ledger records terminal only
+		// on success.
 		if err := s.dropStaging(ctx, staging); err != nil {
 			s.ledger.RecordEvent(claimID, "claim_abandon_failed", "ERROR", map[string]any{"error": err.Error()})
 			return err
@@ -396,21 +400,22 @@ func (s *Store) stagedSwapTarget(claimScope, address []byte) (swap bool, canonic
 	if err != nil {
 		return false, "", "", err
 	}
-	// A staged scope-bytes claim reserved a staging schema distinct from
-	// the canonical selector. Equal (or either empty) means no staging was
-	// reserved — a pick-policy or sync claim — so do not swap.
+	// @deliberate: a staged scope-bytes claim reserved a staging schema
+	// distinct from the canonical selector. Equal (or either empty) means
+	// no staging was reserved — a pick-policy or sync claim — so do not
+	// swap.
 	if canonical == "" || staging == "" || canonical == staging {
 		return false, "", "", nil
 	}
-	// The canonical must not itself be a pick-policy selector: pick-policy
-	// terminal handling owns those.
+	// @constraint: canonical must not itself be a pick-policy selector;
+	// pick-policy terminal handling owns those.
 	if _, ok := s.pickPolicies[canonical]; ok {
 		return false, "", "", nil
 	}
-	// Mirror Open's gate: only a schema-shaped canonical is a swap
-	// target. A non-schema (path-shaped) ClaimScope is an opaque
-	// scope-bytes claim Open never reserved a staging schema for, so its
-	// terminal is a no-op — never a swap.
+	// @constraint: mirror Open's gate — only a schema-shaped canonical
+	// is a swap target. A non-schema (path-shaped) ClaimScope is an
+	// opaque scope-bytes claim Open never reserved a staging schema for,
+	// so its terminal is a no-op — never a swap.
 	if !schemaIdentRegex.MatchString(canonical) {
 		return false, "", "", nil
 	}
@@ -444,9 +449,9 @@ func (s *Store) applyPickAction(ctx context.Context, claimID string, successPath
 		return fmt.Errorf("postgres store: locate policy for claim: %w", err)
 	}
 	if !found {
-		// Either the claim was already terminated (claim_token cleared)
-		// or it never belonged to any pick-policy items table (scope-
-		// bytes claim). Both are no-ops at this layer.
+		// @deliberate: either the claim was already terminated
+		// (claim_token cleared) or it never belonged to any pick-policy
+		// items table (scope-bytes claim). Both are no-ops at this layer.
 		return nil
 	}
 	var act action.Action
@@ -469,20 +474,18 @@ func (s *Store) applyPickAction(ctx context.Context, claimID string, successPath
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	// Every action filters on claim_token = $1 so a duplicated terminal
-	// RPC with a stale claim_id (the row was re-claimed by a different
-	// supervisor in between) affects zero rows — preserving the live
-	// claim's state.
+	// @constraint: every action filters on claim_token = $1 so a
+	// duplicated terminal RPC with a stale claim_id (the row was
+	// re-claimed by a different supervisor in between) affects zero
+	// rows — preserving the live claim's state.
 	switch act.Kind {
 	case action.Pop:
-		// Replaces the legacy "delete" branch — same SQL.
 		if _, err := tx.Exec(ctx,
 			fmt.Sprintf(`DELETE FROM %s WHERE claim_token = $1`, pp.ItemsTable), claimID,
 		); err != nil {
 			return fmt.Errorf("postgres store: pop item: %w", err)
 		}
 	case action.Recycle:
-		// Replaces the legacy "release_to_back" branch — same SQL.
 		if _, err := tx.Exec(ctx,
 			fmt.Sprintf(`UPDATE %s
 			    SET state = 'available', claim_token = NULL, claimed_at = NULL,
@@ -589,18 +592,17 @@ func validatePickPolicy(selector string, pp *PickPolicy) action.ValidationResult
 		addErr(fmt.Errorf("items_table %q is not a valid identifier (lowercase letters/digits/underscore; not starting with a digit)", pp.ItemsTable))
 	}
 
-	// Issue 9: emit only ONE error per slot for an unsupported pg-store
-	// action. The pg-rejection check runs first; if it fires (e.g. an
-	// operator wrote `on_commit: pop_and_move`), we skip the per-action
-	// `Validate()` call so the operator doesn't see two errors stacked
-	// up for the same root-cause mistake (the missing-target one + the
-	// not-supported-by-pg one).
-	//
-	// Issue 11: a zero Kind (yaml.v3 silently dropping null on a struct
-	// value, or an operator missing the field entirely) produces the
-	// hard-to-decode `unknown action ""` from Validate(). Surface a
-	// clearer message ahead of Validate(). Zero-Kind is also not a
-	// PopAndMove/PopAndDelete so pgRejectAction does not fire for it.
+	// @deliberate: emit only ONE error per slot for an unsupported
+	// pg-store action. The pg-rejection check runs first; if it fires
+	// (e.g. an operator wrote `on_commit: pop_and_move`), we skip the
+	// per-action `Validate()` call so the operator doesn't see two
+	// errors stacked up for the same root-cause mistake (the missing-
+	// target one + the not-supported-by-pg one). A zero Kind (yaml.v3
+	// silently dropping null on a struct value, or an operator missing
+	// the field entirely) produces the hard-to-decode `unknown action
+	// ""` from Validate(); surface a clearer message ahead of
+	// Validate(). Zero-Kind is also not a PopAndMove/PopAndDelete so
+	// pgRejectAction does not fire for it.
 	commitHandled := pgZeroOrRejected("on_commit", pp.OnCommit, addErr)
 	giveUpHandled := pgZeroOrRejected("on_give_up", pp.OnGiveUp, addErr)
 

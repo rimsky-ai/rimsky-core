@@ -60,7 +60,6 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 		t.Fatalf("validation errors: %v", res.Errors)
 	}
 
-	// Index canonicalized flat nodes by type.
 	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))
 	for i := range tmpl.Nodes {
 		byType[tmpl.Nodes[i].Type] = &tmpl.Nodes[i]
@@ -77,7 +76,7 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 		t.Errorf("outer-caller must be recognized by IsSubgraphCaller (Delegate=%q)", caller.Delegate)
 	}
 
-	// A non-delegating node must NOT carry the marker.
+	// @constraint: A non-delegating node must NOT carry the marker.
 	plain := byType["plain-node"]
 	if plain == nil {
 		t.Fatalf("plain-node missing")
@@ -90,7 +89,7 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 	}
 }
 
-// IsSubgraphExit is consulted by the supervisor's terminal handler to
+// @deliberate: IsSubgraphExit is consulted by the supervisor's terminal handler to
 // route exit-node terminals through the SettleChildren carry-rule.
 // Verify the predicate aligns with the canonicalized template's
 // declared exit.
@@ -131,7 +130,7 @@ func TestEntryAbsorption_ExitNodeIdentified(t *testing.T) {
 	if runtime.IsSubgraphExit(tmpl, "outer-caller") {
 		t.Errorf("outer-caller is the calling node in main; not an exit")
 	}
-	// The canonicalizer must also stamp IsSubgraphExit on the exit
+	// @constraint: The canonicalizer must also stamp IsSubgraphExit on the exit
 	// node so the runtime terminal handler routes through the
 	// carry-rule via acq.NodeDef alone (no template DB lookup).
 	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))

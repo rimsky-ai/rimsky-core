@@ -32,9 +32,6 @@ type DataProcessingClient = clientiface.DataProcessingClient
 // DataProcessingClient. See `clientiface.DataProcessingRegistry`.
 type DataProcessingRegistry = clientiface.DataProcessingRegistry
 
-// BeginCandidateInput / Output and friends are the rimsky-side
-// payloads for the DataProcessing verbs; see `clientiface.*` for the
-// canonical doc.
 type (
 	BeginCandidateInput     = clientiface.BeginCandidateInput
 	BeginCandidateOutput    = clientiface.BeginCandidateOutput

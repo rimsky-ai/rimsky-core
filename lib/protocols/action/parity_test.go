@@ -26,7 +26,8 @@ func TestSharedVocab_FsAndPgUseSameNames(t *testing.T) {
 			t.Errorf("Kind %v: string value %q, want %q", c.kind, c.kind, c.want)
 		}
 	}
-	// AllKinds must include all four — the count is part of the contract.
+	// @constraint: AllKinds must enumerate exactly four entries — the count
+	// is part of the cross-store action-vocabulary contract.
 	if got := len(AllKinds()); got != 4 {
 		t.Errorf("AllKinds returned %d kinds; want 4", got)
 	}

@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Mode-coexistence helper. Pure; no I/O; deterministic on inputs.
-// Lives in foundation/locks/ so both the supervisor's acquisition flow
-// (runtime/runner_acquire.go) and the queue's eligibility
-// predicate (foundation/persistence/postgres/queue.go) can call it without
-// circular imports.
-//
-// A claim's effective mode is (sync|async, r|w) derived from
-// (intent, store.write_semantics) at conflict-check time. The matrix
-// is symmetric.
-//
-// Plus the rimsky-side scope-conflict comparison (per spec §7.7):
-// byte-equal on canonical scope bytes. Canonicalization is the
-// producer's responsibility, comparison is rimsky's.
-
 package locks
 
 import (
@@ -48,19 +34,20 @@ func ModeCoexists(intentA claimproducer.Intent, semA claimproducer.WriteSemantic
 	syncA := isSync(semA)
 	syncB := isSync(semB)
 	if syncA != syncB {
-		// Cross-quadrant: the (semantics, intent) blocks are independent.
-		// Reachable only if a caller compares two claims from different
-		// stores, which the upstream filter usually rules out — return
-		// true to indicate "no semantic conflict" rather than blocking.
+		// @deliberate: cross-quadrant — the (semantics, intent) blocks
+		// are independent. Reachable only if a caller compares two
+		// claims from different stores, which the upstream filter
+		// usually rules out; return true ("no semantic conflict")
+		// rather than blocking.
 		return true
 	}
 	rwA := intentA == claimproducer.IntentReadWrite
 	rwB := intentB == claimproducer.IntentReadWrite
 	if syncA {
-		// Sync block: r×r ✅; r×w / w×r / w×w ❌.
+		// @constraint: sync block — r×r ✅; r×w / w×r / w×w ❌.
 		return !rwA && !rwB
 	}
-	// Async block: r×r ✅, r×w ✅, w×r ✅, w×w ❌.
+	// @constraint: async block — r×r ✅, r×w ✅, w×r ✅, w×w ❌.
 	return !(rwA && rwB)
 }
 
@@ -93,6 +80,6 @@ func isSync(ws claimproducer.WriteSemantics) bool {
 	case claimproducer.WriteSemanticsStagedAsync:
 		return false
 	}
-	// Unrecognized: conservative — treat as sync.
+	// @deliberate: unrecognized values fall through as sync (conservative).
 	return true
 }

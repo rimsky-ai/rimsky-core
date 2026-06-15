@@ -19,7 +19,7 @@ Operators reconstruct what happened on an instance from one feed in true chronol
 
 ## Acceptance
 
-Through the control-api or `rimsky watch`/`rimsky logs` CLI, an operator reads the events for an instance and observes a single timestamp-ordered feed where (for example) a breakpoint hit that occurred between two node-state transitions appears between them — not grouped by source — and where filtering by kind narrows to that kind while preserving the order across what remains.
+Through the control-api or the event-log CLI surface (watch / logs verbs), an operator reads the events for an instance and observes a single timestamp-ordered feed where (for example) a breakpoint hit that occurred between two node-state transitions appears between them — not grouped by source — and where filtering by kind narrows to that kind while preserving the order across what remains.
 
 ## Falsifier
 

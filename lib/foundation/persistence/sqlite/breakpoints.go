@@ -2,10 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.BreakpointTable — runtime-installed
-// pause/notify breakpoints per concept:breakpoint. Mirror of the
-// postgres impl.
-//
+// @source: lib/foundation/persistence/postgres/breakpoints.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
+
 // @concept: breakpoint
 
 package sqlite
@@ -24,8 +24,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// breakpointsImpl is the per-row-type aspect of *tablesImpl, exposing
-// the BreakpointTable method set. Mirrors the postgres-side pattern.
+// breakpointsImpl is the SQLite-backed persistence.BreakpointTable —
+// runtime-installed pause/notify breakpoints per concept:breakpoint.
+// Aspect-type pattern; mirrors the postgres-side shape.
 type breakpointsImpl tablesImpl
 
 var _ persistence.BreakpointTable = (*breakpointsImpl)(nil)
@@ -35,7 +36,7 @@ func (s *tablesImpl) Breakpoints() persistence.BreakpointTable { return (*breakp
 
 func (b *breakpointsImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-// breakpointCols mirrors the postgres-side column list.
+// sqliteBreakpointCols mirrors the postgres-side column list.
 const sqliteBreakpointCols = `id, instance_id, matcher, checkpoint, signal_type, mode,
 	overflow_policy, hit_ttl_seconds, ttl_seconds, dropped_count,
 	created_by_key, created_at, expires_at`
@@ -65,8 +66,8 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	)
 	if bp.TTLSeconds != nil {
 		ttlArg = *bp.TTLSeconds
-		// Materialize expires_at at write time so SweepExpired's predicate
-		// is a simple `expires_at <= ?` comparison.
+		// @constraint: materialize expires_at at write time so SweepExpired's
+		// predicate is a simple `expires_at <= ?` comparison.
 		expiresArg = time.Now().UTC().
 			Add(time.Duration(*bp.TTLSeconds) * time.Second).
 			Format(timeLayoutFixedNanos)
@@ -115,7 +116,7 @@ func (b *breakpointsImpl) ListForInstance(ctx context.Context, instanceID shared
 		  WHERE instance_id = ?`
 	args := []any{instanceID.String()}
 	if !includeExpired {
-		// SQLite stores expires_at as ISO-8601 text; lexicographic
+		// @constraint: SQLite stores expires_at as ISO-8601 text; lexicographic
 		// comparison agrees with chronological order for the fixed-width
 		// timeLayoutFixedNanos strings we write.
 		nowStr := time.Now().UTC().Format(timeLayoutFixedNanos)

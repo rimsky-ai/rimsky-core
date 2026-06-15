@@ -92,45 +92,48 @@ import (
 // harness never t.Skip's), so a developer who hasn't run `make
 // core-images` sees the missing-image error directly.
 func TestE2E_ExampleLifecycleSubscriberAgainstRunningRimsky(t *testing.T) {
-	// Not parallel: this scenario stands up a docker network + a Postgres
-	// testcontainer + a rimsky-all-in-one container plus an in-process
-	// subscriber + executor on host ports. The cost is real, so other
-	// test methods in this package (subscriber_test.go) keep their fast
-	// in-process shape and only this gate pays the cross-stack price.
+	// @deliberate: not parallel — this scenario stands up a docker
+	// network + a Postgres testcontainer + a rimsky-all-in-one container
+	// plus an in-process subscriber + executor on host ports. The cost
+	// is real, so other test methods in this package
+	// (subscriber_test.go) keep their fast in-process shape and only
+	// this gate pays the cross-stack price.
 	ctx := context.Background()
 
-	// 1. Stand up the example Subscriber, wrapped to record each call,
-	//    as an in-process gRPC server on a free host port. The wrapper
-	//    also serves the minimal ClaimProducer surface rimsky requires
-	//    to pass its startup Capabilities handshake on a peer entry
-	//    that advertises [claim_producer, lifecycle_subscriber].
+	// @deliberate: bring-up order is load-bearing and the subscriber
+	// rides on an executor entry (not a claim_producer) on purpose —
+	// the claim-producer path's StartScheduler dial runs a BLOCKING
+	// Capabilities handshake at rimsky startup and races the reverse-
+	// SSH host-port tunnel under load (per claimproducer_custom.go's
+	// preamble), which surfaces as "connection refused" against the in-
+	// process subscriber. The executor entry's observability handshake
+	// is best-effort and the LifecycleClient dial is non-blocking
+	// (DialLifecycle does grpc.NewClient without a Capabilities call),
+	// so the first actual lifecycle round-trip happens at template-
+	// register time — long after the SSH tunnel is up.
+	//   1. Stand up the example Subscriber, wrapped to record each
+	//      call, as an in-process gRPC server on a free host port. The
+	//      wrapper also serves the minimal ClaimProducer surface rimsky
+	//      requires to pass its startup Capabilities handshake on a
+	//      peer entry that advertises [claim_producer,
+	//      lifecycle_subscriber].
+	//   2. Stand up a Success-returning stub executor on a SEPARATE
+	//      host port. The template's worker node uses this executor so
+	//      the instance can reach terminal end-to-end through real
+	//      dispatch — OnRunScopeTerminal and OnInstanceTerminated only
+	//      fire on a real terminate path. A canned executor is enough:
+	//      the load-bearing observable is the lifecycle callbacks, not
+	//      what the executor returned.
+	//   3. Bring up rimsky-all-in-one on the harness default (Postgres)
+	//      with the subscriber registered as an executor peer
+	//      advertising the lifecycle_subscriber mix-in AND a separate
+	//      stub executor.
 	subPort := freeHostPort(t)
 	rec := startRecordingLifecycleSubscriber(t, subPort)
 
-	// 2. Stand up a Success-returning stub executor on a SEPARATE host
-	//    port. The template's worker node uses this executor so the
-	//    instance can reach terminal end-to-end through real dispatch —
-	//    OnRunScopeTerminal and OnInstanceTerminated only fire on a
-	//    real terminate path. A canned executor is enough: the
-	//    load-bearing observable is the lifecycle callbacks, not what
-	//    the executor returned.
 	execPort := freeHostPort(t)
 	startStubExecutor(t, execPort)
 
-	// 3. Bring up rimsky-all-in-one on the harness default (Postgres)
-	//    with the subscriber registered as an executor peer advertising
-	//    the lifecycle_subscriber mix-in AND a separate stub executor.
-	//    The subscriber rides on an executor entry (not a claim_producer)
-	//    on purpose: the claim-producer path's StartScheduler dial runs
-	//    a BLOCKING Capabilities handshake at rimsky startup and races
-	//    the reverse-SSH host-port tunnel under load (per
-	//    claimproducer_custom.go's preamble), which surfaces as
-	//    "connection refused" against the in-process subscriber. The
-	//    executor entry's observability handshake is best-effort and the
-	//    LifecycleClient dial is non-blocking (DialLifecycle does
-	//    grpc.NewClient without a Capabilities call), so the first
-	//    actual lifecycle round-trip happens at template-register time
-	//    — long after the SSH tunnel is up.
 	subEndpoint := fmt.Sprintf("host.testcontainers.internal:%d", subPort)
 	execEndpoint := fmt.Sprintf("host.testcontainers.internal:%d", execPort)
 	ep := harness.BringUpRimsky(ctx, t,
@@ -138,28 +141,27 @@ func TestE2E_ExampleLifecycleSubscriberAgainstRunningRimsky(t *testing.T) {
 		harness.WithExecutorProtocols("example-subscriber", "lifecycle_subscriber"),
 		harness.WithExecutor("stub", execEndpoint),
 		harness.WithHostPortAccess(subPort, execPort),
-		// The worker node references the `stub` executor by name. The
-		// example-subscriber executor is referenced by no node directly
-		// — it appears in peersReferencedBySpec via the worker node's
-		// `stores: [{name: example-subscriber}]` ref, which is the
-		// channel rimsky's lifecycle-fan-out walks. Strict "all" mode
-		// requires every referenced peer's schema visible at
+		// @deliberate: ref-validation mode `none` sidesteps the
+		// registration-time gate without affecting the dispatch path.
+		// The worker node references the `stub` executor by name; the
+		// example-subscriber executor is referenced indirectly via the
+		// worker's `stores: [{name: example-subscriber}]` ref, which is
+		// the channel rimsky's lifecycle-fan-out walks. Strict "all"
+		// mode requires every referenced peer's schema visible at
 		// registration; the stub advertises an open schema and the
 		// subscriber's Capabilities advertise an open schema too, but
 		// the SSH-tunnel race may leave the discovery cache marking
-		// either as Unreachable on a slow first probe; "none" sidesteps
-		// the registration-time gate without affecting the dispatch
-		// path (which uses the subsequent live-cache probes).
+		// either as Unreachable on a slow first probe.
 		harness.WithRefValidationMode("none"),
 	)
 
-	// Carries the IDs captured in leg 1 and reused by legs 2..7.
 	state := &lifecycleState{}
 
-	// Each leg runs against the SAME running stack — the lifecycle
-	// callbacks fire in a strict natural order (register → deploy →
-	// instance-create → terminate → instance-delete → undeploy →
-	// deregister), so per-leg bring-up would only multiply the cost.
+	// @deliberate: each leg runs against the SAME running stack — the
+	// lifecycle callbacks fire in a strict natural order (register →
+	// deploy → instance-create → terminate → instance-delete →
+	// undeploy → deregister), so per-leg bring-up would only multiply
+	// the cost.
 	t.Run("OnTemplateRegistered_fires_on_template_create", func(t *testing.T) {
 		exerciseOnTemplateRegisteredLeg(t, ep, rec, state)
 	})
@@ -196,22 +198,17 @@ type lifecycleState struct {
 	templateHash      string
 	instanceID        string
 	preTerminateIndex int
-	// adminKey is the bootstrap admin plaintext minted in leg 3.
-	// Anonymous mode is open before this is set; afterwards, every
-	// request must carry the bearer so the auth gate accepts it.
+	// @deliberate: adminKey is the bootstrap admin plaintext minted in
+	// leg 3. Anonymous mode is open before this is set; afterwards,
+	// every request must carry the bearer so the auth gate accepts it.
 	adminKey string
 }
-
-// ---------------------------------------------------------------------------
-// Leg 1: OnTemplateRegistered fires on POST /v1/templates with the
-// template_hash AND the canonical spec bytes populated.
-// ---------------------------------------------------------------------------
 
 func exerciseOnTemplateRegisteredLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
 	before := rec.snapshot()
 	state.templateHash = registerLifecycleTemplate(t, ep)
 
-	// Wait for the callback to arrive — synchronous from
+	// @deliberate: wait for the callback to arrive — synchronous from
 	// FanOutTemplateEvent, but the test runs in the same goroutine as
 	// the HTTP response, so the captured row is available by the time
 	// the response returns. A short poll absorbs any concurrent
@@ -223,23 +220,20 @@ func exerciseOnTemplateRegisteredLeg(t *testing.T, ep harness.RimskyEndpoint, re
 		t.Fatalf("OnTemplateRegistered template_hash mismatch: got %q want %q",
 			call.TemplateHash, state.templateHash)
 	}
-	// The canonical JCS-canonicalized spec bytes must be carried on the
-	// callback — the lifecycle.proto comment says "may be empty" but
-	// rimsky populates it from canonical.CanonicalSpecBytes(spec) on
-	// the register fan-out, so non-empty is the actual contract.
+	// @constraint: the canonical JCS-canonicalized spec bytes must be
+	// carried on the callback — the lifecycle.proto comment says "may
+	// be empty" but rimsky populates it from
+	// canonical.CanonicalSpecBytes(spec) on the register fan-out, so
+	// non-empty is the actual contract.
 	if len(call.Spec) == 0 {
 		t.Fatalf("OnTemplateRegistered carried empty spec bytes — the JCS-canonicalized template spec must be populated (lifecycle.proto OnTemplateRegisteredRequest.spec); falsifier: documented context field is missing from the callback payload")
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Leg 2: OnTemplateDeployed fires on POST /v1/templates/{hash}/deploy.
-// ---------------------------------------------------------------------------
-
 func exerciseOnTemplateDeployedLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
 	before := rec.snapshot()
-	// Anonymous mode is still open at this point (admin key is minted
-	// in leg 3); pass empty bearer.
+	// @deliberate: anonymous mode is still open at this point (admin
+	// key is minted in leg 3); pass empty bearer.
 	deployLifecycleTemplate(t, ep, "", state.templateHash)
 	call := waitForCall(t, rec, "OnTemplateDeployed", before, 30*time.Second,
 		"OnTemplateDeployed must fire on POST /v1/templates/{hash}/deploy")
@@ -249,26 +243,22 @@ func exerciseOnTemplateDeployedLeg(t *testing.T, ep harness.RimskyEndpoint, rec 
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Leg 3: OnInstanceCreated fires with instance_id, template_hash,
-// service_bindings, AND owner_api_key_id populated.
-// ---------------------------------------------------------------------------
-
 func exerciseOnInstanceCreatedLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
-	// Bootstrap the auth perimeter so owner_api_key_id can be observed
-	// non-empty on the callback. `rimsky auth init` on a fresh
-	// deployment is the supported bootstrap path; this test calls the
-	// HTTP equivalent directly so the test process holds the plaintext
-	// for the authenticated POST /v1/instances. From here on every
-	// subsequent request must carry the bearer — anonymous mode closes
-	// the moment the first key is minted.
+	// @deliberate: bootstrap the auth perimeter so owner_api_key_id
+	// can be observed non-empty on the callback. `rimsky auth init` on
+	// a fresh deployment is the supported bootstrap path; this test
+	// calls the HTTP equivalent directly so the test process holds the
+	// plaintext for the authenticated POST /v1/instances. From here on
+	// every subsequent request must carry the bearer — anonymous mode
+	// closes the moment the first key is minted.
 	state.adminKey = bootstrapAdminKey(t, ep)
 	adminKey := state.adminKey
 
-	// Per-instance late-bound service catalog: a non-empty bag the
-	// callback should mirror verbatim. The actual key name doesn't
-	// matter to rimsky for fan-out (the proxy reads it); what matters
-	// is that the callback's service_bindings bytes round-trip.
+	// @deliberate: per-instance late-bound service catalog — a non-
+	// empty bag the callback should mirror verbatim. The actual key
+	// name doesn't matter to rimsky for fan-out (the proxy reads it);
+	// what matters is that the callback's service_bindings bytes
+	// round-trip.
 	bindings := map[string]any{
 		"some-service": map[string]any{"endpoint": "grpc://example:9999"},
 	}
@@ -293,7 +283,8 @@ func exerciseOnInstanceCreatedLeg(t *testing.T, ep harness.RimskyEndpoint, rec *
 		t.Fatalf("OnInstanceCreated service_bindings was empty — the proxy consumes this to populate its per-instance binding cache; the request carried %v; falsifier: documented context field is missing from the callback payload",
 			bindings)
 	}
-	// Round-trip the bag to assert it's the same shape the request sent.
+	// @constraint: round-trip the bag to assert it's the same shape
+	// the request sent.
 	var got map[string]any
 	if err := json.Unmarshal(call.ServiceBindings, &got); err != nil {
 		t.Fatalf("OnInstanceCreated service_bindings JSON decode failed: %v; raw=%q", err, string(call.ServiceBindings))
@@ -303,17 +294,13 @@ func exerciseOnInstanceCreatedLeg(t *testing.T, ep harness.RimskyEndpoint, rec *
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Leg 4: OnRunScopeTerminal fires on POST /v1/instances/{id}/terminate
-// with run_scope_id, terminal_reason, AND instance_id populated.
-// ---------------------------------------------------------------------------
-
 func exerciseOnRunScopeTerminalLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
-	// Capture the pre-terminate baseline once for both the OnRunScopeTerminal
-	// and OnInstanceTerminated legs. The InstanceTerminator worker may fire
-	// OnInstanceTerminated before the test's explicit DELETE runs; if leg 5
-	// re-snapshots after terminate, it could miss the worker's fan-out.
-	// Sharing the baseline keeps the assertion timing-independent.
+	// @deliberate: capture the pre-terminate baseline once for both
+	// the OnRunScopeTerminal and OnInstanceTerminated legs. The
+	// InstanceTerminator worker may fire OnInstanceTerminated before
+	// the test's explicit DELETE runs; if leg 5 re-snapshots after
+	// terminate, it could miss the worker's fan-out. Sharing the
+	// baseline keeps the assertion timing-independent.
 	state.preTerminateIndex = rec.snapshot()
 	terminateInstance(t, ep, state.adminKey, state.instanceID, "test_termination_reason")
 	call := waitForCall(t, rec, "OnRunScopeTerminal", state.preTerminateIndex, 60*time.Second,
@@ -331,16 +318,13 @@ func exerciseOnRunScopeTerminalLeg(t *testing.T, ep harness.RimskyEndpoint, rec 
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Leg 5: OnInstanceTerminated fires on DELETE /v1/instances/{id}.
-// ---------------------------------------------------------------------------
-
 func exerciseOnInstanceTerminatedLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
-	// Use the pre-terminate baseline so a call fired by the
-	// InstanceTerminator worker between leg 4's terminate and this leg's
-	// DELETE is still observable to the assertion. DELETE is still
-	// called: it is the canonical surface for OnInstanceTerminated and
-	// the row-delete is required so the template-delete leg can succeed.
+	// @deliberate: use the pre-terminate baseline so a call fired by
+	// the InstanceTerminator worker between leg 4's terminate and this
+	// leg's DELETE is still observable to the assertion. DELETE is
+	// still called: it is the canonical surface for
+	// OnInstanceTerminated and the row-delete is required so the
+	// template-delete leg can succeed.
 	deleteInstance(t, ep, state.adminKey, state.instanceID)
 	call := waitForCall(t, rec, "OnInstanceTerminated", state.preTerminateIndex, 60*time.Second,
 		"OnInstanceTerminated must fire on DELETE /v1/instances/{id} (or earlier from the InstanceTerminator worker; either site honors the contract)")
@@ -357,10 +341,6 @@ func exerciseOnInstanceTerminatedLeg(t *testing.T, ep harness.RimskyEndpoint, re
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Leg 6: OnTemplateUndeployed fires on POST /v1/templates/{hash}/undeploy.
-// ---------------------------------------------------------------------------
-
 func exerciseOnTemplateUndeployedLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
 	before := rec.snapshot()
 	undeployTemplate(t, ep, state.adminKey, state.templateHash)
@@ -371,10 +351,6 @@ func exerciseOnTemplateUndeployedLeg(t *testing.T, ep harness.RimskyEndpoint, re
 			call.TemplateHash, state.templateHash)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Leg 7: OnTemplateDeregistered fires on DELETE /v1/templates/{hash}.
-// ---------------------------------------------------------------------------
 
 func exerciseOnTemplateDeregisteredLeg(t *testing.T, ep harness.RimskyEndpoint, rec *recordingLifecycleSubscriber, state *lifecycleState) {
 	before := rec.snapshot()
@@ -387,10 +363,6 @@ func exerciseOnTemplateDeregisteredLeg(t *testing.T, ep harness.RimskyEndpoint, 
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Leg 8: rimsky honors the subscriber's failure response synchronously.
-// ---------------------------------------------------------------------------
-
 // exerciseFailureHonoredSynchronouslyLeg flips the recording wrapper to
 // return a non-nil error on the next OnTemplateRegistered, then POSTs a
 // fresh template. The HTTP response MUST be 5xx — rimsky must NOT
@@ -402,8 +374,8 @@ func exerciseFailureHonoredSynchronouslyLeg(t *testing.T, ep harness.RimskyEndpo
 	rec.failNextOnTemplateRegistered(status.Error(codes.Internal, "subscriber rejected the callback"))
 	defer rec.clearFailures()
 
-	// POST a fresh template (different name → different hash → the
-	// idempotency table does NOT short-circuit the fan-out).
+	// @deliberate: POST a fresh template (different name → different
+	// hash → the idempotency table does NOT short-circuit the fan-out).
 	spec := map[string]any{
 		"spec": map[string]any{
 			"name":                  "lifecycle-subscriber-failure-probe",
@@ -441,10 +413,6 @@ func exerciseFailureHonoredSynchronouslyLeg(t *testing.T, ep harness.RimskyEndpo
 		t.Fatalf("5xx response body should name the lifecycle fan-out or the subscriber as the cause: %s", string(body))
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Recording lifecycle subscriber + minimal ClaimProducer Capabilities.
-// ---------------------------------------------------------------------------
 
 // capturedCall is one observed lifecycle callback. Fields are populated
 // per the callback's request shape; unused fields stay at zero-value.
@@ -488,7 +456,7 @@ type recordingLifecycleSubscriber struct {
 
 	mu       sync.Mutex
 	calls    []capturedCall
-	failNext map[string]error // per-verb sticky failure injection
+	failNext map[string]error
 }
 
 func newRecordingLifecycleSubscriber() *recordingLifecycleSubscriber {
@@ -557,7 +525,7 @@ func (r *recordingLifecycleSubscriber) popFailure(verb string) error {
 	return nil
 }
 
-// LifecycleSubscriber methods — delegate to the example then record.
+// OnTemplateRegistered methods — delegate to the example then record.
 
 func (r *recordingLifecycleSubscriber) OnTemplateRegistered(ctx context.Context, req *genv1.OnTemplateRegisteredRequest) (*genv1.LifecycleAck, error) {
 	r.record(capturedCall{
@@ -700,10 +668,6 @@ func startRecordingLifecycleSubscriber(t *testing.T, port int) *recordingLifecyc
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// Stub executor — minimal Success-returning Executor + open schema.
-// ---------------------------------------------------------------------------
-
 // stubExecutorServer is a minimal Executor that returns a single
 // terminal Success for every dispatch. Mirrors the pattern in
 // examples/publisher/main_e2e_test.go::stubExecutorServer — kept inline
@@ -780,10 +744,6 @@ func startStubExecutor(t *testing.T, port int) {
 	t.Fatalf("stub executor did not become dialable at %s within 10s", addr)
 }
 
-// ---------------------------------------------------------------------------
-// Test helpers — template + instance lifecycle drivers + auth bootstrap.
-// ---------------------------------------------------------------------------
-
 // freeHostPort grabs an OS-assigned TCP port and returns it. The brief
 // close-then-reuse race is acceptable for an in-process test fixture
 // (matches examples/publisher/main_e2e_test.go::freeHostPort).
@@ -816,9 +776,10 @@ func waitForCall(t *testing.T, rec *recordingLifecycleSubscriber, verb string, b
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	// Diagnostic: enumerate every callback verb captured since `base`
-	// so the developer can tell whether a different lifecycle event
-	// fired (e.g. ordering swap) vs no events fired at all.
+	// @deliberate: diagnostic — enumerate every callback verb captured
+	// since `base` so the developer can tell whether a different
+	// lifecycle event fired (e.g. ordering swap) vs no events fired
+	// at all.
 	tail := rec.callsSince(base)
 	verbs := make([]string, 0, len(tail))
 	for _, c := range tail {
@@ -847,9 +808,9 @@ func registerLifecycleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 				{
 					"type":     "worker",
 					"executor": "stub",
-					// Reference the subscriber peer as a store; the
-					// alias is what's used by the supervisor, but the
-					// `name` is what makes it appear in
+					// @deliberate: reference the subscriber peer as a
+					// store; the alias is what's used by the supervisor,
+					// but the `name` is what makes it appear in
 					// peersReferencedBySpec for lifecycle fan-out.
 					"stores": []map[string]any{
 						{

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`protojson` marshaling for the HTTP gateway.
+The canonical proto-to-JSON marshaler for the HTTP gateway.
 
 ## Rationale
 

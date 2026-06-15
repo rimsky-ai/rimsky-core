@@ -71,12 +71,12 @@ import (
 //
 // @concept: attribute
 func applyAttributeOverrides(
-	resolved map[string]any, // post-substitution + post-static-default attribute bag
-	overrides map[string]any, // single blob: by_executor + by_node + by_match
+	resolved map[string]any,
+	overrides map[string]any,
 	executor string,
 	nodeName string,
-	graph string, // "main" (spec.MainGraphName) or sub-graph name
-	childKey string, // "" for non-fan-out dispatches
+	graph string,
+	childKey string,
 	logger shared.Logger,
 ) (merged map[string]any, matched []int) {
 	mergedAny := any(shared.DeepMergeJSON(resolved, nil))
@@ -94,9 +94,9 @@ func applyAttributeOverrides(
 		mergedAny = shared.DeepMergeJSON(mergedAny, frag)
 	}
 
-	// Snapshot the post-L4 bag for the matcher. Per the design intent,
-	// every L5 entry's matcher reads from the same snapshot so the
-	// matchers are independent of L5 declaration order.
+	// @deliberate: every L5 entry's matcher reads from the same post-L4
+	// snapshot so matcher evaluation is independent of L5 declaration
+	// order (earlier overlays do not influence later matchers).
 	matcherCtx, _ := mergedAny.(map[string]any)
 	if matcherCtx == nil {
 		matcherCtx = map[string]any{}
@@ -105,10 +105,10 @@ func applyAttributeOverrides(
 	if entries, ok := lookupMatchList(overrides, logger); ok {
 		for i, entry := range entries {
 			if entry == nil {
-				// Malformed per-entry shape: skipped+warned at extract
-				// time by lookupMatchList. Preserve the original index
-				// in `matched` only on successful evaluation, so a bad
-				// entry is fully invisible to the counter path.
+				// @constraint: malformed per-entry shapes (warned at
+				// extract time by lookupMatchList) must not appear in
+				// `matched`; the counter path requires only successfully
+				// evaluated indices, so a bad entry is fully invisible.
 				continue
 			}
 			matcherMap, _ := entry["matcher"].(map[string]any)
@@ -126,10 +126,10 @@ func applyAttributeOverrides(
 	if m, ok := mergedAny.(map[string]any); ok {
 		return m, matched
 	}
-	// `lookupFragment` guarantees fragments are `map[string]any`, and
-	// `DeepMergeJSON` of two maps always returns a map, so this branch
-	// is unreachable in steady state. Surface a Warn so the silent
-	// no-op leaves a trace rather than vanishing.
+	// @deliberate: this branch is unreachable in steady state
+	// (`lookupFragment` guarantees fragments are `map[string]any`, and
+	// `DeepMergeJSON` of two maps always returns a map). Emit a Warn so
+	// the silent no-op leaves a trace rather than vanishing.
 	if logger != nil {
 		logger.Warn("applyAttributeOverrides: merge produced non-map root; falling back to resolved",
 			"executor", executor,
@@ -200,7 +200,7 @@ func lookupMatchList(overrides map[string]any, logger shared.Logger) ([]map[stri
 				logger.Warn("applyAttributeOverrides: by_match entry has malformed shape; skipping",
 					"entry_index", i)
 			}
-			continue // out[i] stays nil; caller skips.
+			continue
 		}
 		out[i] = m
 	}
@@ -274,10 +274,10 @@ func incrementMatchCountersAfterMerge(
 	if len(matched) == 0 {
 		return
 	}
-	// Open a short dedicated tx for the L5 counter increment.
+	// @deliberate: a short dedicated tx for the L5 counter increment.
 	// transitionToRunning already committed the dispatch row before
-	// we got here, so this tx is separate from any other dispatch-
-	// path tx.
+	// this point, so the increment runs in its own tx separate from
+	// any other dispatch-path tx.
 	err := persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return persist.Instances().IncrementAttributeOverrideMatchCounts(ctx, instanceID, matched, tx)
 	})

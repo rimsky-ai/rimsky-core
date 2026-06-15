@@ -30,7 +30,8 @@ func hasErrorContaining(msgs []string, needle string) bool {
 	return false
 }
 
-// happy-path: a single `main` graph with one node validates clean.
+// TestCanonicalizeGraphs_HappyPathSingleMain — a single `main` graph
+// with one node validates clean.
 func TestCanonicalizeGraphs_HappyPathSingleMain(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl-1",
@@ -54,7 +55,8 @@ func TestCanonicalizeGraphs_HappyPathSingleMain(t *testing.T) {
 	}
 }
 
-// reject mixing flat Nodes and Graphs.
+// TestCanonicalizeGraphs_RejectGraphsAndNodesBothSet — rejects mixing
+// flat Nodes and Graphs.
 func TestCanonicalizeGraphs_RejectGraphsAndNodesBothSet(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -71,7 +73,8 @@ func TestCanonicalizeGraphs_RejectGraphsAndNodesBothSet(t *testing.T) {
 	}
 }
 
-// reject when no `main` graph is present.
+// TestCanonicalizeGraphs_RejectMissingMain — rejects when no `main`
+// graph is present.
 func TestCanonicalizeGraphs_RejectMissingMain(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -92,7 +95,7 @@ func TestCanonicalizeGraphs_RejectMissingMain(t *testing.T) {
 	}
 }
 
-// reject `main` having entry/exit.
+// TestCanonicalizeGraphs_RejectMainHasEntryExit `main` having entry/exit.
 func TestCanonicalizeGraphs_RejectMainHasEntryExit(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -112,7 +115,8 @@ func TestCanonicalizeGraphs_RejectMainHasEntryExit(t *testing.T) {
 	}
 }
 
-// reject sub-graph missing entry/exit.
+// TestCanonicalizeGraphs_RejectSubGraphMissingEntry — rejects a
+// sub-graph missing entry/exit.
 func TestCanonicalizeGraphs_RejectSubGraphMissingEntry(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -153,7 +157,7 @@ func TestCanonicalizeGraphs_RejectSubGraphMissingExit(t *testing.T) {
 	}
 }
 
-// reject entry == exit.
+// TestCanonicalizeGraphs_RejectEntryEqualsExit — rejects entry == exit.
 func TestCanonicalizeGraphs_RejectEntryEqualsExit(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -175,7 +179,8 @@ func TestCanonicalizeGraphs_RejectEntryEqualsExit(t *testing.T) {
 	}
 }
 
-// reject entry naming an unknown node.
+// TestCanonicalizeGraphs_RejectUnknownEntry — rejects entry naming an
+// unknown node.
 func TestCanonicalizeGraphs_RejectUnknownEntry(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -197,7 +202,8 @@ func TestCanonicalizeGraphs_RejectUnknownEntry(t *testing.T) {
 	}
 }
 
-// disconnected internal node — reachability rejection.
+// TestCanonicalizeGraphs_RejectDisconnectedInternalNode — rejects a
+// disconnected internal node via the reachability check.
 func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -211,7 +217,9 @@ func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 				Exit:  "z",
 				Nodes: []TemplateNodeDef{
 					{Type: "a"},
-					{Type: "orphan"}, // no subscriptions; unreachable
+					// @deliberate: orphan has no subscriptions and is
+					// unreachable.
+					{Type: "orphan"},
 					{Type: "z", Subscribes: []SubscriptionEntry{{Node: "a", Type: "terminal/*"}}},
 				},
 			},
@@ -223,7 +231,8 @@ func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 	}
 }
 
-// connected sub-graph passes the reachability check.
+// TestCanonicalizeGraphs_ReachabilityHappyPath — a sub-graph passes the
+// reachability check when every internal node is reachable from entry.
 func TestCanonicalizeGraphs_ReachabilityHappyPath(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -251,7 +260,8 @@ func TestCanonicalizeGraphs_ReachabilityHappyPath(t *testing.T) {
 	}
 }
 
-// delegate cycle detection.
+// TestCanonicalizeGraphs_RejectDelegateCycle — cycle detection across
+// delegate edges.
 func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -278,7 +288,8 @@ func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 				Entry: "g2n",
 				Exit:  "g2x",
 				Nodes: []TemplateNodeDef{
-					{Type: "g2n", Delegate: "g1"}, // cycle: g1 -> g2 -> g1
+					// @deliberate: closes the g1 -> g2 -> g1 cycle.
+					{Type: "g2n", Delegate: "g1"},
 					{Type: "g2x", Subscribes: []SubscriptionEntry{{Node: "g2n", Type: "terminal/*"}}},
 				},
 			},
@@ -290,7 +301,8 @@ func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 	}
 }
 
-// internal-node references-outer rejection.
+// TestCanonicalizeGraphs_RejectInternalReferencesOuter — rejects an
+// internal node that references an outer node.
 func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -320,7 +332,8 @@ func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
 	}
 }
 
-// cross-graph node type duplication.
+// TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs — rejects
+// node-type duplication across graphs.
 func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "tmpl",
@@ -329,8 +342,10 @@ func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "shared"}}},
 			{
-				Name:  "sub",
-				Entry: "shared", // collision
+				Name: "sub",
+				// @deliberate: entry name collides with main's "shared"
+				// node.
+				Entry: "shared",
 				Exit:  "b",
 				Nodes: []TemplateNodeDef{{Type: "shared"}, {Type: "b", Subscribes: []SubscriptionEntry{{Node: "shared", Type: "terminal/*"}}}},
 			},
@@ -342,7 +357,7 @@ func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 	}
 }
 
-// Markers — IsSubgraphEntryAbsorbed emitted on calling nodes; the
+// TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed — IsSubgraphEntryAbsorbed emitted on calling nodes; the
 // canonicalizer flatten step sets the marker so the runtime
 // supervisor's terminal handler can route through the sub-graph
 // internal-cascade fire without a per-template lookup.
@@ -391,7 +406,7 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 	}
 }
 
-// Markers — IsSubgraphExit emitted on the declared `exit:` of every
+// TestCanonicalizeGraphs_EmitsIsSubgraphExit — IsSubgraphExit emitted on the declared `exit:` of every
 // non-main graph; the runtime terminal handler reads the marker via
 // acq.NodeDef to drive the carry-rule without a per-terminal template
 // lookup.
@@ -441,7 +456,7 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
 	}
 }
 
-// Markers — flat-shape templates (no `graphs:` block, just top-level
+// TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit — flat-shape templates (no `graphs:` block, just top-level
 // `nodes:`) must never set IsSubgraphExit, regardless of the type
 // name. The marker is exclusive to non-main graphs' declared `exit:`
 // nodes; a flat-shape template has no graphs and therefore no exits.
@@ -456,9 +471,9 @@ func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "alpha", Executor: "stub"},
 			{Type: "beta", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "alpha", Type: "terminal/*"}}},
-			// A node literally named "exit" — the marker is keyed on
-			// `graphs[i].Exit`, not on the type name, so even this node
-			// must stay unmarked under flat shape.
+			// @deliberate: A node literally named "exit" — the marker is keyed on
+			// is keyed on `graphs[i].Exit`, not on the type name, so
+			// even this node must stay unmarked under flat shape.
 			{Type: "exit", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "beta", Type: "terminal/*"}}},
 		},
 	}
@@ -474,7 +489,7 @@ func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
 	}
 }
 
-// Markers — ResolvesViaCallingNode emitted on subscription edges from
+// TestCanonicalizeGraphs_EmitsResolvesViaCallingNode — ResolvesViaCallingNode emitted on subscription edges from
 // non-entry internal nodes that reference the sub-graph's entry alias.
 func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 	spec := &TemplateSpec{
@@ -516,14 +531,16 @@ func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 	if transform == nil || len(transform.Subscribes) != 1 || !transform.Subscribes[0].ResolvesViaCallingNode {
 		t.Fatalf("transform's subscribe to entry alias missing ResolvesViaCallingNode: %+v", transform)
 	}
-	// promote subscribes to transform (an interior internal), NOT the
-	// entry alias — the marker should not be set on that edge.
+	// @deliberate: promote subscribes to transform (an interior
+	// internal), NOT the entry alias — the marker should not be set on
+	// that edge.
 	if promote == nil || len(promote.Subscribes) != 1 || promote.Subscribes[0].ResolvesViaCallingNode {
 		t.Fatalf("promote subscribes to transform; should not carry ResolvesViaCallingNode: %+v", promote)
 	}
 }
 
-// D2 mutual-exclusion under graphs shape: an author who declares BOTH
+// TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor
+// — mutual-exclusion under graphs shape: an author who declares BOTH
 // `executor:` and `delegate:` on a calling node in the `graphs:` shape
 // must be rejected — even when the sub-graph's entry node declares no
 // executor of its own. The IsSubgraphEntryAbsorbed marker disables the
@@ -539,10 +556,9 @@ func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t
 			{
 				Name: MainGraphName,
 				Nodes: []TemplateNodeDef{
-					// Author error: calling node carries both executor:
-					// and delegate:. The entry node below has no
-					// executor of its own, which previously slipped
-					// past the diverging-executor merge guard.
+					// @deliberate: author error — calling node carries
+					// both executor: and delegate:. The entry node below
+					// has no executor of its own.
 					{Type: "caller", Executor: "stub", Delegate: "sub"},
 				},
 			},

@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// node_attributes_per_run.go — NodeAttributesPerRun conformance area.
-//
+// @constraint: NodeAttributesPerRun conformance area.
 // Exercises the per-run keying of `rimsky_node_attributes` (post
 // 2026-05-20). Covers:
 //
@@ -71,7 +70,6 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Two runs for the same node.
 	runA := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().Upsert(ctx, runA, fix.NodeID, map[string]any{"which": "A"}, tx)
@@ -79,8 +77,9 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("Upsert A: %v", err)
 	}
 
-	// Sleep to ensure the second row's updated_at strictly exceeds the
-	// first's, regardless of underlying clock granularity.
+	// @constraint: sleep so the second row's updated_at strictly exceeds
+	// the first's, regardless of underlying clock granularity — the
+	// latest-by-node assertion depends on the strict ordering.
 	time.Sleep(10 * time.Millisecond)
 	runB := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -107,7 +106,9 @@ func testNodeAttributesGetLatestByNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetLatestByNode: data.which=%v want B", latest.Data["which"])
 	}
 
-	// Sanity: GetLatestByNode for a node with no rows returns (nil, nil).
+	// @constraint: GetLatestByNode for a node with no rows returns
+	// (nil, nil) — not an error — so callers can distinguish "absent" from
+	// "lookup failed" without sentinel errors.
 	missingNodeID := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.NodeAttributes().GetLatestByNode(ctx, missingNodeID, fix.MainRunScopeID, tx)
@@ -137,7 +138,6 @@ func testNodeAttributesCascadeDeleteWithRun(t *testing.T, d persistence.Database
 		t.Fatalf("Upsert: %v", err)
 	}
 
-	// Confirm row exists.
 	var pre *persistence.NodeAttributesRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)
@@ -150,11 +150,13 @@ func testNodeAttributesCascadeDeleteWithRun(t *testing.T, d persistence.Database
 		t.Fatalf("attribute row missing before delete")
 	}
 
-	// Delete the run row via raw SQL. RunTreeTable has no Delete by
-	// design — raw SQL is the right approach for this test.
+	// @deliberate: delete the run row via raw SQL because RunTreeTable
+	// exposes no Delete method — run rows are append-only in production,
+	// so this conformance test reaches under the table interface to
+	// trigger the cascade rather than adding a Delete method just for
+	// tests.
 	rawExec(t, d, "DELETE FROM rimsky_node_runs WHERE id = ?", runID)
 
-	// Attribute row should be gone via ON DELETE CASCADE.
 	var post *persistence.NodeAttributesRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.NodeAttributes().GetByRun(ctx, runID, tx)

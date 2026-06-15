@@ -33,4 +33,4 @@ Adjacent: `concept:publisher-subscription` (the rimsky↔publisher binding lifec
 - Emit-time messages set `sender_kind: "publisher"` and `publisher_subscription_id`. Rimsky derives `sender` from the publisher-subscription row's `publisher_name`; the request's `sender` is ignored for trust.
 - A reconciliation worker drives the subscribe verb for `mounting` subscriptions with backoff and no attempt cap; the `failed` state is reserved for non-retryable errors (per `concept:publisher-subscription`).
 - Replicas are not coordinated by rimsky. Single-replica is the v1 contract per `concept:replica`.
-- @blessed-invariant: messages are inert in rimsky. Payload bytes flow from publisher → message envelope → consumer's substitution leaf without inspection.
+- `@blessed-invariant: message-inertness` — payload bytes flow from publisher → message envelope → consumer's substitution leaf without inspection.

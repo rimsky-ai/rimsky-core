@@ -40,7 +40,7 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// Empty queue — Open returns Unavailable.
+				// @deliberate: Empty queue — Open returns Unavailable.
 			},
 		},
 	})
@@ -66,7 +66,7 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "worker",
 					Executor: "stub",
-					// Synthetic class "acquire/unavailable" — per the
+					// @deliberate: Synthetic class "acquire/unavailable" — per the
 					// 2026-05-23 reshape, pre-dispatch acquisition
 					// failure routes through this key. give_up drives
 					// the node into failed.
@@ -85,7 +85,7 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// give_up drives the node to failed.
+	// @deliberate: give_up drives the node to failed.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
 		"worker should land in failed via error_types: { acquire/unavailable: give_up }")
 
@@ -99,7 +99,7 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 	require.Contains(t, *wRow.SettlingSignalType, "terminal/error/",
 		"give_up should record settling_signal_type=terminal/error/<class>")
 
-	// Audit-log assertion: the canonical
+	// @constraint: Audit-log assertion: the canonical
 	// `terminal/error/acquire/unavailable` signal row must land on
 	// `rimsky_events` so subscribers wildcard-matching
 	// `terminal/error/*` can catch acquire failures alongside
@@ -109,7 +109,7 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 		h.WaitForEventKind(worker.ID, "terminal/error/acquire/unavailable", 5*time.Second),
 		"OnError must emit canonical terminal/error/acquire/unavailable on the audit log")
 
-	// Executor must not have been invoked.
+	// @constraint: Executor must not have been invoked.
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when acquire/unavailable routes to give_up")
 }
@@ -128,7 +128,7 @@ func TestAcquireUnavailable_NoPolicyFailsFast(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// Empty queue — Open returns Unavailable.
+				// @deliberate: Empty queue — Open returns Unavailable.
 			},
 		},
 	})
@@ -154,7 +154,7 @@ func TestAcquireUnavailable_NoPolicyFailsFast(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "worker",
 					Executor: "stub",
-					// No error_types: { acquire/unavailable: ... } — the
+					// @deliberate: No error_types: { acquire/unavailable: ... } — the
 					// default is fail-fast. The validator surfaces a
 					// warning for this case (see
 					// graph/node/template_validator.go::
@@ -169,7 +169,6 @@ func TestAcquireUnavailable_NoPolicyFailsFast(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Absent policy → give_up("unknown_error_class") → failed.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
 		"worker should fail-fast when no acquire/unavailable policy is declared")
 }

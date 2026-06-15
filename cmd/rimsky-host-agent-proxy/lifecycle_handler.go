@@ -75,8 +75,8 @@ func (h *lifecycleHandler) OnRunScopeTerminal(_ context.Context, req *genv1.OnRu
 func (h *lifecycleHandler) reap(sp spawnState) {
 	agent, ok := h.state.lookupAgent(sp.agentAPIKeyID)
 	if !ok {
-		// Owner disconnected; the agent's reconnect-recovery SIGKILLs the
-		// orphaned child. Nothing more to do here.
+		// @constraint: owner disconnected — the agent's reconnect-recovery
+		// SIGKILLs the orphaned child; nothing more to do here.
 		return
 	}
 	ackCh := agent.registerReapPending(sp.spawnID)

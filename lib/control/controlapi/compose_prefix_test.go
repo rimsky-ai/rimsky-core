@@ -91,7 +91,7 @@ func TestCreateTag_ComposePrefixRejected(t *testing.T) {
 	require.Contains(t, errMsg, "compose:",
 		"error should cite the compose: prefix: %v", body)
 
-	// Nothing was persisted: the reserved tag must not appear on GET /tags.
+	// @constraint: nothing was persisted: the reserved tag must not appear on GET /tags.
 	require.False(t, tagPresent(t, h, reservedTag),
 		"reserved-prefix tag was persisted despite the rejection")
 }
@@ -123,7 +123,7 @@ func TestCreateInstance_ComposePrefixRejected(t *testing.T) {
 	require.Contains(t, errMsg, "compose:",
 		"error should cite the compose: prefix: %v", body)
 
-	// No instance was created: GET by the reserved instance_key is 404.
+	// @constraint: no instance was created: GET by the reserved instance_key is 404.
 	getStatus, getBody := h.httpJSON(t, "GET", "/v1/instances/"+reservedKey, nil)
 	require.Equal(t, http.StatusNotFound, getStatus, getBody)
 }

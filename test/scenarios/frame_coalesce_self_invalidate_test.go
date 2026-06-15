@@ -42,7 +42,7 @@ import (
 func TestFrameCoalesceSelfInvalidate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Initial stub state: changed=true. Each dispatch produces
+	// @deliberate: Initial stub state: changed=true. Each dispatch produces
 	// fresh_changed, the self-subscription opens a next-frame, the
 	// supervisor re-dispatches. The loop continues until we flip the
 	// stub to changed=false below.
@@ -66,7 +66,7 @@ func TestFrameCoalesceSelfInvalidate(t *testing.T) {
 	d := h.FindNode(iid, "drainer")
 	require.NotNil(t, d)
 
-	// Let the self-cycle iterate a few times. With coalesce
+	// @deliberate: Let the self-cycle iterate a few times. With coalesce
 	// frame_resolution_mode + a steady changed=true, each commit
 	// queues a single trailing frame; rapid commits collapse rather
 	// than fanning out.
@@ -74,17 +74,16 @@ func TestFrameCoalesceSelfInvalidate(t *testing.T) {
 		return len(h.Stub.Observed()) >= 3
 	}, 5*time.Second, 25*time.Millisecond, "expected >=3 dispatches from the self-cycle loop")
 
-	// Flip the stub to changed=false. The next commit settles as
+	// @deliberate: Flip the stub to changed=false. The next commit settles as
 	// fresh_unchanged; the cascade walker's `outcome: fresh_changed`
 	// filter means the self-subscription does NOT fire, and the loop
 	// terminates.
 	h.Stub.WhenType("drainer").Success(map[string]any{"k": 2}, false, "settled")
 
-	// Wait for the node to settle at fresh (no further frame queued).
 	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
 		"node should reach fresh and stay there after stub flips to changed=false")
 
-	// Record the dispatch count once the loop has terminated, then
+	// @deliberate: Record the dispatch count once the loop has terminated, then
 	// confirm it stops growing (coalesce semantics: at most one
 	// trailing frame pending at any time, so the count stabilizes
 	// quickly after the changed=false flip).

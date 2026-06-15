@@ -68,7 +68,7 @@ func TestBreakpointHitEmitsEvent(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	// The supervisor reaches the before_dispatch checkpoint and writes a
+	// @deliberate: The supervisor reaches the before_dispatch checkpoint and writes a
 	// single hit row (notify_only does not block the dispatch).
 	hits := waitForHitCount(t, h, bpID, 1, 15*time.Second)
 	require.Len(t, hits, 1)
@@ -77,7 +77,7 @@ func TestBreakpointHitEmitsEvent(t *testing.T) {
 	require.Equal(t, "before_dispatch", string(hit.Checkpoint))
 	require.Equal(t, "notify_only", string(hit.Mode))
 
-	// A client polling the named acceptance route observes exactly one
+	// @deliberate: A client polling the named acceptance route observes exactly one
 	// `breakpoint.hit` event row whose payload carries the full hit
 	// descriptor and whose `hit_id` is the ledger hit's stable ID.
 	url := h.ControlBase + "/v1/events?kind=breakpoint.hit&instance_id=" + iid.String()
@@ -99,7 +99,7 @@ func TestBreakpointHitEmitsEvent(t *testing.T) {
 	require.Equal(t, "notify_only", asString(payload["mode"]),
 		"event payload must carry the breakpoint mode")
 
-	// Txn-coupling: read the same kind straight out of persistence and
+	// @deliberate: Txn-coupling: read the same kind straight out of persistence and
 	// assert the event-row count equals the ledger hit count (1). This
 	// proves the event is written in the SAME tx that creates the hit —
 	// a recorded hit is ALWAYS reflected on /events, never lagging or

@@ -86,12 +86,12 @@ func TestClaimHandoff_AcrossFrames(t *testing.T) {
 func testClaimHandoffAcrossFrames_FrameNextPerNode(t *testing.T) {
 
 	h, acquirer, coHolder := startAcrossFramesHarness(t, acrossFramesOpts{
-		// Per-node subscription with explicit Frame: "next" forces the
+		// @deliberate: Per-node subscription with explicit Frame: "next" forces the
 		// cascade walk to open a new frame for the co-holder.
 		subscribes: []node.SubscriptionEntry{
 			{Node: "acquirer", Type: "terminal/success", Frame: "next"},
 		},
-		// Delay the co-holder enough to observe the gap between the
+		// @constraint: Delay the co-holder enough to observe the gap between the
 		// acquirer's settlement and the co-holder's: while the co-holder
 		// is in-flight in the new frame, claim_handle.state MUST stay
 		// active. Auto-terminal Commit only fires when every holder is
@@ -102,7 +102,7 @@ func testClaimHandoffAcrossFrames_FrameNextPerNode(t *testing.T) {
 	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
 		"acquirer should settle fresh")
 
-	// At this point the co-holder is dispatched (the cascade walk
+	// @constraint: At this point the co-holder is dispatched (the cascade walk
 	// opened a fresh frame for it) but has not yet settled — its stub
 	// is sleeping for 2s. The claim_handle row must remain active.
 	// Wait until dispatch is observable (the run row exists), then
@@ -112,7 +112,7 @@ func testClaimHandoffAcrossFrames_FrameNextPerNode(t *testing.T) {
 	require.True(t, h.WaitForDispatch(coHolder.ID, 15*time.Second),
 		"co-holder should be dispatched after the cascade walk opens the next frame")
 
-	// While the co-holder is in-flight, the claim handle MUST be
+	// @constraint: While the co-holder is in-flight, the claim handle MUST be
 	// state=active. Cross-frame held-claim survival: the held claim's
 	// lifetime is governed by the holding subgraph, not by the
 	// acquirer's frame. Read the row inline (not the polling helper
@@ -121,13 +121,13 @@ func testClaimHandoffAcrossFrames_FrameNextPerNode(t *testing.T) {
 	requireClaimHandleStateNow(t, h, acquirer.ID, spec.ClaimHandleStateActive, true,
 		"while co-holder is in-flight in the next frame, claim_handle must remain active")
 
-	// Now allow the co-holder to finish. After it settles, auto-
+	// @deliberate: Now allow the co-holder to finish. After it settles, auto-
 	// terminal Commit fires and the row promotes to committed.
 	require.True(t, h.WaitForNodeState(coHolder.ID, cascade.NodeStateFresh, 30*time.Second),
 		"co-holder should settle fresh after its 2s delay")
 	requireClaimHandleState(t, h, acquirer.ID, spec.ClaimHandleStateCommitted, true)
 
-	// Distinct frame_ids: the two runs live in different frames. This
+	// @deliberate: Distinct frame_ids: the two runs live in different frames. This
 	// is the load-bearing property "the held claim survives the frame
 	// boundary" — if both runs shared a frame_id, there would BE no
 	// boundary and the test would prove nothing.
@@ -141,7 +141,7 @@ func testClaimHandoffAcrossFrames_FrameNextPerNode(t *testing.T) {
 func testClaimHandoffAcrossFrames_InstanceTrue(t *testing.T) {
 
 	h, acquirer, coHolder := startAcrossFramesHarness(t, acrossFramesOpts{
-		// Cross-cutting subscription. No explicit Frame — runtime
+		// @deliberate: Cross-cutting subscription. No explicit Frame — runtime
 		// defaults instance:true to "next" so the cascade walk opens a
 		// new frame for the co-holder.
 		subscribes: []node.SubscriptionEntry{
@@ -202,7 +202,7 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 	})
 	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "acquired")
 	h.Stub.WhenType("co-holder-1").Success(map[string]any{}, true, "co-held-1")
-	// Delay co-holder-2 so the gap between co-holder-1's settlement and
+	// @deliberate: Delay co-holder-2 so the gap between co-holder-1's settlement and
 	// co-holder-2's settlement is observable — assert claim_handle is
 	// still active in F3 before the third holder finishes.
 	h.Stub.WhenType("co-holder-2").Delay(2*time.Second).Success(map[string]any{}, true, "co-held-2")
@@ -234,7 +234,6 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 						"schema": {From: "acquirer"},
 					},
 				},
-				// Frame: "next" opens F2.
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "acquirer", Type: "terminal/success", Frame: "next",
 				}),
@@ -245,7 +244,7 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 					Type:     "co-holder-2",
 					Executor: "stub",
 					Holds: map[string]node.HoldsBinding{
-						// Holds against the original acquirer (which is
+						// @constraint: Holds against the original acquirer (which is
 						// the node that actually declares the
 						// `schema` alias in its claims/stores block;
 						// the validator's holds_unknown_claim_alias
@@ -257,7 +256,6 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 						"schema": {From: "acquirer"},
 					},
 				},
-				// Frame: "next" opens F3.
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "co-holder-1", Type: "terminal/success", Frame: "next",
 				}),
@@ -279,7 +277,7 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 	require.True(t, h.WaitForNodeState(holder1.ID, cascade.NodeStateFresh, 30*time.Second),
 		"co-holder-1 should settle fresh in F2 (next frame after F1)")
 
-	// At this point F3 has been opened for co-holder-2 (the cascade
+	// @constraint: At this point F3 has been opened for co-holder-2 (the cascade
 	// walked from co-holder-1's terminal/success into a fresh frame).
 	// Co-holder-2's 2s Delay holds it in-flight; the held claim must
 	// stay active across BOTH frame boundaries.
@@ -292,13 +290,13 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 	require.True(t, h.WaitForNodeState(holder2.ID, cascade.NodeStateFresh, 30*time.Second),
 		"co-holder-2 should settle fresh after its 2s delay")
 
-	// Only after the THIRD frame's holder settles does Commit fire.
+	// @deliberate: Only after the THIRD frame's holder settles does Commit fire.
 	requireClaimHandleState(t, h, acquirer.ID, spec.ClaimHandleStateCommitted, true)
 
-	// Three distinct frame_ids — one per run.
+	// @constraint: Three distinct frame_ids — one per run.
 	requireDistinctFrameIDs(t, h, []shared.UUID{acquirer.ID, holder1.ID, holder2.ID})
 
-	// Wire-payload parity in BOTH downstream frames: the substituted
+	// @constraint: Wire-payload parity in BOTH downstream frames: the substituted
 	// address bytes on EACH co-holder must equal the acquirer's
 	// persisted Address bytes. Tests cross-frame substitution-context
 	// resolution: the alias must resolve in F2 and in F3 to the same
@@ -308,8 +306,6 @@ func testClaimHandoffAcrossFrames_ThreeFrameChain(t *testing.T) {
 	requireSubstitutedAddrMatchesAcquirer(t, h, acquirer.ID, holder2.ID,
 		"co-holder-2's held_addr must equal acquirer's Address in F3")
 }
-
-// ---------- helpers ----------
 
 type acrossFramesOpts struct {
 	// subscribes overrides the co-holder's Subscribes block. The

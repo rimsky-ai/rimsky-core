@@ -2,27 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// LifecycleSubscriber interface — the rimsky-side contract for binaries
-// that hook into Rimsky's control-plane lifecycle events. Per spec
-// docs/specs/2026-05-04-service-protocol-contract.md §3 (extracted from
-// the bundled-into-Store pattern under the layer-crystallization plan,
-// Phase 4).
-//
-// Implementer pattern: return nil from any method the binary doesn't
-// react to. Binaries that don't react to any event simply don't
-// implement the interface.
-//
-// Idempotency: control-api tracks per-peer idempotency in
-// rimsky_lifecycle_idempotencies; subscribers can assume each (peer,
-// event) pair fires exactly once on the rimsky side. Subscribers SHOULD
-// also be idempotent against duplicate calls in case of network retries.
-//
-// Per the layer-crystallization design (2026-05-04), the canonical Go
-// interface and request types live in
-// github.com/rimsky-ai/rimsky-core/lib/protocols/lifecycle; the symbols declared
-// here are Go type aliases so rimsky-internal callers and external
-// implementers share one nominal type.
-
 package locks
 
 import (

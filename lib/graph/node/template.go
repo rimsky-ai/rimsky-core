@@ -32,13 +32,12 @@ package node
 
 import "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 
-// Row-type aliases — the canonical definitions live in
+// @deliberate: Row-type aliases — the canonical definitions live in
 // foundation/spec. These aliases keep `node.TemplateSpec` etc. working
 // for existing call sites without rewriting every importer.
 //
 // Lifecycle-handler types (`OnAcquireUnavailableHandler`,
 // `OnExecutorCompleteHandler`, `OnExecutorTerminalHandler`) retired
-// 2026-05-23 per `.ok-planner/specs/2026-05-23-signal-taxonomy-and-
 // policy-decoupling-design.md`.
 type (
 	TemplateSpec      = spec.TemplateSpec
@@ -48,7 +47,7 @@ type (
 	NodeAttributesDef = spec.NodeAttributesDef
 	SubscriptionEntry = spec.SubscriptionEntry
 
-	// 2026-05-15 data-platform extensions row-types re-exported here
+	// @deliberate: data-platform extensions row-types re-exported here
 	// so existing call sites do not need to import foundation/spec
 	// directly.
 	GraphSpec         = spec.GraphSpec
@@ -57,27 +56,25 @@ type (
 	PublisherSpec     = spec.PublisherSpec
 	AggregationPolicy = spec.AggregationPolicy
 
-	// 2026-05-19 multi-instance-template-ergonomics additions:
+	// @deliberate: multi-instance-template-ergonomics additions —
 	// template-author attribute defaults (L1 in the override merge).
 	TemplateDefaults          = spec.TemplateDefaults
 	TemplateAttributeDefaults = spec.TemplateAttributeDefaults
 )
 
-// Frame-resolution constants re-exported from foundation/spec.
+// @deliberate: Frame-resolution constants re-exported from foundation/spec.
 const (
 	FrameResolutionCoalesce    = spec.FrameResolutionCoalesce
 	FrameResolutionSerialQueue = spec.FrameResolutionSerialQueue
 	FrameTimeoutDefaultMs      = spec.FrameTimeoutDefaultMs
 	FrameTimeoutMinMs          = spec.FrameTimeoutMinMs
 
-	// MainGraphName mirrors the reserved graph name for the top-level
-	// graph in a multi-graph template. Per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Sub-graphs / Identity.
+	// @deliberate: MainGraphName mirrors the reserved graph name for the
+	// top-level graph in a multi-graph template.
 	MainGraphName = spec.MainGraphName
 )
 
-// Frame + target constants. The lifecycle-handler resolve vocabulary
+// @deliberate: Frame + target constants. The lifecycle-handler resolve vocabulary
 // retired 2026-05-23 alongside the handler types; ErrorPolicy's 4-value
 // action vocabulary (`pass | give_up | retry |
 // discard_claims_then_retry`) is the operator-facing replacement and

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Disable the `exported` rule.
+Disable the lint rule that requires every exported symbol to carry a comment.
 
 ## Rationale
 

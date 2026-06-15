@@ -2,9 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// fixtures.go — shared seed helpers for the cross-driver conformance
-// suite. Each helper takes a persistence.Database so it works against both
-// Postgres and SQLite without driver-specific cruft.
+// Package conformance provides shared fixtures for the persistence
+// conformance test suite. Each helper takes a persistence.Database so
+// it works against both Postgres and SQLite without driver-specific
+// cruft.
 package conformance
 
 import (
@@ -42,6 +43,16 @@ func seedMainRunScopeForInstance(
 	return id
 }
 
+// fixtureSet holds the IDs returned by seedFixtureSet for tests to
+// reference across subsequent enqueue / claim / lookup operations.
+type fixtureSet struct {
+	TemplateHash   string
+	InstanceID     shared.UUID
+	NodeID         shared.UUID
+	FrameID        shared.UUID
+	MainRunScopeID shared.UUID
+}
+
 // seedFixtureSet creates the minimum chain of rows needed to satisfy
 // the FK chain rimsky_node_runs -> rimsky_nodes -> rimsky_instances ->
 // rimsky_templates AND rimsky_node_runs -> rimsky_frames. Returns the
@@ -51,14 +62,6 @@ func seedMainRunScopeForInstance(
 // definition that matches the inserted node row's node_type. Tests
 // can call this once per Driver instance and reuse the returned IDs
 // across enqueue/claim operations.
-type fixtureSet struct {
-	TemplateHash   string
-	InstanceID     shared.UUID
-	NodeID         shared.UUID
-	FrameID        shared.UUID
-	MainRunScopeID shared.UUID
-}
-
 func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) fixtureSet {
 	t.Helper()
 	store := d.Tables()
@@ -91,8 +94,9 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		}, tx); err != nil {
 			return err
 		}
-		// Allocate the main RunScope first — rimsky_instances.main_run_scope_id
-		// has an FK to rimsky_run_scopes(id). Per concept:run-scope.
+		// @constraint: rimsky_instances.main_run_scope_id has an FK to
+		// rimsky_run_scopes(id), so the RunScope row must exist before
+		// Instances.Create can commit. Per @concept: run-scope.
 		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:           shared.UUID(mainRunScopeID),
 			GraphName:    spec.MainGraphName,
@@ -119,17 +123,18 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		t.Fatalf("seedFixtureSet: template/instance/node create: %v", err)
 	}
 
-	// Create a frame in 'queued' state then promote to 'running' so the
-	// dispatch FK is satisfiable. The frame engine produces frames itself
-	// in production; for fixture seeding we go through Frames() directly.
+	// @deliberate: production code lets the frame engine produce frames;
+	// fixtures bypass that and call Frames() directly to enqueue then
+	// promote, so dispatch rows can FK against a 'running' frame without
+	// scheduling a real engine pass.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		fid, err := store.Frames().EnqueueSerialFrame(ctx, instanceID, nodeID, 600000, tx)
 		if err != nil {
 			return err
 		}
 		frameID = fid
-		// Promote to 'running' so dispatch rows can FK against it without
-		// surprising a frame-engine sweep.
+		// @constraint: dispatch rows FK against the frame in 'running' state;
+		// promoting here avoids contending with a real frame-engine sweep.
 		if _, err := store.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx); err != nil {
 			return err
 		}
@@ -166,9 +171,9 @@ func seedConformanceRunForNode(
 	store := d.Tables()
 	q := d.Queue()
 
-	// Resolve the instance's main RunScope from the node row. The fixture
-	// set is the only thing that creates instances in conformance tests,
-	// so the FK chain guarantees this resolves.
+	// @deliberate: the fixture set is the only producer of instances in
+	// conformance tests, so node -> instance -> main_run_scope_id is
+	// guaranteed to resolve; no defensive null-handling on the chain.
 	var runScopeID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		nodeRow, err := store.Nodes().Get(ctx, nodeID, tx)

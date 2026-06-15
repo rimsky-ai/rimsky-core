@@ -60,8 +60,8 @@ retention:
 	if r.LineageTrailing != time.Hour {
 		t.Fatalf("LineageTrailing = %s, want 1h", r.LineageTrailing)
 	}
-	// Explicit zero disables the claim-handle retention sweep — it is NOT
-	// re-defaulted to 30d.
+	// @constraint: explicit zero disables the claim-handle retention
+	// sweep — it is NOT re-defaulted to 30d.
 	if r.ClaimHandlesTrailing != 0 {
 		t.Fatalf("ClaimHandlesTrailing = %s, want 0 (explicit disable)", r.ClaimHandlesTrailing)
 	}

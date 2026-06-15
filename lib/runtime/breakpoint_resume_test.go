@@ -174,7 +174,7 @@ func TestValidateAndPersistResume_FirstResumeNoOverlay(t *testing.T) {
 		t.Errorf("FirstResume: got false want true")
 	}
 
-	// Confirm the persistence row reflects the resume.
+	// @deliberate: Confirm the persistence row reflects the resume.
 	var got *persistence.BreakpointHitRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -260,7 +260,7 @@ func TestValidateAndPersistResume_OverlaySchemaRejects(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
 	instanceID, bpID := seedBreakpointResumeFixture(t, ctx, tables)
-	// Schema: top-level requires `score: number`.
+	// @deliberate: Schema: top-level requires `score: number`.
 	snapshot := map[string]any{
 		"dispatch_context": map[string]any{
 			"merged_attributes": map[string]any{"score": float64(10)},
@@ -276,7 +276,7 @@ func TestValidateAndPersistResume_OverlaySchemaRejects(t *testing.T) {
 	hitID := createHitWithSnapshot(t, ctx, tables, bpID, instanceID, snapshot)
 
 	args := runtime.RunArgs{Persist: tables, Logger: shared.SilentLogger{}}
-	// Overlay sets `score` to a string — rejected by `type: number`.
+	// @deliberate: Overlay sets `score` to a string — rejected by `type: number`.
 	overlay := map[string]any{"score": "not-a-number"}
 	_, err := runtime.ValidateAndPersistResume(ctx, args, hitID, overlay, "operator")
 	if !errors.Is(err, shared.ErrResumeOverlayInvalid) {
@@ -309,7 +309,7 @@ func TestValidateAndPersistResume_AfterTerminalOverlayRejected(t *testing.T) {
 		t.Fatalf("expected ErrResumeOverlayInvalid on after_terminal overlay, got %v", err)
 	}
 
-	// The hit must remain unresumed — the rejection happens before the
+	// @deliberate: The hit must remain unresumed — the rejection happens before the
 	// Resume call, so the row's state didn't move.
 	var got *persistence.BreakpointHitRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -326,7 +326,7 @@ func TestValidateAndPersistResume_AfterTerminalOverlayRejected(t *testing.T) {
 		t.Errorf("hit must NOT carry the rejected overlay; got ResumeOverlay=%v", got.ResumeOverlay)
 	}
 
-	// Resuming the same hit with NO overlay should succeed — the
+	// @deliberate: Resuming the same hit with NO overlay should succeed — the
 	// after_terminal hit accepts the no-overlay case (it's just the
 	// notification half of the protocol).
 	res, err := runtime.ValidateAndPersistResume(ctx, args, hitID, nil, "operator")

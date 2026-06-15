@@ -51,13 +51,13 @@ const readerOpenTimeout = 2 * time.Second
 // contexts have already expired.
 func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, caps claimproducer.Capabilities) CheckResult {
 	if !caps.Contains(claimproducer.WriteSemanticsStagedAsync) {
-		// 9b is a staged_async-specific invariant. A producer that does
-		// not advertise staged_async cannot violate it; SKIP.
+		// @constraint: 9b is a staged_async-specific invariant — a producer
+		// that does not advertise staged_async cannot violate it; SKIP.
 		return CheckResult{Name: "Serialization9bSkipped"}
 	}
 
-	// A byte-equal scope shared by the writer and both readers: identical
-	// Selector yields identical ClaimScope bytes from a conformant
+	// @constraint: a byte-equal scope shared by the writer and both readers —
+	// identical Selector yields identical ClaimScope bytes from a conformant
 	// producer, which is the precondition 9b governs.
 	selector := "rimsky/conformance/9b/" + uuid.New().String()
 	writerSpec := claimproducer.ClaimSpec{
@@ -73,32 +73,32 @@ func checkSerialization9b(ctx context.Context, c claimproducer.ClaimProducer, ca
 		return CheckResult{Name: "Serialization9b", Err: fmt.Errorf("writer Open failed: %w", err)}
 	}
 	if !writerOut.Available {
-		// The producer could not give us a writer claim on the synthetic
-		// scope, so we cannot exercise the writer-open precondition. Treat
-		// as a SKIP rather than a violation — the probe needs an open
+		// @constraint: the producer could not give us a writer claim on the
+		// synthetic scope, so we cannot exercise the writer-open precondition
+		// — treat as SKIP rather than a violation; the probe needs an open
 		// writer to detect reader serialization, and there is nothing to
 		// terminal-release.
 		return CheckResult{Name: "Serialization9bSkipped"}
 	}
 
-	// Always drive the writer to a clean terminal so producer state is
-	// consistent and any reader parked on a dishonest producer's internal
-	// gate is unblocked, even after this probe's bounded reader contexts
-	// expired. Use the (untimed) parent context so Release is not itself
-	// cancelled by a reader's deadline.
+	// @constraint: always drive the writer to a clean terminal so producer
+	// state is consistent and any reader parked on a dishonest producer's
+	// internal gate is unblocked, even after this probe's bounded reader
+	// contexts expired. Use the (untimed) parent context so Release is not
+	// itself cancelled by a reader's deadline.
 	defer func() {
 		_ = c.Release(ctx, writerID, writerOut.Result.ClaimScope, writerOut.Result.Address)
 	}()
 
-	// With the writer still open, fire two concurrent reader Opens on the
-	// byte-equal scope. Each gets its own bounded context: an honest
-	// producer returns well inside the window; a serializing producer
-	// blocks until the writer terminal-s, so its reader context expires
-	// and the Open returns a deadline error — the 9b signal.
+	// @constraint: with the writer still open, fire two concurrent reader
+	// Opens on the byte-equal scope — each gets its own bounded context. An
+	// honest producer returns well inside the window; a serializing producer
+	// blocks until the writer terminal-s, so its reader context expires and
+	// the Open returns a deadline error — the 9b signal.
 	blocked, readerCleanup := openConcurrentReaders(ctx, c, selector)
 
-	// Release any reader claim that did return (honest path) before the
-	// writer is released, so producer state is fully torn down.
+	// @constraint: release any reader claim that did return (honest path)
+	// before the writer is released, so producer state is fully torn down.
 	readerCleanup(ctx, c)
 
 	if blocked {
@@ -159,9 +159,9 @@ func openConcurrentReaders(ctx context.Context, c claimproducer.ClaimProducer, s
 
 	blocked := false
 	for _, o := range outcomes {
-		// A reader whose Open did not return successfully within the
-		// bounded window (deadline exceeded or context cancelled) was
-		// serialized behind the open writer — the 9b signal.
+		// @constraint: a reader whose Open did not return successfully
+		// within the bounded window (deadline exceeded or context
+		// cancelled) was serialized behind the open writer — the 9b signal.
 		if o.err != nil {
 			blocked = true
 		}

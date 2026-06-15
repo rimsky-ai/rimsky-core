@@ -58,7 +58,7 @@ func abandonOpenedClaim(
 	scope, address []byte,
 ) error {
 	claimID := claimproducer.ClaimID(claimHandleID.String())
-	// Stamp the producer name so a host-agent-proxy fronting the
+	// @constraint: stamp the producer name so a host-agent-proxy fronting the
 	// claim-producer protocol can route this Abandon by service name.
 	ctx = peer.WithServiceName(ctx, producer.Name())
 	return producer.Abandon(ctx, claimID, scope, address)

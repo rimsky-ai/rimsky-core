@@ -106,17 +106,17 @@ func newFakeProducer() *fakeProducer {
 func (f *fakeProducer) Name() string { return "conformance-target" }
 
 func (f *fakeProducer) Capabilities(context.Context) (claimproducer.Capabilities, error) {
-	// Advertise only `sync` so the staged_async 9b probe SKIPs and the
-	// optional SplitScope / ScopesConflict probes SKIP (their unsupported
-	// fallback paths are honored below).
+	// @deliberate: advertise only `sync` so the staged_async 9b probe SKIPs
+	// and the optional SplitScope / ScopesConflict probes SKIP (their
+	// unsupported fallback paths are honored below).
 	return claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	}, nil
 }
 
 func (f *fakeProducer) Open(_ context.Context, _ claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
-	// Deterministic, byte-equal scope per Selector so the Uniformity check
-	// is exercised and passes. Address mirrors the scope.
+	// @deliberate: deterministic, byte-equal scope per Selector so the
+	// Uniformity check is exercised and passes. Address mirrors the scope.
 	scope, _ := json.Marshal(spec.Selector)
 	return claimproducer.OpenOutcome{
 		Available: true,
@@ -161,7 +161,8 @@ func (f *fakeProducer) SplitScope(context.Context, claimproducer.SplitClaimScope
 }
 
 func (f *fakeProducer) ScopesConflict(_ context.Context, a, b []byte) (bool, error) {
-	// Byte-equal fallback (the unsupported default per @blessed-invariant 4b):
-	// the conformance SKIP path asserts byte-equal scopes conflict.
+	// @constraint: byte-equal fallback (the unsupported default per
+	// @blessed-invariant 4b) — the conformance SKIP path asserts byte-equal
+	// scopes conflict.
 	return string(a) == string(b), nil
 }

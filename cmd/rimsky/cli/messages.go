@@ -64,16 +64,15 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	// Watermark: track the most recent `received_at` seen so we re-emit
-	// only newer rows. Server pagination has its own cursor; this CLI-
-	// side filter avoids relying on the empty-page NextCursor.
+	// @deliberate: client-side watermark on `received_at` re-emits only newer
+	// rows; avoids relying on the server's empty-page NextCursor for follow mode.
 	var lastSeen time.Time
 	for {
 		page, err := c.ListInstanceMessages(signalCtx, id, ListMessagesQuery{
 			Kind:           kind,
 			SenderKind:     senderKind,
 			Target:         target,
-			DeliveredAfter: "", // we filter on received_at locally
+			DeliveredAfter: "", // @deliberate: empty — local `received_at` watermark gates re-emit.
 			Limit:          100,
 		})
 		if err != nil {

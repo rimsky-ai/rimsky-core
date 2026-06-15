@@ -98,7 +98,7 @@ func TestRequiredFieldMissingParamFailsTemplateResolution(t *testing.T) {
 			),
 		},
 	})
-	// No params supplied — the required source-driven directive will
+	// @deliberate: No params supplied — the required source-driven directive will
 	// raise ErrMissingSource at the dispatch substitution pass.
 	iid := h.CreateInstance(tid, "ck-missing-param", map[string]any{})
 

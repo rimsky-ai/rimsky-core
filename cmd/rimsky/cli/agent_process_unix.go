@@ -19,7 +19,6 @@ func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	// On unix, signal 0 performs error checking without delivering a signal.
 	return syscall.Kill(pid, 0) == nil
 }
 

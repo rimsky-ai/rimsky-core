@@ -45,7 +45,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Worker emits a small attribute delta on each dispatch. The
+	// @deliberate: Worker emits a small attribute delta on each dispatch. The
 	// terminal/success event count for this node is the supervisor-
 	// observable proxy for "a new dispatch was claimed and run" — the
 	// load-bearing signal under pause.
@@ -67,7 +67,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 		},
 	})
 
-	// (1) CREATE: POST /v1/instances returns 201 with an instance_id and
+	// @deliberate: (1) CREATE: POST /v1/instances returns 201 with an instance_id and
 	// the supervisor begins driving the node. CreateInstance asserts the
 	// 201 status and waits for the root dispatch row to materialize, so
 	// reaching past it proves the create path is wired end-to-end.
@@ -77,13 +77,13 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w, "worker node must materialize on create")
 
-	// The supervisor drives the first dispatch through the REAL claim
+	// @deliberate: The supervisor drives the first dispatch through the REAL claim
 	// path; reaching fresh proves create wired the instance into the
 	// dispatch queue, not just persisted a row.
 	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh on first run — create did not actually drive a dispatch")
 
-	// (2) LIST: GET /v1/instances?template_hash=... must include this instance.
+	// @constraint: (2) LIST: GET /v1/instances?template_hash=... must include this instance.
 	listBody := getJSONMapInst(t, h.ControlBase+"/v1/instances?template_hash="+tid)
 	listed := listBody["instances"].([]any)
 	require.NotEmpty(t, listed, "list must return at least one instance for the template")
@@ -97,20 +97,20 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	}
 	require.True(t, foundInList, "list response must include the created instance id")
 
-	// (3) GET: GET /v1/instances/{id} returns the row with paused=false
+	// @constraint: (3) GET: GET /v1/instances/{id} returns the row with paused=false
 	// initially.
 	getBody := getJSONMapInst(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Equal(t, iid.String(), getBody["id"])
 	require.Equal(t, false, getBody["paused"], "fresh instance must report paused=false")
 
-	// (4) DELETE non-terminal: must be refused with 409. Spec falsifier:
+	// @constraint: (4) DELETE non-terminal: must be refused with 409. Spec falsifier:
 	// "delete succeeds non-terminal".
 	delNonTerminalResp := doDelete(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Equal(t, http.StatusConflict, delNonTerminalResp.status,
 		"DELETE on a non-terminal instance must return 409 (terminal guard): %s",
 		string(delNonTerminalResp.raw))
 
-	// (5) PAUSE — the load-bearing leg.
+	// @deliberate: (5) PAUSE — the load-bearing leg.
 	//
 	// Snapshot the count of terminal/success events for this node
 	// PRIOR to pause + invalidate. Any new dispatch that the supervisor
@@ -121,11 +121,11 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	require.Equal(t, http.StatusOK, pauseResp.status,
 		"pause must return 200: %s", string(pauseResp.raw))
 
-	// Verify paused=true on the read surface.
+	// @constraint: Verify paused=true on the read surface.
 	getAfterPause := getJSONMapInst(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Equal(t, true, getAfterPause["paused"], "paused must be true after /pause")
 
-	// Drive the supervisor's claim layer: INVALIDATE the worker. The
+	// @deliberate: Drive the supervisor's claim layer: INVALIDATE the worker. The
 	// frame engine flips the node to stale and enqueues a fresh pending
 	// dispatch row. On an UNPAUSED instance the supervisor's 100ms
 	// claim-poll would pick it up within ~1s and emit a new
@@ -137,7 +137,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 		"invalidate while paused must still be accepted (queues the dispatch): %s",
 		string(invResp.raw))
 
-	// Pause window: wait 2s and assert no new terminal/success event
+	// @deliberate: Pause window: wait 2s and assert no new terminal/success event
 	// appears on `GET /v1/events?instance_id=...&kind=terminal/success`.
 	// This is the spec's required acceptance shape — observing the
 	// real event-log surface, not just probing the `paused` column.
@@ -148,7 +148,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 			"the supervisor must stop claiming new dispatches for the paused instance "+
 			"(spec falsifier: pause is recorded but the supervisor keeps dispatching)")
 
-	// The node row itself must be `stale` (the invalidate took effect at
+	// @deliberate: The node row itself must be `stale` (the invalidate took effect at
 	// the frame layer) and a pending dispatch must be sitting unclaimed.
 	// Together these prove the supervisor's claim, not just the
 	// invalidate, is what's gated by pause.
@@ -160,7 +160,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 		"under pause there must be at least one unclaimed pending dispatch row "+
 			"for the invalidated worker (the supervisor refused to claim it)")
 
-	// (6) RESUME: POST /v1/instances/{id}/resume → 200, then the
+	// @deliberate: (6) RESUME: POST /v1/instances/{id}/resume → 200, then the
 	// supervisor's next claim-poll picks up the pending dispatch and a
 	// new terminal/success event arrives.
 	resumeResp := doPost(t, h.ControlBase+"/v1/instances/"+iid.String()+"/resume", nil)
@@ -170,7 +170,6 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	getAfterResume := getJSONMapInst(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Equal(t, false, getAfterResume["paused"], "paused must be false after /resume")
 
-	// Wait for the previously-blocked dispatch to actually run through.
 	deadline := time.Now().Add(15 * time.Second)
 	postResumeSuccessCount := preSuccessCount
 	for time.Now().Before(deadline) {
@@ -184,7 +183,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 		"after /resume the supervisor must pick the queued dispatch back up "+
 			"and a new terminal/success event must appear on /v1/events")
 
-	// (7) Drive the instance terminal via POST /v1/instances/{id}/terminate
+	// @deliberate: (7) Drive the instance terminal via POST /v1/instances/{id}/terminate
 	// so DELETE can succeed. This is the same terminate handler the
 	// force-terminate sibling test exercises — here we use it as the
 	// reaper-precondition step, not as the proof itself.
@@ -194,7 +193,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	require.True(t, waitForInstanceTerminatedInst(t, h, iid, 15*time.Second),
 		"terminate must set terminated_at on the instance")
 
-	// (8) DELETE terminal: now passes the terminal guard, returns
+	// @constraint: (8) DELETE terminal: now passes the terminal guard, returns
 	// 200 {"deleted":true}.
 	delResp := doDelete(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Equal(t, http.StatusOK, delResp.status,
@@ -202,7 +201,7 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	require.Contains(t, string(delResp.raw), `"deleted":true`,
 		"DELETE response must report deleted:true")
 
-	// (9) Confirm the row is actually gone — a follow-up GET returns 404.
+	// @deliberate: (9) Confirm the row is actually gone — a follow-up GET returns 404.
 	getGone, err := http.Get(h.ControlBase + "/v1/instances/" + iid.String())
 	require.NoError(t, err)
 	defer getGone.Body.Close()

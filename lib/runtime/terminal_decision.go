@@ -65,20 +65,20 @@ const (
 	// non-held claim (spec §7.6).
 	ActiveTerminal TerminalSource = iota
 
-	// HeldTerminal: the auto-terminal mechanism fired at holding-
-	// subgraph completion (spec §4.10 invariant 13).
+	// @deliberate: HeldTerminal — the auto-terminal mechanism firing at
+	// holding-subgraph completion (spec §4.10 invariant 13).
 	HeldTerminal
 
-	// OwnershipBail: the verify-before-run race-detection bail
-	// (`runner_acquire_postcommit.go::handleOrphanedClaim`). The
-	// acquisition tx committed, then the separate-read guard discovered
-	// another supervisor stole the dispatch row; the supervisor unwinds
-	// the acquisition it just opened. Under this source the engine
-	// fires Abandon and then DELETEs the claim-handle row
-	// claimant-guarded (rather than promoting it to a resolved state):
-	// the run never dispatched, so the row is unwound, not resolved.
-	// The bail is an admin path — callers pass a zero LineageHint so
-	// no claim_resolution.* signal is emitted.
+	// @deliberate: OwnershipBail — the verify-before-run race-detection
+	// bail (`runner_acquire_postcommit.go::handleOrphanedClaim`).
+	// The acquisition tx committed, then the separate-read guard
+	// discovered another supervisor stole the dispatch row; the
+	// supervisor unwinds the acquisition it just opened. Under this
+	// source the engine fires Abandon and then DELETEs the claim-handle
+	// row claimant-guarded (rather than promoting it to a resolved
+	// state): the run never dispatched, so the row is unwound, not
+	// resolved. The bail is an admin path — callers pass a zero
+	// LineageHint so no claim_resolution.* signal is emitted.
 	OwnershipBail
 )
 
@@ -92,8 +92,8 @@ const (
 	// AggregateCommit: every contributing terminal succeeded → Commit.
 	AggregateCommit AggregateOutcome = iota
 
-	// AggregateAbandon: at least one contributing terminal failed →
-	// Abandon.
+	// @deliberate: AggregateAbandon — at least one contributing terminal
+	// failed → Abandon.
 	AggregateAbandon
 )
 
@@ -250,51 +250,45 @@ func ResolveClaimHandleTerminal(
 	if td.Producer == nil {
 		return fmt.Errorf("ResolveClaimHandleTerminal: producer is nil for claim_handle %s", td.ClaimHandleID)
 	}
-	// 1. DataProcessing candidate dispatch (sub-claim path; no-op for
-	//    non-DataProcessing producers). Returns the committed version id
-	//    when present.
 	versionID, err := dispatchDataProcessingTerminal(ctx, args, tx, td)
 	if err != nil {
 		return err
 	}
-	// 2. Producer verb dispatch (Commit / Abandon). On Commit the
-	//    base-protocol CommitResponse body is honored, not discarded:
-	//    version_id persists on the claim-handle row (below) and
-	//    producer_metadata threads into SettleChildren (step 6) so the
-	//    fan-out parent's writeback surfaces it.
+	// @constraint: on Commit the base-protocol CommitResponse body is
+	// honored, not discarded — version_id persists on the claim-handle
+	// row (below) and producer_metadata threads into SettleChildren so
+	// the fan-out parent's writeback surfaces it.
 	commitRes, err := fireProducerVerb(ctx, td)
 	if err != nil {
 		return err
 	}
-	// 2b. Persist the base-Commit version_id, mirroring the
-	//     data-processing CommitCandidate path above. The base verb is
-	//     the finalizing call, so a non-empty base version_id wins over
-	//     the staged CommitCandidate one. Claimant-guarded SetVersionID
-	//     runs BEFORE the row's state transition (step 5) — after
-	//     Promote the holder is nulled and the guard would no-op.
+	// @constraint: claimant-guarded SetVersionID for the base-Commit
+	// version_id MUST run BEFORE the row's state transition below —
+	// after Promote the holder is nulled and the guard would no-op. The
+	// base verb is the finalizing call, so a non-empty base version_id
+	// wins over the staged CommitCandidate one.
 	if td.Outcome == AggregateCommit && commitRes.VersionID != "" {
 		if err := args.ClaimHandles.SetVersionID(ctx, td.ClaimHandleID, td.SupervisorID, commitRes.VersionID, tx); err != nil {
 			return fmt.Errorf("ResolveClaimHandleTerminal: SetVersionID (base Commit response): %w", err)
 		}
 		versionID = commitRes.VersionID
 	}
-	// 3. Forensics emission (lineage row + claim_resolution event).
 	emitTerminalForensics(ctx, args, tx, td, versionID)
-	// 4. Recursive descendant cancellation on AggregateAbandon (BEFORE
-	//    the row's own state transition).
+	// @constraint: recursive descendant cancellation on AggregateAbandon
+	// runs BEFORE the row's own state transition.
 	if td.Outcome == AggregateAbandon {
 		if err := cancelDescendantClaims(ctx, args, tx, td.ClaimHandleID); err != nil {
 			return fmt.Errorf("ResolveClaimHandleTerminal: cancelDescendantClaims: %w", err)
 		}
 	}
-	// 5. Row transition. Terminal sources promote (Stage 3 of the
-	//    claim-handle state-column refactor); the ownership-bail source
-	//    deletes claimant-guarded — the acquisition is unwound, not
-	//    resolved, so the row must not survive as state='abandoned'.
-	//    Verb-then-delete ordering (step 2 before this step) and the
-	//    claimant guard are load-bearing: the row never disappears
-	//    without the producer verb having fired first, and never under
-	//    a foreign supervisor's hand (@blessed-invariant 4).
+	// @constraint: verb-then-row-transition ordering and the claimant
+	// guard are load-bearing — the row never disappears without the
+	// producer verb having fired first, and never under a foreign
+	// supervisor's hand (@blessed-invariant 4). Terminal sources Promote
+	// (Stage 3 of the claim-handle state-column refactor); the
+	// ownership-bail source Deletes claimant-guarded instead — the
+	// acquisition is unwound, not resolved, so the row must not survive
+	// as state='abandoned'.
 	if td.Source == OwnershipBail {
 		if err := args.ClaimHandles.Delete(ctx, td.ClaimHandleID, td.SupervisorID, tx); err != nil {
 			return fmt.Errorf("ResolveClaimHandleTerminal: ownership-bail Delete: %w", err)
@@ -302,17 +296,14 @@ func ResolveClaimHandleTerminal(
 	} else if err := promoteHandleState(ctx, args, tx, td); err != nil {
 		return err
 	}
-	// 6. Child settlement (counter bump + sibling cancel + parent
-	//    walk) through the unified settle-children primitive. No-op
-	//    for root claims (td.ParentClaimHandleID == nil).
-	//
-	//    Spec
-	//    .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	//    §Recursive claim-tree resolution + §State aggregation rules +
-	//    §Error policy / `strict.cancel_siblings: true`.
-	//
-	//    @concept: claim-tree
-	//    @concept: cancel-siblings
+	// @concept: claim-tree
+	// @concept: cancel-siblings
+	// @constraint: child settlement (counter bump + sibling cancel +
+	// parent walk) routes through the unified settle-children primitive
+	// and is a no-op for root claims (td.ParentClaimHandleID == nil).
+	// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
+	// §Recursive claim-tree resolution + §State aggregation rules +
+	// §Error policy / `strict.cancel_siblings: true`.
 	if td.ParentClaimHandleID == nil {
 		return nil
 	}
@@ -381,10 +372,11 @@ func dispatchDataProcessingTerminal(
 // unknown outcomes or verb-side failures.
 func fireProducerVerb(ctx context.Context, td TerminalDecision) (claimproducer.CommitResult, error) {
 	claimID := claimproducer.ClaimID(td.ClaimHandleID.String())
-	// Stamp the producer name so a host-agent-proxy fronting the
-	// claim-producer protocol can route this Commit/Abandon by service
-	// name. Prefer td.ProducerName (the claim_handle's recorded name);
-	// fall back to the client's own Name when unset.
+	// @constraint: stamp the producer name on the outgoing ctx so a
+	// host-agent-proxy fronting the claim-producer protocol can route
+	// this Commit/Abandon by service name. Prefer td.ProducerName (the
+	// claim_handle's recorded name); fall back to the client's own Name
+	// when unset.
 	producerName := td.ProducerName
 	if producerName == "" && td.Producer != nil {
 		producerName = td.Producer.Name()
@@ -450,10 +442,4 @@ func promoteHandleState(
 	return fmt.Errorf("ResolveClaimHandleTerminal: Promote: %w", err)
 }
 
-// `cancelInFlightSiblings` and `cancelDescendantClaims` (the
-// strict-cancel walkers invoked from `ResolveClaimHandleTerminal`) live
-// in `terminal_decision_cancel.go`.
-//
-// `outcomeVerbName`, `emitTerminalForensics`, `terminalOutcomeKey`, and
-// `preferVersionID` (the forensics + observability emission helpers)
-// live in `terminal_decision_forensics.go`.
+// @deliberate: cancelInFlightSiblings and cancelDescendantClaims live in terminal_decision_cancel.go; this file holds the aggregation + promotion path of the terminal-decision split.

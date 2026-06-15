@@ -90,7 +90,7 @@ const objectStoreReactorNode = "reactor"
 // predictable.
 const objectStoreBucket = "events"
 
-// objectStorePollInterval governs the sensor's polling cadence per
+// objectStorePollIntervalConfig governs the sensor's polling cadence per
 // subscription. The bounded waits in the test are sized as multiples
 // of this — a 5x window is enough to observe several poll ticks
 // without extending the suite past CI deadlines.
@@ -104,74 +104,57 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// 1. Shared docker network + a sibling Postgres for sensor-object-
-	//    store's state DSN. BringUpRimsky brings up its own rimsky-pg
-	//    Postgres for rimsky's schema; the sensor uses a SEPARATE
-	//    Postgres testcontainer on the same network so the sensor's
-	//    durable state survives the sensor's Terminate + fresh
-	//    container — exactly the durability isolation the restart-
-	//    watermark proof requires.
+	// @constraint: sensor state DB is a SEPARATE postgres on the shared
+	// network so durable state survives the sensor's Terminate + fresh
+	// container — the durability isolation the restart-watermark proof
+	// requires.
 	netName := harness.NewNetwork(ctx, t)
 	statePG := startSensorObjectStoreStatePostgres(ctx, t, netName)
 
-	// 2. Bring up the sensor BEFORE rimsky so rimsky's eager-Dial of
-	//    the declared publisher at startup succeeds. The sensor sits
-	//    on the network at alias `sensor-object-store` with the
-	//    durable state DSN wired in and the filesystem backend auto-
-	//    registered (the harness sets RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT
-	//    inside the container).
+	// @constraint: sensor must come up BEFORE rimsky so rimsky's
+	// eager-Dial of the declared publisher at startup succeeds. The
+	// harness sets RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT inside the
+	// container so the filesystem backend auto-registers.
 	sensor := harness.StartSensorObjectStoreHandle(ctx, t, netName, "sensor-object-store", statePG.internalDSN)
 
-	// 3. rimsky-all-in-one on the same network, with `watcher`
-	//    declared as a publisher peer pointing at the sensor.
-	//    ref_validation_mode=none so the reactor node (no executor
-	//    declared, only a subscribes:) registers — the proof axis is
-	//    the PERSISTED publisher message in rimsky, not the
-	//    reactor's run.
+	// @constraint: ref_validation_mode=none so the reactor node (no
+	// executor declared, only a subscribes:) registers — the proof axis
+	// is the PERSISTED publisher message in rimsky, not the reactor's
+	// run.
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithPublisher(objectStorePublisherName, sensor.Endpoint),
 		harness.WithRefValidationMode("none"),
 	)
 
-	// 4. Deploy template + create instance. The template's publisher
-	//    `watcher` is kind=object-store with the filesystem backend
-	//    pointing at the in-container bucket root. The instance-create
-	//    triggers rimsky's StartPublisherSubscriptionsForInstance,
-	//    which generates the publisher_subscription_id and calls
-	//    Subscribe on the sensor — landing the durable row in the
-	//    sensor's state DB.
 	templateID := deployObjectStoreSensorTemplate(t, ep)
 	instanceID := createObjectStoreSensorInstance(t, ep, templateID, "ck-sensor-object-store-e2e")
 
-	// 5. Wait on OBSERVABLE subscription state first: mounting is
-	//    asynchronous (the create returns 201 with the row in
-	//    `mounting`; the reconciler drives Subscribe to `active`), so
-	//    the sensor-side assertion below must not race the mount under
-	//    load — the instance surface, not a wall-clock budget, says
-	//    when Subscribe has landed.
+	// @constraint: mounting is asynchronous (create returns 201 with
+	// the row in `mounting`; the reconciler drives Subscribe to
+	// `active`); wait on the instance surface, not a wall-clock budget,
+	// so the sensor-side assertion below cannot race the mount under
+	// load.
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	//    Then confirm the sensor PERSISTED the subscription before we
-	//    start dropping objects. Without this, a PutObject racing
-	//    Subscribe could drop a file BEFORE the watch is registered,
-	//    and the first poll would observe it but the test's wait-for-
-	//    emit would still pass — masking the durability gate.
+	// @constraint: confirm the sensor PERSISTED the subscription
+	// before dropping objects. Without this, a PutObject racing
+	// Subscribe could drop a file BEFORE the watch is registered, and
+	// the first poll would observe it but the test's wait-for-emit
+	// would still pass — masking the durability gate.
 	statePool := connectSensorObjectStoreStatePostgres(ctx, t, statePG.hostDSN)
 	defer statePool.Close()
 	subID := waitForSensorObjectStoreSubscriptionPersisted(t, ctx, statePool, 60*time.Second)
 	t.Logf("sensor-object-store persisted subscription %s", subID)
 
-	// 6. PROOF — filesystem backend services the subscription, and
-	//    metadata in the emitted message is REAL (Falsifier prongs 2
-	//    + 3).
-	//
-	// Drop object-A into the in-container bucket. The sensor's next
+	// @constraint: filesystem backend services the subscription and
+	// metadata in the emitted message is REAL — falsifier prongs 2 + 3.
+	// Drop object-A into the in-container bucket; the sensor's next
 	// poll calls the filesystem lister, which walks the bucket
-	// directory, hashes the file, and emits one envelope carrying
-	// the actual object_name + size + etag derived from the bytes
-	// we wrote. We then read the emitted message back through rimsky
-	// and assert each metadata field matches the real values.
+	// directory, hashes the file, and emits one envelope carrying the
+	// actual object_name + size + etag derived from the bytes written.
+	// The test reads the emitted message back through rimsky and
+	// asserts each metadata field matches the real values.
 	objectAName := "001-event.json"
 	objectABytes := []byte(`{"event":"created","gen":1,"payload":"first"}`)
 	objectAEtag := fnvHexOf(objectABytes)
@@ -179,13 +162,13 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 
 	requirePublisherMessageCountReaches(t, ep, instanceID, 1,
 		20*time.Second, "first-object-discovered")
-	// Pin the exact count so a sensor that emits MULTIPLE messages
-	// per poll on a single new object breaks the gate too.
+	// @constraint: pin the exact count so a sensor that emits MULTIPLE
+	// messages per poll on a single new object breaks the gate too.
 	requirePublisherMessageCountStable(t, ep, instanceID, 1,
 		5*objectStorePollInterval, "exactly-one-after-first-object")
 
-	// Read the message back and cross-check that the payload
-	// metadata is the REAL file's metadata, not a canned shape.
+	// @constraint: cross-check payload metadata against the REAL file's
+	// metadata so a sensor emitting a canned shape fails here.
 	requireObjectStoreMessagePayload(t, ep, instanceID, objectStoreObservation{
 		Backend:    "filesystem",
 		Bucket:     objectStoreBucket,
@@ -195,11 +178,11 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 		ETag:       objectAEtag,
 	}, "first-object-payload")
 
-	// 7. Independently verify the durable row carries the watermark
-	//    advance. The sensor writes WatermarkName on every successful
-	//    emit (sensor.go::pollOne → state.UpdateWatermarkName); the
-	//    row's watermark_name column is the load-bearing cursor the
-	//    restart will rely on.
+	// @constraint: independently verify the durable row carries the
+	// watermark advance. The sensor writes watermark_name on every
+	// successful emit (sensor.go::pollOne → state.UpdateWatermarkName);
+	// the row's watermark_name column is the load-bearing cursor the
+	// restart will rely on.
 	originalWatermark := waitForSensorObjectStoreWatermark(t, ctx, statePool, subID, 20*time.Second)
 	if originalWatermark != objectAName {
 		t.Fatalf("sensor-object-store watermark = %q, want %q after first emit — "+
@@ -207,16 +190,15 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 			"or the restart-replay gate is unobservable", originalWatermark, objectAName)
 	}
 
-	// 8. PROOF — restart preserves the watermark (Falsifier prong 1).
-	//
-	// Stop the sensor container; rimsky stays up. With rimsky's
-	// ResyncPublisherSubscriptions running only at control-api
-	// startup (NOT periodically), no fresh Subscribe will be re-
-	// issued to the new sensor container. Watch recovery is solely
-	// the sensor's job: AttachStateDB + Subscribe's persisted-state
-	// lookup MUST rebuild the in-memory Watch from the durable row
-	// (subscription_id, backend, bucket, prefix, watermark cursor)
-	// or no polling resumes at all.
+	// @constraint: restart preserves the watermark — falsifier prong 1.
+	// Stop the sensor container; rimsky stays up. rimsky's
+	// ResyncPublisherSubscriptions runs only at control-api startup
+	// (NOT periodically), so no fresh Subscribe will be re-issued to
+	// the new sensor container. Watch recovery is solely the sensor's
+	// job: AttachStateDB + Subscribe's persisted-state lookup MUST
+	// rebuild the in-memory Watch from the durable row
+	// (subscription_id, backend, bucket, prefix, watermark cursor) or
+	// no polling resumes at all.
 	preRestartCount := publisherMessageCount(t, ep, instanceID)
 	sensor.Stop(ctx)
 	t.Logf("sensor-object-store stopped; pre-restart message count=%d", preRestartCount)
@@ -225,36 +207,35 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 	t.Logf("sensor-object-store restarted; recovered watermark must suppress re-emit " +
 		"when object-A is re-dropped into the fresh container's bucket")
 
-	// 9. The fresh container's filesystem is EMPTY — the previous
-	//    container's bucket contents went away with the Terminate.
-	//    Re-drop the SAME object-A (same name, same content → same
-	//    fnv etag) into the fresh container's bucket. The recovered
-	//    watermark says "object-A already emitted"; a sensor that
-	//    honored the durable cursor MUST NOT re-emit.
+	// @constraint: the fresh container's filesystem is EMPTY — the
+	// previous container's bucket contents went away with the
+	// Terminate. Re-drop the SAME object-A (same name + bytes → same
+	// fnv etag) into the fresh container's bucket. The recovered
+	// watermark says "object-A already emitted"; a sensor honoring the
+	// durable cursor MUST NOT re-emit.
 	//
-	//    Note that rimsky's universal idempotency-key dedup on POST
-	//    /instances/{id}/messages would ALSO suppress a re-emit if
-	//    the sensor sent the same idempotency key — but the sensor
-	//    is expected to NOT send the message at all (the watermark
-	//    is enforced sensor-side, before the post). To make THIS gate
-	//    a clean sensor-side proof (not a rimsky-dedup proof), the
-	//    test would need to either delete the durable row by hand
-	//    before re-drop (defeats the proof) or argue the sensor-side
-	//    suppression separately. Here we rely on the combined system
-	//    behavior: the message-count stays pinned at 1 regardless of
-	//    which layer enforces it, AND we cross-check the watermark
-	//    did NOT regress (a watermark-losing sensor would also have
-	//    reset the watermark on restart) below.
+	// @deliberate: rimsky's universal idempotency-key dedup on POST
+	// /instances/{id}/messages would ALSO suppress a re-emit if the
+	// sensor sent the same idempotency key, but the sensor is expected
+	// to NOT send the message at all (watermark enforced sensor-side,
+	// before the post). Making THIS gate a clean sensor-side proof
+	// (not a rimsky-dedup proof) would require either deleting the
+	// durable row by hand before re-drop (defeats the proof) or
+	// arguing the sensor-side suppression separately. The test relies
+	// on combined system behavior: the message-count stays pinned at 1
+	// regardless of which layer enforces it, AND the watermark
+	// cross-check below catches a watermark-losing sensor (which
+	// would also have reset the watermark on restart).
 	sensor.PutObject(ctx, objectStoreBucket, objectAName, objectABytes)
 	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount,
 		5*objectStorePollInterval, "watermark-suppressed-re-emit-after-restart")
 
-	// Cross-check: the durable watermark did NOT regress on restart
-	// (a sensor whose AttachStateDB skipped the cursor would have an
-	// empty watermark and would advance back to objectAName on the
+	// @constraint: durable watermark must NOT regress on restart. A
+	// sensor whose AttachStateDB skipped the cursor would have an empty
+	// watermark and would advance back to objectAName on the
 	// post-restart re-emit; that path either keeps the watermark at
 	// objectAName silently or regresses-then-re-advances — both
-	// detectable by sampling now).
+	// detectable by sampling now.
 	postRestartWatermark := readSensorObjectStoreWatermark(t, ctx, statePool, subID)
 	if postRestartWatermark != objectAName {
 		t.Fatalf("sensor-object-store watermark = %q after restart, want %q — "+
@@ -263,16 +244,14 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 			postRestartWatermark, objectAName)
 	}
 
-	// 10. PROOF — recovered sensor is fully live (the filesystem
-	//     backend is registered, polling resumes, watermark is
-	//     consulted, AND emit happens on a real new object).
-	//
-	// Drop object-B with a name strictly greater than object-A so
-	// the name-based watermark says "new." The revived sensor MUST
-	// observe it and emit exactly one more message carrying B's
-	// metadata. This is the cross-check that the post-restart no-
-	// emit on object-A was due to the watermark and not due to the
-	// sensor being broken end-to-end after restart.
+	// @constraint: recovered sensor must be fully live — filesystem
+	// backend registered, polling resumed, watermark consulted, AND
+	// emit happens on a real new object. Drop object-B with a name
+	// strictly greater than object-A so the name-based watermark says
+	// "new"; the revived sensor MUST observe it and emit exactly one
+	// more message carrying B's metadata. This cross-checks that the
+	// post-restart no-emit on object-A was due to the watermark and
+	// not due to the sensor being broken end-to-end after restart.
 	objectBName := "002-event.json"
 	objectBBytes := []byte(`{"event":"updated","gen":2,"payload":"second"}`)
 	objectBEtag := fnvHexOf(objectBBytes)
@@ -292,11 +271,11 @@ func TestSensorObjectStore_FilesystemBackendRestartWatermark(t *testing.T) {
 		ETag:       objectBEtag,
 	}, "second-object-payload")
 
-	// 11. Watermark advanced past object-A's name on the second
-	//     emit. The durable row's watermark_name MUST now equal
-	//     object-B's name — a non-advanced row would mean the post-
-	//     restart emit either didn't run or didn't persist its
-	//     forward progress (both durability bugs).
+	// @constraint: watermark advanced past object-A's name on the
+	// second emit. The durable row's watermark_name MUST now equal
+	// object-B's name — a non-advanced row would mean the
+	// post-restart emit either didn't run or didn't persist its
+	// forward progress (both durability bugs).
 	requireSensorObjectStoreWatermarkAdvanced(t, ctx, statePool, subID, objectAName, objectBName, 20*time.Second)
 }
 

@@ -45,7 +45,7 @@ import (
 // signal both drives the subscription cascade and lands its canonical
 // audit row — atomically, inside the caller's transaction.
 //
-// @agent-contract: One standard path for cascade-firing disposition signals.
+// @agent-contract: one standard path for cascade-firing disposition signals.
 //
 //   - What: every node-run signal that should cascade-fire subscribers —
 //     terminal/success, terminal/error/<class> (settlements), and
@@ -100,11 +100,11 @@ func emitSignalInTx(
 	sig signalpkg.Signal,
 	visited map[foundationshared.UUID]struct{},
 ) error {
-	// Cascade only when there is a real run + frame to gate receivers on.
-	// A zero senderRunID/senderFrameID is the defensive settlement edge
-	// (the run was already retired by a concurrent sweep): skip the
-	// cascade, but still write the audit row below so the disposition is
-	// never lost.
+	// @constraint: cascade only when there is a real run + frame to gate
+	// receivers on. A zero senderRunID/senderFrameID is the defensive
+	// settlement edge (the run was already retired by a concurrent sweep):
+	// skip the cascade, but still write the audit row below so the
+	// disposition is never lost.
 	var zeroUUID foundationshared.UUID
 	if senderRunID != zeroUUID && senderFrameID != zeroUUID {
 		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,

@@ -64,7 +64,7 @@ func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {
 	if len(res.Errors) != 0 {
 		t.Fatalf("acyclic nested template should validate clean, got errors: %v", res.Errors)
 	}
-	// Both calling nodes must carry the absorption marker.
+	// @constraint: Both calling nodes must carry the absorption marker.
 	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))
 	for i := range tmpl.Nodes {
 		byType[tmpl.Nodes[i].Type] = &tmpl.Nodes[i]
@@ -105,7 +105,7 @@ func TestNestedSubgraph_CycleRejected(t *testing.T) {
 				Entry: "g2n",
 				Exit:  "g2x",
 				Nodes: []node.TemplateNodeDef{
-					{Type: "g2n", Delegate: "g1"}, // cycle: g1 → g2 → g1
+					{Type: "g2n", Delegate: "g1"}, // @deliberate: cycle: g1 → g2 → g1
 					{Type: "g2x", Subscribes: []tmplspec.SubscriptionEntry{{Node: "g2n", Type: "terminal/*"}}},
 				},
 			},

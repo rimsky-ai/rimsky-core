@@ -38,7 +38,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
-// recordingReceiver stands up an httptest.Server that records every POSTed
+// newRecordingReceiver stands up an httptest.Server that records every POSTed
 // message envelope. Mirrors multi_replica_test.go#47-57.
 func newRecordingReceiver() (*httptest.Server, *int64, *[]map[string]any, *sync.Mutex) {
 	var fireCount int64
@@ -75,12 +75,12 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 	srv, fireCount, bodies, bodiesMu := newRecordingReceiver()
 	defer srv.Close()
 
-	// registerTime is fixed; the */5 schedule's next fire is 00:05:00,
-	// strictly in the FUTURE relative to registerTime (00:00:00). So nothing
-	// fires at registration — the watermark is the load-bearing state.
+	// @deliberate: registerTime fixed at 00:00:00 so the */5 schedule's next
+	// fire (00:05:00) is strictly FUTURE — nothing fires at registration and
+	// the persisted watermark is the load-bearing state under test.
 	registerTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// --- First service: register, persist, then die. ---
+	// @constraint: first service registers + persists + dies (without Unsubscribe).
 	state1, err := openStateDB(ctx)
 	if err != nil {
 		t.Fatalf("openStateDB (first): %v", err)
@@ -101,8 +101,8 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 		t.Fatalf("Subscribe (first): %v", err)
 	}
 
-	// Capture the watermark the first service persisted: the cron's first
-	// fire after registerTime.
+	// @constraint: wantNextFire is the cron's first fire after registerTime —
+	// the watermark the first service must persist.
 	wantNextFire := registerTime.Add(5 * time.Minute)
 	if w := s1.watches["cron-1"]; w == nil {
 		t.Fatal("first service: subscription not registered in-memory")
@@ -110,8 +110,9 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 		t.Fatalf("first service NextFireAt: got %s want %s", w.NextFireAt, wantNextFire)
 	}
 
-	// Confirm it round-tripped to durable storage BEFORE the restart, so the
-	// recovery below is genuinely reading from Postgres.
+	// @constraint: round-trip must be confirmed BEFORE the restart, so the
+	// post-restart recovery is genuinely reading from Postgres (not from a
+	// race-survived in-memory map).
 	persisted, err := state1.ListAll(ctx)
 	if err != nil {
 		t.Fatalf("ListAll (first): %v", err)
@@ -123,14 +124,14 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 		t.Fatalf("persisted NextFireAt: got %s want %s", persisted[0].NextFireAt, wantNextFire)
 	}
 
-	// Simulated process death: drop the first service WITHOUT Unsubscribe,
-	// close its DB handle. The row must remain in Postgres.
+	// @deliberate: simulate process death by closing the DB handle WITHOUT
+	// calling Unsubscribe — the row must remain in Postgres for recovery.
 	if err := state1.Close(); err != nil {
 		t.Fatalf("Close (first): %v", err)
 	}
 	s1 = nil
 
-	// --- Second service: fresh process against the SAME DSN. ---
+	// @constraint: second service is a fresh process pointed at the SAME DSN.
 	state2, err := openStateDB(ctx)
 	if err != nil {
 		t.Fatalf("openStateDB (second): %v", err)
@@ -140,18 +141,18 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 	}
 	defer state2.Close()
 	s2 := NewSensorService(srv.URL, noopLogger{})
-	// Pin the second service's clock to a LATER time than registerTime to
-	// prove the recovered watermark is the PERSISTED next_fire_at, not a
-	// fresh sched.Next(restartTime). If recovery recomputed from this clock,
-	// the next fire would be 00:10:00 (the first */5 boundary strictly after
-	// 00:06:00), and the 00:05:00 fire below would be missed.
+	// @deliberate: pin the second clock LATER than registerTime so we can
+	// prove the recovered watermark is the PERSISTED next_fire_at (00:05:00)
+	// and not a fresh sched.Next(restartTime). If recovery recomputed from
+	// this clock, the next fire would be 00:10:00 (the first */5 boundary
+	// strictly after 00:06:00) and the 00:05:00 fire below would be missed.
 	restartTime := registerTime.Add(6 * time.Minute)
 	s2.clock = func() time.Time { return restartTime }
-	// AttachStateDB must rebuild s.watches from state.ListAll.
+	// @constraint: AttachStateDB must rebuild s.watches from state.ListAll.
 	s2.AttachStateDB(state2)
 
-	// The rebuilt watch must carry the ORIGINAL persisted next_fire_at
-	// (00:05:00), not a recomputed one (00:10:00).
+	// @constraint: rebuilt watch must carry the ORIGINAL persisted
+	// next_fire_at (00:05:00), not a recomputed one (00:10:00).
 	rebuilt := s2.watches["cron-1"]
 	if rebuilt == nil {
 		t.Fatal("restart: subscription not rebuilt from state DB")
@@ -161,10 +162,9 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 			rebuilt.NextFireAt, wantNextFire)
 	}
 
-	// --- Fire on the originally-scheduled window (the load-bearing proof). ---
-	// restartTime (00:06:00) is already past the persisted next_fire_at
-	// (00:05:00), so a single Tick must fire exactly once, on the original
-	// window, with no re-Subscribe.
+	// @constraint: load-bearing proof — restartTime (00:06:00) is already past
+	// the persisted next_fire_at (00:05:00), so a single Tick must fire
+	// exactly once, on the original window, with no re-Subscribe.
 	s2.Tick(ctx)
 
 	if got := atomic.LoadInt64(fireCount); got != 1 {
@@ -178,8 +178,8 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 	if (*bodies)[0]["sender_kind"] != "publisher" {
 		t.Errorf("sender_kind: got %v want publisher", (*bodies)[0]["sender_kind"])
 	}
-	// The envelope's fire_at must be the original window (00:05:00),
-	// confirming the fire was on the recovered watermark, not a new window.
+	// @constraint: envelope fire_at must be the original window (00:05:00),
+	// confirming the fire used the recovered watermark, not a fresh window.
 	payload, _ := (*bodies)[0]["payload"].(map[string]any)
 	if payload == nil {
 		t.Fatalf("envelope payload missing/wrong shape: %+v", (*bodies)[0])
@@ -215,7 +215,7 @@ func TestSensorCronStateDSN_UnsetLosesSubscriptionOnRestart(t *testing.T) {
 	registerTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s1 := NewSensorService(srv.URL, noopLogger{})
 	s1.clock = func() time.Time { return registerTime }
-	s1.AttachStateDB(state) // nil → no-op
+	s1.AttachStateDB(state) // @constraint: nil state → no-op
 
 	cfg := map[string]any{"cron": "*/5 * * * *"}
 	raw, _ := json.Marshal(cfg)
@@ -226,7 +226,7 @@ func TestSensorCronStateDSN_UnsetLosesSubscriptionOnRestart(t *testing.T) {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
-	// Simulated restart: a fresh service with a fresh (nil) state DB.
+	// @deliberate: simulated restart — a fresh service with a fresh (nil) state DB.
 	state2, err := openStateDB(ctx)
 	if err != nil {
 		t.Fatalf("openStateDB (restart, unset DSN): %v", err)

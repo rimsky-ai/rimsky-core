@@ -31,7 +31,7 @@ import (
 
 func TestOrphanedClaim(t *testing.T) {
 	t.Parallel()
-	// NoSupervisor so the harness's running supervisor doesn't claim the
+	// @deliberate: NoSupervisor so the harness's running supervisor doesn't claim the
 	// node we're about to attach a manufactured lock-holder row to.
 	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true})
 
@@ -45,7 +45,7 @@ func TestOrphanedClaim(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// Seed an expired `rimsky_claim_handles` row tied to a dead supervisor.
+	// @deliberate: Seed an expired `rimsky_claim_handles` row tied to a dead supervisor.
 	// We pick `kind='named'` so the per-row reap path runs without needing a
 	// real claim_store factory in the harness — the §7.5 step-2 reap is
 	// identical for all three kinds modulo the store-side ReleaseLock call
@@ -63,7 +63,7 @@ func TestOrphanedClaim(t *testing.T) {
 		}, tx)
 	}))
 
-	// Wait for the §7.5 step-2 sweep to reap the row. Scheduler tick
+	// @deliberate: Wait for the §7.5 step-2 sweep to reap the row. Scheduler tick
 	// interval in the harness is 250ms; orphan-reap cutoff is purely
 	// `expires_at < now()` for the lock-holder path.
 	deadline := time.Now().Add(20 * time.Second)
@@ -83,7 +83,6 @@ func TestOrphanedClaim(t *testing.T) {
 	}
 	require.True(t, reaped, "expired lock-holder row was not reaped by §7.5 step-2 sweep")
 
-	// `lock_orphan_reaped` event was emitted with the reaped row's metadata.
 	nid := n.ID
 	var evs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -95,7 +94,7 @@ func TestOrphanedClaim(t *testing.T) {
 	}))
 	require.NotEmpty(t, evs.Events, "expected lock_orphan_reaped event")
 
-	// Spot-check the payload carries the kind + supervisor for operator
+	// @deliberate: Spot-check the payload carries the kind + supervisor for operator
 	// triage (sweep_locks.go:lockReapPayload populates these unconditionally).
 	payload := evs.Events[0].Payload
 	require.Equal(t, "named", payload["lock_kind"])

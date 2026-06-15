@@ -43,8 +43,10 @@ func TestBackoffJitterPlusMinusStaysInRange(t *testing.T) {
 		BaseDelayMs: 1000,
 		Jitter:      shared.JitterPlusMinus,
 	}
-	base := 1000.0 // attemptIndex=0 → base * 1
-	// Deterministic pseudo-random sequence covering [0.0, 1.0).
+	base := 1000.0
+	// @deliberate: a deterministic pseudo-random sequence covering
+	// [0.0, 1.0) replaces the rng so the assertion can pin exact
+	// boundary values rather than depending on real entropy.
 	var i int
 	values := []float64{0.0, 0.1, 0.25, 0.333, 0.5, 0.6, 0.75, 0.9, 0.9999}
 	rng := func() float64 {
@@ -66,7 +68,7 @@ func TestBackoffMaxClamp(t *testing.T) {
 		Jitter:      shared.JitterNone,
 		MaxDelayMs:  5000,
 	}
-	// attemptIndex=10 → 1000 * 11 = 11000, clamped to 5000.
+	// @deliberate: attemptIndex=10 → 1000 * 11 = 11000, clamped to 5000.
 	require.Equal(t, 5000, ComputeDelay(cfg, 10, nil))
 }
 
@@ -77,10 +79,12 @@ func TestBackoffZeroMaxUsesUnbounded(t *testing.T) {
 		Jitter:      shared.JitterNone,
 		MaxDelayMs:  0,
 	}
-	// attemptIndex=20 → 100 * 2^20 = 104857600, below MaxInt32, but repeating
-	// grows past it. Verify we get clamped to MaxInt32 for a huge attempt.
+	// @deliberate: attemptIndex=20 → 100 * 2^20 = 104857600 (below
+	// MaxInt32), but a huge attempt grows past it — verify we clamp to
+	// MaxInt32.
 	require.Equal(t, math.MaxInt32, ComputeDelay(cfg, 100, nil))
-	// attemptIndex=20 is below MaxInt32, so it should pass through unclamped.
+	// @deliberate: attemptIndex=20 is below MaxInt32, so it should pass
+	// through unclamped.
 	require.Equal(t, 100*(1<<20), ComputeDelay(cfg, 20, nil))
 }
 

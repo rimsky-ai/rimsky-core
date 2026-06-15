@@ -2,13 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// messages_test.go — postgres mirror of sqlite/messages_test.go's
-// NULL-payload coverage. pgx tolerates NULL into *json.RawMessage
-// (unlike database/sql, which the sqlite shim works around with a
-// nullable []byte indirect). This test pins the wire-level guarantee
-// against a real Postgres testcontainer so a future driver change can
-// no longer silently regress the NULL-payload read path.
-//
 // @concept: message
 
 package postgres_test
@@ -26,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// seedMessageInstance for the postgres mirror — uses the same template
+// seedMessageInstanceForNullTest for the postgres mirror — uses the same template
 // → main run scope → instance pattern as seedFrameParkedFixture so the
 // rimsky_messages.instance_id FK is satisfied.
 func seedMessageInstanceForNullTest(t *testing.T, ctx context.Context, d persistence.Database) shared.UUID {
@@ -94,7 +87,7 @@ func TestMessagesScan_NullPayload_Postgres(t *testing.T) {
 			Kind:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
-			// Payload omitted → nil → NULL on the wire.
+			// @deliberate: Payload omitted → nil → NULL on the wire; this test exercises the NULL-payload scan path.
 		})
 	}); err != nil {
 		t.Fatalf("Messages.Insert: %v", err)

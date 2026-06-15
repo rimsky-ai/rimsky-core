@@ -12,9 +12,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli/internal/clitest"
 )
 
-// (TestRunAdminForceFire retired by the 2026-05-15 plan B10 / D7 / E16
-// schedule-retirement cascade.)
-
 func TestRunAdminInvalidate(t *testing.T) {
 	srv := setupClitest(t)
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")

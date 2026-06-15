@@ -37,7 +37,7 @@ func seedClaimHandleForSweep(
 	t.Helper()
 	backend := d.Tables()
 
-	// Need an instance + node to anchor the row's FKs.
+	// @deliberate: Need an instance + node to anchor the row's FKs.
 	tmpl := insertDeployedTemplate(ctx, t, backend, node.TemplateSpec{
 		Name: "ret-sweep-" + uuid.NewString(), Version: "1",
 		Nodes: []node.TemplateNodeDef{{Type: "n", Executor: "stub"}},
@@ -75,7 +75,7 @@ func seedClaimHandleForSweep(
 		}, tx); err != nil {
 			return err
 		}
-		// Promote to the requested terminal state (if any).
+		// @deliberate: Promote to the requested terminal state (if any).
 		if promote != "" && promote != spec.ClaimHandleStateActive {
 			if err := backend.ClaimHandles().Promote(ctx, chID, supervisorID, promote, tx); err != nil {
 				return err
@@ -85,7 +85,7 @@ func seedClaimHandleForSweep(
 	}))
 
 	if !resolvedAt.IsZero() {
-		// Backdate resolved_at directly via SQL.
+		// @deliberate: Backdate resolved_at directly via SQL.
 		pool, ok := pgpersist.PoolFromDatabaseForTest(d)
 		require.True(t, ok, "PoolFromDatabaseForTest failed")
 		_, err := pool.Exec(ctx,
@@ -101,7 +101,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 
-	// Durable + committed row with resolved_at well in the past.
+	// @deliberate: Durable + committed row with resolved_at well in the past.
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-1",
 		spec.ClaimLifetimeDurable, spec.ClaimHandleStateCommitted, oneYearAgo)
@@ -116,7 +116,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepDurableCommitted(t *testing.T) {
 	require.Equal(t, spec.ClaimHandleStateCommitted, row.State)
 }
 
-// Notes (diagnostic — testcontainer-startup-bound, not a
+// @deliberate: Notes (diagnostic — testcontainer-startup-bound, not a
 // production-code bug):
 //
 //	Symptom: under heavy parallel load (full
@@ -173,7 +173,7 @@ func TestSweepClaimHandleRetention_SweepsAbandonedPastCutoff(t *testing.T) {
 	d := pgtest.OpenDriver(ctx, t)
 
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
-	// Abandoned rows are swept regardless of lifetime — try durable to
+	// @deliberate: Abandoned rows are swept regardless of lifetime — try durable to
 	// confirm.
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-3",
 		spec.ClaimLifetimeDurable, spec.ClaimHandleStateAbandoned, oneYearAgo)
@@ -192,7 +192,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepWithinCutoff(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 
-	// resolved_at = 1 hour ago, within the 30-day cutoff.
+	// @deliberate: resolved_at = 1 hour ago, within the 30-day cutoff.
 	oneHourAgo := time.Now().Add(-1 * time.Hour)
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-4",
 		spec.ClaimLifetimeSubgraph, spec.ClaimHandleStateCommitted, oneHourAgo)
@@ -211,7 +211,7 @@ func TestSweepClaimHandleRetention_DoesNotSweepActive(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 
-	// Active row — resolved_at is NULL on active rows; the sweep
+	// @deliberate: Active row — resolved_at is NULL on active rows; the sweep
 	// predicate filters them out via `state IN ('committed','abandoned')`
 	// AND `resolved_at < cutoff`. Defense in depth.
 	id := seedClaimHandleForSweep(ctx, t, d, "sup-5",
@@ -232,7 +232,7 @@ func TestSweepClaimHandleRetention_DisabledByZeroTrailing(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
 
-	// Seed a row that would otherwise be swept.
+	// @deliberate: Seed a row that would otherwise be swept.
 	oneYearAgo := time.Now().Add(-365 * 24 * time.Hour)
 	seedClaimHandleForSweep(ctx, t, d, "sup-6",
 		spec.ClaimLifetimeSubgraph, spec.ClaimHandleStateCommitted, oneYearAgo)

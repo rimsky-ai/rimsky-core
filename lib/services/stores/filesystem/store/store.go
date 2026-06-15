@@ -33,12 +33,14 @@ import (
 // set. Queue-vs-ring vs single-shot drain is emergent from
 // OnCommit / OnGiveUp action choice.
 type PickPolicy struct {
-	Root              string         // relative path under store root
-	FolderPattern     *regexp.Regexp // nil means "no extra filter beyond skip-leading-dot"
+	Root string
+	// @constraint: nil FolderPattern means "no extra filter beyond skip-leading-dot" — distinguished from a regex that matches nothing.
+	FolderPattern     *regexp.Regexp
 	OnCommit          action.Action
 	OnGiveUp          action.Action
 	VisibilityTimeout time.Duration
-	SyncStrategy      string // "on_open" | "on_drain" | "explicit" | "never"
+	// @constraint: SyncStrategy must be one of "on_open" | "on_drain" | "explicit" | "never" — enforced in validatePickPolicy.
+	SyncStrategy string
 
 	// syncMu serializes runSync for this policy so concurrent Open
 	// callers don't race on the (read-available, read-in_progress,
@@ -103,7 +105,6 @@ func New(cfg Config) (*Store, error) {
 		for _, w := range res.Warnings {
 			slog.Warn(w)
 		}
-		// Idempotent state-directory creation.
 		dir := filepath.Join(cfg.Root, ".fs-store", trimAtPrefix(selector))
 		for _, sub := range []string{"available", "in_progress"} {
 			if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
@@ -154,7 +155,7 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer
 		return claimproducer.OpenOutcome{}, err
 	}
 	if pp, ok := s.pickPolicies[selector]; ok {
-		// Pick-policy selectors are a configured map-key match — they
+		// @deliberate: pick-policy selectors are a configured map-key match — they
 		// intentionally bypass openScoped's glob-metacharacter
 		// rejection. Operators choose the selector key (convention:
 		// `@policy-name`); a key containing `*`/`?`/`[` is operator
@@ -187,7 +188,7 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 			"filesystem store: Open: selector %q contains glob metacharacters; v3 standard filesystem supports concrete paths only",
 			raw)
 	}
-	// Canonicalize first so "foo" and "./foo" produce identical scope
+	// @constraint: canonicalize first so "foo" and "./foo" produce identical scope
 	// bytes. Strip a single leading "./" before Clean because Clean
 	// preserves "." as the result of "./" only when the input is "./"
 	// alone — for "./foo" Clean returns "foo". The TrimPrefix is
@@ -206,7 +207,7 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 			"filesystem store: Open: selector %q resolves to the root itself; selectors must name a concrete entry", raw)
 	}
 
-	// Scope bytes: canonical JSON-encoded cleaned path string. Two
+	// @constraint: scope bytes are the canonical JSON-encoded cleaned path string — two
 	// claims on the same logical path (e.g. "foo" and "./foo") produce
 	// byte-equal scopes (§7.7 obligation #5).
 	scopeBytes, err := json.Marshal(cleaned)
@@ -214,7 +215,7 @@ func (s *Store) openScoped(claimID, selector string) (claimproducer.OpenOutcome,
 		return claimproducer.OpenOutcome{}, fmt.Errorf("filesystem store: marshal scope: %w", err)
 	}
 	addrPath := filepath.Join(s.root, cleaned)
-	// Defense-in-depth: confirm the resolved path is still under the
+	// @deliberate: defense-in-depth — confirm the resolved path is still under the
 	// configured root. After the cleaned-relative-only checks above
 	// this should always hold, but a Rel-based test catches any
 	// edge case (Windows drive letters, symlinks at the OS layer, etc.)
@@ -339,10 +340,11 @@ func (s *Store) checkRootAvailable(verb string) error {
 		return &ClassedError{Class: RootUnavailableClass, Err: fmt.Errorf(
 			"filesystem store: %s: configured root %q is not accessible: %v", verb, s.root, err)}
 	}
-	// W_OK (POSIX value 2): the store's state directories and
-	// pick-policy actions live under the root, so a read-only root is
-	// a misconfiguration for any claim-mutating verb. This package is
-	// already POSIX-only (see the syscall.Stat_t use below).
+	// @constraint: check W_OK (POSIX value 2) — the store's state
+	// directories and pick-policy actions live under the root, so a
+	// read-only root is a misconfiguration for any claim-mutating
+	// verb. This package is already POSIX-only (see the
+	// syscall.Stat_t use below).
 	if err := syscall.Access(s.root, 0x2); err != nil {
 		return &ClassedError{Class: RootUnavailableClass, Err: fmt.Errorf(
 			"filesystem store: %s: configured root %q is not writable: %v", verb, s.root, err)}
@@ -378,7 +380,7 @@ func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.Valid
 		addErr(errors.New("policy is nil"))
 		return res
 	}
-	// pp.Root may be empty: that means the policy operates at the store root
+	// @deliberate: pp.Root may be empty — that means the policy operates at the store root
 	// itself (e.g. a single-entry policy whose FolderPattern matches one
 	// specific top-level folder). filepath.Clean("") == ".", so the
 	// canonicalization checks below treat empty and "." identically.
@@ -412,9 +414,7 @@ func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.Valid
 		}
 	}
 
-	// Action validation (replaces the old switch on string vocabulary).
-	//
-	// Issue 11: yaml.v3 silently skips UnmarshalYAML when the source is
+	// @deliberate: yaml.v3 silently skips UnmarshalYAML when the source is
 	// null and the target is a struct value, leaving Kind=="". The raw
 	// Validate() error for that case is `unknown action ""`, which
 	// leaks an empty quoted string. Surface a clearer message before
@@ -430,7 +430,6 @@ func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.Valid
 		addErr(fmt.Errorf("on_give_up: %w", err))
 	}
 
-	// pop_and_move target validation: cross-fs check.
 	if pp.OnCommit.Kind == action.PopAndMove && pp.OnCommit.MoveTarget != "" {
 		if err := validateMoveTargetSameFS(storeRoot, pp.Root, pp.OnCommit.MoveTarget); err != nil {
 			addErr(fmt.Errorf("on_commit: pop_and_move: %w", err))
@@ -448,21 +447,20 @@ func validatePickPolicy(storeRoot, selector string, pp *PickPolicy) action.Valid
 
 	switch pp.SyncStrategy {
 	case "":
-		pp.SyncStrategy = "on_open" // default
+		pp.SyncStrategy = "on_open"
 	case "on_open", "on_drain", "explicit", "never":
-		// ok
 	default:
 		addErr(fmt.Errorf("sync_strategy: must be on_open|on_drain|explicit|never, got %q", pp.SyncStrategy))
 	}
 
-	// Validator rule §6.1a: pop + sync_strategy: on_open is rejected.
+	// @constraint: validator rule §6.1a — pop + sync_strategy: on_open is rejected.
 	// Open's sync step would re-add popped folders under fs-store
 	// discovery semantics, so the queue would never drain.
 	if pp.OnCommit.Kind == action.Pop && pp.SyncStrategy == "on_open" {
 		addErr(errors.New("on_commit: pop is incompatible with sync_strategy: on_open (queue would never drain because runSync re-adds popped folders); use sync_strategy: on_drain"))
 	}
 
-	// Validator rule §6.2: warn on recycle + on_drain (queue never empties; on_drain never fires).
+	// @constraint: validator rule §6.2 — warn on recycle + on_drain (queue never empties; on_drain never fires).
 	if pp.OnCommit.Kind == action.Recycle && pp.SyncStrategy == "on_drain" {
 		addWarn(fmt.Sprintf("filesystem store: pick_policies[%q]: recycle + sync_strategy: on_drain is inert (queue never empties; on_drain never fires)", selector))
 	}
@@ -534,7 +532,7 @@ func validateMoveTargetSameFS(storeRoot, policyRoot, target string) error {
 	if err != nil {
 		return fmt.Errorf("resolve symlinks for target %q: %w", targetAbs, err)
 	}
-	// Issue 7: degenerate target == policy root produces silent
+	// @constraint: degenerate target == policy root produces silent
 	// behavioral drift (os.Rename(dir, dir) is a no-op). Reject
 	// explicitly so the operator gets an error instead of "pop_and_move
 	// silently degenerated to pop."

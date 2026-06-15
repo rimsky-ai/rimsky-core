@@ -173,7 +173,7 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Script each node's dispatch as Success with changed=true so the
+	// @deliberate: Script each node's dispatch as Success with changed=true so the
 	// supervisor's terminal-handler settles the node back to fresh
 	// each time. changed=true mirrors the production shape of a
 	// reactive node that updates state on each fire; for the test's
@@ -186,7 +186,7 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "template-subscriptions-cel-e2e", Version: "1",
-		// Serial-queue delivery: one message per frame. Each cascade
+		// @deliberate: Serial-queue delivery: one message per frame. Each cascade
 		// walk is independent so per-receiver fire counts can be
 		// asserted deterministically. Under coalesce, two messages
 		// landing in one frame would deliver together and the
@@ -195,14 +195,14 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 		// reactive events.
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
-			// frame_anchor + some_other_target are the deliberate
+			// @constraint: frame_anchor + some_other_target are the deliberate
 			// frame-source roles. They have NO subscriptions; the
 			// cascade walker never matches against them. They dispatch
 			// only on the frame-source wake when a message targets
 			// their node-type.
 			scenario.MakeNode(node.TemplateNodeDef{Type: "frame_anchor", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "some_other_target", Executor: "stub"}),
-			// receiver_strict: exact-type + CEL predicate. The
+			// @deliberate: receiver_strict: exact-type + CEL predicate. The
 			// type-path's `<target>` segment is `frame_anchor` (not
 			// `receiver_strict`) because the cascade walker emits the
 			// signal with the message's literal target segment, which
@@ -216,7 +216,7 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 					Frame:    "in",
 				}),
 			),
-			// receiver_prefix: trailing-`*` prefix. Matches every
+			// @deliberate: receiver_prefix: trailing-`*` prefix. Matches every
 			// type-path with the `message/invalidate/` prefix.
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver_prefix", Executor: "stub"},
@@ -226,7 +226,7 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 					Frame:    "in",
 				}),
 			),
-			// receiver_other: exact-type targeting a DIFFERENT segment.
+			// @deliberate: receiver_other: exact-type targeting a DIFFERENT segment.
 			// Fires only when leg 3's message names `some_other_target`.
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver_other", Executor: "stub"},
@@ -240,7 +240,7 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 	})
 	iid := h.CreateInstance(tid, "ck-template-subs-cel", map[string]any{})
 
-	// All five roots reach fresh after the initial dispatch.
+	// @deliberate: All five roots reach fresh after the initial dispatch.
 	for _, nt := range []string{
 		"frame_anchor", "some_other_target",
 		"receiver_strict", "receiver_prefix", "receiver_other",
@@ -251,7 +251,7 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 			"%s should reach fresh from its initial frame", nt)
 	}
 
-	// Baseline: each node fired exactly once from the initial frame.
+	// @deliberate: Baseline: each node fired exactly once from the initial frame.
 	// Asserted with overshoot-check so a buggy cascade can't masquerade
 	// as a benign re-dispatch.
 	requireEventualCount(t, h, "receiver_strict", 1, 10*time.Second,
@@ -261,13 +261,11 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 	requireEventualCount(t, h, "receiver_other", 1, 10*time.Second,
 		"exactly 1 initial dispatch of receiver_other expected before any messages")
 
-	// ---------------------------------------------------------------------
-	// LEG 1 — target=frame_anchor, tenant=alpha. Cascade walker emits
+	// @deliberate: LEG 1 — target=frame_anchor, tenant=alpha. Cascade walker emits
 	// signal `message/invalidate/operator/frame_anchor`. CEL on
 	// receiver_strict evaluates true → fires. receiver_prefix matches
 	// type-prefix → fires. receiver_other's exact path is
 	// `…/some_other_target` ≠ `…/frame_anchor` → does NOT fire.
-	// ---------------------------------------------------------------------
 	postMessage(t, h, iid, "frame_anchor", "leg1-anchor-alpha", map[string]any{
 		"tenant": "alpha",
 	})
@@ -284,12 +282,10 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 		"receiver_other must not fire on a leg-1 message — its subscription is "+
 			"an exact path to a different target segment")
 
-	// ---------------------------------------------------------------------
-	// LEG 2 — target=frame_anchor, tenant=beta. Same signal type-path
+	// @constraint: LEG 2 — target=frame_anchor, tenant=beta. Same signal type-path
 	// as leg 1, but the CEL predicate evaluates false → receiver_strict
 	// must NOT fire. receiver_prefix still matches by type-prefix (no
 	// `when:`) → fires. receiver_other still doesn't match.
-	// ---------------------------------------------------------------------
 	postMessage(t, h, iid, "frame_anchor", "leg2-anchor-beta", map[string]any{
 		"tenant": "beta",
 	})
@@ -297,7 +293,7 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 	requireEventualCount(t, h, "receiver_prefix", 3, 30*time.Second,
 		"receiver_prefix must fire on the leg-2 message — the CEL-less prefix "+
 			"subscription matches the type-path regardless of payload")
-	// receiver_strict must NOT advance — the CEL predicate gated the
+	// @constraint: receiver_strict must NOT advance — the CEL predicate gated the
 	// cascade. Allow a settling window so any spurious cascade has time
 	// to land.
 	requireSteadyCount(t, h, "receiver_strict", 2, 3*time.Second,
@@ -307,14 +303,12 @@ func TestTemplateSubscriptions_CELPredicateAndPrefix(t *testing.T) {
 	requireSteadyCount(t, h, "receiver_other", 1, 3*time.Second,
 		"receiver_other must not fire on a leg-2 message (still target=frame_anchor)")
 
-	// ---------------------------------------------------------------------
-	// LEG 3 — target=some_other_target. Cascade walker emits signal
+	// @constraint: LEG 3 — target=some_other_target. Cascade walker emits signal
 	// `message/invalidate/operator/some_other_target`. Trailing-`*`
 	// prefix MUST match this DIFFERENT type-path — the
 	// prefix-matches-every-type-path-with-that-prefix acceptance leg.
 	// receiver_other matches by exact path. receiver_strict's exact path
 	// is `…/frame_anchor` ≠ `…/some_other_target` → does NOT fire.
-	// ---------------------------------------------------------------------
 	postMessage(t, h, iid, "some_other_target", "leg3-other", nil)
 
 	requireEventualCount(t, h, "receiver_other", 2, 30*time.Second,

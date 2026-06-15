@@ -88,8 +88,9 @@ func TestStoresRedesignSmoke(t *testing.T) {
 
 	instanceID := smokeCreateInstance(t, ep, templateID, "stores-redesign-1")
 
-	// Compressed from the original 100 — sufficient to exercise the
-	// claim-recycle / dispatch / cascade-drain loop a handful of times.
+	// @deliberate: compressed from the original 100 — wire-shape coverage,
+	// not stress; 5 cycles exercise the claim-recycle / dispatch /
+	// cascade-drain loop enough to catch regressions.
 	const cycles = 5
 	const perCycle = 30 * time.Second
 
@@ -97,8 +98,6 @@ func TestStoresRedesignSmoke(t *testing.T) {
 
 	for n := 1; n <= cycles; n++ {
 		smokeWaitForTerminal(t, ep, instanceID, "claim-acquirer", 30*time.Second)
-		// Drive an invalidate on the acquirer node so the next cycle
-		// fires.
 		status, raw := ep.PostJSON(t,
 			fmt.Sprintf("/v1/admin/instances/%s/nodes/%s/invalidate", instanceID, nodeID), nil)
 		if status != http.StatusOK {
@@ -107,7 +106,9 @@ func TestStoresRedesignSmoke(t *testing.T) {
 		_ = perCycle
 	}
 
-	// After the last invalidate, the node must drain back to terminal.
+	// @constraint: post-final-invalidate the node must drain back to
+	// terminal — this is the load-bearing wire-shape assertion the
+	// pre-2026-05-24 white-box test covered via DB inspection.
 	smokeWaitForTerminal(t, ep, instanceID, "claim-acquirer", perCycle)
 }
 

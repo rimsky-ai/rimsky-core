@@ -47,9 +47,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
 )
 
-// Re-exports of the wire-shape types from `runtime/clientiface/`
-// (Apache-licensed). The canonical docs live on the alias targets.
-// See `data_processing.go` for the licensing-boundary rationale.
+// @deliberate: re-exports of wire-shape types from runtime/clientiface/
+// (Apache-licensed). Canonical docs live on the alias targets. See
+// data_processing.go for the licensing-boundary rationale.
 type (
 	PublisherClient             = clientiface.PublisherClient
 	SubscribeRequest            = clientiface.SubscribeRequest
@@ -113,10 +113,11 @@ func StartPublisherSubscriptionsForInstance(
 		subID := shared.UUID(uuid.New())
 		resolvedConfig, resolveErr := resolvePublisherConfig(p.Config, params)
 		if resolveErr != nil {
-			// Non-retryable, but never silent: the row is still
-			// inserted (with the unresolved config blob), directly in
-			// state=failed with the resolve error as the operator-readable
-			// reason, exactly like the unknown-publisher class below.
+			// @constraint: non-retryable, but never silent — the row is
+			// still inserted (with the unresolved config blob), directly
+			// in state=failed with the resolve error as the operator-
+			// readable reason, exactly like the unknown-publisher class
+			// below.
 			resolvedConfig = p.Config
 		}
 		messageKind := p.MessageKind
@@ -134,17 +135,18 @@ func StartPublisherSubscriptionsForInstance(
 			State:          persistence.PublisherSubscriptionStateMounting,
 			StartedAt:      now,
 		}
-		// Non-retryable classes are stamped failed IN the insert itself:
-		// committing a mounting row first and CAS-flipping it after opens
-		// a window where a reconciler tick Subscribes a row we already
-		// know is broken (worst case: the mounting→active CAS wins over
-		// the failed flip and an unresolved config goes permanently
-		// active).
+		// @constraint: non-retryable classes are stamped failed IN the
+		// insert itself — committing a mounting row first and CAS-
+		// flipping it after opens a window where a reconciler tick
+		// Subscribes a row we already know is broken (worst case: the
+		// mounting→active CAS wins over the failed flip and an
+		// unresolved config goes permanently active).
 		_, registered := publisherFromRegistry(deps, p.Name)
 		switch {
 		case resolveErr != nil:
-			// Config-resolve failure → non-retryable: the template's
-			// config blob is fixed, so no retry can make it resolvable.
+			// @constraint: config-resolve failure is non-retryable —
+			// the template's config blob is fixed, so no retry can make
+			// it resolvable.
 			deps.Logger.Warn("publisher.subscribe.resolve_failed",
 				"publisher_name", p.Name,
 				"instance_id", instanceID.String(),
@@ -153,8 +155,8 @@ func StartPublisherSubscriptionsForInstance(
 			row.State = persistence.PublisherSubscriptionStateFailed
 			row.FailureReason = fmt.Sprintf("publisher config resolution failed: %s", resolveErr.Error())
 		case !registered:
-			// Unknown publisher name → non-retryable: no reconciler tick
-			// can make an unregistered name resolvable.
+			// @constraint: unknown publisher name is non-retryable — no
+			// reconciler tick can make an unregistered name resolvable.
 			deps.Logger.Warn("publisher.subscribe.unknown_publisher",
 				"publisher_name", p.Name,
 				"instance_id", instanceID.String(),
@@ -243,8 +245,8 @@ func RunPublisherSubscriptionReconciler(ctx context.Context, deps PublisherLifec
 	if interval <= 0 {
 		interval = DefaultPublisherSubscriptionReconcileInterval
 	}
-	// One immediate pass so rows pending at startup don't wait a full
-	// tick, then the ticker cadence.
+	// @deliberate: one immediate pass so rows pending at startup don't
+	// wait a full tick, then the ticker cadence.
 	reconcileMountingSubscriptionsOnce(ctx, deps)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -267,20 +269,21 @@ func reconcileMountingSubscriptionsOnce(ctx context.Context, deps PublisherLifec
 		deps.Logger.Warn("publisher.subscribe.reconcile_list_failed", "error", err.Error())
 		return
 	}
-	// Per-pass memo: many rows can share an instance, and one Get per
-	// row per tick is a needless N+1 — each instance is fetched at most
-	// once per pass.
+	// @deliberate: per-pass memo — many rows can share an instance, and
+	// one Get per row per tick is a needless N+1; each instance is
+	// fetched at most once per pass.
 	goneMemo := map[shared.UUID]bool{}
 	for _, s := range rows {
 		if ctx.Err() != nil {
 			return
 		}
-		// Never mount a subscription for an instance that is terminated
-		// or gone: a terminated instance rejects every publisher emit
-		// (errInstanceTerminated on the message endpoint), so an active
-		// subscription for it is a permanent dead-letter generator. Such
-		// rows are flipped to stopped instead. On a failed read, skip the
-		// row (retry next tick) rather than Subscribing blind.
+		// @constraint: never mount a subscription for an instance that
+		// is terminated or gone — a terminated instance rejects every
+		// publisher emit (errInstanceTerminated on the message
+		// endpoint), so an active subscription for it is a permanent
+		// dead-letter generator. Such rows are flipped to stopped
+		// instead. On a failed read, skip the row (retry next tick)
+		// rather than Subscribing blind.
 		gone, err := instanceTerminatedOrMissingMemo(ctx, deps, s.InstanceID, goneMemo)
 		if err != nil {
 			deps.Logger.Warn("publisher.subscribe.instance_read_failed",
@@ -315,11 +318,12 @@ func reconcileMountingSubscriptionsOnce(ctx context.Context, deps PublisherLifec
 			TargetNode:              s.TargetNode,
 			MessageKind:             s.MessageKind,
 		}
-		// One attempt per tick — the tick interval is the backoff; the
-		// row stays in observable `mounting` between attempts. The
-		// attempt is deadline-bounded (subscribeAttemptTimeout) so a
-		// black-holed publisher cannot wedge the pass for the other
-		// rows; a timeout is just the retryable failure class.
+		// @constraint: one attempt per tick — the tick interval is the
+		// backoff; the row stays in observable `mounting` between
+		// attempts. The attempt is deadline-bounded
+		// (subscribeAttemptTimeout) so a black-holed publisher cannot
+		// wedge the pass for the other rows; a timeout is just the
+		// retryable failure class.
 		attemptCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
 		err = client.Subscribe(attemptCtx, req)
 		cancel()
@@ -332,9 +336,10 @@ func reconcileMountingSubscriptionsOnce(ctx context.Context, deps PublisherLifec
 			continue
 		}
 		if !markSubscriptionActive(ctx, deps, s.ID) {
-			// A concurrent transition settled the row mid-Subscribe
-			// (instance terminate is the common case). If the row is
-			// stopped/gone, reap the publisher-side subscription now.
+			// @constraint: a concurrent transition settled the row
+			// mid-Subscribe (instance terminate is the common case).
+			// If the row is stopped/gone, reap the publisher-side
+			// subscription now.
 			unsubscribeIfRowStopped(ctx, deps, client, s.ID)
 		}
 	}
@@ -364,8 +369,9 @@ func callListSubscriptionsWithRetry(ctx context.Context, client PublisherClient,
 			case <-time.After(d + j):
 			}
 		}
-		// Each attempt is deadline-bounded (subscribeAttemptTimeout) so a
-		// black-holed publisher cannot wedge the resync sweep.
+		// @constraint: each attempt is deadline-bounded
+		// (subscribeAttemptTimeout) so a black-holed publisher cannot
+		// wedge the resync sweep.
 		attemptCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
 		live, err := client.ListSubscriptions(attemptCtx)
 		cancel()
@@ -397,9 +403,9 @@ func callSubscribeWithRetry(ctx context.Context, client PublisherClient, req Sub
 	var lastErr error
 	for attempt := 0; attempt < subscribeRetryAttempts; attempt++ {
 		if attempt > 0 {
-			// Backoff: ~560ms before attempt 2, ~1.6s before attempt 3
-			// (base 200ms × 2.8^attempt; no sleep before attempt 1),
-			// each ±25% jitter.
+			// @deliberate: backoff is ~560ms before attempt 2, ~1.6s
+			// before attempt 3 (base 200ms × 2.8^attempt; no sleep
+			// before attempt 1), each ±25% jitter.
 			d := time.Duration(float64(subscribeRetryBase) * pow28(attempt))
 			j := time.Duration(rand.Float64()*0.5*float64(d)) - d/4
 			select {
@@ -408,8 +414,9 @@ func callSubscribeWithRetry(ctx context.Context, client PublisherClient, req Sub
 			case <-time.After(d + j):
 			}
 		}
-		// Each attempt is deadline-bounded (subscribeAttemptTimeout) so a
-		// black-holed publisher cannot wedge the resync sweep.
+		// @constraint: each attempt is deadline-bounded
+		// (subscribeAttemptTimeout) so a black-holed publisher cannot
+		// wedge the resync sweep.
 		attemptCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
 		err := client.Subscribe(attemptCtx, req)
 		cancel()
@@ -477,9 +484,9 @@ func StopPublisherSubscriptionsForInstance(
 			markSubscriptionStopped(ctx, deps, s.ID, s.State)
 			continue
 		}
-		// Deadline-bounded: Stop runs in the DELETE / terminate request
-		// path, and a black-holed publisher must not hang instance
-		// termination indefinitely.
+		// @constraint: deadline-bounded — Stop runs in the DELETE /
+		// terminate request path, and a black-holed publisher must
+		// not hang instance termination indefinitely.
 		rpcCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
 		err := client.Unsubscribe(rpcCtx, s.ID)
 		cancel()
@@ -490,20 +497,21 @@ func StopPublisherSubscriptionsForInstance(
 				"publisher_subscription_id", s.ID.String(),
 				"error", err.Error())
 			if mounting {
-				// Stop the reconciler from re-driving a terminated
-				// instance. A publisher-side leftover (a Subscribe that
-				// landed despite this Unsubscribe failing) is reaped by
-				// the reconciler's compensating Unsubscribe when its
-				// activation CAS finds the row stopped, or — last
-				// resort — by the orphan sweep at the next control-api
-				// startup resync.
+				// @constraint: stop the reconciler from re-driving a
+				// terminated instance. A publisher-side leftover (a
+				// Subscribe that landed despite this Unsubscribe
+				// failing) is reaped by the reconciler's compensating
+				// Unsubscribe when its activation CAS finds the row
+				// stopped, or — last resort — by the orphan sweep at
+				// the next control-api startup resync.
 				markSubscriptionStopped(ctx, deps, s.ID, persistence.PublisherSubscriptionStateMounting)
 			}
-			// An active row whose Unsubscribe failed stays active here;
-			// the startup resync detects that its instance is terminated
-			// or deleted, flips the row to stopped, and retries the
-			// publisher-side teardown (on DELETE the row is cascade-
-			// deleted instead and the orphan sweep reaps the leftover).
+			// @deliberate: an active row whose Unsubscribe failed stays
+			// active here; the startup resync detects that its instance
+			// is terminated or deleted, flips the row to stopped, and
+			// retries the publisher-side teardown (on DELETE the row is
+			// cascade-deleted instead and the orphan sweep reaps the
+			// leftover).
 			continue
 		}
 		markSubscriptionStopped(ctx, deps, s.ID, s.State)
@@ -572,8 +580,9 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 	for _, s := range expected {
 		expectedByPublisher[s.PublisherName] = append(expectedByPublisher[s.PublisherName], s)
 	}
-	// Per-pass memo for the terminated-instance checks below — at most
-	// one instance Get per distinct instance per sweep.
+	// @deliberate: per-pass memo for the terminated-instance checks
+	// below — at most one instance Get per distinct instance per
+	// sweep.
 	goneMemo := map[shared.UUID]bool{}
 	for _, client := range deps.Publishers.All() {
 		live, err := callListSubscriptionsWithRetry(ctx, client, deps.Logger)
@@ -587,22 +596,24 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 		for _, l := range live {
 			liveSet[l.PublisherSubscriptionID] = struct{}{}
 		}
-		// Rimsky-expected, publisher-missing → re-Subscribe. A mounting
-		// row the publisher already reports flips straight to active.
-		// Before any Subscribe, re-read the row: the snapshot was taken
-		// once at pass start, and a row stopped mid-pass (instance
-		// terminate) must not be re-mounted on the publisher.
+		// @constraint: rimsky-expected, publisher-missing → re-
+		// Subscribe. A mounting row the publisher already reports
+		// flips straight to active. Before any Subscribe, re-read the
+		// row — the snapshot was taken once at pass start, and a row
+		// stopped mid-pass (instance terminate) must not be re-mounted
+		// on the publisher.
 		for _, s := range expectedByPublisher[client.Name()] {
-			// Terminated/deleted instance first, gating BOTH legs (the
-			// fast-path activation and the re-Subscribe): resync must
-			// never mount — or keep mounted — a subscription whose every
-			// emit would be rejected with errInstanceTerminated (a
-			// permanent dead-letter generator). Mirroring the reconciler,
-			// such rows are flipped to stopped; when the publisher still
-			// reports the subscription live (the active row whose
-			// terminate-time Unsubscribe failed), the teardown is retried
-			// with a best-effort Unsubscribe. On a failed instance read,
-			// skip the row — never Subscribe blind.
+			// @constraint: terminated/deleted instance check is first,
+			// gating BOTH legs (the fast-path activation and the
+			// re-Subscribe). Resync must never mount — or keep mounted
+			// — a subscription whose every emit would be rejected with
+			// errInstanceTerminated (a permanent dead-letter
+			// generator). Mirroring the reconciler, such rows are
+			// flipped to stopped; when the publisher still reports the
+			// subscription live (the active row whose terminate-time
+			// Unsubscribe failed), the teardown is retried with a
+			// best-effort Unsubscribe. On a failed instance read, skip
+			// the row — never Subscribe blind.
 			gone, goneErr := instanceTerminatedOrMissingMemo(ctx, deps, s.InstanceID, goneMemo)
 			if goneErr != nil {
 				deps.Logger.Warn("publisher.resync.instance_read_failed",
@@ -658,15 +669,16 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 					"error", err.Error())
 				continue
 			}
-			// Post-Subscribe compensation is unconditional across both
-			// legs: a concurrent stop/DELETE completing between the fresh
-			// read above and the Subscribe leaves a publisher-live
-			// subscription with a stopped — or cascade-deleted, hence
-			// missing — row. unsubscribeIfRowStopped re-reads and
-			// unsubscribes for both the stopped and the missing-row case.
-			// The mounting leg keeps its CAS and compensates only when the
-			// CAS loses (a successful flip proves the row was still
-			// mounting after the Subscribe landed).
+			// @constraint: post-Subscribe compensation is unconditional
+			// across both legs — a concurrent stop/DELETE completing
+			// between the fresh read above and the Subscribe leaves a
+			// publisher-live subscription with a stopped — or cascade-
+			// deleted, hence missing — row. unsubscribeIfRowStopped
+			// re-reads and unsubscribes for both the stopped and the
+			// missing-row case. The mounting leg keeps its CAS and
+			// compensates only when the CAS loses (a successful flip
+			// proves the row was still mounting after the Subscribe
+			// landed).
 			if isMounting {
 				if !markSubscriptionActive(ctx, deps, s.ID) {
 					unsubscribeIfRowStopped(ctx, deps, client, s.ID)
@@ -675,13 +687,14 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 				unsubscribeIfRowStopped(ctx, deps, client, s.ID)
 			}
 		}
-		// Publisher-reported, rimsky-unknown → Unsubscribe + log. The
-		// expected set is a stale snapshot and the reconciler runs
-		// concurrently: a subscription created and mounted during the
-		// pass is publisher-live but snapshot-absent. Re-read the row
-		// before declaring it orphan — a live mounting/active row is
-		// legitimate, and Unsubscribing it would leave a dead
-		// subscription the instance surface reports healthy.
+		// @constraint: publisher-reported, rimsky-unknown → Unsubscribe
+		// + log. The expected set is a stale snapshot and the
+		// reconciler runs concurrently — a subscription created and
+		// mounted during the pass is publisher-live but snapshot-
+		// absent. Re-read the row before declaring it orphan; a live
+		// mounting/active row is legitimate, and Unsubscribing it
+		// would leave a dead subscription the instance surface reports
+		// healthy.
 		expectedSet := map[shared.UUID]struct{}{}
 		for _, s := range expectedByPublisher[client.Name()] {
 			expectedSet[s.ID] = struct{}{}
@@ -692,8 +705,8 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 			}
 			fresh, err := getSubscriptionRow(ctx, deps, l.PublisherSubscriptionID)
 			if err != nil {
-				// Fail safe: never tear down a possibly-legitimate
-				// subscription on a failed read.
+				// @constraint: fail safe — never tear down a possibly-
+				// legitimate subscription on a failed read.
 				deps.Logger.Warn("publisher.resync.orphan_read_failed",
 					"publisher_name", client.Name(),
 					"publisher_subscription_id", l.PublisherSubscriptionID.String(),
@@ -710,9 +723,9 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 				"publisher_subscription_id", l.PublisherSubscriptionID.String(),
 				"instance_id", l.InstanceID.String(),
 				"kind", l.Kind)
-			// Deadline-bounded like every other publisher RPC in the
-			// sweep: one black-holed Unsubscribe must not wedge the rest
-			// of the orphan sweep.
+			// @constraint: deadline-bounded like every other publisher
+			// RPC in the sweep — one black-holed Unsubscribe must not
+			// wedge the rest of the orphan sweep.
 			rpcCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
 			err = client.Unsubscribe(rpcCtx, l.PublisherSubscriptionID)
 			cancel()
@@ -1000,9 +1013,9 @@ func unsubscribeIfRowStopped(ctx context.Context, deps PublisherLifecycleDeps, c
 	if row != nil && row.State != persistence.PublisherSubscriptionStateStopped {
 		return
 	}
-	// Deadline-bounded like every other publisher RPC on the lifecycle
-	// paths — the compensation runs inside reconciler/resync passes and
-	// must not wedge them.
+	// @constraint: deadline-bounded like every other publisher RPC on
+	// the lifecycle paths — the compensation runs inside reconciler/
+	// resync passes and must not wedge them.
 	rpcCtx, cancel := context.WithTimeout(ctx, subscribeAttemptTimeout)
 	defer cancel()
 	if err := client.Unsubscribe(rpcCtx, subID); err != nil && deps.Logger != nil {

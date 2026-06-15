@@ -11,14 +11,12 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
-// §1: templates are content-addressed (id is "sha256-<64-hex>" over an
-// RFC 8785 JCS-canonicalized spec). State is one of three persisted
-// values (registered, deployed, undeployed); deregistered is the
-// absent state — i.e., row deleted. Tags live in rimsky_template_tags
-// as movable aliases.
-
-// TemplateState is the persisted template lifecycle state.
+// TemplateState is the persisted template lifecycle state. Templates
+// are content-addressed (id is "sha256-<64-hex>" over an RFC 8785
+// JCS-canonicalized spec). State is one of three persisted values
+// (registered, deployed, undeployed); deregistered is the absent state
+// — i.e., row deleted. Tags live in rimsky_template_tags as movable
+// aliases.
 type TemplateState string
 
 const (
@@ -35,7 +33,8 @@ type TemplateRow struct {
 	Spec         spec.TemplateSpec `json:"spec"`
 	State        TemplateState     `json:"state"`
 	RegisteredAt time.Time         `json:"registered_at"`
-	Source       string            `json:"source"` // "direct" | future package-manager values
+	// @constraint: Source is "direct" today; future package-manager values are reserved.
+	Source string `json:"source"`
 }
 
 // TemplateInsertInput carries the per-row input for Insert.
@@ -58,7 +57,8 @@ type TemplateTable interface {
 
 // TemplateListFilter is the observability/list filter for templates.
 type TemplateListFilter struct {
-	State TemplateState // empty = no filter
+	// @constraint: empty State means no state filter.
+	State TemplateState
 	// Tag, when non-empty, restricts to templates carrying the given
 	// tag in rimsky_template_tags. Used by the observability /v1/
 	// observability/templates?tag=… browse filter (spec §1.2.2).
@@ -71,7 +71,7 @@ type TemplateListFilter struct {
 // upsert-timestamp.
 type TemplateTagRow struct {
 	Tag        string    `json:"tag"`
-	TemplateID string    `json:"template_id"` // hash
+	TemplateID string    `json:"template_id"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 

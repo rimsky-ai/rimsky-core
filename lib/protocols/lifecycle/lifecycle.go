@@ -10,9 +10,9 @@ import "context"
 // service protocol. Implementations return nil from methods they
 // don't react to.
 type LifecycleSubscriber interface {
-	// Name returns the operator-configured peer name (matches the
-	// peer's name in rimsky.yml under claim_producers: or executors:).
-	// Rimsky-side identifier; not transported over the wire.
+	// @agent-contract: Name returns the operator-configured peer name
+	// (matches the peer's name in rimsky.yml under claim_producers: or
+	// executors:). Rimsky-side identifier; not transported over the wire.
 	Name() string
 
 	OnTemplateRegistered(ctx context.Context, req OnTemplateRegisteredRequest) error
@@ -22,7 +22,8 @@ type LifecycleSubscriber interface {
 	OnInstanceCreated(ctx context.Context, req OnInstanceCreatedRequest) error
 	OnInstanceTerminated(ctx context.Context, req OnInstanceTerminatedRequest) error
 
-	// OnRunScopeTerminal is fired when a run-scope reaches terminal state.
-	// See OnRunScopeTerminalRequest documentation for firing semantics.
+	// @agent-contract: OnRunScopeTerminal fires when a run-scope reaches
+	// terminal state. See OnRunScopeTerminalRequest documentation for firing
+	// semantics.
 	OnRunScopeTerminal(ctx context.Context, req OnRunScopeTerminalRequest) error
 }

@@ -80,7 +80,7 @@ func RunComposeRun(ctx context.Context, args []string) int {
 		return code
 	}
 
-	// slog JSON over stderr so the executable proof for
+	// @constraint: slog JSON over stderr so the executable proof for
 	// STORY-spawned-local-services can parse the `spawned service`
 	// log line and capture child PIDs from the structured envelope.
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -118,8 +118,8 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	bootCtx, cancelBoot := context.WithCancel(ctx)
 	defer cancelBoot()
 	bootSignalDone := make(chan struct{})
-	// releaseBootSignalWatcher closes bootSignalDone on the first
-	// invocation; subsequent calls (the deferred call at function
+	// @deliberate: releaseBootSignalWatcher closes bootSignalDone on the
+	// first invocation; subsequent calls (the deferred call at function
 	// exit when the wait-loop owned the channel) are no-ops.
 	var releaseOnce sync.Once
 	releaseBootSignalWatcher := func() {
@@ -128,7 +128,6 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	defer releaseBootSignalWatcher()
 	go watchBootSignal(sigCh, bootSignalDone, cancelBoot, logger)
 
-	// Step 2 — load + validate manifest.
 	m, err := LoadManifest(flags.manifestPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run:", err)
@@ -136,7 +135,6 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	}
 	resolveTemplatePaths(m, flags.manifestPath)
 
-	// Step 3 — discover artifact root (walk-up or --workdir override).
 	cwd, _ := os.Getwd()
 	root, err := DiscoverArtifactRoot(cwd, flags.workdir)
 	if err != nil {
@@ -144,7 +142,6 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return 2
 	}
 
-	// Step 4 — compute per-run dir (timestamp+name, collision-safe).
 	name := flags.name
 	if name == "" {
 		name = m.Project
@@ -156,11 +153,11 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	}
 	logger.Info("run dir", "path", runDir)
 
-	// Step 5 — resolve and spawn --service binaries. Failure here
-	// returns before the role stack starts, so there is nothing yet
-	// to drain on the role-stack side; the spawn helper itself reaps
-	// partial spawns. The bootCtx is threaded so a SIGINT during the
-	// spawn loop bails between iterations and reaps the partial set.
+	// @deliberate: failure here returns before the role stack starts, so
+	// there is nothing yet to drain on the role-stack side; the spawn
+	// helper itself reaps partial spawns. The bootCtx is threaded so a
+	// SIGINT during the spawn loop bails between iterations and reaps
+	// the partial set.
 	services, spawnOverlay, err := spawnServices(bootCtx, flags.services, logger)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: spawn services:", err)
@@ -171,15 +168,15 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return 2
 	}
 
-	// Step 6 — write synthetic rimsky.yml + supervisor.yml under the
-	// per-run dir so the in-process role runners can load
-	// configuration via the same RIMSKY_CONFIG /
-	// RIMSKY_SUPERVISOR_CONFIG seam the deployed binaries use. The
-	// publishers + named_locks blocks fold through from a sibling
-	// rimsky.yml next to the manifest when one exists — the compose
-	// schema doesn't carry these blocks (@decision: services-source),
-	// so a manifest that needs them leans on the sibling file. An
-	// absent sibling is fine; a malformed one is a startup error.
+	// @deliberate: write synthetic rimsky.yml + supervisor.yml under the
+	// per-run dir so the in-process role runners can load configuration
+	// via the same RIMSKY_CONFIG / RIMSKY_SUPERVISOR_CONFIG seam the
+	// deployed binaries use. The publishers + named_locks blocks fold
+	// through from a sibling rimsky.yml next to the manifest when one
+	// exists — the compose schema doesn't carry these blocks
+	// (@decision: services-source), so a manifest that needs them leans
+	// on the sibling file. An absent sibling is fine; a malformed one
+	// is a startup error.
 	siblingPath, err := SiblingRimskyYMLPath(flags.manifestPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: resolve sibling rimsky.yml:", err)
@@ -215,7 +212,7 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return 2
 	}
 
-	// Step 7 — pre-pick the control-api port via the same FreeLocalPort
+	// @deliberate: pre-pick the control-api port via the same FreeLocalPort
 	// helper SpawnService uses, then plumb env vars the role runners
 	// read at startup. Each runner reads RIMSKY_CONFIG etc. on its own
 	// Open path; the launcher pre-loads the config for the up-front
@@ -243,11 +240,10 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	})
 	defer restoreEnv()
 
-	// Step 8 — boot the role stack (migrate → scheduler →
-	// supervisor → control-api). startRoleStackWithBindRetry retries
-	// on a control-api bind-EADDRINUSE (the TOCTOU between FreeLocalPort
-	// returning and the role runner actually binding); see its comment
-	// for the recovery loop.
+	// @deliberate: startRoleStackWithBindRetry retries on a control-api
+	// bind-EADDRINUSE (the TOCTOU between FreeLocalPort returning and
+	// the role runner actually binding); see its comment for the
+	// recovery loop.
 	stack, err := startRoleStackWithBindRetry(bootCtx, logger, runDir, &controlAPIPort, &endpoint)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: start role stack:", err)
@@ -263,16 +259,14 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		Logger:   logger,
 	}
 
-	// Step 9 — wait for control-api ready before submitting work to
-	// the in-process apply engine. A 10s deadline is generous on a
-	// loopback boot but bounds the failure surface so a wedged
-	// runner is not silently hung.
+	// @deliberate: a 10s deadline is generous on a loopback boot but bounds
+	// the failure surface so a wedged runner is not silently hung.
 	if err := WaitForControlAPIReady(bootCtx, stack.Endpoint(), 10*time.Second); err != nil {
 		fmt.Fprintln(os.Stderr, "rimsky compose run: control-api not ready:", err)
 		return coord.Drain(context.Background(), ReasonAnyFailure)
 	}
 
-	// Step 10 — apply the manifest with TerminateAfterRun=true so
+	// @deliberate: apply the manifest with TerminateAfterRun=true so
 	// every CreateInstance opts the instance into self-termination
 	// the terminal-wait loop observes via `terminated_at`.
 	c := cli.NewClient(stack.Endpoint())
@@ -314,29 +308,30 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return coord.Drain(context.Background(), ReasonAnyFailure)
 	}
 
-	// Step 11 — terminal-wait loop with signal + timeout + role-failure
-	// select. The wait runs in a goroutine so the verb's main
-	// thread can multiplex over the four ready conditions.
+	// @deliberate: terminal-wait runs in a goroutine so the verb's main
+	// thread can multiplex over the four ready conditions (signal,
+	// timeout, role-failure, all-instances-terminated).
 	instanceIDs, keyByID := extractInstanceIDs(created)
 	if len(instanceIDs) == 0 {
-		// Manifest converged but had no instances to wait on (no
-		// changes case). Update the latest-symlink for the audit
-		// artifact and drain successfully.
+		// @deliberate: manifest converged but had no instances to wait
+		// on (no-changes case) — refresh the latest-symlink for any
+		// audit-artifact reader and drain successfully without entering
+		// the wait-loop multiplex.
 		if err := UpdateLatestSymlink(root, runDir); err != nil {
 			logger.Warn("compose run: update latest symlink", "err", err.Error())
 		}
 		return coord.Drain(context.Background(), ReasonAllSuccess)
 	}
 
-	// Update latest symlink as soon as the apply lands so an
-	// audit-artifact reader can `cd .rimsky/latest` and follow along
+	// @deliberate: update latest-symlink as soon as the apply lands so
+	// an audit-artifact reader can `cd .rimsky/latest` and follow along
 	// during the run rather than only after it terminates.
 	if err := UpdateLatestSymlink(root, runDir); err != nil {
 		logger.Warn("compose run: update latest symlink", "err", err.Error())
 	}
 
-	// Hand the sigCh from the boot-time goroutine back to the wait-
-	// loop / drain multiplex. releaseBootSignalWatcher closes
+	// @constraint: hand the sigCh from the boot-time goroutine back to
+	// the wait-loop / drain multiplex. releaseBootSignalWatcher closes
 	// bootSignalDone, which wakes the watcher; if a signal raced the
 	// release-close, Go's select may choose either branch, but the
 	// post-release bootCtx.Err() check below catches the signal-fired
@@ -344,10 +339,10 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	// would have taken (cancelWait + waitForOrTimeout + ReasonSignal).
 	releaseBootSignalWatcher()
 	if bootCtx.Err() != nil {
-		// A boot-time signal fired and was consumed by the watcher
-		// (which already cancelled bootCtx). Skip wait-loop setup
-		// entirely; drain with ReasonSignal so the exit code matches
-		// what a signal-in-wait-loop would have produced.
+		// @constraint: a boot-time signal fired and was consumed by the
+		// watcher (which already cancelled bootCtx). Skip wait-loop
+		// setup entirely; drain with ReasonSignal so the exit code
+		// matches what a signal-in-wait-loop would have produced.
 		printer.Finalize()
 		fmt.Fprintf(os.Stderr, "compose run: %s (%d instance%s)\n",
 			reasonString(ReasonSignal), len(instanceIDs), pluralS(len(instanceIDs)))
@@ -375,24 +370,23 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 	escalatorDone := make(chan struct{})
 	defer close(escalatorDone)
 
-	// armEscalator installs the second-signal escalator after the
-	// first non-natural multiplex case fires. Bound to every drain-
-	// triggering case (signal, timeout, role-failure) so a wedged
-	// drain on ANY trigger has the safety valve armed — binding it
-	// to the SIGINT case alone defeats it on the two most likely
-	// wedge surfaces (drain after a role-runner crash, drain after
-	// --timeout expiry). The escalator MUST be installed AFTER the
-	// first signal is consumed by the multiplex select; otherwise the
-	// first signal would race the select and be consumed by the
-	// escalator goroutine, triggering an immediate hard-exit instead
-	// of a cooperative drain.
+	// @constraint: armEscalator installs the second-signal escalator
+	// after the first non-natural multiplex case fires. Bound to every
+	// drain-triggering case (signal, timeout, role-failure) so a wedged
+	// drain on ANY trigger has the safety valve armed — binding it to
+	// the SIGINT case alone defeats it on the two most likely wedge
+	// surfaces (drain after a role-runner crash, drain after --timeout
+	// expiry). The escalator MUST be installed AFTER the first signal
+	// is consumed by the multiplex select; otherwise the first signal
+	// would race the select and be consumed by the escalator goroutine,
+	// triggering an immediate hard-exit instead of a cooperative drain.
 	armEscalator := func() {
 		InstallSecondSignalEscalator(sigCh, escalatorDone, services, logger)
 	}
 
-	// timeoutCh is nil when --timeout is 0 (unbounded). A select
-	// over a nil channel blocks forever, which is exactly the no-
-	// timeout semantic we want without a separate branch.
+	// @constraint: timeoutCh is nil when --timeout is 0 (unbounded). A
+	// select over a nil channel blocks forever, which is exactly the
+	// no-timeout semantic we want without a separate branch.
 	// @constraint: the timer is scoped to the multiplex select below
 	// — stop it immediately after the select resolves so the Timer
 	// is released before the drain begins rather than at function
@@ -435,9 +429,10 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		}
 	}()
 
-	// Surface a final aggregate summary line for the operator. The
-	// quiet printer suppresses every per-event line but Finalize
-	// runs the closing flush; the prose printers also flush here.
+	// @deliberate: surface a final aggregate summary line for the
+	// operator. The quiet printer suppresses every per-event line but
+	// Finalize runs the closing flush; the prose printers also flush
+	// here.
 	printer.Finalize()
 	fmt.Fprintf(os.Stderr, "compose run: %s (%d instance%s)\n",
 		reasonString(reason), len(instanceIDs), pluralS(len(instanceIDs)))
@@ -488,11 +483,11 @@ func bareInstanceName(prefixedKey string) string {
 		return prefixedKey
 	}
 	rest := prefixedKey[len(prefix):]
-	// rest is "<project>:<name>" — split once on the first ':' so a
-	// project name containing only the alphabet-validator characters
-	// cannot accidentally swallow extra segments. A malformed key
-	// without a separator returns rest verbatim, mirroring the prefix-
-	// only fall-through above.
+	// @constraint: rest is "<project>:<name>" — split once on the first
+	// ':' so a project name containing only the alphabet-validator
+	// characters cannot accidentally swallow extra segments. A
+	// malformed key without a separator returns rest verbatim,
+	// mirroring the prefix-only fall-through above.
 	idx := strings.IndexByte(rest, ':')
 	if idx < 0 {
 		return rest
@@ -550,8 +545,8 @@ func spawnServices(
 			return nil, nil, fmt.Errorf("--service %q: service name is empty", raw)
 		}
 		if explicit && path == "" {
-			// `--service foo=` is an empty-path explicit form, not a
-			// bare-name; that is always an error regardless of aliases.
+			// @constraint: `--service foo=` is an empty-path explicit
+			// form, not a bare-name; always an error regardless of aliases.
 			reapSpawnedFatal(spawns, logger)
 			return nil, nil, fmt.Errorf("--service %q: path is empty", raw)
 		}
@@ -652,7 +647,7 @@ func parseComposeRunFlags(args []string) (*composeRunFlags, int) {
 	fs.Var(&flags.services, "service", "late-bound service binding: <name>=<path>. Repeatable.")
 
 	if err := fs.Parse(args); err != nil {
-		// @constraint: flag.ContinueOnError already printed the usage to fs.Output(); just translate to exit code 2.
+		// @constraint: Flag.ContinueOnError already printed the usage to fs.Output(); just translate to exit code 2.
 		return nil, 2
 	}
 	rest := fs.Args()
@@ -785,10 +780,11 @@ func startRoleStackWithBindRetry(ctx context.Context, logger *slog.Logger, runDi
 		if attempt == maxAttempts {
 			break
 		}
-		// Re-pick the control-api port and re-publish RIMSKY_CONTROL_API_PORT
-		// so the in-process control-api runner reads the new value on its
-		// next start. The env var is mutated under the same envMutex held
-		// by snapshotAndSetEnv, so no other verb invocation can race here.
+		// @constraint: re-pick the control-api port and re-publish
+		// RIMSKY_CONTROL_API_PORT so the in-process control-api runner
+		// reads the new value on its next start. The env var is mutated
+		// under the same envMutex held by snapshotAndSetEnv, so no other
+		// verb invocation can race here.
 		newPort, perr := hostagent.FreeLocalPort()
 		if perr != nil {
 			return nil, fmt.Errorf("start role stack: re-pick port after bind failure: %w", perr)
@@ -814,7 +810,6 @@ func isBindInUseErr(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	// Common message variants from the Go net package across platforms.
 	return strings.Contains(msg, "address already in use") ||
 		strings.Contains(msg, "bind: address already in use")
 }

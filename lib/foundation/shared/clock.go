@@ -125,7 +125,6 @@ func (c *ControllableClock) advanceTo(target time.Time) {
 	const maxRounds = 1000
 	for rounds := 0; rounds < maxRounds; rounds++ {
 		c.mu.Lock()
-		// Find earliest pending deadline at or before target.
 		var nextDue *time.Time
 		for _, p := range c.pending {
 			if !p.due.After(target) {
@@ -139,8 +138,6 @@ func (c *ControllableClock) advanceTo(target time.Time) {
 			c.t = target
 			c.mu.Unlock()
 			c.Tick()
-			// If chained code registered a new sleep <= target during those
-			// yields, loop to handle it.
 			c.mu.Lock()
 			hasDue := false
 			for _, p := range c.pending {

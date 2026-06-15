@@ -77,7 +77,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// Mint admin via the anonymous path so we can mint scoped keys and
+	// @deliberate: Mint admin via the anonymous path so we can mint scoped keys and
 	// authoritatively list templates afterward.
 	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
@@ -88,7 +88,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 		t.Fatalf("admin plaintext missing: %+v", body)
 	}
 
-	// Mint a key whose grant scopes template:register to the single tag
+	// @constraint: Mint a key whose grant scopes template:register to the single tag
 	// "analytics" (least-privilege delegation) and otherwise grants reads.
 	// The matcher must honor the scope: register-as-analytics succeeds,
 	// register-as-billing is denied.
@@ -104,7 +104,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 		t.Fatalf("scoped key plaintext missing: %+v", scopedBody)
 	}
 
-	// In-scope: register a template tagged "analytics" with the scoped key.
+	// @constraint: In-scope: register a template tagged "analytics" with the scoped key.
 	// The scope matches, so the write must succeed (201) and persist.
 	code, regResp := f.request(t, "POST", "/v1/templates", scopedKey, map[string]any{
 		"spec": grantScopeSpec(),
@@ -118,12 +118,12 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 		t.Fatalf("in-scope analytics register missing template_id: %+v", regResp)
 	}
 
-	// Admin sees the analytics-tagged template — the in-scope write landed.
+	// @deliberate: Admin sees the analytics-tagged template — the in-scope write landed.
 	if !templateHasTag(t, f, adminKey, "analytics") {
 		t.Fatalf("expected an analytics-tagged template after the in-scope register")
 	}
 
-	// Out-of-scope: register the SAME spec tagged "billing" with the SAME
+	// @constraint: Out-of-scope: register the SAME spec tagged "billing" with the SAME
 	// scoped key. The action matches but the scope ("analytics") does not
 	// cover the "billing" target, so the permission gate must reject it
 	// with HTTP 403 — denied on scope, not action.
@@ -135,7 +135,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 		t.Fatalf("out-of-scope billing register: code=%d resp=%+v (want 403 — scope must deny the out-of-scope tag)", code, denyResp)
 	}
 
-	// The latest auth.access_denied audit row for template:register records
+	// @deliberate: The latest auth.access_denied audit row for template:register records
 	// the scope rejection as denial_reason=permission_denied — the matcher
 	// rejected it at the permission gate, not the action gate.
 	f.flushAudit()
@@ -163,7 +163,7 @@ func TestGrantScope_TemplateTagEnforced(t *testing.T) {
 		t.Fatalf("expected a template:register auth.access_denied row with denial_reason=permission_denied")
 	}
 
-	// Persisted state confirms the out-of-scope resource was never created:
+	// @constraint: Persisted state confirms the out-of-scope resource was never created:
 	// no template (new or existing) carries the "billing" tag. Absent scope
 	// enforcement the same-spec re-register would have upserted billing onto
 	// the existing analytics row, so this scan is what catches the leak.

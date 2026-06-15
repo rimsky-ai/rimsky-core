@@ -2,26 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// node_attributes.go is the postgres accessor for `rimsky_node_attributes`
-// (spec §9.9.1). Under per-run keying (2026-05-20), the table is keyed by
-// node_run_id with a denormalized node_id column for forensic queries. A
-// row is created lazily by the runner's pre-dispatch Upsert and lives until
-// its parent node_run row is deleted (FK ON DELETE CASCADE).
-//
-// `data` is a JSONB column. Upsert replaces it outright; MergeDelta runs a
-// SHALLOW JSONB merge (`data || $1::jsonb`) and requires the row to exist
-// (spec §5.7.2). Every method takes a `tx persistence.Tx` so callers
-// participate in the supervisor's tx when needed.
-//
-// Blob spill (plan §D6/D7): when a configured BlobBackend is non-nil and
-// the marshalled `data` exceeds the spill threshold, the bytes are
-// written through the backend, the returned handle is stored in
-// value_handle + value_handle_backend, and the inline `data` column is
-// reset to '{}'::jsonb. Reads transparently dereference: when
-// value_handle is non-NULL the bytes come from the backend; otherwise
-// the inline `data` is returned. Overwriting a row that previously had
-// a value_handle inserts the old handle into rimsky_blob_orphans for
-// the SweepOrphanedBlobs sweep to delete after the retention window.
 package postgres
 
 import (
@@ -96,22 +76,20 @@ func scanAttributeRow(ctx context.Context, bb persistence.BlobBackend, row pgx.R
 		return nil, fmt.Errorf("node_attributes.%s: %w", op, err)
 	}
 	out.UpdatedAt = when
-	// Spill-read: when value_handle is set and the row's recorded
-	// backend matches the active backend, fetch the bytes from the
-	// backend and unmarshal as the data map. When the recorded backend
-	// differs from the active backend (cross-backend topology mismatch
-	// during migration), fall back to the inline data column — this
-	// preserves continuity for migrated deployments at the cost of
-	// silently downgrading the row's storage; the operator's migration
-	// tooling is responsible for re-spilling such rows.
+	// @deliberate: when the recorded backend differs from the active
+	// backend (cross-backend topology mismatch during migration), fall
+	// back to the inline data column — this preserves continuity for
+	// migrated deployments at the cost of silently downgrading the
+	// row's storage; the operator's migration tooling is responsible
+	// for re-spilling such rows.
 	if handle != nil && *handle != "" && bb != nil && handleBkend != nil && *handleBkend == bb.Name() {
 		bytes, err := bb.Read(ctx, persistence.Handle(*handle))
 		if err != nil {
 			if errors.Is(err, persistence.ErrBlobNotFound) {
-				// The blob is missing — likely a SweepOrphanedBlobs race
-				// or a deployment that lost its filesystem mount. Surface
-				// as an empty data map so the substitution machinery sees
-				// a well-defined absence rather than a partial JSON parse.
+				// @deliberate: missing blob (SweepOrphanedBlobs race or
+				// lost filesystem mount) surfaces as an empty data map
+				// so the substitution machinery sees a well-defined
+				// absence rather than a partial JSON parse.
 				out.Data = map[string]any{}
 				return &out, nil
 			}
@@ -170,7 +148,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
 		h, werr := si.blob.Write(ctx, persistence.BlobKey{
-			NodeID:        runID.String(), // per-run keying
+			NodeID:        runID.String(),
 			AttributeName: "data",
 		}, raw)
 		if werr != nil {
@@ -193,7 +171,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 			runID, nodeID, dataToSave, newHandle, newBackend,
 		)
 	} else {
-		// Inline path: explicitly clear any prior value_handle so a row
+		// @deliberate: explicitly clear any prior value_handle so a row
 		// previously stored as a spill correctly downgrades to inline
 		// when the new value fits.
 		_, err = si.q(tx).Exec(ctx,
@@ -211,11 +189,11 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		return fmt.Errorf("node_attributes.Upsert: %w", err)
 	}
 
-	// Queue the prior handle for orphan reaping when it would otherwise
-	// be lost (i.e. the row previously had a value_handle and we are
-	// either replacing it with a different handle or downgrading to
-	// inline). Same-handle upserts are a no-op (PK conflict on the
-	// orphans row swallows it).
+	// @constraint: queue the prior handle for orphan reaping when it
+	// would otherwise be lost (the row previously had a value_handle
+	// and we are either replacing it with a different handle or
+	// downgrading to inline). Same-handle upserts are a no-op (PK
+	// conflict on the orphans row swallows it).
 	if priorHandle != "" && priorHandle != newHandle {
 		now := time.Now().UTC()
 		if err := persistence.QueueBlobOrphan(ctx, si.BlobOrphans(), tx,
@@ -259,14 +237,11 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, 
 
 	si := (*tablesImpl)(s)
 
-	// Spilled-row path: materialize, merge in Go, re-Upsert (which
-	// re-applies spill, queues orphans).
 	priorHandle, _, err := readPriorBlobHandle(ctx, si.q(tx), runID)
 	if err != nil {
 		return fmt.Errorf("node_attributes.MergeDelta: read prior handle: %w", err)
 	}
 	if priorHandle != "" {
-		// Read existing data (either from backend or inline).
 		prior, err := s.GetByRun(ctx, runID, tx)
 		if err != nil {
 			return fmt.Errorf("node_attributes.MergeDelta: get prior: %w", err)
@@ -284,7 +259,6 @@ func (s *nodeAttributesImpl) MergeDelta(ctx context.Context, runID shared.UUID, 
 		return s.Upsert(ctx, runID, prior.NodeID, merged, tx)
 	}
 
-	// Inline path: SQL-level shallow merge.
 	raw, err := json.Marshal(delta)
 	if err != nil {
 		return fmt.Errorf("node_attributes.MergeDelta: marshal: %w", err)

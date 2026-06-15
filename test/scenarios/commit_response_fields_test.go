@@ -119,7 +119,7 @@ func TestCommitResponseFields_PlainNode_VersionIDPersisted(t *testing.T) {
 		h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 60*time.Second),
 		"plain-commit node must reach its success terminal")
 
-	// The claim-handle row persists past terminal as state='committed'
+	// @deliberate: The claim-handle row persists past terminal as state='committed'
 	// (queried here well inside the retention window, before any
 	// sweep). The base-Commit response's version_id must be on it —
 	// the falsifier is exactly "set by the producer and absent from
@@ -212,7 +212,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 		h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh, 90*time.Second),
 		"parent fan-out node must reach its aggregate success terminal")
 
-	// The parent claim handle — the row SplitScope partitioned,
+	// @deliberate: The parent claim handle — the row SplitScope partitioned,
 	// distinguished from the leaves' own freshly-Open'd claims (which
 	// share holder_node_id) by its expected_children_count > 0 —
 	// resolves to committed once all three children settle; its
@@ -232,7 +232,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 	}, 90*time.Second, 50*time.Millisecond,
 		"the parent claim-handle row must resolve to state='committed' after the children settle")
 
-	// Every sub-claim child resolved committed (the children's commits
+	// @deliberate: Every sub-claim child resolved committed (the children's commits
 	// whose response metadata the writeback must surface).
 	var committedChildren int
 	h.QueryRowSQL(`
@@ -245,7 +245,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 	require.Equal(t, 3, committedChildren,
 		"all three sub-claim children must resolve via Commit")
 
-	// Parent's own base-Commit version_id (engine wiring on the
+	// @deliberate: Parent's own base-Commit version_id (engine wiring on the
 	// aggregate-terminal path).
 	var parentVersionID string
 	h.QueryRowSQL(`
@@ -258,7 +258,7 @@ func TestCommitResponseFields_FanOut_ProducerMetadataInParentWriteback(t *testin
 	require.Equal(t, commitResponseStampedVersion, parentVersionID,
 		"the parent's own base-Commit version_id must be persisted on the parent claim-handle row")
 
-	// The fan-out parent run's writeback row must surface every
+	// @deliberate: The fan-out parent run's writeback row must surface every
 	// committed child's producer_metadata under the partition key.
 	var writebackJSON string
 	h.QueryRowSQL(`

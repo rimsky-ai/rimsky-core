@@ -26,10 +26,9 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Protocol names the proxy stamps on a DispatchFrame at dispatch start.
-// Every protocol the host-agent-proxy fronts has a name here so the agent
-// can route an inbound dispatch to the right child RPC uniformly — the
-// proxy is a transparent forwarder, not a per-protocol special case.
+// @constraint: every protocol the host-agent-proxy fronts has a name here so
+// the agent can route an inbound dispatch to the right child RPC uniformly —
+// the proxy is a transparent forwarder, not a per-protocol special case.
 const (
 	protocolExecutor       = "executor"
 	protocolClaimProducer  = "claim_producer"
@@ -43,8 +42,8 @@ const (
 // terminal CANCEL frame so the proxy can translate them into the supervisor-
 // facing error_class.
 func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame) {
-	// An inbound CANCEL frame is the proxy relaying a supervisor-side
-	// cancellation: cancel the matching in-flight dispatch's child stream.
+	// @constraint: an inbound CANCEL frame is the proxy relaying a supervisor-
+	// side cancellation — cancel the matching in-flight dispatch's child stream.
 	// It is not a fresh dispatch, so there is no child RPC to start here.
 	if df.GetKind() == genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
 		a.cancelDispatch(df.GetStreamId())
@@ -81,8 +80,9 @@ func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv
 		return
 	}
 
-	// Register a per-dispatch cancelable context so an inbound CANCEL frame
-	// for this stream_id tears down the child's inner Execute stream.
+	// @constraint: a per-dispatch cancelable context is required so an inbound
+	// CANCEL frame for this stream_id can tear down the child's inner Execute
+	// stream.
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	a.registerDispatchCancel(df.GetStreamId(), cancel)
 	defer a.clearDispatchCancel(df.GetStreamId())
@@ -96,9 +96,9 @@ func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv
 	for {
 		ev, recvErr := stream.Recv()
 		if recvErr != nil {
-			// EOF or transport error: the inner StreamClose (if any) was
-			// already forwarded below, so an error here means the child
-			// dropped without a terminal. Signal CANCEL.
+			// @constraint: EOF or transport error here means the child dropped
+			// without a terminal — the inner StreamClose (if any) was already
+			// forwarded below, so signal CANCEL upstream.
 			a.sendDispatchCancel(df)
 			return
 		}
@@ -108,10 +108,13 @@ func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv
 			return
 		}
 		if !a.sendDispatchData(df, payload) {
-			return // stream torn down
+			return
 		}
+		// @constraint: after forwarding the inner terminal event the
+		// proxy closes its side of the stream; the agent must return
+		// to release this loop's hold on the dispatch channel.
 		if _, terminal := ev.GetEvent().(*genv1.ExecuteEvent_StreamClose); terminal {
-			return // forwarded the inner terminal; the proxy closes its side.
+			return
 		}
 	}
 }

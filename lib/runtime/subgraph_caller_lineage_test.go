@@ -39,7 +39,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	d := pgtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	// Seed a sub-graph template: main graph has one calling node
+	// @deliberate: Seed a sub-graph template: main graph has one calling node
 	// `outer-caller` delegating to graph `staging`; staging has entry
 	// `validate` (absorbed), interior `transform`, exit `promote`.
 	tmplSpec := node.TemplateSpec{
@@ -50,7 +50,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			{
 				Name: spec.MainGraphName,
 				Nodes: []node.TemplateNodeDef{
-					// delegate + executor are mutually exclusive; caller
+					// @deliberate: delegate + executor are mutually exclusive; caller
 					// has no executor. The runner treats sub-graph
 					// callers as `Executor == ""` and goes through the
 					// native dispatch path until the absorbed entry
@@ -72,7 +72,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			},
 		},
 	}
-	// Canonicalize subscription edges for sub-graph (sets
+	// @deliberate: Canonicalize subscription edges for sub-graph (sets
 	// ResolvesViaCallingNode on the transform→validate edge).
 	if res := node.ValidateTemplate(&tmplSpec, node.RegistryHooks{}); len(res.Errors) != 0 {
 		t.Fatalf("validate template: %v", res.Errors)
@@ -112,7 +112,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			return err
 		}
 		inst = i
-		// Create rimsky_nodes rows for every template node. The caller's
+		// @deliberate: Create rimsky_nodes rows for every template node. The caller's
 		// row is the test's subject (referenced by acquisition); the
 		// staging nodes (validate/transform/promote) must exist in the
 		// table because `applyTerminalCompleteSubgraphCaller` walks
@@ -126,12 +126,12 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 				NodeType: nodeType, Executor: executor,
 			}, tx)
 		}
-		// Caller carries delegate, not executor; the test only asserts
+		// @deliberate: Caller carries delegate, not executor; the test only asserts
 		// on this row's lineage emission.
 		if callerNode, err = mk("outer-caller", ""); err != nil {
 			return err
 		}
-		// Staging nodes — created so the internal-cascade lookup
+		// @deliberate: Staging nodes — created so the internal-cascade lookup
 		// succeeds, then dropped on the floor (no further references).
 		if _, err = mk("validate", "stub"); err != nil {
 			return err
@@ -145,7 +145,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		return nil
 	}))
 
-	// Frame + caller's run row.
+	// @deliberate: Frame + caller's run row.
 	var (
 		frameID     shared.UUID
 		callerRunID shared.UUID
@@ -159,7 +159,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			return err
 		}
 		frameID = fid
-		// Create a root run row for the caller (parent_run_id = nil so
+		// @deliberate: Create a root run row for the caller (parent_run_id = nil so
 		// the lineage row's parent_run_id key drops via omitempty).
 		callerRunID = shared.UUID(uuid.New())
 		if err := backend.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
@@ -167,21 +167,21 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 			NodeID:     callerNode.ID,
 			FrameID:    frameID,
 			RunScopeID: inst.MainRunScopeID,
-			// ExecutorName empty: sub-graph callers carry delegate, not
+			// @deliberate: ExecutorName empty: sub-graph callers carry delegate, not
 			// executor (the two are mutually exclusive at the template
 			// layer).
 			ExecutorName: "",
 		}); err != nil {
 			return err
 		}
-		// Move the run to running so the state-machine self-transition
+		// @deliberate: Move the run to running so the state-machine self-transition
 		// running → running under the subgraph_internal_cascade_fired
 		// reason is legal.
 		return backend.RunTree().UpdateStateAndOutcome(ctx, tx, callerRunID,
 			cascade.NodeStateRunning, nil)
 	}))
 
-	// Build the acquisition matching the caller node. lookupNodeDef
+	// @deliberate: Build the acquisition matching the caller node. lookupNodeDef
 	// walks the canonicalized template (which copies graph-scoped nodes
 	// onto TemplateSpec.Nodes at validation time).
 	nodeDef := lookupNodeDef(&tmplSpec, "outer-caller")
@@ -193,7 +193,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		NodeID:     callerNode.ID,
 		InstanceID: inst.ID,
 		NodeType:   "outer-caller",
-		// Sub-graph callers have no executor (delegate + executor are
+		// @deliberate: Sub-graph callers have no executor (delegate + executor are
 		// mutually exclusive at the template layer); leave empty.
 		Executor:         "",
 		GraphName:        "main",
@@ -214,7 +214,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		SupervisorID: "sup-subgraph-lineage",
 	}
 
-	// Drive the sub-graph caller terminal. The merged map is what the
+	// @deliberate: Drive the sub-graph caller terminal. The merged map is what the
 	// caller would normally pass through to upsertFinalAttributesTx as
 	// the absorbed entry's attribute writeback; an empty map is fine
 	// for the lineage assertion since the row encodes hashed inputs,
@@ -239,7 +239,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		post(ctx)
 	}
 
-	// Inspect the lineage projection for the caller's run.
+	// @deliberate: Inspect the lineage projection for the caller's run.
 	rows, err := backend.Lineage().GetByRunID(ctx, callerRunID)
 	require.NoError(t, err)
 	require.Len(t, rows, 1, "applyTerminalCompleteSubgraphCaller must emit exactly one leaf_run row for the caller's run")
@@ -256,7 +256,7 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		"state must be `running` (parent stays running across the internal cascade)")
 	require.Equal(t, callerRunID, rec.RunID)
 	require.Equal(t, "outer-caller", rec.NodeAlias)
-	// Sub-graph callers have no executor; the lineage row's
+	// @deliberate: Sub-graph callers have no executor; the lineage row's
 	// `executor_name` is the empty string (dropped by omitempty when
 	// the row is re-marshalled).
 	require.Empty(t, rec.ExecutorName)
@@ -264,14 +264,14 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	require.NotEmpty(t, rec.ParamsSnapshotHash, "params snapshot hash must be populated from acq.InstanceParams")
 	require.NotEmpty(t, rec.AttributesHash, "attributes hash must be populated from acq.MergedAttributes")
 	require.Equal(t, tmplHash, rec.TemplateHash, "template_hash must be threaded through from acq.TemplateHash")
-	// Root caller: ParentRunID must be empty + the JSON key dropped.
+	// @deliberate: Root caller: ParentRunID must be empty + the JSON key dropped.
 	require.Empty(t, rec.ParentRunID)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(row.Record, &raw))
 	_, hasParent := raw["parent_run_id"]
 	require.False(t, hasParent, "root caller must omit parent_run_id from the JSON payload")
 
-	// Wait a few microseconds and re-check that no spurious second row
+	// @deliberate: Wait a few microseconds and re-check that no spurious second row
 	// landed (the second `complete` row is emitted later by
 	// applyTerminalComplete; this test only drives the first emission).
 	time.Sleep(10 * time.Millisecond)

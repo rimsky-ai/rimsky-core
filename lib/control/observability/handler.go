@@ -57,7 +57,7 @@ func Routes(r chi.Router, deps Deps) {
 	r.Get("/templates/{hash}", handleGetTemplate(deps))
 	r.Get("/instances", handleListInstances(deps))
 	r.Get("/instances/{id}", handleGetInstance(deps))
-	// (/schedules retired by the 2026-05-15 plan B10 / D7 / E16
+	// @constraint: (/schedules retired by the 2026-05-15 plan B10 / D7 / E16
 	// schedule-retirement cascade; cron firing is owned by
 	// sensors/sensor-cron/.)
 
@@ -128,8 +128,6 @@ func notFound(w http.ResponseWriter, msg string) {
 func internalErr(w http.ResponseWriter, err error) {
 	writeErr(w, http.StatusInternalServerError, "internal", err.Error())
 }
-
-// ---- Topology ----
 
 type peerListResponse struct {
 	Stores    []PeerEntry `json:"stores,omitempty"`
@@ -219,8 +217,6 @@ func peerExists(peers []PeerSpec, name string) bool {
 	}
 	return false
 }
-
-// ---- Templates / instances ----
 
 func handleListTemplates(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -357,8 +353,6 @@ func handleGetInstance(deps Deps) http.HandlerFunc {
 		})
 	}
 }
-
-// ---- Runtime state ----
 
 func handleListFrames(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -555,7 +549,7 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 			badRequest(w, "invalid dispatch id")
 			return
 		}
-		// Direct point-lookup; avoids scanning the live dispatch table.
+		// @constraint: direct point-lookup; avoids scanning the live dispatch table.
 		match, err := deps.Queue.GetByID(r.Context(), id)
 		if err != nil {
 			internalErr(w, err)
@@ -569,9 +563,9 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 		if match.ClaimedBy != nil {
 			state = "claimed"
 		}
-		// Look up matching lock-holder (if any) so the dashboard can
-		// follow the dispatch → claim_id link. Direct (frame_id, node_id)
-		// lookup avoids the full holder-list scan.
+		// @deliberate: direct (frame_id, node_id) lookup of the matching
+		// lock-holder avoids the full holder-list scan; surfaces the
+		// dispatch → claim_id link for the dashboard.
 		var claimID *shared.UUID
 		var instanceID *shared.UUID
 		var nodeType string
@@ -579,7 +573,7 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 			if holder, err := deps.Tables.ClaimHandles().GetByFrameAndNode(ctx, match.NodeID, match.FrameID, tx); err == nil && holder != nil {
 				claimID = &holder.ID
 			}
-			// Also surface instance_id and node_type so the dashboard can
+			// @constraint: also surface instance_id and node_type so the dashboard can
 			// resolve the executor's `dispatch_url_template` substitution
 			// markers ({dispatch_id}, {instance_id}, {node_type}) per
 			// spec §2.2 on the dispatch-detail page.
@@ -606,8 +600,6 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 		})
 	}
 }
-
-// ---- Lock holders ----
 
 func handleListLockHolders(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -692,8 +684,6 @@ func handleGetClaimHandle(deps Deps) http.HandlerFunc {
 	}
 }
 
-// ---- Events ----
-
 func handleListEvents(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pag, err := parsePagination(r)
@@ -751,8 +741,6 @@ func handleListEvents(deps Deps) http.HandlerFunc {
 	}
 }
 
-// ---- System ----
-
 func handleSystemHealth(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var sups []persistence.SupervisorRow
@@ -764,7 +752,7 @@ func handleSystemHealth(deps Deps) http.HandlerFunc {
 			internalErr(w, err)
 			return
 		}
-		// Postgres connectivity probe (spec §1.2.6). Driver may be nil
+		// @constraint: Postgres connectivity probe (spec §1.2.6). Driver may be nil
 		// in some test fixtures — surface as "unknown" in that case.
 		pgStatus := "unknown"
 		if deps.Driver != nil {

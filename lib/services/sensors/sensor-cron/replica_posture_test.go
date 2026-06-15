@@ -56,8 +56,8 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 	registerTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	fireWindow := func() time.Time { return registerTime.Add(6 * time.Minute) }
 
-	// Facet 1 — single replica fires once per window, observed at the
-	// message-POST altitude: exactly one envelope, carrying sender_kind
+	// @constraint: Facet 1 — single replica fires once per window, observed at
+	// the message-POST altitude: exactly one envelope, carrying sender_kind
 	// "publisher".
 	t.Run("single_replica_fires_once_per_window", func(t *testing.T) {
 		var bodies []map[string]any
@@ -97,10 +97,10 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 		}
 	})
 
-	// Facet 2 — two independent replicas sharing one publisher_subscription_id,
-	// each ticked over the same window, together POST exactly two envelopes:
-	// the honest N-times fan-out per concept:replica. No cross-replica
-	// coordination suppresses the second.
+	// @constraint: Facet 2 — two independent replicas sharing one
+	// publisher_subscription_id, each ticked over the same window, together
+	// POST exactly two envelopes: the honest N-times fan-out per
+	// concept:replica. No cross-replica coordination suppresses the second.
 	t.Run("two_replicas_fan_out_twice", func(t *testing.T) {
 		var fireCount int64
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,18 +141,19 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 		}
 	})
 
-	// Facet 3 — no coordination primitive in the package source. assertNo
-	// CoordinationPrimitive walks every non-_test.go file under the sensor-cron
-	// package directory and fails if any names an advisory-lock / leader-election
-	// token, proving the documented single-replica posture is the implemented
-	// one rather than a stale advisory-lock promise.
+	// @constraint: Facet 3 — no coordination primitive in the package source.
+	// assertNoCoordinationPrimitive walks every non-_test.go file under the
+	// sensor-cron package directory and fails if any names an advisory-lock /
+	// leader-election token, proving the documented single-replica posture is
+	// the implemented one rather than a stale advisory-lock promise.
 	t.Run("no_coordination_primitive_in_source", func(t *testing.T) {
 		assertNoCoordinationPrimitive(t)
 	})
 
-	// Package-doc accuracy — the sensor.go package doc must not carry the retired
-	// "in-memory only — a deliberate divergence" advisory-lock-era prose; the
-	// durable contract the operator reads is the single-replica one.
+	// @constraint: Package-doc accuracy — the sensor.go package doc must not
+	// carry the retired "in-memory only — a deliberate divergence"
+	// advisory-lock-era prose; the durable contract the operator reads is the
+	// single-replica one.
 	t.Run("package_doc_omits_retired_divergence_prose", func(t *testing.T) {
 		doc := readPackageSourceFile(t, "sensor.go")
 		if strings.Contains(doc, "deliberate divergence") {
@@ -193,11 +194,11 @@ func readPackageSourceFile(t *testing.T, name string) string {
 // protected: the gate fires on a real coordination primitive in code, never on
 // prose that correctly states one is absent.
 var coordinationPrimitiveTokens = []string{
-	"pg_advisory",  // pg_advisory_lock / pg_advisory_xact_lock / pg_try_advisory_lock, …
-	"advisorylock", // a Go-identifier advisory-lock call, e.g. conn.AdvisoryLock(...)
-	"get_lock",     // the MySQL named-lock function GET_LOCK(...)
-	"leaderelect",  // LeaderElect / leaderElection / NewLeaderElector, …
-	"electleader",  // ElectLeader(...) variants
+	"pg_advisory",
+	"advisorylock",
+	"get_lock",
+	"leaderelect",
+	"electleader",
 }
 
 // assertNoCoordinationPrimitive walks every non-_test.go Go file under the

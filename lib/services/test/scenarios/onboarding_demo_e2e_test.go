@@ -83,9 +83,9 @@ func TestOnboardingDemo_RunReachesTerminal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The verifier-shape-checks executor must be reachable on the shared
-	// network before rimsky/all starts — the control-api fires a
-	// Capabilities handshake against declared executors at startup.
+	// @constraint: the verifier-shape-checks executor must be reachable on
+	// the shared network before rimsky/all starts — the control-api fires
+	// a Capabilities handshake against declared executors at startup.
 	// Network first, then executor peer, then rimsky on the baked SQLite
 	// default. This mirrors the executor-stub bring-up sequence the
 	// sibling scenarios use; the only difference is the real bundled
@@ -100,9 +100,9 @@ func TestOnboardingDemo_RunReachesTerminal(t *testing.T) {
 		harness.WithExecutor("verifier-shape-checks", "verifier-shape-checks:9095"),
 	)
 
-	// Build the in-tree `cmd/rimsky` CLI into a temp binary so the demo
-	// script (which calls `rimsky run` / `rimsky watch`) drives the
-	// current tree's CLI behavior. We build rather than rely on a
+	// @deliberate: build the in-tree `cmd/rimsky` CLI into a temp binary so
+	// the demo script (which calls `rimsky run` / `rimsky watch`) drives
+	// the current tree's CLI behavior. We build rather than rely on a
 	// possibly-stale pre-built bin/rimsky so a defect in the run/watch
 	// verbs surfaces on every test run.
 	binPath := filepath.Join(t.TempDir(), "rimsky")
@@ -111,12 +111,12 @@ func TestOnboardingDemo_RunReachesTerminal(t *testing.T) {
 	demoScript := repoExampleSpecPath(t, "examples/onboarding-demo.sh")
 	templatePath := repoExampleSpecPath(t, "examples/onboarding-template.yaml")
 
-	// First assertion: drive the SHIPPED script through bash exactly as
-	// the operator would. The script reads RIMSKY_BIN + RIMSKY_ENDPOINT
-	// to find the CLI and the stack; everything else (the template path,
-	// the watch loop, the instance_id parsing) is the script's own
-	// behavior — anything the script gets wrong fails the test, which is
-	// exactly the gate this scenario exists to be.
+	// @deliberate: first assertion — drive the SHIPPED script through bash
+	// exactly as the operator would. The script reads RIMSKY_BIN +
+	// RIMSKY_ENDPOINT to find the CLI and the stack; everything else (the
+	// template path, the watch loop, the instance_id parsing) is the
+	// script's own behavior — anything the script gets wrong fails the
+	// test, which is exactly the gate this scenario exists to be.
 	stdout, exitCode := runDemoScript(t, ctx, demoScript, binPath, ep.BaseURL, 180*time.Second)
 	if exitCode != 0 {
 		t.Fatalf("onboarding-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
@@ -127,32 +127,32 @@ func TestOnboardingDemo_RunReachesTerminal(t *testing.T) {
 	}
 	instanceID := match[1]
 
-	// Confirm the instance reached a terminal state through the real
-	// control-api — `rimsky watch` exiting cleanly proves the watch
-	// loop's terminal check fired, but reading the instance row back
-	// pins the property as the supervisor sees it (the watch loop's
+	// @deliberate: confirm the instance reached a terminal state through
+	// the real control-api — `rimsky watch` exiting cleanly proves the
+	// watch loop's terminal check fired, but reading the instance row
+	// back pins the property as the supervisor sees it (the watch loop's
 	// terminal-flag check and the instance row's terminated_at field
 	// share a write path, so this read is the load-bearing proof).
 	requireOnboardingInstanceTerminated(t, ep, instanceID, 60*time.Second)
 
-	// Also confirm the verifier node actually ran via the executor —
-	// without a `work_started` event, the script would have appeared
-	// successful but the executor would never have been dispatched
-	// against. The Falsifier brief names "rimsky run is a stub that
-	// prints a fake ID without driving register + deploy + instantiate"
-	// as a failure mode; the `work_started` requirement is the
-	// observable proof the dispatch happened.
+	// @deliberate: also confirm the verifier node actually ran via the
+	// executor — without a `work_started` event, the script would have
+	// appeared successful but the executor would never have been
+	// dispatched against. The Falsifier brief names "rimsky run is a stub
+	// that prints a fake ID without driving register + deploy +
+	// instantiate" as a failure mode; the `work_started` requirement is
+	// the observable proof the dispatch happened.
 	requireOnboardingNodeDispatched(t, ep, instanceID, "verifier", 60*time.Second)
 
-	// Second assertion: re-run the same script with a NEW instance key
-	// (the script generates one per-invocation) to prove the README's
-	// documented dev-loop invocation is genuinely repeatable. The
-	// spec's Acceptance ends "A second assertion confirms the README's
-	// documented `rimsky run` invocation succeeds as written." — the
-	// script's `rimsky run` line IS the documented invocation, so a
+	// @deliberate: second assertion — re-run the same script with a NEW
+	// instance key (the script generates one per-invocation) to prove the
+	// README's documented dev-loop invocation is genuinely repeatable.
+	// The spec's Acceptance ends "A second assertion confirms the
+	// README's documented `rimsky run` invocation succeeds as written." —
+	// the script's `rimsky run` line IS the documented invocation, so a
 	// fresh run of the same script under the same env is a faithful
-	// re-exhibition. (We do not need to re-build the CLI — the same
-	// temp binary is reused.)
+	// re-exhibition. (We do not need to re-build the CLI — the same temp
+	// binary is reused.)
 	stdout2, exitCode2 := runDemoScript(t, ctx, demoScript, binPath, ep.BaseURL, 180*time.Second)
 	if exitCode2 != 0 {
 		t.Fatalf("onboarding-demo.sh (second run) exited %d (want 0)\nstdout:\n%s", exitCode2, stdout2)
@@ -165,9 +165,9 @@ func TestOnboardingDemo_RunReachesTerminal(t *testing.T) {
 		t.Fatalf("second run produced the same instance_id %q — the script's per-run instance_key did not actually disambiguate", instanceID)
 	}
 
-	// Sanity: confirm the template path the script points at exists on
-	// disk. A missing template would have already failed the script
-	// run; this is belt-and-suspenders for the Falsifier ("shipped
+	// @deliberate: sanity-check the template path the script points at
+	// exists on disk. A missing template would have already failed the
+	// script run; this is belt-and-suspenders for the Falsifier ("shipped
 	// example isn't a real runnable templatespec").
 	if _, err := os.Stat(templatePath); err != nil {
 		t.Fatalf("shipped template %s missing on disk: %v — the README's first-steps walkthrough is broken", templatePath, err)
@@ -183,9 +183,10 @@ func runDemoScript(t *testing.T, ctx context.Context, scriptPath, binPath, baseU
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "/bin/bash", scriptPath)
-	// The script reads RIMSKY_BIN and RIMSKY_ENDPOINT from env; pass an
-	// otherwise-clean environment so an ambient $RIMSKY_API_KEY or
-	// pre-existing context file in $HOME cannot steer the run.
+	// @constraint: the script reads RIMSKY_BIN and RIMSKY_ENDPOINT from
+	// env; pass an otherwise-clean environment so an ambient
+	// $RIMSKY_API_KEY or pre-existing context file in $HOME cannot steer
+	// the run.
 	cmd.Env = append(os.Environ(),
 		"RIMSKY_BIN="+binPath,
 		"RIMSKY_ENDPOINT="+baseURL,
@@ -193,11 +194,11 @@ func runDemoScript(t *testing.T, ctx context.Context, scriptPath, binPath, baseU
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
-	// On context cancel, exec.CommandContext sends SIGKILL to bash but
-	// does NOT close the inherited stdout/stderr pipes — a grandchild
-	// (e.g. `rimsky watch` mid-poll) keeping the pipe open would block
-	// cmd.Run forever past the context deadline, escalating to the
-	// package's 10m test-timeout panic instead of this test's own
+	// @constraint: on context cancel, exec.CommandContext sends SIGKILL to
+	// bash but does NOT close the inherited stdout/stderr pipes — a
+	// grandchild (e.g. `rimsky watch` mid-poll) keeping the pipe open
+	// would block cmd.Run forever past the context deadline, escalating
+	// to the package's 10m test-timeout panic instead of this test's own
 	// failure. WaitDelay tells Run to force-close the pipes WaitDelay
 	// after the kill signal, surfacing the timeout here as a normal
 	// non-zero exit so the test's outer failure mode (script took too
@@ -273,10 +274,10 @@ func requireOnboardingInstanceTerminated(t *testing.T, ep harness.RimskyEndpoint
 			}
 			lastBody = string(raw)
 			if err := json.Unmarshal(raw, &resp); err == nil {
-				// The control-api returns the instance either flat or
-				// nested under `instance:`; tolerate both shapes so the
-				// gate doesn't break on an unrelated response-shape
-				// refactor — the load-bearing assertion is
+				// @deliberate: the control-api returns the instance either
+				// flat or nested under `instance:`; tolerate both shapes
+				// so the gate doesn't break on an unrelated
+				// response-shape refactor — the load-bearing assertion is
 				// `terminated_at != null`, not a particular envelope.
 				if resp.TerminatedAt != nil && *resp.TerminatedAt != "" {
 					return

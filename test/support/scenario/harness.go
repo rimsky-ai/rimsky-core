@@ -186,7 +186,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	staticResolver := executor.NewStaticResolver(executors)
 	var resolver executor.Resolver = staticResolver
 	if len(opts.LateBindServiceProxies) > 0 {
-		// Wrap the static resolver so late-bound executor names (absent
+		// @deliberate: Wrap the static resolver so late-bound executor names (absent
 		// from the static map but present in an instance's service_bindings)
 		// route through the configured proxy. The lookup reads the bindings
 		// JSONB straight off the instance row.
@@ -237,7 +237,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			OrphanedClaimTimeout: 5 * heartbeatTimeout,
 			Stores:               opts.Stores,
 			NamedLocks:           opts.NamedLocks,
-			// Required for SweepParkedNodes (E3) so parked-rows can be
+			// @deliberate: Required for SweepParkedNodes (E3) so parked-rows can be
 			// resumed under the scheduler's own supervisor id.
 			SupervisorID: "scenario-scheduler",
 		})
@@ -252,7 +252,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		h.Scheduler = sh
 	}
 
-	// Scenario tests assume the stub executor (and any extras the test
+	// @deliberate: Scenario tests assume the stub executor (and any extras the test
 	// declares) is reachable by dispatch time. The runtime fails dispatch
 	// with `executor_schema_unavailable` when the resolver returns
 	// ok=false for an executor referenced by a node — a deliberate hard
@@ -270,7 +270,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		return []byte(`{"type":"object"}`), true
 	}
 
-	// Build the executors config (shared by supervisor + control-api). The
+	// @deliberate: Build the executors config (shared by supervisor + control-api). The
 	// per-executor protocols list defaults to ["executor"]; ExecutorProtocols
 	// overrides it (e.g. to mark the host-agent-proxy as a
 	// lifecycle_subscriber so it's dialed for OnInstanceCreated /
@@ -289,7 +289,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		}
 	}
 
-	// Late-bind-aware lifecycle peer set: adds the proxy peer for templates
+	// @deliberate: Late-bind-aware lifecycle peer set: adds the proxy peer for templates
 	// declaring late_bind_services. Shared by supervisor (OnRunScopeTerminal)
 	// and control-api (OnInstanceCreated). Inert when no proxy is configured.
 	var peersForSpec func(node.TemplateSpec) []string
@@ -304,7 +304,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 	}
 
 	if !opts.NoSupervisor {
-		// Diagnostic: surface supervisor logs when SCENARIO_DEBUG=1 is set
+		// @deliberate: Diagnostic: surface supervisor logs when SCENARIO_DEBUG=1 is set
 		// so a failing scenario can investigate why a row isn't claimed.
 		var supLogger shared.Logger = shared.SilentLogger{}
 		if os.Getenv("SCENARIO_DEBUG") != "" {
@@ -349,7 +349,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		NamedLocks:             opts.NamedLocks,
 		Executors:              executorsCfg,
 		LateBindServiceProxies: opts.LateBindServiceProxies,
-		// Operator-set registration-time reference-validation mode
+		// @deliberate: Operator-set registration-time reference-validation mode
 		// (all / available / none). Zero value = node.RefValidateAll
 		// (strict default), so unset opts keep today's strict behavior.
 		RefValidationMode: opts.RefValidationMode,
@@ -410,7 +410,7 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 	if out.TemplateID == "" {
 		h.T.Fatalf("DeployTemplate: empty template_id")
 	}
-	// Stash the registration response's validation_warnings messages so
+	// @deliberate: Stash the registration response's validation_warnings messages so
 	// tests can assert on (the absence of) advisory findings — e.g. the
 	// producer-class routing proof asserts no warning names a
 	// producer-declared class, which is the falsifiable half of
@@ -420,7 +420,7 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 	for _, w := range out.ValidationWarnings {
 		h.LastDeployWarnings = append(h.LastDeployWarnings, w.Message+" "+w.Path)
 	}
-	// Transition register → deployed so /instances will accept the id.
+	// @deliberate: Transition register → deployed so /instances will accept the id.
 	deployURL := h.ControlBase + "/v1/templates/" + out.TemplateID + "/deploy"
 	deployResp, err := http.Post(deployURL, "application/json", bytesReader([]byte("{}")))
 	if err != nil {
@@ -705,7 +705,7 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState, 
 			n = r
 			return err
 		}); err != nil && h.T != nil {
-			// Test poller: log via the test logger so a transient row-load
+			// @deliberate: Test poller: log via the test logger so a transient row-load
 			// failure surfaces in test output but does not abort the poll.
 			h.T.Logf("WaitForNodeState: load node %s failed; retrying next poll: %v", nodeID.String(), err)
 		}
@@ -721,7 +721,7 @@ func (h *Harness) WaitForNodeState(nodeID shared.UUID, state cascade.NodeState, 
 
 func (h *Harness) hasRunEvent(nodeID shared.UUID) bool {
 	var count int
-	// Pass 5 retired the fixed-string audit kinds; the canonical
+	// @constraint: Pass 5 retired the fixed-string audit kinds; the canonical
 	// signal-shaped audit row for a settled-fresh terminal is
 	// `terminal/success` per concept:signal. Pure-cascade transitions
 	// also emit `terminal/success` (see graph/scheduler/pure_cascade.go).
@@ -1013,7 +1013,7 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 		}
 		nd["error_types"] = ets
 	}
-	// Lifecycle-handler slots (on_acquire_unavailable,
+	// @deliberate: Lifecycle-handler slots (on_acquire_unavailable,
 	// on_executor_complete, on_executor_errored) retired 2026-05-23
 	// per .ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-
 	// decoupling-design.md. Their behaviors fold into error_types:
@@ -1079,7 +1079,7 @@ func storeRefToJSON(s node.NodeStoreRef) map[string]any {
 	if s.Alias != "" {
 		item["alias"] = s.Alias
 	}
-	// Carry through the `lifetime:` discriminator ("subgraph" default |
+	// @constraint: Carry through the `lifetime:` discriminator ("subgraph" default |
 	// "durable" asset pattern). Without this, scenario templates that
 	// declare durable claims would silently serialize as the default,
 	// dropping the asset-pattern construction at template registration.

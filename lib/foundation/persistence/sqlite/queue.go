@@ -2,6 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @source: lib/foundation/persistence/postgres/queue.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
+
 // queue.go is the SQLite implementation of persistence.Queue. Mirrors
 // foundation/persistence/postgres/queue.go method-for-method with SQLite
 // dialect translations per spec §6.3.
@@ -51,13 +55,13 @@ func (q *queueImpl) q(tx persistence.Tx) querier {
 }
 
 func (q *queueImpl) Enqueue(ctx context.Context, req persistence.DispatchRequest) error {
-	// Multi-process atomicity: EnqueueInTx is a guarded INSERT followed
-	// by a zero-rows re-resolution SELECT. Without a transaction another
-	// process sharing the database file could close the run scope between
-	// the two statements and the re-resolution would misclassify "row
-	// already in-flight" as ErrRunScopeClosed. The internal immediate-mode
-	// transaction (the DSN's _txlock=immediate makes BEGIN hold the
-	// writer slot) keeps the pair atomic across processes.
+	// @constraint: EnqueueInTx is a guarded INSERT followed by a zero-rows
+	// re-resolution SELECT. Without a transaction another process sharing
+	// the database file could close the run scope between the two
+	// statements and the re-resolution would misclassify "row already
+	// in-flight" as ErrRunScopeClosed. The internal immediate-mode
+	// transaction (the DSN's _txlock=immediate makes BEGIN hold the writer
+	// slot) keeps the pair atomic across processes.
 	return q.inTx(ctx, func(tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, req, tx)
 	})
@@ -120,8 +124,8 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if req.RunScopeID == (shared.UUID{}) {
 		return fmt.Errorf("sqlite.Enqueue: run_scope_id required for node %s", req.NodeID)
 	}
-	// Recovery-aware fields: prior_dispatch_id / prior_dispatch_disposition
-	// carry the predecessor dispatch identity for retries / heartbeat-stale
+	// @constraint: prior_dispatch_id / prior_dispatch_disposition carry
+	// the predecessor dispatch identity for retries / heartbeat-stale
 	// recovery / recalculates. Both NULL for initial dispatches. Per spec
 	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
 	// §Recovery-aware executor protocol.
@@ -130,9 +134,9 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		priorDispatchID = req.PriorDispatchID.String()
 	}
 	priorDisposition := nullableString(req.PriorDispatchDisposition)
-	// Single-branch guard keyed on (node_id, run_scope_id) — unambiguous
-	// per uq_node_runs_in_flight_per_run_scope. The rimsky_run_scopes
-	// SELECT enforces closed_at IS NULL at INSERT time.
+	// @constraint: single-branch guard keyed on (node_id, run_scope_id)
+	// is unambiguous per uq_node_runs_in_flight_per_run_scope. The
+	// rimsky_run_scopes SELECT enforces closed_at IS NULL at INSERT time.
 	res, err := q.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition)
 		 SELECT ?, ?, ?, ?, ?, 'pending', ?, rs.id, ?, ?
@@ -162,9 +166,9 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if affected > 0 {
 		return nil
 	}
-	// Zero rows: (a) in-flight row already exists (silent success),
-	// (b) scope closed (return ErrRunScopeClosed), or (c) scope absent
-	// (error). Re-resolve via a separate SELECT.
+	// @constraint: zero rows means (a) in-flight row already exists
+	// (silent success), (b) scope closed (return ErrRunScopeClosed),
+	// or (c) scope absent (error). Re-resolve via a separate SELECT.
 	var closedAt sql.NullString
 	err = q.q(tx).QueryRowContext(ctx,
 		`SELECT closed_at FROM rimsky_run_scopes WHERE id = ?`,
@@ -179,8 +183,8 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	if closedAt.Valid {
 		return persistence.ErrRunScopeClosed
 	}
-	// Scope is open: zero rows means an in-flight row already exists;
-	// silent success per the existing no-op contract.
+	// @constraint: scope open + zero rows means an in-flight row already
+	// exists; silent success per the existing no-op contract.
 	return nil
 }
 
@@ -209,18 +213,18 @@ func (q *queueImpl) SelectCandidates(
 		acceptedExecutors = []string{}
 	}
 
-	// SQLite: filter required_stores ⊆ acceptedStores in app code by
-	// scanning then post-filtering. We push the executor and now filters
-	// into SQL where straightforward, but executor `IN (...)` and
+	// @constraint: filter required_stores ⊆ acceptedStores in app code
+	// by scanning then post-filtering. The executor and now filters are
+	// pushed into SQL where straightforward, but executor IN(...) and
 	// required_stores subset are easier in Go.
-	// SELECT predicates: claimed_by IS NULL is the legacy unclaimed-row
-	// gate; phase='pending' filters out parked rows (which also have
-	// claimed_by=NULL but must transition through wakeParkedNode rather
-	// than being directly claimed). Per the 2026-05-08 platform-extensions
-	// plan E2/E3.
-	// Join rimsky_instances via rimsky_nodes (rimsky_node_runs has no
-	// instance_id of its own) and filter out paused instances. Per
-	// concept:breakpoint §5.2 soft-pause semantics.
+	// @constraint: SELECT predicates — claimed_by IS NULL is the legacy
+	// unclaimed-row gate; phase='pending' filters out parked rows (which
+	// also have claimed_by=NULL but must transition through
+	// wakeParkedNode rather than being directly claimed). Per the
+	// 2026-05-08 platform-extensions plan E2/E3.
+	// @constraint: join rimsky_instances via rimsky_nodes
+	// (rimsky_node_runs has no instance_id of its own) and filter out
+	// paused instances. Per concept:breakpoint §5.2 soft-pause semantics.
 	rows, err := q.q(tx).QueryContext(ctx,
 		`SELECT d.id, d.node_id, n.node_type, d.executor_name, d.required_stores, d.enqueued_at, d.frame_id,
 		        d.prior_dispatch_id, d.prior_dispatch_disposition
@@ -244,9 +248,10 @@ func (q *queueImpl) SelectCandidates(
 	}
 	defer rows.Close()
 
-	// Post-stage-3 cutover: native-only rows (executor == "") need a
-	// non-empty required_stores to be dispatch-eligible; pure-cascade
-	// rows (no executor, no stores) are state-only and excluded.
+	// @constraint: post-stage-3 cutover — native-only rows
+	// (executor == "") need a non-empty required_stores to be
+	// dispatch-eligible; pure-cascade rows (no executor, no stores) are
+	// state-only and excluded.
 	executorAccepted := func(executor string, required []string) bool {
 		if executor == "" {
 			return len(required) > 0
@@ -259,7 +264,6 @@ func (q *queueImpl) SelectCandidates(
 		return false
 	}
 	storeAccepted := func(required []string) bool {
-		// required ⊆ acceptedStores
 		for _, r := range required {
 			found := false
 			for _, a := range acceptedStores {
@@ -328,9 +332,9 @@ func (q *queueImpl) SelectCandidates(
 		if c.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
 			return nil, err
 		}
-		// Keyset cursor (mirrors the postgres driver's $6/$7 predicate,
-		// applied in Go here because enqueued_at round-trips through a
-		// string column): only rows strictly after the
+		// @constraint: keyset cursor mirrors the postgres driver's $6/$7
+		// predicate, applied in Go here because enqueued_at round-trips
+		// through a string column. Only rows strictly after the
 		// (enqueued_at, id) cursor pair survive, so the runner can page
 		// past a head-of-line batch whose candidates were all skipped
 		// (e.g. the upstream in-flight gate). Zero cursor = no filter.
@@ -637,9 +641,9 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		args = append(args, formatTime(oc), id.String())
 	}
 	args = append(args, limit)
-	// Post-stage-1 lifecycle flip: terminal rows survive past active
-	// terminal; the "live" observability surface filters to in-flight
-	// phases so the listing keeps its prior shape.
+	// @constraint: post-stage-1 lifecycle flip — terminal rows survive
+	// past active terminal; the "live" observability surface filters to
+	// in-flight phases so the listing keeps its prior shape.
 	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
 	        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
 	   FROM rimsky_node_runs d

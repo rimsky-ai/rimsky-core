@@ -62,10 +62,10 @@ const anonRoutingIdentity = "anonymous"
 // one scenario.
 type hostAgentFixture struct {
 	h           *scenario.Harness
-	proxyAddr   string // host:port the supervisor dials as the executor endpoint
+	proxyAddr   string // @deliberate: host:port the supervisor dials as the executor endpoint
 	stubBinary  string
-	adminKey    string // plaintext bearer for authenticated control-api calls
-	ownerKeyID  string // the created_by_api_key_id the agent registers under
+	adminKey    string // @deliberate: plaintext bearer for authenticated control-api calls
+	ownerKeyID  string // @deliberate: the created_by_api_key_id the agent registers under
 	cancelAgent context.CancelFunc
 	agentDone   chan struct{}
 }
@@ -181,14 +181,14 @@ type fixtureOpts struct {
 func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 	t.Helper()
 
-	// proxyAddr is allocated up-front so the static resolver can point at it
+	// @deliberate: proxyAddr is allocated up-front so the static resolver can point at it
 	// before the proxy process is actually listening (gRPC dials lazily).
 	proxyPort := freePort(t)
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
 
 	execProtocols := []string{"executor", "lifecycle_subscriber"}
 	if opts.blindProxy {
-		// No lifecycle subscription → the proxy never sees OnInstanceCreated.
+		// @constraint: No lifecycle subscription → the proxy never sees OnInstanceCreated.
 		execProtocols = []string{"executor"}
 	}
 	h := scenario.Start(t, scenario.HarnessOpts{
@@ -200,7 +200,7 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		Stores:                 opts.stores,
 	})
 
-	// Mint the owner key (also flips the deployment to authenticated mode).
+	// @deliberate: Mint the owner key (also flips the deployment to authenticated mode).
 	// In anonymous mode we must NOT mint — MintAdminKey creates the first
 	// active key and flips the deployment out of anonymous mode, defeating the
 	// scenario. The admin/owner key stay empty: templates + instances are then
@@ -214,7 +214,7 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 		agentRoutingKey = ownerKeyID
 	}
 
-	// Start the proxy. A blind proxy gets no control-api URL so its
+	// @deliberate: Start the proxy. A blind proxy gets no control-api URL so its
 	// GET-fallback can't populate the cache either. In anonymous mode the
 	// control-api needs no bearer (synthetic admin identity), so the token is
 	// empty but the URL is still wired so the GET-fallback can read the
@@ -236,7 +236,6 @@ func newHostAgentFixture(t *testing.T, opts fixtureOpts) *hostAgentFixture {
 	}
 	if opts.withAgent {
 		fx.cancelAgent, fx.agentDone = startAgent(t, proxyAddr, agentRoutingKey)
-		// Give the agent a moment to register with the proxy.
 		time.Sleep(300 * time.Millisecond)
 	}
 	return fx

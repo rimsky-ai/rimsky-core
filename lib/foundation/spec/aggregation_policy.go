@@ -26,18 +26,17 @@ type AggregationPolicy struct {
 	MaxFailures int `yaml:"max_failures,omitempty" json:"max_failures,omitempty"`
 }
 
-// AggregationPolicy.Kind constants.
 const (
 	AggregationKindStrict     = "strict"
 	AggregationKindThreshold  = "threshold"
 	AggregationKindBestEffort = "best_effort"
 	AggregationKindFirst      = "first"
-	// AggregationKindCarryVerbatim is the delegation (sub-graph)
-	// settlement shape: the single settlement child's outcome is copied
-	// verbatim to the parent. Carry-verbatim requires exactly one child
-	// by construction — enforced at template canonicalization
-	// (rejection class carry_verbatim_requires_single_child), so it is
-	// never legal on `fan_out:` (which declares N children).
+	// @deliberate: carry-verbatim is the delegation (sub-graph) settlement
+	// shape: the single settlement child's outcome is copied verbatim to
+	// the parent. Carry-verbatim requires exactly one child by
+	// construction — enforced at template canonicalization (rejection
+	// class carry_verbatim_requires_single_child), so it is never legal
+	// on `fan_out:` (which declares N children).
 	AggregationKindCarryVerbatim = "carry_verbatim"
 )
 

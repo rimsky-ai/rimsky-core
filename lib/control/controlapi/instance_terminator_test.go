@@ -66,7 +66,7 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 	t.Helper()
 	ctx := context.Background()
 
-	// Use a unique hash per call so parallel tests don't collide on the
+	// @constraint: use a unique hash per call so parallel tests don't collide on the
 	// rimsky_templates PK.
 	templateHash = "sha256-" + repeatHex("a", 32) + uuid.NewString()[:32]
 	spec := node.TemplateSpec{
@@ -111,7 +111,7 @@ func seedTerminatedInstance(t *testing.T, f *terminatorFixture, storeName string
 	}))
 
 	if !withTemplate {
-		// Drop the FK constraint so we can null/replace the binding,
+		// @constraint: drop the FK constraint so we can null/replace the binding,
 		// then delete the template row to simulate a force-deleted
 		// template.
 		pgtest.ExecForTest(ctx, t, f.driver,
@@ -131,10 +131,10 @@ func TestInstanceTerminator_RowFoundRPCSucceedsRowDeleted(t *testing.T) {
 
 	hash, inst := seedTerminatedInstance(t, f, "alpha", true)
 
-	term := NewInstanceTerminator(f.deps, time.Hour) // poll long; we drive tick directly.
+	term := NewInstanceTerminator(f.deps, time.Hour) // @deliberate: poll long — we drive tick directly.
 	term.tick(context.Background())
 
-	// The terminator closes the main run-scope and fires
+	// @constraint: the terminator closes the main run-scope and fires
 	// OnRunScopeTerminal before OnInstanceTerminated, so the happy path
 	// records both lifecycle calls against the store.
 	calls := f.alpha.Calls()
@@ -234,7 +234,7 @@ func TestInstanceTerminator_RunExitsOnContextCancel(t *testing.T) {
 		defer wg.Done()
 		term.Run(ctx)
 	}()
-	// Give the goroutine a chance to enter its loop, then cancel.
+	// @constraint: give the goroutine a chance to enter its loop, then cancel.
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 
@@ -257,13 +257,13 @@ func TestInstanceTerminator_StopBoundedByBudget(t *testing.T) {
 	t.Parallel()
 	f := newTerminatorFixture(t)
 
-	// Started=false → Stop is a no-op fast path.
+	// @constraint: started=false → Stop is a no-op fast path.
 	term := NewInstanceTerminator(f.deps, time.Hour)
 	start := time.Now()
 	term.Stop()
 	require.Less(t, time.Since(start), 100*time.Millisecond)
 
-	// Started=true, goroutine drains cleanly via context-cancel.
+	// @constraint: started=true, goroutine drains cleanly via context-cancel.
 	term2 := NewInstanceTerminator(f.deps, 10*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	go term2.Run(ctx)

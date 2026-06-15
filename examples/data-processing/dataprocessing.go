@@ -57,7 +57,7 @@ type DataProcessing struct {
 
 	mu         sync.Mutex
 	candidates map[string]*candidate
-	versions   map[string][]*versionRecord // claim_handle_id → versions in commit order
+	versions   map[string][]*versionRecord
 
 	// versionSeq is incremented monotonically to mint a unique
 	// version_id per Commit. A real producer would generate something
@@ -144,13 +144,15 @@ func (d *DataProcessing) BeginCandidate(_ context.Context, req *genv1.BeginCandi
 		return &genv1.BeginCandidateResponse{CandidateHandle: existing.handle}, nil
 	}
 
-	// The handle is opaque to rimsky; this example derives it from the claim
-	// handle + idempotency key so it is stable and human-legible in logs.
+	// @deliberate: the handle is opaque to rimsky; this example derives
+	// it from the claim handle + idempotency key so it is stable and
+	// human-legible in logs.
 	handle := []byte(fmt.Sprintf("candidate:%s:%s", req.GetClaimHandleId(), key))
 	d.candidates[key] = &candidate{
 		handle:        handle,
 		claimHandleID: req.GetClaimHandleId(),
-		// Copy the sub-scope so callers may reuse their request buffer.
+		// @constraint: copy the sub-scope so callers may reuse their
+		// request buffer without retroactively mutating our stored state.
 		subScope: append([]byte(nil), req.GetSubScopeDescriptor()...),
 	}
 	return &genv1.BeginCandidateResponse{CandidateHandle: handle}, nil
@@ -183,16 +185,16 @@ func (d *DataProcessing) CommitCandidate(_ context.Context, req *genv1.CommitCan
 
 	versionID := fmt.Sprintf("v%d", d.versionSeq.Add(1))
 	metadata := []byte(fmt.Sprintf(`{"shape":"parquet","status":"committed","version_id":%q}`, versionID))
-	// The example surfaces one partition per committed candidate, keyed by
-	// the sub-scope the leaf received from rimsky. A real producer
-	// materializing N partitions per Commit would surface N descriptors
-	// here; the shape of the list is the same.
+	// @deliberate: the example surfaces one partition per committed
+	// candidate, keyed by the sub-scope the leaf received from rimsky. A
+	// real producer materializing N partitions per Commit would surface
+	// N descriptors here; the shape of the list is the same.
 	partition := &genv1.PartitionDescriptor{
 		PartitionKey:      string(cand.subScope),
 		PartitionMetadata: []byte(fmt.Sprintf(`{"sub_scope":%q}`, string(cand.subScope))),
 	}
-	// An illustrative JSON schema describing the row layout the parquet
-	// candidate wrote. Opaque to rimsky.
+	// @deliberate: an illustrative JSON schema describing the row layout
+	// the parquet candidate wrote. Opaque to rimsky.
 	schema := []byte(`{"type":"object","properties":{"ts":{"type":"string","format":"date-time"},"value":{"type":"number"}}}`)
 	rec := &versionRecord{
 		versionID:   versionID,

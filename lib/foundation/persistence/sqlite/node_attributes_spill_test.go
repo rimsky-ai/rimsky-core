@@ -38,7 +38,8 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	rawDB := sqlitedrv.DBFromDatabase(d)
 
 	mem := persistence.NewMemoryBackend()
-	d.SetBlobBackend(mem, 256, time.Hour) // spill above 256 bytes
+	// @constraint: spill threshold is 256 bytes; small payloads below stay inline, large above spill.
+	d.SetBlobBackend(mem, 256, time.Hour)
 
 	store := d.Tables()
 	attrs := store.NodeAttributes()
@@ -46,7 +47,6 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 
 	nodeID, runID := seedFixtureNodeAndRun(t, rawDB)
 
-	// Small payload — should go inline (≤ 256 bytes after marshal).
 	small := map[string]any{"k": "v"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return attrs.Upsert(ctx, runID, nodeID, small, tx)
@@ -60,7 +60,6 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 		t.Fatalf("Get small: got %v, want k=v", got)
 	}
 
-	// Large payload — should spill.
 	bigVal := strings.Repeat("x", 500)
 	large := map[string]any{"big": bigVal, "tag": "first"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -70,7 +69,6 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 	}
 	firstHandle := verifySpill(t, rawDB, runID, mem.Name())
 
-	// Read returns the materialized data via the backend.
 	got = readData(t, store, runID)
 	if got["big"] != bigVal {
 		t.Fatalf("Get large: big mismatch")
@@ -79,7 +77,6 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 		t.Fatalf("Get large: tag=%v, want first", got["tag"])
 	}
 
-	// Overwrite the spilled row with another large payload.
 	large2 := map[string]any{"big": bigVal, "tag": "second"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return attrs.Upsert(ctx, runID, nodeID, large2, tx)
@@ -91,7 +88,7 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 		t.Fatalf("expected new handle on overwrite; both = %q", firstHandle)
 	}
 
-	// The first handle should now be queued as an orphan.
+	// @constraint: overwriting a spilled row enqueues the prior handle into rimsky_blob_orphans.
 	orphRows, err := orphans.DueBefore(ctx, time.Now().Add(48*time.Hour), 100)
 	if err != nil {
 		t.Fatalf("orphans.DueBefore: %v", err)
@@ -109,8 +106,7 @@ func TestNodeAttributesSpillRoundtrip(t *testing.T) {
 		t.Fatalf("first handle %q not found in orphans (got %d rows)", firstHandle, len(orphRows))
 	}
 
-	// Downgrade: replace with a small payload. value_handle should clear,
-	// secondHandle should queue as orphan.
+	// @constraint: downgrading a spilled row to inline clears value_handle and queues the prior handle as an orphan.
 	tiny := map[string]any{"k": "v"}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return attrs.Upsert(ctx, runID, nodeID, tiny, tx)
@@ -159,7 +155,6 @@ func TestNodeAttributesMergeDeltaSpill(t *testing.T) {
 	}
 	_ = verifySpill(t, rawDB, runID, mem.Name())
 
-	// Merge a delta in. The result is still big → still spilled.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return attrs.MergeDelta(ctx, runID, map[string]any{"phase": "b"}, tx)
 	}); err != nil {
@@ -216,9 +211,7 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	if err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// Post-RunScope-first: instance + run_scope mutually FK each other
-	// (DEFERRABLE INITIALLY DEFERRED). Seed in one tx; rimsky_node_runs
-	// also requires a run_scope_id below.
+	// @constraint: rimsky_instances and rimsky_run_scopes mutually FK each other (DEFERRABLE INITIALLY DEFERRED) so both must be seeded in the same transaction; rimsky_node_runs also requires a run_scope_id below.
 	scopeID := uuid.New().String()
 	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -247,7 +240,7 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	if err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	// Seed a running frame so rimsky_node_runs.frame_id FK is satisfied.
+	// @constraint: rimsky_node_runs.frame_id FK requires a frame row; seed a running frame so the run insert below succeeds.
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
@@ -259,8 +252,7 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	if err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
-	// Seed a pending run row so rimsky_node_attributes.node_run_id FK is
-	// satisfied.
+	// @constraint: rimsky_node_attributes.node_run_id FK requires a node-run row; seed a pending run so per-run-keyed attribute writes succeed.
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)

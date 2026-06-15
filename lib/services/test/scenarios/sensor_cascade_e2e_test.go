@@ -68,8 +68,7 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// 1. Host-side watched source. The body is mutable under a mutex so
-	//    the test can fire the "real external change" by swapping it.
+	// @deliberate: mutable body under mutex — the test fires the "real external change" by swapping it.
 	var (
 		bodyMu sync.RWMutex
 		body   = `{"state":"initial"}`
@@ -85,17 +84,14 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 
 	hostPort := hostPortOf(t, upstream.URL)
 
-	// 2. Network first, then the sensor (rimsky eager-dials its declared
-	//    publishers at startup, so the sensor must be reachable on the
-	//    network BEFORE BringUpRimsky). The sensor needs host-port access
-	//    so it can dial the host-side httptest.Server from inside its
-	//    container.
+	// @constraint: rimsky eager-dials its declared publishers at startup, so the sensor must be
+	// reachable on the network BEFORE BringUpRimsky; the sensor also needs host-port access so it
+	// can dial the host-side httptest.Server from inside its container.
 	netName := harness.NewNetwork(ctx, t)
 	sensorEP := harness.StartSensorHTTP(ctx, t, netName, "sensor-http", hostPort)
 
-	// Also wire a stub executor so the reactor node actually runs (the
-	// reactor re-runs through its executor on cascade; without a real
-	// executor the node would never reach fresh again).
+	// @constraint: the reactor re-runs through its executor on cascade; without a real executor
+	// the node would never reach fresh again.
 	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
 
 	ep := harness.BringUpRimsky(ctx, t,
@@ -104,65 +100,57 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 		harness.WithPublisher("watcher", sensorEP),
 	)
 
-	// 3. The watched URL the sensor polls is per-subscription
-	//    (resolved_config.url), reachable from the sensor container via
-	//    the host-gateway alias. poll_interval=1s keeps the test bounded.
+	// @constraint: watched URL is per-subscription (resolved_config.url), reachable from the
+	// sensor container via the host-gateway alias; poll_interval=1s keeps the test bounded.
 	watchedURL := fmt.Sprintf("http://host.testcontainers.internal:%d/", hostPort)
 
 	templateID := deploySensorCascadeTemplate(t, ep, watchedURL)
 	instanceID := createSensorCascadeInstance(t, ep, templateID, "ck-sensor-cascade")
 
-	// Wait on OBSERVABLE subscription state — mounting is asynchronous,
-	// and the body swap below is only observable if the sensor's
-	// baseline poll (which records the INITIAL content-hash) happened
-	// before the swap. The instance surface, not a wall-clock budget,
-	// says when the sensor's watch is live.
+	// @constraint: wait on OBSERVABLE subscription state — mounting is asynchronous, and the body
+	// swap below is only observable if the sensor's baseline poll (which records the INITIAL
+	// content-hash) happened before the swap. The instance surface, not a wall-clock budget, says
+	// when the sensor's watch is live.
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	// 4. Drive the reactor to an initial fresh — its initial frame runs
-	//    the stub executor and settles. The cascade assertion below is
-	//    only meaningful once the node has first settled.
+	// @constraint: drive the reactor to an initial fresh — the cascade assertion below is only
+	// meaningful once the node has first settled.
 	waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 90*time.Second)
 	waitForSensorNodeState(t, ep, instanceID, "bystander", "fresh", 90*time.Second)
 
-	// Both nodes are roots in the same instance, so their initial-frame
-	// processing (and the recalculate fan-out that couples co-resident
-	// roots) can still be draining when the first frame settles. Wait for
-	// BOTH nodes' dispatch counts to go quiescent (stable across a window)
-	// before firing, so any later growth is unambiguously attributable to
-	// the sensor's emit and not to leftover initial-frame activity. Then
-	// snapshot the bystander's settled dispatch count as the negative-
-	// control baseline.
+	// @constraint: both nodes are roots in the same instance, so their initial-frame processing
+	// (and the recalculate fan-out that couples co-resident roots) can still be draining when the
+	// first frame settles. Wait for BOTH nodes' dispatch counts to go quiescent (stable across a
+	// window) before firing, so any later growth is unambiguously attributable to the sensor's
+	// emit and not to leftover initial-frame activity. Then snapshot the bystander's settled
+	// dispatch count as the negative-control baseline.
 	waitForDispatchQuiescent(t, ep, instanceID, reactorTargetNode, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 
-	// 5. Fire the REAL external change: swap the host server's body so the
-	//    sensor's next poll sees a different content-hash and emits.
+	// @story: sensor-http — fire the REAL external change: swap the host server's body so the
+	// sensor's next poll sees a different content-hash and emits.
 	bodyMu.Lock()
 	body = `{"state":"changed"}`
 	bodyMu.Unlock()
 
-	// 6. Gate 1: the reactor transitions stale (cascade fired) then
-	//    re-runs to fresh. Poll for the stale-then-fresh round trip — we
-	//    require evidence of a SECOND run (a fresh→stale→fresh round trip),
-	//    not merely the terminal fresh it was already in.
+	// @story: cascade-signal-blind — Gate 1: the reactor transitions stale (cascade fired) then re-runs to
+	// fresh. Poll for evidence of a SECOND run (a fresh→stale→fresh round trip), not merely the
+	// terminal fresh it was already in.
 	requireReactorReran(t, ep, instanceID, reactorTargetNode, 120*time.Second)
 
-	// 7. Gate 8: the persisted message carries sender_kind=publisher and a
-	//    sender derived from the publisher identity (the publisher_name
-	//    "watcher", NOT the request body's `sender` which the sensor sets
-	//    to "sensor-http"). rimsky overwrites `sender` from the
-	//    publisher-subscription row for trust.
+	// @story: publisher-protocol — Gate 8: the persisted message carries sender_kind=publisher and a
+	// sender derived from the publisher identity (the publisher_name "watcher", NOT the request
+	// body's `sender` which the sensor sets to "sensor-http"). rimsky overwrites `sender` from
+	// the publisher-subscription row for trust.
 	requirePublisherMessagePersisted(t, ep, instanceID, "watcher")
 
-	// 8. Negative control: the bystander subscribes to a NON-matching
-	//    message topic (message/refresh/..., not the invalidate the sensor
-	//    emits), so the sensor's fire must NOT re-run it. (A real
-	//    coupling-proof revert is impossible against a prebuilt image; the
-	//    negative control proves the cascade fired because of the matching
-	//    subscription, not spuriously.) Asserted against the quiescent
-	//    baseline so the bystander's legitimate initial run is excluded.
+	// @deliberate: negative control — the bystander subscribes to a NON-matching message topic
+	// (message/refresh/..., not the invalidate the sensor emits), so the sensor's fire must NOT
+	// re-run it. A real coupling-proof revert is impossible against a prebuilt image; the
+	// negative control proves the cascade fired because of the matching subscription, not
+	// spuriously. Asserted against the quiescent baseline so the bystander's legitimate initial
+	// run is excluded.
 	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline)
 }
 
@@ -189,8 +177,7 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// Host-side watched source — mutable body, same shape as the sibling
-	// test. Each distinct body is a fresh content-hash the sensor observes.
+	// @deliberate: mutable body — each distinct body is a fresh content-hash the sensor observes.
 	var (
 		bodyMu sync.RWMutex
 		body   = `{"state":"initial"}`
@@ -219,31 +206,30 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	watchedURL := fmt.Sprintf("http://host.testcontainers.internal:%d/", hostPort)
 
 	templateID := deploySensorCascadeTemplate(t, ep, watchedURL)
-	// NO terminate_after_run flag — durable by default. createSensorCascadeInstance
+	// @deliberate: NO terminate_after_run flag — durable by default; createSensorCascadeInstance
 	// POSTs without the flag, exactly the default-instance path.
 	instanceID := createSensorCascadeInstance(t, ep, templateID, "ck-sensor-durable")
 
-	// Wait on OBSERVABLE subscription state before any fire — the
-	// sensor's baseline poll must precede the first body swap (see the
-	// matching wait in the cascade test above).
+	// @constraint: wait on OBSERVABLE subscription state before any fire — the sensor's baseline
+	// poll must precede the first body swap (see the matching wait in the cascade test above).
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	// Drive both root nodes to an initial fresh, then quiesce so later
-	// dispatch growth is attributable to the sensor fires alone.
+	// @constraint: drive both root nodes to an initial fresh, then quiesce so later dispatch
+	// growth is attributable to the sensor fires alone.
 	waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 90*time.Second)
 	waitForSensorNodeState(t, ep, instanceID, "bystander", "fresh", 90*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, reactorTargetNode, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 
-	// After the initial frame settled, the durable instance must already be
-	// un-terminated — this is the first place the old auto-terminate-on-drain
-	// would have stamped terminated_at.
+	// @story: terminate-after-run — after the initial frame settled, the durable instance must
+	// already be un-terminated; this is the first place the old auto-terminate-on-drain would
+	// have stamped terminated_at.
 	requireInstanceNotTerminated(t, ep, instanceID)
 
-	// Fire the REAL external change N≥3 times. Each distinct body is a new
-	// content-hash; the sensor's next poll observes it and emits an
-	// invalidate message that re-runs the reactor through the cascade.
+	// @story: sensor-http — fire the REAL external change N≥3 times. Each distinct body is a new
+	// content-hash; the sensor's next poll observes it and emits an invalidate message that
+	// re-runs the reactor through the cascade.
 	const fires = 3
 	for i := 1; i <= fires; i++ {
 		reactorBefore := workStartedCount(t, ep, instanceID, reactorTargetNode)
@@ -252,18 +238,17 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 		body = fmt.Sprintf(`{"state":"changed-%d"}`, i)
 		bodyMu.Unlock()
 
-		// The reactor must re-run (work_started grows) on THIS fire …
+		// @story: cascade-signal-blind — the reactor must re-run (work_started grows) on THIS fire, settle
+		// back to fresh, and the instance must STILL be un-terminated (the durable property
+		// after each drain — never reaped).
 		requireWorkStartedGrew(t, ep, instanceID, reactorTargetNode, reactorBefore, 120*time.Second,
 			fmt.Sprintf("fire %d/%d", i, fires))
-		// … settle back to fresh …
 		waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 30*time.Second)
-		// … and the instance must STILL be un-terminated (the durable
-		// property after each drain — never reaped).
 		requireInstanceNotTerminated(t, ep, instanceID)
 	}
 
-	// Negative control: the bystander subscribes to a non-matching topic,
-	// so none of the N fires must have re-run it.
+	// @deliberate: negative control — the bystander subscribes to a non-matching topic, so none
+	// of the N fires must have re-run it.
 	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline)
 }
 
@@ -323,9 +308,8 @@ func requireWorkStartedGrew(t *testing.T, ep harness.RimskyEndpoint, instanceID,
 func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedURL string) string {
 	t.Helper()
 
-	// resolved_config for the http sensor: url + a fast poll interval +
-	// match.status so any 200 matches; the body-hash watermark drives the
-	// change detection.
+	// @constraint: resolved_config for the http sensor needs url + a fast poll interval +
+	// match.status so any 200 matches; the body-hash watermark drives the change detection.
 	sensorConfig := map[string]any{
 		"url":           watchedURL,
 		"poll_interval": "1s",
@@ -362,10 +346,9 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 					"subscribes": []map[string]any{
 						{
 							"instance": true,
-							// Different message kind — the invalidate
-							// envelope never produces this signal type, so
-							// this node must never go stale on the sensor
-							// fire. (Negative control.)
+							// @deliberate: different message kind — the invalidate envelope
+							// never produces this signal type, so this node must never go
+							// stale on the sensor fire (negative control).
 							"type":  "message/refresh/publisher/" + reactorTargetNode,
 							"frame": "in",
 						},
@@ -478,7 +461,7 @@ func requireReactorReran(t *testing.T, ep harness.RimskyEndpoint, instanceID, no
 	end := time.Now().Add(deadline)
 	for time.Now().Before(end) {
 		if workStartedCount(t, ep, instanceID, nodeType) > baseline {
-			// Confirm it also settled back to fresh after the re-run.
+			// @constraint: confirm settle back to fresh after the re-run, not just the dispatch.
 			waitForSensorNodeState(t, ep, instanceID, nodeType, "fresh", 30*time.Second)
 			return
 		}
@@ -542,7 +525,6 @@ func requirePublisherMessagePersisted(t *testing.T, ep harness.RimskyEndpoint, i
 							"(rimsky must derive sender from the publisher-subscription's "+
 							"publisher_name, not the request body's sender)", m.Sender, wantSender)
 					}
-					// Found a publisher message with the derived sender.
 					return
 				}
 			}

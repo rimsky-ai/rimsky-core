@@ -22,7 +22,7 @@ type Format int
 const (
 	// FormatHuman is the default for terminal use.
 	FormatHuman Format = iota
-	// FormatJSON emits raw JSON for scripting.
+	// @deliberate: FormatJSON emits raw JSON for scripting.
 	FormatJSON
 )
 
@@ -68,18 +68,15 @@ func EmitTable(w io.Writer, headers []string, rows [][]string) {
 	_ = tw.Flush()
 }
 
-// ANSI escape sequences used by color-aware emitters. AnsiGreen / AnsiRed
-// are exported so package-external emitters (compose plan formatStep)
-// can ask Colorize for matching color.
+// @constraint: AnsiGreen / AnsiRed are exported so package-external
+// emitters (compose plan formatStep) can ask Colorize for matching
+// color; ansiReset / ansiBold stay unexported because external callers
+// reach them only through Colorize.
 const (
 	ansiReset = "\x1b[0m"
 	ansiBold  = "\x1b[1m"
-	// AnsiGreen is the ANSI escape for green foreground; intended for
-	// "additive" / non-destructive markers in plan output.
 	AnsiGreen = "\x1b[32m"
-	// AnsiRed is the ANSI escape for red foreground; intended for
-	// "destructive" markers in plan output.
-	AnsiRed = "\x1b[31m"
+	AnsiRed   = "\x1b[31m"
 )
 
 // activeNoColorFlag is the process-wide --no-color flag, set by

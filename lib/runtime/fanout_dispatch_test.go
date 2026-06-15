@@ -18,10 +18,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// Fan-out dispatch unit tests — pure helpers; the integration-tx
-// wiring (DispatchChildren against a real RunTreeTable, the
-// auto-terminal rendezvous with the producer's Commit response) is
-// covered by N2/N10 scenario tests.
+// TestFanOutPartitions_ProjectsPartitionKeys — fan-out dispatch unit
+// test: pure helpers only; the integration-tx wiring (DispatchChildren
+// against a real RunTreeTable, the auto-terminal rendezvous with the
+// producer's Commit response) is covered by N2/N10 scenario tests.
 
 func TestFanOutPartitions_ProjectsPartitionKeys(t *testing.T) {
 	subClaims := []SubClaim{
@@ -54,14 +54,14 @@ func TestFanOutParallelismSemaphore_BoundsConcurrency(t *testing.T) {
 	if sem.InFlight() != 2 {
 		t.Errorf("in-flight: %d (want 2)", sem.InFlight())
 	}
-	// Third Acquire should block; verify via a timeout.
+	// @deliberate: Third Acquire should block; verify via a timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	err := sem.Acquire(ctx)
 	if err == nil {
 		t.Errorf("expected context-deadline error from 3rd acquire on cap=2 semaphore")
 	}
-	// Release one — next acquire passes.
+	// @deliberate: Release one — next acquire passes.
 	sem.Release()
 	if err := sem.Acquire(context.Background()); err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestFanOutParallelismSemaphore_BoundsConcurrency(t *testing.T) {
 
 func TestFanOutParallelismSemaphore_Unbounded(t *testing.T) {
 	sem := NewFanOutParallelismSemaphore(0)
-	// Unbounded → 1000 acquires complete immediately, no block.
+	// @deliberate: Unbounded → 1000 acquires complete immediately, no block.
 	for i := 0; i < 1000; i++ {
 		if err := sem.Acquire(context.Background()); err != nil {
 			t.Fatalf("unbounded acquire[%d]: %v", i, err)
@@ -82,14 +82,14 @@ func TestFanOutParallelismSemaphore_Unbounded(t *testing.T) {
 	if sem.InFlight() != 0 {
 		t.Errorf("unbounded in-flight reports: %d (want 0)", sem.InFlight())
 	}
-	sem.Release() // no-op on unbounded; should not panic
+	sem.Release() // @deliberate: no-op on unbounded; should not panic
 }
 
 func TestFanOutSemaphoreRegistry_GetOrCreateIsIdempotent(t *testing.T) {
 	r := NewFanOutSemaphoreRegistry()
 	parent := shared.UUID(uuid.New())
 	s1 := r.GetOrCreate(parent, 4)
-	s2 := r.GetOrCreate(parent, 999) // cap argument ignored on re-lookup
+	s2 := r.GetOrCreate(parent, 999)
 	if s1 != s2 {
 		t.Errorf("registry returned different semaphores for same parent")
 	}

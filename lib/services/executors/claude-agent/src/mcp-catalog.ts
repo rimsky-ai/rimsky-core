@@ -2,36 +2,28 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// S-executors-mcp-catalog-transports.
-//
-// Startup MCP-server catalog + `allow_inline` policy for the claude-agent
-// executor. The operator wires a catalog of named MCP servers at startup
-// (env `RIMSKY_EXECUTOR_MCP_CATALOG` → a YAML/JSON file) and an
-// `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` policy (default false). A node's
-// `cli.mcp_servers` then references a catalog entry by `{ ref: <name> }`
-// rather than declaring an inline `{ name, url, headers }` server; inline
-// servers are permitted only when the policy allows them.
-//
-// Each catalog entry declares a `transport`:
-//   - `http`          : a remote streamable-HTTP MCP server (url + headers).
-//   - `stdio`         : a local MCP server spawned as a subprocess
-//                       (command + args), wired into `--mcp-config` as a
-//                       `type: "stdio"` leaf.
-//   - `module`        : an in-tree MCP module the executor `import()`s at
-//                       dispatch and fronts on a per-dispatch loopback HTTP
-//                       listener (the Claude CLI only speaks MCP over a wire
-//                       transport, never an in-process object).
-//   - `http-loopback` : same module-loading shape as `module`; the name
-//                       distinguishes operator intent (a server explicitly
-//                       fronted on a loopback HTTP listener) but the
-//                       stand-up mechanism is identical — a module fronted
-//                       on a loopback HTTP MCP listener.
-//
-// The catalog + policy are parsed ONCE at startup and threaded into every
-// dispatch via `AgentRunOptions` (the carrier for `cliConfig`). Resolution
-// of a `{ ref: }` against the catalog — and the per-dispatch stand-up of a
-// module / http-loopback listener — happens at the single `hostServers`
-// build site in `agent-run.ts`.
+// @deliberate: startup MCP-server catalog + `allow_inline` policy for the
+// claude-agent executor. The operator wires a
+// catalog of named MCP servers at startup (env `RIMSKY_EXECUTOR_MCP_CATALOG`
+// → a YAML/JSON file) and an `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE` policy
+// (default false). A node's `cli.mcp_servers` then references a catalog
+// entry by `{ ref: <name> }` rather than declaring an inline
+// `{ name, url, headers }` server; inline servers are permitted only when
+// the policy allows them. Each catalog entry declares a `transport`:
+// `http` is a remote streamable-HTTP MCP server (url + headers); `stdio`
+// is a local MCP server spawned as a subprocess (command + args), wired
+// into `--mcp-config` as a `type: "stdio"` leaf; `module` is an in-tree
+// MCP module the executor `import()`s at dispatch and fronts on a
+// per-dispatch loopback HTTP listener (the Claude CLI only speaks MCP
+// over a wire transport, never an in-process object); `http-loopback`
+// shares the module-loading shape — the name distinguishes operator
+// intent (a server explicitly fronted on a loopback HTTP listener) but
+// the stand-up mechanism is identical. The catalog + policy are parsed
+// ONCE at startup and threaded into every dispatch via `AgentRunOptions`
+// (the carrier for `cliConfig`). Resolution of a `{ ref: }` against the
+// catalog — and the per-dispatch stand-up of a module / http-loopback
+// listener — happens at the single `hostServers` build site in
+// `agent-run.ts`.
 
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -244,7 +236,7 @@ export async function resolveCatalogServer(
       teardown: async () => {},
     };
   }
-  // module | http-loopback: load the module and front it on a per-dispatch
+  // @deliberate: module | http-loopback: load the module and front it on a per-dispatch
   // loopback HTTP MCP listener.
   const listener = await standUpModuleLoopback(name, entry.module, logger);
   return {
@@ -333,9 +325,10 @@ async function standUpModuleLoopback(
       }
     }
   });
-  // A loopback MCP server holds its SSE GET stream open for the whole
-  // dispatch; disable Node's idle-socket caps so the held stream is never
-  // reaped mid-dispatch (same property the internal callback server pins).
+  // @deliberate: a loopback MCP server holds its SSE GET stream open for
+  // the whole dispatch; disable Node's idle-socket caps so the held stream
+  // is never reaped mid-dispatch (same property the internal callback
+  // server pins).
   httpServer.timeout = 0;
   httpServer.requestTimeout = 0;
   httpServer.keepAliveTimeout = 24 * 60 * 60 * 1000;
@@ -344,7 +337,7 @@ async function standUpModuleLoopback(
     try {
       socket.destroy();
     } catch {
-      /* already gone */
+      /* @deliberate: already gone */
     }
   });
 
@@ -408,7 +401,7 @@ async function loadModuleFactory(
 function toImportUrl(specifier: string): string {
   if (specifier.startsWith("file://")) return specifier;
   if (isAbsolute(specifier)) return pathToFileURL(specifier).href;
-  // Relative specifiers resolve against this module's directory so a
+  // @deliberate: relative specifiers resolve against this module's directory so a
   // catalog can name an in-tree module path independent of process cwd.
   return pathToFileURL(resolvePath(MODULE_DIR, specifier)).href;
 }

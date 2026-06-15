@@ -46,7 +46,6 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Run 1 commits {"value":"first"} into rimsky_node_attributes.
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "first"}, true, "initial")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -69,7 +68,6 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)
 
-	// First run reaches fresh and persists a per-run attribute bag.
 	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh on first run")
 	firstRow := latestAttrRow(h, w.ID, h.GetMainRunScopeID(iid))
@@ -77,13 +75,13 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	firstRunID := firstRow.NodeRunID
 	require.Equal(t, "first", firstRow.Data["value"])
 
-	// Re-prime the stub and invalidate so the node re-runs with a
+	// @constraint: Re-prime the stub and invalidate so the node re-runs with a
 	// DIFFERENT delta value — satisfies the "most-recent of two runs"
 	// clause: the latest bag must differ from the first.
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "second"}, true, "rerun")
 	adminInvalidateLatestAttr(t, h, iid, w.ID)
 
-	// Wait until the live primitive reports the SECOND run's bag (new run
+	// @deliberate: Wait until the live primitive reports the SECOND run's bag (new run
 	// id + new value). This is the canonical value both surfaces must echo.
 	var second *persistence.NodeAttributesRow
 	deadline := time.Now().Add(15 * time.Second)
@@ -100,7 +98,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 		"GetLatestByNode must return the most-recent run's bag")
 	wantBag := second.Data
 
-	// (3) control-api GET /nodes/{id} must carry latest_attributes equal to
+	// @constraint: (3) control-api GET /nodes/{id} must carry latest_attributes equal to
 	// the SECOND run's resolved bag (the GetLatestByNode value).
 	caBody := getJSONMap(t, h.ControlBase+"/v1/nodes/"+w.ID.String())
 	caLatest, ok := caBody["latest_attributes"]
@@ -109,7 +107,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	require.Equal(t, wantBag, normalizeBag(t, caLatest),
 		"GET /nodes/{id} latest_attributes must equal the second run's GetLatestByNode bag")
 
-	// (4) observability GET /v1/observability/nodes/{instance_id}/{node_type}
+	// @constraint: (4) observability GET /v1/observability/nodes/{instance_id}/{node_type}
 	// must carry the same most-recent bag (today it returns only
 	// {node,events,holdings}).
 	obsBody := getJSONMap(t, h.ControlBase+"/v1/observability/nodes/"+iid.String()+"/worker")
@@ -119,7 +117,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	require.Equal(t, wantBag, normalizeBag(t, obsLatest),
 		"observability latest_attributes must equal the second run's GetLatestByNode bag")
 
-	// (5) A node that has NEVER executed must yield an absent/empty
+	// @constraint: (5) A node that has NEVER executed must yield an absent/empty
 	// latest_attributes — no panic on the nil GetLatestByNode row. A paused
 	// instance never dispatches its worker until resumed, so its node row
 	// has no persisted attribute bag.

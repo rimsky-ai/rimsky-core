@@ -278,14 +278,14 @@ describe("rimsky-callback MCP tools", () => {
 
   it("report_park surfaces a structured response when the run did not register onPark", async () => {
     const registry = new TokenRegistry();
-    registry.register("tok-no-park", makeRegistryEntry({})); // no onPark
+    registry.register("tok-no-park", makeRegistryEntry({})); // @deliberate: no onPark
     const client = await buildClient(registry);
 
     const res = await client.callTool({
       name: "report_park",
       arguments: { token: "tok-no-park", reason: "snooze" },
     });
-    // The handler returns a structured "park_not_supported" payload
+    // @deliberate: the handler returns a structured "park_not_supported" payload
     // (not isError) so the agent can surface a meaningful message to
     // the user; the per-run registration is expected to wire onPark
     // in production. Either shape is acceptable; we just want to
@@ -314,7 +314,7 @@ describe("rimsky-callback MCP tools", () => {
     expect(res.isError).toBeFalsy();
     expect(buffer).toHaveLength(1);
     expect(buffer[0]!.name).toBe("progress");
-    // Inertness: the buffered bytes are exactly the JSON serialization of
+    // @deliberate: inertness: the buffered bytes are exactly the JSON serialization of
     // the input payload — the handler never inspects or transforms it.
     expect(buffer[0]!.payload.toString("utf8")).toBe(JSON.stringify(payload));
   });
@@ -354,8 +354,7 @@ describe("rimsky-callback MCP tools", () => {
     );
     const client = await buildClient(registry);
 
-    // A nested, mixed-type payload. The buffered bytes must equal the
-    // input's JSON serialization byte-for-byte — no transformation.
+    // @constraint: buffered bytes equal JSON.stringify(payload) byte-for-byte — emit_named_event performs no payload transformation.
     const payload = { a: [1, 2, { b: "x" }], c: null, d: true };
     await client.callTool({
       name: "emit_named_event",
@@ -431,7 +430,7 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
   }
 
   it("supports two concurrent sessions in one server process (bug 1 regression)", async () => {
-    // Register two distinct dispatches.
+    // @deliberate: register two distinct dispatches.
     const completedA: { changed: boolean; summary: string | null }[] = [];
     const completedB: { changed: boolean; summary: string | null }[] = [];
     handle.registry.register(
@@ -453,10 +452,9 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
       }),
     );
 
-    // Open two clients concurrently and confirm both handshake succeeds.
     const [clientA, clientB] = await Promise.all([openClient(), openClient()]);
 
-    // Each client makes a tool call keyed to its own token. Per-session
+    // @deliberate: each client makes a tool call keyed to its own token. Per-session
     // routing is the contract under test: both should land on the
     // correct registry entry.
     const [resA, resB] = await Promise.all([
@@ -479,7 +477,7 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
   });
 
   it("survives long SSE stream (no per-request timeout RST — #11)", async () => {
-    // #11 regression: a per-socket inactivity timeout destroys the
+    // @deliberate: #11 regression: a per-socket inactivity timeout destroys the
     // long-lived standalone MCP SSE GET stream that the SDK client opens
     // after `initialize`. The destroyed socket surfaces on the client as
     // an ECONNRESET `onerror`, and the dispatch terminal-errors
@@ -511,16 +509,17 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
       version: "1.0.0",
     });
     try {
-      // connect() runs initialize + notifications/initialized, which makes
-      // the SDK client open the standalone GET SSE stream we want to keep
-      // alive across the per-request window.
+      // @deliberate: connect() runs initialize +
+      // notifications/initialized, which makes the SDK client open
+      // the standalone GET SSE stream we want to keep alive across
+      // the per-request window.
       await client.connect(transport);
-      // Hold the stream open well past the inactivity window. Under the
+      // @deliberate: hold the stream open well past the inactivity window. Under the
       // unfixed server, the idle GET SSE socket is destroyed at
       // `socketTimeoutMs` and the client surfaces an ECONNRESET-class
       // error here.
       await new Promise((resolve) => setTimeout(resolve, socketTimeoutMs * 5));
-      // The stream must still be alive: a tool call over the same session
+      // @deliberate: the stream must still be alive: a tool call over the same session
       // round-trips, and no error has fired.
       sseHandle.registry.register("tok-sse", makeRegistryEntry({}));
       const res = await client.callTool({
@@ -536,7 +535,7 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
   });
 
   it("supports a fresh session after a prior one closes (sequential dispatch shape)", async () => {
-    // This is the shape that wedged the 22-hour run: dispatch A finishes,
+    // @deliberate: this is the shape that wedged the 22-hour run: dispatch A finishes,
     // its CLI exits, then dispatch B starts later in the same executor
     // process and tries to initialize. A singleton transport would
     // reject B's initialize with HTTP 400 `Server already initialized`.
@@ -551,7 +550,7 @@ describe("startInternalMcpServer — multi-session HTTP routing", () => {
     expect(parseToolText(resA.content)).toEqual({ status: "accepted" });
     await clientA.close();
 
-    // Dispatch B follows in the same server.
+    // @deliberate: dispatch B follows in the same server.
     const clientB = await openClient();
     const resB = await clientB.callTool({
       name: "report_complete",

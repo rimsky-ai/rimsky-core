@@ -33,7 +33,6 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	now := time.Now().UTC()
 	backfillOp := shared.UUID(uuid.New())
 
-	// One live message + one cancelled-on-backfill-rollback message.
 	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
 		ID:                  shared.UUID(uuid.New()),
 		InstanceID:          instanceID,
@@ -55,7 +54,7 @@ func TestDeadLetter_CancelledNotDelivered(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("EnqueueMessage live: %v", err)
 	}
-	// Cancel the backfill — should mark cancelled=true on the first row.
+	// @deliberate: Cancel the backfill — should mark cancelled=true on the first row.
 	if n, err := m.MarkCancelled(ctx, nil, backfillOp, now); err != nil || n != 1 {
 		t.Fatalf("MarkCancelled: n=%d err=%v", n, err)
 	}

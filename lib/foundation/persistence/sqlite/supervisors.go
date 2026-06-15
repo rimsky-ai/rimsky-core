@@ -2,7 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// supervisors.go — SQLite-backed persistence.SupervisorTable.
+// @source: lib/foundation/persistence/postgres/supervisors.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
+
 package sqlite
 
 import (

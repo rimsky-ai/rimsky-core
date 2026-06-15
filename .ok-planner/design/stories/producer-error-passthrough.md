@@ -23,7 +23,7 @@ The operator triggers an operation that causes their producer to reject — e.g.
 
 ## Falsifier
 
-A producer failure that surfaces as a bare `500 Internal Server Error` with an empty or generic body — the producer's transmitted error class absent from the HTTP response between the gRPC boundary and the HTTP response.
+A producer failure that surfaces as a bare generic internal-server-error response with an empty or generic body — the producer's transmitted error class absent from the HTTP response between the gRPC boundary and the HTTP response.
 
 ## Proof
 

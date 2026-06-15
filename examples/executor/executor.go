@@ -111,9 +111,10 @@ type Executor struct {
 //     Success. The Heartbeat keep-alive at the top of the stream is also
 //     shipped so this example still exhibits the heartbeat shape.
 func (e *Executor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
-	// Optional keep-alive while work proceeds; safe to omit for fast work.
-	// req carries the dispatch: req.GetAttributes() is the (already
-	// substituted) template-author input, req.GetDispatchId() keys per-run state.
+	// @deliberate: optional keep-alive while work proceeds; safe to omit
+	// for fast work. req carries the dispatch — req.GetAttributes() is
+	// the (already substituted) template-author input,
+	// req.GetDispatchId() keys per-run state.
 	if err := stream.Send(&genv1.ExecuteEvent{
 		Event: &genv1.ExecuteEvent_Heartbeat{
 			Heartbeat: &genv1.Heartbeat{Note: fmt.Sprintf("dispatch %s starting", req.GetNodeId())},
@@ -126,9 +127,9 @@ func (e *Executor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_Exec
 
 	switch mode {
 	case "raise_error":
-		// Surface the declared error class. The Error.error_class wire
-		// value is what concept:error-type routes on; the operator's
-		// `error_types:` chain keys on this exact string.
+		// @concept: error-policy — the Error.error_class wire value is what
+		// routes the failure; the operator's `error_types:` chain keys on
+		// this exact string.
 		return stream.Send(&genv1.ExecuteEvent{
 			Event: &genv1.ExecuteEvent_StreamClose{
 				StreamClose: &genv1.StreamClose{
@@ -142,11 +143,11 @@ func (e *Executor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_Exec
 		})
 
 	case "emit_event":
-		// Emit a NamedEvent BEFORE the terminal. The supervisor accepts
-		// any number of NamedEvent records on the stream as long as the
-		// emitted name appears in declared_events; each one persists on
-		// rimsky_events under kind `event/<name>` (per concept:signal),
-		// visible on GET /v1/events?kind=event/<name>.
+		// @concept: signal — emit a NamedEvent BEFORE the terminal. The
+		// supervisor accepts any number of NamedEvent records on the
+		// stream as long as the emitted name appears in
+		// declared_events; each one persists on rimsky_events under
+		// kind `event/<name>`, visible on GET /v1/events?kind=event/<name>.
 		if err := stream.Send(&genv1.ExecuteEvent{
 			Event: &genv1.ExecuteEvent_NamedEvent{
 				NamedEvent: &genv1.NamedEvent{
@@ -157,17 +158,15 @@ func (e *Executor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_Exec
 		}); err != nil {
 			return err
 		}
-		// Fall through to Success terminal.
 	}
 
-	// Default + emit_event path: emit a single Success terminal.
-	// `Changed=false` halts cascade propagation at this node; set
-	// Changed=true and fill AttributesDelta (a *structpb.Struct) to write
-	// results back — they are validated against the node's attributes
-	// schema at commit.
-	//
-	// The other three terminal outcomes are built the same way; construct
-	// one and pass it as StreamClose.Outcome instead of StreamClose_Success:
+	// @deliberate: default + emit_event path emits a single Success
+	// terminal. `Changed=false` halts cascade propagation at this node;
+	// set Changed=true and fill AttributesDelta (a *structpb.Struct) to
+	// write results back — they are validated against the node's
+	// attributes schema at commit. The other three terminal outcomes are
+	// built the same way; construct one and pass it as StreamClose.Outcome
+	// instead of StreamClose_Success:
 	//
 	//	&genv1.StreamClose_Error{Error: &genv1.Error{ErrorClass: "example/failed"}}
 	//	&genv1.StreamClose_Park{Park: &genv1.Park{Reason: genv1.ParkReason_PARK_REASON_SNOOZE}}

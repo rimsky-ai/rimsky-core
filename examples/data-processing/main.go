@@ -29,7 +29,8 @@ func main() {
 	srv := grpc.NewServer()
 	genv1.RegisterDataProcessingServer(srv, newDataProcessing())
 
-	// Serve until SIGINT/SIGTERM, then drain in-flight RPCs gracefully.
+	// @deliberate: serve until SIGINT/SIGTERM, then drain in-flight RPCs
+	// gracefully — abrupt shutdown would tear down RPCs mid-flight.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	serverkit.RunGRPC(ctx, srv, lis, "example-data-processing")

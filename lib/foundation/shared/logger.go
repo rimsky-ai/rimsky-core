@@ -61,7 +61,7 @@ func (c *CapturingLogger) capture(level, msg string, fields []any) {
 	for k, v := range c.base {
 		merged[k] = v
 	}
-	// Treat fields as slog-style alternating key/value pairs.
+	// @constraint: fields follow slog's alternating key/value-pair contract.
 	for i := 0; i+1 < len(fields); i += 2 {
 		key, ok := fields[i].(string)
 		if !ok {
@@ -91,9 +91,8 @@ func (c *CapturingLogger) With(fields ...any) Logger {
 		}
 		merged[key] = fields[i+1]
 	}
+	// @deliberate: child logger shares the records slice with parent — not ideal; revisit if chained-child tests need isolation.
 	return &CapturingLogger{base: merged, records: c.records}
-	// Note: child logger shares records slice with parent? Not ideal but
-	// acceptable for v1 tests; revisit if chained-child tests need isolation.
 }
 
 func (c *CapturingLogger) Records() []Record {

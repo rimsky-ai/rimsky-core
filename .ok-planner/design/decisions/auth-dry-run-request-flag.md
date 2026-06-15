@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`?dry_run=true` query flag on writes.
+A per-request dry-run flag on writes.
 
 ## Rationale
 

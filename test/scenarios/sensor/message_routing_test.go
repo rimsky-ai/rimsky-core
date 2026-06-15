@@ -48,7 +48,6 @@ func (f *fakeRimsky) handler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	parts := splitNonEmpty(r.URL.Path, '/')
 	var instanceID string
-	// path: /v1/instances/<id>/messages
 	if len(parts) >= 4 && parts[0] == "v1" && parts[1] == "instances" && parts[3] == "messages" {
 		instanceID = parts[2]
 	}

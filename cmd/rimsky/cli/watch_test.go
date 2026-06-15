@@ -35,18 +35,15 @@ func TestRunWatch_Chronological(t *testing.T) {
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
 
-	// Three timestamps strictly ordered t1 < t2 < t3, all inside one poll
-	// window. The hit's t2 sits between the two events' t1/t3, so a
-	// source-grouped feed cannot reproduce the true chronological order.
 	t1 := "2026-06-07T00:00:01Z"
 	t2 := "2026-06-07T00:00:02Z"
 	t3 := "2026-06-07T00:00:03Z"
 
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "event_a", OccurredAt: t1, Payload: map[string]any{}})
-	// The breakpoint hit is part of the unified /events stream (a
-	// `breakpoint.hit` row, co-transactional with the hit) — NOT a separate
-	// pending-hits read. watch drains /events alone, so seed it as an event;
-	// printWatchEvent renders breakpoint.hit with its checkpoint/mode detail.
+	// @deliberate: breakpoint hits ride the unified /events stream as
+	// `breakpoint.hit` rows (co-transactional with the hit), not a separate
+	// pending-hits read. watch drains /events alone, so the seed shape must
+	// match production; printWatchEvent renders the checkpoint/mode detail.
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "breakpoint.hit", OccurredAt: t2, Payload: map[string]any{"checkpoint": "between_events", "mode": "stop"}})
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "event_b", OccurredAt: t3, Payload: map[string]any{}})
 
@@ -59,9 +56,9 @@ func TestRunWatch_Chronological(t *testing.T) {
 	done := make(chan int, 1)
 	exit := -1
 	out := captureStdout(t, func() {
-		// A terminal instance must exit on the first iteration regardless of
-		// the (deliberately long) poll interval; the timeout guards against a
-		// regression that would hang the loop.
+		// @constraint: a terminal instance must exit on the first iteration
+		// regardless of the (deliberately long) poll interval; the 5s timeout
+		// guards against a regression that would hang the loop on the 10s tick.
 		go func() {
 			done <- cli.RunWatch(context.Background(), []string{"--poll-interval", "10s", inst.ID})
 		}()
@@ -75,9 +72,8 @@ func TestRunWatch_Chronological(t *testing.T) {
 		t.Fatalf("exit %d, want 0; output:\n%s", exit, out)
 	}
 
-	// Locate the three lines by stable markers. Each source prints its own
-	// line; we compare line indices, not byte offsets, so trailing fields on
-	// a line cannot perturb the ordering check.
+	// @deliberate: compare line indices, not byte offsets — trailing fields
+	// on a line (varying detail strings) must not perturb the ordering check.
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	idxA, idxHit, idxB := -1, -1, -1
 	for i, ln := range lines {
@@ -95,9 +91,6 @@ func TestRunWatch_Chronological(t *testing.T) {
 			idxA, idxHit, idxB, out)
 	}
 
-	// The breakpoint-hit line (t2) must sit strictly between event A (t1) and
-	// event B (t3): true timestamp order is A, hit, B. A source-grouped feed
-	// places the hit after both events (idxHit > idxB), failing this.
 	if !(idxA < idxHit && idxHit < idxB) {
 		t.Errorf("watch feed not in timestamp order: want A(%d) < hit(%d) < B(%d); output:\n%s",
 			idxA, idxHit, idxB, out)

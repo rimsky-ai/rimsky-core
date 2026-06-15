@@ -33,9 +33,9 @@ import (
 func checkTerminals(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 	out := make([]CheckResult, 0, 4)
 	out = append(out, checkTerminalVerb(ctx, c, "Commit", func(id claimproducer.ClaimID, scope, addr []byte) error {
-		// The base CommitResponse body (version_id / producer_metadata)
-		// is optional producer output; the conformance probe asserts
-		// only that the verb is accepted.
+		// @constraint: the base CommitResponse body (version_id /
+		// producer_metadata) is optional producer output; the conformance
+		// probe asserts only that the verb is accepted.
 		_, err := c.Commit(ctx, id, scope, addr)
 		return err
 	}))
@@ -65,9 +65,9 @@ func checkTerminalVerb(ctx context.Context, c claimproducer.ClaimProducer, name 
 		return CheckResult{Name: name, Err: fmt.Errorf("Open for %s probe failed: %w", name, err)}
 	}
 	if !out.Available {
-		// A drained / pick-policy producer with nothing to give cannot be
-		// driven through the terminal — SKIP rather than fail so the suite
-		// stays runnable against queue-shaped producers.
+		// @deliberate: a drained / pick-policy producer with nothing to give
+		// cannot be driven through the terminal — SKIP rather than fail so the
+		// suite stays runnable against queue-shaped producers.
 		return CheckResult{Name: name + "Skipped"}
 	}
 	if err := verb(claimID, out.Result.ClaimScope, out.Result.Address); err != nil {

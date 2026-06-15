@@ -73,7 +73,7 @@ import (
 func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 	t.Parallel()
 
-	// Remote stub claim-producer. Its ClaimProducer surface advertises
+	// @deliberate: Remote stub claim-producer. Its ClaimProducer surface advertises
 	// SupportsSplitScope=true and decodes
 	// `{"partition_keys":[...]}` into one SubScopeDescriptor per key
 	// — the canonical fixture for fan-out scenarios.
@@ -93,7 +93,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 		},
 	})
 
-	// Per-leaf Delay window. Each leaf's Execute call blocks for this
+	// @deliberate: Per-leaf Delay window. Each leaf's Execute call blocks for this
 	// long before the scripted Success terminal. Concurrency proof
 	// (falsifier (b)): if the supervisor SERIALIZED the three partition
 	// dispatches, the work_started timestamps for the three partition
@@ -125,7 +125,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 					FanOut: &tmplspec.FanOutSpec{
 						Claim:            "data",
 						PartitionRequest: `{"partition_keys":["a","b","c"]}`,
-						// Strict aggregation: parent only settles when ALL
+						// @deliberate: Strict aggregation: parent only settles when ALL
 						// children resolve. With all-success children the
 						// parent reaches NodeStateFresh; with one failure
 						// (mixed test below) the parent reaches
@@ -144,12 +144,12 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	// === (a) N sub-claim rows materialize. ==============================
-	// The supervisor's runner_subclaim path INSERTs one
-	// rimsky_claim_handles row per SplitScope sub-scope, with
-	// parent_claim_handle_id pointing at the parent claim handle.
-	// Falsifier brief: "Sub-claims are materialized but not dispatched
-	// concurrently" — we still must prove materialization itself.
+	// @deliberate: (a) N sub-claim rows materialize. The supervisor's
+	// runner_subclaim path INSERTs one rimsky_claim_handles row per
+	// SplitScope sub-scope, with parent_claim_handle_id pointing at
+	// the parent claim handle. Falsifier brief: "Sub-claims are
+	// materialized but not dispatched concurrently" — we still must
+	// prove materialization itself.
 	require.Eventually(t, func() bool {
 		var subClaims int
 		h.QueryRowSQL(`
@@ -162,8 +162,8 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 	}, 60*time.Second, 50*time.Millisecond,
 		"supervisor must materialize three sub-claim rows from SplitScope's three sub-scopes")
 
-	// === (b) Concurrent dispatch (not serialized). ======================
-	// Each partition child emits a `work_started` event from the
+	// @deliberate: (b) Concurrent dispatch (not serialized). Each
+	// partition child emits a `work_started` event from the
 	// runner's post-acquisition audit tx (see
 	// runtime/runner_acquire.go::tryAcquire). For three child runs of
 	// the same node id, the three work_started events bear that
@@ -198,7 +198,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 		     LIMIT 3
 		  ) sub
 	`, []any{parentNode.ID}, &spreadMs)
-	// Concurrency margin: serial dispatch produces ≥ 2 × leafDelay spread
+	// @deliberate: Concurrency margin: serial dispatch produces ≥ 2 × leafDelay spread
 	// across three events. Allow up to leafDelay of spread for clock
 	// jitter / scheduler-tick alignment. A concurrent dispatcher should
 	// run well under this bound on real hardware (typically tens of ms).
@@ -208,7 +208,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 			"(fan-out children must be dispatched in parallel, not one after another)",
 		spreadMs, leafDelay.Milliseconds())
 
-	// === (c) Parent settles ONLY after all children resolve. ============
+	// @deliberate: (c) Parent settles ONLY after all children resolve.
 	// Witness the parent in a NON-settled state while at least one
 	// partition child is still in flight. The parent's effective
 	// NodeState (via the production projection in
@@ -250,7 +250,7 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 			   AND rs.partition_key <> ''
 			   AND r.node_id = $2
 		`, []any{iid, parentNode.ID}, &terminalChildren)
-		// Window: some-but-not-all partition children have terminated.
+		// @constraint: Window: some-but-not-all partition children have terminated.
 		// At this moment the parent's main-scope row must NOT carry a
 		// settled state on its run row.
 		if terminalChildren >= 1 && terminalChildren < 3 {
@@ -276,7 +276,9 @@ func TestTemplateFanOut_HappyPath_AllSuccess(t *testing.T) {
 			"out-of-order relative to the children",
 		leafDelay)
 
-	// === (d-happy) Aggregate outcome reflects all-success children. =====
+	// @deliberate: (d-happy) Aggregate outcome reflects all-success
+	// children: parent fan-out node must reach NodeStateFresh once all
+	// three sub-claim children Succeed under strict aggregation.
 	require.True(t,
 		h.WaitForNodeState(parentNode.ID, cascade.NodeStateFresh, 60*time.Second),
 		"parent fan-out node must reach NodeStateFresh once all three sub-claim children Succeed under strict aggregation")
@@ -325,7 +327,7 @@ func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
 		},
 	})
 
-	// All partition children Error with an unknown error class. The
+	// @deliberate: All partition children Error with an unknown error class. The
 	// unknown class hits the default policy (give_up) immediately, so
 	// each child's leaf run transitions to NodeStateFailed and abandons
 	// its sub-claim. Strict aggregation then propagates the failure to
@@ -364,7 +366,7 @@ func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	// Three sub-claim rows must still materialize even though leaves
+	// @constraint: Three sub-claim rows must still materialize even though leaves
 	// will error: SplitScope runs before per-leaf execution.
 	require.Eventually(t, func() bool {
 		var subClaims int
@@ -378,14 +380,14 @@ func TestTemplateFanOut_AbandonPropagatesToParentError(t *testing.T) {
 	}, 60*time.Second, 50*time.Millisecond,
 		"sub-claim materialization must precede leaf execution — three sub-claim rows expected")
 
-	// Parent's aggregate-failed outcome: NodeStateFailed under
+	// @constraint: Parent's aggregate-failed outcome: NodeStateFailed under
 	// strict aggregation propagated from the abandoned sub-claims.
 	require.True(t,
 		h.WaitForNodeState(parentNode.ID, cascade.NodeStateFailed, 90*time.Second),
 		"parent fan-out node must reach NodeStateFailed once any sub-claim is Abandon'd under strict aggregation "+
 			"(strict_failed projection from runtime/run_tree.go::aggregateStrict)")
 
-	// Pin the SIGNAL on the parent's main-scope run row: the
+	// @deliberate: Pin the SIGNAL on the parent's main-scope run row: the
 	// `settling_signal_type` projection from aggregateStrict ties the
 	// parent's Failed state back to the sub-claim abandonment per
 	// runtime/run_tree.go::aggregateStrict and the propagation bridge

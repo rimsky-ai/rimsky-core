@@ -43,7 +43,7 @@ func TestFanOutPattern(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "fan-out", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			// Pure-cascade root; no executor / no stores. The harness's
+			// @deliberate: Pure-cascade root; no executor / no stores. The harness's
 			// instance-creation initial-frame fires this root on the
 			// first scheduler tick after CreateInstance.
 			scenario.MakeNode(node.TemplateNodeDef{Type: "root"}),
@@ -78,7 +78,6 @@ func TestFanOutPattern(t *testing.T) {
 	root := h.FindNode(iid, "root")
 	require.NotNil(t, root)
 
-	// All three children should reach fresh.
 	for _, typ := range []string{"child_a", "child_b", "child_c"} {
 		c := h.FindNode(iid, typ)
 		require.NotNil(t, c, "missing %s", typ)

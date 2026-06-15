@@ -47,7 +47,7 @@ import (
 func TestLeafCarriesCandidateHandle(t *testing.T) {
 	t.Parallel()
 
-	// Remote stub store. The fixture's ClaimProducer surface advertises
+	// @deliberate: Remote stub store. The fixture's ClaimProducer surface advertises
 	// SupportsSplitScope=true and decodes {"partition_keys":[...]} into one
 	// SubScopeDescriptor per key; the same fixture's DataProcessing surface
 	// (EnableDataProcessing in test/support/stores/stub/testfixture) mints a
@@ -62,7 +62,7 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 			Stores: map[string]config.StoreEntry{
 				"fanout-store": {
 					Endpoint: "grpc://" + endpoint,
-					// Declare data_processing so the supervisor dials the
+					// @deliberate: Declare data_processing so the supervisor dials the
 					// store's DataProcessing surface — without it the sub-
 					// claim acquisition skips BeginCandidate and no candidate
 					// handle is ever minted.
@@ -73,7 +73,7 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 		},
 	})
 
-	// Per-child stub script: Success with a no-op attributes_delta so the
+	// @deliberate: Per-child stub script: Success with a no-op attributes_delta so the
 	// commit gate accepts the bag. best_effort tolerates any per-child
 	// outcome — this scenario asserts the dispatch-time candidate handle,
 	// not aggregation policy semantics.
@@ -107,7 +107,7 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 
 	iid := h.CreateInstance(tid, "ck-leaf-candidate-handle", map[string]any{})
 
-	// Each of the three children dispatches under the parent's node row with
+	// @constraint: Each of the three children dispatches under the parent's node row with
 	// NodeType="fan-child"; the stub's Observed log records each dispatch's
 	// per-store candidate handle. The threading claim: each leaf carries a
 	// non-empty candidate handle under the `data` store alias, and the three
@@ -127,7 +127,7 @@ func TestLeafCarriesCandidateHandle(t *testing.T) {
 				empties++
 				continue
 			}
-			// The stub DataProcessing fixture mints a candidate handle of
+			// @deliberate: The stub DataProcessing fixture mints a candidate handle of
 			// the form "cand:<sub_claim_id>:<idempotency_key>"; assert the
 			// shape so a stray byte-blob can't masquerade as a candidate.
 			if !strings.HasPrefix(string(ch), "cand:") {

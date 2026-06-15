@@ -45,7 +45,7 @@ import (
 // Phase is supplied by the caller via Validate's `phase` argument; the
 // helper does not infer it from the schema or data.
 type ErrSchemaValidation struct {
-	Phase   string // "dispatch" | "commit" — caller-supplied
+	Phase   string
 	Message string
 	// Cause is the underlying jsonschema.ValidationError or schema-compile
 	// error. Errors.Is/Errors.As-able for callers that want to inspect
@@ -69,7 +69,7 @@ func IsSchemaValidation(err error) bool {
 	return errors.As(err, &v)
 }
 
-// PhaseDispatch and PhaseCommit are the two recognised phases. Validate
+// @deliberate: PhaseDispatch and PhaseCommit are the two recognised phases. Validate
 // does not enforce that the caller passes one of these — the field is
 // free-form for forward compatibility — but events emitted from the
 // supervisor expect these literal strings.
@@ -120,11 +120,11 @@ func Validate(schema map[string]any, data map[string]any, phase string) error {
 			Cause:   err,
 		}
 	}
-	// santhosh-tekuri's Validate accepts a Go value but expects JSON-
-	// decoded shapes (map[string]any, []any, primitives). We round-trip
-	// through json to normalise: a Go map produced by yaml.v3 may carry
-	// `map[any]any` subtrees that the validator rejects with a confusing
-	// internal type-assertion error.
+	// @deliberate: santhosh-tekuri's Validate accepts a Go value but
+	// expects JSON-decoded shapes (map[string]any, []any, primitives).
+	// Round-trip through json to normalise: a Go map produced by yaml.v3
+	// may carry `map[any]any` subtrees that the validator rejects with a
+	// confusing internal type-assertion error.
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
 		return &ErrSchemaValidation{

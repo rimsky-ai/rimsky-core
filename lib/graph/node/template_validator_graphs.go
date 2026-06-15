@@ -22,9 +22,7 @@ import (
 // removed at v1; we keep it accepted in V1-pre to avoid churning every
 // existing fixture and scenario test).
 //
-// Rejection classes (mapped to spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Edge-case rejections at registration):
+// Rejection classes:
 //   - graphs_and_nodes_both_set:    template sets both `graphs:` and `nodes:`.
 //   - subgraph_missing_main:        no graph named `main`.
 //   - subgraph_main_has_entry_or_exit: the `main` graph carries entry: or exit:.
@@ -52,7 +50,6 @@ func canonicalizeGraphs(spec *TemplateSpec, res *ValidationResult) {
 		return
 	}
 	if len(spec.Graphs) == 0 {
-		// Legacy flat-Nodes shape; no canonicalization needed.
 		return
 	}
 	if len(spec.Nodes) > 0 {
@@ -63,7 +60,6 @@ func canonicalizeGraphs(spec *TemplateSpec, res *ValidationResult) {
 		return
 	}
 
-	// Index graphs by name + validate per-graph shape.
 	graphByName := make(map[string]int, len(spec.Graphs))
 	mainCount := 0
 	for i, g := range spec.Graphs {
@@ -95,19 +91,10 @@ func canonicalizeGraphs(spec *TemplateSpec, res *ValidationResult) {
 		})
 	}
 
-	// Build a global declared-node map (graph-qualified node-type) and a
-	// flat Nodes list for downstream validation. Sub-graph internal-node
-	// rows are SHARED declaratively across invocations (per spec
-	// §Sub-graphs / Multiple invocations); the canonicalizer emits one
-	// row per (graph, internal-node-alias).
 	flatten(spec, res)
 
-	// Detect delegate: cycles across graphs.
 	detectDelegateCycles(spec, graphByName, res)
 
-	// Per-graph reachability: every non-entry / non-exit internal node
-	// must be reachable from entry along subscribes / inherits edges AND
-	// reach exit. Skip if shape already rejected.
 	for _, g := range spec.Graphs {
 		if g.Name == "" || g.Name == MainGraphName {
 			continue
@@ -115,9 +102,10 @@ func canonicalizeGraphs(spec *TemplateSpec, res *ValidationResult) {
 		validateGraphReachability(g, res)
 	}
 
-	// Internal-references-outer: a sub-graph internal node may only
-	// reference other nodes declared in its own graph (entry / exit /
-	// other internals). References to outer-graph nodes are illegal.
+	// @deliberate: internal-references-outer — a sub-graph internal node
+	// may only reference other nodes declared in its own graph
+	// (entry / exit / other internals). References to outer-graph nodes
+	// are illegal.
 	validateInternalRefsLocal(spec, res)
 }
 
@@ -159,7 +147,7 @@ func validateGraphShape(g GraphSpec, base string, res *ValidationResult) {
 				g.Name, g.Entry),
 		})
 	}
-	// entry / exit must name nodes declared in this graph.
+	// @deliberate: entry / exit must name nodes declared in this graph.
 	declared := make(map[string]struct{}, len(g.Nodes))
 	for _, n := range g.Nodes {
 		if n.Type != "" {
@@ -193,9 +181,7 @@ func validateGraphShape(g GraphSpec, base string, res *ValidationResult) {
 // canonicalizer assumes is unique across the template (cross-graph
 // duplicate types are reported).
 //
-// Two sub-graph markers are emitted here (per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sub-graphs / Identity and absorption):
+// Three sub-graph markers are emitted here:
 //
 //  1. `IsSubgraphEntryAbsorbed: true` on every node that declares a
 //     non-empty `Delegate`. At runtime the supervisor consults this
@@ -234,12 +220,11 @@ func validateGraphShape(g GraphSpec, base string, res *ValidationResult) {
 // resolution — out of scope for the canonicalizer-only absorption
 // merge that lands here.
 func flatten(spec *TemplateSpec, res *ValidationResult) {
-	// Index entries by graph name for the absorption merge below.
-	// Only well-formed sub-graphs (non-main, with a declared entry
-	// that names a real node) contribute an entry-node lookup;
-	// malformed shapes are reported by validateGraphShape and
-	// silently skipped here so the absorption pass doesn't
-	// double-report.
+	// @deliberate: index entries by graph name for the absorption merge
+	// below. Only well-formed sub-graphs (non-main, with a declared entry
+	// that names a real node) contribute an entry-node lookup; malformed
+	// shapes are reported by validateGraphShape and silently skipped here
+	// so the absorption pass doesn't double-report.
 	entryByGraph := buildEntryIndex(spec)
 
 	seen := make(map[string]string, 16)
@@ -250,7 +235,7 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 		exitAlias := g.Exit
 		for ni, n := range g.Nodes {
 			if strings.TrimSpace(n.Type) == "" {
-				// Reported by main per-node validation.
+				// @deliberate: Reported by main per-node validation.
 				flat = append(flat, n)
 				continue
 			}
@@ -265,13 +250,13 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 			}
 			seen[n.Type] = fmt.Sprintf("graph %q", g.Name)
 			emitted := n
-			// Marker 1 + absorption merge: the calling node carries
-			// IsSubgraphEntryAbsorbed when it has a non-empty Delegate,
-			// and the entry node's executor + stores + holds +
-			// attribute schema are merged onto the calling node so the
-			// runtime dispatch path sees a fully populated row. The
-			// marker is emitted at canonicalization so the runtime can
-			// route on it without a per-template lookup at every
+			// @deliberate: Marker 1 + absorption merge: the calling node carries
+			// node carries IsSubgraphEntryAbsorbed when it has a non-
+			// empty Delegate, and the entry node's executor + stores +
+			// holds + attribute schema are merged onto the calling node
+			// so the runtime dispatch path sees a fully populated row.
+			// The marker is emitted at canonicalization so the runtime
+			// can route on it without a per-template lookup at every
 			// terminal; the merge is what makes the entry's identity
 			// "be" the calling node per concept:delegation.
 			if strings.TrimSpace(emitted.Delegate) != "" {
@@ -283,21 +268,21 @@ func flatten(spec *TemplateSpec, res *ValidationResult) {
 					res.Errors = append(res.Errors, errs...)
 				}
 			}
-			// Marker 2: the exit node of a non-main graph carries
-			// IsSubgraphExit. The runtime consults this marker (via
-			// acq.NodeDef) on the success branch of applyTerminalComplete
-			// to fire the carry-rule. Setting it at canonicalization
-			// eliminates the runtime DB lookup (and its transient-failure
-			// mode) that the previous `IsSubgraphExit(tmpl, nodeType)`
-			// predicate required.
+			// @deliberate: Marker 2: the exit node of a non-main graph
+			// carries IsSubgraphExit. The runtime consults this marker
+			// (via acq.NodeDef) on the success branch of
+			// applyTerminalComplete to fire the carry-rule. Setting it
+			// at canonicalization eliminates the runtime DB lookup (and
+			// its transient-failure mode) that the previous
+			// `IsSubgraphExit(tmpl, nodeType)` predicate required.
 			if g.Name != MainGraphName && exitAlias != "" && emitted.Type == exitAlias {
 				emitted.IsSubgraphExit = true
 			}
-			// Marker 3: subscription edges from non-entry internal nodes
-			// that target the graph's entry alias get ResolvesViaCallingNode.
-			// The runtime cascade walker resolves them to the calling
-			// node per-invocation. Only emitted on non-main graphs that
-			// declare entry:.
+			// @deliberate: Marker 3: subscription edges from non-entry
+			// internal nodes that target the graph's entry alias get
+			// ResolvesViaCallingNode. The runtime cascade walker resolves
+			// them to the calling node per-invocation. Only emitted on
+			// non-main graphs that declare entry:.
 			if isSubgraph && emitted.Type != entryAlias {
 				for si := range emitted.Subscribes {
 					if emitted.Subscribes[si].Node == entryAlias {
@@ -362,7 +347,7 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 	out := caller
 	var errs []ValidationError
 
-	// D2 mutual-exclusion — AUTHORED state. The caller's
+	// @deliberate: D2 mutual-exclusion in AUTHORED state. The caller's
 	// IsSubgraphEntryAbsorbed marker is set BEFORE we get here, which
 	// disables the `validateExecutorCoherence` check downstream
 	// (otherwise every absorbed caller would false-positive after the
@@ -371,8 +356,8 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 	// original declaration. The check fires whenever the author wrote
 	// both `executor:` AND `delegate:` on the same node, regardless of
 	// whether the entry itself declares an executor — without this an
-	// author who delegates to a sub-graph whose entry has no executor
-	// of its own would slip past every check.
+	// author who delegates to a sub-graph whose entry has no executor of
+	// its own would slip past every check.
 	if caller.Executor != "" && caller.Delegate != "" {
 		errs = append(errs, ValidationError{
 			Path: basePath + ".executor",
@@ -381,19 +366,19 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 				caller.Executor, caller.Delegate),
 		})
 	}
-	// Only run the diverging-executor check when the mutual-exclusion
-	// check above did NOT fire. Otherwise an author who wrote BOTH
-	// `executor:` AND `delegate:` whose entry happens to declare a
-	// different executor would land two overlapping errors on the same
-	// path — the mutual-exclusion error is the root cause, and the
-	// diverging-executor message is redundant noise on top of it.
+	// @deliberate: Only run the diverging-executor check when the mutual-exclusion
+	// mutual-exclusion check above did NOT fire. Otherwise an author
+	// who wrote BOTH `executor:` AND `delegate:` whose entry happens to
+	// declare a different executor would land two overlapping errors on
+	// the same path — the mutual-exclusion error is the root cause, and
+	// the diverging-executor message is redundant noise on top of it.
 	if len(errs) == 0 && out.Executor != "" && entry.Executor != "" && out.Executor != entry.Executor {
-		// The author declared an executor on the calling node AND the
-		// entry declared an executor of its own. The mutual-exclusion
-		// check is the catch-all for `executor:` + `delegate:`; this
-		// site is more specific about which executor would win the
-		// merge so operators see a coherent absorption-conflict
-		// vocabulary in the diverging-executor case.
+		// @deliberate: The author declared an executor on the calling node AND the
+		// node AND the entry declared an executor of its own. The
+		// mutual-exclusion check is the catch-all for `executor:` +
+		// `delegate:`; this site is more specific about which executor
+		// would win the merge so operators see a coherent
+		// absorption-conflict vocabulary in the diverging-executor case.
 		errs = append(errs, ValidationError{
 			Path: basePath + ".executor",
 			Msg: fmt.Sprintf(
@@ -418,9 +403,10 @@ func absorbEntryIntoCaller(caller, entry TemplateNodeDef, basePath string) (Temp
 	}
 
 	if entry.Attributes != nil && len(entry.Attributes.Schema) > 0 {
-		// Deep-merge: caller's external schema is the L2 override; the
-		// entry's schema is the absorbed baseline. shared.DeepMergeJSON
-		// gives over-wins-on-conflict, so the caller wins as required.
+		// @deliberate: deep-merge — caller's external schema is the L2
+		// override; the entry's schema is the absorbed baseline.
+		// shared.DeepMergeJSON gives over-wins-on-conflict, so the
+		// caller wins as required.
 		entryAsAny := any(entry.Attributes.Schema)
 		var callerAsAny any
 		if caller.Attributes != nil && len(caller.Attributes.Schema) > 0 {
@@ -467,8 +453,8 @@ func mergeStoresOnAbsorb(callerStores, entryStores []NodeStoreRef, basePath stri
 			})
 			continue
 		}
-		// Identical re-declaration: the caller's copy already covers
-		// the slot; the entry adds nothing new.
+		// @deliberate: Identical re-declaration: the caller's copy already covers
+		// already covers the slot; the entry adds nothing new.
 	}
 	return out, errs
 }
@@ -522,7 +508,7 @@ func mergeHoldsOnAbsorb(callerHolds, entryHolds map[string]HoldsBinding, basePat
 // the containing graph → G) and rejects cycles with class
 // `subgraph_recursion_unsupported`.
 func detectDelegateCycles(spec *TemplateSpec, graphIndex map[string]int, res *ValidationResult) {
-	// Build adjacency: for each node with Delegate set, add an edge from
+	// @deliberate: Build adjacency: for each node with Delegate set, add an edge from
 	// its containing graph → the target graph.
 	type edge struct{ from, to string }
 	edges := []edge{}
@@ -532,9 +518,9 @@ func detectDelegateCycles(spec *TemplateSpec, graphIndex map[string]int, res *Va
 				continue
 			}
 			if _, ok := graphIndex[n.Delegate]; !ok {
-				// Reference to an unknown graph; reported separately at
-				// per-node Delegate validation when wired (D2 spec); here
-				// we silently skip the edge.
+				// @deliberate: Reference to an unknown graph; reported separately at
+				// reported separately at per-node Delegate validation;
+				// silently skip the edge here.
 				continue
 			}
 			edges = append(edges, edge{from: g.Name, to: n.Delegate})
@@ -544,7 +530,7 @@ func detectDelegateCycles(spec *TemplateSpec, graphIndex map[string]int, res *Va
 	for _, e := range edges {
 		adj[e.from] = append(adj[e.from], e.to)
 	}
-	// Tarjan-style DFS with colors.
+	// @deliberate: Tarjan-style DFS with colors.
 	const (
 		white = 0
 		gray  = 1
@@ -556,7 +542,6 @@ func detectDelegateCycles(spec *TemplateSpec, graphIndex map[string]int, res *Va
 		color[node] = gray
 		for _, next := range adj[node] {
 			if color[next] == gray {
-				// Cycle.
 				cycle := append([]string{}, path...)
 				cycle = append(cycle, node, next)
 				res.Errors = append(res.Errors, ValidationError{
@@ -605,7 +590,6 @@ func validateGraphReachability(g GraphSpec, res *ValidationResult) {
 			nodes[n.Type] = n
 		}
 	}
-	// Build adjacency.
 	forward := make(map[string][]string, len(nodes))
 	backward := make(map[string][]string, len(nodes))
 	for name, n := range nodes {
@@ -616,12 +600,11 @@ func validateGraphReachability(g GraphSpec, res *ValidationResult) {
 			if _, ok := nodes[s.Node]; !ok {
 				continue
 			}
-			// edge: s.Node → name (sender → receiver)
 			forward[s.Node] = append(forward[s.Node], name)
 			backward[name] = append(backward[name], s.Node)
 		}
 	}
-	// BFS from entry along forward edges.
+	// @deliberate: BFS from entry along forward edges.
 	reachable := make(map[string]bool, len(nodes))
 	queue := []string{g.Entry}
 	reachable[g.Entry] = true
@@ -636,7 +619,7 @@ func validateGraphReachability(g GraphSpec, res *ValidationResult) {
 			queue = append(queue, next)
 		}
 	}
-	// BFS from exit along backward edges (reach exit).
+	// @deliberate: BFS from exit along backward edges to test reachability.
 	canReachExit := make(map[string]bool, len(nodes))
 	queue = []string{g.Exit}
 	canReachExit[g.Exit] = true

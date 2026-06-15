@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As a service author writing a custom claim-producer, I can implement the gRPC `ClaimProducer` server (`Capabilities`, `Open`, `Commit`, `Abandon`, `Release`) with my chosen write-semantics (sync / staged_async / blocking_async / read_only), advertise my capabilities at startup, accept `Open` requests with resolved scope data, return claim handles that drive the executor dispatch, and accept terminal verbs (Commit / Abandon / Release) that close the claim lifecycle correctly, so that my producer plugs into a rimsky stack and rimsky orchestrates claims against it.
+As a service author writing a custom claim-producer, I can implement the `concept:claim-producer` protocol — a capabilities advertisement plus the open / commit / abandon / release verbs — with my chosen write-semantics (sync, staged-async, blocking-async, or read-only), advertise my capabilities at startup, accept open requests with resolved scope data, return claim handles that drive the executor dispatch, and accept terminal verbs that close the claim lifecycle correctly, so that my producer plugs into a rimsky stack and rimsky orchestrates claims against it.
 
 ## Capability
 
-Public claim-producer protocol surface (`Capabilities`, `Open`, `Commit`, `Abandon`, `Release`); rimsky drives discovery, schema validation, terminal-verb orchestration; producers advertise their write-semantics and rimsky enforces it at registration.
+Public claim-producer protocol surface — a capabilities advertisement plus the open / commit / abandon / release verbs (see `concept:claim-producer`); rimsky drives discovery, schema validation, and terminal-verb orchestration; producers advertise their write-semantics and rimsky enforces it at registration.
 
 ## Business value
 
@@ -19,11 +19,11 @@ A custom producer plugs into a rimsky stack and rimsky orchestrates the claim li
 
 ## Acceptance
 
-A custom claim-producer implementing the public protocol, registered with rimsky's catalog, is referenced from a template; on instance dispatch, the producer receives a real `Open` with resolved scope bytes, returns Acquired or Unavailable per its policy; on success, rimsky drives Commit at auto-terminal; on failure, Abandon; on lifecycle close, Release. The producer's capabilities are honored — a template referencing a write-semantics the producer doesn't advertise is refused at registration.
+A custom claim-producer implementing the public protocol, registered with rimsky's catalog, is referenced from a template; on instance dispatch, the producer receives a real open call with resolved scope bytes, returns acquired or unavailable per its policy; on success, rimsky drives commit at auto-terminal; on failure, abandon; on lifecycle close, release. The producer's capabilities are honored — a template referencing a write-semantics the producer doesn't advertise is refused at registration.
 
 ## Falsifier
 
-A registered producer's `Open` is bypassed, OR Commit/Abandon/Release are called but the producer's effect is canned, OR a write-semantics the producer didn't advertise is silently accepted at registration.
+A registered producer's open call is bypassed, OR commit / abandon / release are called but the producer's effect is canned, OR a write-semantics the producer didn't advertise is silently accepted at registration.
 
 ## Proof
 

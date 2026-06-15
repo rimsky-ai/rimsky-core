@@ -96,32 +96,34 @@ type NodeTable interface {
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*NodeRow, error)
 	ListByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) ([]NodeRow, error)
 	ListByInstancePaged(ctx context.Context, instanceID shared.UUID, pag ListPagination, tx Tx) (PaginatedListResult[NodeRow], error)
-	// ListByInstancePagedFiltered is the filter-aware variant; pass a
-	// zero-valued NodeListFilter for the same behaviour as
-	// ListByInstancePaged. The two methods coexist so existing callers
-	// stay unaffected.
+	// @deliberate: ListByInstancePagedFiltered is the filter-aware
+	// variant; pass a zero-valued NodeListFilter for the same behaviour
+	// as ListByInstancePaged. The two methods coexist so existing
+	// callers stay unaffected.
 	ListByInstancePagedFiltered(ctx context.Context, instanceID shared.UUID, pag ListPagination, filter NodeListFilter, tx Tx) (PaginatedListResult[NodeRow], error)
 	ListReadyForDispatch(ctx context.Context, tx Tx) ([]NodeRow, error)
 	ListRunning(ctx context.Context, tx Tx) ([]NodeRow, error)
-	// ListRunningBySupervisor returns the rows in state='running' currently
-	// assigned to the given supervisor (`assigned_supervisor_id = $1`).
-	// Used by the supervisor's heartbeat tick to refresh `last_heartbeat_at`
-	// on every running node it owns — covers both sync dispatches (RunNode
-	// in-flight) and async dispatches (handed off to the callback server
-	// but still running in the DB until the terminal callback arrives).
-	// The DB is the source of truth; do not rely on in-memory bookkeeping
-	// of "currently running" nodes.
+	// @constraint: ListRunningBySupervisor returns the rows in
+	// state='running' currently assigned to the given supervisor
+	// (`assigned_supervisor_id = $1`). Used by the supervisor's
+	// heartbeat tick to refresh `last_heartbeat_at` on every running
+	// node it owns — covers both sync dispatches (RunNode in-flight)
+	// and async dispatches (handed off to the callback server but
+	// still running in the DB until the terminal callback arrives).
+	// The DB is the source of truth; do not rely on in-memory
+	// bookkeeping of "currently running" nodes.
 	ListRunningBySupervisor(ctx context.Context, supervisorID string, tx Tx) ([]NodeRow, error)
 	ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time, tx Tx) ([]NodeRow, error)
 	ListPureCascadeReady(ctx context.Context, tx Tx) ([]NodeRow, error)
 	CountByState(ctx context.Context, tx Tx) (map[cascade.NodeState]int, error)
-	// UpdateState transitions the node to `state` under `reason`, validated
-	// against the cascade state machine. `settlingSignalType` is the
-	// canonical signal type-path (concept:signal) recorded on settling
-	// transitions; nil means "do not write the column" (preserves the
-	// existing value — used for non-settling transitions like
-	// stale→running). Settling transitions pass a non-nil pointer holding
-	// one of "terminal/success" | "terminal/error/<class>" |
+	// @agent-contract UpdateState transitions the node to `state` under
+	// `reason`, validated against the cascade state machine.
+	// `settlingSignalType` is the canonical signal type-path
+	// (concept:signal) recorded on settling transitions; nil means "do
+	// not write the column" (preserves the existing value — used for
+	// non-settling transitions like stale→running). Settling
+	// transitions pass a non-nil pointer holding one of
+	// "terminal/success" | "terminal/error/<class>" |
 	// "terminal/park/<reason>" | "terminal/infra/<reason>".
 	//
 	// `runScopeID` disambiguates which in-flight rimsky_node_runs row to
@@ -138,14 +140,14 @@ type NodeTable interface {
 	// for the bug that motivated this disambiguation.
 	UpdateState(ctx context.Context, id shared.UUID, runScopeID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, settlingSignalType *string, tx Tx) error
 	UpdateError(ctx context.Context, id shared.UUID, es spec.EvaluatorState, tx Tx) error
-	// UpdateHeartbeat refreshes the in-flight run row's last_heartbeat_at
-	// and (when supervisorID is non-empty) stamps claimed_by. `runID`
-	// disambiguates which in-flight row to address — required for
-	// fan-out children that share a node_id with siblings, to prevent
-	// leaking claimed_by onto pending siblings (which would render them
-	// unclaimable via SelectCandidates' `claimed_by IS NULL` filter).
-	// Nil `runID` preserves the legacy by-node-id update for paths that
-	// don't face fan-out ambiguity.
+	// @agent-contract UpdateHeartbeat refreshes the in-flight run row's
+	// last_heartbeat_at and (when supervisorID is non-empty) stamps
+	// claimed_by. `runID` disambiguates which in-flight row to address
+	// — required for fan-out children that share a node_id with
+	// siblings, to prevent leaking claimed_by onto pending siblings
+	// (which would render them unclaimable via SelectCandidates'
+	// `claimed_by IS NULL` filter). Nil `runID` preserves the legacy
+	// by-node-id update for paths that don't face fan-out ambiguity.
 	//
 	// Claimant-guarded (blessed-invariant 4): the write only lands when
 	// the row is unclaimed or already claimed by supervisorID — a row
@@ -154,11 +156,12 @@ type NodeTable interface {
 	// An empty supervisorID matches only unclaimed rows.
 	UpdateHeartbeat(ctx context.Context, id shared.UUID, runScopeID shared.UUID, at time.Time, supervisorID string, tx Tx) error
 	SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx Tx) error
-	// ClearSettlingSignalType clears settling_signal_type to NULL on the
-	// in-flight rimsky_node_runs row. Used by the operator reset path so
-	// the dashboard does not display a stale failed signal-type-path
-	// while the node transitions back through stale → running → fresh.
-	// No-op when no in-flight row exists.
+	// @agent-contract ClearSettlingSignalType clears
+	// settling_signal_type to NULL on the in-flight rimsky_node_runs
+	// row. Used by the operator reset path so the dashboard does not
+	// display a stale failed signal-type-path while the node
+	// transitions back through stale → running → fresh. No-op when no
+	// in-flight row exists.
 	//
 	// `runScopeID` narrows the UPDATE to the specific in-flight row —
 	// required for fan-out children that share a node_id with siblings,
@@ -167,14 +170,15 @@ type NodeTable interface {
 	// Replaces the retired ClearLastOutcome alongside Pass 5 of spec
 	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 	ClearSettlingSignalType(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
-	// ResetFailedTerminalSettlingSignalType clears settling_signal_type
-	// to NULL on the most-recent failed-terminal `rimsky_node_runs` row
-	// for the given node (predicate `phase = 'failed'`, ordered by
-	// `active_terminal_at DESC LIMIT 1`). Used by the operator reset
-	// path: handleResetNode is invoked when the node is in state='failed',
-	// which means the only state-bearing row is the failed-terminal row
-	// (no in-flight row exists); ClearSettlingSignalType's `phase IN
-	// (pending,active,held,parked)` predicate would therefore be a no-op.
+	// @agent-contract ResetFailedTerminalSettlingSignalType clears
+	// settling_signal_type to NULL on the most-recent failed-terminal
+	// `rimsky_node_runs` row for the given node (predicate `phase =
+	// 'failed'`, ordered by `active_terminal_at DESC LIMIT 1`). Used by
+	// the operator reset path: handleResetNode is invoked when the node
+	// is in state='failed', which means the only state-bearing row is
+	// the failed-terminal row (no in-flight row exists);
+	// ClearSettlingSignalType's `phase IN (pending,active,held,parked)`
+	// predicate would therefore be a no-op.
 	//
 	// No-op when no failed-terminal row exists.
 	//
@@ -182,11 +186,11 @@ type NodeTable interface {
 	// Pass 5 of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 	ResetFailedTerminalSettlingSignalType(ctx context.Context, id shared.UUID, runScopeID shared.UUID, tx Tx) error
 
-	// GetFailedTerminalRunScopeID returns the run_scope_id of the
-	// most-recent failed-terminal `rimsky_node_runs` row for the node
-	// (predicate `phase = 'failed'`, ordered by
-	// `COALESCE(active_terminal_at, enqueued_at) DESC LIMIT 1`).
-	// Returns nil when no failed-terminal row exists.
+	// @agent-contract GetFailedTerminalRunScopeID returns the
+	// run_scope_id of the most-recent failed-terminal
+	// `rimsky_node_runs` row for the node (predicate `phase =
+	// 'failed'`, ordered by `COALESCE(active_terminal_at, enqueued_at)
+	// DESC LIMIT 1`). Returns nil when no failed-terminal row exists.
 	//
 	// Used by the operator reset path so the failed-terminal
 	// settling_signal_type reset can key on the correct RunScope
@@ -198,9 +202,10 @@ type NodeTable interface {
 	GetFailedTerminalRunScopeID(ctx context.Context, id shared.UUID, tx Tx) (*shared.UUID, error)
 
 	DeleteByInstance(ctx context.Context, instanceID shared.UUID, tx Tx) error
-	// MarkStaleForCascade transitions the run's state to 'stale' and
-	// pins frame_id. Pure UPDATE keyed by run_id; allocation is the
-	// cascade walker's responsibility via AffirmNodeRunRow.
+	// @agent-contract MarkStaleForCascade transitions the run's state
+	// to 'stale' and pins frame_id. Pure UPDATE keyed by run_id;
+	// allocation is the cascade walker's responsibility via
+	// AffirmNodeRunRow.
 	//
 	// @blessed-invariant: state-machine-writes-single-tx — State-machine writes for a single run must be
 	// tx-atomic. Caller MUST resolve the run id (via the affirm-then-read
@@ -209,10 +214,10 @@ type NodeTable interface {
 	// @concept: cascade
 	MarkStaleForCascade(ctx context.Context, runID shared.UUID, frameID shared.UUID, tx Tx) error
 
-	// AffirmNodeRunRow ensures an in-flight rimsky_node_runs row exists
-	// for (nodeID, runScopeID). If no in-flight row exists, INSERTs a
-	// pending stale row keyed to the supplied frameID; if one exists,
-	// no-op. Returns only error.
+	// @agent-contract AffirmNodeRunRow ensures an in-flight
+	// rimsky_node_runs row exists for (nodeID, runScopeID). If no
+	// in-flight row exists, INSERTs a pending stale row keyed to the
+	// supplied frameID; if one exists, no-op. Returns only error.
 	//
 	// Callers MUST NOT depend on this method's return shape beyond
 	// error/no-error. The architectural property: lazy↔eager
@@ -230,21 +235,22 @@ type NodeTable interface {
 	// @concept: run-scope
 	AffirmNodeRunRow(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, frameID shared.UUID, tx Tx) error
 
-	// HasRunForNodeInFrame reports whether ANY rimsky_node_runs row
-	// (regardless of phase) exists for `nodeID` with `frame_id =
-	// frameID`. Used by the cascade walker's once-per-frame guard so
-	// a receiver that has already dispatched + terminated within a
-	// frame is not re-affirmed by a later sender's cascade in the
-	// same frame.
+	// @agent-contract HasRunForNodeInFrame reports whether ANY
+	// rimsky_node_runs row (regardless of phase) exists for `nodeID`
+	// with `frame_id = frameID`. Used by the cascade walker's
+	// once-per-frame guard so a receiver that has already dispatched +
+	// terminated within a frame is not re-affirmed by a later sender's
+	// cascade in the same frame.
 	//
 	// @concept: signal
 	HasRunForNodeInFrame(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (bool, error)
 
-	// GetRunByDispatchIDForUpdate returns the in-flight rimsky_node_runs
-	// row projection for the given dispatch_id, with SELECT ... FOR UPDATE
-	// row lock. Returns nil if no in-flight row exists for that id.
-	// Used by the callback handler in runtime/callback.go to resolve
-	// the run for a callback under the atomic phase check.
+	// @agent-contract GetRunByDispatchIDForUpdate returns the in-flight
+	// rimsky_node_runs row projection for the given dispatch_id, with
+	// SELECT ... FOR UPDATE row lock. Returns nil if no in-flight row
+	// exists for that id. Used by the callback handler in
+	// runtime/callback.go to resolve the run for a callback under the
+	// atomic phase check.
 	//
 	// @blessed-invariant: callback-determinism — Callback determinism per spec.
 	GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID shared.UUID, tx Tx) (*NodeRunForCallback, error)

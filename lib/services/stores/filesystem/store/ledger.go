@@ -69,7 +69,7 @@ type ClaimLedger struct {
 	mu      sync.RWMutex
 	records map[string]*ClaimRecord
 	max     int
-	order   []string // insertion order of claim_ids for bounded eviction
+	order   []string
 	subs    map[string]map[*subscriber]struct{}
 }
 
@@ -161,8 +161,7 @@ func (l *ClaimLedger) RecordTerminal(claimID, category string, attrs map[string]
 	defer l.mu.Unlock()
 	rec, ok := l.records[claimID]
 	if !ok {
-		// Open was not recorded (e.g. evicted, restarted) — synthesise a
-		// minimal record so the dashboard still sees the terminal.
+		// @deliberate: open was not recorded (e.g. evicted, restarted) — synthesise a minimal record so the dashboard still sees the terminal.
 		rec = &ClaimRecord{ClaimID: claimID, State: ClaimStateUnknown, OpenedAt: time.Now().UTC()}
 		l.records[claimID] = rec
 		l.order = append(l.order, claimID)
@@ -256,7 +255,7 @@ func (l *ClaimLedger) Get(claimID string) (*ClaimRecord, bool) {
 	if !ok {
 		return nil, false
 	}
-	// Return a defensive copy of history.
+	// @deliberate: return a defensive copy of the record + history so callers can't mutate ledger-owned state.
 	cp := *rec
 	cp.History = append([]ClaimEvent(nil), rec.History...)
 	return &cp, true
@@ -316,8 +315,8 @@ func (l *ClaimLedger) List(stateFilter string, cursor string, limit int) ([]*Cla
 // the ledger unbounded. Caller must hold l.mu.
 func (l *ClaimLedger) evictIfNeeded() {
 	for len(l.records) > l.max {
-		// Soft pass: oldest terminal record.
 		evicted := ""
+		// @deliberate: soft pass — oldest terminal record. Live OPEN claims survive longer because terminal rows have nothing left to do.
 		for i, id := range l.order {
 			rec, ok := l.records[id]
 			if !ok {
@@ -333,10 +332,10 @@ func (l *ClaimLedger) evictIfNeeded() {
 		if evicted != "" {
 			continue
 		}
-		// Hard fall-through: oldest record regardless of state.
 		if len(l.order) == 0 {
 			return
 		}
+		// @deliberate: hard fall-through — oldest record regardless of state. Without it a long run of never-terminal dispatches grows the ledger unbounded.
 		oldest := l.order[0]
 		l.order = l.order[1:]
 		delete(l.records, oldest)

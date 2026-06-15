@@ -63,7 +63,7 @@ const serviceNameHeaderKey = "x-rimsky-service-name"
 // rejecting validator is observable through the proxy + agent tunnel.
 const validationRejectRoleSentinel = "stubchild-reject"
 
-// candidateHandlePrefixSentinel / committedMetadataPrefixSentinel mirror the
+// @deliberate: candidateHandlePrefixSentinel / committedMetadataPrefixSentinel mirror the
 // stubchild's deterministic typed-data op: BeginCandidate echoes the
 // idempotency_key into the candidate handle (prefixed), and CommitCandidate
 // derives candidate_metadata from that handle (prefixed). Asserting on these
@@ -74,10 +74,10 @@ const (
 )
 
 func TestHostAgentLateBindAllProtocols(t *testing.T) {
-	// Not parallel: execs real child processes and binds free ports; keep it
+	// @deliberate: Not parallel: execs real child processes and binds free ports; keep it
 	// serial so the port reservations and process reaping stay predictable.
 
-	// A publish log so the late-bind publisher dispatch is observably served
+	// @deliberate: A publish log so the late-bind publisher dispatch is observably served
 	// by the real spawned binary (the stub appends a line per Subscribe).
 	// Set BEFORE the fixture starts so every spawned child inherits it.
 	publishLog := t.TempDir() + "/stub-publish.log"
@@ -85,7 +85,7 @@ func TestHostAgentLateBindAllProtocols(t *testing.T) {
 
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})
 
-	// Create an instance binding `codegen` to the stub binary and let its
+	// @deliberate: Create an instance binding `codegen` to the stub binary and let its
 	// executor node dispatch through proxy → agent → stub. Reaching fresh
 	// proves the agent is connected, the binding cache is populated, and the
 	// stub is spawnable — the preconditions the direct protocol dispatches
@@ -101,7 +101,7 @@ func TestHostAgentLateBindAllProtocols(t *testing.T) {
 
 	instanceID := iid.String()
 
-	// Dial the running proxy's supervisor-facing gRPC port directly. Each
+	// @deliberate: Dial the running proxy's supervisor-facing gRPC port directly. Each
 	// client carries the x-rimsky-service-name header naming the late-bound
 	// service (codegen), exactly as the supervisor's client interceptor would.
 	conn, err := grpc.NewClient(fx.proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -140,7 +140,7 @@ func assertLateBindValidation(t *testing.T, conn *grpc.ClientConn, instanceID st
 	resp, err := client.Validate(ctx, &genv1.ValidateRequest{
 		Role: validationRejectRoleSentinel,
 		Context: &genv1.ValidateRequest_Executor{Executor: &genv1.ExecutorContext{
-			NodeAlias: instanceID, // any non-empty context; the role drives the verdict
+			NodeAlias: instanceID, // @deliberate: any non-empty context; the role drives the verdict
 		}},
 	})
 
@@ -176,7 +176,6 @@ func assertLateBindPublisher(t *testing.T, conn *grpc.ClientConn, instanceID, pu
 		"publisher dispatch returned gRPC Unimplemented — the proxy did not forward to the spawned binary")
 	require.NoError(t, err, "publisher dispatch should be served by the real spawned publisher")
 
-	// The stub records "<sub_id> <instance_id> <target_node>" per Subscribe.
 	want := strings.Join([]string{subID, instanceID, targetNode}, " ")
 	require.Eventually(t, func() bool {
 		data, readErr := os.ReadFile(publishLog)

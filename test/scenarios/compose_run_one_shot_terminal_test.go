@@ -81,21 +81,20 @@ const composeRunStubExecutorPkg = "./cmd/rimsky/cli/compose/testdata/stub-execut
 //     audit artifact, not just instance-level state;
 //   - the per-run dir has a `blobs/` subdirectory.
 func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
-	// Build the rimsky CLI and the stub executor into the test tempdir.
 	binDir := t.TempDir()
 	rimskyBin := filepath.Join(binDir, "rimsky")
 	stubBin := filepath.Join(binDir, "stub-executor")
 	buildRimskyCLIBinary(t, rimskyBin)
 	buildComposeStubExecutorBinary(t, stubBin)
 
-	// Stage a per-test working directory and copy the sample manifest
+	// @deliberate: Stage a per-test working directory and copy the sample manifest
 	// in. The verb's artifact-root discovery walks up from cwd, so
 	// running with cwd=<work> lands the .rimsky/ directory under
 	// <work>/.rimsky/.
 	work := t.TempDir()
 	copyComposeSampleManifest(t, work)
 
-	// Run the verb under a generous timeout — the local rimsky stack
+	// @deliberate: Run the verb under a generous timeout — the local rimsky stack
 	// boots in well under a second; 90s admits any CI slowness without
 	// masking a wedge.
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -107,7 +106,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		"./rimsky-compose.yml",
 	)
 	cmd.Dir = work
-	// Isolate HOME so any default config-lookup path the CLI follows
+	// @deliberate: Isolate HOME so any default config-lookup path the CLI follows
 	// does not stumble on an operator-installed ~/.rimsky.
 	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
 
@@ -116,7 +115,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 
-	// Capture the exit code. ExitError.ExitCode() carries the verb's
+	// @deliberate: Capture the exit code. ExitError.ExitCode() carries the verb's
 	// own exit value; a fork-level error means the binary itself
 	// could not start, which is a test infrastructure problem, not a
 	// falsifier hit.
@@ -134,7 +133,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 
 	stderrStr := stderr.String()
 
-	// Falsifier #1: exit code MUST be 1 — one instance terminal-success
+	// @constraint: Falsifier #1: exit code MUST be 1 — one instance terminal-success
 	// and one terminal-failure classify as ReasonAnyFailure per the
 	// spec's @decision: exit-codes. A 0 here would mean the classifier
 	// missed the failed instance; a 2 would mean the timeout path
@@ -143,7 +142,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		t.Fatalf("expected exit code 1 (any-failure for mixed outcome); got %d\nstderr:\n%s", rc, stderrStr)
 	}
 
-	// Falsifier #2: per-instance summary lines must appear by name AND
+	// @constraint: Falsifier #2: per-instance summary lines must appear by name AND
 	// outcome class. A count-only output (`2 instances done`) is the
 	// failure mode the story rules out.
 	if !strings.Contains(stderrStr, "instance sample-pipeline/ok: success") {
@@ -152,14 +151,14 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 	if !strings.Contains(stderrStr, "instance sample-pipeline/oops: failure") {
 		t.Fatalf("missing per-instance summary for 'oops' (expected failure); stderr:\n%s", stderrStr)
 	}
-	// Aggregate summary must surface the any-failure reason — proves
+	// @constraint: Aggregate summary must surface the any-failure reason — proves
 	// the exit-code classification was driven by the observed mixed
 	// outcomes rather than a default.
 	if !strings.Contains(stderrStr, "compose run: any-failure (2 instances)") {
 		t.Fatalf("missing 'compose run: any-failure (2 instances)' aggregate summary; stderr:\n%s", stderrStr)
 	}
 
-	// Locate the per-run artifact directory via .rimsky/latest. The
+	// @deliberate: Locate the per-run artifact directory via .rimsky/latest. The
 	// readlink target is the directory the verb wrote under
 	// .rimsky/runs/<timestamp>-<name>.
 	rimskyDir := filepath.Join(work, ".rimsky")
@@ -175,14 +174,14 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		runDir = filepath.Clean(filepath.Join(rimskyDir, latestTarget))
 	}
 
-	// Falsifier #3a: blobs/ subdirectory must exist under the run
+	// @constraint: Falsifier #3a: blobs/ subdirectory must exist under the run
 	// dir — the filesystem-blob backend's root and the spec's
 	// `<.rimsky>/runs/<latest>/blobs/` artifact-layout invariant.
 	if info, statErr := os.Stat(filepath.Join(runDir, "blobs")); statErr != nil || !info.IsDir() {
 		t.Fatalf("run dir missing blobs/ subdir (audit-artifact falsifier): err=%v info=%+v", statErr, info)
 	}
 
-	// Falsifier #3b: state.db must load and record both instances
+	// @constraint: Falsifier #3b: state.db must load and record both instances
 	// plus one completed + one failed node-run row. A state.db that
 	// records only "last-known status flags" — the falsifier the
 	// story names — would have no rimsky_node_runs rows at all, OR
@@ -203,7 +202,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		t.Fatalf("expected 2 instances in state.db; got %d", instanceCount)
 	}
 
-	// Both instances must be terminated — the verb's TerminateAfterRun
+	// @deliberate: Both instances must be terminated — the verb's TerminateAfterRun
 	// hook is what makes the wait loop ever exit, so a non-terminated
 	// row here means the wait loop returned early.
 	var terminatedCount int
@@ -215,7 +214,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		t.Fatalf("expected 2 terminated instances; got %d", terminatedCount)
 	}
 
-	// Falsifier #3c: per-node-run phase distribution — one completed
+	// @deliberate: Falsifier #3c: per-node-run phase distribution — one completed
 	// (the success leg) and one failed (the failure leg). The
 	// rimsky_node_runs.phase column is the audit-trail terminal label
 	// for each dispatch (CHECK constraint:
@@ -240,7 +239,7 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		t.Fatalf("expected at least one rimsky_node_runs row in phase 'failed' (failure leg); got %d", failedCount)
 	}
 
-	// Falsifier #3d: per-node names are recorded — the operator can
+	// @deliberate: Falsifier #3d: per-node names are recorded — the operator can
 	// follow the manifest's node type to a per-node-run row. The
 	// audit-artifact story's Falsifier names "only state metadata
 	// (last-known status flags) without per-node-run history" — verify

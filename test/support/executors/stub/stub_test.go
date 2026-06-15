@@ -69,7 +69,7 @@ func TestScriptedComplete(t *testing.T) {
 	require.NotNil(t, comp)
 	require.True(t, comp.GetChanged())
 	require.Equal(t, "did the thing", comp.GetChangeSummary())
-	// AttributesDelta replaced the legacy `Result` field per spec §12.2.
+	// @constraint: AttributesDelta replaced the legacy `Result` field per spec §12.2.
 	require.Equal(t, true, comp.GetAttributesDelta().AsMap()["ok"])
 }
 
@@ -106,7 +106,7 @@ func TestScriptedBlocked(t *testing.T) {
 	require.NotNil(t, events[0].GetHeartbeat())
 	b := events[1].GetStreamClose().GetError()
 	require.NotNil(t, b)
-	// Executor-blocked path: Error with the stub-prefixed class
+	// @deliberate: Executor-blocked path: Error with the stub-prefixed class
 	// `stub/executor_blocked`. Tests construct the payload inline
 	// (reason + any context).
 	require.Equal(t, "stub/executor_blocked", b.GetErrorClass())
@@ -141,7 +141,6 @@ func TestHeartbeatsCount(t *testing.T) {
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.hb"})
 	require.NoError(t, err)
 	events := drain(t, stream)
-	// 1 default heartbeat + 3 extra + terminal = 5
 	require.Len(t, events, 5)
 	for i := 0; i < 4; i++ {
 		require.NotNil(t, events[i].GetHeartbeat(), "event %d should be heartbeat", i)
@@ -160,7 +159,7 @@ func TestDelayRespectsContextCancellation(t *testing.T) {
 
 	stream, err := c.Execute(ctx, &genv1.ExecuteRequest{NodeType: "t.slow"})
 	require.NoError(t, err)
-	// Expect the stream to error out (deadline/cancel) rather than produce a full sequence.
+	// @deliberate: Expect the stream to error out (deadline/cancel) rather than produce a full sequence.
 	start := time.Now()
 	var gotTerminal bool
 	for {
@@ -234,7 +233,6 @@ func TestStubModeReturnsImmediateComplete(t *testing.T) {
 	_, addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	// Known fixture node_type: stub returns the fixture map.
 	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "items.fetch"})
 	require.NoError(t, err)
 	events := drain(t, stream)

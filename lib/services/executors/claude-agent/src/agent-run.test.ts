@@ -169,7 +169,7 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
     tmpCwd = mkdtempSync(join(tmpdir(), "agent-run-retry-"));
     writeFileSync(join(tmpCwd, "marker.txt"), "ok");
     resumeInvocations = [];
-    // Fake CliHandle that fires "exit 0, no signal" on the next tick
+    // @deliberate: fake CliHandle that fires "exit 0, no signal" on the next tick
     // and never invokes any registered callback. Both spawn and resume
     // produce the same shape; resume records the call so the test can
     // assert it was used.
@@ -178,7 +178,7 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
       const exitWaiters: Array<(r: { exitCode: number | null; signal: NodeJS.Signals | null }) => void> = [];
       let exited = false;
       let result: { exitCode: number | null; signal: NodeJS.Signals | null } | null = null;
-      // Schedule a clean exit on the next tick.
+      // @deliberate: schedule a clean exit on the next tick.
       setTimeout(() => {
         exited = true;
         result = { exitCode: 0, signal: null };
@@ -239,18 +239,18 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
       silenceTimeoutMs: 60_000,
       logger,
     });
-    // Resume was attempted exactly once with the runId as session-id.
+    // @deliberate: resume was attempted exactly once with the runId as session-id.
     expect(resumeInvocations).toHaveLength(1);
     expect(resumeInvocations[0]!.sessionId).toBe(runId);
     expect(resumeInvocations[0]!.prompt).toContain("report_complete");
-    // Bug 2 regression: agent-run must pass the rimsky-callback MCP
+    // @deliberate: bug 2 regression: agent-run must pass the rimsky-callback MCP
     // tool config to resume so the resumed subprocess can dial back
     // into the executor's internal MCP server.
     const tool = resumeInvocations[0]!.tools.find((t) => t.name === "rimsky-callback");
     expect(tool).toBeDefined();
     expect(tool!.kind).toBe("mcp-http");
     expect(tool!.url).toMatch(/\/mcp$/);
-    // Outcome should be errored, with retry_attempted: true in the payload.
+    // @deliberate: outcome should be errored, with retry_attempted: true in the payload.
     expect(outcome.kind).toBe("errored");
     if (outcome.kind === "errored") {
       expect(outcome.errorClass).toBe("agent/subprocess_exit/before_complete");
@@ -261,7 +261,7 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
 });
 
 describe("runAgent resume path lands report_complete over a real MCP client (#11)", () => {
-  // #11 resume path: the CLI exits 0 WITHOUT calling report_complete, the
+  // @deliberate: #11 resume path: the CLI exits 0 WITHOUT calling report_complete, the
   // executor resumes the same session, and the resumed CLI dials the
   // SAME per-dispatch internal-MCP server (held alive across resume) and
   // calls report_complete. The dispatch must resolve `complete`, NOT
@@ -277,9 +277,9 @@ describe("runAgent resume path lands report_complete over a real MCP client (#11
     tmpCwd = mkdtempSync(join(tmpdir(), "agent-run-resume-"));
     writeFileSync(join(tmpCwd, "marker.txt"), "ok");
 
-    // A fake CLI handle whose `waitExit` resolves only once teardown
-    // (sendSigterm) is invoked — mirrors a real subprocess that stays
-    // alive while doing work, then exits on the executor's terminal
+    // @deliberate: fake CLI handle whose `waitExit` resolves only once
+    // teardown (sendSigterm) is invoked — mirrors a real subprocess that
+    // stays alive while doing work, then exits on the executor's terminal
     // teardown. `dialAndReport` lets the resume handler perform a real
     // MCP round-trip after the executor has wired its retry handle.
     const makeControlledHandle = (
@@ -328,7 +328,7 @@ describe("runAgent resume path lands report_complete over a real MCP client (#11
       } finally {
         await client.close().catch(() => {});
       }
-      // The resumed CLI does NOT self-exit: a real subprocess stays alive
+      // @deliberate: the resumed CLI does NOT self-exit: a real subprocess stays alive
       // until the executor's terminal teardown (SIGTERM) after
       // report_complete's response is flushed. Driving exit from teardown
       // (sendSigterm → waitExit) mirrors that and avoids racing the
@@ -336,7 +336,7 @@ describe("runAgent resume path lands report_complete over a real MCP client (#11
     };
 
     fakeCli = {
-      // First dispatch: a clean exit 0 with no report (triggers resume).
+      // @deliberate: first dispatch: a clean exit 0 with no report (triggers resume).
       spawn: async () => {
         const exitWaiters: Array<
           (r: { exitCode: number | null; signal: NodeJS.Signals | null }) => void
@@ -359,7 +359,7 @@ describe("runAgent resume path lands report_complete over a real MCP client (#11
               : new Promise((resolve) => exitWaiters.push(resolve)),
         };
       },
-      // Resume: dial the per-dispatch MCP and call report_complete. The
+      // @deliberate: resume: dial the per-dispatch MCP and call report_complete. The
       // MCP round-trip is scheduled AFTER this handler returns so the
       // executor has wired its retry handle (handleRef) before teardown.
       resume: async (req) => {
@@ -371,7 +371,7 @@ describe("runAgent resume path lands report_complete over a real MCP client (#11
         });
         setTimeout(() => {
           void dialAndReport(url, token).catch(() => {
-            // On dial failure, let the handle exit so the test does not
+            // @deliberate: on dial failure, let the handle exit so the test does not
             // hang; the outcome assertion then catches the regression.
             forceExit();
           });
@@ -400,7 +400,7 @@ describe("runAgent resume path lands report_complete over a real MCP client (#11
       callbackUrl: "",
       cancelToken: "",
       cliRunner: fakeCli,
-      // No `callback` handle passed: runAgent starts its OWN per-dispatch
+      // @deliberate: no `callback` handle passed: runAgent starts its OWN per-dispatch
       // internal-MCP server, which is the connection under test.
       callback: undefined as never,
       silenceTimeoutMs: 60_000,
@@ -458,7 +458,7 @@ describe("runAgent in stub mode", () => {
   });
 });
 
-// onComplete-layer coverage for the sign-off gate. These drive `runAgent`
+// @deliberate: onComplete-layer coverage for the sign-off gate. These drive `runAgent`
 // with a fake CLI whose handle connects a REAL MCP client to the per-dispatch
 // rimsky-callback server and issues a terminal report (report_complete or
 // report_error). The gate runs inside `onComplete`; the assertion is the
@@ -467,7 +467,7 @@ describe("runAgent in stub mode", () => {
 // until the executor's terminal teardown after the report lands — this avoids
 // racing the deferred terminal resolution.
 describe("runAgent sign-off gate (onComplete layer)", () => {
-  // Build a fake CLI whose handle dials the per-dispatch MCP and calls a tool.
+  // @deliberate: build a fake CLI whose handle dials the per-dispatch MCP and calls a tool.
   // `drive(url, token)` performs the MCP round-trip; the handle resolves exit
   // only when teardown sends SIGTERM (controlled-handle pattern from the #11
   // resume test) so the deferred terminal `safeResolve` wins the race.
@@ -487,7 +487,7 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
         };
         const url = req.env.RIMSKY_CALLBACK_URL;
         const token = req.env.RIMSKY_CALLBACK_TOKEN;
-        // Drive the MCP round-trip on the next tick so runAgent has wired the
+        // @deliberate: drive the MCP round-trip on the next tick so runAgent has wired the
         // handle (handleRef) before teardown can fire.
         setTimeout(() => {
           void drive(url, token).catch(() => resolveExit());
@@ -508,7 +508,7 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
     };
   }
 
-  // report_complete with the given args, re-calling until the gate stops
+  // @deliberate: report_complete with the given args, re-calling until the gate stops
   // rejecting (accept, or budget-exhausted commit). A hard cap guards against
   // an infinite loop. The CLI does NOT self-exit; teardown drives exit.
   function completeDriver(
@@ -616,7 +616,7 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
   });
 
   it("(c) required_signoffs set but dispatchId empty ⇒ errored agent/signoff_unobtained", async () => {
-    // Even a VALID signature cannot rescue an empty dispatch_id — the binding
+    // @deliberate: even a VALID signature cannot rescue an empty dispatch_id — the binding
     // id is empty, so the gate refuses to verify and treats it as a usage
     // error rather than letting (un-bindable) output through.
     const cli = makeDrivingCli(
@@ -627,7 +627,7 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
       })),
     );
     const outcome = await runAgent({
-      runId: "gate-c-run", // runId is set; dispatchId is the empty one
+      runId: "gate-c-run", // @deliberate: runId is set; dispatchId is the empty one
       nodeId: "n-c",
       nodeType: "agent",
       model: "sonnet",
@@ -656,7 +656,7 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
   });
 
   it("(d) anti-tamper: a cli.required_signoffs override in attributes_delta is ignored", async () => {
-    // The agent tries to disable its own gate by putting an empty
+    // @deliberate: the agent tries to disable its own gate by putting an empty
     // `cli.required_signoffs` inside the delta. The gate reads the gate from
     // DISPATCH-TIME cliConfig, not from the delta, so the otherwise-unsigned
     // delta is still rejected and the run errors.
@@ -695,7 +695,7 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
   });
 
   it("(e) gate guards success only: report_error still terminal-errors with its own class", async () => {
-    // With the gate configured, an honest report_error is NOT gated — it
+    // @deliberate: with the gate configured, an honest report_error is NOT gated — it
     // resolves a terminal errored outcome carrying the agent-supplied class,
     // never agent/signoff_unobtained.
     const errorDriver = async (url: string, token: string): Promise<void> => {

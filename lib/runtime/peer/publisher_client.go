@@ -26,7 +26,8 @@ type PublisherClient struct {
 	rpc  genv1.PublisherClient
 }
 
-// Compile-time interface check.
+// @deliberate: compile-time interface check — fails compilation when
+// *PublisherClient no longer satisfies clientiface.PublisherClient.
 var _ clientiface.PublisherClient = (*PublisherClient)(nil)
 
 // Name returns the operator-configured publisher service name.
@@ -101,7 +102,6 @@ func DialPublisher(_ context.Context, name, endpoint, tlsMode string) (*Publishe
 	if err != nil {
 		return nil, err
 	}
-	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
 	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
 		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),

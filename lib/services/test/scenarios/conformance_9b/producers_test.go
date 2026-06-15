@@ -85,8 +85,10 @@ func (p *honestProducer) Capabilities(_ context.Context, _ *genv1.CapabilitiesRe
 }
 
 func (p *honestProducer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
-	// Snapshot delegation: no gate, no wait — return immediately for
-	// every intent, including a reader Open against an open writer.
+	// @deliberate: snapshot delegation — no gate, no wait. Every intent
+	// returns immediately, including a reader Open against an open
+	// writer; this is the honest staged_async shape @blessed-invariant 9b
+	// requires.
 	return acquiredFor(req), nil
 }
 
@@ -152,8 +154,10 @@ func (p *dishonestProducer) openWriterGateFor(scope string) chan struct{} {
 func (p *dishonestProducer) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
 	scope := string(scopeFor(req.GetSelector()))
 
-	// A writer Open installs an open gate keyed by its claim_id and
-	// returns promptly. Readers on the same scope will block on it.
+	// @deliberate: a writer Open installs an open gate keyed by its
+	// claim_id and returns promptly; the gate is what a subsequent
+	// reader Open on the same scope will park on below, materializing
+	// the lock-shaped serialization @blessed-invariant 9b forbids.
 	if req.GetIntent() == "rw" {
 		p.mu.Lock()
 		p.gates[req.GetClaimId()] = &writerGate{
@@ -164,10 +168,11 @@ func (p *dishonestProducer) Open(ctx context.Context, req *genv1.OpenRequest) (*
 		return acquiredFor(req), nil
 	}
 
-	// A reader Open blocks while a writer is open on the byte-equal
-	// scope — the reader-lease serialization 9b forbids for
-	// staged_async. It returns only once the writer terminal-s (gate
-	// closed) or the call's context is cancelled.
+	// @deliberate: a reader Open blocks while a writer is open on the
+	// byte-equal scope — the reader-lease serialization
+	// @blessed-invariant 9b forbids for staged_async. It returns only
+	// once the writer terminal-s (gate closed) or the call's context is
+	// cancelled. The probe under test must detect this shape.
 	p.mu.Lock()
 	gate := p.openWriterGateFor(scope)
 	p.mu.Unlock()

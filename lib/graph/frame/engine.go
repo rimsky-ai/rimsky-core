@@ -67,7 +67,7 @@ func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Qu
 }
 
 func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger Logger, metrics MetricsHook) error {
-	// Step 1: collect pendings outside any subsequent transition tx so a
+	// @deliberate: Step 1: collect pendings outside any subsequent transition tx so a
 	// single bad frame doesn't poison the whole tick.
 	var pendings []persistence.FramePending
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -81,8 +81,8 @@ func runFrameEndDetection(ctx context.Context, store persistence.Tables, logger 
 		return err
 	}
 
-	// Step 2: per-frame transition tx so a single frame's failure leaves
-	// the rest unaffected.
+	// @deliberate: per-frame transition tx so a single frame's failure
+	// leaves the rest unaffected.
 	for _, p := range pendings {
 		if err := transitionFrameEnd(ctx, store, p.FrameID, p.InstanceID, logger, metrics); err != nil {
 			logger.Warn("frame.end.transition_failed",
@@ -113,9 +113,9 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 		if anyFailed {
 			finalState = persistence.FrameStateFailed
 		}
-		// Snapshot started_at before MarkRunningFrameTerminal stamps
-		// ended_at = now() so the metric observes the running window
-		// without a second roundtrip.
+		// @deliberate: Snapshot started_at before MarkRunningFrameTerminal stamps
+		// MarkRunningFrameTerminal stamps ended_at = now() so the metric
+		// observes the running window without a second roundtrip.
 		row, gerr := store.Frames().GetForObservability(ctx, frameID, tx)
 		if gerr != nil {
 			return gerr
@@ -127,8 +127,9 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 		transitioned = moved
 		if moved && row != nil {
 			startedAt = row.StartedAt
-			// Use clock-now for ended_at; the SQL stamps now() in the
-			// same tx so this is equivalent to the persisted value.
+			// @deliberate: use clock-now for ended_at; the SQL stamps
+			// now() in the same tx so this is equivalent to the persisted
+			// value.
 			now := time.Now()
 			endedAt = &now
 		}
@@ -187,12 +188,13 @@ func advanceOneFrame(
 			return err
 		}
 		if !moved {
-			// Another replica won; nothing to do.
+			// @deliberate: Another replica won; nothing to do.
 			return nil
 		}
-		// Set source nodes stale with frame_id. In-bounds states: fresh,
-		// failed, OR stale-with-nil-frame_id. Out-of-bounds rolls back the
-		// promotion so the queued row remains; next tick retries.
+		// @deliberate: set source nodes stale with frame_id. In-bounds
+		// states: fresh, failed, OR stale-with-nil-frame_id. Out-of-bounds
+		// rolls back the promotion so the queued row remains; next tick
+		// retries.
 		for _, src := range sources {
 			matched, err := store.Frames().MarkSourceNodeStale(ctx, instanceID, src, frameID, tx)
 			if err != nil {
@@ -276,8 +278,8 @@ func runReapOrphanFrameDispatches(ctx context.Context, store persistence.Tables,
 	}
 
 	for _, o := range orphans {
-		// Queue.ReleaseClaim auto-commits its own tx; claimant-guarded by
-		// expectedClaimedBy.
+		// @deliberate: Queue.ReleaseClaim auto-commits its own tx;
+		// claimant-guarded by expectedClaimedBy.
 		if err := queue.ReleaseClaim(ctx, o.DispatchID, o.ClaimedBy); err != nil {
 			logger.Warn("frame.orphan_dispatch.release_failed",
 				"dispatch_id", o.DispatchID,

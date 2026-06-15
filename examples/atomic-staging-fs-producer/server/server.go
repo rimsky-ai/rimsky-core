@@ -83,10 +83,10 @@ func (s *Server) Abandon(_ context.Context, req *genv1.AbandonRequest) (*genv1.A
 // committed it equates to Abandon. The supervisor passes the intent
 // in the request so the producer can route accordingly.
 func (s *Server) Release(_ context.Context, req *genv1.ReleaseRequest) (*genv1.ReleaseResponse, error) {
-	// The proto's ReleaseRequest doesn't carry intent today; producers
-	// that need it must track it from Open. This simple example treats
-	// every Release as a no-op (it's safe for `r` and idempotent for
-	// already-cleaned `rw`).
+	// @deliberate: ReleaseRequest doesn't carry intent today; producers
+	// that need it must track it from Open. This reference example treats
+	// every Release as a no-op — safe for `r`, idempotent for
+	// already-cleaned `rw`.
 	_ = req
 	return &genv1.ReleaseResponse{}, nil
 }

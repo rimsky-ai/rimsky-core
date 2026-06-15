@@ -62,7 +62,7 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SubgraphParentSuccessCascade: %v", err)
 	}
-	// The entry (validate) is absorbed into the calling node — it must
+	// @constraint: The entry (validate) is absorbed into the calling node — it must
 	// NOT appear in the internal-cascade set. transform and promote
 	// (exit) remain.
 	if len(internals) != 2 {
@@ -85,7 +85,7 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 		t.Errorf("transition reason: %s (want subgraph_internal_cascade_fired)", reason.Kind)
 	}
 
-	// And the canonicalizer must have flagged the entry-referencing
+	// @constraint: And the canonicalizer must have flagged the entry-referencing
 	// subscription edge for runtime resolution to the calling node.
 	byType := make(map[string]*node.TemplateNodeDef, len(tmpl.Nodes))
 	for i := range tmpl.Nodes {
@@ -95,7 +95,7 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 	if transform == nil || len(transform.Subscribes) != 1 || !transform.Subscribes[0].ResolvesViaCallingNode {
 		t.Errorf("transform's subscription to entry alias must carry ResolvesViaCallingNode marker: %+v", transform)
 	}
-	// promote subscribes to transform (an interior internal) — not the
+	// @deliberate: promote subscribes to transform (an interior internal) — not the
 	// entry alias — so the marker should be unset.
 	promote := byType["promote"]
 	if promote == nil || len(promote.Subscribes) != 1 || promote.Subscribes[0].ResolvesViaCallingNode {

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Mandatory `Idempotency-Key` HTTP header on `POST /instances/{id}/messages`.
+A mandatory idempotency-key header on the universal message-emit endpoint (see `concept:message`, `concept:control-api`).
 
 ## Rationale
 

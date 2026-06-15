@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// Environment-reference resolution for spawn-boundary secrets.
+// @deliberate: environment-reference resolution for spawn-boundary secrets.
 // S-executors-validator-header-secret-refs.
 //
 // A node may wire an auth-gated host MCP server (a validator, a tool server)

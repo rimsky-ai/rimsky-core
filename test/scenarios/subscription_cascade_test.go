@@ -56,7 +56,6 @@ func TestSubscriptionCascade_MultipleInvalidatorDrain(t *testing.T) {
 	r := h.FindNode(iid, "r")
 	require.NotNil(t, r)
 
-	// All four nodes reach fresh on initial run.
 	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
 		"r should reach fresh after a, b, c settle")
 }
@@ -89,7 +88,7 @@ func TestSubscriptionCascade_MultipleInvalidatorDrain(t *testing.T) {
 func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Initial runs are fast so the instance settles promptly.
+	// @deliberate: Initial runs are fast so the instance settles promptly.
 	h.Stub.WhenType("a").Success(map[string]any{"a": 1}, true, "a")
 	h.Stub.WhenType("b").Success(map[string]any{"b": 1}, true, "b")
 	h.Stub.WhenType("c").Success(map[string]any{"c": 1}, true, "c")
@@ -127,7 +126,7 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	require.NotNil(t, c)
 	require.NotNil(t, r)
 
-	// Initial settle: R reaches fresh after a → (b, c) → r.
+	// @deliberate: Initial settle: R reaches fresh after a → (b, c) → r.
 	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
 		"r should reach fresh initially")
 
@@ -143,7 +142,7 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	baselineRuns := countRuns("r")
 	require.GreaterOrEqual(t, baselineRuns, 1, "r should have run at least once initially")
 
-	// Re-script: A stays fast; B and C are held in-flight until the
+	// @deliberate: Re-script: A stays fast; B and C are held in-flight until the
 	// test releases them, pinning the in-flight set at each midpoint.
 	releaseB := make(chan struct{})
 	releaseC := make(chan struct{})
@@ -152,7 +151,7 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	h.Stub.WhenType("c").HoldUntil(releaseC).Success(map[string]any{"c": 2}, true, "c")
 	h.Stub.WhenType("r").Success(map[string]any{"r": 2}, true, "r")
 
-	// One invalidation, one frame: A re-runs; its settlement marks B
+	// @deliberate: One invalidation, one frame: A re-runs; its settlement marks B
 	// and C stale in the same frame and both dispatch into the holds.
 	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader([]byte(`{}`)))
@@ -163,13 +162,13 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should re-reach fresh")
 
-	// Wait until both senders are actually in-flight (dispatched into
+	// @deliberate: Wait until both senders are actually in-flight (dispatched into
 	// the stub holds) so the first midpoint observes two held runs.
 	require.Eventually(t, func() bool {
 		return countRuns("b") >= 2 && countRuns("c") >= 2
 	}, 30*time.Second, 25*time.Millisecond, "b and c should both dispatch into their holds")
 
-	// assertReceiverNotDispatchEligible holds the midpoint for a
+	// @constraint: assertReceiverNotDispatchEligible holds the midpoint for a
 	// window and asserts R is never claimed for dispatch: its
 	// in-flight run row (when present) stays pending and unclaimed —
 	// settled rows persist with phase='completed' and are out of
@@ -193,12 +192,12 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 		}
 	}
 
-	// Midpoint 1: both B and C in-flight. R must not be dispatch-
+	// @constraint: Midpoint 1: both B and C in-flight. R must not be dispatch-
 	// eligible (its staleness arrived via the invalidation walk; both
 	// senders are in-flight in the frame).
 	assertReceiverNotDispatchEligible("midpoint 1 (b and c in-flight)")
 
-	// Release B; C stays held. B's settlement marks R stale via the
+	// @deliberate: Release B; C stays held. B's settlement marks R stale via the
 	// settlement walk — the propagation path that seeds NO next-tier
 	// wait-set gate for C. This midpoint is the regression pin: only
 	// the in-flight-upstream eligibility condition keeps R parked
@@ -207,10 +206,9 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
 		"b should re-reach fresh after release")
 
-	// Midpoint 2: C still in-flight; R stale via B's settlement.
 	assertReceiverNotDispatchEligible("midpoint 2 (c in-flight after b settled)")
 
-	// Release C: the last in-flight upstream settles, R becomes
+	// @deliberate: Release C: the last in-flight upstream settles, R becomes
 	// eligible, dispatches, and the frame resolves.
 	close(releaseC)
 	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 30*time.Second),
@@ -218,11 +216,11 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
 		"r should re-reach fresh after both senders settle")
 
-	// R ran exactly once for the whole diamond re-run: never against a
+	// @constraint: R ran exactly once for the whole diamond re-run: never against a
 	// half-settled upstream set, and not re-fired per sender.
 	require.Eventually(t, func() bool { return countRuns("r") == baselineRuns+1 },
 		10*time.Second, 25*time.Millisecond, "r should run exactly once after the last upstream settles")
-	// Grace window: no straggler second dispatch.
+	// @constraint: Grace window: no straggler second dispatch.
 	time.Sleep(1 * time.Second)
 	require.Equal(t, baselineRuns+1, countRuns("r"),
 		"r must run exactly once per frame, not once per settling sender")
@@ -266,7 +264,7 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, monitor)
 
-	// Worker reaches failed via give_up; cross-cutting cascade walk
+	// @deliberate: Worker reaches failed via give_up; cross-cutting cascade walk
 	// opens a new frame for monitor (frame: next), monitor dispatches
 	// and reaches fresh.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
@@ -297,7 +295,7 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
-			// Monitor declares no subscriptions: it's a stand-alone
+			// @deliberate: Monitor declares no subscriptions: it's a stand-alone
 			// root node. Its initial frame will fire it once, then
 			// nothing the worker does should re-fire it.
 			scenario.MakeNode(node.TemplateNodeDef{Type: "monitor", Executor: "stub"}),
@@ -309,14 +307,14 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, monitor)
 
-	// Both nodes complete their initial frame; record monitor's
+	// @deliberate: Both nodes complete their initial frame; record monitor's
 	// terminal-complete count so a future re-dispatch is detectable.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should reach fresh")
 	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
 		"monitor should reach fresh from its own initial frame")
 
-	// Snapshot the monitor's ledger before the invalidate (it ran once
+	// @deliberate: Snapshot the monitor's ledger before the invalidate (it ran once
 	// in the initial frame). The steady-state sampler below can miss a
 	// spurious re-run that starts and settles between samples — run
 	// rows leave the in-flight phase set at terminal — so quiescence is
@@ -329,7 +327,7 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	}
 	monitorEventsBefore := monitorDispatchEvents()
 
-	// Invalidate worker; monitor MUST NOT re-fire because no edge
+	// @constraint: Invalidate worker; monitor MUST NOT re-fire because no edge
 	// connects them.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "w-ok-2")
 	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+worker.ID.String()+"/invalidate",
@@ -338,11 +336,11 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Worker re-reaches fresh.
+	// @constraint: Worker re-reaches fresh.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should re-reach fresh")
 
-	// Monitor must stay fresh; never transition to running. Allow
+	// @constraint: Monitor must stay fresh; never transition to running. Allow
 	// 3 seconds for any spurious cascade. Post-stage-3: state lives on
 	// the in-flight run row; no row = fresh.
 	deadline := time.Now().Add(3 * time.Second)
@@ -362,7 +360,7 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	// Durable-record check: the monitor gained no dispatch/terminal
+	// @constraint: Durable-record check: the monitor gained no dispatch/terminal
 	// events across the window — a transient run that slipped between
 	// samples cannot hide from the append-only ledger.
 	require.Equal(t, monitorEventsBefore, monitorDispatchEvents(),
@@ -399,11 +397,10 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 	r := h.FindNode(iid, "r")
 	require.NotNil(t, r)
 
-	// Initial frame settles; R reaches fresh.
 	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
 		"r should reach fresh after initial settle")
 
-	// After the frame closes, every wait-set row for that instance's
+	// @constraint: After the frame closes, every wait-set row for that instance's
 	// frames must have drained_at IS NOT NULL. Allow up to 5 seconds
 	// for frame-end detection to land.
 	deadline := time.Now().Add(5 * time.Second)
@@ -466,7 +463,7 @@ func TestSubscriptionCascade_FrameNextLoopConverges(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, r)
 
-	// A reaches fresh in the first frame; R reaches fresh in the
+	// @deliberate: A reaches fresh in the first frame; R reaches fresh in the
 	// next frame that the cascade walk opened.
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should reach fresh in the initial frame")
@@ -511,14 +508,14 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 	d := h.FindNode(iid, "drain")
 	require.NotNil(t, d)
 
-	// Self-cycle should produce multiple dispatches: initial + at
+	// @deliberate: Self-cycle should produce multiple dispatches: initial + at
 	// least one re-fire from the fresh_changed commit's cascade walk.
 	require.Eventually(t, func() bool {
 		return len(h.Stub.Observed()) >= 2
 	}, 10*time.Second, 25*time.Millisecond,
 		"self-subscription with frame:next must re-fire the node after a fresh_changed commit")
 
-	// Flip the stub: subsequent commits report changed=false → the
+	// @deliberate: Flip the stub: subsequent commits report changed=false → the
 	// receiver-side CEL `when: payload.changed` predicate evaluates
 	// false against the `terminal/success` envelope's payload →
 	// subscriber doesn't fire → loop terminates.
@@ -526,7 +523,7 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
 		"node should settle at fresh once the stub stops reporting changed=true")
 
-	// Confirm termination: once the stub flips to changed=false the
+	// @deliberate: Confirm termination: once the stub flips to changed=false the
 	// dispatch count must stabilize. A few in-flight dispatches may
 	// have been queued from prior changed=true commits before the
 	// flip propagated, so use Eventually to wait for the count to
@@ -574,13 +571,13 @@ func TestSubscriptionCascade_SelfCycleAdvances_FrameIn(t *testing.T) {
 	d := h.FindNode(iid, "drain")
 	require.NotNil(t, d)
 
-	// Self-cycle should produce multiple dispatches in the same frame.
+	// @constraint: Self-cycle should produce multiple dispatches in the same frame.
 	require.Eventually(t, func() bool {
 		return len(h.Stub.Observed()) >= 2
 	}, 10*time.Second, 25*time.Millisecond,
 		"self-subscription with frame:in must re-fire the node after a fresh_changed commit")
 
-	// Flip the stub: subsequent commits report changed=false → the
+	// @deliberate: Flip the stub: subsequent commits report changed=false → the
 	// receiver-side CEL `when: payload.changed` predicate evaluates
 	// false against the `terminal/success` envelope → the self-
 	// subscription doesn't fire → no new pending self-run → frame

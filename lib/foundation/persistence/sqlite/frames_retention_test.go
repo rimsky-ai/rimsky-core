@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// frames_retention_test.go — regression guard for the FrameTable
-// retention sweep (E10). PruneTraceForRetention is a standalone sweep
-// with no caller-supplied tx; it must run directly against the db handle.
-// A prior bug had it call s.q(nil), which trips the no-nil-tx contract and
-// panics the scheduler tick the moment retention is enabled.
-//
 // @concept: frame
 
 package sqlite_test

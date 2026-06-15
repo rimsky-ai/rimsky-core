@@ -43,7 +43,6 @@ type Tool struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
-// Standard JSON-RPC error codes used in V1.
 const (
 	CodeParseError     = -32700
 	CodeInvalidRequest = -32600

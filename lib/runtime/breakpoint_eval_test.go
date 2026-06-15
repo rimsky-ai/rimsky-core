@@ -179,7 +179,7 @@ func TestEvaluateBreakpoints_SignalTypePrefixMatchAndMiss(t *testing.T) {
 	ctx := context.Background()
 	tables := openInMemoryTables(t)
 	instanceID := seedBreakpointEvalFixture(t, ctx, tables)
-	// Trailing-`*` is the project's wildcard syntax per signal/types.go;
+	// @deliberate: Trailing-`*` is the project's wildcard syntax per signal/types.go;
 	// without it HasPrefix does exact-equality only.
 	matchPrefix := "terminal/error/*"
 	missPrefix := "terminal/success"
@@ -289,7 +289,7 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// Wait for the hit row to appear (proves the goroutine is blocked
+	// @deliberate: Wait for the hit row to appear (proves the goroutine is blocked
 	// inside waitForResume).
 	waitForHit := func() shared.UUID {
 		deadline := time.Now().Add(2 * time.Second)
@@ -305,14 +305,14 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 	}
 	hitID := waitForHit()
 
-	// Confirm the goroutine is still blocked.
+	// @deliberate: Confirm the goroutine is still blocked.
 	select {
 	case <-resultCh:
 		t.Fatalf("EvaluateBreakpoints returned before resume")
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// Resume with an overlay that adds a key and overrides `base`.
+	// @deliberate: Resume with an overlay that adds a key and overrides `base`.
 	resumeHit(t, ctx, tables, hitID, map[string]any{"base": "y", "added": 1})
 
 	select {
@@ -323,7 +323,7 @@ func TestEvaluateBreakpoints_PauseModeBlocksAndAppliesOverlay(t *testing.T) {
 		if got := res.merged["base"]; got != "y" {
 			t.Errorf("base after merge: got %v want y", got)
 		}
-		// Overlay value 1 (Go int at write site) round-trips through
+		// @deliberate: Overlay value 1 (Go int at write site) round-trips through
 		// JSON as float64; compare with that in mind.
 		got := res.merged["added"]
 		if gotF, ok := got.(float64); !ok || gotF != 1 {
@@ -366,7 +366,7 @@ func TestEvaluateBreakpoints_CascadeDeletedHitTreatedAsAutoResume(t *testing.T) 
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// Wait for the hit row, then delete the parent breakpoint to
+	// @deliberate: Wait for the hit row, then delete the parent breakpoint to
 	// trigger ON DELETE CASCADE.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -420,7 +420,7 @@ func TestEvaluateBreakpoints_OverflowDropOldestEvictsAndIncrementsCounter(t *tes
 		HitTTLSeconds:  300,
 		CreatedByKey:   "test",
 	})
-	// Seed 100 unresumed hits directly (queue cap = 100).
+	// @deliberate: Seed 100 unresumed hits directly (queue cap = 100).
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for i := 0; i < 100; i++ {
 			if _, _, err := tables.BreakpointHits().Create(ctx, persistence.BreakpointHitRow{
@@ -445,12 +445,12 @@ func TestEvaluateBreakpoints_OverflowDropOldestEvictsAndIncrementsCounter(t *tes
 		t.Fatalf("EvaluateBreakpoints: %v", err)
 	}
 
-	// Cap stays at 100 (one evicted, one written).
+	// @deliberate: Cap stays at 100 (one evicted, one written).
 	hits := listHitsForBreakpoint(t, ctx, tables, bpID)
 	if len(hits) != 100 {
 		t.Errorf("expected 100 hit rows after drop_oldest + write, got %d", len(hits))
 	}
-	// dropped_count incremented.
+	// @deliberate: dropped_count incremented.
 	var bp *persistence.BreakpointRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -481,7 +481,7 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 		HitTTLSeconds:  300,
 		CreatedByKey:   "test",
 	})
-	// Seed 100 unresumed hits to hit the cap.
+	// @deliberate: Seed 100 unresumed hits to hit the cap.
 	hitIDs := make([]shared.UUID, 0, 100)
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for i := 0; i < 100; i++ {
@@ -517,7 +517,7 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// Confirm the evaluator is blocked in handleOverflow (no new hit
+	// @deliberate: Confirm the evaluator is blocked in handleOverflow (no new hit
 	// row written while the queue is at cap).
 	select {
 	case <-resultCh:
@@ -525,18 +525,18 @@ func TestEvaluateBreakpoints_OverflowBlockDispatchReturnsWhenDrained(t *testing.
 	case <-time.After(400 * time.Millisecond):
 	}
 
-	// Resume one of the seeded hits to drop the unresumed count below
+	// @deliberate: Resume one of the seeded hits to drop the unresumed count below
 	// the cap.
 	resumeHit(t, ctx, tables, hitIDs[0], nil)
 
-	// Now the evaluator should write its own hit row. Since this is a
+	// @deliberate: Now the evaluator should write its own hit row. Since this is a
 	// pause-mode breakpoint, after writing it will block in
 	// waitForResume — find the new hit and resume it.
 	deadline := time.Now().Add(2 * time.Second)
 	var newHitID shared.UUID
 	for time.Now().Before(deadline) {
 		hits := listHitsForBreakpoint(t, ctx, tables, bpID)
-		// 100 original seeded - 1 resumed + 1 new = 100; but we need
+		// @deliberate: 100 original seeded - 1 resumed + 1 new = 100; but we need
 		// the unresumed-and-new row. Find the one whose snapshot lacks
 		// our seed marker.
 		for _, h := range hits {
@@ -633,7 +633,7 @@ func TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock(t *testing.T) {
 		HitTTLSeconds:  300,
 		CreatedByKey:   "test",
 	})
-	// Seed 100 unresumed hits so the queue is at cap; handleOverflow
+	// @deliberate: Seed 100 unresumed hits so the queue is at cap; handleOverflow
 	// will spin in the block-dispatch loop until ctx cancels.
 	if err := tables.Transaction(parent, func(ctx context.Context, tx persistence.Tx) error {
 		for i := 0; i < 100; i++ {
@@ -666,7 +666,7 @@ func TestEvaluateBreakpoints_CtxCancelDuringOverflowBlock(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// Give the goroutine time to enter the overflow-block spin (one
+	// @deliberate: Give the goroutine time to enter the overflow-block spin (one
 	// poll-interval is enough; we add slack to avoid flake under load).
 	time.Sleep(400 * time.Millisecond)
 	select {
@@ -724,7 +724,7 @@ func TestEvaluateBreakpoints_CtxCancelDuringWaitForResume(t *testing.T) {
 		resultCh <- evalResult{merged: out, err: err}
 	}()
 
-	// Wait for the hit row to appear — proves the goroutine has
+	// @deliberate: Wait for the hit row to appear — proves the goroutine has
 	// reached waitForResume and is polling.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -773,7 +773,7 @@ func TestEvaluateBreakpoints_DropOldestPhaseLabel(t *testing.T) {
 		HitTTLSeconds:  300,
 		CreatedByKey:   "test",
 	})
-	// Seed 100 unresumed hits so handleOverflow takes the drop_oldest
+	// @deliberate: Seed 100 unresumed hits so handleOverflow takes the drop_oldest
 	// branch on the next call.
 	if err := inner.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		for i := 0; i < 100; i++ {

@@ -185,8 +185,9 @@ func writeAliasFileT(t *testing.T, path, content string) {
 //
 // @decision: service-spawn-flag
 func TestSpawnServices_BareNameNoAlias(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // no global aliases
-	chdirT(t, t.TempDir())        // no project-local aliases
+	// @deliberate: empty HOME + empty CWD ensure neither the global nor the project-local alias file resolves the bare name.
+	t.Setenv("HOME", t.TempDir())
+	chdirT(t, t.TempDir())
 
 	_, _, err := spawnServices(context.Background(), cli.RepeatedFlag{"nope"}, quietLogger())
 	if err == nil {
@@ -219,16 +220,14 @@ func TestSpawnServices_BareNameAliasResolvesPastGate(t *testing.T) {
 		filepath.Join(home, ".rimsky", "aliases.yml"),
 		"aliases:\n  codegen: "+bogusBinary+"\n",
 	)
-	chdirT(t, t.TempDir()) // no project-local aliases overlay
+	chdirT(t, t.TempDir())
 
 	_, _, err := spawnServices(context.Background(), cli.RepeatedFlag{"codegen"}, quietLogger())
 	if err == nil {
 		t.Fatal("spawnServices: expected spawn-stage error for non-existent binary, got nil")
 	}
 	msg := err.Error()
-	// Resolution-stage diagnostics must NOT appear — proving the
-	// alias loader resolved the bare name and the helper progressed
-	// to the spawn stage.
+	// @deliberate: absence of resolution-stage diagnostics is the proof that the alias loader resolved the bare name and the helper progressed to the spawn stage.
 	for _, blocked := range []string{
 		"no alias defined",
 		"bare-name aliases unsupported",
@@ -287,8 +286,7 @@ func TestSpawnServices_ProjectLocalAliasOverlaysGlobal(t *testing.T) {
 func TestSpawnServices_ExplicitEmptyPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	// Define a foo alias to prove that even WITH an alias present,
-	// the explicit `foo=` form still errors (it is not bare).
+	// @deliberate: define a foo alias so the assertion proves the explicit `foo=` form errors even when bare-name resolution would have succeeded.
 	writeAliasFileT(t,
 		filepath.Join(home, ".rimsky", "aliases.yml"),
 		"aliases:\n  foo: /some/path\n",

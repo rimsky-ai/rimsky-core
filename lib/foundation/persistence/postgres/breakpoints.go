@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Postgres impl of persistence.BreakpointTable — runtime-installed
-// pause/notify breakpoints per concept:breakpoint. See spec
-// .ok-planner/specs/2026-05-24-instance-debugger-design.md.
-//
 // @concept: breakpoint
 
 package postgres
@@ -23,9 +19,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// breakpointsImpl is the per-row-type aspect of *tablesImpl, exposing
-// the BreakpointTable method set. Follows the same aspect-type pattern
-// as foundation/persistence/postgres/run_scopes.go and api_keys.go.
+// breakpointsImpl is the Postgres-backed persistence.BreakpointTable —
+// runtime-installed pause/notify breakpoints per concept:breakpoint.
+// Aspect-type pattern: per-row-type slice of *tablesImpl exposing the
+// BreakpointTable method set.
 type breakpointsImpl tablesImpl
 
 var _ persistence.BreakpointTable = (*breakpointsImpl)(nil)
@@ -54,7 +51,6 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	if err != nil {
 		return shared.UUID{}, fmt.Errorf("breakpoints.create: marshal matcher: %w", err)
 	}
-	// id: caller-supplied or DB-default (gen_random_uuid()).
 	var idArg any
 	if bp.ID != (shared.UUID{}) {
 		idArg = bp.ID
@@ -67,9 +63,9 @@ func (b *breakpointsImpl) Create(ctx context.Context, bp persistence.BreakpointR
 	if bp.SignalType != nil {
 		sigArg = *bp.SignalType
 	}
-	// expires_at is materialized at insert time so the per-row sweep
-	// in SweepExpired can use a simple `expires_at <= now()` predicate
-	// without re-evaluating ttl_seconds.
+	// @deliberate: materialize expires_at at insert time so SweepExpired
+	// can use a simple `expires_at <= now()` predicate without
+	// re-evaluating ttl_seconds per row.
 	var id shared.UUID
 	err = ex.QueryRow(ctx,
 		`INSERT INTO rimsky_instance_breakpoints

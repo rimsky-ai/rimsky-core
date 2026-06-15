@@ -76,7 +76,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// `source` settles fresh on its single dispatch (a settled source
+	// @deliberate: `source` settles fresh on its single dispatch (a settled source
 	// inside the running frame F). `holder` parks indefinitely (no
 	// resume_at), holding F open so F stays the instance's running
 	// frame while we drive the operator invalidate; it is the target.
@@ -84,7 +84,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	h.Stub.WhenType("holder").
 		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "await_callback", []byte(`{"ticket":"frame-in"}`), time.Time{}, "")
 
-	// Coalesce mode so the two root nodes coalesce into a SINGLE root
+	// @deliberate: Coalesce mode so the two root nodes coalesce into a SINGLE root
 	// frame F (both as source_node_ids), rather than two serial frames.
 	// Both are roots (no upstream subscription / substitution ref), so
 	// instance-create enqueues them into the one coalesce frame.
@@ -103,7 +103,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	require.NotNil(t, source)
 	require.NotNil(t, holder)
 
-	// Drive the real frame engine + real dispatch until F is genuinely
+	// @deliberate: Drive the real frame engine + real dispatch until F is genuinely
 	// running with `source` settled fresh inside it and `holder` parked
 	// mid-drain. These are the real terminal states the supervisor +
 	// frame engine produce — no hand-promoted frame.
@@ -112,7 +112,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	require.True(t, h.WaitForNodeState(holder.ID, cascade.NodeStateParked, 30*time.Second),
 		"holder must park (holding frame F open) so F stays the running frame")
 
-	// Resolve the instance's currently-running frame F directly from the
+	// @constraint: Resolve the instance's currently-running frame F directly from the
 	// persisted frames table (the same row GetRunningFrameID reads inside
 	// the handler). It must be a single running frame sourced on BOTH
 	// roots — the coalesced root frame, genuinely advanced to running by
@@ -120,7 +120,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	frameF := waitForRunningFrame(t, h, iid, 10*time.Second)
 	require.NotEqual(t, shared.UUID{}, frameF, "instance must have a running coalesced frame F")
 
-	// The holder's node row + run row are bound to F while parked (frame
+	// @deliberate: The holder's node row + run row are bound to F while parked (frame
 	// start bound node.frame_id = F; a Park terminal does not clear it),
 	// so the decisive proof of the in-frame JOIN is the
 	// `in_frame_invalidate` event + the absence of a NEW frame, exactly
@@ -129,7 +129,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	h.QueryRowSQL(`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1`,
 		[]any{iid}, &framesBefore)
 
-	// Sanity: the holder's in-flight run row is parked inside F before
+	// @deliberate: Sanity: the holder's in-flight run row is parked inside F before
 	// the invalidate (genuine mid-drain state, real dispatch path).
 	var preState, preFrame string
 	h.QueryRowSQL(`
@@ -140,7 +140,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	require.Equal(t, "parked", preState, "holder's in-flight run must be parked inside F before the invalidate")
 	require.Equal(t, frameF.String(), preFrame, "holder's parked run must be bound to the running frame F")
 
-	// Operator invalidate with frame: in against the target (the
+	// @deliberate: Operator invalidate with frame: in against the target (the
 	// mid-drain holder) through the REAL control-api over HTTP. The
 	// handler resolves the running frame F via GetRunningFrameID and
 	// threads it as SourceFrameID so invalidateInFrame joins F.
@@ -152,14 +152,14 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode, "operator invalidate must return 200")
 
-	// Discriminator 1 (the in-frame join's signature event): a
+	// @deliberate: Discriminator 1 (the in-frame join's signature event): a
 	// `state_transition` for the target carries reason
 	// `in_frame_invalidate` with frame_id == F. The RED downgrade-to-next
 	// path emits no such event.
 	require.True(t, waitForInFrameInvalidate(t, h, holder.ID, frameF, 15*time.Second),
 		"frame: in must emit a state_transition with reason in_frame_invalidate carrying the running frame F's id (joined F, not downgraded to next)")
 
-	// Discriminator 2 (one frame_id end to end, not two sequential
+	// @deliberate: Discriminator 2 (one frame_id end to end, not two sequential
 	// frames): no SECOND frame was enqueued — the join did not create a
 	// next-frame. The RED path EnqueueOrCoalesces a fresh queued frame.
 	var framesAfter int
@@ -168,7 +168,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	require.Equal(t, framesBefore, framesAfter,
 		"frame: in must NOT enqueue a next-frame; it joins the running frame F (one frame_id end to end)")
 
-	// Discriminator 3 (the target's in-flight run joined F): the run row
+	// @deliberate: Discriminator 3 (the target's in-flight run joined F): the run row
 	// transitioned to 'stale' and carries frame_id == F (MarkStaleForCascade
 	// ran against the running frame).
 	var postState, postFrame string
@@ -182,7 +182,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	require.Equal(t, frameF.String(), postFrame,
 		"the target's in-flight run must carry frame_id == F (joined the running frame, not a next-frame)")
 
-	// Discriminator 4 (the target's node row joined F): the node row
+	// @deliberate: Discriminator 4 (the target's node row joined F): the node row
 	// carries frame_id == F, the running frame — observable at the same
 	// surface the control-api node-detail projects.
 	var nodeFrame string
@@ -191,7 +191,7 @@ func TestAcceptance_OperatorFrameInJoinsRunningFrame(t *testing.T) {
 	require.Equal(t, frameF.String(), nodeFrame,
 		"the target's node row must carry frame_id == F (the running frame, not a freshly-enqueued next-frame)")
 
-	// The dry-run path still echoes `frame: in`, now truthfully: a
+	// @deliberate: The dry-run path still echoes `frame: in`, now truthfully: a
 	// dry-run against the open frame reports it would join F (the
 	// would_have_invalidated envelope carries frame: in), and persists
 	// nothing — no second invalidate, no new frame.

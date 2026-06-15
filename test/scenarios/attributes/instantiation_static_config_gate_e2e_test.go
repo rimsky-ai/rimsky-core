@@ -116,14 +116,14 @@ func startStaticGateHarness(t *testing.T) *scenario.Harness {
 	t.Helper()
 	return scenario.Start(t, scenario.HarnessOpts{
 		ExtraExecutors: map[string]executor.Endpoint{
-			// Reuse constrainedSchema (declared in ref_validation_mode_e2e_
+			// @deliberate: Reuse constrainedSchema (declared in ref_validation_mode_e2e_
 			// _test.go): {"type":"object","properties":{"count":{"type":
 			// "integer","minimum":0}}}. Stub-mode so dispatch settles to
 			// terminal success — letting the well-formed leg run to a
 			// terminal state through the real supervisor.
 			"constrained": scenario.StartStubModeExecutorWithSchema(t, []byte(constrainedSchema)),
 		},
-		// Registration mode `none`: registration-time reference validation
+		// @constraint: Registration mode `none`: registration-time reference validation
 		// is OFF, so a static-default violation (count:-1 vs minimum:0)
 		// slips past registration and MUST be caught at instantiation.
 		RefValidationMode: node.RefValidateNone,
@@ -191,7 +191,7 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		t.Parallel()
 		h := startStaticGateHarness(t)
 
-		// Registered under mode `none` → the violation slips past
+		// @constraint: Registered under mode `none` → the violation slips past
 		// registration; instantiation is the gate that must catch it.
 		tplID := registerDeployStaticGateTemplate(t, h, "static-gate-bad-"+uuid.NewString(), -1)
 
@@ -202,7 +202,7 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, status,
 			"instantiation must reject a static-config violation at create-time; body: %v", out)
 
-		// The rejection must NAME the offending attribute and CITE the
+		// @constraint: The rejection must NAME the offending attribute and CITE the
 		// `minimum` value-constraint violation — a genuine value check, not
 		// a missing/extra-attribute surface error.
 		errText := lowerJoin(out["error"], out["validation_errors"])
@@ -211,7 +211,7 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		require.Contains(t, errText, "minimum",
 			"rejection must cite the `minimum` value-constraint violation; body: %v", out)
 
-		// Nothing was persisted: GET /instances filtered to this template
+		// @constraint: Nothing was persisted: GET /instances filtered to this template
 		// shows zero rows (the no-partial-write property the gate holds).
 		require.Equal(t, 0, instanceCountForTemplateE2E(t, h, tplID),
 			"a rejected static-config create must persist no instance row")
@@ -221,7 +221,6 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		t.Parallel()
 		h := startStaticGateHarness(t)
 
-		// count:5 satisfies the executor schema's minimum:0.
 		tplID := registerDeployStaticGateTemplate(t, h, "static-gate-ok-"+uuid.NewString(), 5)
 
 		status, out := postJSON(t, h, "/v1/instances", map[string]any{
@@ -233,11 +232,11 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		instanceIDStr, _ := out["instance_id"].(string)
 		require.NotEmpty(t, instanceIDStr, "a successful create must return an instance_id; body: %v", out)
 
-		// Exactly one instance row persisted for this template.
+		// @constraint: Exactly one instance row persisted for this template.
 		require.Equal(t, 1, instanceCountForTemplateE2E(t, h, tplID),
 			"a well-formed create must persist exactly one instance row")
 
-		// And it RUNS: the real scheduler/supervisor dispatch the root node
+		// @deliberate: And it RUNS: the real scheduler/supervisor dispatch the root node
 		// to the (stub-mode) constrained executor, which settles it to a
 		// terminal Complete verdict. WaitForNodeState(Fresh) returns true
 		// only once the node has settled and a terminal/success signal event

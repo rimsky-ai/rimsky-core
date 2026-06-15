@@ -154,7 +154,7 @@ func TestBackfills_CreateListShowCancel(t *testing.T) {
 
 	instID := deployFanOutInstance(t, h, fanOutBackfillTemplateBody("bf-"+uuid.NewString()), "bf-ck-")
 
-	// Create a backfill targeting `root` (a wired fan-out node).
+	// @constraint: create a backfill targeting `root` (a wired fan-out node).
 	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/backfills", instID), map[string]any{
 		"target_node": "root",
 		"reason":      "smoke",
@@ -167,7 +167,7 @@ func TestBackfills_CreateListShowCancel(t *testing.T) {
 	require.NotEmpty(t, opID)
 	require.NotEmpty(t, out["message_id"])
 
-	// List backfills for the instance.
+	// @constraint: list backfills for the instance.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/backfills", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	items, _ := out["backfills"].([]any)
@@ -177,19 +177,18 @@ func TestBackfills_CreateListShowCancel(t *testing.T) {
 	require.Equal(t, "root", first["target_node"])
 	require.Equal(t, "smoke", first["reason"])
 
-	// Show single backfill.
+	// @constraint: show single backfill.
 	status, out = h.httpJSON(t, "GET", "/v1/backfills/"+opID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, opID, out["operation_id"])
 	require.Equal(t, "smoke", out["reason"])
 
-	// Partitions: not yet delivered → empty list.
+	// @constraint: partitions: not yet delivered → empty list.
 	status, out = h.httpJSON(t, "GET", "/v1/backfills/"+opID+"/partitions", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	parts, _ := out["partitions"].([]any)
 	require.Equal(t, 0, len(parts))
 
-	// Cancel.
 	status, out = h.httpJSON(t, "POST", "/v1/backfills/"+opID+"/cancel", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["cancelled"])
@@ -233,7 +232,7 @@ func TestBackfills_CreateRejectsNonFanOutTarget(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	// `child` exists but is a plain executor node (no fan_out).
+	// @constraint: `child` exists but is a plain executor node (no fan_out).
 	instID := deployFanOutInstance(t, h, fanOutBackfillTemplateBody("bf-nf-"+uuid.NewString()), "bf-nf-ck-")
 
 	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/backfills", instID), map[string]any{
@@ -277,14 +276,14 @@ func TestBackfills_DryRunRejectsBadTarget(t *testing.T) {
 
 	instID := deployFanOutInstance(t, h, fanOutBackfillTemplateBody("bf-dr-"+uuid.NewString()), "bf-dr-ck-")
 
-	// Non-fan-out target under dry-run → 400 (same as live).
+	// @constraint: non-fan-out target under dry-run → 400 (same as live).
 	status, out := postBackfillWithMode(t, h, instID, auth.ModeDryRun, map[string]any{
 		"target_node": "child",
 		"reason":      "dry-run bad target",
 	})
 	require.Equal(t, http.StatusBadRequest, status, out)
 
-	// Fan-out-but-unwired target under dry-run → 400 too. Re-uses an
+	// @constraint: fan-out-but-unwired target under dry-run → 400 too. Re-uses an
 	// unwired template instance to cover the subtle case in preview.
 	unwiredInst := deployFanOutInstance(t, h, unwiredFanOutBackfillTemplateBody("bf-dr-uw-"+uuid.NewString()), "bf-dr-uw-ck-")
 	status, out = postBackfillWithMode(t, h, unwiredInst, auth.ModeDryRun, map[string]any{
@@ -315,7 +314,7 @@ func TestBackfills_DryRunAcceptsWiredTarget(t *testing.T) {
 	require.Equal(t, true, out["dry_run"])
 	require.Contains(t, out, "would_have_created_backfill")
 
-	// The dry-run must NOT have enqueued a backfill message — listing
+	// @constraint: the dry-run must NOT have enqueued a backfill message — listing
 	// returns no backfills for this instance.
 	listStatus, listOut := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/backfills", instID), nil)
 	require.Equal(t, http.StatusOK, listStatus, listOut)

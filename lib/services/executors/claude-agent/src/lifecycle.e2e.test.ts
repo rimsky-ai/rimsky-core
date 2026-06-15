@@ -2,22 +2,20 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// J11 end-to-end test for claude-agent's parked + corrective + resume
-// lifecycle. The test spans:
-//
-//   (a) Stub-MCP dispatch — attributes-declared MCP catalog entry
-//       (http transport at a test server) reaches the agent.
-//   (b) Simulated rate-limit park → resume cycle. The fake CLI emits a
+// @deliberate: J11 end-to-end test for claude-agent's parked + corrective +
+// resume lifecycle. Spans three scenarios in one suite:
+//   (a) Stub-MCP dispatch — attributes-declared MCP catalog entry (http
+//       transport at a test server) reaches the agent.
+//   (b) Simulated rate-limit park → resume cycle. Fake CLI emits a
 //       rate-limit-shaped stderr line and exits non-zero; runAgent emits
 //       AgentOutcome.park_requested. A second runAgent invocation with
 //       resumeContext.sessionToken set drives cliRunner.resume().
-//   (c) Schema-correction cap. The fake CLI calls report_complete with an
+//   (c) Schema-correction cap. Fake CLI calls report_complete with an
 //       attributes_delta that fails the schema; the executor returns
 //       rejected up to maxSchemaCorrections=3 times, then commits errored
 //       with error_class="agent/schema_violation".
-//
-// Mocks the CliRunner so the test runs in CI without spawning the real
-// claude binary or making any model calls.
+// @reason: CliRunner is mocked so the suite runs in CI without spawning the
+// real claude binary or making any model calls.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import pino from "pino";
@@ -35,10 +33,12 @@ import type {
 
 const logger = pino({ level: "silent" });
 
-// Build a fake CliHandle that surfaces stdout / stderr chunks and a
-// scripted exit. The chunks fire on a microtask tick so the runAgent
-// code path that registers .onStdout / .onStderr after spawn returns
-// receives them.
+/**
+ * Build a fake CliHandle that surfaces stdout / stderr chunks and a
+ * scripted exit. The chunks fire on a microtask tick so the runAgent
+ * code path that registers .onStdout / .onStderr after spawn returns
+ * receives them.
+ */
 type FakeHandleScript = {
   stderrChunks?: string[];
   stdoutChunks?: string[];
@@ -59,7 +59,7 @@ function makeFakeHandle(script: FakeHandleScript): CliHandle {
   let exited = false;
   let result: ExitResult | null = null;
 
-  // Drive the script after the registrations land. setImmediate would
+  // @deliberate: drive the script after the registrations land. setImmediate would
   // also work; setTimeout(0) is friendlier across runtimes.
   setTimeout(async () => {
     for (const c of script.stderrChunks ?? []) {
@@ -107,7 +107,7 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
   });
 
   it("rate-limit signal in CLI stderr → park_requested", async () => {
-    // Fake CLI exits non-zero with a rate-limit-shaped stderr line.
+    // @deliberate: fake CLI exits non-zero with a rate-limit-shaped stderr line.
     const fakeCli: CliRunner = {
       spawn: async () =>
         makeFakeHandle({
@@ -140,19 +140,19 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
 
     expect(outcome.kind).toBe("park_requested");
     if (outcome.kind === "park_requested") {
-      // Rate-limit auto-park classifies as the typed ParkReason
+      // @deliberate: rate-limit auto-park classifies as the typed ParkReason
       // `snooze` per spec
       // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
       // §ParkReason collapse (closed two-value set). The free-form
       // detail moves to `reasonNote`.
       expect(outcome.reason).toBe("snooze");
       expect(outcome.reasonNote).toContain("rate_limit");
-      // sessionToken == runId so the resume path can bring the CLI
+      // @deliberate: sessionToken == runId so the resume path can bring the CLI
       // session back via --resume.
       expect(outcome.sessionToken).toBe(
         "11111111-2222-3333-4444-555555555555",
       );
-      // retry-after: 30 → resumeAt should be ~30s in the future.
+      // @deliberate: retry-after: 30 → resumeAt should be ~30s in the future.
       expect(outcome.resumeAt).not.toBeNull();
     }
   });
@@ -165,7 +165,7 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
       },
       resume: async (req) => {
         resumeRequests.push(req);
-        // Simulate a quiet exit so runAgent falls through to the no-
+        // @deliberate: simulate a quiet exit so runAgent falls through to the no-
         // report recovery path; exitCode 0 + no terminal callback ends
         // up returning agent/subprocess_exit/before_complete.
         return makeFakeHandle({ exitCode: 0, exitDelayMs: 5 });
@@ -194,26 +194,26 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
     });
 
     expect(resumeRequests.length).toBeGreaterThan(0);
-    // The first invocation is the J10 path: resumeContext.sessionToken
+    // @deliberate: the first invocation is the J10 path: resumeContext.sessionToken
     // becomes the --resume session id. (The agent-run code may also
     // fire a second recovery-retry resume keyed on runId after the
     // subprocess exits 0 without report_complete; we only assert the
     // initial J10 invocation here.)
     expect(resumeRequests[0]!.sessionId).toBe("session-from-prior-park");
-    // The executor appends a fixed metadata footer to the user prompt
+    // @deliberate: the executor appends a fixed metadata footer to the user prompt
     // post-2026-05-21 userdata collapse (callback_token + resume
     // metadata). Assert the prompt starts with the resolved bytes and
     // carries the footer with the correct resume_reason.
     expect(resumeRequests[0]!.prompt.startsWith("user prompt\n\n---\n")).toBe(true);
     expect(resumeRequests[0]!.prompt).toContain("resume_reason: deadline_elapsed");
-    // The J10 resume path must pass the rimsky-callback MCP tool config.
+    // @deliberate: the J10 resume path must pass the rimsky-callback MCP tool config.
     // The Claude CLI's --resume does not carry --mcp-config across, so
     // without this the resumed subprocess has no MCP servers registered
     // and every tool call returns "MCP server not connected".
     const tool = resumeRequests[0]!.tools.find((t) => t.name === "rimsky-callback");
     expect(tool).toBeDefined();
     expect(tool!.kind).toBe("mcp-http");
-    // The fake exits 0 without calling report_complete; the recovery
+    // @deliberate: the fake exits 0 without calling report_complete; the recovery
     // path drops back through to errored.
     expect(outcome.kind).toBe("errored");
   });
@@ -232,7 +232,7 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
   });
 
   it("commits errored with agent/schema_violation after max corrections", async () => {
-    // Drive 4 corrective failures (= 3 rejects + 1 final commit-as-error).
+    // @deliberate: drive 4 corrective failures (= 3 rejects + 1 final commit-as-error).
     // We capture the registered onComplete callback and invoke it
     // directly so we bypass the MCP transport but still exercise the
     // J8 rejectWithCorrection logic.
@@ -248,14 +248,14 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
     let onComplete!: CompleteFn;
     let registered = false;
 
-    // Build a fake CLI runner whose handle "spawns," then before it
+    // @deliberate: build a fake CLI runner whose handle "spawns," then before it
     // exits we drive the schema-correction loop. Use the dispatch's
     // internal MCP server to look up the registered token.
     const fakeCli: CliRunner = {
       spawn: async (_req: CliSpawnRequest) => {
         return makeFakeHandle({
           beforeExit: async () => {
-            // Snoop the registered token from runAgent's per-dispatch
+            // @deliberate: snoop the registered token from runAgent's per-dispatch
             // McpServer. The runAgent flow registered a token entry
             // there before spawning the CLI; we grab a reference and
             // hand-drive the report_complete dispatch.
@@ -280,16 +280,16 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
               r();
             });
           },
-          // Keep alive so beforeExit's await above can drive the
+          // @deliberate: keep alive so beforeExit's await above can drive the
           // corrective loop before exit; in this simple variant we
           // return a never-resolving promise to hand control back.
           exitCode: 0,
-          exitDelayMs: 1_000_000_000, // effectively never
+          exitDelayMs: 1_000_000_000, // @deliberate: effectively never
         });
       },
     };
 
-    // Run the full chain with a custom max=2 so we can verify the
+    // @deliberate: run the full chain with a custom max=2 so we can verify the
     // corrective-retry cap behavior end-to-end without needing 4 rounds.
     const runPromise = runAgent({
       runId: "schema-test-run",
@@ -313,7 +313,7 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
       cliConfig: { maxSchemaCorrections: 2 },
     });
 
-    // Race: give the dispatch a moment to register, then we
+    // @deliberate: race: give the dispatch a moment to register, then we
     // unfortunately cannot cleanly grab the per-dispatch registry from
     // outside. So this test currently skips the deep schema-correction
     // verification and instead asserts the cliRunner did spawn (the
@@ -329,7 +329,7 @@ describe("J11 e2e — claude-agent corrective retries on schema failure", () => 
     expect(winner).toBe("timeout");
     expect(registered).toBe(true);
 
-    // Suppress unused variable lint; `onComplete` is reserved for a deeper
+    // @deliberate: suppress unused variable lint; `onComplete` is reserved for a deeper
     // version of the test that captures the per-dispatch onComplete.
     void onComplete;
   });

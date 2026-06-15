@@ -43,11 +43,12 @@ export interface TokenEntry {
    */
   callbackUrl: string;
   /**
-   * `signoffs` is the flat base64 Ed25519 signature bag the agent presented
-   * on `report_complete`, or null when none were supplied. Carried so the
-   * sign-off gate (`requiredSignoffs`) can verify it before the dispatch
-   * resolves to terminal success. Placed before `scheduleTeardown` to keep
-   * `scheduleTeardown` last, matching the other callbacks.
+   * Sign-off payload (`signoffs`): the flat base64 Ed25519 signature bag the
+   * agent presented on `report_complete`, or null when none were supplied.
+   * Carried so the sign-off gate (`requiredSignoffs`) can verify it before
+   * the dispatch resolves to terminal success. Placed before
+   * `scheduleTeardown` to keep `scheduleTeardown` last, matching the other
+   * callbacks.
    */
   onComplete: (
     attributesDelta: Record<string, unknown> | null,

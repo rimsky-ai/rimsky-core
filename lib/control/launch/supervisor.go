@@ -74,8 +74,9 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	log := shared.NewSlogLogger(logger)
 
-	// Resolve the /metrics port up-front so a malformed env value fails
-	// the role at startup instead of silently disabling metrics.
+	// @deliberate: resolve the /metrics port up-front so a malformed env
+	// value fails the role at startup instead of silently disabling
+	// metrics.
 	metricsPort, err := metricsPortFor("supervisor")
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
@@ -152,14 +153,15 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		advertisePort = cfg.Callback.AdvertisePort
 	}
 
-	// Surface the resolved callback advertise host (and where it came from)
-	// at startup. Executors dial this address to POST async-callback
-	// outcomes; when it is empty or a loopback, the POST fails with a bare
-	// "fetch failed" and no other diagnostic — a silent misconfiguration in
-	// any multi-container deployment. The bind host (callbackHost, typically
-	// 0.0.0.0 in a container) is NOT how executors reach the supervisor; only
-	// the advertise host is, so warn rather than log quietly when it can't be
-	// reached from another container.
+	// @deliberate: surface the resolved callback advertise host (and
+	// where it came from) at startup. Executors dial this address to
+	// POST async-callback outcomes; when it is empty or a loopback, the
+	// POST fails with a bare "fetch failed" and no other diagnostic — a
+	// silent misconfiguration in any multi-container deployment. The
+	// bind host (callbackHost, typically 0.0.0.0 in a container) is NOT
+	// how executors reach the supervisor; only the advertise host is, so
+	// warn rather than log quietly when it can't be reached from another
+	// container.
 	if advertiseHost == "" || advertiseHost == "127.0.0.1" || advertiseHost == "localhost" || advertiseHost == "::1" {
 		log.Warn("callback advertise host is loopback or unset — executors on other hosts/containers cannot reach this supervisor",
 			"advertise_host", advertiseHost,
@@ -174,11 +176,11 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 			"advertise_port", advertisePort)
 	}
 
-	// Construct the BlobBackend selected by rimsky.yml's persistence.blob
-	// block and install it on the driver. The attribute write/read path
-	// consults the driver-installed backend directly; the named-event /
-	// parked-payload write paths receive it via SupervisorConfig.Blob
-	// (threaded through to RunArgs).
+	// @constraint: construct the BlobBackend selected by rimsky.yml's
+	// persistence.blob block and install it on the driver. The attribute
+	// write/read path consults the driver-installed backend directly;
+	// the named-event / parked-payload write paths receive it via
+	// SupervisorConfig.Blob (threaded through to RunArgs).
 	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
@@ -187,11 +189,11 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	resolver := executor.NewStaticResolver(endpoints)
 
-	// Run the observability handshake against each declared executor so
-	// the dispatch-time effective-attribute-schema computation can see
-	// the advertised expected_attributes_schema. The resolver closure
-	// is plumbed into SupervisorConfig.ExpectedAttributesSchemaFor
-	// below.
+	// @constraint: run the observability handshake against each
+	// declared executor so the dispatch-time effective-attribute-schema
+	// computation can see the advertised expected_attributes_schema. The
+	// resolver closure is plumbed into
+	// SupervisorConfig.ExpectedAttributesSchemaFor below.
 	execPeers := make([]observability.PeerSpec, 0, len(rimskyCfg.Executors.Executors))
 	for name, e := range rimskyCfg.Executors.Executors {
 		execPeers = append(execPeers, observability.PeerSpec{
@@ -202,18 +204,18 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	disc := observability.RunHandshake(ctx, observability.NewGRPCProber(), execPeers, nil, logger)
 
-	// Per-role Prometheus registry. Constructed up-front so the
-	// supervisor's integration runtime can be instrumented via the
+	// @constraint: per-role Prometheus registry constructed up-front so
+	// the supervisor's integration runtime can be instrumented via the
 	// MetricsHook adapter; the /metrics HTTP listener is opened below
 	// only when RIMSKY_METRICS_PORT > 0.
 	mreg := observability.NewMetricsRegistry()
 
-	// Closure that invokes controlapi.LifecyclePeersForSpec with the
-	// rimsky.yml late_bind_service_proxies baked in. Lives here (control/
-	// layer) so the supervisor's runtime/ never imports control/ — the
+	// @constraint: closure that invokes
+	// controlapi.LifecyclePeersForSpec with the rimsky.yml
+	// late_bind_service_proxies baked in. Lives here (control/ layer) so
+	// the supervisor's runtime/ never imports control/ — the
 	// late-bind-aware peer set crosses the layer boundary as a function
 	// pointer (denied otherwise by .golangci.yml's runtime-purity rule).
-	// Per spec 2026-05-24-host-agent-and-proxy-design.md.
 	lateBindProxies := rimskyCfg.LateBindServiceProxies
 	peersForSpec := func(tplSpec node.TemplateSpec) []string {
 		return controlapi.LifecyclePeersForSpec(
@@ -251,31 +253,24 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	log.Info("supervisor started", "id", supID, "callback_addr", h.CallbackAddr())
 
-	// Launch the gauge refresher so node-state, parked-by-reason,
-	// held-frames, and dispatch-queue-depth gauges reflect live
-	// persistence state. The refresher polls every 5s by default;
-	// cancelled on stop.
 	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
 	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
 		mhook.StartGaugeRefresher(gaugeCtx, driver.Tables(), driver.Queue(), 0, log)
 	}
 
-	// Refresh the executor capability cache periodically so the
-	// expected-attributes-schema resolver sees healed peers without a
-	// process restart.
 	go disc.RefreshLoop(gaugeCtx, config.ObservabilityRefreshInterval(), logger)
 
-	// Capacity 2: the metrics serve loop and the callback serve loop can
-	// each report one failure.
+	// @constraint: capacity 2 — the metrics serve loop and the callback
+	// serve loop can each report one failure.
 	reporter := newFailureReporter(2)
 	metricsSrv := startMetricsServer(metricsHostFromEnv(), "supervisor", metricsPort, mreg, log, reporter)
 
-	// Surface a fatal post-start death of the async-callback HTTP serve
-	// loop as a role failure. Without this the supervisor runs degraded
-	// forever: executors' async callbacks black-hole while the claim
-	// loop keeps dispatching. The handle's channel closes when the serve
-	// loop exits (clean shutdown sends nothing), so this monitor exits
-	// on stop rather than leaking.
+	// @constraint: surface a fatal post-start death of the
+	// async-callback HTTP serve loop as a role failure. Without this the
+	// supervisor runs degraded forever: executors' async callbacks
+	// black-hole while the claim loop keeps dispatching. The handle's
+	// channel closes when the serve loop exits (clean shutdown sends
+	// nothing), so this monitor exits on stop rather than leaking.
 	go func() {
 		if err, ok := <-h.CallbackServeErr(); ok && err != nil {
 			reporter.Report(fmt.Errorf("supervisor callback endpoint: %w", err))
@@ -284,8 +279,9 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	stop := func(stopCtx context.Context) error {
 		var firstErr error
-		// stopCtx's deadline is shared across both servers: the supervisor
-		// handle's shutdown and the metrics server's drain below.
+		// @constraint: stopCtx's deadline is shared across both
+		// servers — the supervisor handle's shutdown and the metrics
+		// server's drain below.
 		if err := h.Shutdown(stopCtx); err != nil {
 			log.Error("supervisor shutdown", "error", err.Error())
 			firstErr = err
@@ -296,10 +292,10 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 			}
 		}
 		cancelGauges()
-		// The driver is caller-owned — RunSupervisor MUST NOT close it.
-		// Close the fail channel so monitor goroutines reading it exit;
-		// RunSupervisor is embeddable and must not leak a monitor per
-		// start/stop cycle.
+		// @constraint: the driver is caller-owned — RunSupervisor MUST
+		// NOT close it. Close the fail channel so monitor goroutines
+		// reading it exit; RunSupervisor is embeddable and must not leak
+		// a monitor per start/stop cycle.
 		reporter.Close()
 		return firstErr
 	}

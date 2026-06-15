@@ -22,7 +22,7 @@ import (
 // testing.
 type MemoryLister struct {
 	mu   sync.Mutex
-	data map[string][]ObjectMeta // keyed by bucket
+	data map[string][]ObjectMeta
 }
 
 // NewMemoryLister returns an empty in-memory fixture.

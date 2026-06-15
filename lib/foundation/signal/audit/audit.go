@@ -51,18 +51,18 @@ func EmitSignal(
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	// Signal-class kinds carry the canonical type-path as the
-	// event-log discriminator (per decision:event-log-kind-enum).
-	// Taxonomy validation has happened at the signal emit site via
+	// @decision: event-log-kind-enum — signal-class kinds carry the
+	// canonical type-path as the event-log discriminator. Taxonomy
+	// validation has happened at the signal emit site via
 	// signal.ValidateTypePath; here we wrap the path opaquely.
 	in := persistence.EventAppendInput{
 		InstanceID: &instanceID,
 		Kind:       eventskinds.SignalKind(string(sig.Type)),
 		Payload:    payload,
 	}
-	// NodeID is optional — message signals arrive at the instance
-	// level before any per-node binding has happened, so callers can
-	// pass a zero UUID to leave the field NULL.
+	// @constraint: NodeID is optional — message signals arrive at the
+	// instance level before any per-node binding has happened, so
+	// callers can pass a zero UUID to leave the field NULL.
 	if nodeID != (shared.UUID{}) {
 		in.NodeID = &nodeID
 	}

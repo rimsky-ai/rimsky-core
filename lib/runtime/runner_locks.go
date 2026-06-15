@@ -108,11 +108,11 @@ func buildLockSpecs(
 		}
 		paramsRaw = b
 	}
-	// Per-run keying (2026-05-20): substitution context comes from the
-	// drained wait-set rows for this receiver in this frame. The
-	// lock-substitution path runs at acquisition phase, but by then the
-	// wait-set is settled (rows drained) — that's what made the receiver
-	// eligible. The same builder works for both phases.
+	// @deliberate: substitution context comes from the drained wait-set rows
+	// for this receiver in this frame. The lock-substitution path runs at
+	// acquisition phase, but by then the wait-set is settled (rows drained) —
+	// that's what made the receiver eligible. The same builder works for both
+	// phases.
 	deps, err := BuildAttributeDeps(ctx, tx, args, dispatchID, frameID)
 	if err != nil {
 		return nil, err
@@ -143,16 +143,17 @@ func buildLockSpecs(
 			Alias:        sref.AliasOf(),
 			TemplateID:   instTemplateScope(inst),
 			InstanceID:   instInstanceScope(inst),
-			// Carry the run-scope onto the OpenRequest so the
+			// @constraint: carry the run-scope onto the OpenRequest so the
 			// host-agent-proxy keys per-run-scope spawn isolation on the
 			// claim-producer path too. Empty for the zero/degenerate
 			// run-scope (proxy falls back to instance keying).
 			// @concept: host-agent-proxy
 			RunScopeID: runScopeIDString(runScopeID),
-			// Carry the template store-ref's lifetime hint ("subgraph" /
-			// "durable") through to the persistence boundary. NodeStoreRef.Lifetime
-			// is a plain string; acquireClaim converts it to spec.ClaimLifetime
-			// at the ClaimHandleInsertInput. @concept: claim-lifetime
+			// @constraint: carry the template store-ref's lifetime hint
+			// ("subgraph" / "durable") through to the persistence boundary.
+			// NodeStoreRef.Lifetime is a plain string; acquireClaim converts
+			// it to spec.ClaimLifetime at the ClaimHandleInsertInput.
+			// @concept: claim-lifetime
 			Lifetime: sref.Lifetime,
 		})
 	}
@@ -192,7 +193,7 @@ func loadInheritedClaimsForNode(ctx context.Context, args RunArgs, tx persistenc
 	if nodeDef == nil {
 		return nil
 	}
-	// Fast path: nodes without `holds:` skip the per-binding lookup
+	// @deliberate: nodes without `holds:` skip the per-binding lookup
 	// entirely. Avoids a ListByInstance + per-handle roundtrip on every
 	// acquire of a non-co-holding node.
 	if len(nodeDef.Holds) == 0 {
@@ -226,12 +227,10 @@ func collectCoHeldClaims(
 		if upstreamType == "" {
 			continue
 		}
-		// Find the upstream node within this instance.
 		upstreamNode := findInstanceNodeByType(ctx, args, tx, instanceID, upstreamType)
 		if upstreamNode == nil {
 			continue
 		}
-		// Find the upstream's claim handle for this alias.
 		lh := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, spec, upstreamType, alias)
 		if lh == nil {
 			continue
@@ -301,22 +300,12 @@ func lookupClaimHandleForAlias(
 		if h.ProducerName == nil || *h.ProducerName != producerName {
 			continue
 		}
-		// Prefer the most recently claimed row.
 		if best == nil || h.ClaimedAt.After(best.ClaimedAt) {
 			best = h
 		}
 	}
 	return best
 }
-
-// memberOf for holding-subgraph membership lookup lives in
-// runner_held_claims.go.
-//
-// (The pre-stage-5 `aliasFromAcquirerStores` helper was retired by the
-// rewrite of `loadInheritedClaimsForNode`: the post-stage-5 lookup
-// starts from the template `holds:` directive and walks to the upstream
-// claim handle directly, so there's no need to invert from a holder
-// row's producer_name back to an alias.)
 
 // instTemplateScope returns the template-scope id sent to the store on
 // Open. Per docs/specs/2026-05-01-control-plane-and-store-lifecycle-

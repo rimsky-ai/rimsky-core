@@ -55,7 +55,7 @@ func newAuthTestHarness(t *testing.T) authTestHarness {
 		Clock:    clock,
 		Logger:   shared.SilentLogger{},
 	}
-	// Mint a structurally-valid plaintext: resolveIdentity runs
+	// @constraint: mint a structurally-valid plaintext: resolveIdentity runs
 	// ValidatePlaintext (prefix + base64url shape) before the hash
 	// lookup, so an arbitrary string would be rejected as invalid_token.
 	plaintext, hash, err := auth.Mint()
@@ -113,7 +113,7 @@ func TestGate_DryRunFlagSetsModeAndReadExecutes(t *testing.T) {
 	}
 	r := chi.NewRouter()
 	r.Use(h.state.IdentityResolver())
-	// instance:read is a registered read action (IsWrite=false).
+	// @constraint: instance:read is a registered read action (IsWrite=false).
 	r.Get("/v1/instances", h.state.gateByAction("instance:read", probe))
 
 	srv := httptest.NewServer(r)
@@ -154,7 +154,7 @@ func TestGate_DryRunFlagSetsModeAndReadExecutes(t *testing.T) {
 func TestGate_StreamingHandlerCanFlush(t *testing.T) {
 	h := newAuthTestHarness(t)
 
-	// Probe mirrors the MCP SSE stream handler's contract: it requires an
+	// @constraint: probe mirrors the MCP SSE stream handler's contract: it requires an
 	// http.Flusher, then writes and flushes one SSE event. Under the gate's
 	// capturingWriter, the assertion must succeed.
 	probe := func(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +170,7 @@ func TestGate_StreamingHandlerCanFlush(t *testing.T) {
 	}
 	r := chi.NewRouter()
 	r.Use(h.state.IdentityResolver())
-	// mcp:read is a registered read action — the umbrella GET /mcp gates on.
+	// @constraint: mcp:read is a registered read action — the umbrella GET /mcp gates on.
 	r.Get("/v1/mcp", h.state.gateByAction("mcp:read", probe))
 
 	srv := httptest.NewServer(r)
@@ -221,7 +221,7 @@ func TestGate_ExecuteBeatsDryRun_MultiEntryGrant(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Build a fresh harness per sub-test so audit rows don't bleed.
+			// @constraint: build a fresh harness per sub-test so audit rows don't bleed.
 			ctx := context.Background()
 			dir := t.TempDir()
 			d, err := persistence.Open(ctx, persistence.Config{

@@ -27,7 +27,7 @@ func TestStagingThenSwapWithCoHolders(t *testing.T) {
 	ctx := context.Background()
 	const claim = "asset/staging-swap"
 
-	// Three concurrent staging candidates; each becomes a partition of
+	// @deliberate: Three concurrent staging candidates; each becomes a partition of
 	// the final commit set.
 	type stage struct {
 		idem  string
@@ -39,7 +39,6 @@ func TestStagingThenSwapWithCoHolders(t *testing.T) {
 		sub, _ := json.Marshal(map[string]string{"partition_key": key})
 		stages = append(stages, stage{idem: key, key: key, bytes: sub})
 	}
-	// Begin every candidate; all are live in parallel.
 	candidates := make(map[string][]byte)
 	for _, st := range stages {
 		resp, err := s.BeginCandidate(ctx, &genv1.BeginCandidateRequest{
@@ -55,7 +54,7 @@ func TestStagingThenSwapWithCoHolders(t *testing.T) {
 	if s.CandidateCount() != len(stages) {
 		t.Errorf("CandidateCount: got %d want %d", s.CandidateCount(), len(stages))
 	}
-	// Commit all candidates: the "swap" semantically completes when
+	// @deliberate: Commit all candidates: the "swap" semantically completes when
 	// every candidate has flipped onto the versions slice.
 	for key, handle := range candidates {
 		if _, err := s.CommitCandidate(ctx, &genv1.CommitCandidateRequest{

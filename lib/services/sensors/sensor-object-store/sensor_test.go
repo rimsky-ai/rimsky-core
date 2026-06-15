@@ -90,7 +90,6 @@ func TestObjectStoreRejectsUnregisteredBackend(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
 	s.SetBackend("memory", NewMemoryLister())
 
-	// 1. Unregistered backend (s3) is rejected, and the error names it.
 	s3cfg, _ := json.Marshal(map[string]any{"backend": "s3", "bucket": "b"})
 	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w-s3", Kind: "object-store", ResolvedConfig: s3cfg,
@@ -102,7 +101,6 @@ func TestObjectStoreRejectsUnregisteredBackend(t *testing.T) {
 		t.Errorf("rejection error must name the unserviceable backend s3: %v", err)
 	}
 
-	// 2. Capabilities advertises a `backend` enum of exactly ["memory"].
 	caps, err := s.Capabilities(context.Background(), &emptypb.Empty{})
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +123,6 @@ func TestObjectStoreRejectsUnregisteredBackend(t *testing.T) {
 		t.Errorf("backend enum: %v (want exactly [memory])", got)
 	}
 
-	// 3. The registered backend (memory) still subscribes.
 	memcfg, _ := json.Marshal(map[string]any{"backend": "memory", "bucket": "b"})
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w-mem", Kind: "object-store", ResolvedConfig: memcfg,
@@ -193,7 +190,6 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	}
 	obsMu.Unlock()
 
-	// No new objects → no messages on next tick.
 	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
 	s.Tick(context.Background())
 	obsMu.Lock()
@@ -202,7 +198,6 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	}
 	obsMu.Unlock()
 
-	// Add a new object → one new message.
 	lister.Put("test-bucket", ObjectMeta{Name: "events/c.json", LastModified: pin, Size: 30, ETag: "etag-c"})
 	s.clock = func() time.Time { return pin.Add(30 * time.Second) }
 	s.Tick(context.Background())
@@ -226,8 +221,9 @@ func TestTick_LastModifiedWatermark(t *testing.T) {
 	s.clock = func() time.Time { return pin }
 	lister := NewMemoryLister()
 	s.SetBackend("memory", lister)
-	// Old object, then a newer one; both inserted out-of-order in the
-	// fixture to confirm sort-by-watermark drives the emission order.
+	// @deliberate: fixture inserts objects out-of-order so the assertion
+	// confirms sort-by-watermark drives the emission order, not insertion
+	// order.
 	lister.Put("test-bucket", ObjectMeta{Name: "z.json", LastModified: pin.Add(-2 * time.Hour)})
 	lister.Put("test-bucket", ObjectMeta{Name: "a.json", LastModified: pin.Add(-1 * time.Hour)})
 
@@ -247,7 +243,6 @@ func TestTick_LastModifiedWatermark(t *testing.T) {
 	if pushed != 2 {
 		t.Errorf("pushed: %d (want 2)", pushed)
 	}
-	// A newer object — pushes one.
 	lister.Put("test-bucket", ObjectMeta{Name: "b.json", LastModified: pin.Add(-30 * time.Minute)})
 	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
 	s.Tick(context.Background())

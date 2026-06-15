@@ -64,7 +64,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 		"sup-FC", "cancel-store", 3,
 		spec.AggregationPolicy{Kind: spec.AggregationKindStrict, CancelSiblings: true})
 
-	// Drive sub[0] to a natural Abandon. The strict.cancel_siblings walker
+	// @deliberate: Drive sub[0] to a natural Abandon. The strict.cancel_siblings walker
 	// force-Abandons sub[1] and sub[2] inside the same tx, and the parent
 	// aggregator finalizes the parent's own Abandon.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -89,7 +89,7 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 		})
 	}))
 
-	// Producer-side: all three sub-claims received Abandon (1 natural,
+	// @constraint: Producer-side: all three sub-claims received Abandon (1 natural,
 	// 2 force-cancelled), plus the parent.
 	for i, sid := range subIDs {
 		require.Equal(t, 1, countCallsOnID(store.Calls(), sid.String(), "abandon"),
@@ -98,14 +98,14 @@ func TestForceCancelledLineage_CancelSiblingsEmitsForceCancelledRows(t *testing.
 	require.Equal(t, 1, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"parent claim must receive its own Abandon (aggregator decision)")
 
-	// Lineage rows: triggering sub[0] is "abandoned"; sub[1]/sub[2] are
+	// @deliberate: Lineage rows: triggering sub[0] is "abandoned"; sub[1]/sub[2] are
 	// "force_cancelled" with Cause="sibling_cancel"; parent is "abandoned".
 	verifyLineageOutcome(ctx, t, backend, subIDs[0], persistence.LineageOutcomeAbandoned, "")
 	verifyLineageOutcome(ctx, t, backend, subIDs[1], persistence.LineageOutcomeForceCancelled, string(runtime.TerminalCauseSiblingCancel))
 	verifyLineageOutcome(ctx, t, backend, subIDs[2], persistence.LineageOutcomeForceCancelled, string(runtime.TerminalCauseSiblingCancel))
 	verifyLineageOutcome(ctx, t, backend, parentID, persistence.LineageOutcomeAbandoned, "")
 
-	// Events: claim_resolution.abandon events for every cancelled sibling
+	// @deliberate: Events: claim_resolution.abandon events for every cancelled sibling
 	// carry cause=sibling_cancel.
 	var page persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

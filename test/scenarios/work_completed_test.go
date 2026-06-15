@@ -41,7 +41,7 @@ import (
 // kind stamped on the completion.
 func assertWorkPair(t *testing.T, h *scenario.Harness, nodeID foundationshared.UUID, wantTerminalKind string) {
 	t.Helper()
-	// The work_completed append is a best-effort post-commit audit tx —
+	// @deliberate: The work_completed append is a best-effort post-commit audit tx —
 	// it can land moments after the state flip a state-based wait
 	// observes. Anchor on the append-only ledger.
 	completed := eventwait.WaitForEvent(h.Ctx, t, h.Persist,
@@ -58,7 +58,7 @@ func assertWorkPair(t *testing.T, h *scenario.Harness, nodeID foundationshared.U
 	require.Equal(t, nodeID, *s.NodeID, "work_started node id")
 	require.Equal(t, nodeID, *c.NodeID, "work_completed node id")
 
-	// The pair joins on dispatch_id — the run identifier both halves
+	// @constraint: The pair joins on dispatch_id — the run identifier both halves
 	// carry. Durations are computable from the two rows' timestamps.
 	sDispatch, ok := s.Payload["dispatch_id"].(string)
 	require.True(t, ok, "work_started payload must carry dispatch_id, got %v", s.Payload)

@@ -98,9 +98,9 @@ func Handler(deps HandlerDeps) http.Handler {
 			return
 		}
 		token := strings.TrimSpace(r.Header.Get("Authorization"))
-		// Strip an optional `Bearer ` prefix; tolerated for executor
-		// convenience. Spec §12.5 calls for the bare token in
-		// `Authorization`.
+		// @deliberate: spec §12.5 calls for the bare token in `Authorization`;
+		// stripping an optional `Bearer ` prefix is intentional tolerance for
+		// executor convenience.
 		token = strings.TrimPrefix(token, "Bearer ")
 		token = strings.TrimSpace(token)
 		if token == "" {
@@ -121,9 +121,9 @@ func Handler(deps HandlerDeps) http.Handler {
 			return
 		}
 		if body.Delta == nil {
-			// Per spec §12.5 the body is `{"delta": {...}}`. An empty or
-			// missing delta is permitted — it bumps updated_at so the
-			// callback's heartbeat-of-progress side-effect still fires.
+			// @deliberate: spec §12.5 permits empty or missing delta — it bumps
+			// updated_at so the callback's heartbeat-of-progress side-effect
+			// still fires.
 			body.Delta = map[string]any{}
 		}
 		if err := deps.Store.MergeDelta(r.Context(), runID, body.Delta); err != nil {

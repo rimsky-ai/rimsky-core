@@ -38,7 +38,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Stub: caller (entry-absorbed) succeeds. Exit returns a Success
+	// @deliberate: Stub: caller (entry-absorbed) succeeds. Exit returns a Success
 	// with attributes_delta = {result: "subgraph-done"} — the carry-
 	// rule copies this onto the calling node's attribute row.
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
@@ -90,7 +90,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 	exitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, exitNode, "inner-exit node missing")
 
-	// Wait for the sub-graph exit to reach fresh — its terminal is the
+	// @deliberate: Wait for the sub-graph exit to reach fresh — its terminal is the
 	// trigger for the carry-rule. The calling node's leaf-run stays in
 	// `running` state until the carry-rule's parent-state transition
 	// fires; that aggregation is the witness for the carry-rule.
@@ -98,7 +98,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 		h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inner-exit must reach fresh")
 
-	// Sub-graph RunScope is closed in the same tx as exit's terminal
+	// @deliberate: Sub-graph RunScope is closed in the same tx as exit's terminal
 	// (carry-rule's closure semantics per Task 36).
 	require.Eventually(t, func() bool {
 		var closed int
@@ -112,7 +112,7 @@ func TestSubgraphExitCarryE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"sub-graph RunScope (graph_name='worker') must close after exit terminates")
 
-	// Carry-rule witness: the calling node's attributes row carries
+	// @deliberate: Carry-rule witness: the calling node's attributes row carries
 	// the exit's attributes_delta. Verified via the node-attributes
 	// accessor (scoped on the main RunScope since the caller lives
 	// there).

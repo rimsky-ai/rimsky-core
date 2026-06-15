@@ -37,8 +37,9 @@ import (
 func TestAdminSync_ExplicitReadmits(t *testing.T) {
 	root := t.TempDir()
 	sub := "docs"
-	// Seed exactly one folder so the first Open claims it and the
-	// queue then drains to empty.
+	// @deliberate: seed exactly one folder so Open #1 claims it and the
+	// queue then drains to empty — the test's whole point is observing
+	// what an explicit-strategy queue does AFTER draining.
 	must(t, os.MkdirAll(filepath.Join(root, sub, "alpha"), 0o755))
 
 	pp := &PickPolicy{
@@ -51,13 +52,14 @@ func TestAdminSync_ExplicitReadmits(t *testing.T) {
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	// Initial seed: explicit strategy never auto-syncs from Open, so the
+	// @constraint: explicit strategy never auto-syncs from Open, so the
 	// operator (here, the test harness standing in for deploy-time
-	// priming) runs sync once to admit the seeded folder.
+	// priming) must run sync once to admit the seeded folder.
 	must(t, st.runSync("@r", pp))
 
-	// Open #1 claims alpha. With on_commit: pop the queue entry is
-	// consumed and not re-admitted (explicit never re-syncs).
+	// @constraint: under on_commit=pop + explicit, the queue entry is
+	// consumed by Commit and not re-admitted (explicit never re-syncs),
+	// which is what makes Open #2 below observe a drained queue.
 	o1, err := st.Open(context.Background(), "c1", "@r")
 	must(t, err)
 	if !o1.Available {
@@ -65,18 +67,19 @@ func TestAdminSync_ExplicitReadmits(t *testing.T) {
 	}
 	must(t, st.Commit(context.Background(), "c1", o1.Result.ClaimScope, o1.Result.Address))
 
-	// Open #2: queue drained, explicit strategy → no auto-sync → Unavailable.
+	// @constraint: on a drained explicit-strategy queue, Open returns
+	// Unavailable because no auto-sync runs to discover new on-disk work.
 	o2, err := st.Open(context.Background(), "c2", "@r")
 	must(t, err)
 	if o2.Available {
 		t.Fatal("Open #2: expected Unavailable on a drained explicit queue (no auto-sync), got Available")
 	}
 
-	// Drop a NEW folder onto disk under the policy root. Explicit
-	// strategy will not pick this up on its own.
+	// @constraint: a folder dropped on disk under an explicit-strategy
+	// policy stays invisible to producers until an operator-driven sync —
+	// this is the precondition the admin route exists to resolve.
 	must(t, os.MkdirAll(filepath.Join(root, sub, "bravo"), 0o755))
 
-	// POST to the admin sync route to trigger an operator-driven refresh.
 	srv := httptest.NewServer(st.AdminHandler())
 	defer srv.Close()
 	resp, err := http.Post(srv.URL+"/admin/sync/%40r", "application/json", strings.NewReader(""))
@@ -87,17 +90,14 @@ func TestAdminSync_ExplicitReadmits(t *testing.T) {
 		t.Fatalf("POST /admin/sync/@r: got %d, want 2xx; body=%s", resp.StatusCode, string(body))
 	}
 
-	// Drain the post-sync queue over the producer interface. The
-	// operator-triggered refresh must make the newly-dropped folder
-	// (bravo) claimable. Under the fs-store's blessed pop semantics the
-	// already-popped folder (alpha) stays on disk and is re-discovered by
-	// the same sync (operators delete processed folders externally to make
-	// progress — see TestPattern_StaticQueue_ExplicitRefresh /
-	// TestOnDrain_SinglePass), so we drain through any re-admitted folders
-	// and assert that bravo, the new work, is reachable with the right
-	// on-disk address. The story's value claim is "the new folder becomes
-	// claimable without redeploy," which this proves; the spec does not
-	// require excluding the re-discovered popped folder.
+	// @deliberate: drain the post-sync queue and only assert bravo's
+	// reachability, not that alpha is absent. Under the fs-store's blessed
+	// pop semantics the already-popped folder (alpha) stays on disk and is
+	// re-discovered by the same sync — operators delete processed folders
+	// externally to make progress (see TestPattern_StaticQueue_ExplicitRefresh
+	// / TestOnDrain_SinglePass). The story's value claim is "the new folder
+	// becomes claimable without redeploy"; the spec does not require
+	// excluding the re-discovered popped folder.
 	wantAddr := filepath.Join(root, sub, "bravo")
 	sawBravo := false
 	for i := 0; i < 8; i++ {

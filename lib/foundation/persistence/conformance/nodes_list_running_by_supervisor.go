@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// nodes_list_running_by_supervisor.go — NodesListRunningBySupervisor
+// @constraint: conformance area conformance area.
 // conformance area.
 //
 // Covers NodeTable.ListRunningBySupervisor — the supervisor-scoped
@@ -33,11 +33,13 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 	store := d.Tables()
 	q := d.Queue()
 
-	// Four sibling nodes against the same instance:
-	//   - runningSelf:   state=running, supervisor=sup-A — must surface for sup-A.
-	//   - runningOther:  state=running, supervisor=sup-B — must surface for sup-B only.
-	//   - staleSelf:     state=stale,   supervisor=sup-A — state predicate excludes.
-	//   - runningUnassigned: state=running, supervisor='' — supervisor predicate excludes (no string match).
+	// @deliberate: four sibling nodes against the same instance exercise
+	// the state='running' AND assigned_supervisor_id=$1 predicate from
+	// every angle: runningSelf (running, sup-A) must surface for sup-A;
+	// runningOther (running, sup-B) must surface for sup-B only;
+	// staleSelf (stale, sup-A) the state predicate excludes;
+	// runningUnassigned (running, '') the supervisor predicate excludes
+	// (empty string never matches a real supervisor id).
 	runningSelfID := shared.UUID(uuid.New())
 	runningOtherID := shared.UUID(uuid.New())
 	staleSelfID := shared.UUID(uuid.New())
@@ -59,10 +61,10 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 		t.Fatalf("seed nodes: %v", err)
 	}
 
-	// Post-stage-3 cutover: state lives on rimsky_node_runs. Enqueue
-	// drives the row into pending+stale; ClaimDispatchRow flips phase
-	// to active; UpdateState(running) writes state='running' on the
-	// in-flight row.
+	// @deliberate: post-stage-3 cutover, state lives on rimsky_node_runs.
+	// Enqueue drives the row into pending+stale; ClaimDispatchRow flips
+	// phase to active; UpdateState(running) writes state='running' on
+	// the in-flight row.
 	transitionToRunning := func(id shared.UUID, supervisorID string) {
 		t.Helper()
 		if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -111,10 +113,11 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 	transitionToRunning(runningOtherID, "sup-B")
 	transitionToRunning(runningUnassignedID, "")
 
-	// staleSelf: seed a pending stale run row pinned to the fixture
-	// frame; UpdateHeartbeat then stamps the supervisor. Post-cutover
-	// `state='stale'` is the run row's state; the test row stays in
-	// phase='pending' (never claimed).
+	// @deliberate: staleSelf seeds a pending stale run row pinned to the
+	// fixture frame; UpdateHeartbeat then stamps the supervisor.
+	// Post-cutover `state='stale'` is the run row's state; the row stays
+	// in phase='pending' (never claimed) so the state predicate excludes
+	// it from ListRunningBySupervisor.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:         staleSelfID,
@@ -131,7 +134,6 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 		t.Fatalf("seed staleSelf: %v", err)
 	}
 
-	// sup-A: must return exactly runningSelf.
 	var got []persistence.NodeRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.Nodes().ListRunningBySupervisor(ctx, "sup-A", tx)
@@ -150,7 +152,6 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 		t.Fatalf("ListRunningBySupervisor(sup-A): row supervisor=%q want sup-A", got[0].AssignedSupervisorID)
 	}
 
-	// sup-B: must return exactly runningOther.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.Nodes().ListRunningBySupervisor(ctx, "sup-B", tx)
 		got = rows
@@ -162,7 +163,6 @@ func testNodesListRunningBySupervisor(t *testing.T, d persistence.Database) {
 		t.Fatalf("ListRunningBySupervisor(sup-B): got %v, want exactly [%s]", nodeIDStrings(got), runningOtherID)
 	}
 
-	// Unknown supervisor: empty.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.Nodes().ListRunningBySupervisor(ctx, "sup-zzz", tx)
 		got = rows

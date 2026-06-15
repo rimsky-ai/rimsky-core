@@ -23,7 +23,8 @@ type DataProcessingClient struct {
 	rpc  genv1.DataProcessingClient
 }
 
-// Compile-time interface check.
+// @deliberate: compile-time interface check — fails compilation when
+// *DataProcessingClient no longer satisfies clientiface.DataProcessingClient.
 var _ clientiface.DataProcessingClient = (*DataProcessingClient)(nil)
 
 // Name returns the operator-configured producer name.
@@ -138,7 +139,6 @@ func DialDataProcessing(_ context.Context, name, endpoint, tlsMode string) (*Dat
 	if err != nil {
 		return nil, err
 	}
-	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
 	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
 		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),

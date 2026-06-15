@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// Behavioral test for the copy-and-modify reference sign-off validator.
+// @deliberate: behavioral test for the copy-and-modify reference sign-off validator.
 //
 // The reference validator is the artifact under test; the executor's REAL
 // `verifyRequiredSignoffs` (src/signoff.ts) is the value-delivering verifier.
@@ -23,7 +23,7 @@ import {
 
 describe("reference sign-off validator", () => {
   it("the reference sign-off validator produces an Ed25519 signature the executor's verifyRequiredSignoffs accepts", () => {
-    // Operator key material (Ed25519). The reference validator signs with the
+    // @deliberate: operator key material (Ed25519). The reference validator signs with the
     // private key; the public key (PEM SPKI) is what `cli.required_signoffs`
     // carries and what the executor's verifier re-derives the message under.
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -39,12 +39,12 @@ describe("reference sign-off validator", () => {
     const value = [{ url: "https://example.com/a" }, { url: "https://example.com/b" }];
     const delta = { [path]: value };
 
-    // The reference validator emits the public key form the gate expects, and
+    // @deliberate: the reference validator emits the public key form the gate expects, and
     // signs the bound value at the gated path per the documented byte-contract.
     const requiredPublicKey = publicKeyForRequiredSignoffs(publicKeyPem);
     const signature = signSignoff(privateKeyPem, dispatchId, value);
 
-    // Positive: the REAL executor verifier accepts the reference signature.
+    // @deliberate: positive: the REAL executor verifier accepts the reference signature.
     const accepted = verifyRequiredSignoffs(
       [{ publicKey: requiredPublicKey, path }],
       delta,
@@ -54,7 +54,7 @@ describe("reference sign-off validator", () => {
     expect(accepted.ok).toBe(true);
     expect(accepted.unmet).toEqual([]);
 
-    // Negative: a signature over a DIFFERENT value is rejected by the real
+    // @deliberate: negative: a signature over a DIFFERENT value is rejected by the real
     // verifier (the gate binds the actual bound output, not an attacker-chosen
     // value).
     const wrongSignature = signSignoff(privateKeyPem, dispatchId, [

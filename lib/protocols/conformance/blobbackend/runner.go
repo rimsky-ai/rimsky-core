@@ -36,15 +36,20 @@ import (
 // reduced and `Handle`/`Key` collapse to []byte hints. The cmd
 // binary adapts the concrete backends to this surface.
 type Backend interface {
-	// Write persists bytes and returns an opaque handle.
+	// @agent-contract: Write persists bytes and returns an opaque handle.
+	// Does NOT guarantee any particular handle format — callers must treat
+	// it as opaque.
 	Write(ctx context.Context, hint string, bytes []byte) (Handle, error)
-	// Read returns the bytes referenced by handle. Returns
-	// ErrBlobNotFound when the handle is unknown.
+	// @agent-contract: Read returns the bytes referenced by handle.
+	// Implementations MUST return an error matching errors.Is(err,
+	// ErrBlobNotFound) when the handle is unknown.
 	Read(ctx context.Context, handle Handle) ([]byte, error)
-	// ReadRange returns a byte range. Returns ErrBlobNotFound
-	// when the handle is unknown.
+	// @agent-contract: ReadRange returns a byte range. Implementations
+	// MUST return an error matching errors.Is(err, ErrBlobNotFound) when
+	// the handle is unknown.
 	ReadRange(ctx context.Context, handle Handle, offset, length int64) ([]byte, error)
-	// Delete removes the blob. Idempotent.
+	// @agent-contract: Delete removes the blob and MUST be idempotent —
+	// a second Delete of the same handle returns nil, not an error.
 	Delete(ctx context.Context, handle Handle) error
 }
 
@@ -102,7 +107,7 @@ func checkRoundtripSmall(ctx context.Context, be Backend) error {
 }
 
 func checkRoundtripLarge(ctx context.Context, be Backend) error {
-	payload := bytes.Repeat([]byte("0123456789"), 1024*1024) // 10 MiB
+	payload := bytes.Repeat([]byte("0123456789"), 1024*1024)
 	h, err := be.Write(ctx, "rt-large", payload)
 	if err != nil {
 		return fmt.Errorf("write: %w", err)

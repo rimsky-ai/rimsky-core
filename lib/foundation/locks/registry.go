@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Registry — the per-process map from operator-chosen producer name to
-// a ClaimProducer implementation. Per spec
-// docs/specs/2026-05-04-service-protocol-contract.md §2.
-//
-// The Registry is a simple name→ClaimProducer map populated externally:
-// each rimsky process's cmd binary loads rimsky.yml, dials a remote
-// gRPC client per entry (runtime/peer/), validates
-// the Capabilities() handshake (operator envelope ⊆ producer envelope),
-// and Add()s the result. There is no Factory interface, no per-kind
-// dispatch.
-//
-// NamedLocksConfig and named-lock helpers stay here unchanged.
-
 package locks
 
 import (

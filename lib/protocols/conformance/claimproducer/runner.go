@@ -56,9 +56,9 @@ func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 	}
 	results = append(results, CheckResult{Name: "EnvelopeNonEmpty"})
 
-	// Envelope conformance + uniformity-per-scope: drive Open twice with
-	// identical specs and assert returned RealizedWriteSemantics is in
-	// the envelope and identical across calls. Selectors are synthetic.
+	// @constraint: envelope conformance + uniformity-per-scope — drive Open
+	// twice with identical specs and assert returned RealizedWriteSemantics
+	// is in the envelope and identical across calls. Selectors are synthetic.
 	spec := claimproducer.ClaimSpec{
 		ProducerName: "conformance-target",
 		Selector:     "rimsky/conformance/uniformity",
@@ -105,20 +105,21 @@ func Run(ctx context.Context, c claimproducer.ClaimProducer) []CheckResult {
 		return results
 	}
 	if !out2.Available {
-		// Some producers (pick-policy queues) drain after Open. Skip
-		// the uniformity check rather than fail.
+		// @deliberate: pick-policy queue producers can drain after Open, so
+		// the uniformity check skips rather than fails when the second Open
+		// returns Unavailable.
 		results = append(results, CheckResult{Name: "OpenSecond"})
 		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results
 	}
 	results = append(results, CheckResult{Name: "OpenSecond"})
 
-	// Spec §2.5 uniformity: "byte-equal Scope MUST yield identical
-	// RealizedWriteSemantics". The check only applies when the two
-	// Open calls returned byte-equal Scope bytes — for pick-policy
-	// producers two Open calls return DIFFERENT scope bytes
-	// (different items), and asserting uniformity across non-byte-
-	// equal scopes is stricter than the invariant requires.
+	// @constraint: spec §2.5 uniformity — "byte-equal Scope MUST yield
+	// identical RealizedWriteSemantics". The check only applies when the
+	// two Open calls returned byte-equal Scope bytes; for pick-policy
+	// producers two Open calls return DIFFERENT scope bytes (different
+	// items), and asserting uniformity across non-byte-equal scopes is
+	// stricter than the invariant requires.
 	if !bytes.Equal(out1.Result.ClaimScope, out2.Result.ClaimScope) {
 		results = append(results, runOptionalChecks(ctx, c, caps)...)
 		return results

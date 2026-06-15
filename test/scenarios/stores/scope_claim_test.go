@@ -74,7 +74,7 @@ func TestScopeClaimEndToEnd(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// The stub store-service must have observed at least one open and
+	// @constraint: The stub store-service must have observed at least one open and
 	// one commit/abandon — confirming the wire round-trip happened.
 	deadline := time.Now().Add(2 * time.Second)
 	var sawOpen, sawTerminal bool

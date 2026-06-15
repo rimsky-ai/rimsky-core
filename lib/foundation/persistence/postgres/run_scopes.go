@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run_scopes.go is the postgres impl of `persistence.RunScopeTable` —
-// CRUD + tree-walks on rimsky_run_scopes, the first-class execution-
-// context table backing concept:run-scope. Spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
-//
 // @concept: run-scope
 
 package postgres
@@ -22,6 +17,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// runScopesImpl is the Postgres-backed persistence.RunScopeTable — CRUD
+// + tree-walks on rimsky_run_scopes, the first-class execution-context
+// table backing concept:run-scope.
 type runScopesImpl tablesImpl
 
 var _ persistence.RunScopeTable = (*runScopesImpl)(nil)
@@ -34,7 +32,7 @@ func (b *runScopesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q
 const runScopeCols = `id, parent_run_scope_id, parent_run_id, graph_name, partition_key, instance_id, created_at, closed_at`
 
 func (b *runScopesImpl) Create(ctx context.Context, tx persistence.Tx, row persistence.RunScopeRow) error {
-	// CreatedAt: zero value → fall through to DB default NOW() via COALESCE.
+	// @deliberate: zero CreatedAt → pass nil so COALESCE falls through to DB default NOW().
 	var createdAt any
 	if !row.CreatedAt.IsZero() {
 		createdAt = row.CreatedAt

@@ -40,7 +40,7 @@ func TestDurableLifetimeAcrossRunCompletion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CommitCandidate: %v", err)
 	}
-	// The committed version persists across the "run completion"
+	// @deliberate: The committed version persists across the "run completion"
 	// boundary — verified here by re-listing after the candidate is
 	// gone.
 	if s.CandidateCount() != 0 {

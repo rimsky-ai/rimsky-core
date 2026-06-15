@@ -2,20 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// types.go contains SQLite-specific type-marshalling helpers shared across
-// the per-feature impls. Per spec §6.3 the SQLite dialect drift requires
-// app-side translation:
-//
-//   - JSONB columns -> TEXT (we marshal at write, unmarshal at read)
-//   - UUID columns -> TEXT (we stringify at write, uuid.Parse at read)
-//   - UUID[]/TEXT[] columns -> TEXT (JSON-encoded array)
-//   - TIMESTAMPTZ columns -> TEXT (fixed-width UTC layout
-//     timeLayoutFixedNanos, whose lexicographic order matches
-//     chronological order)
-//   - NOW() -> caller passes time.Now().UTC().Format(...)
-//
-// These helpers keep the per-feature SQL terse without duplicating the
-// translation rules across 12 files.
 package sqlite
 
 import (
@@ -73,7 +59,6 @@ func parseTime(s string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t, nil
 	}
-	// Fall back to SQLite's `datetime('now')` default ("YYYY-MM-DD HH:MM:SS").
 	const sqliteDefault = "2006-01-02 15:04:05"
 	t, err := time.Parse(sqliteDefault, s)
 	if err != nil {
@@ -190,7 +175,7 @@ func unmarshalStringArray(s string) ([]string, error) {
 	return out, nil
 }
 
-// scanUUID converts a sql.NullString into a *shared.UUID. Returns nil for
+// scanNullableUUID converts a sql.NullString into a *shared.UUID. Returns nil for
 // invalid (null) input.
 func scanNullableUUID(ns sql.NullString) (*shared.UUID, error) {
 	if !ns.Valid || ns.String == "" {

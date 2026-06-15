@@ -30,7 +30,7 @@ type fakeProber struct {
 	storeClasses  []string
 	storeClassErr error
 	probeAttempts atomic.Int64
-	// Received tlsMode arguments, per probe verb. The handshake must
+	// @constraint: received tlsMode arguments, per probe verb. The handshake must
 	// thread each PeerSpec's TLS mode into every dial — dropping it at
 	// any of the three probe call sites would silently downgrade a
 	// required-TLS peer to plaintext.
@@ -226,7 +226,7 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 	if entry.Capabilities == nil {
 		t.Fatalf("capabilities nil — nothing was probed over the wire")
 	}
-	// Assert on the wire-advertised caps the real stub serves
+	// @constraint: assert on the wire-advertised caps the real stub serves
 	// (observability.go Capabilities), NOT SupportsTraceGet — the stub
 	// advertises that false; only the fakeProber set it true. Matching
 	// DeclaredEvents/ExpectedAttributesSchema proves the real caps round-
@@ -239,7 +239,7 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 		t.Fatalf("ExpectedAttributesSchema empty — caps not probed over the wire")
 	}
 
-	// Heal/flip: kill the peer, run one RefreshLoop interval against the
+	// @constraint: heal/flip: kill the peer, run one RefreshLoop interval against the
 	// real prober, and assert the entry flips to unreachable. Mirrors
 	// TestRefreshLoop_HealsUnreachable but exercises the real dial path.
 	srv.Stop()

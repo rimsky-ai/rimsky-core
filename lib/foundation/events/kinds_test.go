@@ -20,11 +20,11 @@ import (
 // kind would land in the column under one spelling and read back as
 // a different operational name (or fall to ErrUnknownKind).
 func TestOperationalKindRoundTrip(t *testing.T) {
-	// Catalog: every operational kind currently emitted in rimsky.
-	// Held literal here (not pulled from AllOperationalKinds) so a
-	// regression that drops an entry from the canonical map shows
-	// up as a missing case in this list, not a silently-empty
-	// round-trip pass.
+	// @deliberate: every operational kind currently emitted is held
+	// literal here (not pulled from AllOperationalKinds) so a
+	// regression that drops an entry from the canonical map shows up
+	// as a missing case in this list, not a silently-empty round-trip
+	// pass.
 	cases := []struct {
 		name string
 		op   genv1.OperationalKind

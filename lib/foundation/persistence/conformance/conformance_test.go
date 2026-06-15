@@ -18,10 +18,7 @@ import (
 	sqlitepersist "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 
-	// Driver registration for postgres. Pulled in so the suite test
-	// file can drive both drivers from one place; pgtest itself
-	// already imports the postgres driver but the blank import here
-	// keeps the conformance_test.go file's intent explicit.
+	// @deliberate: redundant-looking blank import — pgtest already pulls in the postgres driver, but importing it here keeps this file's intent (driving both drivers from one place) explicit.
 	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 )
 

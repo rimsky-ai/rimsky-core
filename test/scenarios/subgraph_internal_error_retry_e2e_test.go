@@ -35,7 +35,7 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Stub: caller (entry-absorbed) succeeds; inner-mid errors and
+	// @deliberate: Stub: caller (entry-absorbed) succeeds; inner-mid errors and
 	// retries (the stub returns Error every time; the retry policy
 	// fires until Count is exhausted).
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
@@ -95,7 +95,7 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 	innerMidNode := h.FindNode(iid, "inner-mid")
 	require.NotNil(t, innerMidNode, "inner-mid node missing")
 
-	// Wait for a retry dispatch on inner-mid. The retry dispatch
+	// @deliberate: Wait for a retry dispatch on inner-mid. The retry dispatch
 	// carries PriorDispatchID + PRIOR_RETRY_AFTER_ERROR; the witness
 	// the stub captures pins the retry actually fired.
 	retrySeen := false
@@ -117,7 +117,7 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 	require.True(t, retrySeen,
 		"inner-mid retry dispatch should carry PRIOR_RETRY_AFTER_ERROR")
 
-	// All inner-mid runs (original + retries) live in the SAME
+	// @deliberate: All inner-mid runs (original + retries) live in the SAME
 	// sub-graph RunScope (graph_name = 'worker'), NOT the main scope.
 	var distinctScopes, totalRuns int
 	h.QueryRowSQL(`
@@ -132,7 +132,7 @@ func TestSubgraphInternalErrorRetryE2E(t *testing.T) {
 	require.GreaterOrEqual(t, totalRuns, 2,
 		"retry should produce at least two rimsky_node_runs rows for inner-mid")
 
-	// The S3 assertion is satisfied by:
+	// @deliberate: The S3 assertion is satisfied by:
 	//   1. The retry dispatch was observed (PRIOR_RETRY_AFTER_ERROR) —
 	//      the retry path fired through the supervisor's terminal-error
 	//      handler, threading the sub-graph RunScope id.

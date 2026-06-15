@@ -4,8 +4,6 @@
 
 // breakpoints.go — HTTP+JSON surface for the instance-debugger
 // breakpoint primitive per spec
-// .ok-planner/specs/2026-05-24-instance-debugger-design.md §4.
-//
 //	POST   /instances/{idOrKey}/breakpoints
 //	GET    /instances/{idOrKey}/breakpoints
 //	DELETE /instances/{idOrKey}/breakpoints/{breakpoint_id}
@@ -124,7 +122,7 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Checkpoint is the discriminator for several downstream rules
+		// @constraint: checkpoint is the discriminator for several downstream rules
 		// (signal_type validity, default overflow_policy) — validate it
 		// first so we can reference it below.
 		checkpoint, err := parseCheckpoint(body.Checkpoint)
@@ -133,7 +131,7 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Mode defaults to "pause" per spec §4.1.
+		// @constraint: mode defaults to "pause".
 		mode := persistence.BreakpointModePause
 		if body.Mode != "" {
 			m, err := parseBreakpointMode(body.Mode)
@@ -144,19 +142,17 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			mode = m
 		}
 
-		// Overflow policy: empty → mode-conditional default
-		// (notify_only → drop_oldest, pause → block_dispatch) per spec
-		// §4.8. Validate the (mode, overflow_policy) pair after the
-		// defaulting step.
+		// @constraint: overflow policy: empty → mode-conditional default
+		// (notify_only → drop_oldest, pause → block_dispatch). Validate
+		// the (mode, overflow_policy) pair after the defaulting step.
 		overflowPolicy, err := resolveOverflowPolicy(body.OverflowPolicy, mode)
 		if err != nil {
 			badRequest(w, err.Error())
 			return
 		}
 
-		// signal_type: valid only on after_terminal checkpoints; must
+		// @constraint: signal_type: valid only on after_terminal checkpoints; must
 		// satisfy signal.ValidateSubscriptionType (admits trailing-*).
-		// Per spec §4.5.
 		if body.SignalType != nil {
 			if checkpoint == persistence.CheckpointBeforeDispatch {
 				badRequest(w, "signal_type is only valid on after_terminal checkpoints")
@@ -181,7 +177,7 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Matcher validation needs the locked template's node + executor
+		// @constraint: matcher validation needs the locked template's node + executor
 		// + graph name sets. Open a tx, lock the template row FOR UPDATE
 		// (so concurrent template-deploy / undeploy can't race), and
 		// validate.
@@ -202,7 +198,7 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			if err := matcher.Validate(matcher.Matcher(body.Matcher), refs, -1); err != nil {
 				return err
 			}
-			// Dry-run gate: every validation step above has succeeded
+			// @constraint: dry-run gate: every validation step above has succeeded
 			// (instance + body + checkpoint/mode/overflow/signal parsing,
 			// and the matcher validated against the locked template).
 			// Skip the Create insert and signal the caller via errDryRunOK
@@ -228,13 +224,13 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			bpID = id
-			// Re-read to populate created_at / expires_at the DB
+			// @constraint: re-read to populate created_at / expires_at the DB
 			// materialized so the response matches what GET would return.
 			fresh, err := deps.Persist.Breakpoints().Get(ctx, id, tx)
 			if err != nil {
 				return err
 			}
-			// Defense-in-depth: within this same tx the row is guaranteed
+			// @constraint: defense-in-depth: within this same tx the row is guaranteed
 			// to be visible to Get (the INSERT above is in our snapshot;
 			// no other transaction can have observed and deleted it yet
 			// because the row's id isn't published outside this tx until
@@ -265,7 +261,8 @@ func handleCreateBreakpoint(deps AppDeps) http.HandlerFunc {
 			writeError(w, txErr)
 			return
 		}
-		_ = bpID // bpID embedded in created.ID
+		// @constraint: bpID is embedded in created.ID.
+		_ = bpID
 		writeJSON(w, http.StatusCreated, toBreakpointItem(created))
 	}
 }
@@ -325,9 +322,12 @@ func handleListBreakpointHits(deps AppDeps) http.HandlerFunc {
 			badRequest(w, mcpErr.Message)
 			return
 		}
-		// Fetch limit+1 so `truncated` reflects an actual row beyond the
+		// @deliberate: fetch limit+1 so `truncated` reflects an actual row beyond the
 		// requested page rather than speculating whenever the page size
-		// happens to equal `limit` (mirrors mcp_resources.go Read).
+		// happens to equal `limit`.
+		// @source: lib/control/controlapi/mcp_resources.go
+		// @diverged: false
+		// @reason: identical truncation-detection idiom shared between HTTP and MCP read paths
 		var hits []persistence.BreakpointHitRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			var err error
@@ -385,7 +385,7 @@ func handleDeleteBreakpoint(deps AppDeps) http.HandlerFunc {
 			if bp == nil || bp.InstanceID != inst.ID {
 				return foundationshared.ErrBreakpointNotFound
 			}
-			// Dry-run gate: existence + instance-ownership validated
+			// @constraint: dry-run gate: existence + instance-ownership validated
 			// against the same row a real delete would act on; skip the
 			// Delete and signal the caller via errDryRunOK so the
 			// envelope is written before any row is removed (the dry-run
@@ -421,7 +421,7 @@ type resumeBreakpointRequest struct {
 // not-found sentinels back to HTTP status codes per spec §4.7.
 func handleResumeBreakpointHit(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		// URL-shape resolution: confirm the named instance and
+		// @constraint: URL-shape resolution: confirm the named instance and
 		// breakpoint exist + belong to each other before doing the
 		// resume. Without this check, a typo'd URL would surface as
 		// 404 ErrBreakpointHitNotFound (correct in spirit, confusing
@@ -450,7 +450,7 @@ func handleResumeBreakpointHit(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "hit_id must be a UUID")
 			return
 		}
-		// Verify the hit belongs to the named breakpoint (and that the
+		// @constraint: verify the hit belongs to the named breakpoint (and that the
 		// breakpoint belongs to the named instance). Spec §4.7's 404
 		// covers "hit_id not in rimsky_breakpoint_hits" and the
 		// cascade-delete case; the cross-id check here surfaces typos
@@ -476,7 +476,7 @@ func handleResumeBreakpointHit(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// Dry-run: instance/breakpoint/hit URL-shape resolved and the hit
+		// @constraint: dry-run: instance/breakpoint/hit URL-shape resolved and the hit
 		// confirmed to belong to the named breakpoint. Skip the resume
 		// mutation (ValidateAndPersistResume) and write the envelope
 		// before any state change — its resume-time validation is coupled
@@ -553,7 +553,7 @@ func resolveOverflowPolicy(s string, mode persistence.BreakpointMode) (persisten
 	default:
 		return "", fmt.Errorf("overflow_policy %q invalid (want drop_oldest, block_dispatch, or auto_resume_after_ttl)", s)
 	}
-	// Reject the two illegal combinations per spec §4.8.
+	// @constraint: reject the two illegal combinations per spec §4.8.
 	if mode == persistence.BreakpointModePause && policy == persistence.OverflowDropOldest {
 		return "", fmt.Errorf("overflow_policy 'drop_oldest' is incompatible with mode 'pause' (pause-mode hits cannot be silently dropped)")
 	}
@@ -592,7 +592,7 @@ func breakpointMatcherRefs(tpl spec.TemplateSpec, executors map[string]ExecutorE
 		NodeTypes:     nodeTypes,
 		ExecutorNames: execNames,
 		GraphNames:    graphNames,
-		// LegacyFlat = false: breakpoints accept "graph: main" on any
+		// @constraint: LegacyFlat = false: breakpoints accept "graph: main" on any
 		// template regardless of whether it declares sub-graphs.
 	}
 }

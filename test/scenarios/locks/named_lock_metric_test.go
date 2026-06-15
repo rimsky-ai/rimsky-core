@@ -70,7 +70,7 @@ func scrapeMetrics(t *testing.T, url string) string {
 // that never moved emits no per-label series).
 func counterValue(t *testing.T, scrape, family, lockName, intent string) float64 {
 	t.Helper()
-	// Text format emits labels alphabetically: intent before lock_name.
+	// @deliberate: Text format emits labels alphabetically: intent before lock_name.
 	re := regexp.MustCompile(
 		fmt.Sprintf(`(?m)^%s\{intent="%s",lock_name="%s"\} ([0-9.e+]+)$`,
 			regexp.QuoteMeta(family), regexp.QuoteMeta(intent), regexp.QuoteMeta(lockName)))
@@ -109,7 +109,7 @@ func TestNamedLockAcquisitionMovesLabeledMetric(t *testing.T) {
 		},
 	})
 
-	// The real metric plumbing: prometheus registry → RegistryHook
+	// @deliberate: The real metric plumbing: prometheus registry → RegistryHook
 	// (production MetricsHook implementation) → /metrics over HTTP via
 	// the production MountMetrics wiring. No stub hook, no in-process
 	// shortcut around the scrape surface.
@@ -147,7 +147,7 @@ func TestNamedLockAcquisitionMovesLabeledMetric(t *testing.T) {
 		return args
 	}
 
-	// Baseline: before any acquisition the named-lock family carries no
+	// @deliberate: Baseline: before any acquisition the named-lock family carries no
 	// sample for this lock.
 	scrape0 := scrapeMetrics(t, metricsSrv.URL)
 	require.Zero(t, counterValue(t, scrape0, family, lockName, "acquired"),
@@ -155,7 +155,7 @@ func TestNamedLockAcquisitionMovesLabeledMetric(t *testing.T) {
 	require.Zero(t, counterValue(t, scrape0, family, lockName, "unavailable"),
 		"baseline: no unavailable sample before any RunNode")
 
-	// Holder-1 acquires the mutex and parks in the barrier executor —
+	// @deliberate: Holder-1 acquires the mutex and parks in the barrier executor —
 	// the acquisition has committed (entered fired), so the counter has
 	// moved by the time we scrape.
 	holder1 := make(chan runResult, 1)
@@ -169,7 +169,7 @@ func TestNamedLockAcquisitionMovesLabeledMetric(t *testing.T) {
 	require.Equal(t, 1.0, counterValue(t, scrape1, family, lockName, "acquired"),
 		"COUNTER MOVEMENT: one named-lock acquisition must read 1 on the metrics endpoint (story falsifier: ledger-only trace)")
 
-	// Contender bails on the saturated mutex → the "unavailable" intent
+	// @constraint: Contender bails on the saturated mutex → the "unavailable" intent
 	// label moves, distinguishable from "acquired".
 	bail := mustRunNodeWithArgs(t, h, runArgs("sup-metric-2"))
 	require.NoError(t, bail.err, "saturation is a soft bail, not an error")
@@ -181,7 +181,7 @@ func TestNamedLockAcquisitionMovesLabeledMetric(t *testing.T) {
 	require.Equal(t, 1.0, counterValue(t, scrape2, family, lockName, "unavailable"),
 		"LABELING: the saturation bail must move the unavailable-intent series")
 
-	// LABELING vs producer claims: the named-lock series lives in its
+	// @constraint: LABELING vs producer claims: the named-lock series lives in its
 	// own family — the producer-claim family must NOT carry the lock
 	// name as a producer label. This is the "distinguishable from
 	// producer-claim acquisitions" half of the acceptance.
@@ -190,7 +190,7 @@ func TestNamedLockAcquisitionMovesLabeledMetric(t *testing.T) {
 		scrape2,
 		"named-lock acquisitions must not masquerade as producer-claim samples")
 
-	// Release holder-1 → terminal → contender acquires the freed mutex
+	// @deliberate: Release holder-1 → terminal → contender acquires the freed mutex
 	// → counter climbs to 2 under load, the operator-observable motion.
 	barrier.freeOne()
 	r1 := <-holder1

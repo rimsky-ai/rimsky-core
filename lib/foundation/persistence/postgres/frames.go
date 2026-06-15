@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// frames.go is the postgres accessor for `rimsky_frames` and the related
-// frame-engine SQL on `rimsky_nodes`, `rimsky_node_runs`, and
-// `rimsky_instances`. Owns the SQL the frame engine
-// (graph/frame/{engine,producer}.go) calls through `persistence.FrameTable`.
-
 package postgres
 
 import (
@@ -274,7 +269,9 @@ func (s *framesImpl) GetRunningFrameID(ctx context.Context, instanceID shared.UU
 func (s *framesImpl) MarkSourceNodeStale(
 	ctx context.Context, instanceID, nodeID, frameID shared.UUID, tx persistence.Tx,
 ) (bool, error) {
-	// Bind the node's frame_id (idempotent for re-entry).
+	// @deliberate: unconditional frame_id rebind — idempotent so the
+	// under-contention re-entry path (caller retrying after a transient
+	// failure) succeeds without a pre-check.
 	if _, err := s.q(tx).Exec(ctx, `
         UPDATE rimsky_nodes
         SET frame_id = $1, updated_at = now()
@@ -282,16 +279,14 @@ func (s *framesImpl) MarkSourceNodeStale(
     `, frameID, instanceID, nodeID); err != nil {
 		return false, fmt.Errorf("frames.MarkSourceNodeStale: bind frame: %w", err)
 	}
-	// INSERT a fresh pending run row when no in-flight row exists.
-	// Populates required_stores from the template node-def so the
-	// supervisor's SelectCandidates pool-predicate
+	// @constraint: required_stores must be populated from the template
+	// node-def so the supervisor's SelectCandidates pool-predicate
 	// (required_stores ⊆ accepted_stores) routes the row correctly.
-	//
-	// Under RunScope-first the new row lives in the instance's main
-	// RunScope (the only RunScope a frame source's run can belong to;
+	// @concept: run-scope
+	// @deliberate: frame source's run row lives in the instance's main
+	// RunScope (the only RunScope a frame source's run can belong to —
 	// sub-graph + fan-out children allocate via AffirmNodeRunRow /
 	// DispatchChildren, not via the frame source path).
-	// @concept: run-scope
 	tag, err := s.q(tx).Exec(ctx, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
@@ -327,8 +322,9 @@ func (s *framesImpl) MarkSourceNodeStale(
 	if tag.RowsAffected() == 1 {
 		return true, nil
 	}
-	// No INSERT — fall back to "already in-flight stale row pinned to
-	// this frame" (under-contention re-entry).
+	// @deliberate: zero RowsAffected falls back to an existence check for
+	// an already-in-flight stale row pinned to this frame, so the
+	// under-contention re-entry returns matched=true rather than failing.
 	var anyMatched bool
 	if err := s.q(tx).QueryRow(ctx, `
         SELECT EXISTS (
@@ -627,29 +623,26 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 	if !countBound && !timeBound {
 		return 0, nil
 	}
-	// Sentinel binds let one SQL serve all three bound combinations:
-	// a disabled bound's predicate is made unsatisfiable (rk > a huge cap
-	// never matches; a NULL cutoff makes the time predicate NULL→false)
-	// so the active bound(s) drive the delete.
+	// @deliberate: sentinel binds let one SQL statement serve all three
+	// bound combinations — a disabled bound's predicate is made
+	// unsatisfiable (rk > a huge cap never matches; a NULL cutoff makes
+	// the time predicate NULL→false) so the active bound(s) drive the
+	// delete.
 	var countCap int = recentFramesKept
 	if !countBound {
-		// The platform max int — exceeds any possible per-instance frame
-		// rank, so the rank predicate never fires when the count bound is
-		// disabled. math.MaxInt (not a 1<<62 literal) keeps the constant in
-		// range of int on a 32-bit build target, where 1<<62 would overflow
-		// and fail to compile.
+		// @constraint: math.MaxInt (not a 1<<62 literal) keeps the
+		// constant in range of int on a 32-bit build target, where 1<<62
+		// would overflow and fail to compile.
 		countCap = math.MaxInt
 	}
 	var cutoffArg any
 	if timeBound {
 		cutoffArg = cutoff
 	}
-	// PARTITION BY instance_id ORDER BY ended_at DESC gives each frame a
-	// per-instance rank (1 = most recent terminal). A frame is a candidate
-	// when its rank exceeds the count cap OR its ended_at precedes the
-	// cutoff. Standalone retention sweep — no caller-supplied tx; run
-	// directly against the pool (mirroring Lineage.DeleteOlderThan). The
-	// frame→node_run ON DELETE CASCADE removes each deleted frame's runs.
+	// @deliberate: standalone retention sweep runs directly against the
+	// pool (no caller-supplied tx), mirroring Lineage.DeleteOlderThan.
+	// The frame→node_run ON DELETE CASCADE removes each deleted frame's
+	// runs.
 	tag, err := (*tablesImpl)(s).pool.Exec(ctx, `
         DELETE FROM rimsky_frames
         WHERE frame_id IN (

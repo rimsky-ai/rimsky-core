@@ -56,7 +56,7 @@ func TestMultiBreakpointMatch(t *testing.T) {
 	})
 
 	iid := createInstanceWithPause(t, h, tid, "ck-multi-match", map[string]any{})
-	// Two breakpoints with overlapping matchers — both fire on the same
+	// @deliberate: Two breakpoints with overlapping matchers — both fire on the same
 	// dispatch. Created sequentially so the ListForInstance ordering is
 	// deterministic.
 	bp1 := breakpointCreate(t, h, iid, map[string]any{
@@ -69,22 +69,20 @@ func TestMultiBreakpointMatch(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	// The first hit lands. The evaluator is blocked there.
+	// @constraint: The first hit lands. The evaluator is blocked there.
 	hit1 := waitForHitOnBreakpoint(t, h, bp1, 10*time.Second)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called while paused at the first breakpoint")
 
-	// Resume bp1; the evaluator should advance to bp2 and write its hit.
 	status, _ := breakpointResume(t, h, iid, bp1, map[string]any{"hit_id": hit1.ID.String()})
 	require.Equal(t, http.StatusOK, status)
 
 	hit2 := waitForHitOnBreakpoint(t, h, bp2, 10*time.Second)
-	// Still no executor — bp2 is now holding the dispatch.
+	// @constraint: Still no executor — bp2 is now holding the dispatch.
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must remain uncalled while paused at the second breakpoint")
 
-	// Resume bp2; the executor should now receive the dispatch.
 	status, _ = breakpointResume(t, h, iid, bp2, map[string]any{"hit_id": hit2.ID.String()})
 	require.Equal(t, http.StatusOK, status)
 

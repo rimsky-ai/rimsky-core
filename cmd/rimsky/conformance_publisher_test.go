@@ -91,7 +91,6 @@ func startReceiver(t *testing.T, r *pubconformance.MessageReceiver) (endpoint st
 		u, _ := url.Parse(req.URL.Path)
 		parts := splitNonEmpty(u.Path, '/')
 		var instanceID string
-		// parts: ["v1", "instances", "{id}", "messages"]
 		if len(parts) >= 4 && parts[0] == "v1" && parts[1] == "instances" && parts[3] == "messages" {
 			instanceID = parts[2]
 		}

@@ -2,22 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// trace_retention_test.go — whole-trace retention gate. The trace is the
-// per-instance execution narrative: frames + their node_runs (structural)
-// + the time-keyed event logs (rimsky_events audit, rimsky_node_events
-// named). Under the durable-by-default model nothing auto-deletes an
-// instance's trace, so a single retention policy must bound it: terminal
-// frame rows reaped by the lesser of a trailing time window and a
-// most-recent-frames count cap (cascading their node_runs), and the event
-// logs reaped by the same time window. In-flight frames — including a
-// parked-held frame — are always exempt.
-//
-// This test exercises the persistence layer directly across the three
-// methods the sweep orchestrates: Frames().PruneTraceForRetention (frames
-// + cascade node_runs ONLY), Events().DeleteOlderThan (audit), and
-// NodeEvents().DeleteOlderThan (named). The sweep that calls them together
-// is runtime.SweepRunTreeRetention; here we drive the methods directly.
-//
 // @concept: frame
 // @concept: event-log
 
@@ -48,7 +32,6 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 	ctx := context.Background()
 	rawDB := sqlitedrv.DBFromDatabase(d)
 
-	// --- Seed the template → instance → run_scope chain ------------------
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
 	scopeID := uuid.New().String()
@@ -59,8 +42,9 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// instance + main_run_scope mutually FK each other; seed in one tx with
-	// deferred constraints (mirrors queue_park_test.go).
+	// @constraint: rimsky_instances.main_run_scope_id and rimsky_run_scopes.instance_id
+	// are mutual FKs — both rows must land in one tx under deferred constraints
+	// (mirrors queue_park_test.go's seed).
 	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
@@ -83,20 +67,19 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	// cutoff sits between the old rows (well in the past) and the recent
-	// rows (just now). The time bound reaps everything older than cutoff;
-	// the count cap (1) independently reaps all but the single most-recent
-	// terminal frame. Both bounds agree on the old frames here, which is
-	// the lesser-of policy at work.
+	// @deliberate: cutoff sits between old rows (well in the past) and recent
+	// rows (just now); count cap (1) independently reaps all but the single
+	// most-recent terminal frame. Both bounds agree on the old frames — the
+	// lesser-of policy at work.
 	cutoff := now.Add(-1 * time.Hour)
 	oldTime := now.Add(-24 * time.Hour)
 	rfc := func(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
-	// seedTerminalFrame inserts a completed frame with one terminal
-	// (phase=completed, state=failed) node_run hung off it, and returns
-	// (frameID, runID, nodeID). Each frame gets a distinct node so the
-	// in-flight partial unique index never bites (it only constrains
-	// in-flight phases, but distinct nodes keep the seed unambiguous).
+	// @constraint: each seeded frame gets a distinct node so the in-flight
+	// partial unique index never bites (it only constrains in-flight phases,
+	// but distinct nodes keep the seed unambiguous). Returns (frameID, runID,
+	// nodeID) for a completed frame with one terminal (phase=completed,
+	// state=failed) node_run hung off it.
 	seedTerminalFrame := func(endedAt time.Time) (string, string, string) {
 		frameID := uuid.New().String()
 		nodeID := uuid.New().String()
@@ -128,15 +111,14 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 		return frameID, runID, nodeID
 	}
 
-	// Three old terminal frames + one recent terminal frame.
 	oldFrame1, oldRun1, _ := seedTerminalFrame(oldTime)
 	oldFrame2, oldRun2, _ := seedTerminalFrame(oldTime.Add(time.Minute))
 	oldFrame3, oldRun3, _ := seedTerminalFrame(oldTime.Add(2 * time.Minute))
 	recentFrame, recentRun, _ := seedTerminalFrame(now.Add(-time.Minute))
 
-	// One in-flight running frame held open by a single parked node_run —
-	// the parked-held exemption case. It is NOT terminal, so the reaper
-	// must never touch it regardless of how old it is.
+	// @deliberate: an in-flight running frame held open by a parked node_run is
+	// NOT terminal, so the reaper must never touch it regardless of age — this
+	// seed exercises the parked-held exemption case.
 	heldFrame := uuid.New().String()
 	heldNode := uuid.New().String()
 	heldRun := uuid.New().String()
@@ -165,10 +147,9 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 		t.Fatalf("seed parked node_run: %v", err)
 	}
 
-	// --- Seed audit (rimsky_events) + named (rimsky_node_events) rows ----
-	// occurred_at / emitted_at are both TEXT RFC3339Nano — the production
-	// write paths both go through formatTime — so seed both with the same
-	// rfc() formatter the cutoff is compared in.
+	// @constraint: occurred_at / emitted_at are both TEXT RFC3339Nano — the
+	// production write paths both go through formatTime — so seed both with
+	// the same rfc() formatter the cutoff is compared in.
 	insertEvent := func(when time.Time, kind string) int64 {
 		res, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_events (instance_id, kind, payload, occurred_at)
@@ -200,9 +181,11 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 	oldNodeEventID := insertNodeEvent(oldTime, "progress")
 	recentNodeEventID := insertNodeEvent(now.Add(-time.Minute), "progress")
 
-	// --- Run the three retention deletes (what the sweep orchestrates) ---
-	// recentFramesKept=1 keeps only the single most-recent terminal frame;
-	// cutoff reaps everything older. Frames + cascade node_runs ONLY.
+	// @deliberate: drive the three retention deletes the sweep orchestrates —
+	// recentFramesKept=1 keeps only the single most-recent terminal frame,
+	// cutoff reaps everything older, and the frames path cascades only to
+	// node_runs (not to events or named events, which the next two calls reap
+	// independently).
 	store := d.Tables()
 	if _, err := store.Frames().PruneTraceForRetention(ctx, 1, cutoff); err != nil {
 		t.Fatalf("PruneTraceForRetention: %v", err)
@@ -214,7 +197,6 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 		t.Fatalf("NodeEvents.DeleteOlderThan: %v", err)
 	}
 
-	// --- Assert structural reaping ---------------------------------------
 	frameExists := func(frameID string) bool {
 		var n int
 		if err := rawDB.QueryRowContext(ctx,
@@ -257,7 +239,6 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 		t.Errorf("parked node_run of the held frame must never be reaped")
 	}
 
-	// --- Assert event-log reaping ----------------------------------------
 	eventExists := func(id int64) bool {
 		var n int
 		if err := rawDB.QueryRowContext(ctx,
@@ -339,8 +320,9 @@ func TestNodeEventDeleteOlderThanQueuesSpilledBlobOrphans(t *testing.T) {
 	oldTime := now.Add(-24 * time.Hour)
 	nodeID := uuid.New().String()
 
-	// Old spilled named event (handle set) → must be reaped and surfaced as
-	// an orphan. A recent inline event (no handle) → survives, no orphan.
+	// @deliberate: seed an old spilled named event (handle set) — the reaper
+	// must both delete the row AND surface (handle, backend) as an orphan, or
+	// the spilled bytes leak forever.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_events
 		   (instance_id, emitter_node_id, event_name, payload_handle, payload_handle_backend, emitted_at)
@@ -364,9 +346,10 @@ func TestNodeEventDeleteOlderThanQueuesSpilledBlobOrphans(t *testing.T) {
 	if orphans[0].Handle != "blob-handle-xyz" || orphans[0].Backend != "filesystem" {
 		t.Fatalf("orphan = %+v, want {Handle:blob-handle-xyz Backend:filesystem}", orphans[0])
 	}
-	// The handle must be durably queued in rimsky_blob_orphans by the same
-	// transaction that deleted the row — surfacing it in the return slice is
-	// not enough; SweepOrphanedBlobs reaps only what is persisted there.
+	// @constraint: the handle must be durably queued in rimsky_blob_orphans by
+	// the same transaction that deleted the row — surfacing it in the return
+	// slice is not enough; SweepOrphanedBlobs reaps only what is persisted
+	// there.
 	var queued int
 	if err := rawDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM rimsky_blob_orphans WHERE handle = 'blob-handle-xyz'`,
@@ -424,8 +407,9 @@ func TestNodeEventTimeRoundTripThroughProductionPaths(t *testing.T) {
 		t.Fatalf("commit seed: %v", err)
 	}
 
-	// Write through the production Insert (emitted_at stamped at time.Now via
-	// formatTime).
+	// @deliberate: write through the production Insert so emitted_at is
+	// stamped via formatTime — the whole point of this test is to pin that
+	// format against the reaper's compare format.
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, ierr := tables.NodeEvents().Insert(ctx, persistence.NodeEvent{
 			InstanceID:    instanceID,
@@ -457,7 +441,9 @@ func TestNodeEventTimeRoundTripThroughProductionPaths(t *testing.T) {
 		t.Fatalf("emitted_at did not round-trip through formatTime/parseTime: got %v", ev.EmittedAt)
 	}
 
-	// A PAST cutoff must not reap a just-written row.
+	// @constraint: a past cutoff must not reap a just-written row — a non-zero
+	// count here means Insert's write format and the reaper's compare format
+	// have drifted.
 	if n, _, derr := tables.NodeEvents().DeleteOlderThan(ctx, time.Now().Add(-time.Hour)); derr != nil {
 		t.Fatalf("DeleteOlderThan(past): %v", derr)
 	} else if n != 0 {
@@ -467,8 +453,9 @@ func TestNodeEventTimeRoundTripThroughProductionPaths(t *testing.T) {
 		t.Fatalf("event must survive a past cutoff")
 	}
 
-	// A FUTURE cutoff must reap it — Insert's stored format and the reaper's
-	// formatTime cutoff compare correctly only when both are RFC3339Nano.
+	// @constraint: a future cutoff must reap the row — Insert's stored format
+	// and the reaper's formatTime cutoff compare correctly only when both are
+	// RFC3339Nano.
 	if n, _, derr := tables.NodeEvents().DeleteOlderThan(ctx, time.Now().Add(time.Hour)); derr != nil {
 		t.Fatalf("DeleteOlderThan(future): %v", derr)
 	} else if n != 1 {

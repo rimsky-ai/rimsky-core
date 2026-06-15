@@ -37,7 +37,7 @@ func registerEventsRoutes(r chi.Router, deps AppDeps) {
 func handleListEvents(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
-		// Validate ?kind= against the typed catalog at the
+		// @constraint: validate ?kind= against the typed catalog at the
 		// request boundary (per decision:event-log-kind-enum).
 		// Empty = no filter (accept). Non-empty = MUST parse to
 		// a known operational kind OR a signal-shaped type-path;

@@ -28,12 +28,15 @@ import (
 // topology.
 type SchedulerConfig struct {
 	// Driver is the unified persistence driver. Required.
-	Driver               persistence.Database
-	Clock                shared.Clock
-	Logger               shared.Logger
-	TickInterval         time.Duration // default 1500ms
-	HeartbeatTimeout     time.Duration // default 15s
-	OrphanedClaimTimeout time.Duration // default 5×HeartbeatTimeout
+	Driver persistence.Database
+	Clock  shared.Clock
+	Logger shared.Logger
+	// @constraint: zero values fall back to the documented defaults —
+	// TickInterval 1500ms, HeartbeatTimeout 15s, OrphanedClaimTimeout
+	// 5×HeartbeatTimeout.
+	TickInterval         time.Duration
+	HeartbeatTimeout     time.Duration
+	OrphanedClaimTimeout time.Duration
 	// Stores is the parsed `stores:` block from rimsky.yml. Each entry
 	// is dialed at startup and validated against the operator-declared
 	// capabilities; mismatches fail StartScheduler.
@@ -98,8 +101,9 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 	if persistStore == nil {
 		return nil, fmt.Errorf("StartScheduler: Database.Tables() returned nil — driver did not initialize the Tables accessor")
 	}
-	// The scheduler does not dispatch, so it has no late-bind proxy map;
-	// the Registry's late-bind hooks stay inert (nil proxy map).
+	// @deliberate: the scheduler does not dispatch, so it has no
+	// late-bind proxy map — the Registry's late-bind hooks stay inert
+	// (nil proxy map).
 	registry, err := dialRemoteStores(context.Background(), cfg.Stores, persistStore, nil)
 	if err != nil {
 		return nil, fmt.Errorf("StartScheduler: %w", err)
@@ -125,22 +129,22 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		OrphanedClaimTimeout: cfg.OrphanedClaimTimeout,
 		ClaimHandles:         persistStore.ClaimHandles(),
 		SupervisorID:         cfg.SupervisorID,
-		// StoreRegistry is the dialed producer registry; required by the
-		// park_timeout watchdog to fire Abandon on held claims (blessed
-		// invariant 13).
+		// @constraint: StoreRegistry is the dialed producer registry —
+		// required by the park_timeout watchdog to fire Abandon on held
+		// claims (@blessed-invariant 13).
 		StoreRegistry: registry,
-		// BlobBackend / BlobOrphans drive the orphan-blob sweep (D8).
-		// cfg.Blob is nil when no backend was installed at startup
-		// (typical of unit tests); persistStore.BlobOrphans() returns
-		// the rimsky_blob_orphans accessor on the unified store.
+		// @constraint: BlobBackend / BlobOrphans drive the orphan-blob
+		// sweep. cfg.Blob is nil when no backend was installed at
+		// startup (typical of unit tests); persistStore.BlobOrphans()
+		// returns the rimsky_blob_orphans accessor on the unified store.
 		BlobBackend:             cfg.Blob,
 		BlobOrphans:             persistStore.BlobOrphans(),
 		OrphanBlobSweepInterval: cfg.OrphanBlobSweepInterval,
 		Metrics:                 cfg.Metrics,
 		Retention:               cfg.Retention,
 	}
-	// Auth-key rotation-grace sweep. Runs every minute; revokes
-	// keys whose `revoke_at` is in the past. Cheap, idempotent.
+	// @constraint: auth-key rotation-grace sweep. Runs every minute;
+	// revokes keys whose `revoke_at` is in the past. Cheap, idempotent.
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	go runAuthSweepLoop(sweepCtx, persistStore, cfg.Clock, cfg.Logger)
 	return schedulerHandleWithRegistry{

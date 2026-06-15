@@ -19,7 +19,7 @@ Operators version a deployable name and roll forward or back without disrupting 
 
 ## Acceptance
 
-Through the control-api or `rimsky tag …` CLI, an operator binds a tag to a template hash; afterward, instance creation against the tag uses that hash. Re-binding the tag to a different hash atomically redirects subsequent instance creation to the new hash without affecting instances already created under the old binding. Deleting a tag makes the name no longer resolvable for new instances.
+Through the control-api or the tag-management CLI surface, an operator binds a tag to a template hash; afterward, instance creation against the tag uses that hash. Re-binding the tag to a different hash atomically redirects subsequent instance creation to the new hash without affecting instances already created under the old binding. Deleting a tag makes the name no longer resolvable for new instances.
 
 ## Falsifier
 

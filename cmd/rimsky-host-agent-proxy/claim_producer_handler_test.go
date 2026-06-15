@@ -22,7 +22,6 @@ import (
 // empty success responses.
 func claimProducerScript() dispatchHandler {
 	return func(protocol string, payload []byte) [][]byte {
-		// Detect the request type by attempting Open first.
 		var open genv1.OpenRequest
 		if err := proto.Unmarshal(payload, &open); err == nil && open.GetClaimId() != "" && open.GetProducerName() != "" {
 			resp, _ := proto.Marshal(&genv1.OpenResponse{Result: &genv1.OpenResponse_Acquired{Acquired: &genv1.Acquired{
@@ -30,9 +29,10 @@ func claimProducerScript() dispatchHandler {
 			}}})
 			return [][]byte{resp}
 		}
-		// Fall through: respond with a Commit/Abandon/Release-shaped empty
-		// response. All three are distinct messages but proto-unmarshal of
-		// an empty message is harmless; the proxy decodes the right type.
+		// @deliberate: fall through with a Commit/Abandon/Release-shaped
+		// empty response. All three are distinct messages but
+		// proto-unmarshal of an empty message is harmless; the proxy
+		// decodes the right type.
 		resp, _ := proto.Marshal(&genv1.CommitResponse{})
 		return [][]byte{resp}
 	}
@@ -89,7 +89,7 @@ func TestOpenThenCommit(t *testing.T) {
 	if _, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "claim-1", ProducerName: "fs-claims", InstanceId: "inst-1"}); err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	// Commit routes by claim_id (no instance_id on the request).
+	// @constraint: commit routes by claim_id (no instance_id on the request).
 	if _, err := client.Commit(ctx, &genv1.CommitRequest{ClaimId: "claim-1"}); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestOpenMissingServiceName(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}})
 
 	client := genv1.NewClaimProducerClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // no header
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // @constraint: no service-name metadata header — proves the header is mandatory
 	defer cancel()
 	_, err := client.Open(ctx, &genv1.OpenRequest{ClaimId: "c", ProducerName: "fs-claims", InstanceId: "inst-1"})
 	if status.Code(err) != codes.FailedPrecondition {
@@ -169,7 +169,7 @@ func TestOpenOwnerEmpty(t *testing.T) {
 
 func TestOpenAgentNotConnected(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
-	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}}) // no agent
+	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"fs-claims": {Path: "./fs"}}) // @constraint: no connectFakeAgent — verifies the no-agent-connected path
 	client := genv1.NewClaimProducerClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("fs-claims"), 5*time.Second)
 	defer cancel()

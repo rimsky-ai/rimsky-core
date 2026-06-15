@@ -36,22 +36,17 @@ import (
 // @decision: exit-codes.
 type ShutdownReason int
 
-// Shutdown reasons enumerated.
-const (
-	// ReasonAllSuccess: every declared instance reached terminal
-	// with outcome `success`. Exit 0.
-	ReasonAllSuccess ShutdownReason = iota
-	// ReasonAnyFailure: at least one instance terminated with a
-	// failure or a parked-timeout outcome, OR a role runner
-	// failed during the run. Exit 1.
-	ReasonAnyFailure
-	// ReasonTimeout: the --timeout deadline expired before every
-	// instance reached terminal. Exit 2.
-	ReasonTimeout
-	// ReasonSignal: a SIGINT or SIGTERM interrupted the run before
-	// natural completion. Exit 130 (the conventional SIGINT exit).
-	ReasonSignal
-)
+// ReasonAllSuccess indicates every declared instance reached terminal with outcome success; maps to exit 0.
+const ReasonAllSuccess ShutdownReason = 0
+
+// ReasonAnyFailure indicates at least one instance terminated with a failure or parked-timeout outcome, or a role runner failed during the run; maps to exit 1.
+const ReasonAnyFailure ShutdownReason = 1
+
+// ReasonTimeout indicates the --timeout deadline expired before every instance reached terminal; maps to exit 2.
+const ReasonTimeout ShutdownReason = 2
+
+// ReasonSignal indicates a SIGINT or SIGTERM interrupted the run before natural completion; maps to exit 130 (the conventional SIGINT exit).
+const ReasonSignal ShutdownReason = 3
 
 // childGraceWindow bounds the time we wait for a spawned child to
 // exit after SIGTERM before escalating to SIGKILL. Kept short so the
@@ -123,17 +118,16 @@ func (c *ShutdownCoordinator) doDrain(ctx context.Context, reason ShutdownReason
 		"stack_present", c.Stack != nil,
 	)
 
-	// Phase 1 — signal every spawned child SIGTERM. Then wait for
-	// each Exited channel up to childGraceWindow; SIGKILL any
-	// straggler. Sequential per child but bounded overall by a
-	// single deadline (so N children share one grace window, not
-	// N*grace). This is load-bearing for the BI test's duration
-	// bound: a non-cooperating child cannot extend the drain beyond
-	// the window.
+	// @constraint: phase 1 SIGTERMs every spawned child then waits up to
+	// childGraceWindow for them to exit; SIGKILL escalation runs against
+	// any straggler. The grace window is shared across all children (not
+	// per-child) so a non-cooperating child cannot extend the drain beyond
+	// the window — load-bearing for the @blessed-invariant:
+	// spawn-child-reaped-on-exit duration bound.
 	c.reapSpawnedChildren(logger)
 
-	// Phase 2 — reverse-order role-stack drain. The stack itself
-	// owns the per-runner stop functions and the deadline-bounded
+	// @constraint: phase 2 is a reverse-order role-stack drain; the stack
+	// itself owns the per-runner stop functions and the deadline-bounded
 	// drainCtx.
 	if c.Stack != nil {
 		c.Stack.Drain(ctx, roleStackDrainWindow)
@@ -180,8 +174,9 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 			continue
 		}
 		if err := s.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
-			// Likely already-exited; the Exited channel will fire
-			// and the wait below will observe it cleanly.
+			// @deliberate: ErrProcessDone here means the child already
+			// exited; the Exited channel will fire and the wait below
+			// will observe it cleanly, so we suppress the warning.
 			if !errors.Is(err, os.ErrProcessDone) {
 				logger.Warn("compose run: SIGTERM child failed",
 					"pid", s.Cmd.Process.Pid,
@@ -191,9 +186,10 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 		}
 	}
 
-	// Build the working set of children whose exits we still need to
-	// observe. Indexed by PID so the per-child watcher can identify
-	// itself when it wakes the loop.
+	// @constraint: remaining is keyed by PID so each per-child watcher
+	// can identify itself when it wakes the loop; the deadline branch
+	// below assumes membership semantics (a child removed from this map
+	// has already been observed exited and must not be SIGKILLed).
 	remaining := map[int]*hostagent.SpawnedService{}
 	for _, s := range c.Services {
 		if s == nil || s.Cmd == nil || s.Cmd.Process == nil || s.Exited == nil {
@@ -205,17 +201,13 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 		return
 	}
 
-	// Each watcher forwards its child's Exited close onto exitWake
-	// (capacity = len(remaining) so a burst of simultaneous exits
-	// never blocks the watchers).
+	// @deliberate: exitWake capacity = len(remaining) so a burst of
+	// simultaneous child exits never blocks the per-child watchers.
 	type exitEvent struct{ pid int }
 	exitWake := make(chan exitEvent, len(remaining))
-	// stopWatchers signals watchers to exit cleanly once the loop has
-	// resolved — without it, the goroutine for a child whose Exited
-	// channel happens to fire after we return would leak (forever
-	// blocked on the unbuffered consumer of a buffered channel — fine
-	// here, the channel has slack, but we still want a clean shutdown
-	// signal for the watcher itself when SIGKILL fires).
+	// @constraint: stopWatchers signals each watcher to exit once the
+	// loop has resolved, so a watcher whose child fires Exited after we
+	// return cannot leak.
 	stopWatchers := make(chan struct{})
 	for pid, s := range remaining {
 		go func(pid int, exited <-chan struct{}) {
@@ -229,22 +221,21 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 			}
 		}(pid, s.Exited)
 	}
-	// On every return path, signal the watchers so a still-running
-	// goroutine exits rather than leaks.
 	defer close(stopWatchers)
 
 	deadline := time.NewTimer(childGraceWindow)
 	defer deadline.Stop()
 
-	// Wait for cooperative exits, bounded by the shared deadline.
 	for len(remaining) > 0 {
 		select {
 		case ev := <-exitWake:
 			delete(remaining, ev.pid)
 		case <-deadline.C:
-			// Escalate to SIGKILL only on the children still in
-			// remaining — cooperative siblings already exited and
-			// were removed above, so they are not in the kill set.
+			// @constraint: SIGKILL fires only on children still in
+			// remaining; cooperative siblings already exited and were
+			// removed above, so they are not in the kill set. Narrowing
+			// the kill set to actual stragglers is the whole point of
+			// the shared-wakeup-channel design above.
 			for _, s := range remaining {
 				if s.Cmd == nil || s.Cmd.Process == nil {
 					continue
@@ -254,11 +245,11 @@ func (c *ShutdownCoordinator) reapSpawnedChildren(logger *slog.Logger) {
 				)
 				_ = s.Cmd.Process.Kill()
 			}
-			// Wait for the post-SIGKILL Exited signals so the
-			// invariant — every child observed exited before
-			// Drain returns — holds. SIGKILL is unstoppable so
-			// this is a bounded wait, not a possible infinite
-			// hang.
+			// @blessed-invariant: spawn-child-reaped-on-exit — wait
+			// for the post-SIGKILL Exited signals so every child is
+			// observed exited before Drain returns. SIGKILL is
+			// unstoppable so this is a bounded wait, not a possible
+			// infinite hang.
 			for _, s := range remaining {
 				if s.Exited != nil {
 					<-s.Exited

@@ -52,9 +52,9 @@ const (
 	// values; ParseKindString rejects empty input rather than emit a
 	// zero Kind.
 	FamilyUnknown Family = iota
-	// FamilyOperational designates an OperationalKind-backed kind.
+	// @constraint: FamilyOperational designates an OperationalKind-backed kind.
 	FamilyOperational
-	// FamilySignal designates a signal-type-path-backed kind.
+	// @constraint: FamilySignal designates a signal-type-path-backed kind.
 	FamilySignal
 )
 
@@ -255,7 +255,7 @@ func AllOperationalKinds() []string {
 	return out
 }
 
-// Convenience constructors for the operational kinds most often
+// KindAuthAccessAttempted constructors for the operational kinds most often
 // emitted from runtime/control. These let call sites avoid the
 // verbose genv1 spelling without re-introducing string literals.
 // Add more as emit sites grow.

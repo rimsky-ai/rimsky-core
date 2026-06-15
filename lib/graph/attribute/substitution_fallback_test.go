@@ -10,8 +10,9 @@ import (
 	"testing"
 )
 
-// Tests for the substitution fallback operator (2026-05-20 per-run keying
-// spec). Wire shape: `{{<directive> | <literal>}}`.
+// TestFallbackOperator_DirectiveResolves — happy path for the
+// substitution fallback operator (2026-05-20 per-run keying spec).
+// Wire shape: `{{<directive> | <literal>}}`.
 
 func TestFallbackOperator_DirectiveResolves(t *testing.T) {
 	ctx := ResolveContext{
@@ -71,10 +72,10 @@ func TestFallbackOperator_BoolLiteral(t *testing.T) {
 }
 
 func TestFallbackOperator_MissingDirectiveFallsThroughEvenInvalidShape(t *testing.T) {
-	// `deps.X.Y` returns ErrMissingSource (retired-form pointer). The
-	// fallback DOES fire because the error IS a missing-source error —
-	// this verifies the fallback path handles substantive missing
-	// sources, not just absent-in-context references.
+	// @deliberate: `deps.X.Y` returns ErrMissingSource (retired-form
+	// pointer). The fallback DOES fire because the error IS a missing-
+	// source error — this verifies the fallback path handles substantive
+	// missing sources, not just absent-in-context references.
 	val, err := SubstituteValue(`{{deps.X.Y | "default"}}`, ResolveContext{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -108,10 +109,10 @@ func TestFallbackOperator_ChainsRejected(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for multi-pipe chain")
 	}
-	// Per spec the chain rejection must be a FATAL grammar error, NOT
-	// an ErrMissingSource — otherwise optional fields would silently
-	// drop and required fields would never surface the malformed-
-	// directive case as a validation failure.
+	// @deliberate: Per spec the chain rejection must be a FATAL grammar error, NOT
+	// error, NOT an ErrMissingSource — otherwise optional fields would
+	// silently drop and required fields would never surface the
+	// malformed-directive case as a validation failure.
 	if IsMissingSource(err) {
 		t.Fatalf("expected fatal grammar error, got ErrMissingSource: %v", err)
 	}
@@ -122,8 +123,8 @@ func TestFallbackOperator_ChainsRejected(t *testing.T) {
 }
 
 func TestFallbackOperator_NumberLiteral_RejectsNonJSONNumberShapes(t *testing.T) {
-	// json.Unmarshal admits exactly JSON-number forms. Test that
-	// strconv-shapes (`NaN`, `Inf`, `.5`) are rejected at runtime;
+	// @deliberate: Json.Unmarshal admits exactly JSON-number forms. Test
+	// that strconv-shapes (`NaN`, `Inf`, `.5`) are rejected at runtime;
 	// the validator separately rejects them at registration.
 	cases := []string{
 		`{{nodes.X.attribute.Y | NaN}}`,

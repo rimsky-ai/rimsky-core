@@ -109,7 +109,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	}
 	parsedArgs := map[string]json.RawMessage{}
 	if len(args) > 0 {
-		// `null`-only args are tolerated as empty.
+		// @constraint: `null`-only args are tolerated as empty.
 		if !bytes.Equal(bytes.TrimSpace(args), []byte("null")) {
 			if err := json.Unmarshal(args, &parsedArgs); err != nil {
 				return nil, &Error{Code: CodeInvalidParams, Message: "args must be a JSON object: " + err.Error()}
@@ -117,7 +117,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		}
 	}
 
-	// Select the canonical route when an action maps to several. The
+	// @constraint: select the canonical route when an action maps to several. The
 	// choice is tool-aware (see pickCanonicalRoute): it skips /admin/
 	// variants, prefers the route whose path placeholders the args
 	// satisfy, and breaks remaining ties by the tool's `_list`/`_get`
@@ -131,10 +131,10 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		return nil, &Error{Code: CodeInvalidParams, Message: err.Error()}
 	}
 
-	// Default to http.NoBody (a non-nil no-op ReadCloser) rather than a
-	// nil io.Reader. http.NewRequestWithContext leaves req.Body nil when
-	// passed a nil body, and chi's ServeHTTP does not populate it — so any
-	// handler that touches req.Body (defer req.Body.Close(), json.Decode,
+	// @constraint: default to http.NoBody (a non-nil no-op ReadCloser) rather
+	// than a nil io.Reader. http.NewRequestWithContext leaves req.Body nil
+	// when passed a nil body, and chi's ServeHTTP does not populate it — so
+	// any handler that touches req.Body (defer req.Body.Close(), json.Decode,
 	// io.ReadAll) nil-dereferences for GET/DELETE tools and body-less POST
 	// tools dispatched through this skin. http.NoBody makes those reads and
 	// the deferred Close behave like a real empty-body request.
@@ -142,7 +142,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	hasBody := false
 	switch route.Method {
 	case "GET", "DELETE":
-		// Query params: each remaining arg becomes a query param.
+		// @constraint: query params: each remaining arg becomes a query param.
 		// V1 only carries simple scalars; complex objects must be
 		// in the path or are unsupported (the action registry's
 		// V1 routes don't need them).
@@ -155,7 +155,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 			}
 		}
 	default:
-		// POST / PUT: encode remaining as a JSON body.
+		// @constraint: POST / PUT: encode remaining as a JSON body.
 		if len(remaining) > 0 {
 			bs, err := json.Marshal(remaining)
 			if err != nil {
@@ -166,7 +166,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 		}
 	}
 
-	// Strip the parent chi.RouteContext from the inner request's context.
+	// @constraint: strip the parent chi.RouteContext from the inner request's context.
 	// The parent context carries the rctx populated by the OUTER `/v1/mcp`
 	// (or `/mcp`) match: rctx.RoutePath, URLParams, and the routing stack
 	// all reflect that prior match. chi's Mux.ServeHTTP reuses any rctx it
@@ -182,14 +182,14 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	if err != nil {
 		return nil, &Error{Code: CodeInternalError, Message: "build inner request: " + err.Error()}
 	}
-	// Forward Authorization so the inner auth middleware re-runs.
+	// @constraint: forward Authorization so the inner auth middleware re-runs.
 	if bearer := r.Header.Get("Authorization"); bearer != "" {
 		inner.Header.Set("Authorization", bearer)
 	}
 	if hasBody {
 		inner.Header.Set("Content-Type", "application/json")
 	}
-	// Write tools that emit a message (POST /instances/{id}/messages)
+	// @constraint: write tools that emit a message (POST /instances/{id}/messages)
 	// require a universal Idempotency-Key header. The skin synthesizes a
 	// fresh key per tool call — each MCP invocation is a distinct intent,
 	// not a retry — so the dispatch isn't rejected by the idempotency gate.
@@ -197,7 +197,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	if route.Method == http.MethodPost || route.Method == http.MethodPut {
 		inner.Header.Set("Idempotency-Key", "mcp-"+uuid.NewString())
 	}
-	// Carry the MCP protocol-skin tag so audit records mark the
+	// @constraint: carry the MCP protocol-skin tag so audit records mark the
 	// origin correctly. WithProtocolSkin is the injected tagger
 	// (mirrors controlapi.WithProtocolSkin) so this package needs no
 	// back-import; nil is a no-op.
@@ -212,7 +212,7 @@ func (c *Catalog) Invoke(r *http.Request, name string, args json.RawMessage) (an
 	defer resp.Body.Close()
 	bs, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		// Surface as a tool-call result envelope rather than a
+		// @constraint: surface as a tool-call result envelope rather than a
 		// JSON-RPC error so the LLM gets the body content. The
 		// `isError` field follows MCP convention.
 		return map[string]any{
@@ -250,12 +250,12 @@ func substitutePathParams(pattern string, args map[string]json.RawMessage) (stri
 		}
 		var str string
 		if err := json.Unmarshal(raw, &str); err != nil {
-			// Allow numeric / boolean / null / other scalars by
+			// @constraint: allow numeric / boolean / null / other scalars by
 			// re-encoding the raw JSON (`42`, `true`, `null`). Strip
 			// any surrounding double-quotes for legacy JSON strings.
 			str = strings.Trim(string(raw), `"`)
 		}
-		// URL-path-escape the substituted value so a hostile / careless
+		// @constraint: URL-path-escape the substituted value so a hostile / careless
 		// caller can't smuggle a `/` or reserved character into the
 		// chi route. UUIDs and tag names pass through unchanged; the
 		// escape is defense-in-depth for the catch-all case.
@@ -324,14 +324,14 @@ func pickCanonicalRoute(toolName string, routes []RegistryRoute, args map[string
 		candidates = append(candidates, r)
 	}
 
-	// (2) Prefer routes whose placeholders are all supplied in args.
+	// @constraint: (2) Prefer routes whose placeholders are all supplied in args.
 	if narrowed := filterRoutes(candidates, func(r RegistryRoute) bool {
 		return placeholdersSatisfied(r.Path, args)
 	}); len(narrowed) > 0 {
 		candidates = narrowed
 	}
 
-	// (3) Break ties by tool-name suffix: `*_list` → collection route,
+	// @constraint: (3) Break ties by tool-name suffix: `*_list` → collection route,
 	// otherwise → item route (trailing `{placeholder}`).
 	wantItem := !strings.HasSuffix(toolName, "_list")
 	if narrowed := filterRoutes(candidates, func(r RegistryRoute) bool {
@@ -340,7 +340,7 @@ func pickCanonicalRoute(toolName string, routes []RegistryRoute, args map[string
 		candidates = narrowed
 	}
 
-	// (4) Shortest path among the survivors.
+	// @constraint: (4) Shortest path among the survivors.
 	pick := candidates[0]
 	for _, r := range candidates[1:] {
 		if len(r.Path) < len(pick.Path) {

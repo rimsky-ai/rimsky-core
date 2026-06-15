@@ -50,7 +50,7 @@ func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 	if !ok {
 		t.Fatalf("pgmigrate: PoolFromDatabaseForTest returned !ok")
 	}
-	// Cleanup is registered inside OpenDriver; return a no-op teardown
+	// @deliberate: Cleanup is registered inside OpenDriver; return a no-op teardown
 	// so existing call sites remain backward-compatible.
 	return pool, func() {}
 }
@@ -165,7 +165,7 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 			return
 		}
 		released = true
-		// context.Background to avoid stranding the lock if the test ctx
+		// @deliberate: context.Background to avoid stranding the lock if the test ctx
 		// is already cancelled.
 		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key)
 		conn.Release()
@@ -189,7 +189,7 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 func OpenDriver(ctx context.Context, t *testing.T) persistence.Database {
 	t.Helper()
 	dsn, terminate := testpg.StartFreshPostgresDSN(ctx, t)
-	// Register the container teardown immediately so a panic in
+	// @deliberate: Register the container teardown immediately so a panic in
 	// persistence.Open does not leak the container. Cleanups run in LIFO
 	// order: the driver Close() registered below runs before this
 	// terminate.

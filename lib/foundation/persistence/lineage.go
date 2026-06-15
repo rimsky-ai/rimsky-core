@@ -12,21 +12,19 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// LineageRecordKind discriminates the two row shapes persisted on
-// table:rimsky_lineage. Per spec §Content lineage + the 2026-05-16
-// forensics extension (claim_commit → claim_terminal rename so the
-// projection covers natural Abandon + force-cancelled terminals as well
-// as Commit).
+// @concept: lineage
+// @constraint: discriminates the two row shapes persisted on rimsky_lineage;
+// claim_terminal (post 2026-05-16 forensics extension renaming claim_commit)
+// covers natural Abandon + force-cancelled terminals as well as Commit.
 const (
 	LineageRecordKindLeafRun       = "leaf_run"
 	LineageRecordKindClaimTerminal = "claim_terminal"
 )
 
-// LineageOutcome discriminates the per-terminal disposition for
-// `claim_terminal` rows. `committed` covers the success branch; the two
-// Abandon variants distinguish a natural exhaustion (give_up, error
-// policy) from an operator-/sibling-driven force-cancel so post-mortem
-// queries can reconstruct the actual flow.
+// @constraint: per-terminal disposition for claim_terminal rows; the two
+// Abandon variants distinguish natural exhaustion (give_up, error policy)
+// from operator-/sibling-driven force-cancel so post-mortem queries can
+// reconstruct the actual flow.
 const (
 	LineageOutcomeCommitted      = "committed"
 	LineageOutcomeAbandoned      = "abandoned"
@@ -48,17 +46,17 @@ const (
 // lineage / Leaf-run record shape and Claim-terminal record shape.
 type LineageRow struct {
 	ID         shared.UUID
-	RecordKind string // "leaf_run" | "claim_terminal"
+	RecordKind string // @constraint: one of "leaf_run" | "claim_terminal"
 	InstanceID shared.UUID
 	FrameID    shared.UUID
 	ObservedAt time.Time
-	Record     json.RawMessage // per-kind payload; opaque to rimsky downstream
-	// Outcome carries the per-terminal disposition for `claim_terminal`
-	// rows: one of `committed | abandoned | force_cancelled`. Empty on
-	// `leaf_run` rows (the column is not meaningful for computational
-	// terminals — every leaf-run row persists with outcome="" verbatim).
-	// Persisted as a column (rather than nested in the JSON payload) so
-	// analytical queries can filter without JSON extraction.
+	Record     json.RawMessage // @agent-contract per-kind payload; opaque to rimsky downstream
+	// @constraint: per-terminal disposition for claim_terminal rows
+	// (committed | abandoned | force_cancelled); empty on leaf_run rows
+	// (column not meaningful for computational terminals — every leaf-run
+	// row persists with outcome="" verbatim).
+	// @deliberate: persisted as a column rather than nested in the JSON
+	// payload so analytical queries can filter without JSON extraction.
 	Outcome string
 }
 
@@ -74,44 +72,43 @@ type LineageQuery struct {
 // table:rimsky_lineage. The projection is append-only — never updated,
 // only inserted (and bulk-deleted by the retention sweep in E10).
 type LineageTable interface {
-	// Insert appends a lineage row.
+	// @agent-contract appends a lineage row.
 	Insert(ctx context.Context, tx Tx, row LineageRow) error
 
-	// GetByRunID returns leaf_run rows for a specific run_id ordered by
-	// observed_at ascending. The query reads the record->>'run_id'
-	// JSONB path.
+	// @agent-contract returns leaf_run rows for a specific run_id ordered
+	// by observed_at ascending; query reads the record->>'run_id' JSONB path.
 	GetByRunID(ctx context.Context, runID shared.UUID) ([]LineageRow, error)
 
-	// GetByClaimHandleID returns claim_terminal rows for a specific claim
-	// handle ordered by observed_at ascending. Used by the asset
+	// @agent-contract returns claim_terminal rows for a specific claim
+	// handle ordered by observed_at ascending; used by the asset
 	// materialization-history endpoint.
 	GetByClaimHandleID(ctx context.Context, handleID shared.UUID) ([]LineageRow, error)
 
-	// Query returns rows matching the filter, paginated.
+	// @agent-contract returns rows matching the filter, paginated.
 	Query(ctx context.Context, q LineageQuery, pag ListPagination) (PaginatedListResult[LineageRow], error)
 
-	// QueryByParentRunID returns leaf_run rows whose
-	// `record->>'parent_run_id'` matches parentRunID, ordered by
-	// observed_at ascending. Used by the descendant-walk endpoint
-	// (`GET /lineage/runs/{run_id}/descendants?depth=N`) to find
-	// children of the seed run without page-scanning the entire
-	// projection. Postgres uses a JSONB key lookup; SQLite uses
-	// `json_extract`. `limit` caps the per-call result set; pre-v1
-	// callers pass `lineageWalkPerFrontierLimit` (1000) which covers
-	// realistic fan-out widths.
+	// @agent-contract returns leaf_run rows whose
+	// record->>'parent_run_id' matches parentRunID, ordered by observed_at
+	// ascending; used by the descendant-walk endpoint
+	// (GET /lineage/runs/{run_id}/descendants?depth=N) to find children of
+	// the seed run without page-scanning the entire projection. Postgres
+	// uses a JSONB key lookup; SQLite uses json_extract. limit caps the
+	// per-call result set; pre-v1 callers pass lineageWalkPerFrontierLimit
+	// (1000) which covers realistic fan-out widths.
 	QueryByParentRunID(ctx context.Context, parentRunID shared.UUID, limit int) ([]LineageRow, error)
 
-	// DeleteOlderThan deletes lineage rows whose observed_at is
-	// before cutoff AND whose corresponding run or claim_handle is no
-	// longer present. Used by the retention sweep (E10).
+	// @agent-contract deletes lineage rows whose observed_at is before
+	// cutoff AND whose corresponding run or claim_handle is no longer
+	// present; used by the retention sweep (E10).
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 
-	// CountOlderThan returns the number of rows DeleteOlderThan would
-	// delete for the same cutoff — the identical "before cutoff AND
-	// corresponding run/claim_handle no longer present" predicate, but
-	// SELECT count(*) instead of DELETE. Used by the prune dry-run
-	// (POST /admin/lineage/prune?dry_run=true) so the would-prune count
-	// is a true preview of the live delete, not an approximation. Drivers
-	// MUST keep the WHERE clause identical to DeleteOlderThan.
+	// @agent-contract returns the number of rows DeleteOlderThan would
+	// delete for the same cutoff — identical "before cutoff AND
+	// corresponding run/claim_handle no longer present" predicate but
+	// SELECT count(*) instead of DELETE; used by the prune dry-run
+	// (POST /admin/lineage/prune?dry_run=true) so the would-prune count is
+	// a true preview of the live delete, not an approximation.
+	// @constraint: drivers MUST keep the WHERE clause identical to
+	// DeleteOlderThan.
 	CountOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 }

@@ -31,7 +31,6 @@ func TestSQLiteMigrationApplies(t *testing.T) {
 	if err := d.Migrate(context.Background(), shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	// Idempotent re-run.
 	if err := d.Migrate(context.Background(), shared.SilentLogger{}); err != nil {
 		t.Fatalf("re-migrate: %v", err)
 	}
@@ -65,8 +64,9 @@ func TestSQLiteMigration002Tags(t *testing.T) {
 
 	db := sqlitepersist.DBFromDatabase(d)
 
-	// 1. Column exists with the right SQLite type + NOT NULL flag +
-	//    default. SQLite's table_info pragma reports per-column metadata.
+	// @constraint: migration-002 pins the `tags` column on `rimsky_nodes` to
+	// TEXT NOT NULL with default '[]'; SQLite's table_info pragma is the
+	// per-column metadata source for verifying that contract.
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(rimsky_nodes)`)
 	if err != nil {
 		t.Fatalf("pragma table_info: %v", err)
@@ -117,14 +117,17 @@ func TestSQLiteMigration002Tags(t *testing.T) {
 		t.Errorf("tags column default: got %q want %q", got, "'[]'")
 	}
 
-	// 2. A row inserted without setting `tags` materializes `'[]'`.
+	// @constraint: a row inserted without setting `tags` must materialize the
+	// default `'[]'`, matching the sibling `accepted_stores` /
+	// `required_stores` JSON-encoded-array convention.
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO rimsky_templates (id, spec, state)
 		 VALUES ('tpl-1', '{}', 'deployed')`); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// Post-RunScope-first: instance + main_run_scope mutually FK each
-	// other (DEFERRABLE INITIALLY DEFERRED). Seed in one tx.
+	// @constraint: post-RunScope-first, `rimsky_instances` and
+	// `rimsky_run_scopes` mutually FK each other (DEFERRABLE INITIALLY
+	// DEFERRED), so both rows must be seeded inside a single tx.
 	stx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin: %v", err)

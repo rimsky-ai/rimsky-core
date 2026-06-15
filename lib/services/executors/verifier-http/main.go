@@ -19,10 +19,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/internal/ops"
 )
 
-// Bundled verifier-http executor — POSTs payload to a URL and checks
+// main verifier-http executor — POSTs payload to a URL and checks
 // response status. Env vars follow `RIMSKY_EXECUTOR_<NAME>_*`.
 //
-//	@concept: verifier-pattern
+// @deliberate: implements the verifier-executor pattern (documentation-
+// only, no successor concept).
 func main() {
 	host := envOr("RIMSKY_EXECUTOR_VERIFIER_HTTP_HOST", "0.0.0.0")
 	port := atoiOr("RIMSKY_EXECUTOR_VERIFIER_HTTP_PORT", 9096)

@@ -96,7 +96,9 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		// Parent (fan-out root) claim — NOT linked to the leaf run.
+		// @constraint: the parent (fan-out root) claim MUST NOT be
+		// linked to the leaf run — the restamp path must treat the
+		// fan-out root's claim as scope-level, not run-level.
 		if err := tables.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: parentClaimID, LockKind: persistence.LockKindScope,
 			ProducerName: &producer, ClaimScopeData: json.RawMessage(`{"p":"root"}`),
@@ -105,7 +107,7 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		// The linked sub-claim: node_run_id = leaf run (the
+		// @deliberate: The linked sub-claim: node_run_id = leaf run (the
 		// DispatchChildren repoint), holder still the parent acquirer.
 		leafRunIDCopy := leafRunID
 		parentClaimIDCopy := parentClaimID
@@ -119,7 +121,7 @@ func TestRestampLinkedSubClaimHolders_MovesParentStampedRowsOnly(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		// The leaf's own freshly-Open'd claim: linked to the run but no
+		// @deliberate: The leaf's own freshly-Open'd claim: linked to the run but no
 		// parent, already held by the leaf's supervisor.
 		return tables.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID: ownClaimID, LockKind: persistence.LockKindScope,

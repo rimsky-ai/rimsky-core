@@ -121,7 +121,7 @@ func validateStaticConfigAgainstExecutorSchemas(
 	execCapabilities func(string) (declaredEvents []string, declaredErrorClasses []string, expectedAttributesSchema []byte, ok bool),
 ) error {
 	if execCapabilities == nil {
-		// No way to look up any executor's schema — nothing to validate.
+		// @constraint: no way to look up any executor's schema — nothing to validate.
 		// (The dispatch-time gate still enforces the schema when reached.)
 		return nil
 	}
@@ -137,7 +137,7 @@ func validateStaticConfigAgainstExecutorSchemas(
 		if len(bag) == 0 {
 			continue
 		}
-		// Strip the executor schema's top-level `required` — the static
+		// @constraint: strip the executor schema's top-level `required` — the static
 		// bag is a partial subset of the dispatch bag, so a `required`
 		// entry bound via `source:` or written by the executor has no
 		// value here and would false-positive. We only want the value
@@ -170,7 +170,7 @@ func lookupExecutorSchema(
 	}
 	var schema map[string]any
 	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
-		// A schema that does not parse is the executor's contract bug,
+		// @constraint: A schema that does not parse is the executor's contract bug,
 		// not the instantiating operator's. Skip rather than reject the
 		// create on it — registration's own validator (under modes that
 		// look at the schema) and the dispatch gate surface a parse
@@ -190,13 +190,13 @@ func lookupExecutorSchema(
 // @source: lib/graph/node/template_validator.go::validateCompositionAgainstExecutor
 func composeStaticConfigBag(n nodepkg.TemplateNodeDef, defaults *nodepkg.TemplateDefaults) map[string]any {
 	bag := map[string]any{}
-	// L1: template-author defaults routed to this node's executor.
+	// @constraint: L1: template-author defaults routed to this node's executor.
 	if defaults != nil && defaults.Attributes != nil {
 		for name, val := range defaults.Attributes.ByExecutor[n.Executor] {
 			bag[name] = val
 		}
 	}
-	// L2: per-node `default:` literals override L1. A property carrying a
+	// @constraint: L2: per-node `default:` literals override L1. A property carrying a
 	// `source:` directive is excluded entirely — only literal `default:`
 	// values are static.
 	if n.Attributes == nil {
@@ -209,7 +209,7 @@ func composeStaticConfigBag(n nodepkg.TemplateNodeDef, defaults *nodepkg.Templat
 			continue
 		}
 		if _, hasSource := prop["source"]; hasSource {
-			// Source-bound: not statically knowable. Leave any L1 default
+			// @constraint: source-bound: not statically knowable. Leave any L1 default
 			// for the same property in place only if L1 itself supplied a
 			// literal (it does not carry `source:`); but a `source:`-bound
 			// L2 property supersedes L1's static contribution, so drop it.

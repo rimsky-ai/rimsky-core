@@ -2,31 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// CEL integration for subscription when: predicates. The subscription
-// surface offers `type: <path>` + optional `when: <cel-expression>`
-// pairs; this file compiles when: into a CompiledPredicate the
-// cascade walker evaluates against a Signal at walk time.
-//
-// Binding rules per concept:signal:
-//
-//   - For exact-type subscriptions (no trailing "*"), the CEL env
-//     binds `payload` as a map<string, dyn> at evaluation time, but
-//     field references are checked against the resolved payload
-//     schema at compile time (via AST walk).  References to fields
-//     not in the schema are rejected at registration with a precise
-//     error naming the missing field.
-//
-//   - For prefix-type subscriptions (trailing "*"), the env binds
-//     `payload` as a map<string, dyn> unconditionally; no field-name
-//     check.  Predicates against unknown fields evaluate to a
-//     missing-key error at runtime, which Eval surfaces as a false
-//     match (the spec's "safe-navigation" semantic).
-//
-//   - `type` is always bound as a string (the actual signal's
-//     TypePath as a string).
-//
-// See concept:signal for the broader contract.
-
 package signal
 
 import (
@@ -84,8 +59,9 @@ func CompileWhen(typeSpec TypePath, when string) (*CompiledPredicate, error) {
 	if issues != nil && issues.Err() != nil {
 		return nil, fmt.Errorf("invalid CEL expression %q: %w", when, issues.Err())
 	}
-	// Exact-type subscriptions: field-name check against the payload
-	// schema. Prefix-type subscriptions skip the check.
+	// @deliberate: only exact-type subscriptions get the payload field-name
+	// check; prefix-type subscriptions bind payload as a dyn map and skip
+	// compile-time field validation.
 	if !strings.HasSuffix(string(typeSpec), "*") {
 		if schemaType, ok := PayloadSchemaForType(typeSpec); ok {
 			if err := checkPayloadFields(checked, schemaType); err != nil {
@@ -129,14 +105,14 @@ func (p *CompiledPredicate) Eval(s Signal) (bool, error) {
 	}
 	out, _, err := p.program.Eval(in)
 	if err != nil {
-		// Per the spec's prefix-binding rule: field references that
-		// don't resolve on the actual payload evaluate to a "no such
-		// key" error at runtime; surface as a false match rather
-		// than bubbling up. Genuine evaluation errors (e.g., type
-		// mismatch on a comparator) also short-circuit to false.
-		// Log so operator-side mistakes (typo in a `when:` field
-		// reference, mismatched types) surface in observability
-		// without breaking the cascade walk on every emission.
+		// @deliberate: field references that don't resolve on the
+		// actual payload evaluate to a "no such key" error at runtime;
+		// surface as a false match rather than bubbling up. Genuine
+		// evaluation errors (type mismatch on a comparator) also
+		// short-circuit to false. Log so operator-side mistakes (typo
+		// in a `when:` field reference, mismatched types) surface in
+		// observability without breaking the cascade walk on every
+		// emission.
 		slog.Default().Warn("signal.CompiledPredicate.Eval: CEL eval error; treating as no-match",
 			"signal_type", string(s.Type),
 			"subscription_type", string(p.subscriptionType),
@@ -146,9 +122,9 @@ func (p *CompiledPredicate) Eval(s Signal) (bool, error) {
 	}
 	b, ok := out.(types.Bool)
 	if !ok {
-		// Predicate that doesn't return a bool is treated as a
-		// non-match (defensive — Check should have rejected
-		// non-boolean predicates).
+		// @deliberate: defensive non-match for non-boolean predicate
+		// output; env.Check should have rejected non-boolean predicates
+		// upstream, but evaluate this defensively rather than panic.
 		return false, nil
 	}
 	return bool(b), nil

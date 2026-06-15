@@ -2,6 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @source: lib/foundation/persistence/postgres/backend.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
+
 package sqlite
 
 import (
@@ -118,8 +122,7 @@ type scannable interface {
 	Scan(dst ...any) error
 }
 
-// Per-feature aspect types — empty wrappers so each *Table has a distinct
-// method set. Mirrors the postgres pattern in postgres/backend.go.
+// @deliberate: per-feature aspect types are empty wrappers over tablesImpl so each Table interface gets a distinct method set; defined here so the per-feature files (nodes.go, instances.go, ...) can attach methods on the aspect type while sharing tablesImpl's layout for the q() downcast. Mirrors the postgres pattern in postgres/backend.go.
 type (
 	templatesImpl            tablesImpl
 	templateTagsImpl         tablesImpl
@@ -134,7 +137,6 @@ type (
 	framesImpl               tablesImpl
 )
 
-// Compile-time assertions that each aspect type satisfies its interface.
 var (
 	_ persistence.Tables                    = (*tablesImpl)(nil)
 	_ persistence.TemplateTable             = (*templatesImpl)(nil)
@@ -150,7 +152,7 @@ var (
 	_ persistence.FrameTable                = (*framesImpl)(nil)
 )
 
-// Per-feature accessor methods on *tablesImpl. Each downcasts to the aspect
+// Templates accessor methods on *tablesImpl. Each downcasts to the aspect
 // type to expose the per-feature method set.
 func (s *tablesImpl) Templates() persistence.TemplateTable       { return (*templatesImpl)(s) }
 func (s *tablesImpl) TemplateTags() persistence.TemplateTagTable { return (*templateTagsImpl)(s) }
@@ -166,7 +168,7 @@ func (s *tablesImpl) Events() persistence.EventTable                 { return (*
 func (s *tablesImpl) Supervisors() persistence.SupervisorTable       { return (*supervisorsImpl)(s) }
 func (s *tablesImpl) Frames() persistence.FrameTable                 { return (*framesImpl)(s) }
 
-// Per-feature aspect-type query helpers: each forwards to (*tablesImpl).q.
+// q aspect-type query helpers: each forwards to (*tablesImpl).q.
 func (b *templatesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }
 func (b *templateTagsImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
 func (b *instancesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }

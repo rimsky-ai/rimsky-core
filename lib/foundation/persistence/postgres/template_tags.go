@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// TemplateTagTable — Postgres-backed persistence.TemplateTagTable. Per
-// docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md §1.1:
-// rimsky_template_tags is the movable-alias table mapping a tag string
-// to a template hash (with FK ON DELETE RESTRICT).
 package postgres
 
 import (

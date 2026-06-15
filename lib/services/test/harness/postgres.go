@@ -98,10 +98,10 @@ func StartFreshPostgresWithAlias(ctx context.Context, t testing.TB, networkName,
 	if err != nil {
 		t.Fatalf("harness: postgres DSN (alias=%s): %v", alias, err)
 	}
-	// Sibling-container DSN: the pgmodule Run defaults to user/pass/db
-	// test/test/rimsky_test and binds 5432 inside the container. The
-	// network alias resolves to the container's bridge IP, so peers on
-	// the same network reach Postgres at the standard 5432.
+	// @deliberate: sibling-container DSN hard-codes test/test/rimsky_test
+	// and port 5432 because pgmodule.Run above pins those defaults; the
+	// network alias resolves to the container's bridge IP so peers on the
+	// same network reach Postgres at the standard 5432.
 	in := "postgres://test:test@" + alias + ":5432/rimsky_test?sslmode=disable"
 	return in, host
 }

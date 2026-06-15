@@ -67,14 +67,14 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		Clock:         shared.SystemClock{},
 	}
 
-	// threshold(max_failures=1): tolerates one Abandon, requires the rest
+	// @constraint: Threshold(max_failures=1): tolerates one Abandon, requires the rest
 	// to Commit. We exercise 4 children: 3 Commit + 1 Abandon → parent
 	// Commits per threshold rule.
 	parentID, subIDs := seedFanOutTree(ctx, t, backend, parentRunID, parentNodeID, frameID,
 		"sup-PM", "postmortem-store", 4,
 		spec.AggregationPolicy{Kind: spec.AggregationKindThreshold, MaxFailures: 1})
 
-	// Drive sub[0..2] as Commit, sub[3] as Abandon. All resolutions
+	// @deliberate: Drive sub[0..2] as Commit, sub[3] as Abandon. All resolutions
 	// recurse upward via ParentClaimHandleID so the parent's aggregation
 	// + counter bumps fire.
 	commitOutcomes := []runtime.AggregateOutcome{
@@ -105,7 +105,6 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 		}))
 	}
 
-	// Lineage coverage: every child + parent emits a claim_terminal row.
 	for i, sid := range subIDs {
 		rows, err := backend.Lineage().GetByClaimHandleID(ctx, sid)
 		require.NoError(t, err)
@@ -122,11 +121,11 @@ func TestFanoutPostMortem_MixedOutcomesEmitFullForensicsTrail(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, parentRows, 1,
 		"parent must emit exactly one claim_terminal row after all children resolve")
-	// threshold(max_failures=1) with 3 commit + 1 abandon → Commit.
+	// @constraint: Threshold(max_failures=1) with 3 commit + 1 abandon → Commit.
 	require.Equal(t, persistence.LineageOutcomeCommitted, parentRows[0].Outcome,
 		"threshold(max_failures=1) tolerates one abandon → parent Commits")
 
-	// Events coverage: 3 commit + 1 abandon per child + 1 commit for the
+	// @deliberate: Events coverage: 3 commit + 1 abandon per child + 1 commit for the
 	// parent.
 	var commitPage persistence.EventListResult
 	var abandonPage persistence.EventListResult

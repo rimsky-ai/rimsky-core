@@ -11,7 +11,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Typed-string enums for the breakpoint vocabulary. The SQL schema
+// BreakpointCheckpoint enums for the breakpoint vocabulary. The SQL schema
 // CHECK constraints carry the same string values (the schema can't
 // reference Go constants); these typed constants are the canonical
 // Go-side surface. Validators, runtime evaluators, and HTTP handlers
@@ -50,15 +50,15 @@ type BreakpointRow struct {
 	InstanceID     shared.UUID
 	Matcher        map[string]any
 	Checkpoint     BreakpointCheckpoint
-	SignalType     *string // nullable; only set for after_terminal
+	SignalType     *string // @constraint: nullable; only set for after_terminal checkpoint
 	Mode           BreakpointMode
 	OverflowPolicy BreakpointOverflowPolicy
 	HitTTLSeconds  int
-	TTLSeconds     *int // nullable; instance-lifetime if null
+	TTLSeconds     *int // @constraint: nullable; instance-lifetime if null
 	DroppedCount   int64
 	CreatedByKey   string
 	CreatedAt      time.Time
-	ExpiresAt      *time.Time // nullable; materialized from TTLSeconds at create
+	ExpiresAt      *time.Time // @constraint: nullable; materialized from TTLSeconds at create
 }
 
 // BreakpointTable is the per-row-type accessor on rimsky_instance_breakpoints.
@@ -75,7 +75,7 @@ type BreakpointTable interface {
 //
 // @concept: breakpoint
 type BreakpointHitRow struct {
-	Seq           int64       // monotonic cursor for resources/read pagination
+	Seq           int64       // @constraint: monotonic cursor for resources/read pagination
 	ID            shared.UUID // stable identity for the resume API
 	BreakpointID  shared.UUID
 	InstanceID    shared.UUID
@@ -83,11 +83,11 @@ type BreakpointHitRow struct {
 	FrameID       *shared.UUID
 	Checkpoint    BreakpointCheckpoint
 	Mode          BreakpointMode
-	Snapshot      map[string]any // full payload per spec §4.6
+	Snapshot      map[string]any // @constraint: full payload per the 2026-05-24 instance-debugger spec §4.6
 	HitAt         time.Time
 	ResumedAt     *time.Time
 	ResumedByKey  *string
-	ResumeOverlay map[string]any // nullable
+	ResumeOverlay map[string]any // @constraint: nullable
 }
 
 // BreakpointHitTable is the per-row-type accessor on rimsky_breakpoint_hits.
@@ -101,16 +101,17 @@ type BreakpointHitTable interface {
 	AutoResumeStale(ctx context.Context, now time.Time, tx Tx) (int, error)
 	DropOldest(ctx context.Context, bpID shared.UUID, keepCount int, tx Tx) (int, error)
 	UnresumedCount(ctx context.Context, bpID shared.UUID, tx Tx) (int, error)
-	// SweepOrphanedUnresumed deletes unresumed hits whose hit_at is
-	// older than the cutoff AND whose parent breakpoint's
-	// overflow_policy is NOT `auto_resume_after_ttl` (those are
-	// handled by AutoResumeStale on their own per-breakpoint hit_ttl).
-	// Reaps rows abandoned by supervisor restart mid-block_dispatch
-	// poll — the supervisor never resumed them and no other code path
-	// drains them, so without a reaper the queue accumulates orphan
-	// rows over many restarts under load. The cutoff should be
-	// generous enough that legitimately-blocked dispatches under
-	// load don't get reaped out from under their waiters. Returns
-	// the rowcount.
+	// @agent-contract: SweepOrphanedUnresumed deletes unresumed hits
+	// whose hit_at is older than the cutoff AND whose parent
+	// breakpoint's overflow_policy is NOT `auto_resume_after_ttl`
+	// (those are handled by AutoResumeStale on their own per-breakpoint
+	// hit_ttl). Reaps rows abandoned by supervisor restart mid-
+	// block_dispatch poll — the supervisor never resumed them and no
+	// other code path drains them, so without a reaper the queue
+	// accumulates orphan rows over many restarts under load. The
+	// cutoff should be generous enough that legitimately-blocked
+	// dispatches under load don't get reaped out from under their
+	// waiters. Returns the rowcount. Does NOT handle
+	// `auto_resume_after_ttl` overflow — that path is AutoResumeStale.
 	SweepOrphanedUnresumed(ctx context.Context, cutoff time.Time, tx Tx) (int, error)
 }

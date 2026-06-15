@@ -171,7 +171,6 @@ func TestWaitForInstancesTerminal_CallsPrinter(t *testing.T) {
 // poll-loop hang on a never-terminal instance.
 func TestWaitForInstancesTerminal_ContextCancelExits(t *testing.T) {
 	client := newFakeClient()
-	// Scripted to NEVER terminate: every poll returns running.
 	client.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", State: "running"}}})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -228,9 +227,12 @@ type transientNodesErrorClient struct {
 
 func (c *transientNodesErrorClient) ListInstanceNodes(ctx context.Context, id string) (*cli.ListInstanceNodesResponse, error) {
 	c.mu.Lock()
-	// Fail exactly once per id, only after the instance has been
-	// observed terminal (i.e., the fake's cursor sits on the last
-	// scripted frame, which is the terminal frame in this test).
+	// @deliberate: fail-once-on-terminal-frame — the transient ListInstanceNodes
+	// blip is injected only when the fake's cursor sits on the last scripted
+	// frame (the terminal frame). This is the exact tick the wait loop would
+	// otherwise use to read terminal nodes, so failing here pins the rule that
+	// a one-tick nodes-call error must not silently promote OutcomeFailure to
+	// OutcomeSuccess.
 	frames := c.fakeInstanceClient.frames[id]
 	cursor := c.fakeInstanceClient.idx[id]
 	terminalFrame := cursor == len(frames)-1 && frames[cursor].inst.TerminatedAt != nil
@@ -252,7 +254,6 @@ func (c *transientNodesErrorClient) ListInstanceNodes(ctx context.Context, id st
 // failed.
 func TestWaitForInstancesTerminal_TransientNodesErrorPreservesOutcome(t *testing.T) {
 	base := newFakeClient()
-	// One node, transitions to failed at terminal.
 	base.script("a", fakeFrame{inst: cli.Instance{ID: "a"}, nodes: []cli.Node{{ID: "a-n1", State: "running"}}})
 	base.script("a", fakeFrame{inst: cli.Instance{ID: "a", TerminatedAt: termTime()}, nodes: []cli.Node{{ID: "a-n1", State: "failed", CurrentErrorClass: "boom"}}})
 

@@ -165,7 +165,7 @@ func TestOpenBridge_StdJSONCannotRecoverOneof(t *testing.T) {
 	ts := mountFake(t, srv)
 	raw := postOpen(t, ts)
 
-	// protojson MUST recover the oneof.
+	// @constraint: protojson must recover the oneof — discriminator shape requires proto3-JSON decoding.
 	var viaProto genv1.OpenResponse
 	if err := protojson.Unmarshal(raw, &viaProto); err != nil {
 		t.Fatalf("protojson.Unmarshal: %v\nbody: %s", err, raw)
@@ -174,12 +174,7 @@ func TestOpenBridge_StdJSONCannotRecoverOneof(t *testing.T) {
 		t.Fatalf("protojson did not recover Acquired arm: %s", raw)
 	}
 
-	// stdlib encoding/json does NOT recover the oneof discriminator —
-	// the field decodes as nil because Go's json reflection cannot map
-	// the proto3-JSON shape onto the generated Result interface. This
-	// asserts the bridge is using protojson for marshal; a swap-back
-	// to encoding/json would produce a different on-the-wire shape and
-	// the protojson decode above would fail before this point.
+	// @constraint: stdlib encoding/json cannot recover the oneof discriminator — Go's json reflection cannot map proto3-JSON onto the generated Result interface, so this assertion guards that the bridge is using protojson for marshal; a swap back to encoding/json would change the on-the-wire shape and fail the protojson decode above.
 	var viaStd genv1.OpenResponse
 	if err := json.Unmarshal(raw, &viaStd); err == nil {
 		if viaStd.GetAcquired() != nil {

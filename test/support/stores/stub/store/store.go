@@ -32,7 +32,7 @@ type Store struct {
 
 	mu     sync.Mutex
 	calls  []Call
-	claims map[string]string // claim_id → item_id (pick-policy claims)
+	claims map[string]string // @deliberate: claim_id → item_id (pick-policy claims)
 }
 
 // CommitResponseFields returns the configured base-Commit response
@@ -147,7 +147,7 @@ func (s *Store) Open(_ context.Context, claimID, selector string) (claimproducer
 	rws := s.realizedSemantics()
 	if pp, ok := s.pickPolicies[selector]; ok {
 		if len(pp.queue) == 0 {
-			// Carry the producer-declared class on the Unavailable arm
+			// @deliberate: Carry the producer-declared class on the Unavailable arm
 			// when configured (mirrors OpenOutcome.UnavailableClass on
 			// a classifying producer); empty otherwise.
 			return claimproducer.OpenOutcome{Available: false, UnavailableClass: pp.unavailableClass}, nil
@@ -254,7 +254,7 @@ func (s *Store) applyPickActionByClaimID(claimID string, successPath bool) error
 		}
 		switch act.Kind {
 		case action.Pop, action.PopAndMove, action.PopAndDelete:
-			// Stub has no separate folder concept; all three "pop" variants
+			// @deliberate: Stub has no separate folder concept; all three "pop" variants
 			// drop the in-flight entry. The distinction matters for
 			// fs/pg-store mechanics but reduces to "drain queue entry"
 			// here.

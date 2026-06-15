@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// observability.ts — claude-agent's ExecutorObservability surface.
+// @deliberate: observability.ts — claude-agent's ExecutorObservability surface.
 //
 // Records per-dispatch trace events in a bounded in-memory ledger.
 // Exposes:
@@ -52,7 +52,7 @@ interface TraceRecord {
   events: TraceEvent[];
   complete: boolean;
   terminalAt?: number;
-  // listeners for live SSE streams
+  // @deliberate: listeners for live SSE streams
   listeners: Set<(ev: TraceEvent) => void>;
 }
 
@@ -92,7 +92,7 @@ export class Observability {
       try {
         cb(event);
       } catch {
-        // listener failures are not the producer's problem
+        // @deliberate: listener failures are not the producer's problem
       }
     }
     this.evictIfNeeded();
@@ -114,7 +114,7 @@ export class Observability {
       try {
         cb(tail);
       } catch {
-        // ignore
+        // @deliberate: ignore
       }
     }
   }
@@ -122,7 +122,7 @@ export class Observability {
   getTrace(dispatchId: string): Trace {
     const rec = this.records.get(dispatchId);
     if (!rec || this.isEvicted(rec)) {
-      // Per spec §2.6: missing dispatches must surface as the same
+      // @deliberate: per spec §2.6: missing dispatches must surface as the same
       // evicted-shape envelope. evicted:true makes "we don't have
       // it" a single observable signal, regardless of whether the
       // dispatch never existed or has been evicted by retention.
@@ -205,7 +205,7 @@ export class Observability {
   }
 
   private evictIfNeeded() {
-    // Hard cap on map size: when the bound is exceeded, drop the
+    // @deliberate: hard cap on map size: when the bound is exceeded, drop the
     // oldest record regardless of state. Without this, a long run of
     // never-terminal dispatches would grow the ledger unbounded
     // (parallels the same fix on the Go ledgers).
@@ -224,10 +224,10 @@ export function capabilitiesPayload(httpBridgeUrl = "") {
     retention_after_terminal_seconds: RETENTION_AFTER_TERMINAL_SECONDS,
     custom_ui: null,
     http_bridge_url: httpBridgeUrl,
-    // Plan A1 — expected attribute schema bytes (base64 for JSON wire) and declared events.
+    // @deliberate: plan A1 — expected attribute schema bytes (base64 for JSON wire) and declared events.
     expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()).toString("base64"),
     declared_events: resolveDeclaredEvents(),
-    // 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
+    // @deliberate: 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
     declared_error_classes: declaredErrorClasses,
   };
 }
@@ -268,7 +268,7 @@ export function mountObservability(
       const send = (ev: TraceEvent) => {
         reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);
       };
-      // Atomic snapshot+subscribe so events appended between the two
+      // @deliberate: atomic snapshot+subscribe so events appended between the two
       // can't escape the stream (issue 11).
       const result = obs.subscribeWithSnapshot(dispatchId, (ev) => {
         send(ev);
@@ -283,7 +283,7 @@ export function mountObservability(
         reply.raw.end();
         return;
       }
-      // Spec §2.5: idle-close after RIMSKY_OBS_IDLE_TIMEOUT_MS (default
+      // @deliberate: spec §2.5: idle-close after RIMSKY_OBS_IDLE_TIMEOUT_MS (default
       // 5 minutes). The listener resets the timer on every event;
       // disconnect cancels both timer and subscription.
       const idleMs = Number(process.env.RIMSKY_OBS_IDLE_TIMEOUT_MS ?? 5 * 60 * 1000);
@@ -292,7 +292,7 @@ export function mountObservability(
         if (idleMs <= 0) return;
         if (idleTimer !== null) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
-          // Final keepalive comment + close (not an error).
+          // @deliberate: final keepalive comment + close (not an error).
           reply.raw.write(`: idle_timeout\n\n`);
           result.unsubscribe();
           reply.raw.end();

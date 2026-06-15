@@ -53,23 +53,25 @@ import (
 )
 
 const (
-	// Two independent pick policies, one per case, each with its own
-	// source dir seeded with EXACTLY ONE folder. Separate policies remove
-	// the FIFO ambiguity of a shared queue (the pick policy hands out the
-	// oldest-then-alphabetically-first available folder per Open; a shared
-	// source dir would make which folder a given instance stages
+	// @deliberate: two independent pick policies, one per case, each with
+	// its own source dir seeded with EXACTLY ONE folder. Separate policies
+	// remove the FIFO ambiguity of a shared queue (the pick policy hands
+	// out the oldest-then-alphabetically-first available folder per Open;
+	// a shared source dir would make which folder a given instance stages
 	// nondeterministic). The store strips the leading "@" for its on-disk
 	// state dir; the selector is matched verbatim against the configured
 	// pick_policies map key.
 
-	// Commit case: source `incoming-commit/`, swap target `committed/`.
+	// @constraint: commit case wires source `incoming-commit/` to swap
+	// target `committed/`.
 	fsCommitSelector  = "@content-commit"
 	fsCommitSource    = "incoming-commit"
 	fsCommitFolder    = "batch-commit"
 	fsCommittedSubdir = "committed"
 
-	// Abandon case: source `incoming-abandon/`, swap target `committed/`
-	// (shared target dir; the abandon path must NOT move into it).
+	// @constraint: abandon case wires source `incoming-abandon/` to swap
+	// target `committed/` (shared target dir; the abandon path must NOT
+	// move into it).
 	fsAbandonSelector = "@content-abandon"
 	fsAbandonSource   = "incoming-abandon"
 	fsAbandonFolder   = "batch-abandon"
@@ -84,20 +86,19 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// Bring up the shared network first so the fs-store and both executor
-	// stubs are reachable when rimsky fires its startup claim-producer /
-	// executor Capabilities handshake.
+	// @constraint: shared network must come up first so the fs-store and
+	// both executor stubs are reachable when rimsky fires its startup
+	// claim-producer / executor Capabilities handshake.
 	netName := harness.NewNetwork(ctx, t)
 
-	// Real filesystem store. Both pick policies use OnCommit =
+	// @constraint: both pick policies use OnCommit =
 	// pop_and_move(committed) — the real swap — and OnGiveUp = recycle (the
 	// abandon path leaves the folder in its source dir, NOT moved into
 	// committed). Each policy's source dir is seeded with exactly one
 	// folder, plus the shared committed/ target dir which MUST exist at
-	// store-config load time (validateMoveTargetSameFS stats it).
-	//
-	// The one-key flow-map `{pop_and_move: committed}` is required because
-	// a bare `pop_and_move` string is rejected by action.UnmarshalYAML
+	// store-config load time (validateMoveTargetSameFS stats it). The
+	// one-key flow-map `{pop_and_move: committed}` is required because a
+	// bare `pop_and_move` string is rejected by action.UnmarshalYAML
 	// (pop_and_move requires an inline target); the harness renders
 	// `on_commit: %s` verbatim, so the value must itself be valid YAML.
 	popAndMoveCommitted := "{pop_and_move: " + fsCommittedSubdir + "}"
@@ -125,9 +126,6 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 		},
 	})
 
-	// Two executor stubs: a success stub (exec-ok) and an error stub
-	// (exec-err). The acquirer always uses ok; the verifier's executor
-	// selects the aggregate outcome.
 	okEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
 	errEndpoint := harness.StartErroringExecutorStubOnNetwork(ctx, t, netName, "exec-err")
 
@@ -138,38 +136,33 @@ func TestFilesystemStageThenSwap_HeldSubgraphE2E(t *testing.T) {
 		harness.WithExecutor("err", errEndpoint),
 	)
 
-	// --- Commit case ---------------------------------------------------
 	commitTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-commit", fsCommitSelector, "ok")
 	commitInstanceID := createHeldSwapInstance(t, ep, commitTemplateID, "ck-fs-held-swap-commit")
 
-	// Both nodes must settle fresh (acquirer success → verifier success →
-	// aggregate Commit). The verifier reaching fresh is the cue the held
-	// subgraph completed and auto-terminal fired.
+	// @constraint: both nodes must settle fresh (acquirer success →
+	// verifier success → aggregate Commit). The verifier reaching fresh is
+	// the cue the held subgraph completed and auto-terminal fired.
 	waitForNodeState(t, ep, commitInstanceID, "acquirer", "fresh", 120*time.Second)
 	waitForNodeState(t, ep, commitInstanceID, "verifier", "fresh", 120*time.Second)
 
-	// The real pop_and_move must have moved the staged folder out of the
-	// source dir and into committed/. Poll the on-disk state via the
-	// host bind-mount — the producer's Commit runs asynchronously after
-	// the verifier settles.
+	// @constraint: the real pop_and_move must have moved the staged folder
+	// out of the source dir and into committed/. Poll the on-disk state
+	// via the host bind-mount — the producer's Commit runs asynchronously
+	// after the verifier settles.
 	committedDst := filepath.Join(store.HostDir, fsCommittedSubdir, fsCommitFolder)
 	sourceSrc := filepath.Join(store.HostDir, fsCommitSource, fsCommitFolder)
 	requireEventuallyMoved(t, committedDst, sourceSrc, 30*time.Second)
 
-	// --- Abandon case --------------------------------------------------
 	abandonTemplateID := deployHeldSwapTemplate(t, ep, "fs-held-swap-abandon", fsAbandonSelector, "err")
 	abandonInstanceID := createHeldSwapInstance(t, ep, abandonTemplateID, "ck-fs-held-swap-abandon")
 
-	// The acquirer succeeds (executor: ok), the verifier fails (executor:
-	// err → stub/forced_error → give_up). Wait for the verifier to settle
-	// failed; auto-terminal then aggregates failure → Abandon.
 	waitForNodeState(t, ep, abandonInstanceID, "acquirer", "fresh", 120*time.Second)
 	waitForNodeState(t, ep, abandonInstanceID, "verifier", "failed", 120*time.Second)
 
-	// The abandon path (OnGiveUp=recycle) must NOT move the staged folder
-	// into committed/. Give the producer's Abandon time to run, then
-	// assert the committed/ target never received batch-abandon and the
-	// folder is still on disk in the source dir.
+	// @constraint: the abandon path (OnGiveUp=recycle) must NOT move the
+	// staged folder into committed/. Give the producer's Abandon time to
+	// run, then assert the committed/ target never received batch-abandon
+	// and the folder is still on disk in the source dir.
 	abandonCommittedDst := filepath.Join(store.HostDir, fsCommittedSubdir, fsAbandonFolder)
 	abandonSource := filepath.Join(store.HostDir, fsAbandonSource, fsAbandonFolder)
 	requireNotMovedIntoCommitted(t, abandonCommittedDst, abandonSource, 20*time.Second)
@@ -201,12 +194,12 @@ func deployHeldSwapTemplate(t *testing.T, ep harness.RimskyEndpoint, name, selec
 		},
 	}
 	if verifierExecutor == "err" {
-		// Route the erroring stub's class to give_up so the verifier's
-		// failure is terminal (not a retry loop). Without this an erroring
-		// node with no policy would still settle failed by default, but
-		// the explicit give_up makes the terminal deterministic and
-		// matches the give_up_test.go shape (error class keyed by the
-		// stub's hierarchical class).
+		// @constraint: route the erroring stub's class to give_up so the
+		// verifier's failure is terminal (not a retry loop). Without this
+		// an erroring node with no policy would still settle failed by
+		// default, but the explicit give_up makes the terminal
+		// deterministic and matches the give_up_test.go shape (error
+		// class keyed by the stub's hierarchical class).
 		verifierNode["error_types"] = map[string]any{
 			"stub/forced_error": map[string]any{
 				"policy": []map[string]any{
@@ -302,8 +295,9 @@ func waitForNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeT
 				if lastState == want {
 					return
 				}
-				// A node that settled failed when we wanted fresh (or vice
-				// versa) will never recover — stop early with a clear message.
+				// @constraint: a node that settled failed when we wanted
+				// fresh (or vice versa) will never recover — stop early
+				// with a clear message.
 				if isTerminalState(lastState) && lastState != want {
 					t.Fatalf("node %q on instance %s settled in %q, want %q",
 						nodeType, instanceID, lastState, want)
@@ -354,8 +348,8 @@ func requireEventuallyMoved(t *testing.T, dst, src string, deadline time.Duratio
 // settle window first so a late, erroneous swap would still be caught.
 func requireNotMovedIntoCommitted(t *testing.T, committedDst, src string, settle time.Duration) {
 	t.Helper()
-	// Wait out the settle window so any (erroneous) Commit-side swap has
-	// time to land before we assert it did not.
+	// @constraint: wait out the settle window so any (erroneous)
+	// Commit-side swap has time to land before we assert it did not.
 	deadline := time.Now().Add(settle)
 	for time.Now().Before(deadline) {
 		if pathExists(committedDst) {

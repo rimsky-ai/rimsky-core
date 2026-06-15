@@ -141,8 +141,8 @@ func RunComposeDown(ctx context.Context, args []string) int {
 		return 2
 	}
 	c := cli.NewClient(endpoint)
-	// Compose owns the reserved `compose:` prefix: stamp the trusted
-	// compose-origin marker so the control-api's server-side guard
+	// @constraint: compose owns the reserved `compose:` prefix; stamp the
+	// trusted compose-origin marker so the control-api's server-side guard
 	// admits compose-originated tag/instance writes (CLICTRL-4).
 	c.SetComposeOrigin(true)
 	return runComposeDownWithManifest(ctx, m, c, flags)
@@ -159,7 +159,6 @@ func runComposeDownWithManifest(ctx context.Context, m *Manifest, c *cli.Client,
 	if err != nil {
 		return reportPlanError(err)
 	}
-	// compose down is destructive by definition.
 	destructiveSteps := append([]Step(nil), plan.Steps...)
 	if !confirmDestructive(flags.common.Yes, os.Stdin, os.Stderr, destructiveSteps) {
 		return 2

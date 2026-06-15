@@ -4,10 +4,6 @@
 
 // lineage.go — F6. Lineage query surface.
 //
-// Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Content lineage / Query surface.
-//
 //   - GET /lineage/runs/{run_id}
 //   - GET /lineage/runs/{run_id}/ancestors?depth=N
 //   - GET /lineage/runs/{run_id}/descendants?depth=N
@@ -39,14 +35,14 @@ import (
 )
 
 const (
-	// lineageWalkDefaultDepth is the depth used when the caller omits
+	// @constraint: lineageWalkDefaultDepth is the depth used when the caller omits
 	// the `?depth=` query param. Modest by design; deep walks are
 	// expensive and operator-friendly defaults beat surprise timeouts.
 	lineageWalkDefaultDepth = 3
-	// lineageWalkMaxDepth caps the depth a single request can request.
+	// @constraint: lineageWalkMaxDepth caps the depth a single request can request.
 	// Per spec §Content lineage / Query surface, walks bounded at 50.
 	lineageWalkMaxDepth = 50
-	// lineageWalkPerFrontierLimit caps the per-frontier-id descendant
+	// @constraint: lineageWalkPerFrontierLimit caps the per-frontier-id descendant
 	// query so a single hot frontier id can't blow the projection
 	// scan. 1000 covers realistic fan-out widths; truly oversized
 	// fan-outs should use the OpenLineage emitter (canonical bulk
@@ -97,7 +93,7 @@ func handleLineagePrune(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "before must be RFC3339 timestamp: "+err.Error())
 			return
 		}
-		// Dry-run: return the real would-prune count by running the same
+		// @constraint: dry-run: return the real would-prune count by running the same
 		// "older than cutoff AND run/claim_handle no longer present"
 		// predicate as the live delete — CountOlderThan is a true
 		// preview, not an approximation. We resolve the mode explicitly
@@ -186,7 +182,7 @@ func handleLineageRun(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, "lineage record not found")
 			return
 		}
-		// GetByRunID is observed_at ASC; the caller wants the most
+		// @constraint: GetByRunID is observed_at ASC; the caller wants the most
 		// recent terminal record for the run.
 		writeJSON(w, http.StatusOK, toLineageItem(rows[len(rows)-1]))
 	}
@@ -288,7 +284,7 @@ func walkLineageRuns(
 		for _, id := range frontier {
 			switch dir {
 			case lineageWalkDirectionAncestors:
-				// Ancestor direction emits ONLY upstream runs, never the
+				// @constraint: ancestor direction emits ONLY upstream runs, never the
 				// frontier id's own row. The seed must not appear in its
 				// own ancestors set; each ancestor shows up exactly once
 				// (the descendant that pulled it in via substitution_refs).
@@ -306,7 +302,7 @@ func walkLineageRuns(
 						if err != nil {
 							return nil, err
 						}
-						// Append the most recent terminal record for the
+						// @constraint: append the most recent terminal record for the
 						// ancestor run; GetByRunID is observed_at ASC.
 						if len(ancestorRows) > 0 {
 							out = append(out, ancestorRows[len(ancestorRows)-1])
@@ -315,7 +311,7 @@ func walkLineageRuns(
 					}
 				}
 			case lineageWalkDirectionDescendants:
-				// Descendant direction emits ONLY children, never the
+				// @constraint: descendant direction emits ONLY children, never the
 				// frontier id's own row. The seed must not appear in its
 				// own descendants set; each child shows up exactly once
 				// (the parent that pulled it in).

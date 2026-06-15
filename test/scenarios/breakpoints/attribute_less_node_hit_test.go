@@ -40,7 +40,7 @@ func TestBreakpointFiresOnAttributeLessNode_NotifyOnly(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	h.Stub.WhenType("worker").Success(map[string]any{}, false, "ok")
 
-	// A worker node with NO `attributes:` block — the degenerate shape whose
+	// @deliberate: A worker node with NO `attributes:` block — the degenerate shape whose
 	// dispatch path returns early from attribute resolution.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "bp-attrless-notify", Version: "1",
@@ -57,14 +57,14 @@ func TestBreakpointFiresOnAttributeLessNode_NotifyOnly(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	// The supervisor must reach the checkpoint and record a hit even though
+	// @constraint: The supervisor must reach the checkpoint and record a hit even though
 	// the node carries no attributes — the regression this scenario guards.
 	hits := waitForHitCount(t, h, bpID, 1, 15*time.Second)
 	require.Len(t, hits, 1)
 	require.Equal(t, "before_dispatch", string(hits[0].Checkpoint))
 	require.Equal(t, "notify_only", string(hits[0].Mode))
 
-	// notify_only is non-blocking, so the dispatch still settles.
+	// @constraint: notify_only is non-blocking, so the dispatch still settles.
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
@@ -94,16 +94,15 @@ func TestBreakpointFiresOnAttributeLessNode_PauseBlocks(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
 
-	// The hit proves the supervisor reached the checkpoint and is parked.
+	// @constraint: The hit proves the supervisor reached the checkpoint and is parked.
 	hit := waitForHitOnBreakpoint(t, h, bpID, 15*time.Second)
 
-	// While paused, the executor must NOT have seen the dispatch — the
+	// @constraint: While paused, the executor must NOT have seen the dispatch — the
 	// before_dispatch checkpoint fired and blocked even on a bare node.
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"pause-mode breakpoint must block the attribute-less dispatch before Execute")
 
-	// Resume; the dispatch now proceeds to terminal.
 	status, out := breakpointResume(t, h, iid, bpID, map[string]any{"hit_id": hit.ID.String()})
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, true, out["resumed"])

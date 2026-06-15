@@ -45,11 +45,10 @@ func main() {
 
 	svc := NewSensorService(rimskyEndpoint, slogAdapter{l: slog.Default()})
 
-	// Start the tick loop in the background.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Optional state-DB persistence. Empty env → in-memory mode.
+	// @deliberate: empty state-DB env → in-memory mode (no persistence required).
 	state, err := openStateDB(ctx)
 	if err != nil {
 		slog.Error("open state db", "error", err.Error())

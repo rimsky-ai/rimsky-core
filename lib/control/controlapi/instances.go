@@ -59,9 +59,6 @@ import (
 // resolveNodeTags resolves a node's tag strings against the instance's
 // params, returning the resolved tag list or a typed error citing which
 // tag / which directive failed. Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// §Item 4 — substitution scope is params-only at materialization time.
-//
 // Composes with Item 3's whole-directive value lift:
 //
 //   - Embedded mode (`"domain:{{params.domain}}"`) — stringify-and-concat.
@@ -93,7 +90,8 @@ func resolveNodeTags(rawTags []string, paramsBytes json.RawMessage) ([]string, e
 }
 
 type createInstanceRequest struct {
-	Template    string         `json:"template"` // tag or hash; per spec §2.2.
+	// @constraint: template is a tag or hash.
+	Template    string         `json:"template"`
 	InstanceKey *string        `json:"instance_key,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
 	// AttributeOverrides is a per-instance ad-hoc override blob deep-merged
@@ -235,10 +233,9 @@ func handlePauseInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		// Dry-run: instance resolved; skip the SetPaused mutation. The
-		// envelope is written BEFORE any state change so a dry_run
-		// request never flips the paused flag (the dry-run
-		// never-mutates property; @concept: dry-run).
+		// @concept: dry-run — the envelope is written BEFORE any state
+		// change so a dry_run request never flips the paused flag (the
+		// dry-run never-mutates property).
 		if WriteDryRunResponse(w, req, "would_have_paused", map[string]any{
 			"instance_id": inst.ID.String(),
 		}) {
@@ -275,10 +272,9 @@ func handleResumeInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		// Dry-run: instance resolved; skip the SetPaused mutation. The
-		// envelope is written BEFORE any state change so a dry_run
-		// request never flips the paused flag (the dry-run
-		// never-mutates property; @concept: dry-run).
+		// @concept: dry-run — the envelope is written BEFORE any state
+		// change so a dry_run request never flips the paused flag (the
+		// dry-run never-mutates property).
 		if WriteDryRunResponse(w, req, "would_have_resumed", map[string]any{
 			"instance_id": inst.ID.String(),
 		}) {
@@ -308,24 +304,26 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid JSON body: "+err.Error())
 			return
 		}
-		// Capture the authenticated identity at handler entry. ident.KeyID
-		// is *shared.UUID (nil under anonymous-mode); it is the
-		// created_by_api_key_id column value and the OwnerAPIKeyID on the
-		// instance-created lifecycle fan-out. In scope at both the
-		// provisionArgs construction and the FanOutInstanceEvent payload.
+		// @constraint: capture the authenticated identity at handler
+		// entry. ident.KeyID is *shared.UUID (nil under anonymous-mode);
+		// it is the created_by_api_key_id column value and the
+		// OwnerAPIKeyID on the instance-created lifecycle fan-out. In
+		// scope at both the provisionArgs construction and the
+		// FanOutInstanceEvent payload.
 		ident, _ := IdentityFromContextOK(req.Context())
-		// Empty-string instance_key is treated as absent (spec §2.2 — the
-		// nullable column is the absence sentinel; an empty string would
-		// participate in the unique index and break further inserts with
-		// no key).
+		// @constraint: empty-string instance_key is treated as absent —
+		// the nullable column is the absence sentinel; an empty string
+		// would participate in the unique index and break further
+		// inserts with no key.
 		if body.InstanceKey != nil && *body.InstanceKey == "" {
 			body.InstanceKey = nil
 		}
-		// Server-side reservation of the compose: instance_key prefix.
-		// Placed ahead of the template lookup and any persistence write so
-		// a rejected create persists nothing. Only the privileged compose
-		// path (which stamps the trusted compose-origin marker) may create
-		// reserved-prefix instance keys.
+		// @constraint: server-side reservation of the compose:
+		// instance_key prefix — placed ahead of the template lookup and
+		// any persistence write so a rejected create persists nothing.
+		// Only the privileged compose path (which stamps the trusted
+		// compose-origin marker) may create reserved-prefix instance
+		// keys.
 		if body.InstanceKey != nil && strings.HasPrefix(*body.InstanceKey, composeReservedPrefix) && !isComposeOrigin(req) {
 			badRequest(w, "instance_key uses reserved prefix \"compose:\" (managed by the compose command)")
 			return
@@ -334,12 +332,12 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "template is required (tag or hash)")
 			return
 		}
-		// Validate frame_delivery_mode early so a typo surfaces as 400
-		// rather than a SQL CHECK violation deep in provisionInstanceTx.
+		// @constraint: validate frame_delivery_mode early so a typo
+		// surfaces as 400 rather than a SQL CHECK violation deep in
+		// provisionInstanceTx.
 		if body.FrameDeliveryMode != nil {
 			switch *body.FrameDeliveryMode {
 			case "serial_queue", "coalesce":
-				// ok
 			default:
 				badRequest(w, fmt.Sprintf("frame_delivery_mode %q invalid (want \"serial_queue\" or \"coalesce\")", *body.FrameDeliveryMode))
 				return
@@ -359,18 +357,14 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			params = map[string]any{}
 		}
 
-		// Spec §2.2 acquisition: lock the template row FOR UPDATE,
-		// validate state == 'deployed', then idempotently resolve the
-		// (template_hash, instance_key) collision to return the existing
-		// row. Capture the locked spec for the post-commit fan-out so we
-		// don't have to re-read.
-		//
-		// Dry-run is honored AFTER the FOR UPDATE state check + the
-		// attribute_overrides validation; a dry-run create against an
-		// undeployed template returns the same 409
-		// `template_validation` error a real call would (per spec
-		// section "Dry-run mode": "Errors from validation surface as
-		// in normal flow").
+		// @constraint: lock the template row FOR UPDATE, validate state
+		// == 'deployed', then idempotently resolve the (template_hash,
+		// instance_key) collision to return the existing row. Capture
+		// the locked spec for the post-commit fan-out so we don't have
+		// to re-read. Dry-run is honored AFTER the FOR UPDATE state
+		// check + the attribute_overrides validation; a dry-run create
+		// against an undeployed template returns the same 409
+		// `template_validation` error a real call would.
 		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		var (
 			tplSpec           nodepkg.TemplateSpec
@@ -405,41 +399,42 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
 			tplSpec = row.Spec
-			// Validate attribute_overrides against the locked template's
-			// node list and the operator-declared executors block. Done
-			// inside the tx so that template state at the time of
-			// validation matches the state of the row we'll insert
-			// against.
+			// @constraint: validate attribute_overrides against the
+			// locked template's node list and the operator-declared
+			// executors block — done inside the tx so that template
+			// state at the time of validation matches the state of the
+			// row we'll insert against.
 			if vErr := validateAttributeOverrides(body.AttributeOverrides, row.Spec.Nodes, row.Spec.Graphs, deps.Executors); vErr != nil {
 				return vErr
 			}
-			// Mandatory instantiation-time static-config validation gate
-			// (story S-template-validation-instantiation-mandatory). Runs
-			// inside the FOR UPDATE tx, after the override-shape check and
-			// BEFORE the dry-run gate (so a dry-run create surfaces the
-			// rejection too) and before any insert (so a rejected create
-			// persists nothing). The gate is mandatory regardless of the
-			// registration-time reference-validation mode: whatever a
-			// relaxed mode (`available`/`none`) skipped at registration is
-			// enforced here, where the template is deployed and all
-			// referenced executors exist + have handshaked. row.Spec.Nodes
-			// is the canonicalized flat node list (graphs flattened at
-			// registration), so this covers both template shapes. Only the
-			// statically-knowable subset is validated — substitution-sourced
-			// values stay dispatch-validated (@blessed-invariant 12).
+			// @constraint: mandatory instantiation-time static-config
+			// validation gate. Runs inside the FOR UPDATE tx, after the
+			// override-shape check and BEFORE the dry-run gate (so a
+			// dry-run create surfaces the rejection too) and before any
+			// insert (so a rejected create persists nothing). The gate
+			// is mandatory regardless of the registration-time
+			// reference-validation mode: whatever a relaxed mode
+			// (`available`/`none`) skipped at registration is enforced
+			// here, where the template is deployed and all referenced
+			// executors exist + have handshaked. row.Spec.Nodes is the
+			// canonicalized flat node list (graphs flattened at
+			// registration), so this covers both template shapes. Only
+			// the statically-knowable subset is validated —
+			// substitution-sourced values stay dispatch-validated
+			// (@blessed-invariant 12).
 			if sErr := validateStaticConfigAgainstExecutorSchemas(row.Spec.Nodes, row.Spec.Defaults, deps.ExecutorCapabilities); sErr != nil {
 				return sErr
 			}
-			// Dry-run gate: every validation step above has succeeded
-			// (template found, state==deployed, overrides accepted).
-			// Skip the mutation and signal the caller via the
-			// errDryRunOK sentinel so the outer code writes the
-			// synthetic envelope. The tx rolls back any FOR UPDATE
-			// state and the LockForUpdate-acquired row lock.
+			// @constraint: dry-run gate — every validation step above
+			// has succeeded; skip the mutation and signal the caller via
+			// the errDryRunOK sentinel so the outer code writes the
+			// synthetic envelope. The tx rolls back any FOR UPDATE state
+			// and the LockForUpdate-acquired row lock.
 			if isDryRun {
 				return errDryRunOK
 			}
-			// Idempotent resolution on (template_hash, instance_key).
+			// @constraint: idempotent resolution on (template_hash,
+			// instance_key).
 			if body.InstanceKey != nil {
 				existing, err := deps.Persist.Instances().GetByInstanceKey(ctx, hash, *body.InstanceKey, tx)
 				if err != nil {
@@ -448,10 +443,11 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				if existing != nil {
 					existedKey = true
 					existingOverrides = existing.AttributeOverrides
-					// Fan out the persisted row's bindings + owner, not this
-					// request's body/identity — an idempotent re-create must
-					// not rewrite the proxy's binding cache or owner-routing
-					// with a divergent body or a different re-creator key.
+					// @constraint: fan out the persisted row's bindings +
+					// owner, not this request's body/identity — an
+					// idempotent re-create must not rewrite the proxy's
+					// binding cache or owner-routing with a divergent
+					// body or a different re-creator key.
 					fanOutBindings = existing.ServiceBindings
 					fanOutOwner = existing.CreatedByAPIKeyID
 					respOut = createInstanceResponse{
@@ -467,10 +463,9 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			if body.FrameDeliveryMode != nil {
 				deliveryMode = *body.FrameDeliveryMode
 			}
-			// Initialise the per-entry by_match counter array at zero-
-			// length matching the request's by_match list. Persisted
-			// alongside the row so dispatch-time increments find an
-			// indexed slot per entry. Per spec §"Persistence".
+			// @constraint: per-entry by_match counter array initialised at
+			// length matching the request's by_match list so dispatch-time
+			// increments find an indexed slot per entry. Per spec §"Persistence".
 			var initialMatchCounts []int64
 			if raw, ok := body.AttributeOverrides["by_match"]; ok {
 				if list, ok := raw.([]any); ok {
@@ -491,24 +486,26 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			// Insert the publisher-subscription rows in the SAME tx as the
-			// instance row, so the two commit atomically: a failure in any
-			// post-commit step of this handler (e.g. the lifecycle fan-out
-			// 500ing the request) can never strand a live instance with
-			// zero subscription rows — the retried create resolves
-			// idempotently on (template_hash, instance_key) and the rows
-			// already exist. No publisher RPC happens here (the inserts are
-			// pure DB writes — instance-create never blocks on publisher
-			// reachability); the reconciliation worker drives the Subscribe
-			// handshake asynchronously, and only the non-retryable classes
-			// (unknown publisher name, config-resolve failure) insert a row
-			// straight in `failed` with a reason.
+			// @constraint: insert the publisher-subscription rows in the
+			// SAME tx as the instance row — they commit atomically, so a
+			// failure in any post-commit step of this handler (e.g. the
+			// lifecycle fan-out 500ing the request) can never strand a
+			// live instance with zero subscription rows. The retried
+			// create resolves idempotently on (template_hash,
+			// instance_key) and the rows already exist. No publisher RPC
+			// happens here (the inserts are pure DB writes —
+			// instance-create never blocks on publisher reachability);
+			// the reconciliation worker drives the Subscribe handshake
+			// asynchronously, and only the non-retryable classes
+			// (unknown publisher name, config-resolve failure) insert a
+			// row straight in `failed` with a reason.
 			if len(row.Spec.Publishers) > 0 {
 				instUUID, parseErr := uuid.Parse(provisioned.InstanceID)
 				if parseErr != nil {
-					// Defensive-unreachable (provisionInstanceTx stringifies
-					// a uuid.UUID) — but never silent: fail the create tx so
-					// no instance commits without its subscription rows.
+					// @deliberate: defensive-unreachable
+					// (provisionInstanceTx stringifies a uuid.UUID) — but
+					// never silent: fail the create tx so no instance
+					// commits without its subscription rows.
 					deps.Logger.Error("instance.publisher_subscriptions.instance_id_parse_failed",
 						"instance_id", provisioned.InstanceID,
 						"error", parseErr.Error())
@@ -527,8 +524,8 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					return fmt.Errorf("insert publisher-subscription rows for instance %s: %w", provisioned.InstanceID, subErr)
 				}
 			}
-			// New-create path: the persisted bindings + owner are exactly
-			// what we passed to provisionInstanceTx.
+			// @constraint: new-create path — the persisted bindings +
+			// owner are exactly what we passed to provisionInstanceTx.
 			fanOutBindings = body.ServiceBindings
 			fanOutOwner = ident.KeyID
 			respOut = provisioned
@@ -551,12 +548,12 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				badRequest(w, err.Error())
 				return
 			}
-			// Static-config gate rejection → 400 with a structured
-			// validation_errors body naming the offending node + attribute
-			// path and the violated constraint. Checked BEFORE the generic
-			// ErrTemplateValidation branch below: a *staticConfigGateError
-			// is-a ErrTemplateValidation (typed-error semantics) but must
-			// surface as 400, not the 409 that the conflict branch assigns.
+			// @constraint: static-config gate rejection must surface as 400
+			// with a structured validation_errors body, checked BEFORE the
+			// generic ErrTemplateValidation branch below — a
+			// *staticConfigGateError is-a ErrTemplateValidation by typed-error
+			// semantics but must NOT take the 409 path that the conflict branch
+			// assigns.
 			var gateErr *staticConfigGateError
 			if errors.As(err, &gateErr) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -572,11 +569,11 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// Spec §2.2 / §5.4 mandate firing OnInstanceCreated on every call,
-		// including idempotent re-creates: the fan-out helper is already
+		// @constraint: fire OnInstanceCreated on every call, including
+		// idempotent re-creates — the fan-out helper is already
 		// progress-preserving (skip-if-already-at-target via the
-		// rimsky_lifecycle_idempotencies bookkeeping), so a partial-failure on
-		// the original creation will be resumed here.
+		// rimsky_lifecycle_idempotencies bookkeeping), so a
+		// partial-failure on the original creation will be resumed here.
 		paramsBytes, err := json.Marshal(params)
 		if err != nil {
 			writeError(w, err)
@@ -600,20 +597,16 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// The publisher-subscription rows were inserted inside the create
-		// tx above, atomically with the instance row (so a fan-out
-		// failure between the commit and here cannot strand an instance
-		// without them). The idempotent re-create path (existedKey)
-		// inserts nothing — the original create committed the rows.
 		status := http.StatusCreated
 		if existedKey {
 			status = http.StatusOK
 		}
-		// Audit trail for ad-hoc per-instance overrides. Logs key names
-		// only (under concept:inertness the attribute fragments
-		// themselves are inert and could carry arbitrary data — never
-		// log them). Operators can confirm via the /instances/:id GET
-		// response, which echoes the full attribute_overrides verbatim.
+		// @constraint: audit trail for ad-hoc per-instance overrides —
+		// logs key names only. Under concept:inertness the attribute
+		// fragments themselves are inert and could carry arbitrary data,
+		// so never log them. Operators can confirm via the
+		// /instances/:id GET response, which echoes the full
+		// attribute_overrides verbatim.
 		if !existedKey && len(body.AttributeOverrides) > 0 {
 			byExecutor, byNode, byMatchCount := overridePresentKeys(body.AttributeOverrides)
 			deps.Logger.Info("instance.attribute_overrides_attached",
@@ -623,14 +616,14 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				"by_node", byNode,
 				"by_match_count", byMatchCount)
 		}
-		// Idempotent re-create with a non-empty overrides body: rimsky
-		// returns the existing row's persisted overrides, so the
-		// caller's blob would be silently dropped (mirrors how `params`
-		// works on idempotent re-create). Only emit the WARN when the
-		// caller's body actually differs from the persisted row —
-		// otherwise an operator's reconcile loop would emit a noisy
-		// "discarded" warning on every retry, even though nothing was
-		// actually discarded (the values are identical).
+		// @constraint: idempotent re-create with a non-empty overrides
+		// body — rimsky returns the existing row's persisted overrides,
+		// so the caller's blob would be silently dropped (mirrors how
+		// `params` works on idempotent re-create). Only emit the WARN
+		// when the caller's body actually differs from the persisted
+		// row — otherwise an operator's reconcile loop would emit a
+		// noisy "discarded" warning on every retry, even though nothing
+		// was actually discarded (the values are identical).
 		if existedKey && len(body.AttributeOverrides) > 0 && !overridesEqual(body.AttributeOverrides, existingOverrides) {
 			byExecutor, byNode, byMatchCount := overridePresentKeys(body.AttributeOverrides)
 			deps.Logger.Warn("instance.attribute_overrides_replaced_by_idempotent_match",
@@ -667,8 +660,8 @@ func handleListInstances(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// Redact per-template — look up each row's template to grab its
-		// params_redact slice.
+		// @constraint: redact per-template — look up each row's template
+		// to grab its params_redact slice.
 		items := make([]instanceItem, 0, len(page.Rows))
 		redactCache := map[string][]string{}
 		for _, r := range page.Rows {
@@ -735,9 +728,9 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 		}
 		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
 		item := toInstanceItem(*inst, redact)
-		// Per-subscription publisher state (concept:publisher-subscription):
-		// the operator-visible mounting → active lifecycle, with the
-		// failure reason for non-retryable failed rows.
+		// @concept: publisher-subscription — per-subscription publisher
+		// state, the operator-visible mounting → active lifecycle, with
+		// the failure reason for non-retryable failed rows.
 		subs, err := deps.Persist.PublisherSubscriptions().ListByInstance(req.Context(), inst.ID)
 		if err != nil {
 			writeError(w, err)
@@ -768,27 +761,28 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		// Spec §2.4: instance deletion is only sanctioned after the
-		// instance has reached terminal state (terminated_at IS NOT NULL).
-		// The terminator worker fires OnInstanceTerminated as soon as the
-		// row terminates; a DELETE on an active instance would bypass that
-		// trigger and risks firing the lifecycle event against a still-
-		// running instance.
+		// @constraint: instance deletion is only sanctioned after the
+		// instance has reached terminal state (terminated_at IS NOT
+		// NULL). The terminator worker fires OnInstanceTerminated as
+		// soon as the row terminates; a DELETE on an active instance
+		// would bypass that trigger and risks firing the lifecycle event
+		// against a still-running instance.
 		if inst.TerminatedAt == nil {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error": "instance is not in terminal state; wait for terminated_at to be set",
 			})
 			return
 		}
-		// Dry-run: validation passed; skip the fan-out + row delete.
+		// @concept: dry-run — validation passed; skip the fan-out + row
+		// delete.
 		if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
 			"instance_id": inst.ID.String(),
 		}) {
 			return
 		}
-		// Spec §1.6 / §5.5: fire OnInstanceTerminated to every store
-		// referenced by the instance's template before deleting the row.
-		// FanOutInstanceEvent deletes per-store lifecycle rows on
+		// @deliberate: fire OnInstanceTerminated to every store
+		// referenced by the instance's template before deleting the
+		// row. FanOutInstanceEvent deletes per-store lifecycle rows on
 		// success and surfaces partial failures so the operator can
 		// retry; surviving lifecycle rows are picked up by the
 		// terminator if the instance row remains. We only proceed with
@@ -807,7 +801,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				terminatedAtMs = inst.TerminatedAt.UnixMilli()
 			}
-			// Close the instance's main run-scope and fire
+			// @constraint: close the instance's main run-scope and fire
 			// OnRunScopeTerminal before OnInstanceTerminated, so the
 			// host-agent-proxy can reap any spawned processes scoped to
 			// this main run-scope. Synchronous in the request context;
@@ -837,8 +831,8 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		} else {
-			// Template gone (e.g. force-deleted): fall back to fanning
-			// out via the recorded lifecycle rows so any per-instance
+			// @deliberate: template gone (e.g. force-deleted); fall back to
+			// fanning out via the recorded lifecycle rows so any per-instance
 			// state in stores is still settled before we drop the row.
 			var terminatedAtMs int64
 			if inst.TerminatedAt != nil {
@@ -852,16 +846,17 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
-		// Walk this instance's mounting + active publisher-subscriptions,
-		// call `Publisher.Unsubscribe` on each, and flip the rows to
-		// stopped (mounting rows are force-stopped even when Unsubscribe
-		// fails, so the reconciler never re-drives a terminated
-		// instance). Non-blocking — failures are logged. The subscription
-		// rows are cascade-deleted with the instance row below, so a
-		// surviving row is not the retry mechanism: a publisher-side
-		// leftover whose Unsubscribe failed here is reaped by the startup
-		// resync's orphan sweep, which unsubscribes publisher-reported
-		// subscriptions with no backing row.
+		// @constraint: walk this instance's mounting + active
+		// publisher-subscriptions, call `Publisher.Unsubscribe` on each,
+		// and flip the rows to stopped (mounting rows are force-stopped
+		// even when Unsubscribe fails, so the reconciler never re-drives
+		// a terminated instance). Non-blocking — failures are logged.
+		// The subscription rows are cascade-deleted with the instance
+		// row below, so a surviving row is not the retry mechanism: a
+		// publisher-side leftover whose Unsubscribe failed here is
+		// reaped by the startup resync's orphan sweep, which
+		// unsubscribes publisher-reported subscriptions with no backing
+		// row.
 		if err := runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
 			Persist:    deps.Persist,
 			Publishers: deps.Publishers,
@@ -872,17 +867,15 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 				"instance_id", inst.ID.String(),
 				"error", err.Error())
 		}
-		// E9: walk held-durable claim_handles for this instance and call
-		// `ClaimProducer.Release` on each before dropping rows. Per
-		// `@blessed-invariant 22` durable claim handles persist past
-		// auto-terminal; the only sanctioned release paths are the
-		// operator-driven asset delete (`DELETE /instances/{id}/assets/{alias}`)
-		// and instance-termination cleanup. Without this, an instance
-		// with held-durable assets would leave producer-side state
-		// dangling forever. Failures are logged + retained on the row
-		// for retry rather than blocking instance deletion. Spec
-		// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-		// §Held-durable claim lifecycle.
+		// @constraint: walk held-durable claim_handles for this instance
+		// and call `ClaimProducer.Release` on each before dropping rows.
+		// Per `@blessed-invariant 22` durable claim handles persist
+		// past auto-terminal; the only sanctioned release paths are the
+		// operator-driven asset delete and instance-termination cleanup.
+		// Without this, an instance with held-durable assets would leave
+		// producer-side state dangling forever. Failures are logged +
+		// retained on the row for retry rather than blocking instance
+		// deletion.
 		if deps.Stores != nil {
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 				_, rErr := runtime.ReleaseHeldDurableClaims(ctx,
@@ -900,8 +893,8 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 					"error", err.Error())
 			}
 		}
-		// Defensive: per spec §1.6 any remaining lifecycle rows for
-		// scope='instance' on this id are deleted with the instance.
+		// @constraint: any remaining lifecycle rows for scope='instance'
+		// on this id are deleted with the instance.
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			if err := deps.Persist.LifecycleIdempotency().DeleteByScope(ctx,
 				persistence.LifecycleIdempotencyScopeInstance, inst.ID.String(), tx); err != nil {
@@ -920,7 +913,6 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 // instance terminal (sets terminated_at) and force-fails every
 // resource-holding in-flight node-run, abandoning each run's
 // uncommitted claim handles. Per spec
-// .ok-planner/specs/2026-05-28-quality-of-life-features-design.md
 // Feature 2 — this is the first production instance-teardown path
 // (MarkTerminated was previously test-only), and the only path that can
 // rescue a node wedged in `running` awaiting an async callback that
@@ -950,19 +942,19 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
-		// Idempotent: an already-terminal instance returns its current
-		// projection with 200 and mutates nothing.
+		// @constraint: idempotent — an already-terminal instance returns
+		// its current projection with 200 and mutates nothing.
 		if inst.TerminatedAt != nil {
 			writeJSON(w, http.StatusOK, toInstanceItem(*inst, redact))
 			return
 		}
-		// Optional `{reason}` body; empty/absent body is acceptable.
 		var body struct {
 			Reason string `json:"reason"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-			// `json.Decoder.Decode` returns io.EOF on empty input —
-			// reason is optional, so only true JSON errors are surfaced.
+			// @constraint: `json.Decoder.Decode` returns io.EOF on empty
+			// input — reason is optional, so only true JSON errors are
+			// surfaced.
 			if !errors.Is(err, io.EOF) {
 				badRequest(w, "invalid JSON body: "+err.Error())
 				return
@@ -970,9 +962,9 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 		reason := body.Reason
 
-		// Gather the resource-holding node-runs that would be force-failed
-		// (running | parked). Used for both the dry-run projection and the
-		// real teardown.
+		// @deliberate: the resource-holding (running | parked) node-runs are
+		// computed once and reused for both the dry-run projection and the real
+		// teardown so the projection cannot disagree with what teardown does.
 		var toFail []persistence.NodeRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			nodes, err := deps.Persist.Nodes().ListByInstance(ctx, inst.ID, tx)
@@ -986,8 +978,8 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Dry-run: validation passed; list what would be force-failed and
-		// mutate nothing.
+		// @concept: dry-run — validation passed; list what would be
+		// force-failed and mutate nothing.
 		wouldFail := make([]string, 0, len(toFail))
 		for _, n := range toFail {
 			wouldFail = append(wouldFail, n.ID.String())
@@ -1001,24 +993,25 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 		}
 
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			// (a) Force-fail the resource-holding node-runs. Re-list inside
-			// the teardown tx so the force-fail acts on current state, not
-			// the snapshot taken above for the dry-run preview — that closes
-			// the window where a node-run could leave running/parked between
-			// the preview gather and here (which would make its → failed
-			// transition illegal and roll the whole teardown back). Each row
-			// carries a non-nil RunScopeID (projected from its in-flight
-			// run); a terminal → failed transition passes a non-nil settling
-			// signal (cousin: runtime/on_error.go give_up branch).
+			// @constraint: (a) force-fail the resource-holding node-runs.
+			// Re-list inside the teardown tx so the force-fail acts on
+			// current state, not the snapshot taken above for the
+			// dry-run preview — that closes the window where a node-run
+			// could leave running/parked between the preview gather and
+			// here (which would make its → failed transition illegal and
+			// roll the whole teardown back). Each row carries a non-nil
+			// RunScopeID (projected from its in-flight run); a terminal
+			// → failed transition passes a non-nil settling signal.
 			nodes, err := deps.Persist.Nodes().ListByInstance(ctx, inst.ID, tx)
 			if err != nil {
 				return err
 			}
 			for _, run := range resourceHoldingNodeRuns(nodes) {
 				if run.RunScopeID == nil {
-					// Defensive: ListByInstance projects RunScopeID for any
-					// row whose state is running/parked, so this is
-					// unreachable — but never deref a nil pointer.
+					// @deliberate: ListByInstance projects RunScopeID for any
+					// running/parked row, so this branch is unreachable in
+					// practice; the guard exists so a future regression cannot
+					// nil-deref.
 					continue
 				}
 				sig := "terminal/error/instance_killed"
@@ -1028,28 +1021,30 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 				}
 				abandonInFlightClaims(ctx, deps, run.ID, tx)
 			}
-			// (b) Close the instance's main run-scope (idempotent: the
-			// UPDATE no-ops if it is already closed). Done in the teardown
-			// tx so a terminated instance never carries an open main
-			// run-scope. Terminate closes it itself rather than leaving it
-			// to the instance_terminator worker — that worker's sweep only
-			// covers terminated instances that still carry
-			// lifecycle-subscriber bookkeeping rows, so an instance with no
-			// lifecycle subscribers would otherwise keep its run-scope open
-			// until DELETE.
+			// @constraint: (b) close the instance's main run-scope
+			// (idempotent — the UPDATE no-ops if it is already closed).
+			// Done in the teardown tx so a terminated instance never
+			// carries an open main run-scope. Terminate closes it itself
+			// rather than leaving it to the instance_terminator worker —
+			// that worker's sweep only covers terminated instances that
+			// still carry lifecycle-subscriber bookkeeping rows, so an
+			// instance with no lifecycle subscribers would otherwise
+			// keep its run-scope open until DELETE.
 			if inst.MainRunScopeID != (foundationshared.UUID{}) {
 				if err := deps.Persist.RunScopes().Close(ctx, tx, inst.MainRunScopeID); err != nil {
 					return err
 				}
 			}
-			// (c) Mark the instance terminal (idempotent UPDATE).
+			// @constraint: (c) mark the instance terminal (idempotent
+			// UPDATE).
 			if err := deps.Persist.Instances().MarkTerminated(ctx, inst.ID, tx); err != nil {
 				return err
 			}
-			// (d) Record the teardown cause as an administrative audit row.
-			// Kind `instance_terminated` is the underscore administrative
-			// form (matching work_started / message_emitted); the slash
-			// form is reserved for the concept:signal type-path taxonomy.
+			// @constraint: (d) record the teardown cause as an
+			// administrative audit row. Kind `instance_terminated` is
+			// the underscore administrative form (matching
+			// work_started / message_emitted); the slash form is
+			// reserved for the concept:signal type-path taxonomy.
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				InstanceID: &inst.ID,
 				Kind:       events.KindInstanceTerminated(),
@@ -1060,14 +1055,15 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Stop this instance's publisher subscriptions now that it is
-		// terminal: Unsubscribe each mounting/active subscription and flip
-		// the rows to stopped (same call DELETE makes). Without this, the
-		// reconciler would keep driving the terminated instance's mounting
-		// rows to active, creating publisher-side subscriptions whose
-		// every emit is rejected with errInstanceTerminated. Non-blocking
-		// — failures are logged; the reconciler's terminated-instance
-		// check and DELETE's repeat call are the backstops.
+		// @constraint: stop this instance's publisher subscriptions now
+		// that it is terminal — Unsubscribe each mounting/active
+		// subscription and flip the rows to stopped (same call DELETE
+		// makes). Without this, the reconciler would keep driving the
+		// terminated instance's mounting rows to active, creating
+		// publisher-side subscriptions whose every emit is rejected with
+		// errInstanceTerminated. Non-blocking — failures are logged; the
+		// reconciler's terminated-instance check and DELETE's repeat
+		// call are the backstops.
 		if err := runtime.StopPublisherSubscriptionsForInstance(req.Context(), runtime.PublisherLifecycleDeps{
 			Persist:    deps.Persist,
 			Publishers: deps.Publishers,
@@ -1079,14 +1075,15 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 				"error", err.Error())
 		}
 
-		// Fire OnRunScopeTerminal for the now-closed main run-scope so the
-		// host-agent-proxy reaps any processes spawned under it — the same
-		// fan-out handleDeleteInstance and the terminator worker perform.
-		// After-commit because it does subscriber / host-agent RPCs;
-		// at-least-once (the worker re-fires for subscriber-backed
-		// instances and store handlers are idempotent). A template-load
-		// failure only skips the fan-out — the run-scope is already closed
-		// in the committed tx above.
+		// @constraint: fire OnRunScopeTerminal for the now-closed main
+		// run-scope so the host-agent-proxy reaps any processes spawned
+		// under it — the same fan-out handleDeleteInstance and the
+		// terminator worker perform. After-commit because it does
+		// subscriber / host-agent RPCs; at-least-once (the worker
+		// re-fires for subscriber-backed instances and store handlers
+		// are idempotent). A template-load failure only skips the
+		// fan-out — the run-scope is already closed in the committed tx
+		// above.
 		if inst.MainRunScopeID != (foundationshared.UUID{}) {
 			var tpl *persistence.TemplateRow
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -1279,20 +1276,18 @@ func provisionInstanceTx(
 	tpl *persistence.TemplateRow,
 	args provisionArgs,
 ) (createInstanceResponse, error) {
-	// Allocate the instance + main RunScope ids up front so the two
-	// inserts (rimsky_run_scopes, rimsky_instances) reference each other.
-	// Per concept:run-scope, every instance has exactly one main RunScope
+	// @concept: run-scope — allocate the instance + main RunScope ids up
+	// front so the two inserts (rimsky_run_scopes, rimsky_instances)
+	// reference each other. Every instance has exactly one main RunScope
 	// rooted at the top of the run-tree (parent_run_scope_id IS NULL,
 	// parent_run_id IS NULL, graph_name = spec.MainGraphName).
-	//
-	// rimsky_instances.main_run_scope_id has an FK to rimsky_run_scopes(id),
-	// so the RunScope insert must precede the instance insert. The RunScope
-	// row in turn has rimsky_run_scopes.instance_id → rimsky_instances(id),
-	// which is satisfied because both FKs are declared `DEFERRABLE INITIALLY
-	// DEFERRED` (see migrations 007 + 010) — the FK check is postponed to
-	// COMMIT, by which time both rows exist.
-	//
-	// @concept: run-scope
+	// rimsky_instances.main_run_scope_id has an FK to
+	// rimsky_run_scopes(id), so the RunScope insert must precede the
+	// instance insert. The RunScope row in turn has
+	// rimsky_run_scopes.instance_id → rimsky_instances(id), which is
+	// satisfied because both FKs are declared `DEFERRABLE INITIALLY
+	// DEFERRED` — the FK check is postponed to COMMIT, by which time
+	// both rows exist.
 	instanceID := foundationshared.UUID(uuid.New())
 	mainRunScopeID := foundationshared.UUID(uuid.New())
 	if err := deps.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -1305,7 +1300,8 @@ func provisionInstanceTx(
 	}); err != nil {
 		return createInstanceResponse{}, fmt.Errorf("instance-factory: create main run scope: %w", err)
 	}
-	// Create instance row (fails with ErrInstanceKeyConflict if duplicate).
+	// @constraint: create instance row (fails with
+	// ErrInstanceKeyConflict if duplicate).
 	inst, err := deps.Persist.Instances().Create(ctx, persistence.InstanceCreateInput{
 		ID:                            instanceID,
 		TemplateHash:                  tpl.ID,
@@ -1324,16 +1320,17 @@ func provisionInstanceTx(
 		return createInstanceResponse{}, err
 	}
 
-	// Allocate one UUID per node up-front so dependencies[] can be rewritten.
+	// @constraint: allocate one UUID per node up-front so dependencies[]
+	// can be rewritten.
 	nodeIDs := make(map[string]foundationshared.UUID, len(tpl.Spec.Nodes))
 	for _, def := range tpl.Spec.Nodes {
 		nodeIDs[def.Type] = uuid.New()
 	}
 
-	// Marshal params once for the materialization-time tag substitution
-	// pass (Item 4). Params-only ResolveContext: other substitution
-	// kinds aren't available at instance-creation time. Failures here
-	// surface as 400-class errors to the caller. See `resolveNodeTags`.
+	// @constraint: params marshalled once for the materialization-time tag
+	// substitution pass (Item 4) with a params-only ResolveContext — other
+	// substitution kinds aren't available at instance-creation time. Failures
+	// here surface as 400-class errors to the caller. See `resolveNodeTags`.
 	var paramsBytes json.RawMessage
 	if args.Params != nil {
 		b, merr := json.Marshal(args.Params)
@@ -1343,20 +1340,17 @@ func provisionInstanceTx(
 		paramsBytes = b
 	}
 
-	// Phase 1: create nodes (Create defaults to 'fresh' per the baseline
-	// schema + spec §3.1) + register schedules. Phase 2 enqueues an initial frame
-	// for each root.
-	//
-	// Post-2026-05-14: cascade-coupling is declared receiver-side via
-	// `subscribes:`; the per-template subscription-edge inverse map
-	// (graph/node/subscription_edges.go) drives cascade walks. The
-	// retired `dependencies` column is no longer populated.
+	// @constraint: phase 1 creates nodes (Create defaults to 'fresh' per
+	// the baseline schema) + registers schedules. Phase 2 enqueues an
+	// initial frame for each root. Cascade-coupling is declared
+	// receiver-side via `subscribes:`; the per-template
+	// subscription-edge inverse map drives cascade walks.
 	for _, def := range tpl.Spec.Nodes {
 		nodeID := nodeIDs[def.Type]
-		// Subscription validity is checked at template-deploy time by
-		// the validator; we still emit an instance-time error on
-		// missing target so a hand-rolled spec doesn't silently
-		// dispatch.
+		// @constraint: subscription validity is checked at
+		// template-deploy time by the validator; emit an instance-time
+		// error on missing target too, so a hand-rolled spec doesn't
+		// silently dispatch.
 		for _, s := range def.Subscribes {
 			if s.Node == "" {
 				continue
@@ -1366,18 +1360,19 @@ func provisionInstanceTx(
 			}
 		}
 
-		// Resolve operator-facing tags against instance params (Item 4).
-		// Failures here are fatal at instance creation, matching the
-		// dispatch-time discipline for required-attribute substitution.
+		// @constraint: resolve operator-facing tags against instance
+		// params. Failures here are fatal at instance creation, matching
+		// the dispatch-time discipline for required-attribute
+		// substitution.
 		resolvedTags, terr := resolveNodeTags(def.Tags, paramsBytes)
 		if terr != nil {
 			return createInstanceResponse{}, fmt.Errorf("instance-factory: resolve tags on node %q: %w", def.Type, terr)
 		}
 
-		// Create node row. Per the 2026-05-15 data-platform-extensions
-		// plan D7/E16/B10 the per-node `schedule:` field and the
-		// rimsky_schedules table are retired; the bundled `sensor-cron`
-		// service owns cron firing via the Sensor protocol.
+		// @constraint: create node row. The per-node `schedule:` field
+		// and the rimsky_schedules table are retired; the bundled
+		// `sensor-cron` service owns cron firing via the Sensor
+		// protocol.
 		if _, err := deps.Persist.Nodes().Create(ctx, persistence.NodeCreateInput{
 			ID:         nodeID,
 			InstanceID: inst.ID,
@@ -1389,14 +1384,13 @@ func provisionInstanceTx(
 		}
 	}
 
-	// Phase 2: enqueue an initial frame for each root node (no upstream
-	// subscriptions), reusing the caller's tx so the frame inserts are
-	// atomic with the instance+node creation above.
-	//
-	// Post-2026-05-14: a "root" is a node with no `subscribes:` entries
-	// naming an upstream node AND no substitution refs in its attribute
-	// schema. Cross-cutting (`instance:true`) entries don't disqualify
-	// a root because they fire on cascade-walks, not at instance create.
+	// @constraint: phase 2 enqueues an initial frame for each root node
+	// (no upstream subscriptions), reusing the caller's tx so the frame
+	// inserts are atomic with the instance+node creation above. A "root"
+	// is a node with no `subscribes:` entries naming an upstream node
+	// AND no substitution refs in its attribute schema. Cross-cutting
+	// (`instance:true`) entries don't disqualify a root because they
+	// fire on cascade-walks, not at instance create.
 	for _, def := range tpl.Spec.Nodes {
 		hasUpstream := false
 		for _, s := range def.Subscribes {

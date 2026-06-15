@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// node_events_retention_test.go — postgres mirror of the SQLite
-// TestNodeEventDeleteOlderThanQueuesSpilledBlobOrphans gate. Proves the
-// postgres NodeEvents().DeleteOlderThan reaps a time-aged named-event row
-// AND atomically queues its spilled payload handle into rimsky_blob_orphans,
-// so the durable-instance trace-retention path cannot leak the blob bytes.
-
 package postgres_test
 
 import (
@@ -64,8 +58,9 @@ func TestPGNodeEventDeleteOlderThanQueuesSpilledBlobOrphans(t *testing.T) {
 	cutoff := now.Add(-time.Hour)
 	oldTime := now.Add(-24 * time.Hour)
 
-	// Old spilled named event (handle set, emitted_at before cutoff): must be
-	// reaped and its handle queued. A recent inline event: survives.
+	// @deliberate: seed two events spanning the cutoff — an old spilled named
+	// event (handle set, emitted_at before cutoff) must be reaped and its handle
+	// queued; a recent inline event must survive.
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_node_events
 		   (instance_id, emitter_node_id, event_name, payload_handle, payload_handle_backend, emitted_at)
@@ -93,9 +88,10 @@ func TestPGNodeEventDeleteOlderThanQueuesSpilledBlobOrphans(t *testing.T) {
 		t.Fatalf("orphan = %+v, want {Handle:blob-handle-pg Backend:filesystem}", orphans[0])
 	}
 
-	// The handle must be durably queued in the SAME transaction as the
-	// delete — surfacing it in the return slice is not the durable guarantee;
-	// SweepOrphanedBlobs reaps only what is persisted in rimsky_blob_orphans.
+	// @constraint: the spilled handle must be durably queued in the SAME
+	// transaction as the delete — surfacing it in the return slice is not the
+	// durable guarantee; SweepOrphanedBlobs reaps only what is persisted in
+	// rimsky_blob_orphans.
 	var queued int
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT COUNT(*) FROM rimsky_blob_orphans WHERE handle = 'blob-handle-pg'`,
@@ -105,7 +101,6 @@ func TestPGNodeEventDeleteOlderThanQueuesSpilledBlobOrphans(t *testing.T) {
 		t.Fatalf("spilled handle must be persisted in rimsky_blob_orphans by DeleteOlderThan, found %d", queued)
 	}
 
-	// The recent inline row survives the cutoff.
 	var remaining int
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT COUNT(*) FROM rimsky_node_events WHERE instance_id = $1::uuid`,

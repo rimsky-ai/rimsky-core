@@ -284,33 +284,33 @@ type RunArgs struct {
 // calls its own concrete setters. Splitting keeps the foundation-
 // visible surface tight to the call sites that actually exist here.
 type MetricsHook interface {
-	// IncDispatch records a dispatch start (executor + terminal class
-	// "started"); pair with IncTerminal at the resolved terminal.
+	// @agent-contract: records a dispatch start (executor + terminal
+	// class "started"); pair with IncTerminal at the resolved terminal.
 	IncDispatch(executor, terminalClass string)
-	// IncTerminal records a resolved terminal verdict.
+	// @agent-contract: records a resolved terminal verdict.
 	IncTerminal(terminalClass, errorClass string)
-	// IncInvalidate records an invalidate fired by source ("admin" |
-	// "scheduler" | "handler" | "policy").
+	// @agent-contract: records an invalidate fired by source
+	// ("admin" | "scheduler" | "handler" | "policy").
 	IncInvalidate(sourceKind string)
-	// IncClaimAcquisition records a claim acquisition (producer name +
+	// @agent-contract: records a claim acquisition (producer name +
 	// intent: "acquired" | "unavailable" | "abandon").
 	IncClaimAcquisition(producer, intent string)
-	// IncNamedLockAcquisition records a named-lock acquisition attempt
-	// (lock name + intent: "acquired" | "unavailable"). A sibling of
-	// IncClaimAcquisition so named-lock activity is distinguishable
-	// from producer-claim activity on the metrics endpoint.
+	// @agent-contract: records a named-lock acquisition attempt (lock
+	// name + intent: "acquired" | "unavailable"). Sibling of
+	// IncClaimAcquisition so named-lock activity is distinguishable from
+	// producer-claim activity on the metrics endpoint.
 	IncNamedLockAcquisition(lockName, intent string)
-	// IncNamedEvent records a NamedEvent persistence write.
+	// @agent-contract: records a NamedEvent persistence write.
 	IncNamedEvent(executor, eventName string)
-	// ObserveDispatchLatency observes the wall-clock dispatch duration.
+	// @agent-contract: observes the wall-clock dispatch duration.
 	ObserveDispatchLatency(executor string, seconds float64)
-	// ObserveClaimAcquisitionLatency observes the wall-clock claim
-	// acquisition tx duration.
+	// @agent-contract: observes the wall-clock claim acquisition tx
+	// duration.
 	ObserveClaimAcquisitionLatency(producer string, seconds float64)
-	// ObserveFrameDuration observes a frame's wall-clock duration.
+	// @agent-contract: observes a frame's wall-clock duration.
 	ObserveFrameDuration(seconds float64)
-	// ObserveParkedDurationOnResume observes how long a node spent
-	// parked, sampled at resume time.
+	// @agent-contract: observes how long a node spent parked, sampled at
+	// resume time.
 	ObserveParkedDurationOnResume(seconds float64)
 }
 
@@ -469,66 +469,48 @@ func RunNode(
 		heartbeatInterval = 5 * time.Second
 	}
 
-	// Step 1 — §7.3 atomic acquisition + verify-before-run + state
-	// transition.
 	acq, ok, err := acquireCandidate(ctx, args, heartbeatInterval)
 	if err != nil {
 		return RunnerResult{}, err
 	}
 	if !ok {
-		// No eligible candidate, or the candidate was lost via verify-
-		// before-run / illegal transition; the helper has already
-		// released store-side state (best-effort) and emitted
-		// orphaned_claim_lost_race when warranted.
 		return RunnerResult{Ran: false}, nil
 	}
 
-	// Step 2 (formerly OpenHandle) — retired: the store's Open
-	// returns the address inside the acquisition tx; there is no
-	// separate native-handle stage.
-
-	// Step 2a — E7 fan-out dispatcher. When the acquisition returned
+	// @deliberate: E7 fan-out dispatcher. When the acquisition returned
 	// sub-claims (the node declared `fan_out:` and acquireCandidate
 	// called SplitScope inside the acquisition tx), create one child
 	// run per sub-claim and DEFER leaf-dispatch to the children. The
 	// parent run stays `running`; the per-child state propagation
 	// (`state_propagation.go::PropagateFromChildState`) settles the parent
 	// at child-aggregate-terminal time.
-	//
-	// Per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Fan-out template DSL "Mechanics at dispatch" steps 3-5.
-	//
-	//	@concept: fan-out
-	//	@concept: run-scope
+	// @concept: fan-out
+	// @concept: run-scope
 	if len(acq.SubClaims) > 0 && IsFanOutNode(acq.NodeDef) {
 		if err := dispatchFanOutChildren(ctx, args, &acq); err != nil {
 			return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
 		}
-		// Children dispatch independently on subsequent runner ticks
-		// (their rows are now eligible candidates the SelectCandidates
-		// helper will pick up). The parent run stays `running` until
-		// the aggregator settles it.
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, nil
 	}
 
-	// Step 3 — resolve attribute source-directives. Failure here routes
-	// through `applyAttributeFailure`, which inspects the typed error
-	// returned by `resolveAttributes` and selects one of three policy
-	// chains: `template_resolution_failed` (strict-directive miss),
-	// `executor_schema_unavailable` (executor's expected schema not
-	// visible at dispatch), or `template_validation_failed` (composition
-	// violations, type mismatches, override-vs-schema conflicts).
+	// @deliberate: failure here routes through `applyAttributeFailure`,
+	// which inspects the typed error returned by `resolveAttributes` and
+	// selects one of three policy chains: `template_resolution_failed`
+	// (strict-directive miss), `executor_schema_unavailable` (executor's
+	// expected schema not visible at dispatch), or
+	// `template_validation_failed` (composition violations, type
+	// mismatches, override-vs-schema conflicts).
 	resolvedAttrs, attrSchema, err := resolveAttributes(ctx, args, &acq)
 	if err != nil {
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID},
 			applyAttributeFailure(ctx, args, &acq, err)
 	}
 
-	// Persist the substituted attributes ahead of dispatch so the
-	// callback path (§12.5 incremental writeback) has a row to merge
-	// into. Under per-run keying the row is keyed on the dispatch_id
-	// (acq.DispatchID); each fresh dispatch starts a new row.
+	// @constraint: persist the substituted attributes ahead of dispatch
+	// so the callback path (§12.5 incremental writeback) has a row to
+	// merge into. Under per-run keying the row is keyed on the
+	// dispatch_id (acq.DispatchID); each fresh dispatch starts a new
+	// row.
 	if err := upsertAttributesPreDispatch(ctx, args, acq.DispatchID, acq.NodeID, resolvedAttrs); err != nil {
 		log.Warn("runner: upsert attributes pre-dispatch failed",
 			"run_id", acq.DispatchID.String(),
@@ -536,7 +518,6 @@ func RunNode(
 	}
 	dispatchAttrs := resolvedAttrs
 
-	// Step 4 — dispatch path.
 	dctx := dispatchContext{
 		Args:              args,
 		Acquired:          &acq,
@@ -554,28 +535,29 @@ func RunNode(
 		return *asyncResult, nil
 	}
 
-	// Step 6 — terminal event handling. Pass the dispatch-time attribute
-	// view so the commit path's mergeAttributesDelta starts from the
-	// same map the executor saw (resumed runs include preserved
-	// executor-populated fields). runApplyTerminal wraps the call in
-	// the outer state-mutation tx that applyTerminal threads through
-	// every handler — same shape the async-callback path uses, so the
-	// determinism invariant holds at both sites.
+	// @constraint: pass the dispatch-time attribute view so the commit
+	// path's mergeAttributesDelta starts from the same map the executor
+	// saw (resumed runs include preserved executor-populated fields).
+	// runApplyTerminal wraps the call in the outer state-mutation tx
+	// that applyTerminal threads through every handler — same shape the
+	// async-callback path uses, so the determinism invariant holds at
+	// both sites.
 	if err := runApplyTerminal(ctx, args, &acq, dispatchAttrs, attrSchema, terminal, nil); err != nil {
 		return RunnerResult{Ran: true, NodeID: acq.NodeID, DispatchID: acq.DispatchID}, err
 	}
 
-	// Breakpoint checkpoint: after_terminal. Runs AFTER runApplyTerminal
-	// returns (its tx is committed) and BEFORE the next runner tick can
-	// fire any downstream cascade work. EvaluateBreakpoints opens its own
-	// short txns; pause-mode hits block on waitForResume (per-iteration
-	// short txns; no tx held across the wait). The return value is
-	// discarded — after-terminal overlays don't mutate further dispatch
-	// because the dispatch is already complete. Pause-mode breakpoints at
-	// after_terminal block the runner before it returns control to the
-	// supervisor loop; that's the value. Notify-only breakpoints just
-	// observe. Failures are best-effort: Warn-log and continue so
-	// debugger problems don't fail the run.
+	// @deliberate: breakpoint checkpoint at after_terminal. Runs AFTER
+	// runApplyTerminal returns (its tx is committed) and BEFORE the next
+	// runner tick can fire any downstream cascade work.
+	// EvaluateBreakpoints opens its own short txns; pause-mode hits
+	// block on waitForResume (per-iteration short txns; no tx held
+	// across the wait). The return value is discarded — after-terminal
+	// overlays don't mutate further dispatch because the dispatch is
+	// already complete. Pause-mode breakpoints at after_terminal block
+	// the runner before it returns control to the supervisor loop;
+	// that's the value. Notify-only breakpoints just observe. Failures
+	// are best-effort: Warn-log and continue so debugger problems don't
+	// fail the run.
 	scope := resolveAcqScope(ctx, args, &acq)
 	terminalSig := signalForTerminal(terminal)
 	if _, err := EvaluateBreakpoints(ctx, args, CheckpointContext{
@@ -713,12 +695,12 @@ func applyAttributeFailure(
 	class, eventKind := classifyAttributeFailure(err)
 	emitAttributeFailureEvent(ctx, args, acq.NodeID, acq.InstanceID,
 		eventKind, extractDirective(err), "attribute", "", err.Error())
-	// applyErrorPolicy now expects to run inside an outer state-mutation
-	// tx (per @blessed-invariant: callback-determinism — Callback determinism). Wrap it in a
-	// fresh tx here — this caller is the dispatch-time attribute
-	// resolution path, which has no outer tx of its own, so we open one
-	// and run the returned postCommit after commit. Same shape as
-	// runApplyTerminal but for the error-only (no terminal verdict)
+	// @constraint: applyErrorPolicy expects to run inside an outer
+	// state-mutation tx (per @blessed-invariant: callback-determinism).
+	// Wrap it in a fresh tx here — this caller is the dispatch-time
+	// attribute resolution path, which has no outer tx of its own, so we
+	// open one and run the returned postCommit after commit. Same shape
+	// as runApplyTerminal but for the error-only (no terminal verdict)
 	// path.
 	var postCommit postCommitFn
 	if txErr := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -759,7 +741,7 @@ func classifyAttributeFailure(err error) (string, events.Kind) {
 	if errors.As(err, &validation) {
 		return "template_validation_failed", events.KindTemplateValidationFailed()
 	}
-	// Defensive fallback: anything we didn't classify routes through the
+	// @deliberate: anything we didn't classify routes through the
 	// resolution chain. Preserves backwards-compatible behaviour for
 	// errors that didn't go through resolveAttributes' typed wrappers.
 	return "template_resolution_failed", events.KindTemplateResolutionFailed()
@@ -774,6 +756,3 @@ func extractDirective(err error) string {
 	}
 	return ""
 }
-
-// applyErrorPolicy funnels an application-level terminal through
-// the OnError policy chain. Defined in runner_terminal.go.

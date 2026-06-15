@@ -186,7 +186,7 @@ func TestResolveSourceFileRefs_WithSiblings_NotRecognized(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	m := got.(map[string]any)["x"].(map[string]any)
-	// Not recognized as a ref — left intact (siblings present).
+	// @constraint: source_file + sibling keys is not a ref — object passes through unchanged.
 	if m["source_file"] != "a.md" || m["foo"] != "bar" {
 		t.Fatalf("object with siblings should be left intact: %v", m)
 	}
@@ -319,9 +319,10 @@ nodes:
 	}
 }
 
-// End-to-end via readSpecFile: write a small template YAML that
-// references a sibling prompt file; confirm the decoded TemplateSpec
-// carries the resolved content (not the reference).
+// TestReadSpecFile_SourceFileResolved exercises sibling-file resolution
+// via readSpecFile: write a small template YAML that references a
+// sibling prompt file; confirm the decoded TemplateSpec carries the
+// resolved content (not the reference).
 func TestReadSpecFile_SourceFileResolved(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, "system.md")

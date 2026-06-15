@@ -4,8 +4,6 @@
 
 // resources_test.go — JSON-RPC dispatch tests for the resources/list
 // and resources/read methods added in Pass 6 per spec
-// .ok-planner/specs/2026-05-24-instance-debugger-design.md §6.
-//
 // The dispatcher (mcp.Server.ServeHTTP) lives in this package; the
 // breakpoint-hits URI scheme + persistence reads live in
 // controlapi/mcp_resources.go. Tests here focus on the dispatch +
@@ -117,7 +115,7 @@ func TestMCPResourcesList_ShapesResponse(t *testing.T) {
 func TestMCPResourcesList_PermissionGatedReturnsEmpty(t *testing.T) {
 	fr := &fakeResources{
 		listFn: func(r *http.Request) ([]mcp.Resource, error) {
-			// Mirror the production catalog: no `breakpoint:read` → empty.
+			// @constraint: mirror the production catalog: no `breakpoint:read` → empty.
 			return []mcp.Resource{}, nil
 		},
 	}
@@ -250,7 +248,7 @@ func TestMCPResourcesList_NoCatalogReturnsEmpty(t *testing.T) {
 // version of the "agent records next_since and re-polls" loop from
 // spec §6.4.
 func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
-	// Synthetic data: 5 hits with seq 1..5. Limit 2 per page → 3 pages
+	// @constraint: synthetic data: 5 hits with seq 1..5. Limit 2 per page → 3 pages
 	// (2+2+1, with the last page un-truncated since len < limit).
 	allHits := []map[string]any{
 		{"seq": 1, "hit_id": "h1"},
@@ -261,7 +259,7 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 	}
 	fr := &fakeResources{
 		readFn: func(r *http.Request, uri string) (*mcp.ResourceContents, *mcp.Error) {
-			// Parse since= and limit= out of the URI the same way the
+			// @constraint: parse since= and limit= out of the URI the same way the
 			// production catalog does — minimal stdlib parse so the
 			// test doesn't depend on the controlapi package.
 			since, limit := parseFakeCursor(uri, t)
@@ -292,10 +290,10 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 	}
 	server := &mcp.Server{Tools: &fakeCatalog{}, Resources: fr}
 
-	// Drain via repeated reads. Start at since=0 (no cursor).
+	// @constraint: Drain via repeated reads. Start at since=0 (no cursor).
 	cursor := int64(0)
 	collected := []int64{}
-	for i := 0; i < 10; i++ { // safety bound; expect 3 iterations
+	for i := 0; i < 10; i++ {
 		uri := buildCursorURI(cursor, 2)
 		body, _ := json.Marshal(map[string]any{
 			"jsonrpc": "2.0",
@@ -313,7 +311,6 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 			t.Fatalf("page %d: expected 1 contents entry; got %d", i, len(contents))
 		}
 		c := contents[0].(map[string]any)
-		// Decode the inner JSON text per spec §6.4.
 		var inner struct {
 			Hits      []map[string]any `json:"hits"`
 			NextSince int64            `json:"next_since"`
@@ -340,7 +337,7 @@ func TestMCPResourcesRead_PollingCursorPagination(t *testing.T) {
 		}
 	}
 
-	// One more poll past the end returns an empty page with
+	// @constraint: one more poll past the end returns an empty page with
 	// truncated=false — confirming the cursor advances and the polling
 	// agent can wait safely.
 	uri := buildCursorURI(cursor, 2)

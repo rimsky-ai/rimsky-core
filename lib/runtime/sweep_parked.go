@@ -87,8 +87,6 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 		limit = 100
 	}
 
-	// 1. Deadline-elapsed: resume_at has elapsed → wake via shared
-	//    wakeParkedNode helper.
 	ready, err := args.Queue.ListParkedReadyForResume(ctx, now, limit)
 	if err != nil {
 		log.Warn("SweepParkedNodes: ListParkedReadyForResume failed", "error", err.Error())
@@ -111,9 +109,10 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 		}
 	}
 
-	// 2. Max-park-duration overrun: emit an Error{error_class} terminal
-	//    via the standard pipeline. The watchdog forces parked → failed
-	//    via the state machine's ReasonParkTimeout.
+	// @constraint: max-park-duration overrun emits an Error terminal via
+	// the standard error_types pipeline; the watchdog forces parked → failed
+	// through the state machine's ReasonParkTimeout so default-policy
+	// give_up applies when the template declares no `park_timeout` override.
 	overdue, err := args.Queue.ListParkedOverdue(ctx, now, limit)
 	if err != nil {
 		log.Warn("SweepParkedNodes: ListParkedOverdue failed", "error", err.Error())
@@ -125,10 +124,10 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 		}
 	}
 
-	// 3. Per-reason max_park_duration overrun (spec E11): for rows whose
-	//    per-row col:rimsky_node_runs.max_park_duration_seconds is NULL
-	//    (no per-row cap), apply the deployment-level per-reason cap when
-	//    a matching entry exists in args.PerReasonMaxPark.
+	// @constraint: for rows whose per-row col:rimsky_node_runs.max_park_duration_seconds
+	// is NULL, apply the deployment-level per-reason cap when a matching entry
+	// exists in args.PerReasonMaxPark. Fallback order is per-row cap → per-reason
+	// deployment cap → no cap; timeout produces failed{error_class: "park_timeout"}.
 	if len(args.PerReasonMaxPark) > 0 {
 		if err := sweepParkedByReason(ctx, args, now, log); err != nil {
 			log.Warn("SweepParkedNodes: per-reason sweep failed", "error", err.Error())
@@ -161,19 +160,16 @@ func sweepParkedByReason(ctx context.Context, args ParkedSweepArgs, now time.Tim
 				"reason", reason, "error", err.Error())
 			continue
 		}
+		// @constraint: per-row col:rimsky_node_runs.max_park_duration_seconds takes priority over the deployment-level per-reason cap — rows with a per-row column are owned by ListParkedOverdue's dedicated path and skipped here to avoid double-waking. The per-reason sweep handles only rows where the per-row column is NULL.
 		for _, d := range diagnostic {
-			// Per-row column takes priority: if the row has its own cap
-			// set, the overdue path in step 2 already covered it.
 			nodeID, err := uuid.Parse(d.NodeID)
 			if err != nil {
 				log.Warn("SweepParkedNodes: parse node_id", "node_id", d.NodeID, "error", err.Error())
 				continue
 			}
-			// Resolve the parked row's RunScope by looking up the
-			// run-tree row keyed on the diagnostic DispatchID — the
-			// diagnostic projection doesn't surface run_scope_id, but
-			// the run-tree row does. Then GetParkedByNode keys on
-			// (node_id, run_scope_id).
+			// @constraint: the diagnostic projection lacks run_scope_id but
+			// GetParkedByNode keys on (node_id, run_scope_id); look up the
+			// run-tree row by DispatchID to resolve the RunScope first.
 			var runScopeID shared.UUID
 			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				rt, err := args.Persist.RunTree().GetByID(ctx, tx, d.DispatchID)
@@ -189,16 +185,19 @@ func sweepParkedByReason(ctx context.Context, args ParkedSweepArgs, now time.Tim
 			if err != nil || row == nil {
 				continue
 			}
+			// @constraint: rows with MaxParkDurationSeconds set are
+			// covered by ListParkedOverdue's dedicated path; this
+			// cap-based sweep must skip them to avoid double-waking.
 			if row.MaxParkDurationSeconds != nil {
-				continue // covered by ListParkedOverdue
+				continue
 			}
 			deadline := row.ParkedAt.Add(cap)
 			if deadline.After(now) {
 				continue
 			}
-			// resume_at race-guard mirroring ListParkedOverdue's filter:
-			// if resume_at has already elapsed, the deadline-elapsed wake
-			// will pick the row up first.
+			// @constraint: race-guard mirroring ListParkedOverdue's filter —
+			// when resume_at has already elapsed, the deadline-elapsed wake
+			// path owns the row and the per-reason sweep must defer.
 			if row.ResumeAt != nil && !row.ResumeAt.After(now) {
 				continue
 			}
@@ -240,14 +239,10 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 	if err != nil || target == nil {
 		return err
 	}
-	// Transition via the state machine (parked → failed under
-	// park_timeout). Use the Persist.Transaction so the queue removal,
-	// state transition, held-claim Abandon, and audit-log are atomic.
-	//
-	// Resolve the run's RunScope from the run-tree row keyed on the
-	// parked row's DispatchID — ParkedRow doesn't project
-	// run_scope_id directly. Without a RunScope we can't address
-	// state-machine writes under the new (node, run_scope) key.
+	// @constraint: queue removal, state transition, held-claim Abandon, and
+	// audit-log must be atomic — run them inside a single Persist.Transaction.
+	// ParkedRow doesn't project run_scope_id, so resolve it from the run-tree
+	// row first; state-machine writes key on (node, run_scope).
 	var runScopeID shared.UUID
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		rt, err := args.Persist.RunTree().GetByID(ctx, tx, row.DispatchID)
@@ -268,35 +263,29 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 			cascade.NodeStateFailed, cascade.ReasonParkTimeout, &parkTimeoutSig, tx); err != nil {
 			return err
 		}
-		// Settled-state drain on park-timeout failed: parked → failed
-		// is a transition between settled states, but any wait-set
-		// rows that landed between park-time and timeout (e.g. via a
-		// concurrent cascade walk) must release. Defensive correctness
-		// per `concept:wait-set` invariant "Bulk-delete on sender
-		// resolution covers every topic kind uniformly." Post-stage-5
-		// the wait-set keys on sender_run_id; the parked row's
-		// DispatchID is the run id.
-		//
-		//	@concept: wait-set
+		// @concept: wait-set — parked → failed is a transition between
+		// settled states, but any wait-set rows that landed between
+		// park-time and timeout (e.g. via a concurrent cascade walk) must
+		// release per the invariant "Bulk-delete on sender resolution
+		// covers every topic kind uniformly." Post-stage-5 the wait-set
+		// keys on sender_run_id; the parked row's DispatchID is the run id.
 		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, row.FrameID, row.DispatchID, tx); err != nil {
 			return err
 		}
-		// Auto-terminal Abandon for any held claims anchored on this
-		// node. We mark the claim-holders rows as 'failed' so
+		// @constraint: mark held claim-holders rows as 'failed' so
 		// CheckAndFireResolution computes the aggregate-failed → Abandon
-		// outcome. Skipped when the wire-time wiring isn't complete
-		// (ClaimHandles/StoreRegistry nil — typical of unit tests).
+		// outcome for every claim anchored on this node. Skipped when the
+		// wire-time wiring isn't complete (ClaimHandles/StoreRegistry nil
+		// — typical of unit tests).
 		if args.ClaimHandles != nil && args.StoreRegistry != nil {
 			if err := abandonHeldClaimsForOverdueNode(ctx, args, tx, row.NodeID, log); err != nil {
 				return err
 			}
 		}
-		// Remove the node-run row outright. With held claims
-		// resolved above, no producer-side state is left dangling.
-		//
-		// Thread `runScopeID` (already resolved above) so fan-out
-		// children's retirement lands on this specific run, not every
-		// sibling sharing the `node_id`.
+		// @constraint: thread runScopeID so fan-out children's retirement
+		// lands on this specific run, not every sibling sharing the
+		// node_id. Held claims are already resolved above so no
+		// producer-side state is left dangling by the outright removal.
 		if err := args.Queue.RemoveForNodeInTx(ctx, row.NodeID, runScopeID, "", tx); err != nil {
 			return err
 		}
@@ -325,7 +314,6 @@ func abandonHeldClaimsForOverdueNode(
 	if err != nil {
 		return err
 	}
-	// Build a minimal RunArgs for the unified terminal-decision engine.
 	runArgs := RunArgs{
 		Persist:        args.Persist,
 		Queue:          args.Queue,
@@ -338,37 +326,32 @@ func abandonHeldClaimsForOverdueNode(
 	}
 	for _, h := range handles {
 		if !h.IsHeld {
-			// Non-held claims do not have claim-holders rows; their
-			// terminal-decision is the active-terminal path on the
-			// owning supervisor's runner. The orphan reaper handles
-			// the cleanup since the owning node-run is going away.
+			// @constraint: non-held claims lack claim-holders rows; their
+			// terminal-decision is the active-terminal path on the owning
+			// supervisor's runner, and the orphan reaper handles cleanup
+			// since the owning node-run is going away.
 			continue
 		}
 		if h.HolderSupervisorID == nil {
-			// Non-active claim_handle (state ∈ {committed, abandoned})
-			// — auto-terminal already resolved this row. Skip silently;
-			// CheckAndFireResolution is idempotent but FailAllActive +
-			// the claimant-guarded predicate would fail with an empty
-			// supervisor id.
+			// @constraint: non-active claim_handle (state ∈ {committed,
+			// abandoned}) — auto-terminal already resolved this row.
+			// FailAllActive and the claimant-guarded predicate would fail
+			// with an empty supervisor id; skip silently because
+			// CheckAndFireResolution is idempotent.
 			continue
 		}
 		holderSupervisorID := *h.HolderSupervisorID
-		// Mark every still-active row as failed. ClaimHolders is reachable
-		// via Persist; we don't take a separate field on args because the
-		// dependency surface is already wide enough.
 		if err := args.Persist.ClaimHolders().FailAllActiveByClaimHandle(ctx, h.ID, holderSupervisorID, tx); err != nil {
 			return err
 		}
-		// Fire CheckAndFireResolution. The claim-handle row's
-		// HolderSupervisorID is the original acquirer; the resolution
-		// engine compares it against runArgs.SupervisorID, which here is
-		// the scheduler's supervisor id (different process). Override
-		// runArgs.SupervisorID to the row's HolderSupervisorID for the
-		// duration of this resolution so the claimant guard passes —
-		// blessed invariant 13 says the auto-terminal flow runs against
-		// the original holder. The scheduler is an authorized observer
-		// fulfilling the cleanup that the original holder will never
-		// perform (it was parked indefinitely).
+		// @constraint: per the claimant-guarded-release invariant, the
+		// resolution engine compares HolderSupervisorID against
+		// runArgs.SupervisorID, which here is the scheduler's id
+		// (different process). Override runArgs.SupervisorID to the row's
+		// HolderSupervisorID for the duration of this resolution so the
+		// claimant guard passes; the scheduler is an authorized observer
+		// fulfilling cleanup the original (indefinitely-parked) holder
+		// will never perform.
 		runArgs.SupervisorID = holderSupervisorID
 		if err := CheckAndFireResolution(ctx, runArgs, tx, h.ID); err != nil {
 			return err

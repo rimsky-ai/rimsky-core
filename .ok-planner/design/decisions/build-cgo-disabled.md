@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`CGO_ENABLED=0` for all builds.
+CGO disabled for all builds.
 
 ## Rationale
 

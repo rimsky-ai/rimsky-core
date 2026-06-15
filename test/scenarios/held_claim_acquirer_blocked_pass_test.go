@@ -46,7 +46,7 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// One item so Open returns Acquired and we exercise the
+				// @deliberate: One item so Open returns Acquired and we exercise the
 				// post-acquisition Blocked path (vs. the
 				// on_acquire_unavailable path in
 				// held_claim_acquirer_passes_test.go).
@@ -68,7 +68,7 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 			},
 		},
 	})
-	// Acquirer's executor returns an executor-blocked error. Inheritor
+	// @constraint: Acquirer's executor returns an executor-blocked error. Inheritor
 	// would succeed if it ran — it must not. It subscribes to the
 	// acquirer's terminal/success, which does not match the acquirer's
 	// terminal/error/<class> pass settlement, so the cascade does not
@@ -116,11 +116,11 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	// Acquirer should settle fresh under the pass branch.
+	// @constraint: Acquirer should settle fresh under the pass branch.
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/", 30*time.Second),
 		"acquirer should record settling_signal_type=terminal/error/<class> under error_types: { executor_blocked: { policy: [pass] } }")
 
-	// Auto-terminal must fire promptly because the acquirer-failure
+	// @constraint: Auto-terminal must fire promptly because the acquirer-failure
 	// path now fails all inheritor claim_holders rows (the fix for the
 	// held-claim leak). Post-Stage-3 of the claim-handle state-column
 	// refactor: auto-terminal flips the row's state (Promote-not-
@@ -143,7 +143,7 @@ func TestHeldClaimAcquirerBlockedPass(t *testing.T) {
 	require.Equal(t, 0, activeCount,
 		"every rimsky_claim_handles row for this instance must reach a terminal state — auto-terminal must fire when the held-claim acquirer takes resolve=pass; non-zero indicates the inheritor-rows-active leak has regressed")
 
-	// Inheritor must remain fresh — it subscribes to terminal/success,
+	// @deliberate: Inheritor must remain fresh — it subscribes to terminal/success,
 	// which does not match the acquirer's terminal/error/<class> pass
 	// settlement, so the cascade does not wake it.
 	var inhRow *persistence.NodeRow

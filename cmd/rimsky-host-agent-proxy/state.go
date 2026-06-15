@@ -25,11 +25,11 @@ import (
 type proxyState struct {
 	mu sync.RWMutex
 
-	agents           map[string]*agentConnection    // api_key_id → connection
-	spawns           map[string]*spawnState         // spawn_id → metadata
-	runScopeBindings map[runScopeBindingKey]string  // (scope_id, binding_name) → spawn_id
-	instances        map[string]*instanceCacheEntry // instance_id → cached binding catalog + owner + params
-	claimRoutes      map[string]claimRoute          // claim_id → (api_key_id, spawn_id) for Commit/Abandon/Release
+	agents           map[string]*agentConnection    // @constraint: api_key_id → connection
+	spawns           map[string]*spawnState         // @constraint: spawn_id → metadata
+	runScopeBindings map[runScopeBindingKey]string  // @constraint: (scope_id, binding_name) → spawn_id
+	instances        map[string]*instanceCacheEntry // @constraint: instance_id → cached binding
+	claimRoutes      map[string]claimRoute          // @constraint: claim_id → (api_key_id, spawn_id)
 }
 
 // claimRoute records which spawned producer holds a given claim so the
@@ -65,11 +65,11 @@ type agentConnection struct {
 	closeOnce sync.Once
 	closed    chan struct{}
 
-	// pendingMu guards all three pending maps below.
+	// @constraint: pendingMu guards pendingSpawn, pendingReap, and pendingStreams; held across delete+close in closeAllStreams so a concurrent deliverDispatch (also under pendingMu) never sends on a closed channel.
 	pendingMu      sync.Mutex
-	pendingSpawn   map[string]chan *genv1.SpawnAck      // spawn_id → ack channel
-	pendingReap    map[string]chan *genv1.Reaped        // spawn_id → reaped channel
-	pendingStreams map[string]chan *genv1.DispatchFrame // stream_id → dispatch-frame channel
+	pendingSpawn   map[string]chan *genv1.SpawnAck
+	pendingReap    map[string]chan *genv1.Reaped
+	pendingStreams map[string]chan *genv1.DispatchFrame
 }
 
 func newAgentConnection(apiKeyID, label, localCallbackBaseURL string) *agentConnection {
@@ -213,11 +213,12 @@ func (a *agentConnection) closeAllStreams() {
 
 // spawnState records one lazily-spawned child process. originalCallback
 // holds the un-rewritten supervisor callback URL so a LocalHttpForward
-// from the child can be un-rewritten back to the supervisor.
+// from the child can be un-rewritten back to the supervisor. scopeID is
+// the dispatch-observable scope (the instance id in v1).
 type spawnState struct {
 	spawnID          string
 	agentAPIKeyID    string
-	scopeID          string // the dispatch-observable scope (instance id in v1)
+	scopeID          string
 	bindingName      string
 	capabilities     map[string][]byte
 	originalCallback string

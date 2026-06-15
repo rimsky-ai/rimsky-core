@@ -29,12 +29,11 @@ func TestUnifiedImage(t *testing.T) {
 		t.Skip("docker unavailable")
 	}
 
-	// Resolve repo root from this test's source location so the build
+	// @deliberate: Resolve repo root from this test's source location so the build
 	// works regardless of the test runner's CWD.
 	_, thisFile, _, _ := runtime.Caller(0)
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
 
-	// Build.
 	buildCmd := exec.Command("docker", "build",
 		"-f", filepath.Join(repoRoot, "Dockerfile.rimsky"),
 		"-t", "rimsky:smoke", repoRoot)
@@ -49,7 +48,6 @@ func TestUnifiedImage(t *testing.T) {
 		_ = exec.Command("docker", "volume", "rm", volID).Run()
 	})
 
-	// Run with -p 0:8080 (random host port).
 	runCmd := exec.Command("docker", "run", "--rm", "-d", "--name", runID,
 		"-p", "0:8080", "-v", volID+":/var/lib/rimsky",
 		"rimsky-all:smoke")
@@ -57,7 +55,6 @@ func TestUnifiedImage(t *testing.T) {
 		t.Fatalf("docker run: %v\n%s", err, out)
 	}
 
-	// Find the host port.
 	portCmd := exec.Command("docker", "port", runID, "8080/tcp")
 	portOut, err := portCmd.Output()
 	if err != nil {
@@ -67,7 +64,6 @@ func TestUnifiedImage(t *testing.T) {
 	parts := strings.Split(firstLine, ":")
 	port := parts[len(parts)-1]
 
-	// Poll /health.
 	url := fmt.Sprintf("http://localhost:%s/health", port)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
@@ -86,7 +82,6 @@ func TestUnifiedImage(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	// Verify the SQLite startup banner appears in container logs.
 	logsOut, err := exec.Command("docker", "logs", runID).CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker logs: %v", err)
@@ -95,7 +90,6 @@ func TestUnifiedImage(t *testing.T) {
 		t.Fatalf("startup banner missing from container logs:\n%s", logsOut)
 	}
 
-	// Stop and verify clean exit.
 	if out, err := exec.Command("docker", "stop", runID).CombinedOutput(); err != nil {
 		t.Fatalf("docker stop: %v\n%s", err, out)
 	}

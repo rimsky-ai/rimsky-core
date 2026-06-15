@@ -124,10 +124,10 @@ func bailAcquiredLock(ctx context.Context, args RunArgs, lk AcquiredLock) error 
 			Producer:      lk.Producer,
 			Scope:         claimScope(lk),
 			Address:       claimAddress(lk),
-			// Zero LineageHint: the bail is an admin path and emits no
-			// claim_resolution.* signal — only the caller's
-			// orphaned_claim_lost_race admin event records it.
-			// ParentClaimHandleID stays nil: the bail unwinds a
+			// @deliberate: zero LineageHint because the bail is an admin
+			// path and emits no claim_resolution.* signal — only the
+			// caller's orphaned_claim_lost_race admin event records it.
+			// ParentClaimHandleID stays nil because the bail unwinds a
 			// just-committed root acquisition; there is no parent
 			// aggregation to bump.
 		})

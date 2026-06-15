@@ -82,12 +82,12 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 		})
 	}))
 
-	// Producer-side: one Abandon, no Commit.
+	// @constraint: Producer-side: one Abandon, no Commit.
 	require.Equal(t, 1, countCallsOnID(store.Calls(), claimHandleID.String(), "abandon"),
 		"natural Abandon must hit Producer.Abandon once")
 	require.Equal(t, 0, countCallsOnID(store.Calls(), claimHandleID.String(), "commit"))
 
-	// Lineage row: kind=claim_terminal, outcome=abandoned, no cause.
+	// @constraint: Lineage row: kind=claim_terminal, outcome=abandoned, no cause.
 	rows, err := backend.Lineage().GetByClaimHandleID(ctx, claimHandleID)
 	require.NoError(t, err)
 	require.Len(t, rows, 1, "claim_terminal row must be present after Abandon")
@@ -100,7 +100,7 @@ func TestClaimAbandonLineage_NaturalAbandonEmitsAbandonedOutcome(t *testing.T) {
 	require.Equal(t, persistence.LineageOutcomeAbandoned, rec.Outcome)
 	require.Empty(t, rec.Cause, "natural Abandon must not carry a Cause field")
 
-	// Events: one claim_resolution.abandon, cause=natural.
+	// @deliberate: Events: one claim_resolution.abandon, cause=natural.
 	var page persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		p, err := backend.Events().List(ctx, persistence.EventListFilter{

@@ -359,15 +359,6 @@ func EmitLeafRunLineage(ctx context.Context, args RunArgs, in LeafRunEmitInput) 
 			"run_id", in.RunID.String(),
 			"error", uerr.Error())
 	}
-	// Plumbing status of the LeafRunRecord fields:
-	//   - TemplateHash, ParentRunID — sourced from acquisition; populated.
-	//   - ExecutorVersion, FrameTriggerKind, TriggerMessageID — NOT YET
-	//     plumbed. Tracked via a single-shot startup INFO log
-	//     (`logMissingFieldsOnce`) rather than a per-row warn so the gap
-	//     is observable once at boot without spamming the log on every
-	//     terminal. When a field's source lands, drop it from
-	//     `missingLeafRunFields` and the startup line shortens
-	//     automatically.
 	parentRunID := ""
 	if in.ParentRunID != nil {
 		parentRunID = in.ParentRunID.String()
@@ -418,7 +409,8 @@ func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {
 	for _, lk := range acq.Locks {
 		sp, ok := lk.Spec.(claimproducer.ClaimSpec)
 		if !ok {
-			// NamedLockSpec rows — no producer.
+			// @constraint: NamedLockSpec rows carry no producer, so they
+			// cannot contribute to the producer-keyed lineage projection.
 			continue
 		}
 		out = append(out, LeafRunHeldClaim{
@@ -428,12 +420,11 @@ func HeldClaimsForLineage(acq *acquisition) []LeafRunHeldClaim {
 			ClaimScopeDataHash: HashBytes(lk.ClaimResult.ClaimScope),
 		})
 	}
-	// `HeldClaims` map carries co-held / inherited aliases — the
-	// claim_handle_id and producer_name aren't on the in-memory result
-	// (they live on the row), so we capture only the per-alias entry
-	// with empty ClaimHandleID + ProducerName. Downstream tools can
-	// join against `rimsky_claim_handles` by alias if they need the
-	// row id.
+	// @deliberate: HeldClaims map carries co-held / inherited aliases
+	// whose claim_handle_id and producer_name live on the row, not the
+	// in-memory result, so the per-alias entry is emitted with empty
+	// ClaimHandleID + ProducerName; downstream tools join against
+	// rimsky_claim_handles by alias if they need the row id.
 	for alias, cr := range acq.HeldClaims {
 		out = append(out, LeafRunHeldClaim{
 			ClaimHandleID:      "",
@@ -478,6 +469,8 @@ func missingLeafRunFields(rec LeafRunRecord) []string {
 	return out
 }
 
+var logMissingFieldsOnceState sync.Once
+
 // logMissingFieldsOnce emits a single startup-time INFO listing the
 // LeafRunRecord fields the build doesn't yet plumb. Subsequent emits
 // in the same process are silent — the gap is observable at boot
@@ -488,8 +481,6 @@ func missingLeafRunFields(rec LeafRunRecord) []string {
 // condition. Tests that exercise EmitLeafRunLineage don't need to
 // reset it: every test inherits the same plumbing surface; the log
 // fires at most once per process regardless of test count.
-var logMissingFieldsOnceState sync.Once
-
 func logMissingFieldsOnce(logger shared.Logger, rec LeafRunRecord) {
 	if logger == nil {
 		return
@@ -537,8 +528,6 @@ func CollectSubstitutionRefsForEmit(ctx context.Context, args RunArgs, acq *acqu
 	if len(refs) == 0 {
 		return nil
 	}
-	// Pre-populate the directive-shape entries. The upstream-run-id
-	// lookup augments these with `SourceKind="run"` entries below.
 	out := make([]SubstitutionRef, 0, len(refs)*2)
 	for _, r := range refs {
 		out = append(out, SubstitutionRef{
@@ -547,9 +536,6 @@ func CollectSubstitutionRefsForEmit(ctx context.Context, args RunArgs, acq *acqu
 			SourceVersionOrID: r.Name,
 		})
 	}
-	// Map upstream node-type → upstream node-id within the instance
-	// (one tx for the whole batch). The upstream run-id lookup walks
-	// the lineage projection for the most recent leaf-run row.
 	if args.Persist == nil {
 		return out
 	}
@@ -615,9 +601,9 @@ func mostRecentRunIDForNode(ctx context.Context, lt persistence.LineageTable, up
 	if err != nil {
 		return shared.UUID{}
 	}
-	// Rows come back observed_at DESC for the most-recent semantics
-	// the ancestor walker wants; the persistence layer's `Query`
-	// sorts ascending so we scan back-to-front.
+	// @constraint: ancestor walker needs observed_at DESC for
+	// most-recent semantics; the persistence layer's Query sorts
+	// ascending, so this loop scans back-to-front to invert the order.
 	for i := len(page.Rows) - 1; i >= 0; i-- {
 		r := page.Rows[i]
 		var rec struct {

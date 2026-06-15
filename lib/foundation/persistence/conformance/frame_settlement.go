@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// frame_settlement.go — FrameSettlement conformance area.
-//
+// @constraint: FrameSettlement conformance area.
 // Pins the frame-engine settlement core (graph/frame/engine.go's
 // frame-end detection, instance termination, stuck-frame warning, and
 // orphan-dispatch reaper) plus the producer-side source-node binding:
@@ -95,20 +94,19 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 	store := d.Tables()
 	q := d.Queue()
 
-	// The fixture frame is running with no run rows at all — it
-	// surfaces as drained.
+	// @constraint: a running frame with no run rows surfaces as drained.
 	if got := framePendingForInstance(ctx, t, d, fix.InstanceID); len(got) != 1 || got[0].FrameID != fix.FrameID {
 		t.Fatalf("empty running frame not surfaced: %+v, want [%s]", got, fix.FrameID)
 	}
 
-	// A pending/stale run row in the frame's scope holds it open.
+	// @constraint: a pending/stale run row in the frame's scope holds it open.
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	if got := framePendingForInstance(ctx, t, d, fix.InstanceID); len(got) != 0 {
 		t.Fatalf("frame surfaced drained while a stale run is pending: %+v", got)
 	}
 
-	// A PARKED run holds the frame open too — draining to completed
-	// while a run sits parked would discard the park's eventual resume.
+	// @constraint: a parked run holds the frame open — draining while a
+	// run sits parked would discard the park's eventual resume.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ok, err := q.ClaimDispatchRow(ctx, tx, runID, frameSettlementSup)
 		if err != nil {
@@ -130,7 +128,9 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 		t.Fatalf("frame surfaced drained while a run is PARKED: %+v", got)
 	}
 
-	// Resume (parked → pending/stale): still unresolved, still held.
+	// @constraint: resume (parked → pending/stale) MUST keep the
+	// frame unresolved and held — the supervisor treats both states
+	// as unsettled.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		resumed, err := q.ResumeParkedInTx(ctx, tx, runID, "deadline_elapsed")
 		if err != nil {
@@ -147,15 +147,15 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 		t.Fatalf("frame surfaced drained while the resumed run is stale: %+v", got)
 	}
 
-	// Retiring the run drains the frame.
+	// @constraint: retiring the run drains the frame.
 	completeRunAdmin(ctx, t, d, runID)
 	if got := framePendingForInstance(ctx, t, d, fix.InstanceID); len(got) != 1 || got[0].FrameID != fix.FrameID {
 		t.Fatalf("drained frame not surfaced after run retired: %+v", got)
 	}
 
-	// A terminal-FAILED run row does NOT hold the frame — failed is
-	// genuinely terminal (the engine picks the frame's failed flavor via
-	// HasFailedNode instead).
+	// @constraint: a terminal-failed run row does NOT hold the frame —
+	// failed is genuinely terminal (the engine picks the frame's failed
+	// flavor via HasFailedNode instead).
 	nodeB := seedExtraNode(ctx, t, d, fix, "settlement-node-b")
 	runB := seedClaimedRunForNode(ctx, t, d, fix, nodeB, frameSettlementSup)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -194,7 +194,7 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 		return failed
 	}
 
-	// A stale (and then running) run is unresolved, not failed.
+	// @constraint: a stale (and then running) run is unresolved, not failed.
 	_ = seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, frameSettlementSup)
 	if hasFailed(fix.FrameID) {
 		t.Fatalf("HasFailedNode = true with only a claimed stale run")
@@ -209,7 +209,7 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("HasFailedNode = true with only a running run")
 	}
 
-	// running → failed flips the read for THIS frame only.
+	// @constraint: running → failed flips the read for THIS frame only.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
 			cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, nil, tx)
@@ -220,7 +220,8 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("HasFailedNode = false after running → failed")
 	}
 
-	// Frame-scoped: a different frame in the same instance reads clean.
+	// @constraint: frame-scoped read — a different frame in the same
+	// instance reads clean.
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
@@ -314,14 +315,15 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 		return ts
 	}
 
-	// Durable instance (the default): never touched, even fully drained.
+	// @constraint: durable instance (the default) — never touched, even
+	// fully drained.
 	markIfDone(fix.InstanceID)
 	if got := terminatedAt(fix.InstanceID); got != nil {
 		t.Fatalf("durable instance terminated: terminated_at=%v", got)
 	}
 
-	// terminate_after_run instance with an unresolved (stale) run: the
-	// unresolved-work guard blocks termination.
+	// @constraint: terminate_after_run instance with an unresolved
+	// (stale) run — the unresolved-work guard blocks termination.
 	tfr := seedTerminateAfterRunInstance(ctx, t, d, fix)
 	runID := seedClaimedRunForNode(ctx, t, d, tfr, tfr.NodeID, frameSettlementSup)
 	markIfDone(tfr.InstanceID)
@@ -329,8 +331,8 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 		t.Fatalf("instance terminated with an unresolved stale run: %v", got)
 	}
 
-	// Parked run: still blocked — a later wake must never land on a
-	// terminated instance.
+	// @constraint: parked run still blocks termination — a later wake
+	// must never land on a terminated instance.
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		DispatchID: runID, ExpectedClaimedBy: frameSettlementSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
@@ -341,9 +343,9 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 		t.Fatalf("instance terminated with a PARKED run: %v", got)
 	}
 
-	// Strict semantics: a QUEUED frame does NOT block termination. Park
-	// resolved + run retired → the predicate holds even though a queued
-	// frame is waiting.
+	// @constraint: strict semantics — a queued frame does NOT block
+	// termination. Park resolved + run retired → the predicate holds even
+	// though a queued frame is waiting.
 	var queuedFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
@@ -365,14 +367,14 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 		t.Fatalf("terminate_after_run instance did not terminate once drained")
 	}
 
-	// Idempotent set-once: a second invocation keeps the stamp.
+	// @constraint: idempotent set-once — a second invocation keeps the stamp.
 	markIfDone(tfr.InstanceID)
 	if got := terminatedAt(tfr.InstanceID); got == nil || !got.Equal(*first) {
 		t.Fatalf("terminated_at re-stamped: first=%v second=%v", first, got)
 	}
 
-	// Terminated-instance guard: the orphaned queued frame never
-	// surfaces ready (it must not run against a terminated instance).
+	// @constraint: terminated-instance guard — the orphaned queued frame
+	// never surfaces ready (it must not run against a terminated instance).
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if _, err := frames.MarkRunningFrameTerminal(ctx, tfr.FrameID, persistence.FrameStateCompleted, tx); err != nil {
 			return err
@@ -430,8 +432,8 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 		return id, found
 	}
 
-	// Fresh source: matched=true, one pending/stale run row exists bound
-	// to the frame.
+	// @constraint: fresh source — matched=true, one pending/stale run row
+	// exists bound to the frame.
 	if !mark(nodeS, fix.FrameID) {
 		t.Fatalf("MarkSourceNodeStale on a fresh source returned matched=false")
 	}
@@ -440,8 +442,8 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 		t.Fatalf("no in-flight run row after MarkSourceNodeStale")
 	}
 
-	// Idempotent re-entry (redelivered frame-start under contention):
-	// matched=true again, SAME in-flight row — no sibling minted.
+	// @constraint: idempotent re-entry (redelivered frame-start under
+	// contention) — matched=true again, SAME in-flight row, no sibling minted.
 	if !mark(nodeS, fix.FrameID) {
 		t.Fatalf("re-entrant MarkSourceNodeStale returned matched=false")
 	}
@@ -450,8 +452,9 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 		t.Fatalf("re-entry changed the in-flight row: first=%s second=%s found=%v", runID, runID2, found)
 	}
 
-	// Out-of-bounds: the source is already in-flight under a DIFFERENT
-	// frame → matched=false (the engine must roll back the promotion).
+	// @constraint: out-of-bounds — the source is already in-flight under
+	// a DIFFERENT frame → matched=false (the engine must roll back the
+	// promotion).
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
@@ -464,8 +467,8 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 		t.Fatalf("MarkSourceNodeStale matched a source already in-flight under another frame")
 	}
 
-	// Out-of-bounds: a CLAIMED (active) run rejects even for its own
-	// frame — the source is no longer pending/stale.
+	// @constraint: out-of-bounds — a claimed (active) run rejects even
+	// for its own frame; the source is no longer pending/stale.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ok, err := q.ClaimDispatchRow(ctx, tx, runID, frameSettlementSup)
 		if err != nil {
@@ -506,8 +509,8 @@ func testFrameSettlementStuckFrames(
 	frames := store.Frames()
 	q := d.Queue()
 
-	// The fixture frame carries the 600000ms timeout; an 11-minute-old
-	// last_progress_at puts it past the window.
+	// @deliberate: the fixture frame carries the 600000ms timeout; an
+	// 11-minute-old last_progress_at puts it past the window.
 	const timeoutMs = int64(600000)
 	frameID := fix.FrameID
 	backdate := func() {
@@ -541,20 +544,20 @@ func testFrameSettlementStuckFrames(
 
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, frameID)
 
-	// Fresh window: not stuck yet.
+	// @constraint: fresh window — not stuck yet.
 	if got := listStuck(); len(got) != 0 {
 		t.Fatalf("frame stuck inside a fresh progress window: %+v", got)
 	}
 
-	// Window elapsed with an unclaimed stale run: stuck, carrying the
-	// frame's timeout for the warning message.
+	// @constraint: window elapsed with an unclaimed stale run — stuck,
+	// carrying the frame's timeout for the warning message.
 	backdate()
 	got := listStuck()
 	if len(got) != 1 || got[0].FrameID != frameID || got[0].FrameTimeoutMs != timeoutMs {
 		t.Fatalf("stuck set = %+v, want [{%s %s %d}]", got, frameID, fix.InstanceID, timeoutMs)
 	}
 
-	// A claimed dispatch means work is being executed: not stuck.
+	// @constraint: a claimed dispatch means work is being executed — not stuck.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ok, err := q.ClaimDispatchRow(ctx, tx, runID, frameSettlementSup)
 		if err != nil {
@@ -571,7 +574,7 @@ func testFrameSettlementStuckFrames(
 		t.Fatalf("frame stuck while its dispatch is claimed: %+v", got)
 	}
 
-	// Released back to unclaimed: stuck again.
+	// @constraint: released back to unclaimed — stuck again.
 	if err := q.ReleaseClaim(ctx, runID, frameSettlementSup); err != nil {
 		t.Fatalf("ReleaseClaim: %v", err)
 	}
@@ -579,8 +582,8 @@ func testFrameSettlementStuckFrames(
 		t.Fatalf("released frame not stuck: %+v", got)
 	}
 
-	// RefreshProgress restarts the window (the no-progress metric, not
-	// frame age): not stuck.
+	// @constraint: RefreshProgress restarts the window (the no-progress
+	// metric, not frame age) — not stuck.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return frames.RefreshProgress(ctx, frameID, tx)
 	}); err != nil {
@@ -590,8 +593,9 @@ func testFrameSettlementStuckFrames(
 		t.Fatalf("frame stuck immediately after RefreshProgress: %+v", got)
 	}
 
-	// Window elapses again, then the dispatchable work drains: a frame
-	// with no stale/running run is not stuck no matter how old.
+	// @constraint: window elapses again, then the dispatchable work
+	// drains — a frame with no stale/running run is not stuck no matter
+	// how old.
 	backdate()
 	if got := listStuck(); len(got) != 1 {
 		t.Fatalf("frame not stuck after window re-elapsed: %+v", got)
@@ -630,18 +634,19 @@ func testFrameSettlementOrphanDispatches(t *testing.T, d persistence.Database) {
 		return mine
 	}
 
-	// One claimed run + one unclaimed run in the fixture frame.
+	// @deliberate: seed one claimed run + one unclaimed run in the
+	// fixture frame.
 	claimedRun := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, frameSettlementSup)
 	nodeB := seedExtraNode(ctx, t, d, fix, "orphan-node-b")
 	_ = seedConformanceRunForNode(ctx, t, d, nodeB, fix.FrameID)
 
-	// While the frame is running, nothing is orphaned.
+	// @constraint: while the frame is running, nothing is orphaned.
 	if got := listOrphans(); len(got) != 0 {
 		t.Fatalf("orphans reported under a running frame: %+v", got)
 	}
 
-	// Frame terminal: exactly the CLAIMED dispatch surfaces, carrying
-	// the claimant the reaper releases.
+	// @constraint: frame terminal — exactly the claimed dispatch
+	// surfaces, carrying the claimant the reaper releases.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		transitioned, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateCompleted, tx)
 		if err != nil {
@@ -659,7 +664,8 @@ func testFrameSettlementOrphanDispatches(t *testing.T, d persistence.Database) {
 		t.Fatalf("orphan set = %+v, want exactly [{%s %s %s}]", got, claimedRun, frameSettlementSup, fix.FrameID)
 	}
 
-	// Releasing the claim clears the orphan (the reaper's fixed point).
+	// @constraint: releasing the claim clears the orphan (the reaper's
+	// fixed point).
 	if err := d.Queue().ReleaseClaim(ctx, claimedRun, frameSettlementSup); err != nil {
 		t.Fatalf("ReleaseClaim: %v", err)
 	}

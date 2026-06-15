@@ -63,7 +63,6 @@ func TestResumeInvalidOverlay(t *testing.T) {
 
 	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
 
-	// Step 1: resume with type-violating overlay. Expect 400.
 	badStatus, badOut := breakpointResume(t, h, iid, bpID, map[string]any{
 		"hit_id":  hit.ID.String(),
 		"overlay": map[string]any{"tag": 42},
@@ -71,7 +70,7 @@ func TestResumeInvalidOverlay(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, badStatus,
 		"invalid overlay should yield 400 ErrResumeOverlayInvalid; got body=%v", badOut)
 
-	// The hit row must NOT carry resumed_at — the rejection is
+	// @constraint: The hit row must NOT carry resumed_at — the rejection is
 	// non-destructive so the operator can retry with a valid overlay.
 	row := getHitRow(t, h, hit.ID)
 	require.NotNil(t, row)
@@ -80,7 +79,6 @@ func TestResumeInvalidOverlay(t *testing.T) {
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called while the hit is still paused")
 
-	// Step 2: retry with a valid overlay; should resume and dispatch.
 	goodStatus, goodOut := breakpointResume(t, h, iid, bpID, map[string]any{
 		"hit_id":  hit.ID.String(),
 		"overlay": map[string]any{"tag": "good"},

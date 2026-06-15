@@ -35,7 +35,7 @@ export function loadExecutorProto(): ExecutorPackage {
       enums: String,
       defaults: true,
       oneofs: true,
-      // Resolve any cross-proto imports against the package's proto dir.
+      // @deliberate: resolve any cross-proto imports against the package's proto dir.
       includeDirs: [protoDir],
     },
   );

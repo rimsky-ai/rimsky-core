@@ -44,8 +44,8 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// Post-RunScope-first: instance + main_run_scope mutually FK each
-	// other; seed in one tx with deferred constraints.
+	// @constraint: post-RunScope-first, instance and main_run_scope FK
+	// each other mutually; seed in one tx with deferred constraints.
 	scopeID := uuid.New().String()
 	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -67,8 +67,8 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// rimsky_frames requires frame_timeout_ms >= 60000 (CHECK). Use the
-	// minimum permitted value; the test never trips the timeout.
+	// @constraint: rimsky_frames CHECK requires frame_timeout_ms >= 60000;
+	// use the minimum permitted value, the test never trips the timeout.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at)
@@ -84,8 +84,9 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	// The only node_run for this frame is parked: phase='parked',
-	// state='parked'. There are NO stale/running runs.
+	// @deliberate: seed the frame's only node_run as fully parked
+	// (phase + state), with no stale/running runs, to assert the
+	// predicate holds the frame open on park alone.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)

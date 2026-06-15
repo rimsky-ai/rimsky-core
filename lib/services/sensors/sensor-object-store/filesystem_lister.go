@@ -99,8 +99,6 @@ func (l *FilesystemLister) List(_ context.Context, bucket, prefix string) ([]Obj
 		if walkErr != nil {
 			return walkErr
 		}
-		// Only regular files become objects. Skip the bucket root
-		// (it's a directory) and any subdirectories.
 		if fi.IsDir() {
 			return nil
 		}
@@ -111,9 +109,9 @@ func (l *FilesystemLister) List(_ context.Context, bucket, prefix string) ([]Obj
 		if err != nil {
 			return fmt.Errorf("rel %q: %w", p, err)
 		}
-		// Normalize to forward slashes so the object names stay
-		// stable across OS (the watermark is a name comparison and
-		// must not flip on path-separator differences).
+		// @constraint: object names use forward slashes so the
+		// watermark (a name comparison) stays stable across OS and
+		// does not flip on path-separator differences.
 		name := filepath.ToSlash(rel)
 		if prefix != "" && !strings.HasPrefix(name, prefix) {
 			return nil

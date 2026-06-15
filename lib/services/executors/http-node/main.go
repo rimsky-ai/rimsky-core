@@ -32,7 +32,6 @@ func main() {
 
 	s := NewServer(cfg)
 
-	// gRPC listener on the primary port.
 	grpcLis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", cfg.Host, cfg.GRPCPort))
 	if err != nil {
 		slog.Error("grpc listen", "error", err.Error())
@@ -49,9 +48,9 @@ func main() {
 		}
 	}()
 
-	// HTTP+JSON bridge on a separate port. Hosts both the dispatch
-	// `/v1/Execute` endpoint and the observability `/observability/v1/*`
-	// endpoints — same listener, different path prefixes (per spec §2.1).
+	// @deliberate: one HTTP listener hosts both the dispatch `/v1/Execute`
+	// endpoint and the observability `/observability/v1/*` endpoints —
+	// different path prefixes share a single port per spec §2.1.
 	httpBridgeURL := cfg.HTTPBridgeURL
 	mux := http.NewServeMux()
 	mountBridge(mux, s)
@@ -66,8 +65,8 @@ func main() {
 		}
 	}()
 
-	// Periodic SweepEvicted goroutine — bounds memory growth as the
-	// retention TTL passes for terminal-ed dispatches.
+	// @constraint: SweepEvicted must run periodically to bound observability
+	// memory growth as the retention TTL passes for terminal-ed dispatches.
 	sweepCtx, cancelSweep := context.WithCancel(context.Background())
 	defer cancelSweep()
 	go func() {

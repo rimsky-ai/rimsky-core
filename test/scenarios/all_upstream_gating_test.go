@@ -43,13 +43,13 @@ import (
 func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Initial frame runs fast so the instance settles promptly.
+	// @deliberate: Initial frame runs fast so the instance settles promptly.
 	h.Stub.WhenType("a").Success(map[string]any{"a_value": "a-1"}, true, "a")
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-1"}, true, "b")
 	h.Stub.WhenType("c").Success(map[string]any{"c_value": "from-c-1"}, true, "c")
 	h.Stub.WhenType("d").Success(map[string]any{}, true, "d")
 
-	// The diamond. B and C subscribe to A; D subscribes to B and C AND
+	// @deliberate: The diamond. B and C subscribe to A; D subscribes to B and C AND
 	// pulls one attribute from each (both required), so D's dispatch
 	// carries the full upstream set in its substitution context — and a
 	// premature dispatch against a half-settled set is independently
@@ -123,7 +123,6 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	require.NotNil(t, c)
 	require.NotNil(t, d)
 
-	// Initial settle: the whole diamond reaches fresh.
 	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
 		"d should reach fresh after the initial frame settles")
 
@@ -139,7 +138,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	baselineDRuns := countRuns("d")
 	require.GreaterOrEqual(t, baselineDRuns, 1, "d should have run at least once initially")
 
-	// Re-script: A and B stay fast; C is held in-flight until the test
+	// @deliberate: Re-script: A and B stay fast; C is held in-flight until the test
 	// releases it (the deterministic injection hook). D records its
 	// dispatch-time attribute bag for the substitution-context check.
 	releaseC := make(chan struct{})
@@ -148,7 +147,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	h.Stub.WhenType("c").HoldUntil(releaseC).Success(map[string]any{"c_value": "from-c-2"}, true, "c")
 	h.Stub.WhenType("d").Success(map[string]any{}, true, "d")
 
-	// One invalidation of A, one frame. A re-runs; B's and C's staleness
+	// @deliberate: One invalidation of A, one frame. A re-runs; B's and C's staleness
 	// arrives via A's SETTLEMENT walk — the propagation path that seeds
 	// no next-tier wait-set gates for D.
 	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate",
@@ -159,13 +158,12 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should re-reach fresh")
-	// B settles fast; C dispatches into the hold and stays in-flight.
 	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
 		"b should re-reach fresh while c is held")
 	require.Eventually(t, func() bool { return countRuns("c") >= 2 },
 		30*time.Second, 25*time.Millisecond, "c should dispatch into its hold")
 
-	// THE midpoint: B settled (its settlement walk marked D stale), C
+	// @constraint: THE midpoint: B settled (its settlement walk marked D stale), C
 	// still in-flight. D must not be dispatch-eligible — its in-flight
 	// run row (when present) stays pending and unclaimed (settled rows
 	// persist with phase='completed' and are out of scope), and the stub
@@ -187,7 +185,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Release the held upstream: the last in-flight upstream resolves,
+	// @deliberate: Release the held upstream: the last in-flight upstream resolves,
 	// D becomes eligible, dispatches, and the frame resolves.
 	close(releaseC)
 	require.True(t, h.WaitForNodeState(c.ID, cascade.NodeStateFresh, 30*time.Second),
@@ -195,17 +193,17 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
 		"d should re-reach fresh after the last upstream settles")
 
-	// Single dispatch: exactly one new `d` run for the whole diamond
+	// @constraint: Single dispatch: exactly one new `d` run for the whole diamond
 	// re-run — not re-fired per settling sender, never run early.
 	require.Eventually(t, func() bool { return countRuns("d") == baselineDRuns+1 },
 		10*time.Second, 25*time.Millisecond,
 		"d should run exactly once after the last upstream settles")
-	// Grace window: no straggler second dispatch.
+	// @constraint: Grace window: no straggler second dispatch.
 	time.Sleep(1 * time.Second)
 	require.Equal(t, baselineDRuns+1, countRuns("d"),
 		"d must run exactly once per frame, not once per settling sender")
 
-	// Full upstream set in the substitution context: D's dispatch-time
+	// @deliberate: Full upstream set in the substitution context: D's dispatch-time
 	// attribute bag (recorded by the stub off the wire) carries BOTH
 	// this-frame contributions — fresh B and the released C — proving
 	// the run was computed against the fully-settled upstream set.

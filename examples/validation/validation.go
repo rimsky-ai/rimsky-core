@@ -48,8 +48,8 @@ func (v *Validation) Validate(_ context.Context, req *genv1.ValidateRequest) (*g
 	if cp := req.GetClaimProducer(); cp != nil {
 		return validateClaimProducer(cp), nil
 	}
-	// A role this example does not validate: accept it rather than silently
-	// rejecting registration. A real service would route every role it owns.
+	// @deliberate: a role this example does not validate is accepted rather
+	// than silently rejected; a real service would route every role it owns.
 	return &genv1.ValidateResponse{Valid: true}, nil
 }
 
@@ -71,24 +71,19 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 	return &genv1.ValidateResponse{Valid: true}
 }
 
-// Sentinel selector tokens used by the cross-stack proof in
-// main_e2e_test.go to drive each validation outcome through the public
-// registration surface. A real validator would key on producer-specific
-// semantics (selector grammar, retention class, partition key), not magic
-// strings — but the sentinels here let the proof prove the THREE outcomes
-// (error blocks, warning passes, accept passes) deterministically without
-// dragging in a domain-specific selector parser.
-const (
-	// SelectorTriggerError, present anywhere in a claim binding's
-	// selector, surfaces an error-severity finding from the
-	// claim-producer arm. Registration is refused with HTTP 400.
-	SelectorTriggerError = "trigger-validation-error"
-	// SelectorTriggerWarning, present anywhere in a claim binding's
-	// selector, surfaces a warning-severity finding. Registration
-	// succeeds; rimsky surfaces the warning on the response body
-	// (and in the dry-run synthesis).
-	SelectorTriggerWarning = "trigger-validation-warning"
-)
+// SelectorTriggerError, present anywhere in a claim binding's selector,
+// surfaces an error-severity finding from the claim-producer arm.
+// Registration is refused with HTTP 400. The cross-stack proof uses this
+// sentinel — alongside SelectorTriggerWarning — to drive each validation
+// outcome through the public registration surface; a real validator
+// would key on producer-specific semantics rather than magic strings.
+const SelectorTriggerError = "trigger-validation-error"
+
+// SelectorTriggerWarning, present anywhere in a claim binding's
+// selector, surfaces a warning-severity finding. Registration succeeds;
+// rimsky surfaces the warning on the response body (and in the dry-run
+// synthesis).
+const SelectorTriggerWarning = "trigger-validation-warning"
 
 // validateClaimProducer walks the claim bindings rimsky sends for a
 // template-registration validation and surfaces a finding per the

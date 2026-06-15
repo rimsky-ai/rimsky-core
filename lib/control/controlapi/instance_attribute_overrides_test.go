@@ -57,14 +57,14 @@ func TestInstanceCreate_AttributeOverrides_RoundTripAndPersistence(t *testing.T)
 	instID, _ := out["instance_id"].(string)
 	require.NotEmpty(t, instID)
 
-	// Round-trips via GET /instances/:id.
+	// @constraint: round-trips via GET /instances/:id.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	gotOverrides, ok := out["attribute_overrides"].(map[string]any)
 	require.True(t, ok, "attribute_overrides missing from GET response: %v", out)
 	require.Equal(t, overrides, gotOverrides)
 
-	// Persisted on the row directly so the dispatch path (which reads
+	// @constraint: persisted on the row directly so the dispatch path (which reads
 	// the row at acquisition) sees the same shape.
 	id, err := uuid.Parse(instID)
 	require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestInstanceCreate_AttributeOverrides_OmittedDefaultsEmpty(t *testing.T) {
 
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status)
-	// Omit-from-response when empty (omitempty on the struct tag).
+	// @constraint: omit-from-response when empty (omitempty on the struct tag).
 	_, present := out["attribute_overrides"]
 	require.False(t, present, "attribute_overrides should be omitted from the GET response when empty: %v", out)
 }
@@ -162,7 +162,7 @@ func TestInstanceCreate_AttributeOverrides_RejectsExecutorNotReferencedByTemplat
 	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	// `unused-exec` is declared in the harness's Executors map but the
+	// @constraint: `unused-exec` is declared in the harness's Executors map but the
 	// `validTemplateBody` template only routes to `worker`. Attempting
 	// to override on `unused-exec` would be a silent no-op at dispatch —
 	// the validator must reject it.
@@ -205,11 +205,11 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMatch_NoWarn(t *testing.T) 
 	})
 	require.Equal(t, http.StatusCreated, status)
 
-	// Clear logs from the initial create so we only see records from
+	// @constraint: clear logs from the initial create so we only see records from
 	// the idempotent retry that follows.
 	h.logger.Clear()
 
-	// Idempotent retry with the SAME body: the persisted row's
+	// @constraint: idempotent retry with the SAME body: the persisted row's
 	// overrides match the request, so nothing was actually discarded;
 	// the WARN must not fire.
 	status, _ = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
@@ -254,7 +254,7 @@ func TestInstanceCreate_AttributeOverrides_IdempotentMismatch_Warns(t *testing.T
 
 	h.logger.Clear()
 
-	// Idempotent retry with a DIFFERENT body — the persisted row's
+	// @constraint: idempotent retry with a DIFFERENT body — the persisted row's
 	// overrides won't match, so the WARN must fire.
 	differentOverrides := map[string]any{
 		"by_executor": map[string]any{

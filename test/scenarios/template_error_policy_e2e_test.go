@@ -101,7 +101,7 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 					},
 				},
 			}),
-			// Pure-cascade downstream subscribing on terminal/* — fires
+			// @constraint: Pure-cascade downstream subscribing on terminal/* — fires
 			// on any terminal signal. `pass` emits terminal/error/<class>;
 			// the cascade-after-pass must propagate that signal so the
 			// downstream node settles fresh.
@@ -118,7 +118,7 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, downstream)
 
-	// Observable 1 — worker settles fresh under pass (not failed). The
+	// @deliberate: Observable 1 — worker settles fresh under pass (not failed). The
 	// settling_signal_type carries the canonical terminal/error/<class>
 	// envelope so subscribers wildcard-matching `terminal/*` see it,
 	// even though the run-row color is fresh (the pass "absolve"
@@ -135,14 +135,14 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, workerRow.State,
 		"pass must settle the node fresh, not failed — the action declaration is what differentiates pass from give_up")
 
-	// Observable 2 — the downstream subscriber cascades on the
+	// @deliberate: Observable 2 — the downstream subscriber cascades on the
 	// terminal/error/* signal that pass emits. Reaching fresh is the
 	// real cascade fire (state transition driven by the cascade walker
 	// against the wait-set row inserted at emit time).
 	require.True(t, h.WaitForNodeState(downstream.ID, cascade.NodeStateFresh, 30*time.Second),
 		"pass must continue the cascade — a downstream subscriber on terminal/* must fire on the worker's terminal/error/<class> signal")
 
-	// Falsifier guard: the executor should not have been re-invoked
+	// @deliberate: Falsifier guard: the executor should not have been re-invoked
 	// (pass is a one-shot resolution, not retry).
 	dispatchCount := 0
 	for _, o := range h.Stub.Observed() {
@@ -202,11 +202,11 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, downstream)
 
-	// Observable 1 — worker reaches failed.
+	// @constraint: Observable 1 — worker reaches failed.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
 		"give_up must drive the worker to state=failed; pass would settle fresh and retry would not settle at all")
 
-	// Observable 2 — downstream is genuinely skipped. The give_up
+	// @constraint: Observable 2 — downstream is genuinely skipped. The give_up
 	// terminal signal is terminal/error/<class>; the downstream
 	// subscribes on terminal/success which is structurally disjoint
 	// from terminal/error/*. The downstream must NOT have been
@@ -223,7 +223,7 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, downstreamRow.State,
 		"give_up must skip downstream — the downstream subscribes on terminal/success and the worker's give_up emits terminal/error/<class>, which must not cascade to it")
 
-	// Durable-record check (2026-06-11 polling audit): the fresh-state
+	// @constraint: Durable-record check (2026-06-11 polling audit): the fresh-state
 	// sample above cannot distinguish "downstream never ran" from
 	// "downstream spuriously ran and settled back to fresh inside the
 	// grace window". The append-only event log can — any dispatch
@@ -234,14 +234,14 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 		eventwait.Events(h.Ctx, t, h.Persist, eventwait.Matcher{NodeID: &dsID, Kind: "work_started", KindPrefix: "terminal/"}),
 		"downstream must leave no dispatch/terminal events on the ledger when give_up fires upstream")
 
-	// Falsifier guard: the downstream's executor must not have been
+	// @constraint: Falsifier guard: the downstream's executor must not have been
 	// invoked. h.Stub.Observed() only records worker dispatches.
 	for _, o := range h.Stub.Observed() {
 		require.NotEqual(t, "downstream", o.NodeType,
 			"downstream executor must not be invoked when give_up fires on the upstream worker")
 	}
 
-	// Falsifier guard: worker's settling signal must carry the
+	// @deliberate: Falsifier guard: worker's settling signal must carry the
 	// terminal/error/<class> envelope (give_up's wire shape).
 	var workerRow *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -296,12 +296,12 @@ func testTemplateErrorPolicyRetry(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Observable — node lands in failed once the retry chain
+	// @constraint: Observable — node lands in failed once the retry chain
 	// exhausts and falls through to give_up.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 60*time.Second),
 		"retry chain must run to exhaustion then fall through to give_up; reaching failed proves both the retry dispatches happened and the chain advanced past the retry slot")
 
-	// Observable — multiple worker dispatches occurred. The initial
+	// @deliberate: Observable — multiple worker dispatches occurred. The initial
 	// dispatch plus retryCount retries = retryCount+1 minimum. Allow
 	// a small slop because the runner_acquire path may emit duplicate
 	// requests under heavy parallel testcontainer load.
@@ -315,7 +315,7 @@ func testTemplateErrorPolicyRetry(t *testing.T) {
 		"retry must produce at least %d worker dispatches (initial + %d retries); got %d — the runtime did not re-dispatch on retry",
 		retryCount+1, retryCount, dispatchCount)
 
-	// Observable — transient/retry/<n>/<class> signals appear in the
+	// @deliberate: Observable — transient/retry/<n>/<class> signals appear in the
 	// canonical audit log (rimsky_events). Each retry emits one row;
 	// the row's kind carries the wire signal type-path.
 	var retryEventCount int
@@ -328,7 +328,7 @@ func testTemplateErrorPolicyRetry(t *testing.T) {
 		"each retry must emit a transient/retry/<n>/<class> audit row; expected at least %d, got %d",
 		retryCount, retryEventCount)
 
-	// Observable — the retry signal payload's `discarded_claims` flag
+	// @deliberate: Observable — the retry signal payload's `discarded_claims` flag
 	// is FALSE (this is the discriminator vs.
 	// discard_claims_then_retry).
 	var raw []byte
@@ -375,7 +375,7 @@ func testTemplateErrorPolicyRetry(t *testing.T) {
 func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 	t.Parallel()
 
-	// Stub queue-store with enough items to satisfy multiple
+	// @deliberate: Stub queue-store with enough items to satisfy multiple
 	// re-acquisitions across the discard_claims_then_retry chain. The
 	// fixed @queue selector pops one item per acquisition; we seed
 	// several so each retry's re-acquire path finds an item.
@@ -408,7 +408,7 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 	})
 
 	h.Stub.WhenType("acquirer").Error("boom_discard", map[string]any{"why": "discard-branch"})
-	// Inheritor's executor never invoked — its subscription is on
+	// @constraint: Inheritor's executor never invoked — its subscription is on
 	// terminal/success which the acquirer's terminal/error/<class>
 	// settlement (after give_up exhaustion) does not match. The
 	// inheritor is present so the acquirer's claim is a HELD claim
@@ -455,14 +455,14 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 	acq := h.FindNode(iid, "acquirer")
 	require.NotNil(t, acq)
 
-	// Observable 1 — node ultimately lands in failed once the
+	// @deliberate: Observable 1 — node ultimately lands in failed once the
 	// discard_claims_then_retry chain exhausts and falls through to
 	// give_up. The fall-through proves the chain was actually
 	// traversed.
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateFailed, 60*time.Second),
 		"discard_claims_then_retry chain must exhaust and fall through to give_up; reaching failed proves both the re-dispatches happened and the chain advanced")
 
-	// Observable 2 — multiple acquirer dispatches occurred. Each
+	// @deliberate: Observable 2 — multiple acquirer dispatches occurred. Each
 	// `discard_claims_then_retry` step re-enqueues the dispatch the
 	// same way plain `retry` does, just with the claim-release flag
 	// set on the resolution.
@@ -476,7 +476,7 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 		"discard_claims_then_retry must re-dispatch like retry; expected at least %d dispatches (initial + %d retries); got %d",
 		retryCount+1, retryCount, dispatchCount)
 
-	// Observable 3 — the retry signal payload records
+	// @deliberate: Observable 3 — the retry signal payload records
 	// `discarded_claims: true`. This is the wire-level discriminator
 	// vs. plain `retry`, the contract that proves the action's
 	// declared intent reached the canonical signal envelope.
@@ -494,7 +494,7 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 	require.True(t, dc,
 		"`discard_claims_then_retry` must record discarded_claims=true in the transient/retry payload — this is the discriminator vs. plain retry, the action's wire-level effect")
 
-	// Observable 4 — the held claim-holder row is released through the
+	// @deliberate: Observable 4 — the held claim-holder row is released through the
 	// spec-named operator surface `GET /v1/lock-holders/{id}/claim-holders`.
 	// Each acquirer dispatch acquires a fresh claim-handle row against
 	// the queue store; on discard_claims_then_retry the supervisor
@@ -530,7 +530,7 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 		for _, h := range body.Holders {
 			require.Equal(t, chID.String(), h.ClaimHandleID,
 				"every returned holder must key on the queried claim_handle_id")
-			// Every holder row must have left 'active' — the
+			// @constraint: Every holder row must have left 'active' — the
 			// discard_claims_then_retry release path either completes
 			// the holder (on commit semantics) or fails it (on
 			// release_failed). Both are non-active. An 'active' row
@@ -555,7 +555,7 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 func listClaimHandleIDsForInstance(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []shared.UUID {
 	t.Helper()
 	var ids []shared.UUID
-	// Poll briefly — the last release runs in the failed-terminal tx;
+	// @constraint: poll briefly — the last release runs in the failed-terminal tx;
 	// claim-handles persist across releases (state column flips rather
 	// than the row going away) so a snapshot taken right after
 	// WaitForNodeState→failed already sees them, but allow a small

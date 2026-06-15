@@ -48,13 +48,11 @@ func TestReleaseRejectsWhenRootRemoved(t *testing.T) {
 	}
 	s := newStoreAt(t, root)
 
-	// Open while healthy — direct mode registers the claim.
 	out, err := s.Open(context.Background(), "claim-1", "items/out.json")
 	if err != nil || !out.Available {
 		t.Fatalf("Open while healthy: %v available=%v", err, out.Available)
 	}
 
-	// The backing root vanishes (unmounted volume / deleted path).
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatal(err)
 	}
@@ -85,13 +83,11 @@ func TestCommitRejectsWhenRootRemoved(t *testing.T) {
 	}
 	s := newStoreAt(t, root)
 
-	// Open while healthy — direct mode registers the claim.
 	out, err := s.Open(context.Background(), "claim-1", "items/out.json")
 	if err != nil || !out.Available {
 		t.Fatalf("Open while healthy: %v available=%v", err, out.Available)
 	}
 
-	// The backing root vanishes (unmounted volume / deleted path).
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatal(err)
 	}
@@ -122,13 +118,11 @@ func TestAbandonRejectsWhenRootRemoved(t *testing.T) {
 	}
 	s := newStoreAt(t, root)
 
-	// Open while healthy — direct mode registers the claim.
 	out, err := s.Open(context.Background(), "claim-1", "items/out.json")
 	if err != nil || !out.Available {
 		t.Fatalf("Open while healthy: %v available=%v", err, out.Available)
 	}
 
-	// The backing root vanishes (unmounted volume / deleted path).
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatal(err)
 	}

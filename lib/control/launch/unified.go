@@ -67,12 +67,11 @@ func (s *UnifiedStack) Drain(ctx context.Context, deadline time.Duration) {
 	}
 }
 
-// runSchedulerFn / runSupervisorFn / runControlAPIFn are seam vars
-// for the three role-runner entry points. Production code uses the
-// real RunX runners (the defaults set here); a test can substitute a
-// fake that records the persistence.Database pointer it received and
-// assert all three runners observed the SAME pointer — the
-// @blessed-invariant: one-driver-per-process exhibit.
+// @constraint: test-seam vars for the three role-runner entry points.
+// Production binds them to RunScheduler/RunSupervisor/RunControlAPI;
+// tests substitute fakes that record the persistence.Database pointer
+// each runner received and assert all three observed the SAME pointer.
+// @blessed-invariant: one-driver-per-process
 var (
 	runSchedulerFn  = RunScheduler
 	runSupervisorFn = RunSupervisor
@@ -124,17 +123,17 @@ func StartUnifiedStack(ctx context.Context, logger *slog.Logger, driver persiste
 		stack.stops = append(stack.stops, stop)
 		stack.names = append(stack.names, r.name)
 		go func(name string, ch <-chan error) {
-			// failureReporter.Close closes runnerFail on Drain, so a
-			// receive returning ok=false is the clean-shutdown path and
-			// we exit the goroutine without forwarding anything.
+			// @constraint: FailureReporter.Close closes runnerFail on
+			// Drain, so a receive returning ok=false is the
+			// clean-shutdown path — exit without forwarding anything.
 			err, ok := <-ch
 			if !ok || err == nil {
 				return
 			}
-			// Non-blocking send: the channel is buffered to len(runners)
-			// so the first failure per role always fits; if the caller
-			// has already drained and stopped consuming we still must
-			// not block.
+			// @constraint: non-blocking send — the channel is buffered to
+			// len(runners) so the first failure per role always fits; if
+			// the caller has already drained and stopped consuming we
+			// still must not block.
 			select {
 			case stack.failCh <- RoleFailure{Role: name, Err: err}:
 			default:

@@ -63,7 +63,7 @@ func registerAuditRoutes(r chi.Router, deps AppDeps) {
 func handleListAudit(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		q := req.URL.Query()
-		// Validate ?kind= against both the proto enum AND the audit
+		// @constraint: validate ?kind= against both the proto enum AND the audit
 		// surface's allowlist (auth.*). The intersection is the
 		// rule: a kind that's valid in the proto enum but not in
 		// the audit surface (e.g. state_transition) returns 400 —
@@ -89,7 +89,7 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 					strings.Join(auditKinds, ", ")+")")
 				return
 			}
-			// Narrow the read to the single requested kind via
+			// @constraint: narrow the read to the single requested kind via
 			// the exact-match Kind field; KindIn stays set so the
 			// allowlist still gates downstream filters that may
 			// fall through (the persistence layer AND-composes
@@ -98,26 +98,25 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 			// when X is in the allowlist.
 			filter.Kind = wire
 		}
-		// Actor filters.
 		if s := q.Get("key_id"); s != "" {
 			filter.KeyID = &s
 		}
 		if s := q.Get("key_name"); s != "" {
 			filter.KeyName = &s
 		}
-		// Action: exact takes precedence over prefix when both are given.
+		// @constraint: action: exact takes precedence over prefix when both are given.
 		if s := q.Get("action"); s != "" {
 			filter.ActionExact = &s
 		} else if s := q.Get("action_prefix"); s != "" {
 			filter.ActionPrefix = &s
 		}
-		// Target = the request path recorded in the audit payload. Backed
-		// by the request_path expression index (partial, scoped to
-		// kind LIKE 'auth.%') so the narrow stays index-bounded.
+		// @deliberate: target = the request path recorded in the audit
+		// payload. Backed by the request_path expression index (partial,
+		// scoped to kind LIKE 'auth.%') so the narrow stays
+		// index-bounded.
 		if s := q.Get("target"); s != "" {
 			filter.RequestPath = &s
 		}
-		// Result (HTTP status) filter.
 		if s := q.Get("status"); s != "" {
 			n, err := strconv.Atoi(s)
 			if err != nil {
@@ -126,7 +125,7 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 			}
 			filter.ResponseStatus = &n
 		}
-		// Mode filter (execute | dry_run).
+		// @constraint: mode filter (execute | dry_run).
 		if s := q.Get("mode"); s != "" {
 			filter.Mode = &s
 		}
@@ -150,9 +149,9 @@ func handleListAudit(deps AppDeps) http.HandlerFunc {
 			Limit:  parseLimit(req, 100),
 			Cursor: q.Get("cursor"),
 		}
-		// Short fresh transaction per the cascade-graph read discipline
-		// (mirror handleListEvents): open a read tx, run the single List,
-		// commit. No mutation rides this path.
+		// @constraint: short fresh transaction per the cascade-graph read
+		// discipline (mirror handleListEvents) — open a read tx, run the
+		// single List, commit. No mutation rides this path.
 		var page persistence.EventListResult
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			p, err := deps.Persist.Events().List(ctx, filter, pag, tx)

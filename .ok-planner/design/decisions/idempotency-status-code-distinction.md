@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`201` on fresh insert vs `200` on replay (returning original `message_id`).
+A created-resource status code on fresh insert versus an OK status code on replay (returning the original message identifier — see `concept:message`).
 
 ## Rationale
 

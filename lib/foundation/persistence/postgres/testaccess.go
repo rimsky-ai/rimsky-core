@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// testaccess.go provides test-only escape hatches for code that needs
-// raw *pgxpool.Pool access against a postgres-backed
-// persistence.Database. Used by:
-//
-//   - graph/scenario/harness.go — scenario tests seed fixtures via raw
-//     SQL (executor_blocked_test, etc.).
-//   - test/smoke/setup.go — the smoke fixture's diagnostics driver.
-//   - foundation/internal/pgtest — exposes StartPostgres for legacy callers.
-//
-// Production code MUST go through the persistence.Database interface.
-// Adding a non-test caller of these helpers is a regression
-// against blessed-invariant 9a (the persistence layer is the single
-// runtime-state surface).
 package postgres
 
 import (

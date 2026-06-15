@@ -45,11 +45,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-var _ = genv1.PriorDispatchDisposition_PRIOR_HEARTBEAT_STALE // package-import witness
+var _ = genv1.PriorDispatchDisposition_PRIOR_HEARTBEAT_STALE // @deliberate: package-import witness
 
 func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 	t.Parallel()
-	// NoSupervisor + NoScheduler so the test owns the heartbeat-stale
+	// @deliberate: NoSupervisor + NoScheduler so the test owns the heartbeat-stale
 	// recovery deterministically — no background sweep can race the
 	// seeded zombie. The test seeds the zombie row directly, then drives
 	// runtime.SweepStaleHeartbeats explicitly (line below) — that's the
@@ -70,7 +70,7 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n, "worker node missing")
 
-	// Build the partition RunScope manually: F3 doesn't need to drive
+	// @deliberate: Build the partition RunScope manually: F3 doesn't need to drive
 	// SplitScope through a real producer. The partition RunScope's
 	// shape (parent_run_id, partition_key, instance_id) is all the
 	// SweepStaleHeartbeats path consumes.
@@ -78,7 +78,7 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 	parentRunID := shared.UUID(uuid.New())
 	partitionScopeID := shared.UUID(uuid.New())
 
-	// Seed a synthetic parent run in the main scope so the partition
+	// @deliberate: Seed a synthetic parent run in the main scope so the partition
 	// scope's parent_run_id has a valid FK target. The parent row is
 	// minimal — only the columns the partition's recovery path reads.
 	var frameID uuid.UUID
@@ -87,7 +87,7 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 		uuid.UUID(iid),
 	).Scan(&frameID))
 
-	// Synthetic main-scope parent run (so partition_scope.parent_run_id
+	// @deliberate: Synthetic main-scope parent run (so partition_scope.parent_run_id
 	// FK is satisfied). Insert directly with run_scope_id populated.
 	_, err := h.Pool.Exec(h.Ctx, `
 		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
@@ -96,7 +96,6 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 	`, parentRunID, n.ID, frameID, mainScopeID)
 	require.NoError(t, err)
 
-	// Create the partition RunScope.
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:               partitionScopeID,
@@ -108,7 +107,7 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 		})
 	}))
 
-	// Clear any harness-seeded initial dispatch in the main scope so the
+	// @deliberate: Clear any harness-seeded initial dispatch in the main scope so the
 	// nodeSelect LATERAL surfaces our zombie row unambiguously when
 	// SweepStaleHeartbeats picks it up. The LATERAL's "most-relevant
 	// run row" predicate ranks in-flight rows by enqueued_at DESC; a
@@ -119,7 +118,7 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 		n.ID, parentRunID, uuid.Nil)
 	require.NoError(t, err)
 
-	// Seed the zombie partition-child run as a live in-flight 'active'
+	// @deliberate: Seed the zombie partition-child run as a live in-flight 'active'
 	// row with phase='active' state='running' and a stale heartbeat
 	// older than HeartbeatTimeout. This is the pre-sweep state that
 	// SweepStaleHeartbeats inspects: zombie supervisor's heartbeat
@@ -142,7 +141,7 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 	`, zombieID, n.ID, frameID, partitionScopeID)
 	require.NoError(t, err)
 
-	// Drive SweepStaleHeartbeats — this is the canonical conductor
+	// @constraint: Drive SweepStaleHeartbeats — this is the canonical conductor
 	// path. Per spec §"Recovery-aware executor protocol" the sweep
 	// transitions phase 'active' → 'completed' / state 'running' →
 	// 'stale', then issues a Queue.Enqueue with prior_dispatch_id =
@@ -155,7 +154,7 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 		HeartbeatTimeout: 5 * time.Second,
 	}))
 
-	// Assert: a new dispatch row exists in the partition RunScope with
+	// @deliberate: Assert: a new dispatch row exists in the partition RunScope with
 	// prior_dispatch_id = zombieID and disposition = heartbeat_stale.
 	var newDispatchID uuid.UUID
 	var priorID *uuid.UUID
@@ -176,7 +175,7 @@ func TestFanOutHeartbeatStaleRecoveryE2E(t *testing.T) {
 	require.Equal(t, "heartbeat_stale", *priorDisposition,
 		"prior_dispatch_disposition must be heartbeat_stale per the SweepStaleHeartbeats path")
 
-	// Sanity: the new dispatch lives in the SAME partition RunScope as
+	// @deliberate: Sanity: the new dispatch lives in the SAME partition RunScope as
 	// the zombie. The SELECT predicate `run_scope_id = $2` above gates
 	// this — but assert again on the row directly so the failure
 	// message is unambiguous if the row drifts.

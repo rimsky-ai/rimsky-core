@@ -99,8 +99,6 @@ func findInheritedAliasesForRun(
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	// Pre-index held subgraphs this node could inherit from (acquirer
-	// is somebody else; this node is a member; size > 1).
 	candidatesByAcquirer := map[string][]aliasCandidate{}
 	for _, sg := range subgraphs {
 		if sg.AcquirerType == nodeType {
@@ -126,8 +124,11 @@ func findInheritedAliasesForRun(
 		if err != nil {
 			return nil, fmt.Errorf("findInheritedAliasesForNode: ClaimHandles.Get: %w", err)
 		}
+		// @deliberate: a missing claim handle means a sibling already
+		// auto-terminated the row; the inheritance lookup tolerates
+		// the race rather than treating it as an error.
 		if lh == nil {
-			continue // already auto-terminated by a sibling
+			continue
 		}
 		acquirerNode, err := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
 		if err != nil {
@@ -186,9 +187,10 @@ func pickAliasForClaimHandle(
 			if sref.AliasOf() != p.alias {
 				continue
 			}
-			// Best-effort selector match — we don't re-substitute
-			// params/deps here; the acquirer already wrote the
-			// substituted selector into claim_scope_data at acquire time.
+			// @deliberate: best-effort selector match — we don't
+			// re-substitute params/deps here; the acquirer already
+			// wrote the substituted selector into claim_scope_data
+			// at acquire time.
 			if matchesClaimScope(lh.ClaimScopeData, sref.Selector) {
 				return p.alias
 			}

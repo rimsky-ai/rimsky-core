@@ -66,16 +66,15 @@ func Suite(
 	t.Run("SelectCandidatesKeysetCursor", func(t *testing.T) { testSelectCandidatesKeysetCursor(t, factory(t)) })
 	t.Run("QueueRebindRunFrameInTx", func(t *testing.T) { testQueueRebindRunFrameInTx(t, factory(t)) })
 	t.Run("ClaimHandlesUpdateClaimScope", func(t *testing.T) { testClaimHandlesUpdateClaimScope(t, factory(t)) })
-	// NodesMarkStaleForCascade conformance retired by spec
-	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md:
-	// MarkStaleForCascade is now keyed on `runID` (pure UPDATE); allocation
-	// moved to AffirmNodeRunRow. The shaped-from-nodeID + bool-return-of-
-	// inserted contract that this test pinned is gone. Replacement coverage:
-	// AffirmNodeRunRow conformance (testAffirmNodeRunRow) below.
+	// @deliberate: spec 2026-05-22-fan-out-safety-scope-first-design retired
+	// NodesMarkStaleForCascade conformance — MarkStaleForCascade is now keyed
+	// on runID (pure UPDATE); allocation moved to AffirmNodeRunRow. The
+	// shaped-from-nodeID + bool-return-of-inserted contract this test pinned
+	// is gone. Replacement coverage: AffirmNodeRunRow conformance below.
 	t.Run("NodesListRunningBySupervisor", func(t *testing.T) { testNodesListRunningBySupervisor(t, factory(t)) })
 
-	// === RunScope-first conformance (Tasks 28–31, 55) ===
-	// Per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
+	// @deliberate: spec 2026-05-22-fan-out-safety-scope-first-design — RunScope-first
+	// conformance group (Tasks 28–31, 55).
 	t.Run("RunScopeLifecycle", func(t *testing.T) {
 		t.Run("CreateMainAndChild", func(t *testing.T) { testRunScopeCreate_MainAndChild(t, factory(t)) })
 		t.Run("CloseStampsClosedAt", func(t *testing.T) { testRunScopeClose_StampsClosedAt(t, factory(t)) })
@@ -109,15 +108,13 @@ func Suite(
 		t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testRunStateWritesIsolated_NodeAttributesGetLatestByNode(t, factory(t)) })
 	})
 	t.Run("RecoveryAwareDispatch", func(t *testing.T) { testRecoveryAwareDispatch(t, factory(t)) })
-	// Note: cycle-2/3 fan-out disambiguator-specific conformance tests
+	// @deliberate: spec 2026-05-22-fan-out-safety-scope-first-design retired the
+	// cycle-2/3 fan-out disambiguator-specific conformance tests
 	// (NodesUpdateStateFanoutRunID, NodesClearLastOutcomeFanoutRunID,
 	// QueueRemoveForNodeFanoutRunID, QueueEnqueueFanoutPartition,
-	// QueueGetInFlightRunForNodeFanoutDisambiguator, QueueGetParkedByNodeFanoutRunID)
-	// were retired by spec
-	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md:
-	// their cases became inexpressible under
-	// uq_node_runs_in_flight_per_run_scope. The replacement coverage lives
-	// in RunStateWritesIsolatedByScope below.
+	// QueueGetInFlightRunForNodeFanoutDisambiguator, QueueGetParkedByNodeFanoutRunID):
+	// their cases became inexpressible under uq_node_runs_in_flight_per_run_scope.
+	// Replacement coverage lives in RunStateWritesIsolatedByScope below.
 	t.Run("NodeAttributesMergeDelta", func(t *testing.T) { testNodeAttributesMergeDelta(t, factory(t)) })
 	t.Run("NodeAttributesPerRunInsertByRun", func(t *testing.T) { testNodeAttributesPerRunInsertByRun(t, factory(t)) })
 	t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testNodeAttributesGetLatestByNode(t, factory(t)) })
@@ -143,11 +140,11 @@ func Suite(
 	t.Run("EventsListDescending", func(t *testing.T) { testEventsListDescending(t, factory(t)) })
 	t.Run("EventsListAuthPayloadFilters", func(t *testing.T) { testEventsListAuthPayloadFilters(t, factory(t)) })
 	t.Run("MessagesListByFrameID", func(t *testing.T) { testMessagesListByFrameID(t, factory(t)) })
-	// (SchedulesDenseSameTimestampPagination retired by the 2026-05-15
-	// plan B10 / D7 / E16 schedule-retirement cascade.)
+	// @deliberate: SchedulesDenseSameTimestampPagination retired by the
+	// 2026-05-15 plan B10 / D7 / E16 schedule-retirement cascade.
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
-	// === Claimant-guard no-op coverage (inv 4) ===
-	// Every ownership mutation must be a provable no-op for the wrong
+	// @decision: claimant-guard-helper — no-op coverage for invariant 4:
+	// every ownership mutation must be a provable no-op for the wrong
 	// supervisor; see claimant_guard.go for the operation-family map.
 	t.Run("ClaimantGuard", func(t *testing.T) {
 		t.Run("HandleUpdates", func(t *testing.T) { testClaimantGuardHandleUpdates(t, factory(t)) })
@@ -168,9 +165,9 @@ func Suite(
 		t.Run("RunEmptyClaimantCarveOut", func(t *testing.T) { testClaimantGuardRunEmptyClaimantCarveOut(t, factory(t)) })
 		t.Run("UnguardedMutationCarveOuts", func(t *testing.T) { testClaimantGuardUnguardedMutationCarveOuts(t, factory(t)) })
 	})
-	// === Driver-parity expansion: runtime-consumed behaviors with
-	// driver-specific SQL idioms (park/resume, frame lifecycle,
-	// retention sweeps, message idempotency). ===
+	// @constraint: driver-parity expansion — runtime-consumed behaviors with
+	// driver-specific SQL idioms (park/resume, frame lifecycle, retention
+	// sweeps, message idempotency) must pass identically on both drivers.
 	t.Run("MessageIdempotency", func(t *testing.T) {
 		t.Run("InsertOrLookup", func(t *testing.T) { testMessageIdempotencyInsertOrLookup(t, factory(t)) })
 		t.Run("DeleteOlderThan", func(t *testing.T) { testMessageIdempotencyDeleteOlderThan(t, factory(t)) })
@@ -185,10 +182,11 @@ func Suite(
 		t.Run("SerialQueue", func(t *testing.T) { testFrameLifecycleSerialQueue(t, factory(t)) })
 		t.Run("Coalesce", func(t *testing.T) { testFrameLifecycleCoalesce(t, factory(t)) })
 	})
-	// FrameSettlement: the frame engine's settlement core (frame-end
-	// detection, instance termination, source-node binding, stuck-frame
-	// warning, orphan-dispatch reaper) — the most driver-divergent SQL
-	// in the layer (INTERVAL arithmetic vs Go-side window math).
+	// @constraint: FrameSettlement is the frame engine's settlement core
+	// (frame-end detection, instance termination, source-node binding,
+	// stuck-frame warning, orphan-dispatch reaper) and carries the most
+	// driver-divergent SQL in the layer (INTERVAL arithmetic vs Go-side
+	// window math), so both drivers must prove parity here.
 	t.Run("FrameSettlement", func(t *testing.T) {
 		t.Run("NoPendingNodes", func(t *testing.T) { testFrameSettlementNoPendingNodes(t, factory(t)) })
 		t.Run("HasFailedNode", func(t *testing.T) { testFrameSettlementHasFailedNode(t, factory(t)) })
@@ -197,9 +195,10 @@ func Suite(
 		t.Run("StuckFrames", func(t *testing.T) { testFrameSettlementStuckFrames(t, factory(t), rawExec) })
 		t.Run("OrphanDispatches", func(t *testing.T) { testFrameSettlementOrphanDispatches(t, factory(t)) })
 	})
-	// ClaimHandleQueries: the runtime-consumed claim-handle read/repoint
-	// surface (named-lock capacity gate, anchor walks, fan-out repoint,
-	// recursive child walk, asset query).
+	// @constraint: ClaimHandleQueries pins the runtime-consumed claim-handle
+	// read/repoint surface (named-lock capacity gate, anchor walks, fan-out
+	// repoint, recursive child walk, asset query) so both drivers stay in
+	// parity for these runtime reads.
 	t.Run("ClaimHandleQueries", func(t *testing.T) {
 		t.Run("CountByNamedLock", func(t *testing.T) { testClaimHandleCountByNamedLock(t, factory(t)) })
 		t.Run("AnchorsAndRepoint", func(t *testing.T) { testClaimHandleAnchorsAndRepoint(t, factory(t)) })

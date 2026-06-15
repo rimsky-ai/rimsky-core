@@ -2,9 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// coordinator.go — CoordinatorSchedulerTick conformance area.
-//
-// Inv 7: TrySchedulerTick mutual exclusion.
+// @constraint: Inv 7 (CoordinatorSchedulerTick) — TrySchedulerTick mutual exclusion.
 //
 // Under SQLite the tick lock is an exclusive flock on a lock file
 // beside the database file: exclusion holds across OS processes sharing
@@ -44,7 +42,6 @@ func testCoordinatorSchedulerTick(t *testing.T, d persistence.Database) {
 		t.Fatalf("TrySchedulerTick #2 returned held=true while #1 still held")
 	}
 
-	// Release #1, then #3 should succeed.
 	release1()
 	got3, release3, err := c.TrySchedulerTick(ctx)
 	if err != nil {

@@ -2,8 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run_in_flight_lookup.go — RunInFlightLookup conformance area.
-//
+// @concept: run-scope
+
+// @constraint: RunInFlightLookup conformance area.
 // Covers Queue.GetInFlightRunForNode under the post-2026-05-22 reshape:
 // in-flight uniqueness is keyed on (node_id, run_scope_id) via the
 // uq_node_runs_in_flight_per_run_scope partial-unique index. Two
@@ -67,9 +68,8 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 	store := d.Tables()
 	q := d.Queue()
 
-	// fix.MainRunScopeID is scope A. Create scope B (another fan-out
-	// partition under the same instance, parent_run_id keyed off a
-	// fresh run row so the FK satisfies).
+	// @constraint: scope B's parent_run_id must reference a real
+	// rimsky_node_runs row to satisfy the FK; seed a fresh run row first.
 	parentRun := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	scopeB := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -85,10 +85,6 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 		t.Fatalf("Create scope B: %v", err)
 	}
 
-	// Seed an in-flight row in scope A (main) for fix.NodeID. The
-	// seedConformanceRunForNode helper inserts via Queue.EnqueueInTx
-	// which targets the main RunScope; that's exactly the row we want.
-	// First-time lookup before affirm proves the absence baseline.
 	scopeA := fix.MainRunScopeID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeA, fix.FrameID, tx)
@@ -96,17 +92,15 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 		t.Fatalf("Affirm A: %v", err)
 	}
 
-	// Create a second node in the same instance so we can also seed a
-	// distinct in-flight row under scope B for a different node — and
-	// importantly seed an in-flight row in scope B for `fix.NodeID` too
-	// (the cross-scope same-node case).
+	// @constraint: seed the cross-scope same-node case — fix.NodeID has
+	// an in-flight row in both scopeA and scopeB. The lookups below
+	// exercise the partial-unique index's (node_id, run_scope_id) key.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeB, fix.FrameID, tx)
 	}); err != nil {
 		t.Fatalf("Affirm B: %v", err)
 	}
 
-	// Lookup in scope A: returns scope-A's row.
 	var idA shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		id, found, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, scopeA)
@@ -119,7 +113,6 @@ func testInFlightLookup_NoFalsePositiveAcrossScopes(t *testing.T, d persistence.
 		t.Fatalf("lookup A: %v", err)
 	}
 
-	// Lookup in scope B: returns scope-B's row.
 	var idB shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		id, found, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, scopeB)
@@ -163,7 +156,7 @@ func testInFlightLookup_ReturnsNoneWhenAbsent(t *testing.T, d persistence.Databa
 		t.Fatalf("GetInFlightRunForNode (missing): id=%v, want zero", id)
 	}
 
-	// Silence unused-imports for time/spec used only by other tests in
-	// this conformance file's sibling files.
+	// @deliberate: silence unused-import for time, used only by sibling
+	// conformance files in this package.
 	_ = time.Time{}
 }

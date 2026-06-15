@@ -148,8 +148,6 @@ type AppDeps struct {
 	// declarations. Nil → asset endpoints (`/instances/{id}/assets/...`)
 	// that need version metadata return 503 and the fan-out path skips
 	// candidate-handle persistence. Spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Protocol surfaces / DataProcessing.
 	DataProcessors runtime.DataProcessingRegistry
 
 	// UnreachableValidatorPolicy controls the pipeline's reaction to a
@@ -191,12 +189,12 @@ type ExecutorEntry struct {
 func NewApp(deps AppDeps) http.Handler {
 	r := chi.NewRouter()
 
-	// Request ID + structured access log via slog-backed Logger.
+	// @constraint: request ID + structured access log via slog-backed Logger.
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(accessLog(deps.Logger))
 
-	// Every control-API route lives under the /v1/ version prefix. The
+	// @constraint: every control-API route lives under the /v1/ version prefix. The
 	// previous tree mixed bare paths (`/templates`, `/instances`, …)
 	// with carve-outs at `/v1/observability/*` and `/v1/callback/...`
 	// (the callback listener lives on a separate http.Server in
@@ -204,7 +202,7 @@ func NewApp(deps AppDeps) http.Handler {
 	// route below absorbs both surfaces under a single prefix per
 	// decision:pre-v1-break-freely + tension:control-api-version-prefix.
 	r.Route("/v1", func(v1 chi.Router) {
-		// Health endpoints are NOT auth-gated — they predate auth and
+		// @constraint: health endpoints are NOT auth-gated — they predate auth and
 		// serve infrastructure clients (load balancer, k8s probes) that
 		// don't carry Bearer tokens. Register on the /v1/ sub-router
 		// BEFORE the auth middleware group so `GET /v1/health` reaches
@@ -213,13 +211,13 @@ func NewApp(deps AppDeps) http.Handler {
 		// keeping this registration outside the auth group.
 		registerHealthRoutes(v1, deps)
 
-		// Everything else under the auth middleware.
+		// @constraint: everything else under the auth middleware.
 		v1.Group(func(rr chi.Router) {
 			if deps.AuthState != nil {
 				rr.Use(deps.AuthState.IdentityResolver())
 			}
 
-			// Mount the observability subtree under its own chi.Group
+			// @constraint: mount the observability subtree under its own chi.Group
 			// with a minimal middleware stack. Observability is
 			// read-only (GET-only) and intentionally exempt from the
 			// AllowContentType "application/json" gate.
@@ -239,7 +237,7 @@ func NewApp(deps AppDeps) http.Handler {
 				})
 			}
 
-			// Write/admin surface — sets common content-type and the
+			// @constraint: write/admin surface — sets common content-type and the
 			// strict AllowContentType gate. Sibling files register each
 			// group of routes; each handler is wrapped with
 			// gateByAction at registration time.
@@ -271,7 +269,7 @@ func NewApp(deps AppDeps) http.Handler {
 		})
 	})
 
-	// Late-bind the MCP catalog's router pointer to the finished
+	// @constraint: late-bind the MCP catalog's router pointer to the finished
 	// chi router so in-process tool calls re-enter the pipeline.
 	if deps.AuthState != nil && deps.AuthState.mcpRouterRef != nil {
 		deps.AuthState.mcpRouterRef.h = r

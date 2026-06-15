@@ -56,8 +56,11 @@ func FanOutRunScopeEvent(
 	terminalReason string,
 	tx persistence.Tx,
 ) {
+	// @deliberate: a supervisor without lifecycle outbound wiring is
+	// a legal state — fan-out is a no-op rather than a fatal error
+	// so the surrounding caller need not pre-check.
 	if lifecycleSubs == nil || peersForSpec == nil {
-		return // supervisor wasn't wired with lifecycle outbound
+		return
 	}
 	peers := peersForSpec(tplSpec)
 	scopeID := runScopeID.String()
@@ -69,7 +72,7 @@ func FanOutRunScopeEvent(
 			scopeID, tx,
 		)
 		if err != nil {
-			// Non-fatal: the close is the load-bearing write and must not
+			// @deliberate: the close is the load-bearing write and must not
 			// roll back on a fan-out bookkeeping failure. Skip this peer; a
 			// later close re-attempts (subscribers are idempotent). Mirrors
 			// the per-peer subscriber-error convention below.
@@ -92,11 +95,10 @@ func FanOutRunScopeEvent(
 			InstanceID:     instanceID.String(),
 		}
 		if err := sub.OnRunScopeTerminal(ctx, req); err != nil {
-			// Non-fatal at the per-peer level: a subscriber error must not
-			// roll back the close it observed. Skip the bookkeeping upsert
-			// (so a later close re-attempts) and continue to the next peer.
-			// Mirrors control-api FanOutRunScopeEvent's per-peer
-			// continue-on-error convention.
+			// @deliberate: a subscriber error must not roll back the close
+			// it observed. Skip the bookkeeping upsert (so a later close
+			// re-attempts) and continue to the next peer. Mirrors control-
+			// api FanOutRunScopeEvent's per-peer continue-on-error convention.
 			continue
 		}
 
@@ -108,7 +110,7 @@ func FanOutRunScopeEvent(
 				State:                 persistence.LifecycleIdempotencyStateRunScopeTerminal,
 			}, tx,
 		); err != nil {
-			// Non-fatal: same rationale as the lookup above. The subscriber
+			// @deliberate: same rationale as the lookup above. The subscriber
 			// already fired successfully; a missed upsert only means a later
 			// close may re-fire (idempotent on the subscriber side).
 			slog.Warn("FanOutRunScopeEvent: lifecycle row upsert failed; close stands",

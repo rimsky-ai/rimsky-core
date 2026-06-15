@@ -19,7 +19,7 @@ Operators re-process historical data through the live pipeline without bouncing 
 
 ## Acceptance
 
-Through the control-api or `rimsky backfill …` CLI, an operator starts a backfill on an asset with a partition-selector override; the supervisor materializes runs against the overridden selector (not the template default) and drives them to terminal through the real dispatch path; the per-partition progress surface reflects what actually happened; cancelling a running backfill aborts the in-flight partitions through the real supervisor cancel path.
+Through the control-api or the backfill CLI verb, an operator starts a backfill on an asset with a partition-selector override; the supervisor materializes runs against the overridden selector (not the template default) and drives them to terminal through the real dispatch path; the per-partition progress surface reflects what actually happened; cancelling a running backfill aborts the in-flight partitions through the real supervisor cancel path.
 
 ## Falsifier
 

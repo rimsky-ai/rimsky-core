@@ -131,9 +131,10 @@ func TestConformanceSubcommandsRegisterDocumentedFlags(t *testing.T) {
 					t.Errorf("subcommand %q: documented flag --%s missing from usage:\n%s", sc.name, f, usage)
 				}
 			}
-			// Guard against drift the other direction: the only flag tokens in
-			// the usage should be the documented ones. flag's PrintDefaults
-			// renders each flag on its own line beginning with "  -<name>".
+			// @deliberate: guard the inverse direction — the only flag tokens
+			// in the usage should be the documented ones. flag's PrintDefaults
+			// renders each flag on its own line beginning with "  -<name>", so
+			// the parser keys on that prefix.
 			for _, line := range strings.Split(usage, "\n") {
 				trimmed := strings.TrimSpace(line)
 				if !strings.HasPrefix(trimmed, "-") {

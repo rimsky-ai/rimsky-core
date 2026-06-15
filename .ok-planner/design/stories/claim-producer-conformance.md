@@ -7,7 +7,7 @@ status: as-is
 
 ## Role
 
-As a claim-producer author shipping a custom producer, I can run `rimsky conformance claim-producer --endpoint <my-producer>` and have the suite drive my producer through the four terminal verbs (Open / Commit / Abandon / Release) including idempotency under retry, plus the serialization-9b probe (detect dishonest internal serialization on `staged_async`), reporting pass / fail per check, so that I prove my producer is correct before shipping it.
+As a claim-producer author shipping a custom producer, I can run the conformance suite against my producer endpoint and have the suite drive my producer through the four terminal verbs (Open / Commit / Abandon / Release) including idempotency under retry, plus the serialization-9b probe (detect dishonest internal serialization on the staged-async write-semantics), reporting pass / fail per check, so that I prove my producer is correct before shipping it.
 
 ## Capability
 
@@ -15,7 +15,7 @@ Conformance CLI for the claim-producer protocol: drives every terminal verb plus
 
 ## Business value
 
-Custom producer authors prove correctness against rimsky's contract before shipping; the 9b probe catches dishonest internal serialization on `staged_async` that no in-process unit test could detect.
+Custom producer authors prove correctness against rimsky's contract before shipping; the 9b probe catches dishonest internal serialization on the staged-async write-semantics that no in-process unit test could detect.
 
 ## Acceptance
 

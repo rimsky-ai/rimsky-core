@@ -2,9 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// queue_park.go is the SQLite impl of the parked-row helpers added to
-// persistence.Queue by the 2026-05-08 platform-extensions plan (sections
-// E1, E3, E4, E5). Mirrors postgres/queue_park.go method-for-method.
+// @source: lib/foundation/persistence/postgres/queue_park.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
 
 package sqlite
 
@@ -131,11 +131,12 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 	if err != nil {
 		return nil, err
 	}
-	// App-side filter: parked_at + max_park_duration_seconds <= now,
-	// AND resume_at is either NULL or strictly in the future. The
-	// resume_at predicate prevents racing the deadline-elapsed wake
-	// path (which picks rows whose resume_at <= now) — see the postgres
-	// mirror for the full rationale.
+	// @constraint: SQLite has no native interval arithmetic, so the
+	// overdue predicate (parked_at + max_park_duration_seconds <= now)
+	// is enforced app-side. The resume_at gate (NULL or strictly in the
+	// future) prevents racing the deadline-elapsed wake path, which
+	// picks rows whose resume_at <= now; see the postgres mirror for
+	// the full rationale.
 	out := make([]persistence.ParkedRow, 0, len(all))
 	for _, r := range all {
 		if r.MaxParkDurationSeconds == nil {
@@ -146,7 +147,7 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 			continue
 		}
 		if r.ResumeAt != nil && !r.ResumeAt.After(now) {
-			// resume_at has elapsed → row is the wake path's, skip.
+			// @constraint: resume_at has elapsed → row is the wake path's, skip (the max-park sweep does not steal rows the wake sweep will resume).
 			continue
 		}
 		out = append(out, r)

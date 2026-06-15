@@ -16,11 +16,6 @@
 //  4. `ReleaseHeldDurableClaims` fires `producer.Release` and drops
 //     the row at instance termination.
 //
-// Issue 1 / fixer cycle 3: the companion scenario
-// `durable_lifetime_persistence_test.go` only pins the
-// foundation/spec constants + `ClaimHandleInsertInput` shape; this
-// scenario closes the end-to-end gap.
-//
 // @concept: claim-lifetime
 // @concept: auto-terminal
 // @concept: claim-handle
@@ -118,7 +113,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		}, tx)
 	}))
 
-	// Drive the holder to 'completed' so auto-terminal sees a complete
+	// @deliberate: Drive the holder to 'completed' so auto-terminal sees a complete
 	// holding subgraph.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHolders().CompleteByClaimHandleAndRun(
@@ -137,7 +132,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
 	}))
 
-	// Row MUST survive — durable promotion flipped state to 'committed'
+	// @deliberate: Row MUST survive — durable promotion flipped state to 'committed'
 	// and skipped the Delete (held-durable Promote contract per
 	// @blessed-invariant 22).
 	var row *persistence.ClaimHandleRow
@@ -147,7 +142,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 		return err
 	}))
 	require.NotNil(t, row, "durable claim must survive auto-terminal")
-	// Post-refactor: durable-Commit promotes the row to state='committed'
+	// @constraint: Post-refactor: durable-Commit promotes the row to state='committed'
 	// (Promote-not-delete). The durable property comes from
 	// `lifetime='durable'` on the row.
 	require.Equal(t, spec.ClaimHandleStateCommitted, row.State,
@@ -155,7 +150,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.Equal(t, spec.ClaimLifetimeDurable, row.Lifetime,
 		"durable claim must carry lifetime=durable")
 
-	// ListByInstanceAndState(committed, durable) surfaces the row.
+	// @constraint: ListByInstanceAndState(committed, durable) surfaces the row.
 	var durables []persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		rows, err := backend.ClaimHandles().ListByInstanceAndState(
@@ -167,7 +162,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.Len(t, durables, 1)
 	require.Equal(t, claimHandleID, durables[0].ID)
 
-	// Instance termination cleanup fires producer.Release on every
+	// @deliberate: Instance termination cleanup fires producer.Release on every
 	// durable row + deletes the row.
 	var report runtime.HeldDurableReleaseReport
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -179,7 +174,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	require.Equal(t, 1, report.Succeeded)
 	require.Empty(t, report.Failures)
 
-	// Row MUST be gone.
+	// @constraint: Row MUST be gone.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, claimHandleID, tx)
 		row = r
@@ -187,7 +182,7 @@ func TestDurableLifetimeE2E(t *testing.T) {
 	}))
 	require.Nil(t, row, "ReleaseHeldDurableClaims must drop the row")
 
-	// Producer.Release MUST have fired.
+	// @constraint: Producer.Release MUST have fired.
 	releaseSeen := false
 	for _, c := range stubStore.Calls() {
 		if c.Verb == "release" {

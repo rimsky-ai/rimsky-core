@@ -61,9 +61,9 @@ func (h *executorHandler) Execute(req *genv1.ExecuteRequest, stream genv1.Execut
 		return sendExecutorTerminalError(stream, rerr.class, rerr.msg)
 	}
 
-	// Rewrite the callback URL onto the agent's local listener so the
-	// spawned child posts callbacks into the tunnel rather than dialing
-	// the supervisor directly (which it can't reach).
+	// @constraint: rewrite the callback URL onto the agent's local
+	// listener so the spawned child posts callbacks into the tunnel
+	// rather than dialing the supervisor directly (which it can't reach).
 	forwarded := proto.Clone(req).(*genv1.ExecuteRequest)
 	forwarded.CallbackUrl = rewriteCallbackURL(req.GetCallbackUrl(), res.agent.localCallbackBaseURL)
 
@@ -97,10 +97,11 @@ func (h *executorHandler) pump(stream genv1.Executor_ExecuteServer, res *resolve
 	for {
 		select {
 		case <-ctx.Done():
-			// The supervisor cancelled the Execute stream. Signal the agent
-			// to cancel the child's inner Execute via a terminal CANCEL frame
-			// so the spawned executor's stream is torn down rather than left
-			// running until the child terminates on its own.
+			// @constraint: the supervisor cancelled the Execute stream;
+			// signal the agent to cancel the child's inner Execute via
+			// a terminal CANCEL frame so the spawned executor's stream
+			// is torn down rather than left running until the child
+			// terminates on its own.
 			res.agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
 				SpawnId:  res.spawnID,
 				Protocol: protocolExecutor,
@@ -110,7 +111,7 @@ func (h *executorHandler) pump(stream genv1.Executor_ExecuteServer, res *resolve
 			return ctx.Err()
 		case frame, ok := <-respCh:
 			if !ok {
-				// Channel closed by closeAllStreams on agent disconnect.
+				// @constraint: channel closed by closeAllStreams on agent disconnect.
 				h.state.dropSpawn(res.spawnID)
 				return sendExecutorTerminalError(stream, errClassHostAgentDisconnected, "agent disconnected mid-execute")
 			}

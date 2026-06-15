@@ -155,7 +155,6 @@ func TestEnsureRunDir_BlobsCreated(t *testing.T) {
 }
 
 func TestFormatRunTimestamp_FilesystemSafe(t *testing.T) {
-	// 2026-06-13T10:30:45Z UTC → "2026-06-13T10-30-45Z".
 	got := FormatRunTimestamp(time.Date(2026, 6, 13, 10, 30, 45, 0, time.UTC))
 	if strings.Contains(got, ":") {
 		t.Fatalf("FormatRunTimestamp returned %q which contains a colon (not filesystem-safe on Windows)", got)
@@ -242,9 +241,11 @@ func TestUpdateLatestSymlink_ConcurrentFirstInstall(t *testing.T) {
 		rel, _ := filepath.Rel(linkDir, runDir)
 		relTargets[rel] = true
 	}
-	// All writers race the very first install. The sentinel `.` is a
-	// transient internal target — a concurrent reader may see it; the
-	// invariant only forbids the dent being missing.
+	// @deliberate: accept the sentinel `.` as a valid observation. All
+	// writers race the very first install; the sentinel is a transient
+	// internal target a concurrent reader may legitimately see — the
+	// invariant only forbids the dent being missing, not the dent
+	// pointing at the bootstrap sentinel.
 	relTargets["."] = true
 
 	var wg sync.WaitGroup
@@ -297,7 +298,6 @@ func TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureRunDir b: %v", err)
 	}
-	// Seed the link so the very first reader sees a valid target.
 	if err := UpdateLatestSymlink(tmp, a); err != nil {
 		t.Fatalf("UpdateLatestSymlink seed: %v", err)
 	}
@@ -329,11 +329,11 @@ func TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken(t *testing.T) {
 				}
 				got, err := os.Readlink(linkPath)
 				if err != nil {
-					// The invariant promises the link is never missing —
-					// os.ErrNotExist (ENOENT) is the broken-window
-					// observation we reject. A transient EINVAL during the
-					// kernel's atomic-swap window is not a broken link;
-					// the next readlink succeeds.
+					// @constraint: classify readlink errors against the
+					// broken-window invariant. ENOENT is the rejected
+					// observation — the dent must never be missing. EINVAL
+					// during the kernel's atomic-swap window is tolerated;
+					// the next readlink succeeds with a valid target.
 					switch {
 					case errors.Is(err, os.ErrNotExist):
 						missingLinkErrors.Add(1)
@@ -364,8 +364,6 @@ func TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken(t *testing.T) {
 			}
 		}()
 	}
-	// 100 alternating updates from a single writer; the readers race
-	// each rename.
 	for i := 0; i < 100; i++ {
 		target := a
 		if i%2 == 1 {
@@ -377,7 +375,6 @@ func TestUpdateLatestSymlink_ConcurrentReadersNeverSeeBroken(t *testing.T) {
 			t.Fatalf("UpdateLatestSymlink iteration %d: %v", i, err)
 		}
 	}
-	// Give readers a beat to observe the final state.
 	time.Sleep(50 * time.Millisecond)
 	close(stop)
 	wg.Wait()

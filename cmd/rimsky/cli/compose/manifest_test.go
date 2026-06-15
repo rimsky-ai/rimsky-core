@@ -178,7 +178,7 @@ func TestValidate_MultiError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	// @constraint: errors.Join produces a multi-error; the wrapped slice is visible via the Unwrap() []error interface.
+	// @constraint: Errors.Join produces a multi-error; the wrapped slice is visible via the Unwrap() []error interface.
 	var joined interface{ Unwrap() []error }
 	if !errors.As(err, &joined) {
 		t.Fatalf("expected a joined error, got %T", err)

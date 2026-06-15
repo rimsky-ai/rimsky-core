@@ -55,7 +55,6 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// 1. Bring up rimsky + executor-stub + fs-store.
 	netName := harness.NewNetwork(ctx, t)
 	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
 		harness.FilesystemStoreSpec{
@@ -77,9 +76,8 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// 2. Register a template that exercises both lineage record kinds:
-	//    - leaf_run records: every executor terminal.
-	//    - claim_terminal records: every store commit/abandon.
+	// @deliberate: template exercises both lineage record kinds — leaf_run
+	// (every executor terminal) and claim_terminal (every store commit/abandon).
 	tplBody := map[string]any{
 		"spec": map[string]any{
 			"name":                  "openlineage-e2e",
@@ -100,13 +98,12 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	templateID := postTemplate(t, ep, tplBody)
 	instanceID := postInstance(t, ep, templateID, "openlineage-e2e-1")
 
-	// 3. Wait for the cascade to settle so lineage rows are written.
 	waitNodeTerminal(t, ep, instanceID, "acquire-and-execute", 60*time.Second)
-	// Lineage rows are written by `runtime/lineage_writer.go` after
-	// the cascade ticks; give it a moment to flush before polling.
+	// @deliberate: lineage rows are written by `runtime/lineage_writer.go`
+	// after the cascade ticks; poll for the flush before constructing the
+	// subscriber so the first tick has rows to emit.
 	waitForLineageRows(t, ep, 1, 30*time.Second)
 
-	// 4. Boot a fake Marquez backend that records POST bodies.
 	var (
 		mu       sync.Mutex
 		received []Event
@@ -123,8 +120,6 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	}))
 	defer marquez.Close()
 
-	// 5. Construct the subscriber pointing at rimsky's host-side DSN
-	//    and the fake Marquez backend.
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
 	sub, err := New(ctx, Config{
 		RimskyDSN:    ep.HostDSN,
@@ -139,11 +134,10 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 	}
 	defer sub.Close()
 
-	// 6. Tick the subscriber and assert events were emitted. A real
-	//    cascade settles to at least one leaf_run row; the claim-
-	//    producer's commit semantics on a pick-policy claim depend on
-	//    the configured on_commit action, so a claim_terminal row may
-	//    or may not be present.
+	// @deliberate: assert >= 1 (not == N). A real cascade settles to at
+	// least one leaf_run row; the claim-producer's commit semantics on a
+	// pick-policy claim depend on the configured on_commit action, so a
+	// claim_terminal row may or may not be present.
 	if err := sub.tick(ctx); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
@@ -154,8 +148,8 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 		t.Fatalf("received %d events; want >= 1", got)
 	}
 
-	// 7. Idempotency: the cursor advanced past the rows; a second
-	//    tick with no new rows must not re-emit.
+	// @deliberate: idempotency check. Once the cursor has advanced past
+	// a row, a subsequent tick with no new rows must not re-emit it.
 	if err := sub.tick(ctx); err != nil {
 		t.Fatalf("tick (idempotent): %v", err)
 	}
@@ -166,9 +160,9 @@ func TestSubscriber_EndToEnd_PollsAndEmits(t *testing.T) {
 		t.Errorf("second tick added rows; received %d (want stays at %d)", gotAfter, got)
 	}
 
-	// 8. Every received event must carry the documented top-level
-	//    fields (the wire-contract decode tests below pin the per-kind
-	//    payload shapes; this top-level check pins the envelope).
+	// @deliberate: top-level envelope check only. The wire-contract decode
+	// tests below pin the per-kind payload shapes; this loop pins the
+	// envelope fields every event must carry regardless of record kind.
 	mu.Lock()
 	defer mu.Unlock()
 	for i, ev := range received {
@@ -258,11 +252,11 @@ func TestSubscriber_EmitFailureHaltsBatch(t *testing.T) {
 	defer sub.Close()
 
 	_ = sub.tick(ctx)
-	// Cursor must remain at the epoch zero: the very first emit
-	// failed, so the cursor never advanced. (If no lineage rows were
-	// written at all, the cursor also stays at epoch zero — the test
-	// still asserts the load-bearing invariant: "emit failure does
-	// not advance the cursor".)
+	// @deliberate: cursor must remain at epoch zero — the very first emit
+	// failed, so the cursor never advanced. If no lineage rows were
+	// written at all, the cursor also stays at epoch zero; either way the
+	// assertion pins the load-bearing property "emit failure does not
+	// advance the cursor".
 	if !sub.cursorAt.Equal(time.Unix(0, 0)) {
 		t.Errorf("cursor advanced despite emit failure: %v", sub.cursorAt)
 	}
@@ -630,5 +624,5 @@ func parseJSONTag(tag string) (name string, omitempty bool) {
 	return name, omitempty
 }
 
-// _ keeps fmt imported in case future debug logging needs it.
+// @deliberate: keeps fmt imported in case future debug logging needs it.
 var _ = fmt.Sprintf

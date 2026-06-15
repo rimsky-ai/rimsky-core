@@ -50,7 +50,6 @@ var allStates = []NodeState{
 // TestTransitionTable exhaustively checks every (from, reason) pair against
 // the spec §4.1 table (plus the Go-port `pure_cascade` addition).
 func TestTransitionTable(t *testing.T) {
-	// valid[from][reason] = expected to-state
 	valid := map[NodeState]map[string]NodeState{
 		NodeStateFresh: {
 			"invalidate_received": NodeStateStale,
@@ -61,7 +60,7 @@ func TestTransitionTable(t *testing.T) {
 			"pure_cascade":        NodeStateFresh,
 			"dispatch_impossible": NodeStateFailed,
 			"acquire_pass":        NodeStateFresh,
-			// policy_give_up from stale supports
+			// @constraint: policy_give_up from stale supports
 			// on_acquire_unavailable: { resolve: error } with
 			// error_types[X].policy ending in give_up.
 			"policy_give_up": NodeStateFailed,
@@ -305,9 +304,10 @@ func TestParkedToParkedRejected(t *testing.T) {
 			if got == NodeStateParked {
 				t.Fatalf("parked → parked under reason %q must be rejected, got success", reason.Kind)
 			}
-			// handler_resume → stale, park_timeout → failed, and
-			// instance_killed → failed are the only legal exits from
-			// parked; everything else must surface ErrIllegalTransition.
+			// @deliberate: handler_resume → stale, park_timeout →
+			// failed, and instance_killed → failed are the only legal
+			// exits from parked; everything else must surface
+			// ErrIllegalTransition.
 			if reason.Kind != "handler_resume" && reason.Kind != "park_timeout" && reason.Kind != "instance_killed" {
 				require.Error(t, err, "reason=%s", reason.Kind)
 				require.True(t, errors.Is(err, ErrIllegalTransition))
@@ -358,17 +358,14 @@ func TestNextStateParent_ChildTransitioned_AggregateOK(t *testing.T) {
 // NextStateParent.
 func TestNextStateParent_LeafReasonsStillRouteToNextState(t *testing.T) {
 	t.Parallel()
-	// running → fresh under handler_complete (leaf path).
 	got, err := NextStateParent(NodeStateRunning, ReasonHandlerComplete)
 	require.NoError(t, err)
 	require.Equal(t, NodeStateFresh, got)
 
-	// running → parked under handler_park (leaf path).
 	got, err = NextStateParent(NodeStateRunning, ReasonHandlerPark)
 	require.NoError(t, err)
 	require.Equal(t, NodeStateParked, got)
 
-	// Illegal leaf transitions stay illegal under NextStateParent.
 	_, err = NextStateParent(NodeStateRunning, ReasonDispatchClaimed)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrIllegalTransition))

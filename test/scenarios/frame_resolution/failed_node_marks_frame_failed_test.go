@@ -48,7 +48,6 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 15*time.Second),
 		"worker did not reach failed on first fire")
 
-	// Wait for the frame engine's tick to record frame-end.
 	deadline := time.Now().Add(5 * time.Second)
 	var first frameRow
 	for time.Now().Before(deadline) {
@@ -63,7 +62,7 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 		"frame should end failed when its expected node ended failed")
 	require.NotNil(t, first.EndedAt, "failed frame must have ended_at set")
 
-	// frame_id on the failed node is preserved (per §6.2).
+	// @deliberate: frame_id on the failed node is preserved (per §6.2).
 	var nodeFrameID *uuid.UUID
 	err := h.Pool.QueryRow(context.Background(),
 		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, uuid.UUID(worker.ID)).Scan(&nodeFrameID)
@@ -73,14 +72,13 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 	require.Equal(t, first.FrameID, *nodeFrameID,
 		"failed node frame_id should match the failed frame")
 
-	// Fire a second invalidate after re-scripting the stub to succeed.
+	// @deliberate: Fire a second invalidate after re-scripting the stub to succeed.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
 	fireInvalidate(t, h, iid, worker.ID)
 
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh on second fire")
 
-	// Wait for the second frame to settle.
 	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 5*time.Second),
 		"expected one completed frame after second fire")
 

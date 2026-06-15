@@ -68,12 +68,12 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 	syncCaps := claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	}
-	// Scoped-direct stub store: Commit/Abandon record into the Calls
+	// @deliberate: Scoped-direct stub store: Commit/Abandon record into the Calls
 	// ledger; lookup is claim_id-based and idempotent.
 	endpoint, store, teardown := stubfixture.Start(t, stubstore.Config{Capabilities: syncCaps})
 	t.Cleanup(teardown)
 
-	// No scheduler: the conductor tick would run the real orphan reaper
+	// @deliberate: No scheduler: the conductor tick would run the real orphan reaper
 	// in the background and steal the seeded expired row from the
 	// deterministic interleaving. No supervisor: the test drives the
 	// terminal release itself.
@@ -99,7 +99,7 @@ func startReaperRaceFixture(t *testing.T) *reaperRaceFixture {
 		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '10 minutes', $3, $4, 'completed')`,
 		runID, worker.ID, *worker.FrameID, mainScopeID,
 	)
-	// The row is past expiry but still active and owned — the edge the
+	// @deliberate: The row is past expiry but still active and owned — the edge the
 	// reaper and the in-flight terminal both observe.
 	chID := uuid.New()
 	h.ExecSQL(
@@ -183,7 +183,7 @@ func TestOrphanReaperVsTerminalRelease_ReleaseWinsInsideSweepWindow(t *testing.T
 	t.Parallel()
 	f := startReaperRaceFixture(t)
 
-	// The reaper has listed the expired row; the owner's terminal
+	// @deliberate: The reaper has listed the expired row; the owner's terminal
 	// release completes inside the list→delete window. The reaper's
 	// claimant-guarded DeleteIfExpired must then lose: Promote nulled
 	// the holder, so the guard matches nothing.
@@ -204,7 +204,7 @@ func TestOrphanReaperVsTerminalRelease_ReleaseWinsInsideSweepWindow(t *testing.T
 	}))
 	require.True(t, hooked.Load(), "the PreReapHook seam must have fired")
 
-	// Exactly one of the two paths resolved the row: the release
+	// @deliberate: Exactly one of the two paths resolved the row: the release
 	// promoted it; the reaper's delete was a no-op.
 	var rowCount int
 	var state string
@@ -213,13 +213,13 @@ func TestOrphanReaperVsTerminalRelease_ReleaseWinsInsideSweepWindow(t *testing.T
 	f.h.QueryRowSQL(`SELECT state FROM rimsky_claim_handles WHERE id = $1`, []any{f.chID}, &state)
 	require.Equal(t, "committed", state, "the release's Promote is the single resolution")
 
-	// Verb accounting per concept:terminal-resolution: the release fired
+	// @constraint: Verb accounting per concept:terminal-resolution: the release fired
 	// Commit exactly once; the reaper fired nothing.
 	require.Equal(t, 1, f.countStoreVerb("commit"),
 		"exactly one producer Commit — the terminal release's")
 	require.Zero(t, f.countStoreVerb("abandon"), "no Abandon may fire")
 
-	// The losing reaper must not claim the reap in the audit log.
+	// @constraint: The losing reaper must not claim the reap in the audit log.
 	require.Zero(t, f.reapEvents(t),
 		"no lock_orphan_reaped event may be emitted when the reaper lost the race")
 }
@@ -228,7 +228,7 @@ func TestOrphanReaperVsTerminalRelease_ReaperWinsThenLateRelease(t *testing.T) {
 	t.Parallel()
 	f := startReaperRaceFixture(t)
 
-	// The sweep completes first: the reaper hard-deletes the expired
+	// @deliberate: The sweep completes first: the reaper hard-deletes the expired
 	// row claimant-guarded, emits lock_orphan_reaped, and fires NO
 	// producer verb.
 	require.NoError(t, runtime.SweepOrphanedClaimHandles(f.h.Ctx, runtime.OrphanReaperArgs{
@@ -243,7 +243,7 @@ func TestOrphanReaperVsTerminalRelease_ReaperWinsThenLateRelease(t *testing.T) {
 	require.Zero(t, f.countStoreVerb("commit"), "the reaper fires no producer verb")
 	require.Zero(t, f.countStoreVerb("abandon"), "the reaper fires no producer verb")
 
-	// The owner's late terminal release arrives after the reap. It must
+	// @constraint: The owner's late terminal release arrives after the reap. It must
 	// not error, must not resurrect the row, and must not double-record
 	// the resolution: the claimant-guarded Promote matches nothing
 	// (logged no-op). Its producer verb still fires once — at-least-once

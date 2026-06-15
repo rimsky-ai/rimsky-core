@@ -19,7 +19,7 @@ Downstream nodes consume the bus reliably without duplicate processing on retry;
 
 ## Acceptance
 
-A sender (operator or publisher, via the control-api `POST /instances/{id}/messages` or its MCP equivalent) emits a message carrying a dedup key; the message is persisted and visible in the instance's message history. A second emission with the same key returns the original message identifier and produces no second envelope. A request with no dedup key is refused. Senders with structurally distinct identities (operator vs. publisher; one operator key vs. another) do not replay each other when they happen to choose the same dedup key.
+A sender (operator or publisher) emits a message through the control-api's instance-message-emit surface (or its MCP equivalent) carrying a dedup key; the message is persisted and visible in the instance's message history. A second emission with the same key returns the original message identifier and produces no second envelope. A request with no dedup key is refused. Senders with structurally distinct identities (operator vs. publisher; one operator key vs. another) do not replay each other when they happen to choose the same dedup key.
 
 ## Falsifier
 

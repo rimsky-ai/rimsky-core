@@ -95,18 +95,19 @@ func candidateGatedByInFlightUpstream(
 	cand persistence.Candidate, runScopeID shared.UUID,
 ) (bool, error) {
 	if inst == nil {
-		// No instance row → no template to derive edges from; the
-		// caller already treats this as a degraded candidate.
+		// @deliberate: no instance row means no template to derive edges from;
+		// the caller already treats this as a degraded candidate, so returning
+		// ungated here defers to that path rather than double-handling it.
 		return false, nil
 	}
 	if runScopeID == (shared.UUID{}) {
-		// The run-scope key is load-bearing for the gate: a zero scope
-		// would match nothing and silently dispatch ungated. Fail
-		// closed — consistent with the edges/nodes lookups below and
-		// the doc above (the guarantee wins over throughput on a
-		// faulting database). The caller's run-tree lookup surfaces its
-		// own error before this is ever reached; this guards the
-		// remaining no-row / partial-wiring shapes.
+		// @constraint: the run-scope key is load-bearing for the gate — a zero
+		// scope would match nothing and silently dispatch ungated. Fail closed,
+		// consistent with the edges/nodes lookups below and the doc above (the
+		// all-upstreams-resolve-first guarantee wins over throughput on a
+		// faulting database). The caller's run-tree lookup surfaces its own
+		// error before this is ever reached; this guards the remaining
+		// no-row / partial-wiring shapes.
 		return false, fmt.Errorf("candidateGatedByInFlightUpstream: run scope unresolved for run %s; failing closed", cand.DispatchID)
 	}
 	edges, err := subscriptionEdgesForTemplate(ctx, args, inst.TemplateHash, tx)
@@ -130,8 +131,8 @@ func candidateGatedByInFlightUpstream(
 	for _, n := range instNodes {
 		allIDs = append(allIDs, n.ID)
 		if n.ID == cand.NodeID {
-			// Self-edge: a node subscribed to itself drains its own
-			// queue; its own in-flight row must not gate it.
+			// @constraint: self-edge — a node subscribed to itself drains its
+			// own queue, so its own in-flight row must not gate it.
 			continue
 		}
 		if _, ok := senderTypeSet[n.NodeType]; ok {
@@ -141,10 +142,10 @@ func candidateGatedByInFlightUpstream(
 	if len(senderIDs) == 0 {
 		return false, nil
 	}
-	// One phase query for the whole instance node set: the gate's own
-	// sender check reads the sender subset, and the pending-cycle
-	// tie-breaker (when it applies) reuses the same map instead of
-	// re-querying a superset in the same tx.
+	// @deliberate: one phase query for the whole instance node set — the
+	// gate's own sender check reads the sender subset, and the pending-cycle
+	// tie-breaker (when it applies) reuses the same map instead of re-querying
+	// a superset in the same tx.
 	phasesAll, err := args.Queue.ListInFlightRunPhases(ctx, tx, allIDs, cand.FrameID, runScopeID)
 	if err != nil {
 		return false, fmt.Errorf("candidateGatedByInFlightUpstream: %w", err)
@@ -156,8 +157,8 @@ func candidateGatedByInFlightUpstream(
 			continue
 		}
 		if !phasesPendingOnly(phases) {
-			// A progressing upstream (active / held / parked) always
-			// gates, cycle or not.
+			// @constraint: a progressing upstream (active / held / parked)
+			// always gates, cycle or not.
 			return true, nil
 		}
 		gatingSenders = append(gatingSenders, sid)
@@ -165,32 +166,32 @@ func candidateGatedByInFlightUpstream(
 	if len(gatingSenders) == 0 {
 		return false, nil
 	}
-	// Every gating sender is merely-pending — the pending-cycle
-	// tie-breaker MAY apply (see the package doc). It applies only when
-	// the candidate's OWN in-flight rows are also merely-pending: a
-	// candidate with a progressing row (e.g. a parked run alongside the
-	// pending one) stays gated, so every contender computes cycle
-	// membership over the same uniform predicate and the same persisted
-	// state — no contender-dependent SCC, no dual-pass.
+	// @deliberate: every gating sender is merely-pending, so the pending-cycle
+	// tie-breaker MAY apply (see the package doc). It applies only when the
+	// candidate's OWN in-flight rows are also merely-pending — a candidate
+	// with a progressing row (e.g. a parked run alongside the pending one)
+	// stays gated, so every contender computes cycle membership over the same
+	// uniform predicate and the same persisted state, with no contender-
+	// dependent SCC and no dual-pass.
 	if !phasesPendingOnly(phasesAll[cand.NodeID]) {
 		return true, nil
 	}
-	// Compute the pending-only gating cycle containing the candidate;
-	// the candidate passes only when every gating sender belongs to that
-	// cycle AND the candidate's node id is byte-wise lowest in it.
+	// @deliberate: compute the pending-only gating cycle containing the
+	// candidate; the candidate passes only when every gating sender belongs
+	// to that cycle AND the candidate's node id is byte-wise lowest in it.
 	cycle := pendingGatingCycleMembers(edges, instNodes, cand, phasesAll)
 	for _, senderID := range gatingSenders {
 		if _, inCycle := cycle[senderID]; !inCycle {
-			// A merely-pending sender outside the candidate's pending
-			// cycle gates like any other upstream: its own gates resolve
-			// independently, and its settlement re-triggers selection.
+			// @constraint: a merely-pending sender outside the candidate's
+			// pending cycle gates like any other upstream — its own gates
+			// resolve independently and its settlement re-triggers selection.
 			return true, nil
 		}
 	}
 	for member := range cycle {
 		if bytes.Compare(member[:], cand.NodeID[:]) < 0 {
-			// A lower-id cycle member wins the tie-break: it dispatches
-			// first, we stay gated.
+			// @deliberate: a lower-id cycle member wins the tie-break — it
+			// dispatches first, we stay gated.
 			return true, nil
 		}
 	}
@@ -239,20 +240,17 @@ func pendingGatingCycleMembers(
 		typeByID[n.ID] = n.NodeType
 		idsByType[n.NodeType] = append(idsByType[n.NodeType], n.ID)
 	}
-	// Vertex predicate — UNIFORM across every node, the candidate
-	// included: a node is a member iff its in-flight rows in
-	// (frame, scope) are merely-pending. The caller has already
-	// verified the candidate's own rows are pending-only before the
-	// tie-breaker runs (a candidate with a progressing row is gated
-	// outright), and reachableFrom seeds the candidate unconditionally,
-	// so no candidate-by-definition special case is needed — two
-	// contenders evaluating the same state always derive the same SCC.
+	// @deliberate: vertex predicate is UNIFORM across every node, the
+	// candidate included — a node is a member iff its in-flight rows in
+	// (frame, scope) are merely-pending. The caller has already verified the
+	// candidate's own rows are pending-only before the tie-breaker runs (a
+	// candidate with a progressing row is gated outright), and reachableFrom
+	// seeds the candidate unconditionally, so no candidate-by-definition
+	// special case is needed: two contenders evaluating the same state always
+	// derive the same SCC.
 	isMember := func(id shared.UUID) bool {
 		return phasesPendingOnly(phasesAll[id])
 	}
-	// senderMembersOf resolves a member's gating-edge successors: the
-	// member nodes whose node-type appears in the receiver's sender set
-	// (self-edges excluded).
 	senderMembersOf := func(id shared.UUID) []shared.UUID {
 		var out []shared.UUID
 		for _, st := range edges.SenderNodeTypesForReceiver(typeByID[id]) {
@@ -268,8 +266,8 @@ func pendingGatingCycleMembers(
 		return out
 	}
 	fwd := reachableFrom(cand.NodeID, senderMembersOf)
-	// Reverse edges: receiver r points at sender s, so s's predecessors
-	// are every member r whose sender set contains s's type.
+	// @deliberate: reverse edges — receiver r points at sender s, so s's
+	// predecessors are every member r whose sender set contains s's type.
 	receiverMembersOf := func(id shared.UUID) []shared.UUID {
 		var out []shared.UUID
 		for _, r := range instNodes {

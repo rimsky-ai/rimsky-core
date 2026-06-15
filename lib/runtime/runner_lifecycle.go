@@ -57,53 +57,52 @@ import (
 //
 //	@concept: error-policy
 func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) {
-	// Defense-in-depth nil check: today's tryAcquire path that returns
-	// errAcquireUnavailable always populates NodeDef (an Unavailable
-	// requires having a ClaimSpec, which requires a template lookup).
+	// @deliberate: defense-in-depth nil check; today's tryAcquire path
+	// that returns errAcquireUnavailable always populates NodeDef (an
+	// Unavailable requires a ClaimSpec, which requires a template lookup).
 	if acq.NodeDef == nil {
 		return
 	}
-	// Test-only seam: deterministically observe the post-rollback /
-	// pre-Abandon window so an injection test can prove the tx-side
-	// rows are gone before the producer-side Abandon fires, and that
-	// the Abandon then fires exactly once. Nil in production (no
-	// behavior change); see RunArgs.PreAcquireUnavailableHook.
+	// @deliberate: test-only seam to deterministically observe the
+	// post-rollback / pre-Abandon window so an injection test can prove
+	// the tx-side rows are gone before the producer-side Abandon fires,
+	// and that the Abandon then fires exactly once. Nil in production
+	// (no behavior change); see RunArgs.PreAcquireUnavailableHook.
 	if args.PreAcquireUnavailableHook != nil {
 		args.PreAcquireUnavailableHook(ctx)
 	}
-	// Abandon any claims that successfully Open'd before the Unavailable
-	// was hit. The tx-side rollback already removed the lock-holder
-	// rows; the store-side Abandon undoes any producer-side state.
+	// @constraint: tx-side rollback already removed the lock-holder rows; the store-side Abandon undoes any producer-side state.
 	abandonPartialLocks(ctx, args, acq.PartialLocks)
 
-	// Re-claim the dispatch row before resolving the policy: the
-	// errAcquireUnavailable rollback undid the in-tx ClaimDispatchRow,
-	// so the row sits pending+unclaimed and OnError's claimant-guarded
-	// retire (RemoveForNodeInTx, blessed-invariant 4) would silently
-	// no-op — leaking a pending run row that the upstream gate then
-	// reads as a forever-in-flight sender, livelocking every subscribed
-	// receiver. Losing the re-claim CAS means another supervisor now
-	// owns the row; that supervisor's own acquisition attempt routes
-	// the policy, so we must not double-resolve here.
+	// @constraint: re-claim the dispatch row before resolving the policy.
+	// The errAcquireUnavailable rollback undid the in-tx
+	// ClaimDispatchRow, so the row sits pending+unclaimed and OnError's
+	// claimant-guarded retire (RemoveForNodeInTx, blessed-invariant 4)
+	// would silently no-op — leaking a pending run row that the upstream
+	// gate then reads as a forever-in-flight sender, livelocking every
+	// subscribed receiver. Losing the re-claim CAS means another
+	// supervisor now owns the row; that supervisor's own acquisition
+	// attempt routes the policy, so we must not double-resolve here.
 	if !reclaimDispatchRowShortTx(ctx, args, cand, "handleAcquireUnavailable") {
 		return
 	}
 
-	// Route through the operator's error_types: chain. Key on the
-	// producer-declared acquisition-failure class (e.g.
+	// @constraint: route through the operator's error_types: chain.
+	// Key on the producer-declared acquisition-failure class (e.g.
 	// "pg/claim_unavailable") when the producer named one on its
 	// Unavailable response; otherwise fall back to the synthetic
-	// "acquire/unavailable". Threading the producer-declared leaf is what
-	// makes an operator's `error_types: { pg/claim_unavailable: ... }`
-	// policy match — and what lands the canonical
-	// `terminal/error/pg/claim_unavailable` signal on the event log a
-	// subscriber routes to. The policy lookup falls back from the exact
-	// producer-declared class to the synthetic "acquire/unavailable"
-	// family (PolicyFallbackClass) so a template that declares only the
-	// generic policy still catches classified failures; see
-	// lookupPolicy's fallback-order comment. Absent BOTH policies →
-	// OnError resolves to give_up("unknown_error_class") (intentional
-	// fail-fast; operators that want retry declare it explicitly).
+	// "acquire/unavailable". Threading the producer-declared leaf is
+	// what makes an operator's
+	// `error_types: { pg/claim_unavailable: ... }` policy match — and
+	// what lands the canonical `terminal/error/pg/claim_unavailable`
+	// signal on the event log a subscriber routes to. The policy lookup
+	// falls back from the exact producer-declared class to the synthetic
+	// "acquire/unavailable" family (PolicyFallbackClass) so a template
+	// that declares only the generic policy still catches classified
+	// failures; see lookupPolicy's fallback-order comment. Absent BOTH
+	// policies → OnError resolves to give_up("unknown_error_class")
+	// (intentional fail-fast; operators that want retry declare it
+	// explicitly).
 	errorClass := acquireUnavailableSyntheticClass
 	if acq.UnavailableClass != "" {
 		errorClass = acq.UnavailableClass
@@ -172,32 +171,31 @@ const producerAcquireErrorFallbackClass = "acquire/producer_error"
 //
 //	@concept: error-policy
 func handleAcquireProducerError(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) {
-	// Defense-in-depth nil check: the tryAcquire path that returns
-	// errAcquireProducerErrored always populates NodeDef (a producer
-	// fault requires a ClaimSpec, which requires a template lookup).
+	// @deliberate: defense-in-depth nil check; the tryAcquire path that
+	// returns errAcquireProducerErrored always populates NodeDef (a
+	// producer fault requires a ClaimSpec, which requires a template
+	// lookup).
 	if acq.NodeDef == nil {
 		return
 	}
-	// Abandon any claims that successfully Open'd before the fault was
-	// hit. The tx-side rollback already removed the lock-holder rows;
-	// the store-side Abandon undoes any producer-side state.
+	// @constraint: tx-side rollback already removed the lock-holder rows; the store-side Abandon undoes any producer-side state.
 	abandonPartialLocks(ctx, args, acq.PartialLocks)
 
-	// Re-claim the dispatch row before resolving the policy — mirrors
-	// handleAcquireUnavailable: the rollback undid the in-tx claim, and
-	// OnError's claimant-guarded retire silently no-ops on an unclaimed
-	// row, leaking it pending. Bail when another supervisor won the CAS
-	// (it owns the resolution).
+	// @constraint: re-claim the dispatch row before resolving the policy
+	// — mirrors handleAcquireUnavailable. The rollback undid the in-tx
+	// claim, and OnError's claimant-guarded retire silently no-ops on an
+	// unclaimed row, leaking it pending. Bail when another supervisor
+	// won the CAS (it owns the resolution).
 	if !reclaimDispatchRowShortTx(ctx, args, cand, "handleAcquireProducerError") {
 		return
 	}
 
-	// Policy lookup falls back from the exact producer-declared class
-	// (ErrorInfo.Reason) to the synthetic "acquire/producer_error"
-	// family — mirroring handleAcquireUnavailable's fallback — so a
-	// template that declares only the generic policy still catches
-	// classified producer faults. See lookupPolicy's fallback-order
-	// comment.
+	// @constraint: policy lookup falls back from the exact
+	// producer-declared class (ErrorInfo.Reason) to the synthetic
+	// "acquire/producer_error" family — mirroring
+	// handleAcquireUnavailable's fallback — so a template that declares
+	// only the generic policy still catches classified producer faults.
+	// See lookupPolicy's fallback-order comment.
 	errorClass := acq.ProducerErrorClass
 	if errorClass == "" {
 		errorClass = producerAcquireErrorFallbackClass

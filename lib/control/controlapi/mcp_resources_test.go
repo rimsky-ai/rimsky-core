@@ -6,7 +6,6 @@
 // MCP resource catalog defined in mcp_resources.go. Pairs with the
 // JSON-RPC dispatcher tests in control/controlapi/mcp/resources_test.go.
 //
-// Spec coverage (see .ok-planner/specs/2026-05-24-instance-debugger-design.md):
 //   - §6.2 URI scheme (parsing both instance-scoped and breakpoint-scoped
 //     forms, rejecting non-rimsky:// schemes, mis-shaped paths, etc.)
 //   - §6.4 paginated reads (since cursor, limit cap, polling pattern,
@@ -135,7 +134,7 @@ func TestResources_List_NoBreakpointReadReturnsEmpty(t *testing.T) {
 	_, _ = seedBPInstance(t, h, uuid.NewString())
 
 	cat := buildResourceCatalog(h)
-	// Grant only `instance:read` — does NOT cover `breakpoint:read`.
+	// @constraint: grant only `instance:read` — does NOT cover `breakpoint:read`.
 	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "instance:read"}}})
 
 	got, err := cat.List(req)
@@ -154,7 +153,7 @@ func TestResources_Read_ByInstance(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 	instUUID := uuid.MustParse(instID)
 
-	// Seed a breakpoint + 3 hits.
+	// @constraint: seed a breakpoint + 3 hits.
 	bpID := createBreakpointForRead(t, h, instID)
 	t1 := time.Now().UTC().Add(-3 * time.Minute)
 	_, seq1 := seedBPHit(t, h, bpID, instUUID, t1)
@@ -182,7 +181,7 @@ func TestResources_Read_ByInstance(t *testing.T) {
 	require.Equal(t, seq3, body.NextSince)
 	require.False(t, body.Truncated)
 
-	// Each row should carry seq + identity fields + snapshot fields.
+	// @constraint: each row should carry seq + identity fields + snapshot fields.
 	require.EqualValues(t, seq1, int64(body.Hits[0]["seq"].(float64)))
 	require.NotEmpty(t, body.Hits[0]["hit_id"])
 	require.Equal(t, "before_dispatch", body.Hits[0]["checkpoint"])
@@ -246,7 +245,7 @@ func TestResources_Read_PollingCursorFlow(t *testing.T) {
 
 	cursor := int64(0)
 	collected := []int64{}
-	for page := 0; page < 10; page++ { // safety bound; expect 3 iterations
+	for page := 0; page < 10; page++ {
 		uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits?since=%d&limit=2", instID, cursor)
 		contents, rpcErr := cat.Read(req, uri)
 		require.Nil(t, rpcErr, "page %d: %+v", page, rpcErr)
@@ -264,7 +263,8 @@ func TestResources_Read_PollingCursorFlow(t *testing.T) {
 			require.Equal(t, page, 2, "expected the final page to be page index 2 (third iteration)")
 			break
 		}
-		require.Equal(t, page, page) // suppress unused-var lints if loop body changes
+		// @deliberate: suppress unused-var lints if loop body changes.
+		require.Equal(t, page, page)
 		require.Equal(t, 2, len(body.Hits), "truncated pages should be full")
 	}
 	require.Equal(t, seeded, collected, "polling loop should drain every seeded hit in seq order")
@@ -342,7 +342,7 @@ func TestResources_Read_PermissionDenied(t *testing.T) {
 	t.Cleanup(teardown)
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 	cat := buildResourceCatalog(h)
-	// `event:read` does NOT cover `breakpoint:read`.
+	// @constraint: `event:read` does NOT cover `breakpoint:read`.
 	req := withIdentity(t, auth.Identity{Kind: auth.IdentityAPIKey, Permissions: auth.Grant{{Action: "event:read"}}})
 	uri := fmt.Sprintf("rimsky://instances/%s/breakpoint-hits", instID)
 	_, rpcErr := cat.Read(req, uri)
@@ -360,7 +360,7 @@ func TestResources_Read_LimitCappedAtMax(t *testing.T) {
 	_, instID := seedBPInstance(t, h, uuid.NewString())
 	instUUID := uuid.MustParse(instID)
 	bpID := createBreakpointForRead(t, h, instID)
-	// One hit is enough — we're checking parser bounds, not row content.
+	// @constraint: one hit is enough — we're checking parser bounds, not row content.
 	_, _ = seedBPHit(t, h, bpID, instUUID, time.Now().UTC().Add(-time.Minute))
 
 	cat := buildResourceCatalog(h)

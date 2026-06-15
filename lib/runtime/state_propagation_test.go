@@ -43,7 +43,7 @@ func newFakes() (*fakeRunTreeTable, *fakeRunScopeTable) {
 	return tree, scopes
 }
 
-// --- fakeRunScopeTable --- //
+// Create fakeRunScopeTable --- //
 
 func (f *fakeRunScopeTable) Create(_ context.Context, _ persistence.Tx, row persistence.RunScopeRow) error {
 	if row.CreatedAt.IsZero() {
@@ -111,7 +111,7 @@ func (f *fakeRunScopeTable) ListParentChain(_ context.Context, _ persistence.Tx,
 	return out, nil
 }
 
-// --- fakeRunTreeTable --- //
+// CreateRootRun fakeRunTreeTable --- //
 
 func (f *fakeRunTreeTable) CreateRootRun(_ context.Context, _ persistence.Tx, in persistence.CreateRootRunInput) error {
 	f.rows[in.RunID] = &persistence.RunTreeRow{
@@ -242,7 +242,7 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateRootRun: %v", err)
 	}
-	// Two fan-out partition RunScopes under root.
+	// @deliberate: Two fan-out partition RunScopes under root.
 	c1Scope := scopes.makeChildScope(rootScope, root, "a", "main")
 	c2Scope := scopes.makeChildScope(rootScope, root, "b", "main")
 	if err := rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
@@ -259,7 +259,7 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 	args := PropagationArgs{RunTree: rt, RunScopes: scopes}
 	successSig := strPtr("terminal/success")
 
-	// First child terminates → parent still stale (other child active).
+	// @deliberate: First child terminates → parent still stale (other child active).
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateFresh, successSig)
 	if _, _, err := PropagateFromChildState(ctx, args, nil, c1, cascade.NodeStateFresh, successSig); err != nil {
 		t.Fatalf("PropagateFromChildState c1: %v", err)
@@ -269,7 +269,7 @@ func TestPropagateFromChildState_LeafRoot(t *testing.T) {
 		t.Fatalf("expected root still stale after one child, got %s", rootRow.State)
 	}
 
-	// Second child terminates → parent fresh + terminal/success.
+	// @deliberate: Second child terminates → parent fresh + terminal/success.
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFresh, successSig)
 	actions, _, err := PropagateFromChildState(ctx, args, nil, c2, cascade.NodeStateFresh, successSig)
 	if err != nil {
@@ -312,10 +312,10 @@ func TestPropagateFromChildState_StrictCancelSiblings(t *testing.T) {
 	_ = rt.CreateChildRun(ctx, nil, persistence.CreateChildRunInput{
 		RunID: c2, NodeID: newUUID(), FrameID: frame, RunScopeID: c2Scope,
 	})
-	// c1 still running.
+	// @deliberate: c1 still running.
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c1, cascade.NodeStateRunning, nil)
 
-	// c2 fails → parent failed + cancel-siblings action.
+	// @deliberate: c2 fails → parent failed + cancel-siblings action.
 	failedSig := strPtr("terminal/error/test_failure")
 	_ = rt.UpdateStateAndOutcome(ctx, nil, c2, cascade.NodeStateFailed, failedSig)
 	actions, _, err := PropagateFromChildState(context.Background(), PropagationArgs{RunTree: rt, RunScopes: scopes}, nil,

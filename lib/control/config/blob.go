@@ -12,6 +12,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 )
 
+// sharedMemoryBackendOnce gates lazy construction of sharedMemoryBackend.
+var sharedMemoryBackendOnce sync.Once
+
 // sharedMemoryBackend is the process-wide MemoryBackend handed to every
 // OpenBlobBackend("memory") caller. The memory backend is gated to the
 // single-process mode (RIMSKY_PROCESS_ROLE=unified, set only by the
@@ -22,10 +25,7 @@ import (
 // shared map per process is the property the gate promises; this
 // singleton is what makes it true. Tests constructing MemoryBackend
 // directly via persistence.NewMemoryBackend keep isolated instances.
-var (
-	sharedMemoryBackendOnce sync.Once
-	sharedMemoryBackend     *persistence.MemoryBackend
-)
+var sharedMemoryBackend *persistence.MemoryBackend
 
 func memoryBackend() *persistence.MemoryBackend {
 	sharedMemoryBackendOnce.Do(func() {

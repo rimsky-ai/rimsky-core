@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// claim_handle_queries.go — ClaimHandleQueries conformance area.
-//
+// @constraint: ClaimHandleQueries conformance area.
 // Pins the runtime-consumed rimsky_claim_handles read/repoint surface
 // that the claimant-guard area (claimant_guard.go) does not touch:
 //
@@ -78,8 +77,8 @@ func testClaimHandleCountByNamedLock(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Two active holders on "cap-lock", one on "other-lock", plus a
-	// claim-scope-kind row (never counted regardless of name).
+	// @constraint: CountByNamedLock counts only lock_kind='named' rows; the
+	// claim-scope row must never be counted regardless of name.
 	capA := namedLockHandleInput(fix, "cap-lock")
 	capB := namedLockHandleInput(fix, "cap-lock")
 	other := namedLockHandleInput(fix, "other-lock")
@@ -98,8 +97,8 @@ func testClaimHandleCountByNamedLock(t *testing.T, d persistence.Database) {
 		t.Fatalf("CountByNamedLock(absent-lock) = %d, want 0", got)
 	}
 
-	// A committed row released the lock at terminal — it must NOT count
-	// against the capacity limit.
+	// @constraint: committed rows released the lock at terminal must NOT
+	// occupy named-lock capacity.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.ClaimHandles().Promote(ctx, capA.ID, claimQuerySup, spec.ClaimHandleStateCommitted, tx)
 	}); err != nil {
@@ -109,7 +108,6 @@ func testClaimHandleCountByNamedLock(t *testing.T, d persistence.Database) {
 		t.Fatalf("CountByNamedLock(cap-lock) after commit = %d, want 1 (committed rows must not occupy capacity)", got)
 	}
 
-	// Deleting the remaining holder frees the name entirely.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.ClaimHandles().Delete(ctx, capB.ID, claimQuerySup, tx)
 	}); err != nil {
@@ -141,9 +139,9 @@ func testClaimHandleAnchorsAndRepoint(t *testing.T, d persistence.Database) {
 	nodeB := seedExtraNode(ctx, t, d, fix, "anchor-node-b")
 	runB := seedConformanceRunForNode(ctx, t, d, nodeB, fix.FrameID)
 
-	// h1, h2 anchored to (fix.NodeID, runA) — the sleep guarantees a
-	// strictly-older claimed_at for h1 at both drivers' stored
-	// precision. h3 anchored to (nodeB, runB).
+	// @constraint: the inter-insert sleep guarantees a strictly-older
+	// claimed_at for h1 at both drivers' stored timestamp precision so
+	// the claimed_at-ascending order is observable.
 	h1 := guardScopeHandleInput(fix, claimQuerySup, time.Now().Add(1*time.Hour))
 	h1.NodeRunID = &runA
 	seedGuardClaimHandle(ctx, t, d, h1)
@@ -195,9 +193,9 @@ func testClaimHandleAnchorsAndRepoint(t *testing.T, d persistence.Database) {
 		t.Fatalf("ListByNodeRun(runB) = %v, want [%s]", got, h3.ID)
 	}
 
-	// Fan-out repoint: h2 moves from the parent run (runA) to the child
-	// leaf run (runB). The leaf then resolves it by its OWN dispatch id;
-	// the parent's anchor no longer carries it.
+	// @concept: claim-handle — fan-out repoint moves a sub-claim from the
+	// parent run's anchor to its own child leaf run so the leaf resolves it
+	// by node_run_id; the parent's anchor no longer carries it.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return ch.UpdateNodeRunID(ctx, h2.ID, runB, tx)
 	}); err != nil {
@@ -206,8 +204,9 @@ func testClaimHandleAnchorsAndRepoint(t *testing.T, d persistence.Database) {
 	if got := listByRun(runA); len(got) != 1 || got[0] != h1.ID {
 		t.Fatalf("ListByNodeRun(runA) after repoint = %v, want [%s]", got, h1.ID)
 	}
-	// claimed_at ordering follows insert time (h2 before h3), not the
-	// repoint time — UpdateNodeRunID moves the anchor only.
+	// @constraint: claimed_at ordering follows insert time, not repoint
+	// time — UpdateNodeRunID moves the anchor only and must not touch
+	// claimed_at.
 	got := listByRun(runB)
 	if len(got) != 2 || got[0] != h2.ID || got[1] != h3.ID {
 		t.Fatalf("ListByNodeRun(runB) after repoint = %v, want [%s %s] claimed_at-ascending", got, h2.ID, h3.ID)
@@ -216,8 +215,8 @@ func testClaimHandleAnchorsAndRepoint(t *testing.T, d persistence.Database) {
 	if row == nil || row.NodeRunID == nil || *row.NodeRunID != runB {
 		t.Fatalf("repointed handle node_run_id = %v, want %s", row, runB)
 	}
-	// The repoint moves the run anchor ONLY; the holder-node anchor is
-	// untouched.
+	// @constraint: UpdateNodeRunID moves the run anchor ONLY; the
+	// holder-node anchor must remain untouched.
 	if got := listByHolder(fix.NodeID); len(got) != 2 {
 		t.Fatalf("UpdateNodeRunID mutated the holder-node anchor: %v", got)
 	}
@@ -268,9 +267,9 @@ func testClaimHandleChildWalk(t *testing.T, d persistence.Database) {
 		t.Fatalf("leaf sub-claim reported children: %v", got)
 	}
 
-	// Parent delete detaches (ON DELETE SET NULL): the sub-claim rows
-	// outlive the parent during auto-terminal staging rather than
-	// cascading away with it.
+	// @constraint: parent delete detaches via ON DELETE SET NULL — sub-claim
+	// rows must outlive the deleted parent during auto-terminal staging
+	// rather than cascading away with it.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return ch.Delete(ctx, parent.ID, claimQuerySup, tx)
 	}); err != nil {
@@ -299,9 +298,10 @@ func testClaimHandleListByInstanceAndState(t *testing.T, d persistence.Database)
 	store := d.Tables()
 	ch := store.ClaimHandles()
 
-	// Instance A: a committed-durable asset row, a committed-subgraph
-	// row (lifetime filter), and a still-active durable row (state
-	// filter). Instance B: a committed-durable row (instance filter).
+	// @constraint: fixture spans every filter dimension of
+	// ListByInstanceAndState — instance A holds rows that flex the lifetime
+	// (durable vs subgraph) and state (active vs committed) arms; instance
+	// B holds a committed-durable row that flexes the instance arm.
 	durableA := guardScopeHandleInput(fixA, claimQuerySup, time.Now().Add(1*time.Hour))
 	durableA.Lifetime = spec.ClaimLifetimeDurable
 	subgraphA := guardScopeHandleInput(fixA, claimQuerySup, time.Now().Add(1*time.Hour))
@@ -334,20 +334,18 @@ func testClaimHandleListByInstanceAndState(t *testing.T, d persistence.Database)
 		return claimHandleIDs(rows)
 	}
 
-	// The asset query shape: exactly the committed-durable row of THIS
-	// instance.
+	// @constraint: the asset-query shape returns exactly the
+	// committed-durable row of the queried instance — subgraph rows,
+	// active rows, and other-instance rows must be excluded.
 	if got := list(fixA.InstanceID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable); len(got) != 1 || got[0] != durableA.ID {
 		t.Fatalf("assets(A) = %v, want [%s] only (subgraph/active/other-instance rows excluded)", got, durableA.ID)
 	}
 	if got := list(fixB.InstanceID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable); len(got) != 1 || got[0] != durableB.ID {
 		t.Fatalf("assets(B) = %v, want [%s]", got, durableB.ID)
 	}
-	// State arm: the active-durable row surfaces under state=active only.
 	if got := list(fixA.InstanceID, spec.ClaimHandleStateActive, spec.ClaimLifetimeDurable); len(got) != 1 || got[0] != activeDurableA.ID {
 		t.Fatalf("active-durable(A) = %v, want [%s]", got, activeDurableA.ID)
 	}
-	// Lifetime arm: the committed-subgraph row surfaces under
-	// lifetime=subgraph only.
 	if got := list(fixA.InstanceID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeSubgraph); len(got) != 1 || got[0] != subgraphA.ID {
 		t.Fatalf("committed-subgraph(A) = %v, want [%s]", got, subgraphA.ID)
 	}

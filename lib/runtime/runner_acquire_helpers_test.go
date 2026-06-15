@@ -99,7 +99,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 	t.Parallel()
 	ctx := context.Background()
 
-	// The canonical fan-out partition_request: pull the override off the
+	// @deliberate: The canonical fan-out partition_request: pull the override off the
 	// trigger message, else fall back to the template default. The
 	// fallback literal grammar admits a quoted string (here "all", the
 	// "process every partition" request a producer understands by
@@ -137,7 +137,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 	}
 	out := &acquisition{InstanceID: instanceID}
 
-	// (1) Override present → substituted bytes carry the override's
+	// @deliberate: (1) Override present → substituted bytes carry the override's
 	// partition keys, NOT the template default.
 	msgs := newFakeMessages()
 	deliverMessage(msgs, `{"partition_request_override":{"partition_keys":["region-x","region-y"]}}`)
@@ -148,7 +148,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 	var override struct {
 		PartitionKeys []string `json:"partition_keys"`
 	}
-	// If the silent-drop bug were present, the directive would never
+	// @deliberate: If the silent-drop bug were present, the directive would never
 	// resolve and the bytes would be the literal fallback "all" — which
 	// is not valid JSON for this struct, so the unmarshal would fail.
 	if err := json.Unmarshal(got, &override); err != nil {
@@ -158,7 +158,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 		t.Fatalf("override did not reach SplitScope: got partition_keys=%v, want [region-x region-y]", override.PartitionKeys)
 	}
 
-	// (2) No trigger message in the frame → the `|`-fallback fires and the
+	// @deliberate: (2) No trigger message in the frame → the `|`-fallback fires and the
 	// template default ("all") is used (no panic, no error). The
 	// quoted-string literal resolves to the Go string and flows through
 	// as raw bytes.
@@ -170,7 +170,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 		t.Fatalf("fallback default not used: got %q want %q", gotDefault, "all")
 	}
 
-	// (3) A literal partition_request (no directive, e.g. "all") flows
+	// @deliberate: (3) A literal partition_request (no directive, e.g. "all") flows
 	// through as its raw bytes verbatim — preserving the producer's
 	// existing interpretation.
 	literal, err := substituteFanOutPartitionRequest(ctx, newArgs(newFakeMessages()), nil, frameID, out, "all")
@@ -265,7 +265,7 @@ func TestAcquireFanOutIfDeclared_ChildRunsSkipSplitScope(t *testing.T) {
 	scopes := &staticScopeTable{}
 	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{
 		ID:           scopeID,
-		ParentRunID:  &parentRun, // <-- this marks the scope as a fan-out partition
+		ParentRunID:  &parentRun, // @deliberate: <-- this marks the scope as a fan-out partition
 		PartitionKey: "a",
 		GraphName:    "main",
 	})
@@ -279,7 +279,7 @@ func TestAcquireFanOutIfDeclared_ChildRunsSkipSplitScope(t *testing.T) {
 			ErrorPolicy:      spec.AggregationPolicy{Kind: "strict"},
 		},
 	}
-	// args.StoreRegistry intentionally nil — if the guard fails to
+	// @deliberate: Args.StoreRegistry intentionally nil — if the guard fails to
 	// short-circuit, the helper will reach into the registry to call
 	// SplitScope and crash. That crash is the regression signal.
 	args := RunArgs{Persist: &scopeOnlyPersist{scopes: scopes}}
@@ -291,7 +291,7 @@ func TestAcquireFanOutIfDeclared_ChildRunsSkipSplitScope(t *testing.T) {
 		out,
 		persistence.Candidate{},
 		nodeDef,
-		nil, // acquiredLocks
+		nil, // @deliberate: acquiredLocks
 		30*time.Second,
 	)
 	if err != nil {
@@ -317,7 +317,7 @@ func TestAcquireFanOutIfDeclared_RootRunWithoutMatchingAliasIsNoOp(t *testing.T)
 	_ = scopes.Create(context.Background(), nil, persistence.RunScopeRow{
 		ID:        scopeID,
 		GraphName: "main",
-		// ParentRunID nil — main RunScope, root run.
+		// @deliberate: ParentRunID nil — main RunScope, root run.
 	})
 	out := &acquisition{RunScopeID: scopeID}
 	nodeDef := &node.TemplateNodeDef{
@@ -328,7 +328,7 @@ func TestAcquireFanOutIfDeclared_RootRunWithoutMatchingAliasIsNoOp(t *testing.T)
 			ErrorPolicy:      spec.AggregationPolicy{Kind: "strict"},
 		},
 	}
-	// No acquiredLocks → no parent claim to split → helper bails with
+	// @deliberate: No acquiredLocks → no parent claim to split → helper bails with
 	// nil (validator catches this case at template-deploy time; the
 	// runtime path is best-effort safe).
 	args := RunArgs{Persist: &scopeOnlyPersist{scopes: scopes}}
@@ -340,7 +340,7 @@ func TestAcquireFanOutIfDeclared_RootRunWithoutMatchingAliasIsNoOp(t *testing.T)
 		out,
 		persistence.Candidate{},
 		nodeDef,
-		nil, // acquiredLocks — no parent claim
+		nil, // @deliberate: acquiredLocks — no parent claim
 		30*time.Second,
 	)
 	if err != nil {
@@ -356,7 +356,7 @@ func TestAcquireFanOutIfDeclared_RootRunWithoutMatchingAliasIsNoOp(t *testing.T)
 // nil immediately regardless of RunScope shape.
 func TestAcquireFanOutIfDeclared_NoFanOutSpecIsNoOp(t *testing.T) {
 	t.Parallel()
-	// Two scopes: one root, one child — both must short-circuit.
+	// @deliberate: Two scopes: one root, one child — both must short-circuit.
 	rootScopeID := shared.UUID{1}
 	childScopeID := shared.UUID{2}
 	parentRun := shared.UUID{3}
@@ -416,12 +416,12 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	instanceID := shared.UUID(uuid.New())
 	rootScopeID := shared.UUID(uuid.New())
 
-	// Root run scope (nil ParentRunID) so the recursion guard does not
+	// @deliberate: Root run scope (nil ParentRunID) so the recursion guard does not
 	// short-circuit — this is the run that splits.
 	scopes := &staticScopeTable{}
 	_ = scopes.Create(ctx, nil, persistence.RunScopeRow{ID: rootScopeID, GraphName: "main"})
 
-	// Deliver an invalidate message to the frame carrying the backfill
+	// @deliberate: Deliver an invalidate message to the frame carrying the backfill
 	// override, exactly as a real backfill would.
 	msgs := newFakeMessages()
 	msgID := shared.UUID(uuid.New())
@@ -440,7 +440,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 		t.Fatalf("MarkDelivered: ok=%v err=%v", ok, err)
 	}
 
-	// Fake producer: capture the PartitionRequest SplitScope receives,
+	// @deliberate: Fake producer: capture the PartitionRequest SplitScope receives,
 	// then short-circuit with a sentinel so no sub-claim persistence runs.
 	errStop := errors.New("stop-after-capture")
 	var captured []byte
@@ -461,7 +461,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 		FanOut: &node.FanOutSpec{
 			Claim:            "data",
 			PartitionRequest: directive,
-			// Empty ErrorPolicy → AcquireSubClaims skips the
+			// @deliberate: Empty ErrorPolicy → AcquireSubClaims skips the
 			// SetAggregationPolicy branch (no ClaimHandles fake needed);
 			// SplitScope is reached and captured before it regardless.
 		},
@@ -492,7 +492,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 
 	err := acquireFanOutIfDeclared(ctx, args, nil, instanceID, out, cand, nodeDef, acquiredLocks, 30*time.Second)
 
-	// The sentinel short-circuit is expected; what matters is WHAT reached
+	// @deliberate: The sentinel short-circuit is expected; what matters is WHAT reached
 	// SplitScope.
 	if !errors.Is(err, errStop) {
 		t.Fatalf("expected the sentinel short-circuit error from SplitScope, got %v", err)
@@ -500,7 +500,7 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	if captured == nil {
 		t.Fatal("SplitScope was never reached — acquireFanOutIfDeclared did not forward to AcquireSubClaims")
 	}
-	// The forwarded bytes must be the SUBSTITUTED override — not the
+	// @deliberate: The forwarded bytes must be the SUBSTITUTED override — not the
 	// literal directive (the original bug) and not the template default.
 	if string(captured) == directive {
 		t.Fatalf("forwarded the literal template directive verbatim (the original silent bug): %s", captured)

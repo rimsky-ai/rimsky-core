@@ -49,7 +49,7 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 	fa := connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
-	// Drive one Execute carrying a real run_scope_id distinct from the
+	// @deliberate: Drive one Execute carrying a real run_scope_id distinct from the
 	// instance id — exactly what production stamps (supervisor sets
 	// ExecuteRequest.run_scope_id to the run-tree row's RunScopeID, which is
 	// the partition run-scope for a fanned-out node and ≠ the instance id).
@@ -61,7 +61,7 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 	defer cancel()
 	_ = collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1", RunScopeId: runScopeID})
 
-	// The spawn is keyed by run_scope_id, NOT instance id.
+	// @constraint: the spawn is keyed by run_scope_id, NOT instance id.
 	spawnID, ok := ts.state.lookupSpawnByRunScopeBinding(runScopeID, "codegen")
 	if !ok {
 		t.Fatalf("expected a spawn keyed by run_scope_id before reap")
@@ -70,12 +70,12 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 		t.Fatalf("spawn must be keyed by run_scope_id, not instance id")
 	}
 
-	// Fire the run-scope-terminal lifecycle event for that run-scope. The
-	// proxy now keys spawns by run_scope_id, so the reap must match on
-	// run_scope_id — NOT instance_id. Production passes a real run-scope id
-	// ≠ instance id, so this guards run-scope-keyed reap end to end (and the
-	// per-run-scope isolation invariant: a single run-scope's terminal reaps
-	// only that run-scope's child).
+	// @constraint: fire the run-scope-terminal lifecycle event for that
+	// run-scope. The proxy keys spawns by run_scope_id, so the reap must
+	// match on run_scope_id — NOT instance_id. Production passes a real
+	// run-scope id ≠ instance id, so this guards run-scope-keyed reap
+	// end to end (and the per-run-scope isolation invariant: a single
+	// run-scope's terminal reaps only that run-scope's child).
 	lc := genv1.NewLifecycleSubscriberClient(ts.supConn)
 	if _, err := lc.OnRunScopeTerminal(context.Background(), &genv1.OnRunScopeTerminalRequest{
 		RunScopeId: runScopeID,
@@ -84,7 +84,7 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 		t.Fatalf("OnRunScopeTerminal: %v", err)
 	}
 
-	// The agent should have received a Reap for the spawn.
+	// @constraint: the agent must have received a Reap for the spawn.
 	select {
 	case got := <-fa.reaped:
 		if got != spawnID {
@@ -94,7 +94,7 @@ func TestOnRunScopeTerminalReapsSpawns(t *testing.T) {
 		t.Fatalf("agent did not receive a Reap")
 	}
 
-	// The spawn should be gone from state.
+	// @constraint: the spawn must be gone from state after reap.
 	if _, ok := ts.state.lookupSpawn(spawnID); ok {
 		t.Fatalf("spawn should be dropped after reap")
 	}
@@ -121,7 +121,7 @@ func TestNoOpLifecycleMethods(t *testing.T) {
 }
 
 func TestLocalHttpForwardRoundTrip(t *testing.T) {
-	// Upstream supervisor callback receiver.
+	// @deliberate: Upstream supervisor callback receiver.
 	var gotBody atomic.Value
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf, _ := io.ReadAll(r.Body)
@@ -133,7 +133,7 @@ func TestLocalHttpForwardRoundTrip(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	state := newProxyState()
-	// Record a spawn whose original callback is the upstream server.
+	// @deliberate: Record a spawn whose original callback is the upstream server.
 	state.recordSpawn("spawn-1", "owner-1", "inst-1", "codegen", nil, upstream.URL+"/v1/callback/ack-1")
 	conn := newAgentConnection("owner-1", "label", "http://127.0.0.1:7777")
 
@@ -146,8 +146,8 @@ func TestLocalHttpForwardRoundTrip(t *testing.T) {
 		SpawnId:   "spawn-1",
 	})
 
-	// The forwarder enqueued a LocalHttpResponse onto the connection's
-	// sendCh; drain it.
+	// @constraint: the forwarder enqueued a LocalHttpResponse onto the
+	// connection's sendCh; drain it.
 	select {
 	case frame := <-conn.sendCh:
 		resp := frame.GetHttpResponse()
@@ -188,14 +188,14 @@ func TestLocalHttpForwardReusedSpawnPerCallbackPath(t *testing.T) {
 	t.Cleanup(upstream.Close)
 
 	state := newProxyState()
-	// The spawn's recorded callback encodes ack-1 (the FIRST dispatch's path).
+	// @deliberate: The spawn's recorded callback encodes ack-1 (the FIRST dispatch's path).
 	state.recordSpawn("spawn-1", "owner-1", "inst-1", "codegen", nil, upstream.URL+"/v1/callback/ack-1")
 	conn := newAgentConnection("owner-1", "label", "http://127.0.0.1:7777")
 	fwd := newHTTPForwarder(state)
 
-	// A SECOND dispatch on the same spawn fires a callback for ack-2. The
-	// child POSTed to the agent's local listener at /v1/callback/ack-2; the
-	// forward carries that path.
+	// @constraint: a SECOND dispatch on the same spawn fires a callback
+	// for ack-2. The child POSTed to the agent's local listener at
+	// /v1/callback/ack-2; the forward carries that path.
 	fwd.handle(conn, &genv1.LocalHttpForward{
 		ForwardId: "fwd-2",
 		Method:    http.MethodPost,
@@ -204,7 +204,7 @@ func TestLocalHttpForwardReusedSpawnPerCallbackPath(t *testing.T) {
 	})
 
 	select {
-	case <-conn.sendCh: // drain the LocalHttpResponse
+	case <-conn.sendCh:
 	case <-time.After(3 * time.Second):
 		t.Fatalf("no LocalHttpResponse enqueued")
 	}

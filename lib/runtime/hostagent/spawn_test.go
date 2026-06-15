@@ -64,7 +64,7 @@ func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 		t.Fatalf("spawn_id = %q, want %q", ack.GetSpawnId(), spawnID)
 	}
 
-	// Executor capabilities decode to the stubchild's declared events.
+	// @deliberate: Executor capabilities decode to the stubchild's declared events.
 	execCaps := ack.GetCapabilities()[protocolExecutor]
 	if execCaps == nil {
 		t.Fatal("missing executor capabilities")
@@ -77,7 +77,7 @@ func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 		t.Fatalf("declared events = %v, want [stubchild.output]", obs.GetDeclaredEvents())
 	}
 
-	// Claim-producer capabilities decode to the stubchild's write-semantics.
+	// @deliberate: Claim-producer capabilities decode to the stubchild's write-semantics.
 	cpCaps := ack.GetCapabilities()[protocolClaimProducer]
 	if cpCaps == nil {
 		t.Fatal("missing claim_producer capabilities")
@@ -90,7 +90,7 @@ func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 		t.Fatalf("write semantics = %v, want one entry", cp.GetWriteSemanticsAllowed())
 	}
 
-	// Reap it so the child doesn't outlive the test.
+	// @deliberate: Reap it so the child doesn't outlive the test.
 	reapVia(t, fp, spawnID, 5)
 }
 
@@ -102,7 +102,7 @@ func TestSpawnRejectedByAllowPaths(t *testing.T) {
 
 	ack := spawnVia(t, fp, &genv1.Spawn{
 		SpawnId:             uuid.NewString(),
-		Binding:             &genv1.Binding{Path: bin}, // temp-dir path, not matched
+		Binding:             &genv1.Binding{Path: bin}, // @deliberate: temp-dir path, not matched
 		ExpectedProtocols:   []string{protocolExecutor},
 		ReadyTimeoutSeconds: 5,
 	})
@@ -121,7 +121,7 @@ func TestSpawnRejectedByAllowPaths(t *testing.T) {
 // agent's inherited env).
 func TestSpawnReadyTimeout(t *testing.T) {
 	bin := buildStubChild(t)
-	t.Setenv("STUBCHILD_NO_BIND", "1") // inherited by the spawned child
+	t.Setenv("STUBCHILD_NO_BIND", "1") // @deliberate: inherited by the spawned child
 	fp := startFakeProxy(t)
 	connectAgentToFakeProxy(t, fp, Config{})
 
@@ -166,7 +166,7 @@ func TestDispatchExecutorStreaming(t *testing.T) {
 		Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA,
 	}}})
 
-	// First DATA frame: the echoed NamedEvent.
+	// @deliberate: First DATA frame: the echoed NamedEvent.
 	first := nextDispatch(t, fp, streamID)
 	var ev1 genv1.ExecuteEvent
 	if err := proto.Unmarshal(first.GetPayload(), &ev1); err != nil {
@@ -180,7 +180,7 @@ func TestDispatchExecutorStreaming(t *testing.T) {
 		t.Fatalf("echoed payload = %q, want node-7", named.NamedEvent.GetPayload())
 	}
 
-	// Second DATA frame: the terminal StreamClose.
+	// @deliberate: Second DATA frame: the terminal StreamClose.
 	second := nextDispatch(t, fp, streamID)
 	var ev2 genv1.ExecuteEvent
 	if err := proto.Unmarshal(second.GetPayload(), &ev2); err != nil {
@@ -261,7 +261,7 @@ func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 		t.Fatalf("spawn failed: %v", ack.GetError())
 	}
 
-	// Abandon: the request is wire-identical to a Commit at claim_id.
+	// @deliberate: Abandon: the request is wire-identical to a Commit at claim_id.
 	abandonBytes, _ := proto.Marshal(&genv1.AbandonRequest{ClaimId: "claim-1"})
 	abandonStream := uuid.NewString()
 	fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
@@ -277,7 +277,7 @@ func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 		t.Fatalf("abandon dispatch was cancelled (agent rejected the verb)")
 	}
 
-	// Release: also wire-identical to a Commit at claim_id.
+	// @deliberate: Release: also wire-identical to a Commit at claim_id.
 	releaseBytes, _ := proto.Marshal(&genv1.ReleaseRequest{ClaimId: "claim-1"})
 	releaseStream := uuid.NewString()
 	fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
@@ -295,7 +295,7 @@ func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 
 	reapVia(t, fp, spawnID, 5)
 
-	// The child must have seen Abandon and Release — never Commit.
+	// @deliberate: The child must have seen Abandon and Release — never Commit.
 	logged := readVerbLog(t, verbLog)
 	if got := joinVerbs(logged); got != "abandon,release" {
 		t.Fatalf("child saw verbs %q, want %q (a Commit here is the state-integrity bug)", got, "abandon,release")
@@ -391,7 +391,7 @@ func TestConfigDefaults(t *testing.T) {
 		t.Fatal("agent label should default to hostname-pid")
 	}
 	if _, err := strconv.Atoi(c.AgentLabel[len(c.AgentLabel)-1:]); err != nil {
-		// label ends with the pid digits; loose sanity check only.
+		// @deliberate: label ends with the pid digits; loose sanity check only.
 		_ = err
 	}
 }

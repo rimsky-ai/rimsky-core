@@ -110,7 +110,7 @@ func TestParseCallbackBody_NewShape_Park_Base64Payload(t *testing.T) {
 }
 
 func TestParseCallbackBody_NewShape_Park_LiteralPayload(t *testing.T) {
-	// Non-base64 payload is tolerated as a literal string.
+	// @constraint: non-base64 payload is tolerated as a literal string.
 	body := map[string]any{
 		"park": map[string]any{
 			"reason":        "rate_limit",
@@ -152,8 +152,8 @@ func TestParseCallbackBody_NoOutcome(t *testing.T) {
 }
 
 func TestParseCallbackBody_RejectsLegacyTypeDiscriminator(t *testing.T) {
-	// The legacy {type: "complete"|"blocked"|"errored"} shape is no
-	// longer accepted post-2026-05-12.
+	// @constraint: the legacy {type: "complete"|"blocked"|"errored"} shape
+	// is no longer accepted post-2026-05-12.
 	body := map[string]any{
 		"type":             "complete",
 		"attributes_delta": map[string]any{},
@@ -246,7 +246,7 @@ func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
 			t.Fatalf("unexpected duplicate callback delivered: %T", extra.Event)
 		}
 	case <-time.After(150 * time.Millisecond):
-		// expected — no second event delivered
+		// @deliberate: expected silence — no second event delivered.
 	}
 }
 

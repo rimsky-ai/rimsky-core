@@ -123,73 +123,68 @@ import (
 // a developer who hasn't run `make core-images` sees the
 // missing-image error directly.
 func TestE2E_ExampleClaimProducerAgainstRunningRimsky(t *testing.T) {
-	// Not parallel: this scenario stands up a docker network + a Postgres
-	// testcontainer + a rimsky-all-in-one container + three peer
-	// containers (example producer + ok executor + err executor) + an
+	// @deliberate: not parallel — this scenario stands up a docker network
+	// + a Postgres testcontainer + a rimsky-all-in-one container + three
+	// peer containers (example producer + ok executor + err executor) + an
 	// in-process producer on a host port. The cost is real, so the
-	// in-process claimproducer_test.go keeps its fast shape and only
-	// this gate pays the cross-stack price.
+	// in-process claimproducer_test.go keeps its fast shape and only this
+	// gate pays the cross-stack price.
 	ctx := context.Background()
 
-	// 1. Shared docker network. The peer containers + rimsky-all-in-one
-	//    + the postgres testcontainer all attach to it. The peer
-	//    containers MUST be up BEFORE rimsky comes up because rimsky's
-	//    control-api / scheduler / supervisor eager-dial every declared
-	//    claim-producer and executor at startup and EXIT NON-ZERO if any
-	//    is unreachable.
+	// @deliberate: bring-up order is load-bearing. Peer containers MUST be
+	// up BEFORE rimsky comes up because rimsky's control-api / scheduler /
+	// supervisor eager-dial every declared claim-producer and executor at
+	// startup and EXIT NON-ZERO if any is unreachable. Steps 1-5 below
+	// follow that ordering:
+	//   1. Shared docker network — peers + rimsky-all-in-one + postgres
+	//      attach here.
+	//   2. Example producer container at alias `example-producer`, built
+	//      on demand from Dockerfile.example via testcontainers
+	//      FromDockerfile. Build context is the rimsky-core repo root so
+	//      the build can vendor the in-tree lib/protocols module via
+	//      go.work.
+	//   3. Two stub executors (success + error) shipped by the harness at
+	//      lib/services/test/stubexecutor, built on demand by
+	//      FromDockerfile too.
+	//   4. rimsky-all-in-one on the harness default (Postgres). All peers
+	//      are reachable on stable in-network aliases by now, so rimsky's
+	//      eager startup handshake reaches them deterministically.
+	//   5. SEPARATE in-process producer on a host port for legs 3 + 4 —
+	//      pure protocol-surface observations (Release via the wire
+	//      client; the registration validator via peer.Dial +
+	//      ValidateCapabilities). These don't drive rimsky and so are
+	//      immune to the host-port-tunnel race that forces the container
+	//      producer above.
 	netName := harness.NewNetwork(ctx, t)
-
-	// 2. Example producer container on the network at alias
-	//    `example-producer`. Built on demand from Dockerfile.example via
-	//    testcontainers FromDockerfile. The build context is the
-	//    rimsky-core repo root so the build can vendor the in-tree
-	//    lib/protocols module via go.work.
 	prodInternal := startExampleClaimProducerOnNetwork(ctx, t, netName, "example-producer")
-
-	// 3. Two stub executors on the network (success + error). The
-	//    harness ships container-based stubs at lib/services/test/
-	//    stubexecutor, built on demand by FromDockerfile too — same
-	//    ordering discipline as the example producer.
 	okEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
 	errEndpoint := harness.StartErroringExecutorStubOnNetwork(ctx, t, netName, "exec-err")
-
-	// 4. rimsky-all-in-one on the harness default (Postgres). All peers
-	//    are reachable on stable in-network aliases by the time we
-	//    bring up rimsky, so the eager startup handshake reaches them
-	//    deterministically.
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
-		// The example producer advertises read_only; the operator's
-		// envelope MUST be a non-empty subset of that. [read_only] is
-		// the only honest declaration; sync / staged_async / blocking
-		// would all be rejected by ValidateCapabilities at startup
-		// (which leg 4 exhibits directly).
+		// @deliberate: the example producer advertises read_only; the
+		// operator's envelope MUST be a non-empty subset. [read_only] is
+		// the only honest declaration here — sync / staged_async /
+		// blocking would be rejected by ValidateCapabilities at startup
+		// (leg 4 exhibits that rejection directly).
 		harness.WithClaimProducer("example", prodInternal, "read_only"),
 		harness.WithExecutor("ok", okEndpoint),
 		harness.WithExecutor("err", errEndpoint),
-		// Strict-`all` (the all-in-one image's baked default) would
-		// require every executor's expected_attributes_schema to be in
-		// the discovery cache before POST /v1/templates accepts the
-		// template. The stubs advertise a permissive open schema so
-		// `all` would also work, but `none` keeps the gate on the
-		// producer + executor wiring under test, not the schema
-		// freshness race.
+		// @deliberate: ref-validation mode `none` keeps the gate on the
+		// producer + executor wiring under test. Strict-`all` (the
+		// all-in-one image's baked default) would require every
+		// executor's expected_attributes_schema to be in the discovery
+		// cache before POST /v1/templates accepts the template; the
+		// stubs would satisfy that, but the freshness race becomes part
+		// of the test surface.
 		harness.WithRefValidationMode("none"),
 	)
 
-	// 5. SEPARATE in-process producer on a host port for legs 3 + 4.
-	//    These legs are pure protocol-surface observations (Release
-	//    directly via the wire client; the registration validator
-	//    directly via peer.Dial + ValidateCapabilities); they do not
-	//    drive rimsky and so are immune to the host-port-tunnel race
-	//    that forces the container producer above.
 	inProcPort := freeHostPort(t)
 	inProcProd := startExampleProducerInProcess(t, inProcPort)
 
-	// Run each acceptance leg as a sub-test against the SAME running
-	// stack — the four legs are independent observations, so a single
-	// bring-up is sufficient and a per-leg bring-up would only multiply
-	// the bring-up cost.
+	// @deliberate: each leg runs against the SAME running stack. The four
+	// legs are independent observations, so a single bring-up suffices;
+	// per-leg bring-up would only multiply the cost.
 	t.Run("Open_and_Commit_on_success_terminal", func(t *testing.T) {
 		exerciseOpenCommitLeg(t, ep)
 	})
@@ -244,8 +239,8 @@ func exerciseOpenCommitLeg(t *testing.T, ep harness.RimskyEndpoint) {
 //
 // Proof for spec acceptance leg (b): "on failure, Abandon."
 func exerciseOpenAbandonLeg(t *testing.T, ep harness.RimskyEndpoint) {
-	// The erroring stub returns Error{class: "stub/forced_error"}; the
-	// template declares give_up policy on that class so the node-run
+	// @deliberate: erroring stub returns Error{class: "stub/forced_error"};
+	// the template declares give_up policy on that class so the node-run
 	// terminates failed (not retry-loop). Mirrors the
 	// fs_held_swap_e2e_test.go pattern.
 	tplID := deployClaimTemplateWithErrorPolicy(t, ep, "example-claim-abandon", "err", "r-abandon")
@@ -303,9 +298,9 @@ func exerciseReleaseLeg(t *testing.T, prod *Producer, prodPort int) {
 			before.Release, after.Release)
 	}
 
-	// Falsifier guard: the verb landed against the exact claim_id we
-	// passed. A canned handler that ignores its input would record an
-	// empty / stale claim_id; the assertion rules that out.
+	// @deliberate: falsifier guard — the verb landed against the exact
+	// claim_id we passed. A canned handler that ignores its input would
+	// record an empty / stale claim_id; the assertion rules that out.
 	releaseIDs := prod.ReleaseClaimIDs()
 	if len(releaseIDs) == 0 {
 		t.Fatalf("Release landed but no claim_ids were recorded — internal counter inconsistency")
@@ -338,8 +333,8 @@ func exerciseReleaseLeg(t *testing.T, prod *Producer, prodPort int) {
 func exerciseUnadvertisedWriteSemanticsLeg(t *testing.T, prodPort int) {
 	dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// peer.Dial is the same function lib/control/config/stores.go calls
-	// at startup. It runs the Capabilities handshake and caches the
+	// @deliberate: peer.Dial is the same function rimsky's startup config
+	// loader calls. It runs the Capabilities handshake and caches the
 	// advertised envelope on the Client.
 	client, err := peer.Dial(dialCtx, "example", fmt.Sprintf("127.0.0.1:%d", prodPort), peer.TLSModeOff)
 	if err != nil {
@@ -347,11 +342,10 @@ func exerciseUnadvertisedWriteSemanticsLeg(t *testing.T, prodPort int) {
 	}
 	defer client.Close()
 
-	// Operator-declared envelope claiming `sync` — a write-semantics
-	// the producer NEVER advertised. ValidateCapabilities is the
+	// @deliberate: operator-declared envelope claiming `sync` — a write-
+	// semantics the producer NEVER advertised. ValidateCapabilities is the
 	// subset check rimsky runs at startup against every claim_producers
-	// entry's `write_semantics_allowed` field; mismatch is a hard
-	// error.
+	// entry's write_semantics_allowed field; mismatch is a hard error.
 	declared := claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	}
@@ -360,17 +354,14 @@ func exerciseUnadvertisedWriteSemanticsLeg(t *testing.T, prodPort int) {
 		t.Fatalf("ValidateCapabilities accepted an operator envelope ([sync]) that the producer NEVER advertised (producer's Capabilities returns [read_only] only) — the falsifier fires (\"a write-semantics the producer didn't advertise is silently accepted at registration\"). A startup config with this envelope would cause the rimsky-all-in-one container to exit non-zero before /health flips to 200")
 	}
 
-	// The error message must name "capabilities mismatch" (the
-	// canonical startup-registration error in
-	// lib/runtime/peer/client.go) so an operator can diagnose the
-	// misshapen envelope from logs alone.
+	// @constraint: the error message must name "capabilities mismatch" —
+	// the canonical startup-registration error — so an operator can
+	// diagnose the misshapen envelope from logs alone.
 	msg := strings.ToLower(vErr.Error())
 	if !strings.Contains(msg, "capabilities mismatch") {
 		t.Fatalf("ValidateCapabilities rejected the envelope but the error does not name the canonical failure mode (\"capabilities mismatch\"): %v", vErr)
 	}
 }
-
-// --- event observation helpers -----------------------------------------------
 
 // requireEventKindWithProducer polls GET /v1/events?instance_id=...&kind=...
 // until at least one event of the given kind appears whose
@@ -454,8 +445,6 @@ func dumpEventKindsForInstance(t *testing.T, ep harness.RimskyEndpoint, instance
 	}
 	return out
 }
-
-// --- template helpers --------------------------------------------------------
 
 // deployClaimTemplate posts a single-node template referencing the
 // example producer (intent: r, the producer's only honest intent) on
@@ -591,9 +580,7 @@ func waitForNodeState(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeT
 		nodeType, instanceID, want, deadline, lastState)
 }
 
-// --- example producer container bring-up ------------------------------------
-
-// examplePProducerBuildMu serializes the testcontainers FromDockerfile
+// exampleProducerBuildMu serializes the testcontainers FromDockerfile
 // build of the example producer so parallel runs of the e2e test don't
 // race on the same image tag (mirrors the executor-stub harness's
 // stubBuildMu pattern). go test runs by default with parallel sub-tests
@@ -654,8 +641,6 @@ func repoRoot() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
 
-// --- in-process producer + port helpers --------------------------------------
-
 // freeHostPort grabs an OS-assigned TCP port and returns it. The brief
 // close-then-reuse race is acceptable for an in-process test fixture
 // (matches the pattern in examples/executor/main_e2e_test.go::freeHostPort
@@ -691,8 +676,8 @@ func startExampleProducerInProcess(t *testing.T, port int) *Producer {
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
-	// Poll-dial to confirm the gRPC server is up before returning, so
-	// the leg-3 / leg-4 dials don't race the listener.
+	// @deliberate: poll-dial to confirm the gRPC server is up before
+	// returning, so the leg-3 / leg-4 dials don't race the listener.
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {

@@ -77,7 +77,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Two distinct node types so each leg's target is independent:
+	// @deliberate: Two distinct node types so each leg's target is independent:
 	//   `worker` settles fresh on every dispatch (drives the
 	//      get + next-frame invalidate + supervisor-re-fires legs).
 	//   `flaky` errors with a `give_up`-terminated policy chain
@@ -98,7 +98,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 			}),
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type: "flaky", Executor: "stub",
-				// Two retries then give_up — drives the node to
+				// @deliberate: Two retries then give_up — drives the node to
 				// state=failed through the real policy chain (the
 				// same shape as `give_up_test.go`). Two retries
 				// makes retry_counter genuinely > 0 by the time the
@@ -128,7 +128,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 	require.NotNil(t, worker)
 	require.NotNil(t, flaky)
 
-	// Drive both nodes to their first terminal via the real
+	// @constraint: Drive both nodes to their first terminal via the real
 	// supervisor.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker must settle fresh on its first real dispatch")
@@ -136,7 +136,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 		"flaky must reach failed via retry-then-give_up — without a real failed terminal the reset leg's "+
 			"falsifier (counter cleared but supervisor still treats node as exhausted) is untestable")
 
-	// ---- Leg 1: GET /v1/nodes/{id} surfaces full state ----
+	// @deliberate: Leg 1: GET /v1/nodes/{id} surfaces full state
 	//
 	// The story's Acceptance: "an operator retrieves a node and sees
 	// its current state and settling signal type." The worker is
@@ -153,7 +153,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 		"GET /v1/nodes/{id} must surface the settling_signal_type column projected via NodeRow — "+
 			"omitting it would fail the story's 'sees its current settling signal type' clause")
 
-	// The flaky node is at a real failed terminal; the handler's
+	// @constraint: The flaky node is at a real failed terminal; the handler's
 	// projection must surface the persisted error bookkeeping —
 	// current_error_class names which class is owed (the cursor into
 	// the policy chain) and action_index records how far the chain
@@ -177,7 +177,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 			"`retry` action to `give_up`) — an action_index of 0 means the chain never advanced, and "+
 			"the reset leg's 'budget cleared' assertion would be vacuous")
 
-	// 404 path on the GET surface (the story's read is a real
+	// @deliberate: 404 path on the GET surface (the story's read is a real
 	// read-or-404 — silent canned responses are the falsifier here).
 	notFoundResp, err := http.Get(h.ControlBase + "/v1/nodes/00000000-0000-0000-0000-000000000000")
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, notFoundResp.StatusCode,
 		"GET /v1/nodes/{unknown} must 404 — silently returning 200 with a stub response is the falsifier")
 
-	// ---- Leg 2: POST /v1/nodes/{id}/invalidate (frame: next) ----
+	// @deliberate: Leg 2: POST /v1/nodes/{id}/invalidate (frame: next)
 	//
 	// The story's Acceptance: "force-invalidating a node causes the
 	// supervisor to re-fire it on a real dispatch." The worker is
@@ -212,7 +212,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 	require.Equal(t, http.StatusOK, invalidateResp.StatusCode,
 		"POST /v1/nodes/{id}/invalidate must return 200 on a real node")
 
-	// The supervisor re-dispatched the worker (a SECOND
+	// @deliberate: The supervisor re-dispatched the worker (a SECOND
 	// `terminal/success` event arrives). The pre-count baseline
 	// keeps this robust against polling races: we observe the count
 	// genuinely growing, which is only possible if a real dispatch
@@ -226,7 +226,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 10*time.Second),
 		"worker must re-settle to fresh after the operator-invalidate re-fire")
 
-	// ---- Leg 3: POST /v1/nodes/{id}/reset ----
+	// @deliberate: Leg 3: POST /v1/nodes/{id}/reset
 	//
 	// The story's Acceptance: "resetting a failed node clears its
 	// error count and the next acquisition attempt is not skipped
@@ -252,7 +252,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 	require.Equal(t, http.StatusOK, resetResp.StatusCode,
 		"POST /v1/nodes/{id}/reset on a failed node must return 200")
 
-	// Discriminator 1 (error budget cleared, observable via the
+	// @deliberate: Discriminator 1 (error budget cleared, observable via the
 	// operator-facing GET surface): the story explicitly names this
 	// as the user-observable proof — "observable via `GET /v1/nodes/{id}`"
 	// per the plan's task 21 step 3. The cleared fields are
@@ -275,7 +275,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 			"the falsifier's 'reset clears the visible counter' shape is satisfied here, but only the "+
 			"next discriminator proves the supervisor isn't still treating the node as exhausted")
 
-	// Discriminator 2 (the supervisor really re-fires the node — the
+	// @deliberate: Discriminator 2 (the supervisor really re-fires the node — the
 	// falsifier's 'supervisor still treats the node as exhausted'
 	// shape is closed by observing a REAL successful terminal on
 	// the now-rescripted `flaky`):
@@ -289,7 +289,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 		"flaky must reach fresh after reset + supervisor re-dispatch — the full re-fire cycle "+
 			"completing end to end is the story's terminal observation")
 
-	// Final post-condition: the cleared error budget persists past
+	// @deliberate: Final post-condition: the cleared error budget persists past
 	// the successful re-fire (a fresh node carries no error
 	// bookkeeping), confirming the reset's clear-and-re-fire chain
 	// is coherent end to end.

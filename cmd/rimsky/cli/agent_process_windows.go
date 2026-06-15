@@ -29,7 +29,6 @@ func processAlive(pid int) bool {
 	if err := windows.GetExitCodeProcess(h, &code); err != nil {
 		return false
 	}
-	// STILL_ACTIVE (259): the process has not exited.
 	const stillActive = 259
 	return code == stillActive
 }

@@ -146,7 +146,7 @@ type ClaimHandleRow struct {
 // ClaimHandleInsertInput is the per-row input for Insert.
 type ClaimHandleInsertInput struct {
 	ID                     shared.UUID
-	NodeRunID              *shared.UUID // FK to rimsky_node_runs.id (nullable for legacy/orphan paths)
+	NodeRunID              *shared.UUID // @constraint: FK to rimsky_node_runs.id (nullable for legacy/orphan paths)
 	LockKind               LockKind
 	LockName               *string
 	ProducerName           *string
@@ -158,7 +158,7 @@ type ClaimHandleInsertInput struct {
 	HolderNodeID           shared.UUID
 	ExpiresAt              time.Time
 	FrameID                *shared.UUID
-	RealizedWriteSemantics string // empty for named-lock rows
+	RealizedWriteSemantics string // @deliberate: empty for named-lock rows
 	// IsHeld marks claims that persist past the active terminal of
 	// the owning node-run. Computed from the holding-subgraph
 	// declarations at acquisition time; auto-terminal fires aggregate-
@@ -197,6 +197,7 @@ type ClaimHandleInsertInput struct {
 type ClaimHandleTable interface {
 	Insert(ctx context.Context, in ClaimHandleInsertInput, tx Tx) error
 	UpdateAddress(ctx context.Context, id shared.UUID, supervisorID string, address json.RawMessage, tx Tx) error
+	// @agent-contract
 	// UpdatePayload writes the producer-supplied capture-time payload
 	// bytes onto an existing claim-scope row. Claimant-guarded on
 	// supervisorID; mismatches are a no-op. Called by the supervisor's
@@ -211,6 +212,7 @@ type ClaimHandleTable interface {
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHandleRow, error)
 	ListByHolderNode(ctx context.Context, holderNodeID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
 
+	// @agent-contract
 	// ListByNodeRun returns claim_handle rows whose node_run_id equals
 	// nodeRunID. Used by the fan-out leaf-dispatch path
 	// (`runtime/runner_acquire.go`) to find the leaf's OWN sub-claim row
@@ -225,22 +227,26 @@ type ClaimHandleTable interface {
 	ListExpired(ctx context.Context, tx Tx) ([]ClaimHandleRow, error)
 	Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx Tx) error
 
+	// @agent-contract
 	// CountByNamedLock returns the number of currently-held named-lock
 	// rows for the given lock name. Used by the supervisor's named-lock
 	// counting-mode eligibility check inside the acquisition tx.
 	CountByNamedLock(ctx context.Context, lockName string, tx Tx) (int, error)
 
+	// @agent-contract
 	// ListByProducerClaimScope returns all lock-holder rows for a given
 	// producer name. The supervisor uses this for the in-Go claim-scope-
 	// conflict check inside the acquisition tx (byte-equal on
 	// claim_scope_data per spec §7.7).
 	ListByProducerClaimScope(ctx context.Context, producerName string, tx Tx) ([]ClaimHandleRow, error)
 
+	// @agent-contract
 	// DeleteIfExpired claimant-guards a delete on (id, supervisor_id,
 	// expires_at). Returns true when the row was deleted; false otherwise.
 	// Used by the orphan-reaper sweep.
 	DeleteIfExpired(ctx context.Context, id shared.UUID, supervisorID string, tx Tx) (bool, error)
 
+	// @agent-contract
 	// LockForUpdate runs SELECT ... FOR UPDATE on the lock-holder row.
 	// Used by runtime/auto_terminal.go::CheckAndFireResolution to
 	// serialize auto-terminal resolution per blessed-invariant 13.
@@ -248,12 +254,14 @@ type ClaimHandleTable interface {
 	// a prior resolution).
 	LockForUpdate(ctx context.Context, id shared.UUID, tx Tx) (*ClaimHandleRow, error)
 
+	// @agent-contract
 	// UpdateClaimScope writes a new claim_scope_data to a claim-scope-kind row,
 	// claimant-guarded on supervisorID. Used by the supervisor's
 	// acquireClaim path when the store-chosen claim-scope differs from the
 	// substituted-selector claim-scope the supervisor wrote at INSERT time.
 	UpdateClaimScope(ctx context.Context, id shared.UUID, supervisorID string, scope json.RawMessage, tx Tx) error
 
+	// @agent-contract
 	// UpdateNodeRunID repoints a claim_handle row's node_run_id FK.
 	// Used by the fan-out dispatch path
 	// (`runtime/child_execution.go::DispatchChildren`) to retarget a
@@ -266,6 +274,7 @@ type ClaimHandleTable interface {
 	// target (the freshly-created child run) is guaranteed to exist in-tx.
 	UpdateNodeRunID(ctx context.Context, id shared.UUID, nodeRunID shared.UUID, tx Tx) error
 
+	// @agent-contract
 	// ReassignHolderSupervisor CAS-moves an ACTIVE claim-handle row's
 	// holder_supervisor_id from fromSupervisorID to toSupervisorID:
 	//
@@ -298,6 +307,7 @@ type ClaimHandleTable interface {
 	// the migration-009 CHECK pair).
 	ReassignHolderSupervisor(ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx Tx) error
 
+	// @agent-contract
 	// UpdateRealizedWriteSemantics writes the per-claim ClaimProducer-
 	// declared realized_write_semantics on a claim-scope-kind row,
 	// claimant-guarded on supervisorID. Called after ClaimProducer.Open
@@ -306,11 +316,13 @@ type ClaimHandleTable interface {
 	// without re-dialing the producer.
 	UpdateRealizedWriteSemantics(ctx context.Context, id shared.UUID, supervisorID string, ws string, tx Tx) error
 
+	// @agent-contract
 	// ListForObservability returns rows matching the filter, paginated
 	// by claimed_at DESC. Used by the observability /v1/observability/
 	// lock-holders browse endpoint (spec §1.2.4).
 	ListForObservability(ctx context.Context, filter LockHolderListFilter, pag ListPagination, tx Tx) (PaginatedListResult[ClaimHandleRow], error)
 
+	// @agent-contract
 	// GetByFrameAndNode returns the lock-holder row whose holder_node_id
 	// equals nodeID and frame_id equals frameID. Used by the
 	// observability /v1/observability/node-runs/{id} endpoint to
@@ -318,6 +330,7 @@ type ClaimHandleTable interface {
 	// (nil, nil) when no matching row exists.
 	GetByFrameAndNode(ctx context.Context, nodeID shared.UUID, frameID shared.UUID, tx Tx) (*ClaimHandleRow, error)
 
+	// @agent-contract
 	// ListChildClaimHandles returns claim_handles rows whose
 	// parent_claim_handle_id equals parentID. Used by the recursive
 	// claim-tree resolution path (`runtime/auto_terminal.go::
@@ -326,11 +339,13 @@ type ClaimHandleTable interface {
 	// Spec §Recursive claim-tree resolution.
 	ListChildClaimHandles(ctx context.Context, parentID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
 
+	// @agent-contract
 	// SetVersionID persists the DataProcessing-producer-returned
 	// canonical version_id from `ClaimProducer.Commit`. Claimant-guarded.
 	// Inert in rimsky (@blessed-invariant 20-class).
 	SetVersionID(ctx context.Context, id shared.UUID, supervisorID string, versionID string, tx Tx) error
 
+	// @agent-contract
 	// DeleteResolvedOlderThan deletes terminal (non-active)
 	// claim_handle rows whose `resolved_at` is older than the cutoff,
 	// skipping the committed-durable asset surface (which is released
@@ -356,6 +371,7 @@ type ClaimHandleTable interface {
 	// @concept: claim-lifetime
 	DeleteResolvedOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 
+	// @agent-contract
 	// DeleteResolved deletes a non-active claim_handle row (state ∈
 	// {committed, abandoned}). Absence-guarded: the post-Stage-4 CHECK
 	// constraint nulls `holder_supervisor_id` whenever `state` exits
@@ -373,6 +389,7 @@ type ClaimHandleTable interface {
 	// are guarded by absence + the row-discovery query filter.
 	DeleteResolved(ctx context.Context, id shared.UUID, tx Tx) error
 
+	// @agent-contract
 	// Promote transitions a claim handle from active to committed or
 	// abandoned. Claimant-guarded:
 	//
@@ -388,11 +405,13 @@ type ClaimHandleTable interface {
 	Promote(ctx context.Context, id shared.UUID, supervisorID string,
 		newState spec.ClaimHandleState, tx Tx) error
 
+	// @agent-contract
 	// ListByState returns claim-handle rows currently in the given state.
 	// Used by the retention sweep (state ∈ {committed, abandoned}) and
 	// by readers that need state-filtered listings.
 	ListByState(ctx context.Context, state spec.ClaimHandleState, tx Tx) ([]ClaimHandleRow, error)
 
+	// @agent-contract
 	// ListByInstanceAndState returns rows joined through
 	// holder_node_id → rimsky_nodes filtered by instance + state +
 	// lifetime. The asset query calls
@@ -400,6 +419,7 @@ type ClaimHandleTable interface {
 	ListByInstanceAndState(ctx context.Context, instanceID shared.UUID,
 		state spec.ClaimHandleState, lifetime spec.ClaimLifetime, tx Tx) ([]ClaimHandleRow, error)
 
+	// @agent-contract
 	// SetAggregationPolicy writes the parent-claim aggregation policy
 	// snapshot on a claim_handle row. Called once per fan-out parent at
 	// sub-claim acquisition time so the recursive walker
@@ -410,6 +430,7 @@ type ClaimHandleTable interface {
 	// §Recursive scope partitioning.
 	SetAggregationPolicy(ctx context.Context, id shared.UUID, supervisorID string, policy json.RawMessage, tx Tx) error
 
+	// @agent-contract
 	// BumpExpectedChildrenCount adds `delta` to the parent's
 	// `expected_children_count`. Called by `AcquireSubClaims` per
 	// sub-claim INSERT so the recursive walker can detect "all children
@@ -417,6 +438,7 @@ type ClaimHandleTable interface {
 	// supervisorID. Spec §Recursive scope partitioning.
 	BumpExpectedChildrenCount(ctx context.Context, id shared.UUID, supervisorID string, delta int, tx Tx) error
 
+	// @agent-contract
 	// BumpChildOutcomeCount adds `delta` to either
 	// `committed_children_count` (when outcome == "commit") or
 	// `abandoned_children_count` (when outcome == "abandon"). Called by

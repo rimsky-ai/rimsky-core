@@ -85,30 +85,28 @@ func CheckAndFireResolution(
 		return err
 	}
 	if row == nil {
-		// Gone from the table — reaped by the retention sweep after a
-		// prior termination promoted it to non-active (race-safe per
-		// §4.10 invariant 13.2). The non-active-but-present case is
-		// handled by the state guard below.
+		// @constraint: row gone from the table means the retention sweep
+		// reaped it after a prior termination promoted it to non-active
+		// (race-safe per §4.10 invariant 13.2); the non-active-but-present
+		// case falls through to the state guard below.
 		return nil
 	}
 	if row.HolderSupervisorID == nil || *row.HolderSupervisorID != args.SupervisorID {
-		// Either a non-active row (NULL holder per the migration-009
-		// CHECK pair) or the UUID re-use defensive case. Both branches
-		// are no-ops here: the active-state guard immediately below
-		// would already filter non-active rows, but checking the
-		// claimant guard first matches the original cycle-5 ordering.
+		// @constraint: claimant-guard first matches cycle-5 ordering — a
+		// NULL holder (non-active row per the migration-009 CHECK pair) or
+		// a UUID re-use both no-op here; the active-state guard immediately
+		// below would also filter non-active rows but ordering matters.
 		return nil
 	}
-	// Held-durable promotion already fired. A previous holding-subgraph
-	// completion promoted the row to state='committed' and skipped the
-	// Delete (held-durable Promote contract per @blessed-invariant 22; see
-	// `ResolveClaimHandleTerminal`); a late sibling terminal re-entering
-	// CheckAndFireResolution would otherwise re-fire Commit and emit a
-	// duplicate `claim_terminal` lineage row. The recursive
-	// `SettleChildren` already treats committed-durable children
-	// as resolved-and-deleted; this matches that posture. Spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Held-durable claim lifecycle.
+	// @constraint: held-durable already-promoted skip — a previous
+	// holding-subgraph completion promoted the row to state='committed' and
+	// skipped the Delete (held-durable Promote contract per
+	// @blessed-invariant 22; see ResolveClaimHandleTerminal); a late sibling
+	// terminal re-entering CheckAndFireResolution would otherwise re-fire
+	// Commit and emit a duplicate claim_terminal lineage row. The recursive
+	// SettleChildren already treats committed-durable children as
+	// resolved-and-deleted; this matches that posture.
+	// @concept: claim-handle
 	if row.State != spec.ClaimHandleStateActive {
 		return nil
 	}
@@ -118,8 +116,9 @@ func CheckAndFireResolution(
 		return fmt.Errorf("CheckAndFireResolution: ListByClaimHandleID: %w", err)
 	}
 	if len(holders) == 0 {
-		// No claim-holder rows — non-held claim. Caller should not
-		// invoke this function for non-held claims, but tolerate it.
+		// @deliberate: tolerate the non-held-claim case — callers should
+		// not invoke this for non-held claims but a defensive no-op is
+		// cheaper than a panic.
 		return nil
 	}
 	anyActive, anyFailed := false, false
@@ -134,18 +133,17 @@ func CheckAndFireResolution(
 	if anyActive {
 		return nil
 	}
-	// Premature-firing guard. Inheritor / co-holder runs insert their
-	// holder rows at THEIR own acquire-tx, not at the acquirer's acquire.
-	// When the acquirer's row is the first to flip non-active, the
-	// holder set is incomplete relative to the deploy-time subgraph.
-	// Consult the template's holding subgraph and bail if any expected
-	// inheritor is missing from the current row set.
-	//
-	// Skip the guard on aggregate-failed: a failed holder means the
-	// subgraph is doomed and downstream inheritors won't dispatch
-	// (the cascade walker won't stale-mark them on a failed sender),
-	// so Abandon must fire immediately rather than waiting for rows
-	// that will never appear.
+	// @constraint: premature-firing guard — inheritor / co-holder runs
+	// insert holder rows at THEIR own acquire-tx, not the acquirer's, so
+	// when the acquirer's row is the first to flip non-active, the holder
+	// set is incomplete relative to the deploy-time subgraph. Consult the
+	// template's holding subgraph and bail if any expected inheritor is
+	// missing.
+	// @deliberate: skip the guard on aggregate-failed — a failed holder
+	// dooms the subgraph and downstream inheritors won't dispatch (the
+	// cascade walker won't stale-mark them on a failed sender), so Abandon
+	// must fire immediately rather than waiting for rows that will never
+	// appear.
 	if !anyFailed {
 		expectedMissing, err := expectedInheritorsMissing(ctx, args, tx, row, holders)
 		if err != nil {
@@ -160,9 +158,9 @@ func CheckAndFireResolution(
 	if row.ProducerName != nil {
 		producerName = *row.ProducerName
 	}
-	// Terminal-resolution path (not dispatch-time acquisition): the
-	// claim was already bound at acquire time and no instance context is
-	// in scope at this point, so a bare Get is correct here.
+	// @deliberate: bare Get on the terminal-resolution path — the claim
+	// was already bound at acquire time and no instance context is in
+	// scope here, so dispatch-time alias resolution does not apply.
 	producer, ok := args.StoreRegistry.Get(producerName)
 	if !ok {
 		return fmt.Errorf("CheckAndFireResolution: unknown producer %q", producerName)
@@ -171,35 +169,25 @@ func CheckAndFireResolution(
 	if anyFailed {
 		outcome = AggregateAbandon
 	}
-	// When the row is itself a fan-out parent (expected_children_count > 0),
-	// combine the holders' aggregate with the children's aggregate per
-	// the snapshotted policy. The holders contribute the "this claim's
-	// own work" outcome; the children contribute the "fan-out work"
-	// outcome. The aggregation policy chooses Commit vs Abandon over
-	// the children; a holder failure always implies Abandon (the parent's
-	// own subgraph failed). Pre-cycle-4 callers that never set children
-	// (`expected_children_count = 0`) get the historical anyFailed-only
-	// verdict (cycle 4 issue C tail).
-	//
-	// Cycle-6 children-quorum guard. The children-aggregation branch
-	// assumes every fan-out child has already resolved (and bumped its
-	// outcome counter via `ResolveClaimHandleTerminal`) before the
-	// parent's `CheckAndFireResolution` runs. This holds in normal
-	// operation because the run-tree `Aggregate` orders parent terminal
-	// strictly after all children — but the assumption isn't enforced
-	// inside this function. A future caller that fires
-	// `CheckAndFireResolution` on a fan-out parent before all children
-	// have terminated would see incomplete counters and compute the
-	// wrong verdict (e.g. `best_effort` could read
-	// `committed_children_count == 0` mid-flight → Abandon despite
-	// pending Commits). Defer when the counters don't yet cover the
-	// expected children; the next child's terminal will re-invoke
-	// `SettleChildren`, which performs the same children-
-	// completeness check via `ListChildClaimHandles` row presence and
-	// re-evaluates the parent's verdict through the same counters via
-	// `aggregateParentOutcome`. The two paths converge on the same
-	// Commit/Abandon decision. Defense-in-depth — redundant under the
-	// current call graph but makes the ordering assumption explicit.
+	// @constraint: fan-out parent aggregation — when the row carries
+	// expected_children_count > 0, combine the holders' aggregate with the
+	// children's aggregate per the snapshotted policy. Holders contribute
+	// the "this claim's own work" outcome; children contribute the
+	// "fan-out work" outcome; the aggregation policy chooses Commit vs
+	// Abandon over the children; a holder failure always implies Abandon
+	// (parent's own subgraph failed). Pre-cycle-4 callers that never set
+	// children get the historical anyFailed-only verdict.
+	// @constraint: cycle-6 children-quorum guard — the
+	// children-aggregation branch assumes every fan-out child has resolved
+	// (and bumped its outcome counter via ResolveClaimHandleTerminal)
+	// before the parent's CheckAndFireResolution runs. The run-tree
+	// Aggregate orders parent terminal strictly after all children, but
+	// this is defense-in-depth: a future caller firing on a fan-out parent
+	// before all children have terminated would compute the wrong verdict
+	// (best_effort could read committed_children_count == 0 mid-flight →
+	// Abandon despite pending Commits). Defer when counters don't yet
+	// cover expected children; the next child's terminal re-invokes
+	// SettleChildren, which converges on the same Commit/Abandon decision.
 	if row.ExpectedChildrenCount > 0 && !anyFailed {
 		resolved := row.CommittedChildrenCount + row.AbandonedChildrenCount
 		if resolved < row.ExpectedChildrenCount {
@@ -207,9 +195,9 @@ func CheckAndFireResolution(
 		}
 		outcome = aggregateParentOutcome(row, outcome)
 	}
-	// Build the lineage hint from the held claim-handle row. The
-	// held-claim path doesn't carry an acquisition struct, so we
-	// re-derive the per-claim instance / frame / node from the row.
+	// @deliberate: re-derive the lineage hint from the held claim-handle
+	// row because the held-claim path carries no acquisition struct — the
+	// per-claim instance / frame / node must come from the row itself.
 	hint := ClaimLineageHint{
 		ProducerName: producerName,
 		VersionID:    row.VersionID,
@@ -224,26 +212,22 @@ func CheckAndFireResolution(
 	if acquirer, aErr := args.Persist.Nodes().Get(ctx, row.HolderNodeID, tx); aErr == nil && acquirer != nil {
 		hint.InstanceID = acquirer.InstanceID
 	}
-	// Recursive claim-tree resolution is now driven by
-	// `ResolveClaimHandleTerminal` itself: after it promotes the row to
-	// terminal it settles the parent through `SettleChildren` (counter
-	// bump + sibling cancel + aggregation walk). Forwarding
-	// `ParentClaimHandleID` here keeps the held path firing the
-	// parent walk after the resolution commits. Spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Recursive claim-tree resolution + §Fan-out template DSL.
-	//
-	// Outcome propagation: a sub-claim that aggregated Abandon
-	// signals "this partition's holding subgraph failed." The fan-out
-	// parent must Abandon to match — partial success leaks bytes the
-	// caller's aggregator wasn't expecting. SettleChildren
-	// honors `seedOutcome` to carry the aggregate-failed verdict up.
-	// Test-only seam: the check has decided to fire; the verb + Promote
-	// have not run yet. An injection test interleaves a second contender
-	// here to prove the SELECT … FOR UPDATE serialization + the
-	// state='active' guard make the loser a no-op (the producer verb
-	// fires exactly once per @blessed-invariant 13). Nil in production
-	// (no behavior change); see RunArgs.CheckAndFireHook.
+	// @constraint: recursive claim-tree resolution rides through
+	// ResolveClaimHandleTerminal — it promotes the row to terminal and
+	// settles the parent through SettleChildren (counter bump + sibling
+	// cancel + aggregation walk). Forwarding ParentClaimHandleID keeps
+	// the held path firing the parent walk after the resolution commits.
+	// @constraint: outcome propagation — a sub-claim that aggregated
+	// Abandon signals "this partition's holding subgraph failed"; the
+	// fan-out parent must Abandon to match because partial success leaks
+	// bytes the caller's aggregator wasn't expecting. SettleChildren
+	// honors seedOutcome to carry the aggregate-failed verdict up.
+	// @deliberate: test-only seam fires BEFORE the verb + Promote — an
+	// injection test interleaves a second contender here to prove the
+	// SELECT … FOR UPDATE serialization + the state='active' guard make
+	// the loser a no-op (the producer verb fires exactly once per
+	// @blessed-invariant 13). Nil in production (no behavior change); see
+	// RunArgs.CheckAndFireHook.
 	if args.CheckAndFireHook != nil {
 		args.CheckAndFireHook(ctx)
 	}
@@ -262,16 +246,17 @@ func CheckAndFireResolution(
 		ParentClaimHandleID: row.ParentClaimHandleID,
 	}
 	if err := ResolveClaimHandleTerminal(ctx, args, tx, td); err != nil {
-		// A producer-verb fault carrying a rimsky error_class (e.g. the
-		// atomic-staging `pg/swap_failed` collision the postgres store
-		// returns from Commit) is NOT a tx-fatal error: letting it bubble
-		// would roll back the holder's terminal and wedge the run with no
-		// settled disposition (the claim never resolves, the run retries
-		// forever). Instead route it as a claim-terminal error signal —
-		// `terminal/error/<class>` for the holder node — co-committed in
-		// this same tx, and resolve the claim handle so the held subgraph
-		// settles cleanly. This is what gives the producer's declared
-		// `pg/swap_failed` class a real signal at the subscriber surface.
+		// @constraint: a producer-verb fault carrying a rimsky error_class
+		// (e.g. atomic-staging pg/swap_failed from the postgres store
+		// Commit) is NOT tx-fatal — bubbling would roll back the holder's
+		// terminal and wedge the run with no settled disposition (claim
+		// never resolves, run retries forever). Instead route as a
+		// claim-terminal error signal (terminal/error/<class> for the
+		// holder node) co-committed in this same tx, and resolve the claim
+		// handle so the held subgraph settles cleanly. This gives the
+		// producer's declared pg/swap_failed class a real signal at the
+		// subscriber surface.
+		// @concept: error-policy
 		if cls := producerErrorClassOf(err); cls != "" {
 			if rerr := routeHeldClaimVerbError(ctx, args, tx, row, td, cls); rerr != nil {
 				return fmt.Errorf("CheckAndFireResolution: route verb error: %w", rerr)
@@ -304,11 +289,10 @@ func routeHeldClaimVerbError(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	row *persistence.ClaimHandleRow, td TerminalDecision, errorClass string,
 ) error {
-	// Emit the claim-terminal error signal for the holder node. senderRunID
-	// / senderFrameID come from the claim-handle row when present; a zero
-	// pair degrades to the audit-only edge (the disposition row still lands
-	// on the event log, which is the operator-visible surface a subscriber /
-	// `error_types:` chain routes to).
+	// @deliberate: senderRunID / senderFrameID come from the claim-handle
+	// row when present; a zero pair degrades to the audit-only edge — the
+	// disposition row still lands on the event log, which is the
+	// operator-visible surface a subscriber / error_types: chain routes to.
 	var senderRunID, senderFrameID shared.UUID
 	if row.NodeRunID != nil {
 		senderRunID = *row.NodeRunID
@@ -330,10 +314,11 @@ func routeHeldClaimVerbError(
 		senderFrameID, sig); err != nil {
 		return fmt.Errorf("emit claim-terminal error signal: %w", err)
 	}
-	// Promote the claim handle to abandoned (state-column flip,
-	// claimant-guarded) WITHOUT re-firing the producer verb — the faulted
-	// cutover already ran store-side. Reuse promoteHandleState by flagging
-	// the decision as Abandon.
+	// @constraint: promote to abandoned WITHOUT re-firing the producer
+	// verb — the faulted cutover already ran store-side, and a
+	// pg/swap_failed collision leaves the staging intact for the operator
+	// to inspect; re-firing would discard that state. Reuse
+	// promoteHandleState by flagging the decision as Abandon.
 	abandonTD := td
 	abandonTD.Outcome = AggregateAbandon
 	if err := promoteHandleState(ctx, args, tx, abandonTD); err != nil {
@@ -404,7 +389,9 @@ func expectedInheritorsMissing(
 		}
 	}
 	if alias == "" {
-		// No alias resolution path. Best-effort: don't defer.
+		// @deliberate: best-effort fall-through when alias resolution
+		// fails — don't defer auto-terminal on a missing alias, since the
+		// expected-member set can't be computed without one.
 		return false, nil
 	}
 	subgraphs := node.HoldingSubgraphsForTemplate(&tmpl.Spec)
@@ -416,13 +403,15 @@ func expectedInheritorsMissing(
 		}
 	}
 	if len(members) <= 1 {
-		// Non-held subgraph; nothing to wait for.
+		// @deliberate: a single-member subgraph is non-held — nothing to
+		// wait for, don't defer.
 		return false, nil
 	}
-	// Build a (node-type, present?) view from the current holder rows.
-	// Map each holder row's run id → node id → node type via
-	// Queue.GetDispatchNode (returns node_id regardless of phase, so it
-	// works for both in-flight and terminal-completed run rows).
+	// @constraint: map each holder row's run id → node id → node type via
+	// Queue.GetDispatchNode, which returns node_id regardless of phase
+	// (works for both in-flight and terminal-completed run rows). Building
+	// a (node-type, present?) view lets the loop below check expected
+	// members without re-querying per-member.
 	holderTypes := make(map[string]struct{}, len(holders))
 	for _, h := range holders {
 		nodeID, _, err := args.Queue.GetDispatchNode(ctx, h.HolderRunID)
@@ -442,7 +431,3 @@ func expectedInheritorsMissing(
 	}
 	return false, nil
 }
-
-// (lockClaimHandleRow + scanClaimHandleForResolution were retired when
-// the persistence layer landed `ClaimHandleTable.LockForUpdate`. The
-// auto-terminal flow above calls that method directly.)

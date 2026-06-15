@@ -11,8 +11,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Event kinds for rimsky_events.kind. See spec section "Audit" for
-// payload shapes.
+// @constraint: event-kind string values for col:rimsky_events.kind; payload
+// shapes are defined by the spec "Audit" section and the *Payload structs below.
 const (
 	EventAccessAttempted = "auth.access_attempted"
 	EventAccessDenied    = "auth.access_denied"
@@ -38,7 +38,7 @@ type AccessAttemptedPayload struct {
 	KeyID         *shared.UUID    `json:"key_id"`
 	KeyName       string          `json:"key_name"`
 	IdentityKind  IdentityKind    `json:"identity_kind"`
-	ProtocolSkin  string          `json:"protocol_skin"` // "http" | "mcp"
+	ProtocolSkin  string          `json:"protocol_skin"` // @constraint: only "http" or "mcp"
 	Action        string          `json:"action"`
 	RequestPath   string          `json:"request_path"`
 	RequestMethod string          `json:"request_method"`

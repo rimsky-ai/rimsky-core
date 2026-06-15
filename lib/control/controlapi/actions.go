@@ -9,8 +9,6 @@
 //   - POST /auth/keys to reject grants referencing unknown actions
 //   - the MCP tool catalog to filter tools per requesting key's grant
 //
-// See spec
-// .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
 // "Action grammar".
 //
 // @concept: permission
@@ -26,12 +24,16 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/auth"
 )
 
-// ActionEntry is one row in the canonical action registry.
+// ActionEntry is one row in the canonical action registry. Action is
+// an action string (e.g. "node:invalidate"); IsWrite is false → read
+// action with mode modifier ignored; Routes lists the HTTP routes that
+// map to this action; MCPTools lists the MCP tool names that map to
+// this action.
 type ActionEntry struct {
-	Action   string   // e.g. "node:invalidate"
-	IsWrite  bool     // false → read action; mode modifier ignored
-	Routes   []Route  // HTTP routes that map to this action
-	MCPTools []string // MCP tool names that map to this action
+	Action   string
+	IsWrite  bool
+	Routes   []Route
+	MCPTools []string
 
 	// ScopeDimensions enumerates the resource-selector keys this
 	// action's `requestTargets` ever emits — i.e. the only `scope`
@@ -50,21 +52,25 @@ type ActionEntry struct {
 	Description string
 }
 
-// Route is one HTTP method+path pair (chi-template format).
+// Route is one HTTP method+path pair (chi-template format). Method is
+// the HTTP method (e.g. "POST"); Path is the chi pattern (e.g.
+// "/nodes/{id}/invalidate").
 type Route struct {
-	Method string // e.g. "POST"
-	Path   string // chi pattern, e.g. "/nodes/{id}/invalidate"
+	Method string
+	Path   string
 }
 
 // ActionRegistry holds the canonical action list and the two
 // lookup tables (route → action, MCP tool → action). Construct via
 // NewActionRegistry; populate via Register; freeze with Build.
 type ActionRegistry struct {
-	mu      sync.RWMutex
-	built   bool
-	entries map[string]ActionEntry // by action string
-	byRoute map[string]string      // "<METHOD> <pattern>" → action
-	byTool  map[string]string      // MCP tool name → action
+	mu    sync.RWMutex
+	built bool
+	// @constraint: entries is keyed by action string; byRoute by
+	// "<METHOD> <pattern>" → action; byTool by MCP tool name → action.
+	entries map[string]ActionEntry
+	byRoute map[string]string
+	byTool  map[string]string
 }
 
 // NewActionRegistry returns an empty registry.
@@ -175,7 +181,7 @@ func (r *ActionRegistry) ValidateGrantScope(grant auth.Grant) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for i, e := range grant {
-		// Wildcard entries cover many actions; per-action dimension
+		// @constraint: wildcard entries cover many actions; per-action dimension
 		// validation doesn't fit at mint time. The scope still has to
 		// match SOMETHING at request time (auth.ScopeMatches will
 		// reject any selector key the routed action doesn't emit), so
@@ -189,7 +195,7 @@ func (r *ActionRegistry) ValidateGrantScope(grant auth.Grant) error {
 		}
 		entry, ok := r.entries[e.Action]
 		if !ok {
-			// Unknown action; the surrounding IsKnownAction check at
+			// @constraint: unknown action; the surrounding IsKnownAction check at
 			// the mint handler is what 400s on that, so we leave it.
 			continue
 		}
@@ -289,7 +295,8 @@ func BuildV1Registry() *ActionRegistry {
 // spec's table but is gated for consistency with "every endpoint is
 // gated"; the bundled roles already cover it via `*:read`.
 var v1Actions = []ActionEntry{
-	// Instances
+	// @constraint: instances subsystem — instance lifecycle (read /
+	// create / terminate / pause / resume / kill).
 	{Action: "instance:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/instances"}, {"GET", "/v1/instances/{idOrKey}"}},
 		MCPTools:    []string{"instance_list", "instance_get"},
@@ -316,7 +323,7 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"instance_kill"},
 		Description: "Force-terminate an instance: mark it terminal and abandon in-flight node-runs."},
 
-	// Breakpoints (concept:breakpoint — instance-debugger surface).
+	// @concept: breakpoint — instance-debugger surface.
 	{Action: "breakpoint:read", IsWrite: false,
 		Routes: []Route{
 			{"GET", "/v1/instances/{idOrKey}/breakpoints"},
@@ -337,7 +344,8 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"breakpoint_delete"},
 		Description: "Delete a breakpoint; cascades to its hits."},
 
-	// Templates
+	// @constraint: templates subsystem — template lifecycle (read /
+	// validate / register / deploy / undeploy / delete).
 	{Action: "template:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/templates"}, {"GET", "/v1/templates/{id}"}},
 		MCPTools:    []string{"template_list", "template_get"},
@@ -367,7 +375,8 @@ var v1Actions = []ActionEntry{
 		ScopeDimensions: []string{"template_tag"},
 		Description:     "Delete a template; refused while any instance references it."},
 
-	// Tags
+	// @constraint: tags subsystem — template-tag lifecycle (read /
+	// create / set / delete).
 	{Action: "tag:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/tags"}},
 		MCPTools:    []string{"tag_list"},
@@ -387,7 +396,8 @@ var v1Actions = []ActionEntry{
 		ScopeDimensions: []string{"template_tag"},
 		Description:     "Delete a template tag."},
 
-	// Nodes
+	// @constraint: nodes subsystem — per-node read + invalidate / reset
+	// admin verbs.
 	{Action: "node:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/instances/{idOrKey}/nodes"}, {"GET", "/v1/nodes/{id}"}},
 		MCPTools:    []string{"node_list", "node_get"},
@@ -404,7 +414,8 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"node_reset"},
 		Description: "Reset a failed node back to stale so it can be re-attempted."},
 
-	// Messages
+	// @constraint: messages subsystem — instance message bus (send /
+	// read).
 	{Action: "message:send", IsWrite: true,
 		Routes:      []Route{{"POST", "/v1/instances/{id}/messages"}},
 		MCPTools:    []string{"message_send"},
@@ -414,21 +425,23 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"message_list", "message_get"},
 		Description: "Read messages on an instance or by id."},
 
-	// Events
+	// @constraint: events subsystem — operator-facing event log read.
 	{Action: "event:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/events"}},
 		MCPTools:    []string{"event_list"},
 		Description: "Read the event log."},
 
-	// Audit (the auth.* slice of the event log; granted separately
-	// from event:read because actor identity / IP / user-agent /
-	// actions are sensitive — see concept:event-log, concept:permission).
+	// @deliberate: audit is the auth.* slice of the event log,
+	// granted separately from event:read because actor identity / IP
+	// / user-agent / actions are sensitive — see @concept: event-log,
+	// @concept: permission.
 	{Action: "audit:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/audit"}},
 		MCPTools:    []string{"audit_list"},
 		Description: "Read the auth audit log."},
 
-	// Lineage
+	// @constraint: lineage subsystem — graph reads and the prune admin
+	// verb.
 	{Action: "lineage:read", IsWrite: false,
 		Routes: []Route{
 			{"GET", "/v1/lineage/runs/{run_id}"},
@@ -446,7 +459,7 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"lineage_prune"},
 		Description: "Prune lineage rows older than a cutoff."},
 
-	// Parked nodes
+	// @constraint: parked-nodes subsystem — wait-set diagnostic surface.
 	{Action: "parked-node:read", IsWrite: false,
 		Routes: []Route{
 			{"GET", "/v1/diagnostics/parked"},
@@ -455,19 +468,22 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"parked_node_list"},
 		Description: "List nodes parked in the wait-set."},
 
-	// Wait-sets
+	// @constraint: wait-sets subsystem — sender/receiver-edge diagnostic
+	// surface.
 	{Action: "waitset:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/admin/diagnostics/wait-sets"}},
 		MCPTools:    []string{"waitset_list"},
 		Description: "List wait-set entries (sender/receiver edges)."},
 
-	// Claim holders
+	// @constraint: claim-holders subsystem — per-claim-handle holder
+	// listing.
 	{Action: "claim-holders:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/lock-holders/{claim_handle_id}/claim-holders"}},
 		MCPTools:    []string{"claim_holders_list"},
 		Description: "List claim-holder rows for a claim handle."},
 
-	// Backfills
+	// @constraint: backfills subsystem — backfill operation lifecycle
+	// (create / read / cancel).
 	{Action: "backfill:create", IsWrite: true,
 		Routes:      []Route{{"POST", "/v1/instances/{id}/backfills"}},
 		MCPTools:    []string{"backfill_create"},
@@ -485,7 +501,8 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"backfill_cancel"},
 		Description: "Cancel a running backfill operation."},
 
-	// Assets
+	// @constraint: assets subsystem — per-instance asset lifecycle
+	// (read / materialize / delete).
 	{Action: "asset:read", IsWrite: false,
 		Routes: []Route{
 			{"GET", "/v1/instances/{id}/assets"},
@@ -504,13 +521,16 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"asset_delete"},
 		Description: "Delete an asset on an instance."},
 
-	// Diagnostics
+	// @constraint: diagnostics subsystem — operator-facing read-only
+	// observability endpoints (no auth-subsystem grouping leakage).
 	{Action: "diagnostics:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/admin/diagnostics/held-frames"}},
 		MCPTools:    []string{"held_frames_list"},
 		Description: "List frames held by holding-subgraph claims."},
 
-	// Auth (self-administration)
+	// @constraint: auth subsystem (self-administration) — key lifecycle
+	// (read/create/revoke/rotate/expire) plus the anonymous|authenticated
+	// status verb.
 	{Action: "auth:read", IsWrite: false,
 		Routes: []Route{
 			{"GET", "/v1/auth/keys"},
@@ -532,16 +552,16 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"auth_rotate_key"},
 		Description: "Rotate an API key (mint a new plaintext with same identity; old key revoked at grace expiry)."},
 
-	// Observability (HTTP-only; no MCP tool surface in V1).
-	// Supplemental to the spec's action grammar table; covers the
-	// `/v1/observability/*` read-only browse surface. Implicitly
-	// covered by `*:read` in bundled roles.
+	// @deliberate: observability:read is HTTP-only (no MCP tool
+	// surface in V1) and supplemental to the spec's action grammar
+	// table; it covers the `/v1/observability/*` read-only browse
+	// surface and is implicitly covered by `*:read` in bundled roles.
 	{Action: "observability:read", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/observability/*"}},
 		MCPTools:    nil,
 		Description: "Read observability data via /v1/observability/*."},
 
-	// Compose-origin marker. A "capability" action that no route or MCP
+	// @constraint: compose-origin marker. A "capability" action that no route or MCP
 	// tool maps to — it is consulted by isComposeOrigin() to gate the
 	// reserved `compose:` prefix bypass on tag-create / instance-create.
 	// Only api-keys whose grant matches `compose:origin` (typically the
@@ -560,7 +580,7 @@ var v1Actions = []ActionEntry{
 		MCPTools:    nil,
 		Description: "Capability marker for the privileged compose-CLI: grants the bearer the right to create reserved-prefix `compose:<project>:<...>` tags and instance keys. No route maps to this action; it is consulted server-side when a request stamps the X-Rimsky-Compose-Origin header."},
 
-	// MCP umbrella action covering the MCP Streamable HTTP transport
+	// @constraint: MCP umbrella action covering the MCP Streamable HTTP transport
 	// surface at `/mcp`. `POST /mcp` carries the JSON-RPC dispatch:
 	// gates `initialize` and `tools/list` (which run inside the MCP
 	// Server without ever reaching tools/call); tool invocations

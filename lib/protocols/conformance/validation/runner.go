@@ -149,7 +149,7 @@ func checkUnknownRole(ctx context.Context, c genv1.ValidationClient) CheckResult
 	req := &genv1.ValidateRequest{Role: "unknown-role-conformance"}
 	resp, err := c.Validate(ctx, req)
 	if err != nil {
-		// Acceptable: gRPC error.
+		// @constraint: gRPC error is an acceptable rejection path.
 		return CheckResult{Name: "UnknownRole"}
 	}
 	if resp.GetValid() {

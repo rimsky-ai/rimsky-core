@@ -33,7 +33,7 @@ func TestPureCascadeNode(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "pure-cascade", Version: "1",
 		Nodes: []node.TemplateNodeDef{
-			// No executor → pure-cascade node. No stores, locks, or
+			// @deliberate: No executor → pure-cascade node. No stores, locks, or
 			// attributes wiring is required; the scheduler sweep promotes
 			// it to fresh on the first tick.
 			scenario.MakeNode(node.TemplateNodeDef{Type: "hub"}),
@@ -43,23 +43,22 @@ func TestPureCascadeNode(t *testing.T) {
 
 	hub := h.FindNode(iid, "hub")
 	require.NotNil(t, hub)
-	// Starts stale; pure-cascade sweep should promote it to fresh on the
+	// @deliberate: Starts stale; pure-cascade sweep should promote it to fresh on the
 	// first scheduler tick.
 	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),
 		"hub did not reach fresh via initial pure-cascade sweep")
 
-	// Invalidate via control API.
 	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+hub.ID.String()+"/invalidate",
 		"application/json", bytes.NewReader([]byte(`{}`)))
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Expect fresh again after next tick.
+	// @deliberate: Expect fresh again after next tick.
 	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),
 		"hub did not return to fresh after invalidate")
 
-	// Verify a terminal/success signal event was emitted (per Pass 5
+	// @constraint: Verify a terminal/success signal event was emitted (per Pass 5
 	// the pure_cascade_commit fixed-string row retired; pure-cascade
 	// transitions emit terminal/success with payload.change_summary
 	// = "pure_cascade" per concept:signal).

@@ -28,12 +28,10 @@ func ActionMatches(entryAction, requestAction string) bool {
 		return true
 	}
 	if strings.HasSuffix(entryAction, ":*") {
-		// "auth:*" → prefix "auth:" (colon retained).
 		prefix := entryAction[:len(entryAction)-1]
 		return strings.HasPrefix(requestAction, prefix)
 	}
 	if strings.HasPrefix(entryAction, "*:") {
-		// "*:read" → suffix ":read" (colon retained).
 		suffix := entryAction[1:]
 		return strings.HasSuffix(requestAction, suffix)
 	}
@@ -51,14 +49,12 @@ func ValidateActionString(entryAction string) error {
 	if entryAction == "*" {
 		return nil
 	}
-	// Exact strings: no '*' anywhere.
 	if !strings.Contains(entryAction, "*") {
 		if !strings.Contains(entryAction, ":") {
 			return fmt.Errorf("action %q must contain a ':' separator", entryAction)
 		}
 		return nil
 	}
-	// Prefix wildcard: "<noun>:*"
 	if strings.HasSuffix(entryAction, ":*") {
 		prefix := entryAction[:len(entryAction)-2]
 		if prefix == "" || strings.Contains(prefix, "*") || strings.Contains(prefix, ":") {
@@ -66,7 +62,6 @@ func ValidateActionString(entryAction string) error {
 		}
 		return nil
 	}
-	// Suffix wildcard: "*:<verb>"
 	if strings.HasPrefix(entryAction, "*:") {
 		suffix := entryAction[2:]
 		if suffix == "" || strings.Contains(suffix, "*") || strings.Contains(suffix, ":") {

@@ -2,7 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// events.go — SQLite-backed persistence.EventTable.
+// @source: lib/foundation/persistence/postgres/events.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
+
 package sqlite
 
 import (
@@ -93,11 +96,9 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		untilArg = formatTime(*filter.Until)
 	}
 
-	// Auth-payload filters. Each predicate is NULL-tolerant
-	// (`? IS NULL OR ...`) so a nil pointer never excludes a row.
-	// response_status is a JSON number; json_extract returns it as an
-	// integer, so we bind the int directly. action prefix uses LIKE with
-	// a trailing %.
+	// @constraint: auth-payload predicates are NULL-tolerant
+	// (`? IS NULL OR ...`) so a nil pointer never excludes a row;
+	// action prefix uses LIKE with a trailing %.
 	var keyIDArg, keyNameArg, actionExactArg, actionPrefixArg, respStatusArg, modeArg, requestPathArg any
 	if filter.KeyID != nil {
 		keyIDArg = *filter.KeyID
@@ -121,8 +122,8 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		requestPathArg = *filter.RequestPath
 	}
 
-	// Build a kind_in IN (...) clause dynamically because sqlite has no
-	// native array bind. Skipped when filter.KindIn is empty.
+	// @constraint: sqlite has no native array bind, so the kind_in IN (...)
+	// clause is built dynamically; skipped when filter.KindIn is empty.
 	kindInClause := ""
 	args := []any{
 		nodeArg, nodeArg, instArg, instArg, kindArg, kindArg,
@@ -140,8 +141,8 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		}
 		kindInClause = " AND kind IN (" + placeholders + ")"
 	}
-	// Auth-payload predicates appended after the kind_in clause so their
-	// binds line up with the placeholders below.
+	// @constraint: auth-payload binds must be appended after the kind_in
+	// clause so their positions line up with the placeholders below.
 	args = append(args,
 		keyIDArg, keyIDArg,
 		keyNameArg, keyNameArg,
@@ -192,9 +193,8 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		if err := rows.Scan(&eventID, &instanceIDStr, &nodeIDStr, &kindRaw, &payloadStr, &occurredAtStr); err != nil {
 			return persistence.EventListResult{}, err
 		}
-		// Defensive parse at the unmarshal boundary (per
-		// decision:event-log-kind-enum). An unknown string is a
-		// real error — surface it, don't synthesize a Kind.
+		// @decision: event-log-kind-enum — defensive parse at the unmarshal
+		// boundary; an unknown string is a real error, not a Kind to synthesize.
 		k, err := events.ParseKindString(kindRaw)
 		if err != nil {
 			slog.Error("events.unknown_kind_at_unmarshal", slog.String("raw", kindRaw))
@@ -358,8 +358,6 @@ func (s *eventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int
 	}
 	return int(n), nil
 }
-
-// ---- cursor encoding ----
 
 type eventCursor struct {
 	O time.Time `json:"o"`

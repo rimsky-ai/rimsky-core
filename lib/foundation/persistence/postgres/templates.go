@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// TemplateTable — Postgres-backed persistence.TemplateTable. Per docs/specs/
-// 2026-05-01-control-plane-and-store-lifecycle-design.md §1.2:
-// rimsky_templates.id is the content hash ("sha256-<64-hex>"); state
-// has three persisted values (registered, deployed, undeployed) —
-// deregistered is the absent state, i.e., row deleted. Tags are
-// separate (rimsky_template_tags).
 package postgres
 
 import (
@@ -23,8 +17,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
-
-// TemplateTable is the Postgres-backed persistence.TemplateTable.
 
 const templateCols = `id, spec, state, registered_at, source`
 

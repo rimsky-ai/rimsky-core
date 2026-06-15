@@ -17,7 +17,8 @@ func TestLedgerRecordsOpenAndCommit(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	target := filepath.Join(root, "foo")
-	_ = target // existence not required for direct-mode Open
+	// @deliberate: target path is computed but unused — direct-mode Open does not require pre-existence
+	_ = target
 	if _, err := st.Open(context.Background(), "claim-1", "foo"); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -101,7 +102,6 @@ func TestLedgerRecordEvent_NonTerminal(t *testing.T) {
 	if got := tail.Attributes["error"]; got != "transient" {
 		t.Fatalf("tail attrs[error] = %v, want transient", got)
 	}
-	// A subsequent terminal event must still flip State / ClosedAt.
 	st.Ledger().RecordTerminal("claim-1", "claim_committed", nil)
 	rec2, _ := st.Ledger().Get("claim-1")
 	if rec2.State != ClaimStateCommitted {

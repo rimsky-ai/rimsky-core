@@ -16,7 +16,7 @@ func TestUnmarshalAction(t *testing.T) {
 		name   string
 		yaml   string
 		want   Action
-		errSub string // non-empty: expected parse error containing this substring
+		errSub string // @constraint: non-empty marks the case as expecting a parse error containing this substring
 	}{
 		{"bare pop", "pop", Action{Kind: Pop}, ""},
 		{"bare recycle", "recycle", Action{Kind: Recycle}, ""},
@@ -31,8 +31,9 @@ func TestUnmarshalAction(t *testing.T) {
 		{"empty map", "{}", Action{}, "empty action map"},
 		{"multi-key map", "{pop_and_move: a, pop: b}", Action{}, "exactly one key"},
 		{"sequence", "[pop]", Action{}, "must be a string or one-key map"},
-		// Null is unrepresentable here: yaml.v3 skips UnmarshalYAML for
-		// null on a struct-value target (the zero Action remains).
+		// @constraint: null is unrepresentable in this table — yaml.v3 skips
+		// UnmarshalYAML for null on a struct-value target (the zero Action
+		// remains), so the parse-level error path isn't exercisable here;
 		// Action.Validate() catches the resulting empty Kind downstream.
 		{"number", "42", Action{}, "must be a string or one-key map"},
 		{"empty target", "{pop_and_move: \"\"}", Action{}, "must be non-empty"},

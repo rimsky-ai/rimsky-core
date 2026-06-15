@@ -51,12 +51,12 @@ func TestVerifierRegistrationValidation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The verifier must be up before rimsky: startup eagerly runs the
-	// executor Capabilities handshake AND — because the peer advertises
-	// the validation mix-in — the ExecutorObservability handshake that
-	// resolves validation_supported_roles. A failed roles handshake
-	// fails startup by design, so a stack that comes up at all has
-	// already learned the live roles.
+	// @constraint: verifier must be up before rimsky — startup eagerly
+	// runs the executor Capabilities handshake AND, because the peer
+	// advertises the validation mix-in, the ExecutorObservability
+	// handshake that resolves validation_supported_roles. A failed roles
+	// handshake fails startup by design, so a stack that comes up at all
+	// has already learned the live roles.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartVerifierShapeChecksOnNetwork(ctx, t, netName, "verifier-shape-checks")
 	ep := harness.BringUpRimsky(ctx, t,
@@ -65,10 +65,11 @@ func TestVerifierRegistrationValidation(t *testing.T) {
 		harness.WithExecutorProtocols("verifier-shape-checks", "validation"),
 	)
 
-	// Leg 1: missing `checks` → the verifier's Validate must reject the
-	// registration. This is only reachable if the handshake-learned
-	// role set contains "executor" — an empty set silently skips the
-	// executor-role check and the template registers.
+	// @constraint: leg 1 — missing `checks` must drive the verifier's
+	// Validate to reject the registration. The 400 is only reachable
+	// when the handshake-learned role set contains "executor"; an empty
+	// set silently skips the executor-role check and the template
+	// registers.
 	t.Run("missing_checks_rejected_at_registration", func(t *testing.T) {
 		status, raw := ep.PostJSON(t, "/v1/templates",
 			buildRegistrationValidationTemplate("registration-validation-missing-checks", nil))
@@ -98,9 +99,10 @@ func TestVerifierRegistrationValidation(t *testing.T) {
 		}
 	})
 
-	// Leg 2: well-formed checks → registration succeeds. Kinds are
-	// drawn from the runtime dispatcher's registry, so the verifier's
-	// unknown_check_kind advisory must stay silent too.
+	// @deliberate: leg 2 — well-formed checks drawn from the runtime
+	// dispatcher's registry so registration succeeds AND the verifier's
+	// unknown_check_kind advisory stays silent, proving the validator
+	// gates rather than blanket-rejects.
 	t.Run("well_formed_checks_registered", func(t *testing.T) {
 		status, raw := ep.PostJSON(t, "/v1/templates",
 			buildRegistrationValidationTemplate("registration-validation-well-formed", []any{

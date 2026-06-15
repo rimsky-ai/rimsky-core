@@ -8,7 +8,7 @@
 // `schedule_cron` column retired with the 2026-05-15 plan B10 / D7 / E16
 // schedule-retirement cascade; cron is owned by `sensors/sensor-cron/`.
 //
-// @blessed-invariant (§17): UpdateState never short-circuits on from==to.
+// @blessed-invariant 17: UpdateState never short-circuits on from==to.
 // Every UpdateState call runs cascade.NextState(current, reason); identical
 // from/to under e.g. dispatch_claimed must reject as illegal, not silently
 // succeed. This is the load-bearing guard against double-execute.
@@ -91,10 +91,10 @@ LEFT JOIN LATERAL (
 // nodeCols produces COALESCE(r.state, 'fresh').
 func (s *nodesImpl) Create(ctx context.Context, in persistence.NodeCreateInput, tx persistence.Tx) (persistence.NodeRow, error) {
 	ex := s.q(tx)
-	// pgx v5 maps []string transparently to TEXT[]; an empty slice (or
-	// nil) lands as an empty array via the column default. Pass an empty
-	// slice explicitly so the value is owned by the caller (the column
-	// default would only fire if we omitted the column entirely).
+	// @deliberate: pgx v5 maps []string transparently to TEXT[]; an empty slice
+	// (or nil) lands as empty via the column default. Pass an empty slice
+	// explicitly so the value is owned by the caller (the column default would
+	// only fire if we omitted the column entirely).
 	tags := in.Tags
 	if tags == nil {
 		tags = []string{}
@@ -180,8 +180,8 @@ func (s *nodesImpl) ListByInstancePagedFiltered(
 		}
 		cursor = &u
 	}
-	// `tag = '' OR <tag> = ANY(n.tags)` — when no filter is set, the
-	// first disjunct admits every row.
+	// @deliberate: `tag = '' OR <tag> = ANY(n.tags)` — when no filter is set,
+	// the first disjunct admits every row.
 	rows, err := ex.Query(ctx,
 		`SELECT `+nodeCols+` `+nodeSelect+`
 		 WHERE n.instance_id = $1
@@ -419,19 +419,17 @@ func (s *nodesImpl) enforceAndUpdate(
 		runFrameID    *foundationshared.UUID
 		frameIDBefore *foundationshared.UUID
 	)
-	// Read the in-flight run row (if any) for the current state +
-	// run-row frame_id. Row-lock holds for the tx so concurrent
-	// updaters serialise. State writes go to this row only; non-
-	// in-flight ranks (terminal-failed) do NOT take the lock — those
-	// represent the node's "failed" state but cannot be transitioned
-	// out of in-place (operator-reset / operator-invalidate seed a new
-	// run row).
+	// @constraint: Row-lock holds for the tx so concurrent updaters serialise.
+	// State writes go to this row only; non-in-flight ranks (terminal-failed)
+	// do NOT take the lock — those represent the node's "failed" state but
+	// cannot be transitioned out of in-place (operator-reset /
+	// operator-invalidate seed a new run row).
 	var (
 		runIDScan      *foundationshared.UUID
 		stateScan      *string
 		runFrameIDScan *foundationshared.UUID
 	)
-	// Key on (node_id, run_scope_id) — unambiguous per the new unique
+	// @constraint: Key on (node_id, run_scope_id) — unambiguous per the unique
 	// index. Under RunScope-first, every operation knows its RunScope.
 	err := ex.QueryRow(ctx,
 		`SELECT id, state, frame_id
@@ -449,9 +447,9 @@ func (s *nodesImpl) enforceAndUpdate(
 		}
 		runFrameID = runFrameIDScan
 	case errors.Is(err, pgx.ErrNoRows):
-		// No in-flight row. Check whether the most-recent terminal row
-		// is failed (the node is currently in the failed state) so the
-		// state machine can validate fresh-target reset transitions.
+		// @constraint: With no in-flight row, check whether the most-recent
+		// terminal row is failed (the node is currently in the failed state)
+		// so the state machine can validate fresh-target reset transitions.
 		var failedScan *string
 		if err := ex.QueryRow(ctx,
 			`SELECT state FROM rimsky_node_runs
@@ -463,25 +461,24 @@ func (s *nodesImpl) enforceAndUpdate(
 		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("nodes.updateState: select failed run: %w", err)
 		}
-		// Otherwise current stays 'fresh'.
 	default:
 		return fmt.Errorf("nodes.updateState: select run row: %w", err)
 	}
-	// Also read the node's frame_id for the "close the closing frame's
-	// progress on fresh" path. Post-cutover, the node's frame_id is the
-	// node's binding to a frame; the run row's frame_id is the same in
-	// the in-flight case, but we look it up explicitly for the fresh
-	// case (where there is no in-flight run row).
+	// @constraint: read the node's frame_id for the "close the closing frame's
+	// progress on fresh" path. Post-cutover, the node's frame_id is the node's
+	// binding to a frame; the run row's frame_id is the same in the in-flight
+	// case, but the fresh case (no in-flight run row) requires an explicit
+	// lookup.
 	if err := ex.QueryRow(ctx,
 		`SELECT frame_id FROM rimsky_nodes WHERE id = $1`, id,
 	).Scan(&frameIDBefore); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// TS parity: silent no-op when node row gone.
+			// @deliberate: TS parity — silent no-op when node row gone.
 			return nil
 		}
 		return fmt.Errorf("nodes.updateState: select node frame: %w", err)
 	}
-	// @blessed-invariant 1: state machine alone decides legality.
+	// @constraint: invariant-1 no short-circuit; the state machine alone decides legality (no `if from == to` skip).
 	expected, err := cascade.NextState(current, reason)
 	if err != nil {
 		return err
@@ -500,8 +497,8 @@ func (s *nodesImpl) enforceAndUpdate(
 	} else {
 		settlingArg = *settlingSignalType
 	}
-	// rimsky_nodes write: frame_id clear on transition to 'fresh',
-	// updated_at refresh otherwise. State no longer lives here.
+	// @constraint: rimsky_nodes write — frame_id clear on transition to
+	// 'fresh', updated_at refresh otherwise. State no longer lives here.
 	if _, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes
 		   SET updated_at = NOW(),
@@ -511,13 +508,13 @@ func (s *nodesImpl) enforceAndUpdate(
 	); err != nil {
 		return fmt.Errorf("nodes.updateState: rimsky_nodes update: %w", err)
 	}
-	// rimsky_node_runs write: state + settling_signal_type on the
-	// in-flight row. No in-flight row means the only legal transition is
-	// into fresh (handled implicitly: no state to write). A non-fresh
-	// target without an in-flight row indicates a caller that should
-	// have either invoked MarkSourceNodeStale / MarkStaleForCascade to
-	// seed the run row, or threaded the run ID through; surface that as
-	// an error so the caller can repair.
+	// @constraint: rimsky_node_runs write — state + settling_signal_type on
+	// the in-flight row. No in-flight row means the only legal transition is
+	// into fresh (handled implicitly: no state to write). A non-fresh target
+	// without an in-flight row indicates a caller that should have either
+	// invoked MarkSourceNodeStale / MarkStaleForCascade to seed the run row,
+	// or threaded the run ID through; surface that as an error so the caller
+	// can repair.
 	switch {
 	case runID != nil:
 		if _, err := ex.Exec(ctx,
@@ -530,11 +527,12 @@ func (s *nodesImpl) enforceAndUpdate(
 			return fmt.Errorf("nodes.updateState: run-row update: %w", err)
 		}
 	case state == cascade.NodeStateFresh:
-		// Nothing to do — fresh has no in-flight row.
+		// @deliberate: fresh has no in-flight row; the rimsky_nodes update
+		// above is the entire fresh-target write.
 	case state == cascade.NodeStateStale && (current == cascade.NodeStateFailed || current == cascade.NodeStateFresh):
-		// failed → stale (operator-reset / operator-invalidate path) or
-		// fresh → stale (operator-invalidate). Seed a fresh pending
-		// stale run row in the supplied RunScope.
+		// @constraint: failed → stale (operator-reset / operator-invalidate)
+		// or fresh → stale (operator-invalidate) seeds a fresh pending stale
+		// run row in the supplied RunScope.
 		if frameIDBefore != nil {
 			if _, err := ex.Exec(ctx,
 				`INSERT INTO rimsky_node_runs
@@ -554,16 +552,15 @@ func (s *nodesImpl) enforceAndUpdate(
 			}
 		}
 	default:
-		// Defensive guard: any other non-fresh target without an
-		// in-flight run row is a logic bug.
+		// @constraint: any other non-fresh target without an in-flight run
+		// row is a logic bug — surface it rather than silently swallow.
 		return fmt.Errorf("nodes.updateState: no in-flight run row for node %s on transition to %q (reason %q)", id, state, reason.Kind)
 	}
-	// Refresh frame progress: any state-transition write within a frame
-	// counts as progress for frame_timeout_ms's "no progress in window"
-	// semantics. Use the in-flight run row's frame_id when present
-	// (covers active/held/parked); fall back to the node row's frame_id
-	// (covers the fresh / cascade-target window before the run row is
-	// inserted).
+	// @constraint: any state-transition write within a frame counts as
+	// progress for frame_timeout_ms's "no progress in window" semantics. Use
+	// the in-flight run row's frame_id when present (covers
+	// active/held/parked); fall back to the node row's frame_id (covers the
+	// fresh / cascade-target window before the run row is inserted).
 	if runFrameID != nil {
 		if _, err := ex.Exec(ctx,
 			`UPDATE rimsky_frames SET last_progress_at = NOW() WHERE frame_id = $1`,
@@ -660,8 +657,8 @@ func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationsh
 		    AND phase IN ('pending','active','held','parked')`, id, runScopeID); err != nil {
 		return err
 	}
-	// Bump rimsky_nodes.updated_at so the dashboard reorder sees the
-	// reset; the row itself carries no state-machine column to clear.
+	// @constraint: bump rimsky_nodes.updated_at so the dashboard reorder sees
+	// the reset; the row itself carries no state-machine column to clear.
 	_, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes SET updated_at = NOW() WHERE id = $1`, id)
 	return err
@@ -678,10 +675,10 @@ func (s *nodesImpl) ClearSettlingSignalType(ctx context.Context, id foundationsh
 // of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
-	// Narrow the UPDATE via a CTE that picks the most-recent failed
-	// terminal row in the supplied RunScope. Skip the rimsky_nodes
-	// updated_at bump when the CTE update affected 0 rows (driver-drift
-	// fix per spec § "Remaining explicit fixes / #2").
+	// @constraint: narrow the UPDATE via a CTE that picks the most-recent
+	// failed terminal row in the supplied RunScope. Skip the rimsky_nodes
+	// updated_at bump when the CTE update affected 0 rows (driver-drift fix
+	// per spec § "Remaining explicit fixes / #2").
 	tag, err := ex.Exec(ctx,
 		`WITH target AS (
 		     SELECT id
@@ -702,7 +699,7 @@ func (s *nodesImpl) ResetFailedTerminalSettlingSignalType(ctx context.Context, i
 	if tag.RowsAffected() == 0 {
 		return nil
 	}
-	// Bump rimsky_nodes.updated_at so dashboards re-sort.
+	// @constraint: bump rimsky_nodes.updated_at so dashboards re-sort.
 	_, err = ex.Exec(ctx,
 		`UPDATE rimsky_nodes SET updated_at = NOW() WHERE id = $1`, id)
 	return err
@@ -757,10 +754,11 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 		return fmt.Errorf("nodesImpl.MarkStaleForCascade: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		// Row gone or terminal; no-op.
+		// @deliberate: row gone or terminal — silent no-op (caller's expected
+		// behaviour per cascade walker discipline).
 		return nil
 	}
-	// Bind node frame_id so dashboard reflects the cascade target.
+	// @constraint: bind node frame_id so dashboard reflects the cascade target.
 	if _, err := ex.Exec(ctx,
 		`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now()
 		  WHERE id = (SELECT node_id FROM rimsky_node_runs WHERE id = $2)`,
@@ -832,16 +830,15 @@ func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshare
 	if tag.RowsAffected() > 0 {
 		return nil
 	}
-	// Zero rows can mean: (a) row already in-flight (silent success),
-	// (b) scope closed (return ErrRunScopeClosed), or (c) scope absent
-	// (error). Re-resolve via a separate SELECT. With a non-nil tx the
-	// SELECT shares the INSERT's snapshot so closed_at reads stably.
-	// With tx == nil the INSERT and SELECT run on separate pool
-	// connections, so a concurrent `RunScopes().Close()` commit between
-	// them can flip closed_at from NULL to non-NULL and we'll
-	// over-report ErrRunScopeClosed; see the function comment above —
-	// the race is benign because every correct caller treats
-	// ErrRunScopeClosed as "skip silently."
+	// @constraint: zero rows can mean (a) row already in-flight (silent
+	// success), (b) scope closed (return ErrRunScopeClosed), or (c) scope
+	// absent (error). Re-resolve via a separate SELECT. With a non-nil tx the
+	// SELECT shares the INSERT's snapshot so closed_at reads stably; with
+	// tx == nil the INSERT and SELECT run on separate pool connections, so a
+	// concurrent `RunScopes().Close()` commit between them can flip closed_at
+	// from NULL to non-NULL and the call will over-report ErrRunScopeClosed.
+	// The race is benign because every correct caller treats
+	// ErrRunScopeClosed as "skip silently" (see the function comment above).
 	var closedAt *time.Time
 	err = ex.QueryRow(ctx, `SELECT closed_at FROM rimsky_run_scopes WHERE id = $1`, runScopeID).Scan(&closedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -853,7 +850,7 @@ func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshare
 	if closedAt != nil {
 		return persistence.ErrRunScopeClosed
 	}
-	// Row already in-flight; silent success.
+	// @deliberate: row already in-flight — silent success.
 	return nil
 }
 
@@ -903,8 +900,6 @@ func (s *nodesImpl) GetRunByDispatchIDForUpdate(ctx context.Context, dispatchID 
 	return &r, nil
 }
 
-// ---- helpers ----
-
 func scanNode(sc scannable) (persistence.NodeRow, error) {
 	var (
 		r                  persistence.NodeRow
@@ -937,9 +932,9 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.AssignedSupervisorID = derefString(assignedSup)
 	r.LastHeartbeatAt = lastHB
 	r.FrameID = frameID
-	// Normalize NULL-via-default to empty slice (rather than nil) so the
-	// JSON encoding emits `[]` rather than `null` (per the NodeRow
-	// contract: empty array means "no tags", not "unknown").
+	// @constraint: normalize NULL-via-default to empty slice (rather than nil)
+	// so the JSON encoding emits `[]` rather than `null` — per the NodeRow
+	// contract, empty array means "no tags", not "unknown".
 	if tags == nil {
 		tags = []string{}
 	}

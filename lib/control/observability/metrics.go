@@ -2,15 +2,12 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// metrics.go declares the rimsky-side Prometheus metric set and wires
-// the /metrics endpoint into a chi router. The metric instrumentation
-// hooks are call-site wrappers (Inc / Observe / Set) that production
-// code in runtime, graph/scheduler, and
+// Package observability declares the rimsky-side Prometheus metric set
+// and wires the /metrics endpoint into a chi router. The metric
+// instrumentation hooks are call-site wrappers (Inc / Observe / Set)
+// that production code in runtime, graph/scheduler, and
 // control/controlapi can call without importing prometheus directly —
 // keeps the operator-visible metric surface centralised.
-//
-// Per plan I1 + I2.
-
 package observability
 
 import (
@@ -33,7 +30,6 @@ import (
 type MetricsRegistry struct {
 	reg *prometheus.Registry
 
-	// Counters
 	Dispatches        *prometheus.CounterVec
 	TerminalVerdicts  *prometheus.CounterVec
 	Invalidates       *prometheus.CounterVec
@@ -46,13 +42,11 @@ type MetricsRegistry struct {
 	NamedLockAcquisitions *prometheus.CounterVec
 	NamedEvents           *prometheus.CounterVec
 
-	// Gauges
 	NodesByState    *prometheus.GaugeVec
 	ParkedByReason  *prometheus.GaugeVec
 	HeldFrames      prometheus.Gauge
 	NodeRunsPending prometheus.Gauge
 
-	// Histograms
 	DispatchLatencySeconds         *prometheus.HistogramVec
 	ClaimAcquisitionLatencySeconds *prometheus.HistogramVec
 	FrameDurationSeconds           prometheus.Histogram

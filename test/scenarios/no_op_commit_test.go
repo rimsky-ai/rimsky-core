@@ -40,7 +40,7 @@ func TestNoOpCommit(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// First producer run commits real data so the dependent reaches fresh.
+	// @deliberate: First producer run commits real data so the dependent reaches fresh.
 	h.Stub.WhenType("producer").Success(map[string]any{"x": 1}, true, "initial")
 	h.Stub.WhenType("dependent").Success(map[string]any{"y": 2}, true, "downstream")
 
@@ -83,7 +83,7 @@ func TestNoOpCommit(t *testing.T) {
 	require.True(t, h.WaitForNodeState(dep.ID, cascade.NodeStateFresh, 60*time.Second),
 		"dependent did not reach fresh on first cascade")
 
-	// Capture the dependent's last-updated time so we can later assert the
+	// @deliberate: Capture the dependent's last-updated time so we can later assert the
 	// no-op producer commit didn't drag it back through running.
 	var depBefore *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -92,7 +92,7 @@ func TestNoOpCommit(t *testing.T) {
 		return err
 	}))
 
-	// Swap the stub to changed=false and invalidate the producer; the
+	// @deliberate: Swap the stub to changed=false and invalidate the producer; the
 	// supervisor should re-run it, emit `terminal/success` with
 	// payload.changed=false, and NOT cascade. Per Pass 5 of spec
 	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design the
@@ -102,7 +102,7 @@ func TestNoOpCommit(t *testing.T) {
 	// `payload.changed`.
 	h.Stub.WhenType("producer").Success(map[string]any{"x": 1}, false, "noop")
 
-	// Snapshot the producer's existing terminal/success event count so
+	// @deliberate: Snapshot the producer's existing terminal/success event count so
 	// the first run's row doesn't false-positive the assertion below.
 	pid := producer.ID
 	var priorCommitted persistence.EventListResult
@@ -115,7 +115,7 @@ func TestNoOpCommit(t *testing.T) {
 	}))
 	priorCount := len(priorCommitted.Events)
 
-	// Under frame resolution, operator-driven invalidation goes through
+	// @deliberate: Under frame resolution, operator-driven invalidation goes through
 	// the controlapi → InvalidateNode → frame.EnqueueOrCoalesce path.
 	// A direct UpdateState bypasses the frame engine and leaves the
 	// node stale-with-nil-frame_id.
@@ -125,7 +125,6 @@ func TestNoOpCommit(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Wait for a NEW terminal/success signal (count > priorCount).
 	require.Eventually(t,
 		func() bool {
 			var ev persistence.EventListResult
@@ -142,7 +141,7 @@ func TestNoOpCommit(t *testing.T) {
 		"producer did not emit a second terminal/success after changed=false run",
 	)
 
-	// Verify the second run's terminal/success row carries changed=false.
+	// @deliberate: Verify the second run's terminal/success row carries changed=false.
 	var allCommitted persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Events().List(h.Ctx,
@@ -153,7 +152,7 @@ func TestNoOpCommit(t *testing.T) {
 	}))
 	require.Greater(t, len(allCommitted.Events), priorCount,
 		"expected a new terminal/success after changed=false run")
-	// Events.List returns rows in (occurred_at DESC, id DESC) order, so
+	// @deliberate: Events.List returns rows in (occurred_at DESC, id DESC) order, so
 	// the first element is the most recent terminal/success row — the
 	// second run's emission.
 	latest := allCommitted.Events[0]
@@ -161,7 +160,7 @@ func TestNoOpCommit(t *testing.T) {
 	require.False(t, changedVal,
 		"second run's terminal/success must carry payload.changed=false")
 
-	// Under the pessimistic-invalidate rule, the producer's
+	// @deliberate: Under the pessimistic-invalidate rule, the producer's
 	// invalidation cascades to mark the dependent stale; the
 	// dependent re-dispatches idempotently. Wait for the dependent
 	// to settle back to fresh — the test's stub returns the same
@@ -172,7 +171,7 @@ func TestNoOpCommit(t *testing.T) {
 	require.True(t, h.WaitForNodeState(dep.ID, cascade.NodeStateFresh, 30*time.Second),
 		"dependent should re-reach fresh after idempotent cascade from producer no_op commit")
 
-	// depBefore is captured pre-invalidation; not asserting on
+	// @deliberate: depBefore is captured pre-invalidation; not asserting on
 	// UpdatedAt anymore since the dependent's re-dispatch advances it.
 	_ = depBefore
 }

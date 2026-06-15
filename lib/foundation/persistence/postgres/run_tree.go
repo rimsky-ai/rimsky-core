@@ -2,14 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run_tree.go is the postgres impl of `persistence.RunTreeTable` — CRUD
-// + locking on the run-tree extension of `rimsky_node_runs`. Under
-// RunScope-first (per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md),
-// the tree shape lives on `rimsky_run_scopes`; this table projects the
-// per-run aggregation_policy + state columns and joins across
-// run_scope_id when listing children.
-
 package postgres
 
 import (
@@ -26,6 +18,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
+// runTreeImpl is the Postgres-backed persistence.RunTreeTable — CRUD +
+// locking on the run-tree extension of rimsky_node_runs. Under
+// RunScope-first, the tree shape lives on rimsky_run_scopes; this
+// table projects the per-run aggregation_policy + state columns and
+// joins across run_scope_id when listing children.
 type runTreeImpl tablesImpl
 
 var _ persistence.RunTreeTable = (*runTreeImpl)(nil)
@@ -83,7 +80,7 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 		stores = []string{}
 	}
 	executor := nullableText(in.ExecutorName)
-	// Idempotency: WHERE NOT EXISTS keyed on (node_id, run_scope_id).
+	// @deliberate: idempotent INSERT via WHERE NOT EXISTS keyed on (node_id, run_scope_id) — re-driving the same child create on retry is a no-op.
 	_, err = b.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,

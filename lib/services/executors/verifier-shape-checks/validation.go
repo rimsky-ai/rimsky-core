@@ -87,16 +87,12 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 		}
 	}
 
-	// Extract the `checks` attribute's static-default value from the
-	// per-node L2 schema. Under the userdata collapse, this verifier
-	// expects the template author to declare `checks` either as a
-	// `default:` value (the common case) or via `source:` (derived at
-	// dispatch from another node's attributes). Both shapes route through
-	// schema.properties.checks; the registration-time gate accepts either
-	// shape as satisfying the requirement, deferring per-element shape
-	// validation to dispatch time when `source:` is used. Only when
-	// neither is present (and the property is not `readOnly`) does the
-	// gate emit `missing_checks`.
+	// @constraint: registration-time gate accepts `checks` declared as
+	// either a `default:` value or a `source:` binding (both route through
+	// schema.properties.checks); per-element shape validation defers to
+	// dispatch time when `source:` is used. Only when neither is present
+	// (and the property is not `readOnly`) does the gate emit
+	// `missing_checks`.
 	props, _ := attrs["properties"].(map[string]any)
 	checksProp, _ := props["checks"].(map[string]any)
 	_, hasSource := checksProp["source"].(string)
@@ -110,9 +106,10 @@ func validateExecutor(exec *genv1.ExecutorContext) *genv1.ValidateResponse {
 		})
 		return &genv1.ValidateResponse{Valid: false, Errors: errors, Warnings: warnings}
 	}
-	// Source-bound `checks` is validated at dispatch time once the
-	// upstream produces the array; registration-time per-element checks
-	// only run when a static default is present.
+	// @deliberate: source-bound `checks` skips per-element validation here;
+	// the upstream-produced array is validated at dispatch time, so
+	// registration-time element checks only run when a static default is
+	// present.
 	if !hasDefault {
 		return &genv1.ValidateResponse{Valid: true, Errors: errors, Warnings: warnings}
 	}

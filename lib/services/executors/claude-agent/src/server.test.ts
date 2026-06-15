@@ -55,7 +55,7 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     },
   };
 
-  // Capture calls made via the supervisor callback URL (mocked).
+  // @deliberate: capture calls made via the supervisor callback URL (mocked).
   const callbackPosts: Array<{ url: string; body: unknown }> = [];
   const fakeCallbackUrl = "http://supervisor.invalid/rimsky/callback";
 
@@ -117,22 +117,22 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     expect(events.length).toBeGreaterThanOrEqual(2);
     expect(events[0]!.heartbeat).toBeDefined();
     const terminal = events[events.length - 1]!;
-    // Post-spec:2026-05-12 (Group E.4): the stream-close event uses
+    // @deliberate: post-spec:2026-05-12 (Group E.4): the stream-close event uses
     // StreamClose + outcome oneof; AwaitAsyncCallback replaces AsyncAccepted.
     expect(terminal.stream_close).toBeDefined();
     expect(terminal.stream_close!.await_async).toBeDefined();
     const ackId = terminal.stream_close!.await_async!.async_ack_id;
     expect(ackId).toBeTruthy();
 
-    // Wait for the background agent run + callback POST. Stub is ~50ms.
+    // @deliberate: wait for the background agent run + callback POST. Stub is ~50ms.
     await waitFor(() => callbackPosts.length > 0, 2000);
     expect(callbackPosts).toHaveLength(1);
-    // Executor appends /v1/callback/{ackID} to the supervisor-provided base.
+    // @deliberate: executor appends /v1/callback/{ackID} to the supervisor-provided base.
     expect(callbackPosts[0]!.url).toBe(
       `${fakeCallbackUrl}/v1/callback/${encodeURIComponent(ackId)}`,
     );
     const body = callbackPosts[0]!.body as Record<string, unknown>;
-    // Post-2026-05-12 (spec E.2/E.6): the callback body uses the
+    // @deliberate: post-2026-05-12 (spec E.2/E.6): the callback body uses the
     // AsyncCallbackBody outcome-oneof shape — `success: { ... }` —
     // rather than the legacy `{type: "complete", ...}` discriminator.
     expect(body.success).toBeDefined();
@@ -156,7 +156,7 @@ async function waitFor(
   }
 }
 
-// gRPC Execute observability: dashboard fetches the trace via
+// @deliberate: gRPC Execute observability: dashboard fetches the trace via
 // dispatch_id, so the ledger must record step_started on receipt and
 // step_completed on outcome, then markComplete so the SSE/snapshot
 // surfaces close.
@@ -232,7 +232,7 @@ describe("gRPC Execute observability ledger", () => {
 
     const trace = obs.getTrace(dispatchId);
     expect(trace.dispatch_id).toBe(dispatchId);
-    // Successful stub run records step_started + step_completed plus
+    // @deliberate: successful stub run records step_started + step_completed plus
     // the synthetic trace_complete marker added by markComplete.
     const cats = trace.events.map((e) => e.category);
     expect(cats).toContain("step_started");
@@ -244,7 +244,7 @@ describe("gRPC Execute observability ledger", () => {
   });
 });
 
-// End-to-end coverage of the TS executor -> Go supervisor callback protocol.
+// @deliberate: end-to-end coverage of the TS executor -> Go supervisor callback protocol.
 // Rather than spin up a full Go supervisor here (out of scope for TS tests),
 // we stand up a plain HTTP server that mimics the supervisor's chi routing:
 //   POST /v1/callback/{ackID}  -> captures ackID from path + body
@@ -271,7 +271,7 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
     process.env.RIMSKY_EXECUTOR_STUB_MODE = "1";
     received.length = 0;
 
-    // Minimal supervisor-like HTTP server that matches the Go chi route
+    // @deliberate: minimal supervisor-like HTTP server that matches the Go chi route
     // `POST /v1/callback/{ackID}`. This is the end-to-end assertion.
     supervisorLike = http.createServer((req, res) => {
       const match = /^\/v1\/callback\/([^/]+)$/.exec(req.url ?? "");
@@ -316,7 +316,7 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       cliRunner: fakeCli,
       silenceTimeoutMs: 5000,
       logger,
-      // Use the real defaultPostCallback (no postCallback override) so we
+      // @deliberate: use the real defaultPostCallback (no postCallback override) so we
       // actually exercise the network round-trip.
     });
   });
@@ -375,14 +375,14 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       `/v1/callback/${encodeURIComponent(ackId)}`,
     );
     expect(received[0]!.ackId).toBe(ackId);
-    // Post-2026-05-12 (spec E.2/E.6): AsyncCallbackBody outcome-oneof
+    // @deliberate: post-2026-05-12 (spec E.2/E.6): AsyncCallbackBody outcome-oneof
     // shape — `success: { ... }` — rather than the legacy
     // `{type: "complete", ...}` discriminator.
     expect(received[0]!.body.success).toBeDefined();
-    // Ensure we did NOT use the legacy `kind` or `type` keys.
+    // @deliberate: ensure we did NOT use the legacy `kind` or `type` keys.
     expect(received[0]!.body.kind).toBeUndefined();
     expect(received[0]!.body.type).toBeUndefined();
-    // Spec §12.2: stub round-trips its synthetic delta.
+    // @deliberate: spec §12.2: stub round-trips its synthetic delta.
     const success = received[0]!.body.success as Record<string, unknown>;
     expect(success.attributes_delta).toEqual({ stub: true });
 
@@ -391,7 +391,7 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
   });
 });
 
-// The malformed-gate-config fail-loud guarantee, proven on the gRPC transport
+// @deliberate: the malformed-gate-config fail-loud guarantee, proven on the gRPC transport
 // (the HTTP bridge proves the same in http-bridge.test.ts). A present-but-
 // malformed cli.required_signoffs (host omitted public_key) must terminal-
 // ERROR with agent/attribute_invalid, never silently degrade to an ungated
@@ -443,7 +443,7 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       creds: grpc.ChannelCredentials,
     ) => grpc.Client;
     const client = new Client(srv.address, grpc.credentials.createInsecure());
-    // Build the attributes Struct with protobuf.js's canonical camelCase Value
+    // @deliberate: build the attributes Struct with protobuf.js's canonical camelCase Value
     // wrappers (structValue/listValue/stringValue) — the form @grpc/proto-loader
     // actually serializes nested Structs from on the client (see describe note).
     const toValue = (v: unknown): unknown => {
@@ -468,7 +468,7 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       node_id: "n-gate",
       node_type: "stub-agent",
       dispatch_id: "d-grpc-gate",
-      // public_key omitted — only `path` present. The parser must reject this
+      // @deliberate: public_key omitted — only `path` present. The parser must reject this
       // present-but-malformed gate rather than drop it to an ungated run.
       attributes: toStruct({
         model: "sonnet",
@@ -486,7 +486,7 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       call.on("end", resolve);
     });
 
-    // The stream completes the async handoff; the verdict rides the callback.
+    // @deliberate: the stream completes the async handoff; the verdict rides the callback.
     const terminal = events[events.length - 1]!;
     expect(terminal.stream_close?.await_async).toBeDefined();
     const ackId = terminal.stream_close!.await_async!.async_ack_id;
@@ -497,7 +497,7 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       `${fakeCallbackUrl}/v1/callback/${encodeURIComponent(ackId)}`,
     );
     const body = callbackPosts[0]!.body as Record<string, unknown>;
-    // Must NOT have reached terminal success.
+    // @deliberate: must NOT have reached terminal success.
     expect(body.success).toBeUndefined();
     expect(body.error).toBeDefined();
     const error = body.error as { error_class: string };
@@ -508,7 +508,7 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
   });
 });
 
-// Round-trip the production gRPC wire shape through unwrapStruct.
+// @deliberate: round-trip the production gRPC wire shape through unwrapStruct.
 // proto-loader runs with `keepCase: true` + `oneofs: true` (see
 // proto-loader.ts) which produces `{kind: "string_value", string_value: "x"}`
 // per Value. The dispatch path reads `attributes.model` from this shape;
@@ -581,7 +581,7 @@ describe("unwrapStruct production wire shape (kind-set discriminator)", () => {
   });
 });
 
-// jsToProtoValue / jsToProtoStruct / isoToProtoTimestamp / traceEventToProto
+// @deliberate: jsToProtoValue / jsToProtoStruct / isoToProtoTimestamp / traceEventToProto
 // are reached on every GetTrace + StreamTrace reply. Bugs in these silently
 // corrupt traces with no visible RPC error.
 describe("proto-conversion helpers", () => {
@@ -618,7 +618,6 @@ describe("proto-conversion helpers", () => {
     expect(jsToProtoStruct({})).toEqual({ fields: {} });
   });
   it("isoToProtoTimestamp: post-epoch positive ISO", () => {
-    // Date.UTC(2026, 4, 9, 12, 0, 0) — month is 0-indexed.
     const iso = "2026-05-09T12:00:00.000Z";
     const ts = isoToProtoTimestamp(iso);
     expect(ts.nanos).toBe(0);
@@ -630,7 +629,7 @@ describe("proto-conversion helpers", () => {
     expect(Number(ts.seconds)).toBe(Math.floor(Date.UTC(2026, 4, 9, 12, 0, 0, 250) / 1000));
   });
   it("isoToProtoTimestamp: pre-epoch sub-second uses floor (no negative nanos)", () => {
-    // 1969-12-31T23:59:59.500Z = -500ms wall time. Math.trunc would
+    // @deliberate: 1969-12-31T23:59:59.500Z = -500ms wall time. Math.trunc would
     // produce nanos=-500_000_000 which violates the proto contract;
     // Math.floor produces seconds=-1, nanos=500_000_000.
     const ts = isoToProtoTimestamp("1969-12-31T23:59:59.500Z");
@@ -680,7 +679,7 @@ describe("proto-conversion helpers", () => {
   });
 });
 
-// unwrapStructValue scalar fallback shapes (kind absent, value field absent
+// @deliberate: unwrapStructValue scalar fallback shapes (kind absent, value field absent
 // → returns sensible default). Pins the kind-omitted-fixture branch separate
 // from the production-wire tests above.
 describe("unwrapStructValue defensive defaults", () => {
@@ -695,7 +694,7 @@ describe("unwrapStructValue defensive defaults", () => {
   });
 });
 
-// The gRPC ExecutorObservability.Capabilities surface must carry the
+// @deliberate: the gRPC ExecutorObservability.Capabilities surface must carry the
 // RIMSKY_EXECUTOR_DECLARED_EVENTS-resolved list in declared_events (field 7).
 // This pairs with the HTTP capabilitiesPayload coverage in observability.test.ts
 // to cover "both capability surfaces."
@@ -747,7 +746,7 @@ describe("ExecutorObservability.Capabilities declared_events (gRPC surface)", ()
   });
 });
 
-// outcomeToCallbackBody must ride the per-dispatch named-event buffer on the
+// @deliberate: outcomeToCallbackBody must ride the per-dispatch named-event buffer on the
 // AsyncCallbackBody `events[]` array (the gRPC stream already closed at
 // dispatch). Payloads are base64-encoded per the proto-JSON `bytes` rule the
 // Go supervisor expects.
@@ -770,7 +769,7 @@ describe("outcomeToCallbackBody named-event surfacing", () => {
       { name: "progress", payload: payloadA.toString("base64") },
       { name: "ping", payload: payloadB.toString("base64") },
     ]);
-    // The outcome verdict is still present alongside the events.
+    // @deliberate: the outcome verdict is still present alongside the events.
     expect(body.success).toBeDefined();
   });
 

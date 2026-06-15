@@ -55,18 +55,18 @@ func applyErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, tx persistence.Tx,
 ) (postCommitFn, error) {
-	// Short-circuit retry-loop guard: if this terminal would route to a
-	// retry action AND we'd be over the cap, rewrite the error_class
-	// before resolving the policy. retry_loop_no_progress's policy
-	// (give_up) takes precedence over the original class's retry.
+	// @constraint: short-circuit retry-loop guard — if this terminal
+	// would route to a retry action AND we'd be over the cap, rewrite
+	// the error_class before resolving the policy. retry_loop_no_progress's
+	// policy (give_up) takes precedence over the original class's retry.
 	if errorClass != "retry_loop_no_progress" {
 		if shouldForceRetryLoopGiveUp(ctx, args, acq) {
 			args.Logger.Warn("applyErrorPolicy: retry_loop_no_progress cap reached; forcing give_up",
 				"node_id", acq.NodeID.String(),
 				"original_error_class", errorClass)
-			// Capture original error class + payload BEFORE reassigning, so the
-			// new payload's `original_error_class` records the actual prior
-			// class, not the rewritten one.
+			// @constraint: capture original error class + payload BEFORE
+			// reassigning, so the new payload's `original_error_class`
+			// records the actual prior class, not the rewritten one.
 			origErrorClass := errorClass
 			origPayload := payload
 			errorClass = "retry_loop_no_progress"
@@ -95,12 +95,11 @@ func applyErrorPolicy(
 		}
 	}
 	resolved := node.Evaluate(policy, state, errorClass, nil)
-	// E5 counter housekeeping: capture the prior dispatch row's
-	// counter so we can carry it forward across the retry round-trip.
-	// applyResolvedAction's retry branch removes the old row and
-	// inserts a new one — without this carry-forward the counter
-	// would reset to zero on every retry and the cap would never
-	// trigger.
+	// @constraint: E5 counter housekeeping — capture the prior dispatch
+	// row's counter so we can carry it forward across the retry round-trip.
+	// applyResolvedAction's retry branch removes the old row and inserts
+	// a new one; without this carry-forward the counter would reset to
+	// zero on every retry and the cap would never trigger.
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
 	var carryForwardCount int
 	if isRetryKind(resolved.Kind) {
@@ -109,58 +108,57 @@ func applyErrorPolicy(
 		carryForwardCount = 0
 	}
 
-	// Construct the canonical Resolution (signal + dispatch disposition
-	// + color) from the resolved action. Built once here so signal-emit
-	// + applyResolvedAction share the same instance.
+	// @constraint: build the canonical Resolution (signal + dispatch
+	// disposition + color) once here so signal-emit + applyResolvedAction
+	// share the same instance.
 	resolution := buildResolution(resolved, errorClass, payload, carryForwardCount)
 
-	// Primary state-mutation work runs inline in the caller's outer tx.
 	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
-	// Retry-flavored dispositions re-dispatch into the same RunScope,
-	// so the parent-owned linked sub-claims must be retained — see
-	// releaseLocksInTx's retainLinkedSubClaims contract.
+	// @constraint: retry-flavored dispositions re-dispatch into the same
+	// RunScope, so the parent-owned linked sub-claims must be retained —
+	// see releaseLocksInTx's retainLinkedSubClaims contract.
 	if err := releaseLocksInTx(ctx, args, tx, acq, false, isRetryKind(resolved.Kind)); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
 	if err := applyResolvedAction(ctx, args, tx, acq, prior, resolved, resolution); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 	}
-	// On retry, re-stamp the counter onto the freshly-inserted
-	// dispatch row so the next iteration's
-	// shouldForceRetryLoopGiveUp can see accumulated retries.
+	// @constraint: on retry, re-stamp the counter onto the freshly-inserted
+	// dispatch row so the next iteration's shouldForceRetryLoopGiveUp can
+	// see accumulated retries.
 	if isRetryKind(resolved.Kind) {
 		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, carryForwardCount); err != nil {
 			return nil, fmt.Errorf("applyErrorPolicy: %w", err)
 		}
 	}
-	// The resolution signal's cascade AND its canonical audit row land
-	// together in the same tx inside applyResolvedAction, via the single
-	// emit chokepoint (emitSignalInTxOnce in signal_emit.go) — co-committed
-	// with the state transition that produced it, so subscribers
-	// wildcard-matching `transient/retry/*` or `terminal/error/*` never see
-	// an audit row whose state column still contradicts the disposition,
-	// and a settlement can no longer emit a signal without cascading it.
+	// @constraint: the resolution signal's cascade AND its canonical audit
+	// row land together in the same tx inside applyResolvedAction, via
+	// the single emit chokepoint (emitSignalInTxOnce in signal_emit.go) —
+	// co-committed with the state transition that produced it, so
+	// subscribers wildcard-matching `transient/retry/*` or
+	// `terminal/error/*` never see an audit row whose state column still
+	// contradicts the disposition, and a settlement can no longer emit a
+	// signal without cascading it.
 
-	// Post-commit work: lineage emit (on give_up) + run-tree
-	// propagation (on give_up). Both must run AFTER the state
-	// transition commits — PropagateIfChildAfterTerminal reads the
-	// just-written child row to drive parent aggregation, and the
-	// lineage emit is an observability append that's safe to lose on
-	// crash. The canonical signal-emit was hoisted into the outer tx
-	// above so it shares the state transition's tx-atomicity guarantee
-	// (per `code:runtime/on_error.go::OnError`).
+	// @constraint: post-commit work (lineage emit on give_up + run-tree
+	// propagation on give_up) must run AFTER the state transition commits —
+	// PropagateIfChildAfterTerminal reads the just-written child row to
+	// drive parent aggregation, and the lineage emit is an observability
+	// append that's safe to lose on crash. The canonical signal-emit was
+	// hoisted into the outer tx above so it shares the state transition's
+	// tx-atomicity guarantee (per `code:runtime/on_error.go::OnError`).
 	dispatchID := acq.DispatchID
 	resSig := resolution.Signal
 	post := func(ctx context.Context) {
-		// Run-tree state propagation (E2): give_up is a terminal failure;
-		// the child's state has transitioned to NodeStateFailed and any
-		// parent must aggregate. Retry / discard_claims_then_retry / pass
-		// leave the node in a non-failed terminal state so failure
-		// propagation skips them.
+		// @constraint: run-tree state propagation (E2) — give_up is a
+		// terminal failure; the child's state has transitioned to
+		// NodeStateFailed and any parent must aggregate. Retry /
+		// discard_claims_then_retry / pass leave the node in a non-failed
+		// terminal state so failure propagation skips them.
 		if resolved.Kind == "give_up" {
-			// E8: emit leaf-run lineage record for the failed terminal.
+			// @constraint: E8 emits leaf-run lineage record for the failed terminal.
 			scope := resolveAcqScope(ctx, args, acq)
 			EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 				InstanceID:         acq.InstanceID,
@@ -189,8 +187,9 @@ func applyErrorPolicy(
 			}
 		}
 	}
-	// `invalidate` action retired under the 2026-05-14 subscription-
-	// cascade resolution; the validator rejects it at deploy time.
+	// @deliberate: `invalidate` action retired under the 2026-05-14
+	// subscription-cascade resolution; the validator rejects it at
+	// deploy time.
 	return post, nil
 }
 
@@ -227,29 +226,28 @@ func applyResolvedAction(
 				return err
 			}
 		}
-		// Run-disposition signal: transient/retry/<n>/<class> — cascade
-		// AND audit via the single emit chokepoint (signal_emit.go),
-		// emitted UNCONDITIONALLY (outside the running guard) so the
-		// resolution always lands its audit row, matching the prior
-		// unconditional emit in applyErrorPolicy. Subscriber-driven per
-		// concept:signal: only nodes subscribing to a matching
-		// transient/retry/* (with a true CEL when:) fire.
+		// @constraint: run-disposition signal transient/retry/<n>/<class> —
+		// cascade AND audit via the single emit chokepoint
+		// (signal_emit.go), emitted UNCONDITIONALLY (outside the running
+		// guard) so the resolution always lands its audit row, matching
+		// the prior unconditional emit in applyErrorPolicy.
+		// @concept: signal
 		if err := emitSignalInTxOnce(ctx, args, tx,
 			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
 			resolution.Signal); err != nil {
 			return err
 		}
-		// Thread `runScopeID` so fan-out children's retirement lands
-		// on this specific run, not every sibling claimed by this
-		// supervisor under the shared `node_id`.
+		// @constraint: thread `runScopeID` so fan-out children's
+		// retirement lands on this specific run, not every sibling claimed
+		// by this supervisor under the shared `node_id`.
 		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 			return err
 		}
-		// Recovery-aware fields: this retry supersedes the prior
-		// dispatch (acq.DispatchID). The executor reads the
+		// @constraint: recovery-aware fields — this retry supersedes the
+		// prior dispatch (acq.DispatchID). The executor reads the
 		// predecessor id on
-		// proto:executor.proto::ExecuteRequest.prior_dispatch_id
-		// at the retry dispatch.
+		// proto:executor.proto::ExecuteRequest.prior_dispatch_id at the
+		// retry dispatch.
 		priorID := acq.DispatchID
 		if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:                   acq.NodeID,
@@ -261,14 +259,14 @@ func applyResolvedAction(
 			PriorDispatchID:          &priorID,
 			PriorDispatchDisposition: "retry_after_error",
 		}, tx); err != nil {
-			// Defensive: a closed RunScope means the rendezvous has
-			// fired while this runner was processing the terminal
-			// (e.g. a heartbeat-loss sweep retired the runner's own
-			// active dispatch via claimant-guard mismatch and closed
-			// the scope). Walker discipline per concept:run-scope:
-			// do not enqueue into a closed scope; the state writes
-			// above already committed. Mirrors OnError retry and
-			// SweepStaleHeartbeats.
+			// @constraint: defensive — a closed RunScope means the
+			// rendezvous has fired while this runner was processing the
+			// terminal (e.g. a heartbeat-loss sweep retired the runner's
+			// own active dispatch via claimant-guard mismatch and closed
+			// the scope). Walker discipline per concept:run-scope: do not
+			// enqueue into a closed scope; the state writes above already
+			// committed. Mirrors OnError retry and SweepStaleHeartbeats.
+			// @concept: run-scope
 			if errors.Is(err, persistence.ErrRunScopeClosed) {
 				if args.Logger != nil {
 					args.Logger.Warn("applyResolvedAction retry: skip enqueue: run scope closed",
@@ -281,8 +279,8 @@ func applyResolvedAction(
 		}
 		return nil
 	case spec.DispositionEnd:
-		// End settles the run; color from Resolution determines the
-		// terminal state. give_up → failed; pass → fresh.
+		// @constraint: End settles the run; color from Resolution
+		// determines the terminal state. give_up → failed; pass → fresh.
 		if prior != nil && prior.State == cascade.NodeStateRunning {
 			settlingSig := string(resolution.Signal.Type)
 			switch resolution.Color {
@@ -292,43 +290,42 @@ func applyResolvedAction(
 					return err
 				}
 			case spec.ColorFresh:
-				// Pass settles the run fresh under ReasonHandlerPass.
-				// The settling_signal_type column carries the
-				// terminal/error/<class> signal-type-path so the
-				// substitution-visibility gate (which accepts
+				// @constraint: Pass settles the run fresh under
+				// ReasonHandlerPass. The settling_signal_type column
+				// carries the terminal/error/<class> signal-type-path so
+				// the substitution-visibility gate (which accepts
 				// fresh-color settled runs regardless of the signal
 				// type-path's color implication) sees the run as
-				// settled-success. The wait-set drain runs the same
-				// way as give_up because both are settling terminals.
+				// settled-success. The wait-set drain runs the same way
+				// as give_up because both are settling terminals.
 				if err := args.Persist.Nodes().UpdateState(ctx, acq.NodeID, acq.RunScopeID,
 					cascade.NodeStateFresh, cascade.ReasonHandlerPass, &settlingSig, tx); err != nil {
 					return err
 				}
 			}
 		}
-		// Run-disposition signal: terminal/error/<class> — cascade AND
-		// audit via the single emit chokepoint (signal_emit.go), emitted
-		// UNCONDITIONALLY (outside the running guard) so the resolution
-		// always lands its audit row, matching the prior unconditional emit
-		// in applyErrorPolicy. It runs BEFORE the settled-state drain below
-		// so gated receivers are affirmed-then-released in the same tx
-		// (insert-then-drain).
-		//
-		//	@concept: cascade
-		//	@concept: signal
+		// @constraint: run-disposition signal terminal/error/<class> —
+		// cascade AND audit via the single emit chokepoint
+		// (signal_emit.go), emitted UNCONDITIONALLY (outside the running
+		// guard) so the resolution always lands its audit row, matching
+		// the prior unconditional emit in applyErrorPolicy. It runs
+		// BEFORE the settled-state drain below so gated receivers are
+		// affirmed-then-released in the same tx (insert-then-drain).
+		// @concept: cascade
+		// @concept: signal
 		if err := emitSignalInTxOnce(ctx, args, tx,
 			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID,
 			resolution.Signal); err != nil {
 			return err
 		}
-		// Settled-state drain: any wait-set rows gating receivers on
-		// this sender's run release.
+		// @constraint: settled-state drain — any wait-set rows gating
+		// receivers on this sender's run release.
 		if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 			return err
 		}
-		// Thread `runScopeID` so fan-out children's retirement lands
-		// on this specific run, not every sibling claimed by this
-		// supervisor under the shared `node_id`.
+		// @constraint: thread `runScopeID` so fan-out children's
+		// retirement lands on this specific run, not every sibling claimed
+		// by this supervisor under the shared `node_id`.
 		return args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx)
 	}
 	return nil
@@ -356,11 +353,11 @@ func applyTerminalInfraError(
 			"node_id", acq.NodeID.String(),
 			"error", perr.Error())
 	}
-	// Read the current counter so we can carry it forward onto the
-	// freshly-inserted dispatch row.
+	// @constraint: read the current counter so we can carry it forward
+	// onto the freshly-inserted dispatch row.
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
-	// Infra-reenqueue re-dispatches into the same RunScope, so the
-	// parent-owned linked sub-claims must be retained — see
+	// @constraint: infra-reenqueue re-dispatches into the same RunScope,
+	// so the parent-owned linked sub-claims must be retained — see
 	// releaseLocksInTx's retainLinkedSubClaims contract.
 	if err := releaseLocksInTx(ctx, args, tx, acq, false, true); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
@@ -371,8 +368,8 @@ func applyTerminalInfraError(
 			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 		}
 	}
-	// Thread `runScopeID` so fan-out children's retirement lands
-	// on this specific run, not every sibling claimed by this
+	// @constraint: thread `runScopeID` so fan-out children's retirement
+	// lands on this specific run, not every sibling claimed by this
 	// supervisor under the shared `node_id`.
 	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
@@ -385,13 +382,13 @@ func applyTerminalInfraError(
 		FrameID:        acq.FrameID,
 		RunScopeID:     acq.RunScopeID,
 	}, tx); err != nil {
-		// Defensive: a closed RunScope means the rendezvous has
-		// fired while this runner was processing the infra-error
-		// terminal. Walker discipline per concept:run-scope: do
-		// not enqueue into a closed scope; skip the counter
-		// re-stamp too (no row was inserted to stamp). The state
-		// writes above already committed. Mirrors OnError retry
-		// and SweepStaleHeartbeats.
+		// @constraint: defensive — a closed RunScope means the rendezvous
+		// has fired while this runner was processing the infra-error
+		// terminal. Walker discipline per concept:run-scope: do not
+		// enqueue into a closed scope; skip the counter re-stamp too (no
+		// row was inserted to stamp). The state writes above already
+		// committed. Mirrors OnError retry and SweepStaleHeartbeats.
+		// @concept: run-scope
 		if errors.Is(err, persistence.ErrRunScopeClosed) {
 			if args.Logger != nil {
 				args.Logger.Warn("applyTerminalInfraError: skip re-enqueue: run scope closed",
@@ -402,19 +399,20 @@ func applyTerminalInfraError(
 			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 		}
 	} else {
-		// Re-stamp the counter on the freshly-inserted dispatch row so
-		// the infra round-trip preserves cap-eligibility.
+		// @constraint: re-stamp the counter on the freshly-inserted
+		// dispatch row so the infra round-trip preserves cap-eligibility.
 		if err := args.Queue.SetRetryNoProgressForNodeInTx(ctx, tx, acq.NodeID, acq.RunScopeID, priorCount); err != nil {
 			return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 		}
 	}
 
-	// Post-commit: best-effort audit-log append.
+	// @constraint: post-commit best-effort audit-log append.
 	post := func(ctx context.Context) {
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// Canonical signal emission per concept:signal.
-			// terminal/infra/<reason> carries the synthesized
-			// errorClass as the reason leaf.
+			// @constraint: canonical signal emission —
+			// terminal/infra/<reason> carries the synthesized errorClass
+			// as the reason leaf.
+			// @concept: signal
 			infraSig := signalpkg.Signal{
 				Type: signalpkg.TypePath("terminal/infra/" + errorClass),
 				Payload: map[string]any{
@@ -422,9 +420,9 @@ func applyTerminalInfraError(
 					"details": payload,
 				},
 			}
-			// terminal/infra/* signal above is the canonical audit row
-			// per concept:signal. The pre-Pass-5 fixed-string "error"
-			// audit-row retired alongside spec
+			// @deliberate: the terminal/infra/* signal above is the
+			// canonical audit row per concept:signal. The pre-Pass-5
+			// fixed-string "error" audit-row retired alongside spec
 			// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
 				acq.InstanceID, acq.NodeID, infraSig, args.Clock.Now(), tx)
@@ -504,7 +502,7 @@ func buildResolution(
 			DispatchDisposition: spec.DispositionEnd,
 			Color:               spec.ColorFresh,
 		}
-	default: // give_up + any unknown kind
+	default:
 		return spec.Resolution{
 			Signal:              sig,
 			DispatchDisposition: spec.DispositionEnd,
@@ -540,8 +538,9 @@ func errorPolicySignal(errorClass string, errorPayload map[string]any, resolvedK
 			},
 		}
 	default:
-		// give_up | pass — both settle as terminal/error/<class>;
-		// color is differentiated upstream via Resolution.Color.
+		// @constraint: give_up | pass — both settle as
+		// terminal/error/<class>; color is differentiated upstream via
+		// Resolution.Color.
 		typ := signalpkg.TypePath("terminal/error/" + errorClass)
 		return signalpkg.Signal{
 			Type: typ,
@@ -572,9 +571,9 @@ func shouldForceRetryLoopGiveUp(ctx context.Context, args RunArgs, acq *acquisit
 	if err != nil {
 		return false
 	}
-	// Fall back to the template-spec value if the dispatch row's
-	// override has not been denormalized yet. This makes the cap apply
-	// to retry-only loops where the row never went through a park
+	// @constraint: fall back to the template-spec value if the dispatch
+	// row's override has not been denormalized yet. This makes the cap
+	// apply to retry-only loops where the row never went through a park
 	// transition.
 	if override == nil && acq.NodeDef != nil && acq.NodeDef.MaxRetriesWithoutProgress != nil {
 		override = acq.NodeDef.MaxRetriesWithoutProgress
@@ -586,7 +585,7 @@ func shouldForceRetryLoopGiveUp(ctx context.Context, args RunArgs, acq *acquisit
 	if maxRetries <= 0 {
 		return false
 	}
-	// We want to force give_up when the next retry would put us over.
+	// @constraint: force give_up when the next retry would put us over.
 	// Use count >= maxRetries so maxRetries=100 means "100 retries
 	// permitted; the 101st is forced give_up."
 	return count >= maxRetries

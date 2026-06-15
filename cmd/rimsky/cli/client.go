@@ -100,20 +100,16 @@ func (c *Client) Endpoint() string { return c.endpoint }
 // bespoke httpRequest / doRequest helpers and share the Client's
 // transport, user-agent, and Bearer-injection.
 //
-//	@agent-contract
-//	what: typed HTTP verb returning JSON.
-//	how: pass the (method, path, body, out) — body may be nil; out
-//	     may be nil for fire-and-forget; the returned status code
-//	     mirrors the underlying HTTP response (or 0 on transport
-//	     failure).
-//	handles: 2xx → unmarshal into out; non-2xx → *APIError with the
-//	         decoded body fields preserved.
-//	does not handle: streaming responses, multipart bodies, non-JSON
-//	     content types (the response body is JSON-decoded
-//	     unconditionally when out is non-nil and the body is
-//	     non-empty).
-//	thread-safety: safe for concurrent use; the underlying
-//	     http.Client is shared.
+// @agent-contract RawCall: typed HTTP verb returning JSON. Pass
+// (method, path, body, out) — body may be nil; out may be nil for
+// fire-and-forget; the returned status code mirrors the underlying
+// HTTP response (or 0 on transport failure). On 2xx the response body
+// is unmarshalled into out; on non-2xx returns *APIError with the
+// decoded body fields preserved. Does NOT handle streaming responses,
+// multipart bodies, or non-JSON content types (the response body is
+// JSON-decoded unconditionally when out is non-nil and the body is
+// non-empty). Safe for concurrent use; the underlying http.Client is
+// shared.
 func (c *Client) RawCall(ctx context.Context, method, path string, body any, out any) (int, error) {
 	req, err := c.request(ctx, method, path, body)
 	if err != nil {
@@ -203,10 +199,6 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (*h
 	return req, nil
 }
 
-// ---------------------------------------------------------------------
-// Templates
-// ---------------------------------------------------------------------
-
 // RegisterTemplateRequest is the wrapped POST /templates body shape per
 // control-plane v1 spec §1.5: `{spec: {...}, tag, source}`. Spec is the
 // typed template spec; tag and source are optional.
@@ -221,7 +213,7 @@ type RegisterTemplateRequest struct {
 // {id, state, registered_at, source, tags, spec}. Both shapes share
 // the fields below; absent fields decode to zero values.
 type Template struct {
-	// POST /templates returns this as "template_id"; GET as "id".
+	// @constraint: POST /templates returns this as "template_id"; GET as "id".
 	TemplateID   string         `json:"template_id,omitempty"`
 	ID           string         `json:"id,omitempty"`
 	State        string         `json:"state,omitempty"`
@@ -229,7 +221,7 @@ type Template struct {
 	Source       string         `json:"source,omitempty"`
 	Tags         []string       `json:"tags,omitempty"`
 	Spec         map[string]any `json:"spec,omitempty"`
-	// Deploy/undeploy responses include these:
+	// @constraint: deploy/undeploy responses include these.
 	NoOp bool `json:"no_op,omitempty"`
 }
 
@@ -384,10 +376,6 @@ func (c *Client) DeleteTemplate(ctx context.Context, ref string) error {
 	return c.do(req, nil)
 }
 
-// ---------------------------------------------------------------------
-// Tags
-// ---------------------------------------------------------------------
-
 // CreateTagRequest is the POST /tags body shape.
 type CreateTagRequest struct {
 	Tag      string `json:"tag"`
@@ -477,10 +465,6 @@ func (c *Client) DeleteTag(ctx context.Context, tag string) error {
 	return c.do(req, nil)
 }
 
-// ---------------------------------------------------------------------
-// Instances
-// ---------------------------------------------------------------------
-
 // CreateInstanceRequest is the POST /instances body shape per
 // control-plane v1 spec §2.2.
 type CreateInstanceRequest struct {
@@ -519,7 +503,7 @@ type bindingSpec struct {
 // instance_key, params, created_at, terminated_at}). Both shapes share
 // the fields below; absent fields decode to zero values.
 type Instance struct {
-	// POST returns InstanceID; GET returns ID.
+	// @constraint: POST returns InstanceID; GET returns ID.
 	InstanceID   string         `json:"instance_id,omitempty"`
 	ID           string         `json:"id,omitempty"`
 	TemplateHash string         `json:"template_hash,omitempty"`
@@ -695,10 +679,6 @@ func (c *Client) ListBreakpointHits(ctx context.Context, idOrKey string, since i
 	return &out, nil
 }
 
-// ---------------------------------------------------------------------
-// Nodes
-// ---------------------------------------------------------------------
-
 // Node is the shape returned by GET /nodes/{id}.
 type Node struct {
 	ID                   string  `json:"id"`
@@ -791,10 +771,6 @@ func (c *Client) ResetNode(ctx context.Context, id string) error {
 	return c.do(req, nil)
 }
 
-// ---------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------
-
 // Event is one row of GET /events.
 type Event struct {
 	ID         int64          `json:"id"`
@@ -861,10 +837,6 @@ func (c *Client) ListEvents(ctx context.Context, q ListEventsQuery) (*ListEvents
 	return &out, nil
 }
 
-// ---------------------------------------------------------------------
-// Health
-// ---------------------------------------------------------------------
-
 // HealthResponse mirrors GET /health.
 type HealthResponse struct {
 	Status      string              `json:"status"`
@@ -893,10 +865,6 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 	}
 	return &out, nil
 }
-
-// ---------------------------------------------------------------------
-// Messages (F1/F2 — G3)
-// ---------------------------------------------------------------------
 
 // MessageItem mirrors the JSON projection of `persistence.MessageRow`
 // returned by GET /instances/{id}/messages and GET /messages/{id}.
@@ -989,10 +957,6 @@ func (c *Client) GetMessage(ctx context.Context, id string) (*MessageItem, error
 	}
 	return &out, nil
 }
-
-// ---------------------------------------------------------------------
-// Backfills (F4 — G2)
-// ---------------------------------------------------------------------
 
 // CreateBackfillRequest is the POST /instances/{id}/backfills body.
 type CreateBackfillRequest struct {
@@ -1103,10 +1067,6 @@ func (c *Client) CancelBackfill(ctx context.Context, opID string) (map[string]an
 	}
 	return out, nil
 }
-
-// ---------------------------------------------------------------------
-// Assets (F5 — G1)
-// ---------------------------------------------------------------------
 
 // AssetItem is one element of GET /instances/{id}/assets. Mirrors the
 // server-side envelope at `code:control/controlapi/assets.go::assetItem`:
@@ -1233,10 +1193,6 @@ func (c *Client) GetAssetMaterializationHistory(ctx context.Context, instanceID,
 	return &out, nil
 }
 
-// ---------------------------------------------------------------------
-// Lineage (F6 — G1 asset lineage + G4 prune)
-// ---------------------------------------------------------------------
-
 // LineageRecordItem mirrors the JSON projection of persistence.LineageRow.
 type LineageRecordItem struct {
 	ID         string          `json:"id"`
@@ -1292,10 +1248,6 @@ func (c *Client) PruneLineage(ctx context.Context, before string) (map[string]an
 	}
 	return out, nil
 }
-
-// ---------------------------------------------------------------------
-// Template register with warnings_as_errors (G6)
-// ---------------------------------------------------------------------
 
 // RegisterTemplateOptions extends RegisterTemplateRequest with the
 // runtime-only `warnings_as_errors` query parameter introduced by F9.

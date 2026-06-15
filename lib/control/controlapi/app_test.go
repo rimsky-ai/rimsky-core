@@ -79,7 +79,7 @@ func newHarness(t *testing.T) (*harness, func()) {
 				"topics-ring:concurrent": {Limit: 5},
 			},
 		},
-		// Wire the executor names referenced by validTemplateBody and
+		// @constraint: wire the executor names referenced by validTemplateBody and
 		// templateWithStoresAndLocks so the validator's
 		// ExecutorDeclared hook actually runs (otherwise the hook is
 		// silently nil and missing-executor templates pass deploy).
@@ -224,7 +224,7 @@ func templateWithStoresAndLocks(name string) map[string]any {
 					"stores": []map[string]any{
 						{"name": "content", "selector": "items/x", "intent": "r"},
 					},
-					// Post-2026-06-02 `inherits:` deletion (spec
+					// @constraint: post-2026-06-02 `inherits:` deletion (spec
 					// 2026-06-02-rimsky-core-remediation): co-holdership is
 					// declared via `holds:`. The review node co-holds the
 					// upstream claim-topic node's `topics-ring` claim. Outer
@@ -342,7 +342,7 @@ func TestTemplateDeploy_DependencyCycle_400(t *testing.T) {
 			"name":                  "cycle-" + uuid.NewString(),
 			"version":               "v1",
 			"frame_resolution_mode": "serial_queue",
-			// Post-2026-05-14: the legacy `dependencies:` field retired;
+			// @constraint: post-2026-05-14: the legacy `dependencies:` field retired;
 			// the JSON decoder (`DisallowUnknownFields`) rejects bodies
 			// carrying it. Subscription cycles between two nodes are no
 			// longer rejected at deploy time — the wait-set semantics
@@ -366,7 +366,7 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	tplBody := validTemplateBody("inst-lc-" + uuid.NewString())
 	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID, _ := out["template_id"].(string)
-	// Transition register → deployed; instance creation requires
+	// @constraint: transition register → deployed; instance creation requires
 	// state='deployed' per spec §2.2.
 	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
@@ -396,7 +396,7 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	nodes, _ := out["nodes"].([]any)
 	require.Len(t, nodes, 2)
 
-	// Drive the instance terminal — DELETE refuses to fire the
+	// @constraint: drive the instance terminal — DELETE refuses to fire the
 	// OnInstanceTerminated fan-out against a still-active instance
 	// (spec §2.4).
 	pgtest.ExecForTest(context.Background(), t, h.driver,
@@ -455,7 +455,7 @@ func TestInstanceDuplicateConsumerKey_Idempotent(t *testing.T) {
 	firstID := firstOut["instance_id"].(string)
 	require.NotEmpty(t, firstID)
 
-	// Per spec §2.2 idempotent re-create: a second POST with the same
+	// @constraint: per spec §2.2 idempotent re-create: a second POST with the same
 	// (template_hash, instance_key) returns the existing row at 200 OK.
 	status, secondOut := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
@@ -473,7 +473,7 @@ func TestOperatorInvalidate(t *testing.T) {
 	ctx := context.Background()
 	inst := seedInstance(t, h, "op-inv-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
-	// Post-stage-3: 'fresh' = no in-flight run row. Delete any.
+	// @constraint: post-stage-3: 'fresh' = no in-flight run row. Delete any.
 	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1 AND phase IN ('pending','active','held','parked')`, nodeRow.ID)
 
 	status, out := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
@@ -509,11 +509,11 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusConflict, status)
 
-	// Post-stage-3: state lives on rimsky_node_runs. Seed a failed
+	// @constraint: post-stage-3: state lives on rimsky_node_runs. Seed a failed
 	// terminal row to put the node in the failed state.
 	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1`, nodeRow.ID)
-	// We need a frame_id for the run row's NOT NULL constraint. Find
-	// any frame for this instance, or insert one.
+	// @constraint: rimsky_node_runs.frame_id is NOT NULL — reuse an existing
+	// frame for this instance to satisfy the FK before inserting the run row.
 	var frameID uuid.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver, `
         SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 ORDER BY queued_at DESC LIMIT 1
@@ -608,7 +608,7 @@ func TestClaimHoldersRoute_EmptyList(t *testing.T) {
 	require.Empty(t, holders)
 }
 
-// (TestAdminForceFire_RouteWired retired by the 2026-05-15 plan B10 /
+// seedInstance retired by the 2026-05-15 plan B10 /
 // D7 / E16 schedule-retirement cascade. The /admin/scheduled-nodes/.../
 // force-fire endpoint is gone.)
 

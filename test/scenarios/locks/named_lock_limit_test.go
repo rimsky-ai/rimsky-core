@@ -90,7 +90,7 @@ func newBarrierExecutor() *barrierExecutor {
 }
 
 func (b *barrierExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
-	// Heartbeat first so the supervisor's stream-read loop has a live
+	// @deliberate: Heartbeat first so the supervisor's stream-read loop has a live
 	// frame; then announce arrival and block until the test releases us.
 	if err := stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Heartbeat{Heartbeat: &genv1.Heartbeat{
 		TimestampMs: time.Now().UnixMilli(),
@@ -155,7 +155,7 @@ func activeNamedLockCount(t *testing.T, h *scenario.Harness, lockName string) in
 	return n
 }
 
-// runNodeAsync starts one RunNode cycle on its own goroutine under the
+// @deliberate: runNodeAsync starts one RunNode cycle on its own goroutine under the
 // given supervisor id and returns a channel carrying its result. Used to
 // launch a holder that will block in the barrier executor.
 type runResult struct {
@@ -209,7 +209,7 @@ func TestNamedLockMutexEnforcesMutualExclusion(t *testing.T) {
 		},
 	})
 
-	// One template, a single node holding the mutex; two instances so each
+	// @deliberate: One template, a single node holding the mutex; two instances so each
 	// has its own root frame + dispatch row + node row, letting two manual
 	// supervisors contend on the same name without frame-engine coupling.
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -237,7 +237,7 @@ func TestNamedLockMutexEnforcesMutualExclusion(t *testing.T) {
 	require.Equal(t, 0, activeNamedLockCount(t, h, lockName),
 		"precondition: no holders before any RunNode")
 
-	// Launch holder-1; it acquires the mutex (count→1) and blocks in the
+	// @deliberate: Launch holder-1; it acquires the mutex (count→1) and blocks in the
 	// barrier executor.
 	holder1 := make(chan runResult, 1)
 	go func() {
@@ -246,14 +246,14 @@ func TestNamedLockMutexEnforcesMutualExclusion(t *testing.T) {
 	}()
 	barrier.waitEntered(t, 15*time.Second)
 
-	// Holder-1 is parked mid-flight with the lock acquired: exactly one
+	// @deliberate: Holder-1 is parked mid-flight with the lock acquired: exactly one
 	// active named-lock row exists. (If the limit weren't incremented at
 	// acquire, this would be 0; the count is the @blessed-invariant 2
 	// observable.)
 	require.Equal(t, 1, activeNamedLockCount(t, h, lockName),
 		"holder-1 must hold exactly one active named-lock row while parked")
 
-	// While holder-1 holds the mutex, holder-2's full RunNode cycle must
+	// @constraint: While holder-1 holds the mutex, holder-2's full RunNode cycle must
 	// bail: the candidate is selected and the dispatch row claimed, but
 	// acquireNamedLock sees count(1) >= limit(1) and bails, rolling back
 	// the per-candidate tx. RunNode therefore reports Ran=false and the
@@ -263,26 +263,26 @@ func TestNamedLockMutexEnforcesMutualExclusion(t *testing.T) {
 	require.False(t, r2.out.Ran,
 		"MUTUAL EXCLUSION: holder-2 must bail (Ran=false) while holder-1 holds the limit:1 named lock")
 
-	// The mutex is still held by exactly one (holder-1); holder-2's bail
+	// @deliberate: The mutex is still held by exactly one (holder-1); holder-2's bail
 	// left no row behind.
 	require.Equal(t, 1, activeNamedLockCount(t, h, lockName),
 		"after holder-2 bails, still exactly one active named-lock row (holder-1)")
 
-	// Holder-2's dispatch row must remain pending+unclaimed (the bail rolled
+	// @constraint: Holder-2's dispatch row must remain pending+unclaimed (the bail rolled
 	// back the dispatch claim), so it is re-acquirable once the mutex frees.
 	requireDispatchPending(t, h, wB.ID)
 
-	// Release holder-1 → it terminals → the named lock decrements to 0.
+	// @constraint: Release holder-1 → it terminals → the named lock decrements to 0.
 	barrier.freeOne()
 	r1 := <-holder1
 	require.NoError(t, r1.err, "holder-1 RunNode error")
 	require.True(t, r1.out.Ran, "holder-1 must have run")
 
-	// Decrement-at-terminal (@blessed-invariant 2): after holder-1's
+	// @deliberate: Decrement-at-terminal (@blessed-invariant 2): after holder-1's
 	// terminal the lock is fully released.
 	requireNamedLockCountEventually(t, h, lockName, 0, 5*time.Second)
 
-	// Now the mutex is free, holder-2 can acquire and run to completion.
+	// @deliberate: Now the mutex is free, holder-2 can acquire and run to completion.
 	// It enters the barrier executor (proving it actually acquired this
 	// time, not bailed), then we release it.
 	holder2 := make(chan runResult, 1)
@@ -299,7 +299,7 @@ func TestNamedLockMutexEnforcesMutualExclusion(t *testing.T) {
 	require.True(t, r2b.out.Ran,
 		"holder-2 must acquire and run AFTER holder-1 released the mutex (second-after-first)")
 
-	// Disposition: after both holders terminal, the named lock is fully
+	// @deliberate: Disposition: after both holders terminal, the named lock is fully
 	// released — zero active rows remain.
 	requireNamedLockCountEventually(t, h, lockName, 0, 5*time.Second)
 }
@@ -340,7 +340,7 @@ func TestNamedLockSemaphoreSaturatesAtLimit(t *testing.T) {
 		},
 	})
 
-	// N+1 instances, one node each. Track the per-instance worker node id.
+	// @deliberate: N+1 instances, one node each. Track the per-instance worker node id.
 	const contenders = limit + 1
 	workerIDs := make([]shared.UUID, 0, contenders)
 	for i := 0; i < contenders; i++ {
@@ -357,7 +357,7 @@ func TestNamedLockSemaphoreSaturatesAtLimit(t *testing.T) {
 	require.Equal(t, 0, activeNamedLockCount(t, h, lockName),
 		"precondition: no holders before any RunNode")
 
-	// Launch the first N holders; each acquires a slot (count climbs to N)
+	// @deliberate: Launch the first N holders; each acquires a slot (count climbs to N)
 	// and blocks in the barrier executor.
 	holders := make([]chan runResult, 0, limit)
 	for i := 0; i < limit; i++ {
@@ -372,7 +372,7 @@ func TestNamedLockSemaphoreSaturatesAtLimit(t *testing.T) {
 			"after %d holders entered, exactly %d active semaphore rows", i+1, i+1)
 	}
 
-	// Semaphore saturated at N. The (N+1)th contender's RunNode must bail:
+	// @constraint: Semaphore saturated at N. The (N+1)th contender's RunNode must bail:
 	// count(N) >= limit(N) → acquireNamedLock bails → Ran=false. The
 	// barrier executor is NEVER reached by the extra contender.
 	extra := mustRunNode(t, h, "sup-extra", execAddr, namedLocks, pool)
@@ -382,14 +382,14 @@ func TestNamedLockSemaphoreSaturatesAtLimit(t *testing.T) {
 	require.Equal(t, limit, activeNamedLockCount(t, h, lockName),
 		"after the over-limit bail, still exactly N active semaphore rows")
 
-	// Release ONE holder → count drops to N-1, opening a single slot.
+	// @constraint: Release ONE holder → count drops to N-1, opening a single slot.
 	barrier.freeOne()
 	r := <-holders[0]
 	require.NoError(t, r.err, "released holder RunNode error")
 	require.True(t, r.out.Ran, "released holder must have run")
 	requireNamedLockCountEventually(t, h, lockName, limit-1, 5*time.Second)
 
-	// Now the formerly-gated contender can acquire the freed slot. It
+	// @deliberate: Now the formerly-gated contender can acquire the freed slot. It
 	// enters the barrier executor (proving genuine acquisition), bringing
 	// the count back to N.
 	gated := make(chan runResult, 1)
@@ -401,9 +401,8 @@ func TestNamedLockSemaphoreSaturatesAtLimit(t *testing.T) {
 	require.Equal(t, limit, activeNamedLockCount(t, h, lockName),
 		"the gated contender acquired the freed slot; count back to N")
 
-	// Drain the remaining holders + the late acquirer.
-	barrier.freeOne() // the remaining original holder
-	barrier.freeOne() // the late acquirer
+	barrier.freeOne() // @deliberate: the remaining original holder
+	barrier.freeOne() // @deliberate: the late acquirer
 	rRemain := <-holders[1]
 	require.NoError(t, rRemain.err)
 	require.True(t, rRemain.out.Ran)
@@ -411,7 +410,7 @@ func TestNamedLockSemaphoreSaturatesAtLimit(t *testing.T) {
 	require.NoError(t, rGated.err)
 	require.True(t, rGated.out.Ran)
 
-	// Disposition: every holder terminaled → the semaphore is fully
+	// @deliberate: Disposition: every holder terminaled → the semaphore is fully
 	// released back to zero (@blessed-invariant 2 decrement-at-terminal).
 	requireNamedLockCountEventually(t, h, lockName, 0, 5*time.Second)
 

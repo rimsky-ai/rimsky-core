@@ -31,7 +31,7 @@ func TestPgLargeObjectBackend(t *testing.T) {
 		t.Fatalf("Name: got %q, want pg-largeobject", be.Name())
 	}
 
-	// 1 MiB payload exercises chunked I/O.
+	// @deliberate: 1 MiB payload exercises chunked I/O.
 	payload := bytes.Repeat([]byte("0123456789abcdef"), 65536)
 	h, err := be.Write(ctx, persistence.BlobKey{NodeID: "n1", AttributeName: "value"}, payload)
 	if err != nil {

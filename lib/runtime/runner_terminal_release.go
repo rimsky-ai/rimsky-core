@@ -118,7 +118,7 @@ func resolveLinkedSubClaimsInTx(
 	if err != nil {
 		return fmt.Errorf("resolveLinkedSubClaims: ListByNodeRun: %w", err)
 	}
-	// The leaf's own freshly-Open'd claims were already released by the
+	// @deliberate: The leaf's own freshly-Open'd claims were already released by the
 	// acq.Locks walk; exclude them by id so a future row shape change
 	// cannot double-resolve.
 	released := make(map[shared.UUID]bool, len(acq.Locks))
@@ -213,7 +213,7 @@ func releaseClaim(
 		if err := markClaimHolderForRun(ctx, args, tx, lk.ClaimHandleID, acq.DispatchID, success); err != nil {
 			return err
 		}
-		// Held-claim acquirer-failure semantics: when the acquirer
+		// @constraint: Held-claim acquirer-failure semantics: when the acquirer
 		// terminates with !success (resolve=pass / give_up / policy
 		// failure), inheritor rows would otherwise stay 'active'
 		// indefinitely because their nodes never get dispatched (no
@@ -250,7 +250,7 @@ func releaseClaim(
 	if !success {
 		outcome = AggregateAbandon
 	}
-	// Build the lineage hint from the claim-handle row + the active
+	// @deliberate: Build the lineage hint from the claim-handle row + the active
 	// acquisition context. Used by the terminal-decision engine to
 	// record the `claim_terminal` lineage row + claim_resolution event
 	// per spec §Content lineage + the 2026-05-16 forensics extension.

@@ -83,90 +83,58 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// 1. Shared docker network + a single Postgres testcontainer the
-	//    whole stack (rimsky + sensor-cron state DSN) talks to.
-	//    BringUpRimsky brings up its own rimsky-pg postgres container
-	//    on this network at hostname `rimsky-pg`; the sensor-cron uses
-	//    the SAME Postgres on a sibling logical schema (`sensor_cron_
-	//    state` table, created at sensor bootstrap). That sharing
-	//    matters: the durable rows must persist across the sensor's
-	//    Terminate + fresh container — using the same Postgres
-	//    container guarantees the durable rows do not disappear with
-	//    the sensor process.
+	// @deliberate: shared docker network so rimsky (its own rimsky-pg
+	// testcontainer) and the sensor-cron state DSN (sibling postgres on
+	// the same network) can resolve each other by alias. The durable
+	// rows must outlive the sensor's Terminate, so the state DB lives in
+	// a sibling container, not the sensor's process.
 	netName := harness.NewNetwork(ctx, t)
 
-	// 2. Bring up rimsky first (so its Postgres testcontainer is
-	//    running on the network) — but we need the sensor-cron's state
-	//    DSN BEFORE the sensor starts, and we need the sensor RUNNING
-	//    before rimsky's eager-dial of its declared publishers. We
-	//    resolve this by starting rimsky once to learn the in-network
-	//    Postgres DSN, then bringing up the sensor against that DSN
-	//    using a SEPARATE bring-up path.
-	//
-	//    The simplest shape that works: BringUpRimskyHandle (with
-	//    WithPublisher pointing at the sensor's in-network endpoint
-	//    we KNOW in advance — alias `sensor-cron` + port 9081) on this
-	//    network; rimsky's eager-Subscribe at instance-create races
-	//    with the sensor's start, but the sensor is up before we
-	//    create the instance, so the race is bounded by us.
-	//
-	//    Concretely:
-	//      - StartSensorCron on this network FIRST with a known DSN
-	//        pointing at a sibling postgres testcontainer.
-	//      - BringUpRimsky on the same network, declaring `tick` as a
-	//        publisher peer pointing at the sensor's endpoint.
-	//      - Deploy + create instance → rimsky calls Subscribe; the
-	//        sensor persists the row.
-	//
-	//    For the state DSN we use a SEPARATE Postgres testcontainer
-	//    (StartFreshPostgres) on the same network so the sensor's
-	//    state survives a rimsky restart and vice versa — and so the
-	//    test isolates sensor-cron's durability from rimsky's
-	//    persistence.
+	// @deliberate: bring-up order is state-pg → sensor → rimsky. The
+	// sensor needs its state DSN before it boots, and rimsky's
+	// eager-dial of declared publishers at instance-create needs the
+	// sensor reachable at the in-network alias `sensor-cron`. A
+	// SEPARATE Postgres testcontainer (not rimsky's rimsky-pg) carries
+	// the state DSN so this test isolates sensor-cron's durability
+	// from rimsky's persistence.
 
-	// 2a. Sensor's state DSN postgres. Sibling container on the same
-	//     network, durable across the sensor's restart.
+	// @deliberate: sibling state-pg container on the same network so
+	// the durable rows outlive the sensor's restart.
 	statePGContainer := startSensorStatePostgres(ctx, t, netName)
 
-	// 2b. Bring up the sensor BEFORE rimsky so rimsky's eager-Dial of
-	//     the declared publisher at startup succeeds; the sensor is on
-	//     the network at alias `sensor-cron` with the durable state DSN
-	//     wired in.
+	// @deliberate: sensor before rimsky so rimsky's eager-Dial of the
+	// declared publisher at startup succeeds; alias `sensor-cron`
+	// matches the publisher peer rimsky will dial below.
 	sensor := harness.StartSensorCron(ctx, t, netName, "sensor-cron", statePGContainer.internalDSN)
 
-	// 2c. rimsky-all-in-one on the same network, with `tick` declared
-	//     as a publisher peer pointing at the sensor.
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithPublisher(cronPublisherName, sensor.Endpoint),
-		// The template's reactor node references no executor; set
-		// ref_validation_mode=none so the unreferenced-executor check
-		// does not refuse the template at registration. The test does
-		// not need the reactor to actually run — only that rimsky
-		// PERSISTS the publisher-message a sensor-cron POSTs.
+		// @deliberate: ref_validation_mode=none lets the template
+		// register with a reactor that names no executor — this test
+		// only needs rimsky to PERSIST the publisher message, not to
+		// run the reactor.
 		harness.WithRefValidationMode("none"),
 	)
 
-	// 3. Deploy template + create instance. The cron expression `*
-	//    * * * *` (every minute) keeps next_fire_at strictly within
-	//    60s of subscribe, so the test can observe the windowed fire
-	//    in bounded time. The exact field doesn't matter — what
-	//    matters is that the persisted next_fire_at is a wall-clock
-	//    moment we will roll past during the test.
+	// @constraint: cron `* * * * *` keeps next_fire_at within 60s of
+	// subscribe so the test observes the windowed fire in bounded
+	// time; the persisted next_fire_at must be a wall-clock moment
+	// the test rolls past before restart.
 	templateID := deployCronSensorTemplate(t, ep)
 	instanceID := createCronSensorInstance(t, ep, templateID, "ck-sensor-cron-restart")
 
-	// 4. Wait on OBSERVABLE subscription state first: mounting is
-	//    asynchronous (instance-create returns 201 with the row in
-	//    `mounting`; the reconciler drives Subscribe to `active`), so
-	//    the sensor-side assertion below must not race the mount under
-	//    load — the instance surface, not a wall-clock budget, says
-	//    when Subscribe has landed.
+	// @constraint: gate on the observable Subscribe-active surface
+	// before peeking at the sensor's state DB — mount is async
+	// (instance-create returns 201 with the row in `mounting`; the
+	// reconciler drives Subscribe to `active`), so a wall-clock budget
+	// would race the mount under load.
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	//    Then confirm the sensor-cron PERSISTED the subscription to
-	//    its state DB by polling the sensor's state table directly via
-	//    the host-mapped postgres port until we see one row.
+	// @constraint: cross-check the sensor's durable state by polling
+	// the sensor_cron_state table through the host-mapped postgres
+	// port — the load-bearing pre-restart watermark must be observed
+	// on disk, not inferred from rimsky's view.
 	statePool := connectSensorStatePostgres(ctx, t, statePGContainer.hostDSN)
 	defer statePool.Close()
 
@@ -174,58 +142,44 @@ func TestSensorCronRestartRecovery(t *testing.T) {
 	t.Logf("sensor-cron persisted subscription %s with next_fire_at=%s (originally scheduled)",
 		subID, originalNextFire.UTC().Format(time.RFC3339Nano))
 
-	// 5. Kill the sensor BEFORE its originally-scheduled window. The
-	//    `* * * * *` schedule's first fire after subscribe is the
-	//    NEXT minute boundary; stopping the container while
-	//    next_fire_at is still in the future is the load-bearing
-	//    setup for the recovery proof. If we stopped AFTER the
-	//    window, recovery and wall-clock-recompute would be
-	//    indistinguishable.
+	// @constraint: stop the sensor BEFORE its originally-scheduled
+	// window — stopping after the window would make recovery and
+	// wall-clock-recompute indistinguishable, collapsing the falsifier.
 	sensor.Stop(ctx)
 	t.Logf("sensor-cron stopped at %s, before scheduled window %s",
 		time.Now().UTC().Format(time.RFC3339Nano), originalNextFire.UTC().Format(time.RFC3339Nano))
 
-	// 6. Wait until the wall clock is past the originally-scheduled
-	//    window. With cron `* * * * *` the window is within 60s of
-	//    subscribe, so this is bounded; we add a safety margin so a
-	//    wall-clock recompute (the falsified implementation) would
-	//    deterministically yield a LATER next_fire_at than the
-	//    recovered watermark.
+	// @constraint: roll the wall clock strictly past the original
+	// window plus a safety margin so a wall-clock-recompute
+	// implementation would deterministically yield a LATER
+	// next_fire_at than the recovered watermark.
 	sleepUntilPast(originalNextFire, 5*time.Second)
 
-	// 7. Bring the sensor back up with IDENTICAL env. The fresh
-	//    process's AttachStateDB rebuilds in-memory watches from
-	//    durable storage — the recovered watch carries the ORIGINAL
-	//    next_fire_at (now in the past), so the first Tick after
-	//    boot fires immediately on the originally-scheduled window.
-	//    A wall-clock implementation would compute next_fire_at =
-	//    sched.Next(now) which is in the FUTURE, and the window
-	//    would never produce a message during the rest of this
-	//    test.
+	// @constraint: restart with IDENTICAL env so the fresh process's
+	// AttachStateDB rebuilds watches from durable storage with the
+	// ORIGINAL next_fire_at (now in the past); first Tick fires the
+	// originally-scheduled window. A wall-clock implementation would
+	// recompute sched.Next(now) into the future and never produce a
+	// message in the rest of this test.
 	restartAt := time.Now().UTC()
 	sensor.Restart(ctx)
 	t.Logf("sensor-cron restarted at %s; recovered watermark should fire on first Tick",
 		restartAt.Format(time.RFC3339Nano))
 
-	// 8. The load-bearing observable: a message row with
-	//    sender_kind=publisher MUST persist in rimsky AFTER the
-	//    restart timestamp. rimsky derives `sender` from the
-	//    publisher-subscription row (cronPublisherName), so the
-	//    assertion pins that derived value end-to-end. The post-
-	//    restart cut on received_at is what proves the revived
-	//    process was the poster — a wall-clock-recompute
-	//    implementation would not produce a message in the
-	//    interval between restart and the NEXT minute boundary,
-	//    so this gate falsifies the falsified shape.
+	// @constraint: a message row with sender_kind=publisher and
+	// received_at > restartAt MUST persist in rimsky, proving the
+	// revived sensor honored the durable next_fire_at. rimsky derives
+	// `sender` from publisher_subscriptions.publisher_name, so the
+	// assertion pins that derived value end-to-end. A wall-clock-
+	// recompute implementation would produce no message between
+	// restart and the next minute boundary, falsifying the falsified
+	// shape.
 	requireRecoveredPublisherMessage(t, ep, instanceID, cronPublisherName, restartAt, 90*time.Second)
 
-	// 9. Cross-check: the sensor advanced next_fire_at on the
-	//    durable row past the originally-scheduled window. The
-	//    UpdateNextFire path runs on every fire (sensor.go::fireOne),
-	//    so a non-advanced row would mean the fire never ran (or ran
-	//    and dropped the persist), both of which break the
-	//    durability contract. We poll the state DB until next_
-	//    fire_at > originalNextFire.
+	// @constraint: cross-check the durable watermark advanced past the
+	// original window — UpdateNextFire runs in sensor.go::fireOne on
+	// every fire, so a non-advanced row means the fire never ran or
+	// dropped the persist, both breaking the durability contract.
 	requireSensorCronAdvancedWatermark(t, ctx, statePool, subID, originalNextFire, 60*time.Second)
 }
 
@@ -246,9 +200,9 @@ type sensorStatePostgres struct {
 // death), and the test does not Terminate it early.
 func startSensorStatePostgres(ctx context.Context, t *testing.T, networkName string) sensorStatePostgres {
 	t.Helper()
-	// We need a stable in-network alias so the sensor container's env
-	// DSN can name it. Reuse the pgmodule shape used by BringUpRimsky's
-	// rimsky-pg testcontainer, but with our own alias.
+	// @constraint: stable in-network alias `sensor-cron-pg` so the
+	// sensor container's env DSN can name it; same pgmodule shape
+	// BringUpRimsky's rimsky-pg uses, distinct alias.
 	dsn, hostDSN := harness.StartFreshPostgresWithAlias(ctx, t, networkName, "sensor-cron-pg")
 	return sensorStatePostgres{internalDSN: dsn, hostDSN: hostDSN}
 }
@@ -349,13 +303,12 @@ func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, i
 					if m.SenderKind != "publisher" {
 						continue
 					}
-					// Use received_at as the post-restart cut: the
-					// rimsky-side row is timestamped on the server side
-					// when the sensor POSTs, so a received_at > restartAt
-					// is unambiguous proof the revived sensor was the
-					// poster. delivered_at is set later by the cascade,
-					// so it may still be nil for very recent fires —
-					// received_at is the right axis here.
+					// @constraint: cut on received_at, not delivered_at —
+					// rimsky stamps received_at server-side at POST, so
+					// received_at > restartAt is unambiguous proof the
+					// revived sensor posted it. delivered_at is set
+					// later by the cascade and may still be nil for
+					// very recent fires.
 					if !m.ReceivedAt.After(restartAt) {
 						continue
 					}
@@ -368,9 +321,6 @@ func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, i
 							m.ReceivedAt.UTC().Format(time.RFC3339Nano),
 							restartAt.UTC().Format(time.RFC3339Nano))
 					}
-					// Found a publisher message received AFTER the
-					// sensor restart — the revived process honored
-					// its durable subscription end to end.
 					return
 				}
 			}

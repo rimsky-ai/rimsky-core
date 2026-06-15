@@ -41,7 +41,7 @@ func TestFrameStartAtomicity(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Reset to a clean queued frame state for full control. Post-
+	// @deliberate: Reset to a clean queued frame state for full control. Post-
 	// stage-3 cutover: state lives on rimsky_node_runs; clearing the
 	// in-flight run rows + the node-row frame_id is the equivalent
 	// reset.
@@ -56,7 +56,7 @@ func TestFrameStartAtomicity(t *testing.T) {
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
 
-	// Race two RunTicks.
+	// @deliberate: Race two RunTicks.
 	var wg sync.WaitGroup
 	const N = 4
 	wg.Add(N)
@@ -68,11 +68,11 @@ func TestFrameStartAtomicity(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Exactly one frame should have advanced to running (per uq_rimsky_frames_running).
+	// @deliberate: Exactly one frame should have advanced to running (per uq_rimsky_frames_running).
 	require.Equal(t, 1, countFramesByState(t, h, iid, "running"),
 		"exactly one frame should be running after the race")
 
-	// Atomic visibility: running row has started_at set, AND the source node
+	// @deliberate: Atomic visibility: running row has started_at set, AND the source node
 	// has state='stale' (or has progressed onward via supervisor) with the matching frame_id.
 	var state string
 	var startedAt *time.Time
@@ -82,7 +82,7 @@ func TestFrameStartAtomicity(t *testing.T) {
 	require.Equal(t, "running", state)
 	require.NotNil(t, startedAt, "running frame must have started_at set atomically")
 
-	// Post-stage-3 cutover: state comes from the in-flight run row.
+	// @deliberate: Post-stage-3 cutover: state comes from the in-flight run row.
 	var nodeState string
 	var nodeFrameID *uuid.UUID
 	h.QueryRowSQL(

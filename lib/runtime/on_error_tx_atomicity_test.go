@@ -260,7 +260,7 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// Wrap nodes + queue for tx tracking. The wrapped Tables is what
+	// @deliberate: Wrap nodes + queue for tx tracking. The wrapped Tables is what
 	// OnError sees.
 	trackedNodes := &txTrackingNodes{NodeTable: store.Nodes()}
 	trackedQueue := &txTrackingQueue{Queue: q}
@@ -281,7 +281,7 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 		t.Fatalf("OnError: %v", err)
 	}
 
-	// Find the retry path's UpdateState — the call writing
+	// @deliberate: Find the retry path's UpdateState — the call writing
 	// NodeStateStale (the only `policy_retry` state write). The seed
 	// step earlier issued an UpdateState(NodeStateRunning); skip those.
 	var retryStateTx persistence.Tx
@@ -300,7 +300,7 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 	if len(trackedQueue.removeForNodes) == 0 {
 		t.Fatalf("retry path did not call Queue.RemoveForNodeInTx")
 	}
-	// The first RemoveForNodeInTx after seed must share the retry state tx.
+	// @deliberate: The first RemoveForNodeInTx after seed must share the retry state tx.
 	if trackedQueue.removeForNodes[0] != retryStateTx {
 		t.Fatalf("retry path opened a new tx between UpdateState and RemoveForNodeInTx: "+
 			"state tx=%p, remove tx=%p — must be the same tx",

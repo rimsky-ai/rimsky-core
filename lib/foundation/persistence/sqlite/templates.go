@@ -2,9 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// templates.go — SQLite-backed persistence.TemplateTable. Mirrors
-// foundation/persistence/postgres/templates.go method-for-method with SQLite
-// dialect translations per spec §6.3.
+// @source: lib/foundation/persistence/postgres/templates.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
+
 package sqlite
 
 import (

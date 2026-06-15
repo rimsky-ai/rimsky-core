@@ -39,14 +39,14 @@ import (
 )
 
 func TestHostAgentAnonymousModeLateBind(t *testing.T) {
-	// Not parallel: execs real child processes and binds free ports; keep it
+	// @deliberate: Not parallel: execs real child processes and binds free ports; keep it
 	// serial so the port reservations and process reaping stay predictable.
 	// anonymous: true skips minting an owner key (which would flip the
 	// deployment out of anonymous mode) and registers the agent under the
 	// anonymous routing identity.
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: true, anonymous: true})
 
-	// fx.adminKey is empty in anonymous mode, so deployLateBindTemplate /
+	// @deliberate: fx.adminKey is empty in anonymous mode, so deployLateBindTemplate /
 	// createLateBindInstance both POST with no bearer — the anonymous path.
 	// The resulting instance row carries an empty created_by_api_key_id.
 	tid := fx.deployLateBindTemplate(t, "anon-late-bind")
@@ -55,7 +55,7 @@ func TestHostAgentAnonymousModeLateBind(t *testing.T) {
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node should exist")
 
-	// The dispatch must traverse proxy → agent → stub and the run must reach
+	// @constraint: The dispatch must traverse proxy → agent → stub and the run must reach
 	// fresh (terminal/success), proving the proxy resolved the anonymous-owner
 	// instance to the connected agent rather than terminating with
 	// host_agent_not_connected on the empty-owner short-circuit.

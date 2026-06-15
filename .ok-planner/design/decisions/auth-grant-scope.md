@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`scope` map of action-specific dimension keys (e.g., `template_tag`) constraining the action.
+A per-grant scope map of action-specific dimension keys (e.g., template tag) constraining the action (see `concept:permission`).
 
 ## Rationale
 

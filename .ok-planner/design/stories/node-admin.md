@@ -19,7 +19,7 @@ Operators drive a stalled or errored node back into the cascade without re-insta
 
 ## Acceptance
 
-Through the control-api or `rimsky admin …` CLI, an operator retrieves a node and sees its current state and settling signal type; force-invalidating a node causes the supervisor to re-fire it on a real dispatch; invalidating with the in-cascade option joins the running cascade frame and the node settles inside that frame rather than the next one; resetting a failed node clears its error count and the next acquisition attempt is not skipped due to error budget exhaustion.
+Through the control-api or the node-admin CLI surface, an operator retrieves a node and sees its current state and settling signal type; force-invalidating a node causes the supervisor to re-fire it on a real dispatch; invalidating with the in-cascade option joins the running cascade frame and the node settles inside that frame rather than the next one; resetting a failed node clears its error count and the next acquisition attempt is not skipped due to error budget exhaustion.
 
 ## Falsifier
 

@@ -83,17 +83,17 @@ type ObjectLister interface {
 type Watch struct {
 	SubscriptionID string
 	InstanceID     string
-	Backend        string // a registered backend name; "memory" in the default build
+	Backend        string // @constraint: must be a name registered via SetBackend; default build registers only "memory"
 	Bucket         string
 	Prefix         string
 	PollInterval   time.Duration
-	WatermarkField string // "name" | "last_modified"
+	WatermarkField string // @constraint: one of "name" | "last_modified"
 	TargetNode     string
 	MessageKind    string
 
 	LastPollAt    time.Time
-	WatermarkName string    // when WatermarkField == "name"
-	WatermarkTime time.Time // when WatermarkField == "last_modified"
+	WatermarkName string    // @constraint: populated only when WatermarkField == "name"
+	WatermarkTime time.Time // @constraint: populated only when WatermarkField == "last_modified"
 }
 
 // SensorService implements genv1.PublisherServer for object-store
@@ -285,12 +285,10 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	if cfg.Bucket == "" {
 		return nil, fmt.Errorf("resolved_config.bucket required")
 	}
-	// Validate the backend against the listers actually registered on this
-	// build (J3). The default image services only "memory"; a production
-	// build that wires s3/gcs/azure listers via SetBackend before Run
-	// auto-accepts them here. Rejecting unregistered backends keeps the
-	// sensor from accepting a subscription it could only no-op on at poll
-	// time.
+	// @deliberate: validate against the listers actually registered on this
+	// build (J3) so Subscribe rejects backends the poll loop could only
+	// no-op on; the default image services only "memory", production
+	// builds wire s3/gcs/azure via SetBackend before Run.
 	s.mu.Lock()
 	_, backendRegistered := s.listers[cfg.Backend]
 	registered := s.registeredBackends()
@@ -327,9 +325,9 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		TargetNode:     req.GetTargetNode(),
 		MessageKind:    messageKind,
 	}
-	// Restart-replay: load the persisted watermark cursor before
-	// registering the Watch so the first poll skips already-emitted
-	// objects.
+	// @constraint: load the persisted watermark cursor BEFORE registering
+	// the Watch so the first post-restart poll skips already-emitted
+	// objects rather than re-emitting them.
 	s.mu.Lock()
 	state := s.state
 	s.mu.Unlock()
@@ -347,8 +345,8 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
-		// Idempotent Subscribe: the state-DB row is already present from
-		// the prior call, so we skip the UpsertSubscription below.
+		// @deliberate: idempotent Subscribe — the state-DB row is already
+		// present from the prior call, so skip the UpsertSubscription below.
 		return &genv1.SubscribeResponse{}, nil
 	}
 	s.watches[w.SubscriptionID] = w
@@ -440,8 +438,8 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		return
 	}
 
-	// Sort by watermark field ascending so we emit observations in order
-	// AND advance the watermark deterministically.
+	// @constraint: sort by watermark field ascending so observations emit
+	// in order AND the watermark advances deterministically.
 	sort.Slice(objs, func(i, j int) bool {
 		switch w.WatermarkField {
 		case "last_modified":
@@ -469,8 +467,9 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 			s.mu.Unlock()
 			continue
 		}
-		// Advance watermark BEFORE post so a post failure does not
-		// re-emit. The plan's pre-resolved decision favors at-most-once.
+		// @deliberate: advance the watermark BEFORE post so a post failure
+		// does not re-emit — the plan's pre-resolved decision favors
+		// at-most-once over at-least-once delivery.
 		switch cur.WatermarkField {
 		case "last_modified":
 			cur.WatermarkTime = o.LastModified

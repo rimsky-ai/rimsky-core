@@ -41,7 +41,7 @@ func TestAuditDurability_NoDropsUnderConcurrentLoad(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// Bootstrap an admin via anonymous mode. This emits one
+	// @deliberate: Bootstrap an admin via anonymous mode. This emits one
 	// auth.access_attempted row of its own (POST /auth/keys), which we
 	// exclude from the count below by scoping to GET /auth/keys under
 	// the dedicated load key.
@@ -54,7 +54,7 @@ func TestAuditDurability_NoDropsUnderConcurrentLoad(t *testing.T) {
 		t.Fatalf("mint admin: %+v", adminBody)
 	}
 
-	// Mint a dedicated read-only key with a unique name so its audit
+	// @deliberate: Mint a dedicated read-only key with a unique name so its audit
 	// rows are unambiguously attributable to this test's burst.
 	const loadKeyName = "audit-load-key"
 	code, loadBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
@@ -69,7 +69,7 @@ func TestAuditDurability_NoDropsUnderConcurrentLoad(t *testing.T) {
 		t.Fatalf("load key plaintext missing: %+v", loadBody)
 	}
 
-	// Fire auditLoadRequests authenticated GET /auth/keys requests,
+	// @constraint: Fire auditLoadRequests authenticated GET /auth/keys requests,
 	// bounded to auditLoadConcurrency in flight. Each one must succeed
 	// (200) and synchronously write its auth.access_attempted row
 	// before the gate returns.
@@ -98,7 +98,7 @@ func TestAuditDurability_NoDropsUnderConcurrentLoad(t *testing.T) {
 		t.Fatalf("at least one load request did not return 200: got %d", badStatus)
 	}
 
-	// Synchronous write: by the time every request returned, its row is
+	// @constraint: Synchronous write: by the time every request returned, its row is
 	// committed and visible. Page through all auth.access_attempted
 	// rows and count those attributable to the load key's GET /auth/keys
 	// burst. Exactly auditLoadRequests must be present — no drops.

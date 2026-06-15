@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// InstanceTable — Postgres-backed persistence.InstanceTable.
-// rimsky_instances binds to template_hash (TEXT); instance_key is nullable.
 package postgres
 
 import (
@@ -58,19 +56,20 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 	id := in.ID
-	// Empty string → the INSERT's COALESCE($6, 'serial_queue') defaults an
-	// omitted mode to 'serial_queue' (the load-bearing default; this is NOT
-	// taken from the column DEFAULT — the literal here decides it). Any
-	// other value is sent verbatim; the CHECK constraint enforces the
-	// {serial_queue, coalesce} vocabulary so a bad value surfaces as a
-	// 23514 from Postgres.
+	// @constraint: empty FrameDeliveryMode passes nil so the INSERT's
+	// COALESCE($6, 'serial_queue') applies — the literal here decides
+	// the default, NOT the column DEFAULT. Non-empty values are sent
+	// verbatim; the CHECK constraint enforces the {serial_queue,
+	// coalesce} vocabulary so a bad value surfaces as Postgres 23514.
 	var deliveryMode any
 	if in.FrameDeliveryMode != "" {
 		deliveryMode = in.FrameDeliveryMode
 	}
-	// Empty json.RawMessage → NULL service_bindings (pgx encodes a nil
-	// []byte as SQL NULL for JSONB). created_by_api_key_id is passed as
-	// *shared.UUID; pgx encodes a nil pointer as NULL.
+	// @constraint: empty json.RawMessage must encode as SQL NULL for the
+	// service_bindings JSONB column — pgx encodes a nil []byte as NULL
+	// (a non-nil empty slice would write JSONB 'null', which differs).
+	// created_by_api_key_id is passed as *shared.UUID; pgx encodes a nil
+	// pointer as NULL.
 	var serviceBindings []byte
 	if len(in.ServiceBindings) > 0 {
 		serviceBindings = in.ServiceBindings
@@ -171,8 +170,10 @@ func (s *instancesImpl) List(
 		v := filter.TemplateHash
 		tmplHash = &v
 	}
-	// Active filter: nil → no filter; true → terminated_at IS NULL;
-	// false → terminated_at IS NOT NULL.
+	// @constraint: filter.Active is tri-state — nil bypasses the filter,
+	// true selects terminated_at IS NULL, false selects terminated_at IS
+	// NOT NULL. Passing as `any` lets pgx encode nil → SQL NULL and the
+	// $2::boolean IS NULL branch in the WHERE clause matches.
 	var activeArg any
 	if filter.Active != nil {
 		activeArg = *filter.Active
@@ -223,16 +224,14 @@ func (s *instancesImpl) List(
 
 func (s *instancesImpl) Delete(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
-	// Per concept:run-scope every node_run lives under a run_scope that
-	// lives under an instance. The schema (migrations 007/008) declares
-	// ON DELETE CASCADE on rimsky_run_scopes.instance_id,
-	// rimsky_run_scopes.parent_run_id, rimsky_run_scopes.parent_run_scope_id,
-	// and rimsky_node_runs.run_scope_id — so deleting the instance row
-	// walks the entire scope/dispatch tree atomically inside the DB.
-	//
-	// rimsky_instances.main_run_scope_id is DEFERRABLE INITIALLY
-	// DEFERRED so the simultaneous deletion of instance and its main
-	// scope satisfies the FK at commit time.
+	// @concept: run-scope
+	// @constraint: schema migrations 007/008 declare ON DELETE CASCADE on
+	// rimsky_run_scopes.instance_id, rimsky_run_scopes.parent_run_id,
+	// rimsky_run_scopes.parent_run_scope_id, and rimsky_node_runs.run_scope_id,
+	// so deleting the instance row walks the entire scope/dispatch tree
+	// atomically inside the DB. rimsky_instances.main_run_scope_id is
+	// DEFERRABLE INITIALLY DEFERRED so the simultaneous deletion of the
+	// instance and its main scope satisfies the FK at commit time.
 	_, err := ex.Exec(ctx, `DELETE FROM rimsky_instances WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("instances.delete: %w", err)
@@ -308,17 +307,15 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	if len(indices) == 0 {
 		return nil
 	}
-	// Aggregate per-index deltas while preserving the first-appearance
-	// order so the per-index UPDATE sequence is deterministic.
-	//
-	// Pre-filter negative indices: Postgres' jsonb_set with create_missing
-	// =false silently no-ops for out-of-range POSITIVE indices, but treats
-	// NEGATIVE indices as offsets-from-end (`{-1}` modifies the last
-	// element). The runtime never produces negative indices (matched
-	// slice indexes into `entries`), so this is defensive parity with the
-	// SQLite mirror's pre-filter — both drivers silently skip idx < 0 so
-	// callers observe the same out-of-range semantics regardless of
-	// backend.
+	// @constraint: aggregation preserves first-appearance order so the
+	// per-index UPDATE sequence is deterministic.
+	// @constraint: negative indices are pre-filtered because Postgres'
+	// jsonb_set with create_missing=false silently no-ops for out-of-range
+	// POSITIVE indices but treats NEGATIVE ones as offsets-from-end
+	// (`{-1}` modifies the last element). The runtime never produces
+	// negative indices (matched slice indexes into `entries`); this is
+	// defensive parity with the SQLite mirror's pre-filter so both drivers
+	// expose identical out-of-range semantics to callers.
 	deltas := map[int]int{}
 	order := make([]int, 0, len(indices))
 	for _, idx := range indices {
@@ -334,39 +331,34 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 		return nil
 	}
 	ex := s.q(tx)
-	// Issue ONE jsonb_set UPDATE per unique index. We MUST NOT inline
-	// the prior setExpr into the next setExpr's template (the obvious
-	// "chain everything into one statement" approach), because the
-	// resulting SQL string grows O(2^N) characters in the number of
-	// unique indices — each iteration substitutes the prior setExpr
-	// twice (once as the jsonb_set target, once inside the value
-	// subexpression). For an instance with ~20 matched entries in a
-	// single dispatch that hits Postgres' max_stack_depth (default
-	// 2MB) and statement-size limits before the query reaches the
-	// planner.
-	//
-	// The per-iteration UPDATE has constant-size SQL and the same
-	// per-occurrence semantic. The tx is already open (caller wraps
-	// with args.Persist.Transaction); the per-row updates are
-	// serialised at the same row lock, so concurrent callers don't
-	// see partial increments outside their own tx boundary.
-	//
-	// jsonb_set's path arg is text[] where numeric strings index into
-	// arrays. The `->>` read side, however, requires an integer
-	// literal for array indexing (text args index by key name and
-	// return NULL for arrays); hence the asymmetric `ARRAY['%d']` for
-	// the write path vs `->>%d` for the read. Both are integer-valued
-	// and locally produced (idx came from the runtime's matched-
-	// indices slice; delta is a count), so SQL injection is not a
-	// concern.
+	// @deliberate: issue ONE jsonb_set UPDATE per unique index rather than
+	// chaining everything into one statement. Inlining the prior setExpr
+	// into the next setExpr's template grows the SQL string O(2^N) in
+	// the number of unique indices — each iteration substitutes the
+	// prior expression twice (once as jsonb_set target, once inside the
+	// value subexpression). For an instance with ~20 matched entries in
+	// a single dispatch that hits Postgres' max_stack_depth (default 2MB)
+	// and statement-size limits before the query reaches the planner.
+	// The per-iteration UPDATE has constant-size SQL and the same per-
+	// occurrence semantic; the tx is already open (caller wraps with
+	// args.Persist.Transaction) and per-row updates serialize on the
+	// same row lock, so concurrent callers don't see partial increments
+	// outside their own tx boundary.
+	// @constraint: jsonb_set's path arg is text[] (numeric strings index
+	// into arrays) but the `->>` read side requires an integer literal
+	// for array indexing (text args index by key name and return NULL
+	// for arrays); hence the asymmetric `ARRAY['%d']` write vs `->>%d`
+	// read. Both are integer-valued and locally produced (idx from the
+	// runtime's matched-indices slice, delta a count), so SQL injection
+	// is not a concern.
 	for _, idx := range order {
-		// Cast to `bigint` (not `int`): the Go-side counter is `int64`
-		// (`InstanceRow.AttributeOverridesMatchCounts`), and a long-lived
-		// instance with a single matcher firing per dispatch on a busy
-		// producer could plausibly exceed PostgreSQL `int`'s ~2.1B
+		// @constraint: cast to `bigint` (not `int`) because the Go-side
+		// counter is `int64` (InstanceRow.AttributeOverridesMatchCounts);
+		// a long-lived instance with a matcher firing per dispatch on a
+		// busy producer could plausibly exceed PostgreSQL `int`'s ~2.1B
 		// (32-bit signed) ceiling. `bigint` (64-bit signed) matches the
-		// Go column's range so the database arithmetic doesn't overflow
-		// before the Go decoder ever sees the value.
+		// Go column range so the database arithmetic doesn't overflow
+		// before the Go decoder sees the value.
 		query := fmt.Sprintf(
 			`UPDATE rimsky_instances
 			   SET attribute_overrides_match_counts = jsonb_set(
@@ -414,10 +406,11 @@ func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshar
 		}
 		return false, fmt.Errorf("instances.setPaused.select: %w", err)
 	}
-	// Skip the UPDATE when the row is already at the requested value: the
-	// caller-facing semantic is "report the prior value so the handler can
-	// translate no-op toggles to 409". Writing the same value back acquires
-	// the row write lock + produces WAL traffic for no behavioral change.
+	// @deliberate: skip the UPDATE when the row is already at the requested
+	// value. The caller-facing semantic is "report the prior value so the
+	// handler can translate no-op toggles to 409"; writing the same value
+	// back would acquire the row write lock and produce WAL traffic for no
+	// behavioral change.
 	if prior == paused {
 		return prior, nil
 	}
@@ -481,8 +474,6 @@ func (s *instancesImpl) ListTerminatedWithLifecycleRows(ctx context.Context, lim
 	}
 	return out, rows.Err()
 }
-
-// ---- helpers ----
 
 // scannable is implemented by both pgx.Row and pgx.Rows.
 type scannable interface {

@@ -29,7 +29,7 @@ func TestConformanceEvents(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// A emits the same event name twice; the second should win for
+	// @deliberate: A emits the same event name twice; the second should win for
 	// substitution.
 	h.Stub.WhenType("a").
 		EmitNamedEvent("ready", []byte(`{"value":"first"}`)).
@@ -37,7 +37,7 @@ func TestConformanceEvents(t *testing.T) {
 		Success(map[string]any{}, true, "a-done")
 	h.Stub.WhenType("b").Success(map[string]any{}, true, "b-done")
 
-	// B's attributes substitute from A's most-recent event payload via
+	// @deliberate: B's attributes substitute from A's most-recent event payload via
 	// the F4 source kind `nodes.a.event.ready.value`.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "conformance-events", Version: "1",
@@ -49,7 +49,7 @@ func TestConformanceEvents(t *testing.T) {
 			}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "b", Executor: "stub"},
-				// The {{nodes.a.event.ready.value}} ref below auto-subscribes
+				// @deliberate: The {{nodes.a.event.ready.value}} ref below auto-subscribes
 				// b to a's `event` topic with name="ready"; explicit
 				// subscription kept here for clarity.
 				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "event/ready"}),
@@ -75,7 +75,7 @@ func TestConformanceEvents(t *testing.T) {
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should complete")
 
-	// Ledger should have at least one row for (a, ready); LatestByName
+	// @deliberate: Ledger should have at least one row for (a, ready); LatestByName
 	// returns the most recent.
 	require.Eventually(t, func() bool {
 		evt, err := getLatestNodeEvent(t, h, iid, a.ID, "ready")
@@ -88,7 +88,6 @@ func TestConformanceEvents(t *testing.T) {
 	require.Contains(t, string(evt.PayloadInline), `"value":"second"`,
 		"LatestByName must return the most recent emission")
 
-	// B should run with the substituted value visible in its attributes.
 	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
 		"b should run after A's event invalidates it")
 

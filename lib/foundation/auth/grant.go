@@ -144,18 +144,14 @@ func (g *GrantEntry) UnmarshalJSON(data []byte) error {
 // modifier marshals identically to the pre-modifier `{"action":...}`
 // shape.
 func (g GrantEntry) MarshalJSON() ([]byte, error) {
-	// Build the output by hand so the key order is deterministic
-	// regardless of Go's randomized map iteration.
 	var buf bytes.Buffer
 	buf.WriteByte('{')
-	// "action": <action>
 	actionJSON, err := json.Marshal(g.Action)
 	if err != nil {
 		return nil, err
 	}
 	buf.WriteString(`"action":`)
 	buf.Write(actionJSON)
-	// "mode": <mode> (only when set).
 	if g.Mode != "" {
 		modeJSON, err := json.Marshal(string(g.Mode))
 		if err != nil {
@@ -164,16 +160,14 @@ func (g GrantEntry) MarshalJSON() ([]byte, error) {
 		buf.WriteString(`,"mode":`)
 		buf.Write(modeJSON)
 	}
-	// "scope": {<sorted keys>} (only when non-empty). Marshaled
-	// by-hand with sorted keys so the selector serializes byte-stably
-	// regardless of map iteration order.
+	// @deliberate: scope is written by-hand with sorted keys so the
+	// selector serializes byte-stably regardless of map iteration order.
 	if len(g.Scope) > 0 {
 		buf.WriteString(`,"scope":`)
 		if err := writeSortedStringMap(&buf, g.Scope); err != nil {
 			return nil, err
 		}
 	}
-	// Extras in sorted-key order.
 	if len(g.Extras) > 0 {
 		keys := make([]string, 0, len(g.Extras))
 		for k := range g.Extras {

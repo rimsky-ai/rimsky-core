@@ -2,23 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run_tree.go is the persistence accessor for the run-tree extension to
-// `rimsky_node_runs` (spec §Run-tree and aggregation). Tracks
-// parent/child run linkage, snapshotted aggregation policy, and the
-// state/last_outcome columns lifted from `rimsky_nodes`.
-//
 // @concept: run-scope
 // @concept: terminal-resolution
-//
-// The leaf-style state (one row per node per frame, no children) was
-// previously read/written via `NodeTable.UpdateState` against
-// `rimsky_nodes`. The run-tree extension lifts those columns onto
-// `rimsky_node_runs.state` / `last_outcome` so that fan-out and
-// sub-graph composition can carry per-run state independently of the
-// node row. Pre-v1 break-freely (per `.claude/rules/rules.md`): once
-// every caller migrates to the run-tree API, the `rimsky_nodes` state
-// columns drop. Until then, the run-tree state column is additive and
-// the two paths coexist.
 
 package persistence
 
@@ -95,60 +80,59 @@ type CreateChildRunInput struct {
 // methods take an explicit tx; callers wrap them in
 // `Tables.Transaction` for atomicity across multiple state writes.
 //
-// @agent-contract:
-//
-//	what:        run-tree CRUD on rimsky_node_runs (state, last_outcome,
-//	             parent_run_id, child_key, aggregation_policy).
-//	how to use:  build atomic state-propagation via LockTreeForUpdate +
-//	             ListChildren + UpdateStateAndOutcome inside a single tx.
-//	handles:     idempotent child creation; parent-row locking; state
-//	             reads/writes.
-//	does NOT:    state-machine validation (callers consult
-//	             `foundation/cascade/state.go::NextStateParent`);
-//	             aggregation rule application (callers consult
-//	             `runtime/run_tree.go::Aggregate`); claim-handle resolution
-//	             (callers invoke `runtime/auto_terminal.go`).
-//	threadsafe:  serializable per the caller's tx isolation; ancestor
-//	             locks taken in tree order (upward) avoid deadlock.
+// @agent-contract RunTreeTable: run-tree CRUD on rimsky_node_runs
+// (state, last_outcome, parent_run_id, child_key, aggregation_policy).
+// Build atomic state-propagation via LockTreeForUpdate + ListChildren
+// + UpdateStateAndOutcome inside a single tx. Handles idempotent child
+// creation, parent-row locking, state reads/writes. Does NOT validate
+// state-machine transitions (callers consult
+// `code:foundation/cascade/state.go::NextStateParent`), apply
+// aggregation rules (callers consult `code:runtime/run_tree.go::Aggregate`),
+// or resolve claim handles (callers invoke
+// `code:runtime/auto_terminal.go`). Serializable per the caller's tx
+// isolation; ancestor locks taken in tree order (upward) avoid deadlock.
 type RunTreeTable interface {
-	// CreateRootRun inserts a top-level run (parent_run_id NULL,
-	// child_key NULL). Stale-marked by default (the existing dispatch
-	// row insert is what `Queue.EnqueueInTx` does today; this is the
-	// run-tree-aware variant that ALSO carries the aggregation_policy).
+	// @agent-contract CreateRootRun: inserts a top-level run
+	// (parent_run_id NULL, child_key NULL). Stale-marked by default
+	// (the existing dispatch row insert is what `Queue.EnqueueInTx`
+	// does today; this is the run-tree-aware variant that ALSO carries
+	// the aggregation_policy).
 	CreateRootRun(ctx context.Context, tx Tx, in CreateRootRunInput) error
 
-	// CreateChildRun inserts a child run within the given RunScope.
-	// Idempotent on (node_id, run_scope_id): re-creates return nil
-	// without error. Existing run is reachable via
+	// @agent-contract CreateChildRun: inserts a child run within the
+	// given RunScope. Idempotent on (node_id, run_scope_id): re-creates
+	// return nil without error. Existing run is reachable via
 	// Queue.GetInFlightRunForNode(node_id, run_scope_id).
 	CreateChildRun(ctx context.Context, tx Tx, in CreateChildRunInput) error
 
-	// GetByID returns the run-tree row for a given run id, or nil when
-	// the row does not exist.
+	// @agent-contract GetByID: returns the run-tree row for a given
+	// run id, or nil when the row does not exist.
 	GetByID(ctx context.Context, tx Tx, runID shared.UUID) (*RunTreeRow, error)
 
-	// LockTreeForUpdate runs SELECT ... FOR UPDATE on the run row
-	// identified by runID. Used by the state-propagation transaction
-	// before reading children + writing the parent state.
+	// @agent-contract LockTreeForUpdate: runs SELECT ... FOR UPDATE on
+	// the run row identified by runID. Used by the state-propagation
+	// transaction before reading children + writing the parent state.
 	LockTreeForUpdate(ctx context.Context, tx Tx, runID shared.UUID) (*RunTreeRow, error)
 
-	// ListChildren returns all in-flight run rows in RunScopes whose
-	// parent_run_id equals parentRunID. Walks via rimsky_run_scopes JOIN.
-	// Used to evaluate aggregation rules over the parent's children.
+	// @agent-contract ListChildren: returns all in-flight run rows in
+	// RunScopes whose parent_run_id equals parentRunID. Walks via
+	// rimsky_run_scopes JOIN. Used to evaluate aggregation rules over
+	// the parent's children.
 	ListChildren(ctx context.Context, tx Tx, parentRunID shared.UUID) ([]RunTreeRow, error)
 
-	// UpdateStateAndOutcome writes a new (state, settling_signal_type)
-	// pair on the run row. settlingSignalType nil means "do not write
-	// the column" (preserves existing value — used for non-settling
-	// transitions). Settling transitions pass a non-nil pointer holding
-	// the canonical signal type-path per concept:signal. Does NOT
-	// validate the transition — callers consult cascade.NextState /
-	// cascade.NextStateParent before invoking.
+	// @agent-contract UpdateStateAndOutcome: writes a new (state,
+	// settling_signal_type) pair on the run row. settlingSignalType nil
+	// means "do not write the column" (preserves existing value — used
+	// for non-settling transitions). Settling transitions pass a
+	// non-nil pointer holding the canonical signal type-path per
+	// concept:signal. Does NOT validate the transition — callers
+	// consult cascade.NextState / cascade.NextStateParent before
+	// invoking.
 	UpdateStateAndOutcome(ctx context.Context, tx Tx, runID shared.UUID, state cascade.NodeState, settlingSignalType *string) error
 
-	// UpdateAggregationPolicy snapshots a new aggregation policy onto
-	// the run row. Used when canonicalization-time policy is overridden
-	// (rare).
+	// @agent-contract UpdateAggregationPolicy: snapshots a new
+	// aggregation policy onto the run row. Used when
+	// canonicalization-time policy is overridden (rare).
 	UpdateAggregationPolicy(ctx context.Context, tx Tx, runID shared.UUID, policy spec.AggregationPolicy) error
 }
 

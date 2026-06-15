@@ -124,7 +124,7 @@ func FanOutTemplateEvent(
 	default:
 		return nil, nil, fmt.Errorf("FanOutTemplateEvent: %v is not a template-scope event", event)
 	}
-	// Template-scope fan-out does NOT use the late-bind extension — the
+	// @constraint: template-scope fan-out does NOT use the late-bind extension — the
 	// proxy doesn't subscribe to template events. Use the raw referenced
 	// peer set directly.
 	peerNames := peersReferencedBySpec(spec)
@@ -162,7 +162,7 @@ func FanOutTemplateEvent(
 		s, ok := deps.LifecycleSubs.Get(name)
 		if !ok {
 			flog.Debug("fanout.peer.skip", "peer", name, "reason", "not_subscribed")
-			// Peer is referenced by the template but does not subscribe
+			// @constraint: peer is referenced by the template but does not subscribe
 			// to lifecycle events; skip silently.
 			continue
 		}
@@ -353,7 +353,7 @@ func FanOutRunScopeEvent(
 		}
 		if err := s.OnRunScopeTerminal(ctx, req); err != nil {
 			perPeerErr[name] = err
-			// Continue to next peer on subscriber error, surface via
+			// @constraint: continue to next peer on subscriber error, surface via
 			// perPeerErr (matches FanOutInstanceEvent's convention).
 			continue
 		}

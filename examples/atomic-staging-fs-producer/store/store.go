@@ -160,8 +160,8 @@ func (s *Store) swapIntoCanonical(entry Entry) error {
 	}
 
 	if err := os.Rename(entry.StagingPath, canonical); err != nil {
-		// Install failed: restore the previously-committed view so a failed
-		// Commit never destroys it.
+		// @constraint: install-failure must restore the previously-committed
+		// view — a failed Commit never destroys what was already there.
 		if hadExisting {
 			_ = os.Rename(aside, canonical)
 		}
@@ -230,7 +230,7 @@ func (s *Store) abandonLocked(claimID string) error {
 		return err
 	}
 	if !ok {
-		return nil // idempotent: already gone
+		return nil // @constraint: idempotent — already gone
 	}
 	if err := os.RemoveAll(entry.StagingPath); err != nil {
 		return fmt.Errorf("atomic-staging.Abandon: %w", err)
@@ -238,8 +238,10 @@ func (s *Store) abandonLocked(claimID string) error {
 	return s.removeEntry(claimID)
 }
 
-// --- side-table primitives (JSONL) ----------------------------------
-
+// appendEntry persists e to the JSONL entries file under s.dir,
+// creating the file if absent. One of the side-table primitives
+// (appendEntry / removeEntry / readAll / writeAll) that back the
+// per-store entries.jsonl file.
 func (s *Store) appendEntry(e Entry) error {
 	all, err := s.readAll()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {

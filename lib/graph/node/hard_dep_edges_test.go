@@ -99,19 +99,17 @@ func TestBuildHardDepEdges_CycleDetected(t *testing.T) {
 }
 
 func TestBuildHardDepEdges_MultipleCyclesReported(t *testing.T) {
-	// Two disjoint hard-dep cycles in a single template. The cycle
-	// detector must surface both cycles in one error so template
-	// authors can fix all topology issues in one round (rather than
-	// playing whack-a-mole with one cycle at a time).
+	// @deliberate: Two disjoint hard-dep cycles in a single template. The cycle
+	// The cycle detector must surface both cycles in one error so
+	// template authors can fix all topology issues in one round (rather
+	// than playing whack-a-mole with one cycle at a time).
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
-		// Cycle 1: a ↔ b
 		{Type: "a", Executor: "stub",
 			Attributes: hardDepSchema("y", "{{nodes.b.attribute.foo}}", true),
 		},
 		{Type: "b", Executor: "stub",
 			Attributes: hardDepSchema("x", "{{nodes.a.attribute.foo}}", true),
 		},
-		// Cycle 2: c ↔ d (disjoint from cycle 1).
 		{Type: "c", Executor: "stub",
 			Attributes: hardDepSchema("y", "{{nodes.d.attribute.foo}}", true),
 		},
@@ -127,16 +125,17 @@ func TestBuildHardDepEdges_MultipleCyclesReported(t *testing.T) {
 	if !strings.Contains(msg, "cycle") {
 		t.Fatalf("error %q does not mention cycle", msg)
 	}
-	// Both cycles must be mentioned. The detector reports cycles as
-	// the node-types involved; both [a b] and [c d] components must
-	// appear in the surfaced error string.
+	// @deliberate: Both cycles must be mentioned. The detector reports cycles as
+	// cycles as the node-types involved; both [a b] and [c d] components
+	// must appear in the surfaced error string.
 	if !strings.Contains(msg, "a") || !strings.Contains(msg, "b") {
 		t.Fatalf("error %q does not mention cycle 1 (a↔b)", msg)
 	}
 	if !strings.Contains(msg, "c") || !strings.Contains(msg, "d") {
 		t.Fatalf("error %q does not mention cycle 2 (c↔d)", msg)
 	}
-	// The aggregate-error form should signal "more than one cycle".
+	// @deliberate: the aggregate-error form should signal "more than one
+	// cycle".
 	if !strings.Contains(msg, "(2)") && !strings.Contains(msg, "cycles") {
 		t.Fatalf("error %q should signal multi-cycle aggregate (e.g. %q or %q)",
 			msg, "(2)", "cycles")
@@ -144,10 +143,11 @@ func TestBuildHardDepEdges_MultipleCyclesReported(t *testing.T) {
 }
 
 func TestBuildHardDepEdges_RejectsFanoutTarget(t *testing.T) {
-	// A hard_dep edge pointing at a fan-out node-type is ambiguous —
-	// the runtime pullHardDepUpstreams picks a single upstream per type
-	// per instance, which is undefined for multi-instance fan-out. The
-	// validator must reject this at registration.
+	// @deliberate: a hard_dep edge pointing at a fan-out node-type is
+	// ambiguous — the runtime pullHardDepUpstreams picks a single
+	// upstream per type per instance, which is undefined for
+	// multi-instance fan-out. The validator must reject this at
+	// registration.
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "a", Executor: "stub",
 			FanOut: &spec.FanOutSpec{
@@ -170,9 +170,9 @@ func TestBuildHardDepEdges_RejectsFanoutTarget(t *testing.T) {
 }
 
 func TestBuildHardDepEdges_NonAttributeKindIgnored(t *testing.T) {
-	// Defensively: hard_dep on a claim-payload source must not produce
-	// an edge. The validator separately rejects this shape, but the
-	// edge builder is robust against it.
+	// @deliberate: defensively — hard_dep on a claim-payload source
+	// must not produce an edge. The validator separately rejects this
+	// shape, but the edge builder is robust against it.
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "a", Executor: "stub"},
 		{Type: "b", Executor: "stub",

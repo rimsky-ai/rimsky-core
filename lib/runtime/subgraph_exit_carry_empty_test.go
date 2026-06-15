@@ -52,7 +52,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 	t.Cleanup(func() { _ = d.Close() })
 	tables := d.Tables()
 
-	// Seed the persisted sub-graph shape the carry-rule fires against: a
+	// @deliberate: Seed the persisted sub-graph shape the carry-rule fires against: a
 	// calling-node parent run in the instance's main RunScope plus an
 	// exit leaf run inside a child RunScope whose parent_run_id points
 	// back at the parent run. Mirrors the fixture in
@@ -163,7 +163,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		NodeDef:    &node.TemplateNodeDef{Type: "inner-exit", Executor: "test-executor", IsSubgraphExit: true},
 	}
 
-	// Drive the runner wrapper with an EMPTY attribute map — the exact
+	// @deliberate: Drive the runner wrapper with an EMPTY attribute map — the exact
 	// shape an exit produces when its executor terminates with no
 	// writeback. The wrapper encodes a nil Writeback and the primitive
 	// must run the full settlement minus the attribute upsert.
@@ -173,7 +173,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		t.Fatalf("applyTerminalCompleteSubgraphExit (empty attributes): %v", err)
 	}
 
-	// (a) The sub-graph RunScope is CLOSED — the empty carry must not
+	// @deliberate: (a) The sub-graph RunScope is CLOSED — the empty carry must not
 	// leak the child execution context open.
 	var scope *persistence.RunScopeRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -187,7 +187,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		t.Errorf("sub-graph RunScope not closed after empty-attribute exit settlement")
 	}
 
-	// (b) The `subgraph.exit_carry` forensics event is emitted.
+	// @deliberate: (b) The `subgraph.exit_carry` forensics event is emitted.
 	var res persistence.EventListResult
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -208,7 +208,7 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		t.Errorf("no subgraph.exit_carry event after empty-attribute exit settlement")
 	}
 
-	// The parent run's writeback row stays empty — the empty carry skips
+	// @deliberate: The parent run's writeback row stays empty — the empty carry skips
 	// ONLY the attribute upsert.
 	var attrs *persistence.NodeAttributesRow
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

@@ -89,7 +89,7 @@ func TestLineageAdminPrune(t *testing.T) {
 
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// A minimal real template + instance gives the lineage rows a
+	// @constraint: A minimal real template + instance gives the lineage rows a
 	// real `instance_id` (rimsky_lineage.instance_id REFERENCES
 	// rimsky_instances(id) ON DELETE CASCADE — without a real
 	// instance the seed Inserts would fail the FK). The stub
@@ -110,13 +110,12 @@ func TestLineageAdminPrune(t *testing.T) {
 	})
 	iid := h.CreateInstance(tid, "ck-lineage-admin-prune-e2e", map[string]any{})
 
-	// === Seed three claim_terminal rows of varied ages ===
-	//
-	// observed_at offsets are anchored against `now` (the test's
-	// clock) so the cutoff math below matches the predicate the
-	// route applies. Each row's run_id + claim_handle_id are
-	// freshly-minted UUIDs that do NOT exist in rimsky_node_runs
-	// / rimsky_claim_handles. The prune predicate is:
+	// @deliberate: Seed three claim_terminal rows of varied ages whose
+	// observed_at offsets are anchored against `now` (the test's clock)
+	// so the cutoff math below matches the predicate the route applies.
+	// Each row's run_id + claim_handle_id are freshly-minted UUIDs that
+	// do NOT exist in rimsky_node_runs / rimsky_claim_handles. The prune
+	// predicate is:
 	//
 	//   observed_at < cutoff
 	//     AND NOT EXISTS (rimsky_node_runs with id = record->>'run_id')
@@ -127,9 +126,9 @@ func TestLineageAdminPrune(t *testing.T) {
 	// the cutoff cleanly in the falsifier discriminators.
 	now := time.Now().UTC()
 	const (
-		oldProducer      = "prune7d"  // 7 days old — strictly older than 24h → DELETE
-		boundaryProducer = "prune24h" // exactly 24h old — at cutoff boundary → KEEP (strict `<`)
-		newProducer      = "prune1h"  // 1 hour old — strictly newer than 24h → KEEP
+		oldProducer      = "prune7d"  // @deliberate: 7 days old — strictly older than 24h → DELETE
+		boundaryProducer = "prune24h" // @deliberate: exactly 24h old — at cutoff boundary → KEEP (strict `<`)
+		newProducer      = "prune1h"  // @deliberate: 1 hour old — strictly newer than 24h → KEEP
 	)
 	oldObservedAt := now.Add(-7 * 24 * time.Hour)
 	boundaryObservedAt := now.Add(-24 * time.Hour)
@@ -139,7 +138,6 @@ func TestLineageAdminPrune(t *testing.T) {
 	seedClaimTerminal(t, h, iid.String(), boundaryProducer, boundaryObservedAt)
 	seedClaimTerminal(t, h, iid.String(), newProducer, newObservedAt)
 
-	// === Pre-prune baseline: each producer surfaces 1 row ===
 	require.Equal(t, 1, byProducerCount(t, h, oldProducer),
 		"seed sanity: old producer must have exactly 1 row before prune")
 	require.Equal(t, 1, byProducerCount(t, h, boundaryProducer),
@@ -147,15 +145,13 @@ func TestLineageAdminPrune(t *testing.T) {
 	require.Equal(t, 1, byProducerCount(t, h, newProducer),
 		"seed sanity: new producer must have exactly 1 row before prune")
 
-	// === The cutoff is the boundary timestamp exactly ===
-	//
-	// LOAD-BEARING: the boundary row's observed_at equals the
-	// cutoff. Per the route's predicate (`observed_at < cutoff`)
-	// it MUST survive — a cheaper shape using `<=` would delete it
-	// and the post-prune assertion below would red-flag.
+	// @constraint: The cutoff is the boundary timestamp exactly. The
+	// boundary row's observed_at equals the cutoff. Per the route's
+	// predicate (`observed_at < cutoff`) it MUST survive — a cheaper
+	// shape using `<=` would delete it and the post-prune assertion
+	// below would red-flag.
 	cutoff := boundaryObservedAt
 
-	// === POST /v1/admin/lineage/prune with the cutoff ===
 	pruneBody, err := json.Marshal(map[string]any{
 		"before": cutoff.Format(time.RFC3339Nano),
 	})
@@ -175,7 +171,7 @@ func TestLineageAdminPrune(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&pruneResp))
 
-	// LOAD-BEARING FALSIFIER LEG (count): the deleted count IS the
+	// @deliberate: LOAD-BEARING FALSIFIER LEG (count): the deleted count IS the
 	// signal that the cutoff was honored. 0 here would prove the
 	// "silently drops the cutoff and returns a no-op count" branch
 	// of the falsifier. >1 would prove the "removes records at
@@ -187,11 +183,10 @@ func TestLineageAdminPrune(t *testing.T) {
 	require.Equal(t, cutoff.Format(time.RFC3339Nano), pruneResp.Before,
 		"prune response must echo the cutoff")
 
-	// === Post-prune verification through the public read surface ===
-	//
-	// Re-query `GET /v1/lineage/by-producer/<name>` for each producer.
-	// The old producer's row must be gone (the prune deleted it);
-	// the boundary + new producers' rows must remain.
+	// @deliberate: Post-prune verification through the public read
+	// surface: re-query `GET /v1/lineage/by-producer/<name>` for each
+	// producer. The old producer's row must be gone (the prune deleted
+	// it); the boundary + new producers' rows must remain.
 	require.Equal(t, 0, byProducerCount(t, h, oldProducer),
 		"FALSIFIER: the strictly-older row must be removed after prune")
 	require.Equal(t, 1, byProducerCount(t, h, boundaryProducer),
@@ -214,7 +209,7 @@ func seedClaimTerminal(t *testing.T, h *scenario.Harness, instanceID, producerNa
 
 	rowID := uuid.New()
 	frameID := uuid.New()
-	// Synthetic run/claim_handle ids the prune predicate's orphan check
+	// @deliberate: Synthetic run/claim_handle ids the prune predicate's orphan check
 	// can match against (they are not present in rimsky_node_runs /
 	// rimsky_claim_handles, so the NOT EXISTS sub-queries are satisfied).
 	syntheticRunID := uuid.New().String()

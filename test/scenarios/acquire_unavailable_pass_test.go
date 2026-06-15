@@ -41,7 +41,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// No InitialItems — the queue is drained from the start.
+				// @deliberate: No InitialItems — the queue is drained from the start.
 			},
 		},
 	})
@@ -57,7 +57,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 			},
 		},
 	})
-	// Script the executor — but we expect it to never be called.
+	// @constraint: Script the executor — but we expect it to never be called.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -83,7 +83,6 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Node should record settling_signal_type=terminal/error/acquire/unavailable.
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, worker.ID, "terminal/error/", 30*time.Second),
 		"worker should record settling_signal_type=terminal/error/acquire/unavailable under error_types: { acquire/unavailable: [pass] }")
 
@@ -96,7 +95,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, wRow.State,
 		"worker should be fresh after resolve=pass")
 
-	// The stub producer must have seen at least one Open (the one that
+	// @deliberate: The stub producer must have seen at least one Open (the one that
 	// returned Unavailable). The executor must not have been invoked.
 	var sawOpen bool
 	for _, c := range sub.Calls() {
@@ -107,7 +106,7 @@ func TestAcquireUnavailablePass(t *testing.T) {
 	}
 	require.True(t, sawOpen, "stub producer should have received at least one Open")
 
-	// Stub executor's observed-request log should be empty.
+	// @constraint: Stub executor's observed-request log should be empty.
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when error_types: { acquire/unavailable: [pass] } fires")
 }

@@ -33,7 +33,7 @@ import (
 func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Slow stub so the first frame is genuinely in flight while we fire
+	// @deliberate: Slow stub so the first frame is genuinely in flight while we fire
 	// the concurrent batch — we want the partial unique index actually
 	// guarding a queued row, not a freshly-completing race.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok").Delay(3 * time.Second)
@@ -49,12 +49,12 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Wait until the first frame is running so subsequent invalidates
+	// @constraint: Wait until the first frame is running so subsequent invalidates
 	// must coalesce rather than become the running frame.
 	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
 		"first frame did not enter running")
 
-	// Fire N concurrent invalidates. Each runs in its own short tx via
+	// @deliberate: Fire N concurrent invalidates. Each runs in its own short tx via
 	// the persistence driver, exactly mirroring how two operator
 	// invalidate handlers would race in production.
 	const N = 32
@@ -79,7 +79,7 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 			"concurrent EnqueueOrCoalesce(coalesce) must not surface 5xx-class errors (e.g. unique-violation)")
 	}
 
-	// uq_rimsky_frames_coalesce_queued: at most one queued coalesce row
+	// @deliberate: uq_rimsky_frames_coalesce_queued: at most one queued coalesce row
 	// at any moment. Sample for a short window in case the running frame
 	// is just about to terminate.
 	deadline := time.Now().Add(500 * time.Millisecond)
@@ -90,7 +90,7 @@ func TestCoalesceConcurrentInvalidatesNoUniqueViolation(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// Drain to terminal: exactly 2 completed frames (initial running +
+	// @deliberate: Drain to terminal: exactly 2 completed frames (initial running +
 	// the single coalesced trailing frame).
 	require.Eventually(t, func() bool {
 		return countFramesByState(t, h, iid, "completed") == 2

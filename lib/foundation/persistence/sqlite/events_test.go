@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// events_test.go — exercises the sqlite impls of
-// persistence.EventTable for the typed-Kind discipline introduced by
-// spec:2026-06-08-design-corpus-bootstrap Pass 2. Mirrors the
-// postgres-side events_test.go in scope:
-//
-//   - Write/read round-trip through events.Kind.
-//   - Defensive-read posture against a deliberately-corrupted row.
-//
-// In-process (no testcontainers needed) per the sqlite tests' usual
-// posture.
-
 package sqlite_test
 
 import (
@@ -123,10 +112,6 @@ func TestSQLiteEvents_UnmarshalRejectsCorruptKind(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Append legitimate: %v", err)
 	}
-	// Use the test-only DBFromDatabase escape hatch to reach the
-	// underlying sql.DB handle directly. The kind has no slash and
-	// is not a canonical operational name, so ParseKindString
-	// returns ErrUnknownKind.
 	db := sqlitepersist.DBFromDatabase(d)
 	if _, err := db.ExecContext(ctx,
 		`UPDATE rimsky_events SET kind = 'totally_made_up_kind'`); err != nil {

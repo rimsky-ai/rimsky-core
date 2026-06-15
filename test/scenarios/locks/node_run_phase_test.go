@@ -74,7 +74,7 @@ func TestNodeRunPhaseAdvancesOnClaim(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// Drive the node through to terminal. After fresh, the node-run
+	// @deliberate: Drive the node through to terminal. After fresh, the node-run
 	// row is deleted. We can't directly observe the 'active' phase mid-run
 	// without race-conditional polling; we instead verify the lifecycle:
 	// (a) the node-run row was inserted (driven by scheduler enqueue),
@@ -119,7 +119,7 @@ func TestClaimHandleIsHeldColumnPopulated(t *testing.T) {
 			},
 		},
 	})
-	// Delay terminal so we can observe the claim_handle row before it's
+	// @deliberate: Delay terminal so we can observe the claim_handle row before it's
 	// deleted at terminal. The Delay applies before the stub returns a
 	// terminal response; during this window the row is live and the
 	// is_held column carries its acquisition-time value.
@@ -138,7 +138,6 @@ func TestClaimHandleIsHeldColumnPopulated(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// Wait for the claim_handle row to appear (acquisition tx committed).
 	deadline := time.Now().Add(10 * time.Second)
 	var found bool
 	var isHeld bool

@@ -69,7 +69,7 @@ import (
 func requestTargets(ctx context.Context, persist persistence.Tables, action string, body []byte, r *http.Request) []map[string]string {
 	switch action {
 	case "template:register":
-		// POST /templates body is `{spec: {...}, tag, source}`. The tag
+		// @constraint: POST /templates body is `{spec: {...}, tag, source}`. The tag
 		// is the scopeable dimension — a grant scoped to
 		// {template_tag: X} must reject a register that tags the
 		// template anything but X. An empty/absent tag leaves the
@@ -80,17 +80,17 @@ func requestTargets(ctx context.Context, persist persistence.Tables, action stri
 			return []map[string]string{{"template_tag": tag}}
 		}
 	case "template:deploy", "template:undeploy", "template:deregister":
-		// POST/DELETE /templates/{id} where {id} is a tag OR a hash.
+		// @constraint: POST/DELETE /templates/{id} where {id} is a tag OR a hash.
 		// Tag-form: scope by that tag. Hash-form: enumerate the tags
 		// pointing at the hash and yield one candidate per tag.
 		return templateIDTargets(ctx, persist, chi.URLParam(r, "id"))
 	case "tag:set", "tag:delete":
-		// PUT/DELETE /tags/{tag}. The URL segment is the tag directly.
+		// @constraint: PUT/DELETE /tags/{tag}. The URL segment is the tag directly.
 		if tag := chi.URLParam(r, "tag"); tag != "" {
 			return []map[string]string{{"template_tag": tag}}
 		}
 	case "instance:create":
-		// POST /instances body is `{template, instance_key, params, ...}`.
+		// @constraint: POST /instances body is `{template, instance_key, params, ...}`.
 		// `template` is a tag OR hash; resolve to the candidate set the
 		// same way as the lifecycle URLs above so a `template_tag`-scoped
 		// grant protects the full template lifecycle, not just register.
@@ -98,7 +98,7 @@ func requestTargets(ctx context.Context, persist persistence.Tables, action stri
 			return templateIDTargets(ctx, persist, tpl)
 		}
 	}
-	// No scopeable dimension for this action: emit the lone empty
+	// @constraint: no scopeable dimension for this action: emit the lone empty
 	// target so unscoped grants still match (preserve today's behavior).
 	return []map[string]string{{}}
 }
@@ -115,11 +115,11 @@ func templateIDTargets(ctx context.Context, persist persistence.Tables, idOrTag 
 		return []map[string]string{{}}
 	}
 	if !looksLikeHash(idOrTag) {
-		// Tag form — single candidate.
+		// @constraint: tag form — single candidate.
 		return []map[string]string{{"template_tag": idOrTag}}
 	}
 	if persist == nil {
-		// No persistence wired (route-only test harness). Fall back to
+		// @constraint: no persistence wired (route-only test harness). Fall back to
 		// the empty target so unscoped grants still match; a tag-scoped
 		// grant fails as it would for an unresolvable hash.
 		return []map[string]string{{}}

@@ -47,7 +47,7 @@ import (
 func TestFanOutSuccessCascadeE2E(t *testing.T) {
 	t.Parallel()
 
-	// Remote stub store. The fixture's ClaimProducer surface advertises
+	// @deliberate: Remote stub store. The fixture's ClaimProducer surface advertises
 	// SupportsSplitScope=true and decodes
 	// {"partition_keys":[...]} into one SubScopeDescriptor per key.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -66,7 +66,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 		},
 	})
 
-	// Per-child + downstream scripts. Each script returns Success so the
+	// @deliberate: Per-child + downstream scripts. Each script returns Success so the
 	// parent's aggregation settles cleanly. best_effort tolerates any
 	// per-child outcome — this scenario asserts dispatch + cascade
 	// shape, not aggregation policy semantics.
@@ -96,7 +96,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 				openAttrs,
 				scenario.WithStores(scenario.AliasedClaimRef("fanout-store", "data", "rw", "data")),
 			),
-			// Downstream main-graph subscriber. The subscription edge
+			// @deliberate: Downstream main-graph subscriber. The subscription edge
 			// targets "fan-parent" so the cascade walker reaches it
 			// when partition children settle.
 			scenario.MakeNode(
@@ -115,7 +115,6 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 	downstreamNode := h.FindNode(iid, "downstream")
 	require.NotNil(t, downstreamNode, "downstream node missing")
 
-	// Wait for all three partition children to dispatch through the stub.
 	deadline := time.Now().Add(60 * time.Second)
 	gotChildren := false
 	for time.Now().Before(deadline) {
@@ -133,7 +132,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 	}
 	require.True(t, gotChildren, "expected three fan-parent child dispatches via SplitScope")
 
-	// Three fanout_partition RunScopes are created (one per partition
+	// @deliberate: Three fanout_partition RunScopes are created (one per partition
 	// key), each rooted under the parent run via parent_run_id.
 	var partitionCount int
 	h.QueryRowSQL(`
@@ -144,7 +143,6 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 	require.Equal(t, 3, partitionCount,
 		"three fanout_partition RunScopes should be created by AcquireSubClaims")
 
-	// Each partition's leaf-run reaches state=fresh on Success terminal.
 	require.Eventually(t, func() bool {
 		var freshRuns int
 		h.QueryRowSQL(`
@@ -160,7 +158,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 	}, 60*time.Second, 100*time.Millisecond,
 		"all three partition children should reach state=fresh after Success terminal")
 
-	// The downstream main-graph subscriber receives the cascade and
+	// @deliberate: The downstream main-graph subscriber receives the cascade and
 	// reaches state=fresh after its own dispatch. With best_effort
 	// aggregation the downstream may receive the cascade from any
 	// partition's settlement; that's enough to pin cross-RunScope
@@ -169,7 +167,7 @@ func TestFanOutSuccessCascadeE2E(t *testing.T) {
 		h.WaitForNodeState(downstreamNode.ID, cascade.NodeStateFresh, 60*time.Second),
 		"downstream must reach fresh via the cascade walker")
 
-	// Pin Phase G carryover #2: the parent claim handle's
+	// @deliberate: Pin Phase G carryover #2: the parent claim handle's
 	// expected_children_count must reach 3 after AcquireSubClaims
 	// commits — that count is what the recursive aggregation walker
 	// uses to detect "all children resolved" via

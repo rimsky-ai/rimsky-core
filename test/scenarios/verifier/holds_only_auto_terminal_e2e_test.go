@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// #2 — holds:-only co-holdership engages the held auto-terminal path.
+// @deliberate: #2 — holds:-only co-holdership engages the held auto-terminal path.
 //
 // A two-node template where an acquirer node opens a claim and a
 // downstream co-holder declares `holds: {held: {from: acquirer}}`.
@@ -79,7 +79,7 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "acquired")
 	h.Stub.WhenType("coholder").Success(map[string]any{}, true, "co-held")
 
-	// holds:-only template. The acquirer declares the `held` claim
+	// @deliberate: holds:-only template. The acquirer declares the `held` claim
 	// alias; the co-holder co-holds it via `holds: {held: {from:
 	// acquirer}}` and subscribes to the acquirer's terminal so it
 	// runs after acquisition. `holds:` is the sole co-holdership
@@ -115,7 +115,7 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 	require.True(t, h.WaitForNodeState(coholder.ID, cascade.NodeStateFresh, 15*time.Second),
 		"co-holder did not reach fresh")
 
-	// Auto-terminal must fire exactly one Commit over the co-holder set
+	// @constraint: Auto-terminal must fire exactly one Commit over the co-holder set
 	// (aggregate-completed → Commit per @blessed-invariant 13). Abandon
 	// must not fire. Poll briefly for the held resolution to settle.
 	deadline := time.Now().Add(5 * time.Second)
@@ -140,7 +140,7 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 	require.Equal(t, 0, abandonCount,
 		"aggregate-completed (all-success) must NOT route to Abandon")
 
-	// LOAD-BEARING DISTINGUISHER: every co-holder claim_holders row must
+	// @deliberate: LOAD-BEARING DISTINGUISHER: every co-holder claim_holders row must
 	// be resolved by the held auto-terminal path. Today the acquirer
 	// commits via the non-held branch and never aggregates the
 	// co-holder's row, leaving it stranded `state='active'`. The
@@ -159,7 +159,7 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 			"a stranded co-holder row means the holds:-only claim was never recognized as held "+
 			"and the documented aggregate Commit never resolved the co-holder set")
 
-	// The acquirer's claim handle must reach state='committed' via the
+	// @deliberate: The acquirer's claim handle must reach state='committed' via the
 	// held auto-terminal path (Promote-not-delete). Required assertion
 	// per the task; on its own it does not distinguish the held path
 	// from the broken non-held path (both promote to committed), which
@@ -175,7 +175,7 @@ func TestHoldsOnlyAutoTerminal(t *testing.T) {
 	require.Greater(t, committedHandleCount, 0,
 		"the acquirer's claim handle must reach state='committed' after the held auto-terminal Commit")
 
-	// And no claim handle may be left 'active'.
+	// @deliberate: And no claim handle may be left 'active'.
 	var activeHandleCount int
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_claim_handles lh

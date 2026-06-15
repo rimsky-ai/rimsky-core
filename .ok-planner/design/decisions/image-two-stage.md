@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`golang:1.25-alpine` for build stage; `gcr.io/distroless/static-debian12:nonroot` for runtime.
+An Alpine-based Go toolchain image for the build stage; a distroless static base image running as a non-root user for the runtime stage.
 
 ## Rationale
 

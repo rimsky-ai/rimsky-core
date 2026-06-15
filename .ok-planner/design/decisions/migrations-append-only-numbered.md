@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Numbered (`001-`, `002-`…), append-only, per backend.
+Numerically ordered, append-only, per backend (see `concept:persistence-database`).
 
 ## Rationale
 

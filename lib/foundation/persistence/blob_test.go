@@ -72,7 +72,7 @@ func TestMemoryBackend(t *testing.T) {
 		t.Fatalf("ReadRange: got %q, want %q", string(gotRange), "blob")
 	}
 
-	// Mutate the original slice; cached bytes must remain intact.
+	// @deliberate: mutate the caller's slice to prove the backend stored its own copy; a shared-slice bug would surface as got2[0] == 0xff below.
 	payload[0] = 0xff
 	got2, _ := be.Read(ctx, h)
 	if got2[0] != 'h' {
@@ -114,7 +114,7 @@ func TestFilesystemBackend(t *testing.T) {
 		t.Fatalf("Name: got %q, want filesystem", be.Name())
 	}
 	ctx := context.Background()
-	payload := bytes.Repeat([]byte("0123456789abcdef"), 64) // 1 KiB
+	payload := bytes.Repeat([]byte("0123456789abcdef"), 64)
 	h, err := be.Write(ctx, BlobKey{NodeID: "n1", AttributeName: "value"}, payload)
 	if err != nil {
 		t.Fatalf("Write: %v", err)
@@ -159,10 +159,7 @@ func TestFilesystemBackendRejectsPathEscape(t *testing.T) {
 		t.Fatalf("NewFilesystemBackend: %v", err)
 	}
 	if _, err := be.Read(context.Background(), Handle("fs:../../../etc/passwd")); err == nil {
-		// Path is normalized into the root by filepath.Clean("/"+rel)
-		// — should resolve to <root>/etc/passwd which doesn't exist.
-		// Either ErrBlobNotFound or an explicit "escapes root" error is acceptable;
-		// what is NOT acceptable is a successful read of /etc/passwd.
+		// @constraint: backend MUST refuse path-escape handles; either ErrBlobNotFound (after filepath.Clean("/"+rel) lands inside <root>) or an explicit "escapes root" error is acceptable, but a successful read of the host's /etc/passwd is not.
 		t.Fatalf("expected error, got success on path-escape handle")
 	}
 }
@@ -186,7 +183,7 @@ func TestValidateBlobConfig(t *testing.T) {
 	cases := []struct {
 		name     string
 		cfg      BlobConfig
-		role     string // value of RIMSKY_PROCESS_ROLE
+		role     string
 		wantErr  bool
 		wantWrap error
 	}{

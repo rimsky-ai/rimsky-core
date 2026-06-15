@@ -161,7 +161,7 @@ func (f *fakeDiagnosticQueue) ListParkedDiagnostic(_ context.Context, _ persiste
 	return out, nil
 }
 
-// Stub-out the rest of persistence.Queue so the type satisfies the
+// Enqueue the rest of persistence.Queue so the type satisfies the
 // interface. None of these are exercised by the admin-diagnostics
 // route handlers.
 func (f *fakeDiagnosticQueue) Enqueue(context.Context, persistence.DispatchRequest) error {
@@ -306,7 +306,7 @@ func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 		t.Fatalf("want 2 parked rows, got %d", len(got.ParkedNodes))
 	}
 
-	// With reason filter (post-2026-05-22 ParkReason 7→2 collapse, the
+	// @constraint: with reason filter (post-2026-05-22 ParkReason 7→2 collapse, the
 	// enum projection validates: await_callback | snooze).
 	resp2, err := http.Get(srv.URL + "/v1/admin/diagnostics/parked-nodes?reason=snooze")
 	if err != nil {
@@ -405,7 +405,7 @@ func TestAdminInvalidateNode_Conflict409(t *testing.T) {
 		t.Fatalf("status: got %d, want 409", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	// The conflict text describes the running-node rejection (the only
+	// @constraint: the conflict text describes the running-node rejection (the only
 	// state that refuses an invalidate). Pin a stable substring of the
 	// corrected ErrInvalidateConflict sentinel.
 	if !strings.Contains(string(body), "running node") {

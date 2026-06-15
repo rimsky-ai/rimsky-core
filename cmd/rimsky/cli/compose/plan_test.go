@@ -96,9 +96,7 @@ instances:
   - template: a@1.0
     name: hello
 `)
-	// Compute plan against empty state — register, tag, deploy, create.
 	state, _ := compose.QueryState(context.Background(), c, m.Project)
-	// Make manifest paths absolute relative to dir.
 	for i := range m.Templates {
 		m.Templates[i].Path = filepath.Join(dir, m.Templates[i].Path)
 	}
@@ -123,7 +121,6 @@ func TestComputePlan_TagMv(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	// Pre-existing template + tag at old hash, deployed.
 	oldHash, _ := srv.State.RegisterTemplate(map[string]any{"name": "old", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "compose:p:a@1.0", "")
 	srv.State.SetTemplateState(oldHash, "deployed")
 	dir, m := makeManifest(t, `project: p
@@ -139,7 +136,6 @@ templates:
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Expect: register-new, tag-move, deploy-new, undeploy-old, template-delete-old.
 	actions := []compose.Action{}
 	for _, s := range plan.Steps {
 		actions = append(actions, s.Action)
@@ -191,8 +187,6 @@ instances:
 	for i := range m.Templates {
 		m.Templates[i].Path = filepath.Join(dir, m.Templates[i].Path)
 	}
-	// Pre-state: the same hash that ResolveTemplate will produce is
-	// already registered, deployed, and has a failed terminal instance.
 	hash, body, err := compose.ResolveTemplate(m.Templates[0].Path)
 	if err != nil {
 		t.Fatal(err)
@@ -268,10 +262,6 @@ instances:
 	for i := range m.Templates {
 		m.Templates[i].Path = filepath.Join(dir, m.Templates[i].Path)
 	}
-	// Pre-populate state with the canonical end-state of the manifest:
-	// the same hash registered, the compose-prefixed tag pointing at
-	// it, the template deployed, and a non-terminal instance with the
-	// matching prefixed key.
 	hash, body, err := compose.ResolveTemplate(m.Templates[0].Path)
 	if err != nil {
 		t.Fatal(err)
@@ -328,14 +318,10 @@ instances:
 	}
 	srv.State.SetTemplateState(hash, "deployed")
 	key := "compose:p:hello"
-	// Pre-existing non-terminal instance whose params disagree with the
-	// manifest (count: 7 in state vs. count: 5 in manifest).
 	if _, _, err := srv.State.CreateInstance(hash, &key, map[string]any{"count": 7}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Capture stderr via os.Pipe so the warning, which is printed by
-	// fmt.Fprintf(os.Stderr, …), is observable from the test.
 	origStderr := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -350,12 +336,10 @@ instances:
 		t.Fatal(err)
 	}
 
-	// Drain the pipe; close the writer so the read returns EOF.
 	_ = w.Close()
 	stderrBytes, _ := io.ReadAll(r)
 	os.Stderr = origStderr
 
-	// (a) plan must contain zero new steps for the drifted instance.
 	for _, s := range plan.Steps {
 		if s.InstanceKey == key {
 			t.Errorf("unexpected step for drifted instance %s: %+v", key, s)
@@ -365,7 +349,6 @@ instances:
 		t.Errorf("HasDriftWarnings: got false; want true")
 	}
 
-	// (b) stderr must contain the warning exactly once.
 	stderr := string(stderrBytes)
 	want := "warning: params drift on running instance " + key
 	count := strings.Count(stderr, want)
@@ -406,9 +389,11 @@ instances:
 	srv.State.SetTemplateState(hash, "deployed")
 	key := "compose:p:hello"
 	inst, _, _ := srv.State.CreateInstance(hash, &key, nil)
-	// Non-fresh non-failed state on a terminal instance: blessed-invariant
-	// 13 forbids this in production, but the CLI's classifier must
-	// defensively treat anything-not-fresh as failure.
+	// @deliberate: fixture constructs a non-fresh, non-failed node on a
+	// terminal instance — blessed-invariant 13 forbids this combination
+	// in production, but the CLI's classifier must defensively treat
+	// anything-not-fresh as failure, and only this state shape exercises
+	// the cycle-2 fix under test.
 	srv.State.AddNode(inst.ID, cli.Node{ID: "n1", InstanceID: inst.ID, NodeType: "a", State: "running"})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(inst.ID, &now)

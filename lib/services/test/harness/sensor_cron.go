@@ -111,15 +111,16 @@ func runSensorCronContainer(ctx context.Context, t testing.TB, networkName, alia
 	t.Helper()
 	env := map[string]string{
 		"RIMSKY_SENSOR_CRON_PORT": "9081",
-		// rimsky's stable in-network alias; the sensor POSTs message
-		// envelopes here.
+		// @constraint: rimsky's stable in-network alias; the sensor
+		// POSTs message envelopes here.
 		"RIMSKY_ENDPOINT": "http://rimsky:8080",
 	}
 	if stateDSN != "" {
-		// Durability gate. When set, sensor-cron persists active
-		// publisher-subscriptions + their next_fire_at watermarks to
-		// the configured Postgres so a process restart resumes the
-		// originally-scheduled window. Empty → in-memory default.
+		// @constraint: durability gate — when set, sensor-cron persists
+		// active publisher-subscriptions + their next_fire_at
+		// watermarks to the configured Postgres so a process restart
+		// resumes the originally-scheduled window. Empty → in-memory
+		// default.
 		env["RIMSKY_SENSOR_CRON_STATE_DSN"] = stateDSN
 	}
 	c, err := testcontainers.Run(ctx, sensorCronImage,

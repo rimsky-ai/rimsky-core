@@ -60,8 +60,8 @@ func (a *agent) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 	respCh := a.registerForward(forwardID)
 	defer a.clearForward(forwardID)
 
-	// The proxy un-rewrites the URL against the originating spawn's recorded
-	// callback, so the full URL the child saw is forwarded verbatim.
+	// @constraint: proxy un-rewrites the URL against the originating spawn's
+	// recorded callback, so the full URL the child saw is forwarded verbatim.
 	url := "http://" + r.Host + r.URL.RequestURI()
 	if !a.send(&genv1.ClientFrame{Body: &genv1.ClientFrame_HttpForward{HttpForward: &genv1.LocalHttpForward{
 		ForwardId: forwardID,
@@ -118,8 +118,11 @@ func (a *agent) deliverHTTPResponse(resp *genv1.LocalHttpResponse) {
 	a.forwardMu.Lock()
 	ch, ok := a.pendingForwards[resp.GetForwardId()]
 	a.forwardMu.Unlock()
+	// @deliberate: drop late or unknown forward_id — the waiter has
+	// already torn down (timeout, cancel) and there is nothing to
+	// route to; the response is discarded silently.
 	if !ok {
-		return // late or unknown forward_id; drop.
+		return
 	}
 	select {
 	case ch <- resp:

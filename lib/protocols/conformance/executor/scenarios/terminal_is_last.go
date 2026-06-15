@@ -52,8 +52,11 @@ func runTerminalIsLast(ctx context.Context, env conformance.Env) error {
 			return nil
 		}
 		if err != nil {
+			// @deliberate: some transports surface a non-EOF close
+			// after the terminal event; treat any post-terminal close
+			// as acceptable rather than a protocol violation.
 			if sawTerminal {
-				return nil // some transports surface a non-EOF close; acceptable post-terminal
+				return nil
 			}
 			return fmt.Errorf("recv: %w", err)
 		}

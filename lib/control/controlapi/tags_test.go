@@ -129,7 +129,7 @@ func TestDeleteTag_DoesNotDeleteTemplate(t *testing.T) {
 	status, _ := h.httpJSON(t, "DELETE", "/v1/tags/"+tag, nil)
 	require.Equal(t, http.StatusOK, status)
 
-	// Template still resolvable by hash.
+	// @constraint: template still resolvable by hash.
 	status, _ = h.httpJSON(t, "GET", "/v1/templates/"+tplID, nil)
 	require.Equal(t, http.StatusOK, status)
 }

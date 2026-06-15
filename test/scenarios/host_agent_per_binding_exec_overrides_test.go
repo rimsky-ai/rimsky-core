@@ -121,11 +121,11 @@ func waitForExecLog(t *testing.T, path string, timeout time.Duration) (execLogLi
 // are applied at exec(), the per-binding timeout bounds the spawn wait, and a
 // binding with no overrides still spawns (backward compatible).
 func TestHostAgentPerBindingExecOverrides(t *testing.T) {
-	// Not parallel: execs real child processes and binds free ports; keep it
+	// @constraint: Not parallel: execs real child processes and binds free ports; keep it
 	// serial so the port reservations and process reaping stay predictable.
 
 	t.Run("overrides_applied_at_exec", func(t *testing.T) {
-		// The exec-log + env-key must be set BEFORE the fixture starts so the
+		// @constraint: The exec-log + env-key must be set BEFORE the fixture starts so the
 		// agent (and every child it exec()s) inherits them via os.Environ().
 		execLog := t.TempDir() + "/stub-exec.log"
 		t.Setenv("STUBCHILD_EXEC_LOG", execLog)
@@ -133,7 +133,7 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 
 		fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})
 
-		// A per-binding cwd the agent must chdir the child into. Must exist on
+		// @constraint: A per-binding cwd the agent must chdir the child into. Must exist on
 		// disk (exec.Command fails if cmd.Dir does not).
 		bindingCwd := t.TempDir()
 
@@ -150,7 +150,7 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 		worker := fx.h.FindNode(iid, "worker")
 		require.NotNil(t, worker, "worker node should exist")
 
-		// The dispatch must reach the spawned child; once it does, the stub
+		// @constraint: The dispatch must reach the spawned child; once it does, the stub
 		// echoes its argv/env/cwd.
 		line, ok := waitForExecLog(t, execLog, 45*time.Second)
 		require.True(t, ok, "the late-bound child never logged an Execute (dispatch did not reach it)")
@@ -159,7 +159,7 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 			"the spawned child must run with the per-binding args (exec.Command(path, binding.args...))")
 		require.Equal(t, wantEnvVal, line.Env,
 			"the spawned child must see the per-binding env var (binding.env layered onto the inherited environment)")
-		// os.Getwd() resolves symlinks (e.g. macOS /var → /private/var); compare
+		// @constraint: os.Getwd() resolves symlinks (e.g. macOS /var → /private/var); compare
 		// against the same resolution so the assertion is about the real chdir,
 		// not symlink spelling.
 		require.Equal(t, evalSymlinks(t, bindingCwd), evalSymlinks(t, line.Cwd),
@@ -167,7 +167,7 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 	})
 
 	t.Run("short_binding_timeout_bounds_the_wait", func(t *testing.T) {
-		// STUBCHILD_NO_BIND makes the stub never bind its port, so the spawn
+		// @constraint: STUBCHILD_NO_BIND makes the stub never bind its port, so the spawn
 		// readiness wait must time out. The binding declares a SHORT timeout
 		// (3s) — far below the 30s global default. If the override is applied,
 		// spawn_failed arrives within a sub-30s budget; if it is ignored (today)
@@ -182,7 +182,7 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 			"timeout_seconds": 3,
 		})
 
-		// Budget chosen well below the 30s global default but well above the 3s
+		// @deliberate: Budget chosen well below the 30s global default but well above the 3s
 		// per-binding override (plus dispatch/proxy overhead): a spawn_failed
 		// inside this window proves the SHORT binding timeout bounded the wait,
 		// not the global default.
@@ -196,7 +196,7 @@ func TestHostAgentPerBindingExecOverrides(t *testing.T) {
 	})
 
 	t.Run("no_overrides_still_spawns", func(t *testing.T) {
-		// Backward compatibility: a binding with no override fields spawns with
+		// @deliberate: Backward compatibility: a binding with no override fields spawns with
 		// inherited env, the global cwd, and the global timeout, and the run
 		// reaches terminal/success exactly as the unmodified late-bind path.
 		fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})

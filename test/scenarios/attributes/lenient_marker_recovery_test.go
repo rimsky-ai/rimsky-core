@@ -58,10 +58,10 @@ import (
 func TestLenientMarkerRecoveryE2E(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// upstream produces `present`, never `maybe`.
+	// @constraint: upstream produces `present`, never `maybe`.
 	h.Stub.WhenType("upstream").Success(map[string]any{"present": "yes"}, true, "ok")
 	h.Stub.WhenType("lenient").Success(map[string]any{}, true, "ok")
-	// strict's dispatch fails at substitution before the stub is ever
+	// @deliberate: strict's dispatch fails at substitution before the stub is ever
 	// invoked; no script needs to model a terminal for it.
 	h.Stub.WhenType("strict").Success(map[string]any{}, true, "ok")
 
@@ -74,7 +74,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 					"type": "object",
 					"properties": map[string]any{
 						"present": map[string]any{"type": "string"},
-						// `maybe` is DECLARED (so the downstream substitution
+						// @constraint: `maybe` is DECLARED (so the downstream substitution
 						// refs pass the registration cross-check) but NEVER
 						// produced — it is optional and the upstream stub emits
 						// only `present`. At dispatch the source is therefore
@@ -86,7 +86,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "lenient", Executor: "stub"},
-				// Fire this node off upstream's terminal — the cascade
+				// @constraint: Fire this node off upstream's terminal — the cascade
 				// trigger is decoupled from the (deliberately absent) `maybe`
 				// attribute, so the node genuinely dispatches and we observe
 				// the lenient recovery at dispatch time rather than never
@@ -95,7 +95,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// Lenient `?` marker — absent source recovers to empty.
+						// @deliberate: Lenient `?` marker — absent source recovers to empty.
 						"note": map[string]any{
 							"type":   "string",
 							"source": "{{nodes.upstream.attribute.maybe?}}",
@@ -117,7 +117,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// Strict — same absent source, no marker. Missing
+						// @deliberate: Strict — same absent source, no marker. Missing
 						// source fails the dispatch.
 						"note": map[string]any{
 							"type":   "string",
@@ -137,7 +137,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 	require.NotNil(t, lenientN)
 	require.NotNil(t, strictN)
 
-	// (a) Lenient node dispatches with the recovered-empty note and
+	// @deliberate: (a) Lenient node dispatches with the recovered-empty note and
 	// reaches a terminal Complete (settles fresh with a terminal/success
 	// event).
 	require.True(t, h.WaitForNodeState(upN.ID, cascade.NodeStateFresh, 20*time.Second),
@@ -145,7 +145,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 	require.True(t, h.WaitForNodeState(lenientN.ID, cascade.NodeStateFresh, 20*time.Second),
 		"lenient node should reach terminal Complete (fresh), not fail with ErrMissingSource")
 
-	// The stub recorded the lenient node's dispatch with `note`
+	// @deliberate: The stub recorded the lenient node's dispatch with `note`
 	// resolved to empty string (lenient recovery).
 	var lenientNote any
 	var sawLenientDispatch bool
@@ -159,7 +159,7 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 	require.Equal(t, "", lenientNote,
 		"lenient `?` directive over an absent source should resolve to empty string at dispatch")
 
-	// (b) Strict node fails the dispatch with a missing-source
+	// @constraint: (b) Strict node fails the dispatch with a missing-source
 	// diagnostic — it transitions to failed via the
 	// template_resolution_failed give_up policy and never reaches a
 	// clean terminal Complete.

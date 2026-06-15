@@ -99,8 +99,9 @@ func (f *httpForwarder) targetURL(fwd *genv1.LocalHttpForward) string {
 	}
 	fwdURL, err := url.Parse(fwd.GetUrl())
 	if err != nil || fwdURL.Path == "" {
-		// No usable per-callback path on the forward; fall back to the
-		// recorded callback verbatim (single-dispatch happy path).
+		// @deliberate: no usable per-callback path on the forward; fall
+		// back to the recorded callback verbatim (single-dispatch happy
+		// path).
 		return sp.originalCallback
 	}
 	base.Path = fwdURL.Path

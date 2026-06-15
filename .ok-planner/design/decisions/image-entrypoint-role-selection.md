@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`rimsky-entrypoint` with no command → all roles; single role command → that role; migrate runs once per deployment, owner role determined by command.
+The shared entrypoint binary with no command → all roles; single role command → that role; migrate runs once per deployment, owner role determined by command (see `concept:rimsky`).
 
 ## Rationale
 

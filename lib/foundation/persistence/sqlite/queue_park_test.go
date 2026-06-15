@@ -32,7 +32,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 
 	rawDB := sqlitedrv.DBFromDatabase(d)
 
-	// Seed the FK chain (template → instance → frame → node → node-run).
+	// @constraint: FK chain order — template → instance → frame → node → node-run.
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
 	frameID := uuid.New()
@@ -45,8 +45,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// Post-RunScope-first: instance + main_run_scope mutually FK each
-	// other; seed in one tx with deferred constraints.
+	// @constraint: instance ↔ main_run_scope mutually FK each other post-RunScope-first cutover; both rows must land in one tx with deferred constraints.
 	scopeID := uuid.New().String()
 	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -68,8 +67,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// rimsky_frames requires frame_timeout_ms >= 60000 (CHECK). Use the
-	// minimum permitted value; the test never trips the timeout.
+	// @constraint: rimsky_frames CHECK requires frame_timeout_ms >= 60000; use the minimum permitted value (the test never trips the timeout).
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at)
@@ -78,8 +76,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
-	// Post-stage-3 cutover: state lives on rimsky_node_runs; the
-	// rimsky_nodes row carries only identity + frame_id.
+	// @constraint: post-stage-3 cutover — state lives on rimsky_node_runs; rimsky_nodes row carries only identity + frame_id.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
 		 VALUES (?, ?, 'fixture', ?)`,
@@ -87,7 +84,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	// node-run starts in phase='active' so ParkActiveInTx accepts it.
+	// @constraint: node-run must start in phase='active' so ParkActiveInTx accepts it.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, phase, frame_id, run_scope_id)
@@ -117,10 +114,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 		t.Fatalf("ParkActiveInTx: %v", err)
 	}
 
-	// Resume the row to phase='pending' so the resume-dispatch path's
-	// LoadResumeMetadataInTx call would fire (in production this happens
-	// inside the runner's per-candidate acquisition tx). The wake_reason
-	// arg is the WakeReason enum string.
+	// @deliberate: drive row to phase='pending' here so LoadResumeMetadataInTx fires the resume-dispatch path; in production the runner does this inside its per-candidate acquisition tx. The wake_reason arg is the WakeReason enum string.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ok, err := queue.ResumeParkedInTx(ctx, tx, dispatchID, "deadline_elapsed")
 		if err != nil {
@@ -134,10 +128,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 		t.Fatalf("ResumeParkedInTx: %v", err)
 	}
 
-	// LoadResumeMetadataInTx is the bug surface. Before the fix this
-	// returned an error trying to scan parked_at TEXT into sql.NullTime;
-	// the runner's short-circuit swallowed the error and treated the
-	// dispatch as fresh.
+	// @constraint: LoadResumeMetadataInTx must scan parked_at TEXT into time.Time without error — regression surface where sql.NullTime previously failed and the runner's short-circuit swallowed it, treating the dispatch as fresh.
 	var rm *persistence.ResumeMetadataRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		out, err := queue.LoadResumeMetadataInTx(ctx, tx, dispatchID)
@@ -161,8 +152,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 	if rm.WakeReason != "deadline_elapsed" {
 		t.Fatalf("WakeReason: got %q, want deadline_elapsed", rm.WakeReason)
 	}
-	// ParkedAt round-trip: SQLite stores RFC3339Nano text; parseTime
-	// handles the parse. We expect equality at microsecond precision.
+	// @constraint: ParkedAt round-trip — SQLite stores RFC3339Nano text and parseTime handles the parse; equality holds at microsecond precision.
 	if rm.ParkedAt.IsZero() {
 		t.Fatalf("ParkedAt: got zero, want %v (regression: TEXT → sql.NullTime scan failure)",
 			parkedAt)
@@ -171,8 +161,7 @@ func TestSQLiteParkResumeRoundTrip(t *testing.T) {
 		t.Fatalf("ParkedAt: got %v, want %v", rm.ParkedAt, parkedAt)
 	}
 
-	// ClearResumeMetadataInTx wipes the metadata; a second load returns
-	// nil. Confirms the post-resume path empties cleanly.
+	// @constraint: ClearResumeMetadataInTx must leave a subsequent LoadResumeMetadataInTx returning nil — the post-resume path empties metadata cleanly.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return queue.ClearResumeMetadataInTx(ctx, tx, dispatchID)
 	}); err != nil {

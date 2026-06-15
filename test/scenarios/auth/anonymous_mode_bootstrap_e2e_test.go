@@ -54,7 +54,7 @@ func TestAnonymousModeBootstrap(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// Isolate from any developer ~/.rimsky/config.yml — the auth
+	// @deliberate: Isolate from any developer ~/.rimsky/config.yml — the auth
 	// subcommands resolve the endpoint via flag → env → config in
 	// that order. We pass --endpoint explicitly below, but stamping a
 	// throwaway HOME keeps a stray config from coloring resolution.
@@ -62,33 +62,13 @@ func TestAnonymousModeBootstrap(t *testing.T) {
 	t.Setenv("RIMSKY_CONTROL_API", "")
 	t.Setenv("RIMSKY_API_KEY", "")
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 1: fresh deployment — keys table is empty, status reports
-	// "anonymous". This is the precondition the story names.
-	// ────────────────────────────────────────────────────────────────
 	assertAuthStatus(t, f, "", "anonymous", 0, 0)
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 2: anonymous-mode requests succeed without a bearer token.
-	// We pick a route that is auth-gated in authenticated mode
-	// (`GET /v1/auth/keys` requires `auth:read`) so the same call
-	// later exhibits the closed-mode 401. The same property holds for
-	// arbitrary `auth:write` routes — the fixture intentionally drives
-	// `POST /v1/auth/keys` for `auth init` itself, so that path is
-	// covered by step 3.
-	// ────────────────────────────────────────────────────────────────
 	code, body := f.request(t, "GET", "/v1/auth/keys", "", nil)
 	if code != http.StatusOK {
 		t.Fatalf("anonymous GET /v1/auth/keys: got %d %+v, want 200 (anonymous mode is open)", code, body)
 	}
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 3: `rimsky auth init` against the anonymous deployment.
-	// Drive the real CLI entry point (the same function
-	// cmd/rimsky/main.go invokes for the `auth init` subcommand).
-	// Capture stdout so we can prove the plaintext is returned —
-	// exactly once.
-	// ────────────────────────────────────────────────────────────────
 	stdout1, stderr1, exit1 := runAuthInit(t, f.srv.URL)
 	if exit1 != 0 {
 		t.Fatalf("auth init (1st): exit %d, stderr=%q, want exit 0", exit1, stderr1)
@@ -98,24 +78,18 @@ func TestAnonymousModeBootstrap(t *testing.T) {
 		t.Fatalf("auth init (1st): stdout did not include the minted plaintext: %q", stdout1)
 	}
 
-	// The plaintext must NOT also appear in stderr (would-be
+	// @constraint: The plaintext must NOT also appear in stderr (would-be
 	// log/banner leakage). It is a write-once secret.
 	if strings.Contains(stderr1, plaintext) {
 		t.Fatalf("auth init (1st): plaintext leaked to stderr: %q", stderr1)
 	}
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 4: after init, anonymous mode is CLOSED. An unauthenticated
-	// request to the same route used in step 2 must now be refused.
-	// This is the load-bearing falsifier check (anonymous mode stays
-	// open after a key is minted).
-	// ────────────────────────────────────────────────────────────────
 	code, body = f.request(t, "GET", "/v1/auth/keys", "", nil)
 	if code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated GET /v1/auth/keys after init: got %d %+v, want 401 (anonymous mode must close on first key mint)", code, body)
 	}
 
-	// Sanity: the minted plaintext is a real bearer credential — the
+	// @deliberate: Sanity: the minted plaintext is a real bearer credential — the
 	// same route succeeds when presented. This confirms what we
 	// captured from stdout is the actual minted key, not a placeholder.
 	code, body = f.request(t, "GET", "/v1/auth/keys", plaintext, nil)
@@ -123,32 +97,8 @@ func TestAnonymousModeBootstrap(t *testing.T) {
 		t.Fatalf("bearer GET /v1/auth/keys with minted plaintext: got %d %+v, want 200 (the plaintext returned from auth init must authenticate)", code, body)
 	}
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 5: status surface honestly reports the new mode. Active
-	// count is 1, admin count is 1 (the bundled `admin` role is the
-	// literal `*` grant — see cmd/rimsky/cli/roles/admin.json — which
-	// is the admin_count predicate).
-	// ────────────────────────────────────────────────────────────────
 	assertAuthStatus(t, f, plaintext, "authenticated", 1, 1)
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 6: re-running `rimsky auth init` against the same deployment
-	// MUST refuse (the keys table is non-empty). This is the second
-	// load-bearing falsifier check.
-	//
-	// Two surfaces enforce the refusal:
-	//   - CLI-side: auth_init.go fetches /v1/auth/status before mint
-	//     and exits 1 with "already authenticated" when active>0.
-	//   - Server-side: even if the CLI nicety were missing, the POST
-	//     /v1/auth/keys endpoint would refuse the unauthenticated
-	//     request now that anonymous mode has closed (the call would
-	//     reach the auth gate and 401).
-	//
-	// Either way, plaintext must NOT be printed again — a successful
-	// stdout that includes a freshly-minted plaintext would mean the
-	// bootstrap surface re-issued an admin credential against a
-	// already-bootstrapped deployment.
-	// ────────────────────────────────────────────────────────────────
 	stdout2, stderr2, exit2 := runAuthInit(t, f.srv.URL)
 	if exit2 == 0 {
 		t.Fatalf("auth init (2nd): exit 0; expected non-zero. stdout=%q, stderr=%q. The bootstrap surface must refuse on a deployment with active keys.", stdout2, stderr2)
@@ -156,17 +106,13 @@ func TestAnonymousModeBootstrap(t *testing.T) {
 	if strings.Contains(stdout2, "rim_") || strings.Contains(stdout2, plaintext) {
 		t.Fatalf("auth init (2nd): plaintext appeared on stdout despite refused exit. stdout=%q", stdout2)
 	}
-	// The stderr message names the recovery path — operators must be
+	// @constraint: The stderr message names the recovery path — operators must be
 	// directed at `rimsky auth create-key` rather than left guessing.
 	// (The exact phrase comes from auth_init.go.)
 	if !strings.Contains(stderr2, "already authenticated") && !strings.Contains(stderr2, "already exist") {
 		t.Logf("auth init (2nd) stderr (informational): %q", stderr2)
 	}
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 7: status surface still reports `authenticated` after the
-	// refused re-init (no second key minted, no mode regression).
-	// ────────────────────────────────────────────────────────────────
 	assertAuthStatus(t, f, plaintext, "authenticated", 1, 1)
 }
 
@@ -190,7 +136,7 @@ func runAuthInit(t *testing.T, endpoint string) (string, string, int) {
 	os.Stdout = stdoutW
 	os.Stderr = stderrW
 
-	// Drain on background goroutines so writes larger than the OS
+	// @deliberate: Drain on background goroutines so writes larger than the OS
 	// pipe buffer don't deadlock during the CLI invocation.
 	outCh := make(chan []byte, 1)
 	errCh := make(chan []byte, 1)
@@ -220,7 +166,6 @@ func runAuthInit(t *testing.T, endpoint string) (string, string, int) {
 // the story names ("plaintext returned exactly once").
 func extractPlaintext(t *testing.T, stdout string) string {
 	t.Helper()
-	// Find the banner line; the plaintext is the next non-blank line.
 	lines := strings.Split(stdout, "\n")
 	for i, ln := range lines {
 		if strings.Contains(ln, "Save this admin key") {
@@ -248,7 +193,7 @@ func assertAuthStatus(t *testing.T, f *authFixture, bearer, wantMode string, wan
 	if gotMode != wantMode {
 		t.Fatalf("GET /v1/auth/status mode: got %q, want %q (full body=%+v)", gotMode, wantMode, body)
 	}
-	// JSON numeric fields decode as float64; coerce for the count
+	// @deliberate: JSON numeric fields decode as float64; coerce for the count
 	// comparisons.
 	gotActive, _ := body["active_key_count"].(float64)
 	if int(gotActive) != wantActive {
@@ -258,7 +203,7 @@ func assertAuthStatus(t *testing.T, f *authFixture, bearer, wantMode string, wan
 	if int(gotAdmins) != wantAdmins {
 		t.Fatalf("GET /v1/auth/status admin_count: got %d, want %d (body=%+v)", int(gotAdmins), wantAdmins, body)
 	}
-	// Re-encode the body so a JSON-parsing regression here surfaces
+	// @deliberate: Re-encode the body so a JSON-parsing regression here surfaces
 	// loudly rather than as a silent wrong-shape pass. (Mirrors a
 	// belt-and-suspenders check elsewhere in the auth suite.)
 	if _, err := json.Marshal(body); err != nil {

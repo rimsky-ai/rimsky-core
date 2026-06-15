@@ -157,7 +157,7 @@ func (h *senderSubjectHarness) mintActiveAPIKey(t *testing.T, name string, perms
 			CreatedAt:   h.clock.Now(),
 		}, tx)
 	}))
-	// IsAnonymousMode caches the predicate; the first mint flips the
+	// @constraint: IsAnonymousMode caches the predicate; the first mint flips the
 	// deployment out of anonymous mode, so invalidate so subsequent
 	// requests use the authenticated path immediately.
 	h.auth.InvalidateAnonCache()
@@ -192,7 +192,7 @@ func (h *senderSubjectHarness) httpPostAs(t *testing.T, path string, body any, b
 	return resp.StatusCode, out
 }
 
-// newSenderSubjectInstance registers + deploys a one-node template and
+// newInstance registers + deploys a one-node template and
 // creates an instance against it, returning the instance id. Uses admin
 // bearer so the auth-gated routes accept the calls.
 func (h *senderSubjectHarness) newInstance(t *testing.T, adminKey, tag string) string {
@@ -264,10 +264,10 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	h := newSenderSubjectHarness(t)
 	t.Cleanup(h.close)
 
-	// Mint admin (wildcard) so the instance/template setup can run.
+	// @constraint: mint admin (wildcard) so the instance/template setup can run.
 	adminKey, _ := h.mintActiveAPIKey(t, "admin", []map[string]any{{"action": "*"}})
 
-	// Mint two distinct narrow keys, each holding the message-create
+	// @constraint: mint two distinct narrow keys, each holding the message-create
 	// surface but distinct as identities. Both must hit the
 	// authenticated branch (not the anonymous-mode synthetic), so we
 	// have at least one active key when these requests fire.
@@ -286,7 +286,7 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	const sharedKey = "shared-idem-key"
 	path := fmt.Sprintf("/v1/instances/%s/messages", instID)
 
-	// (1) Key A first emit: 201, captures the persisted message_id.
+	// @constraint: (1) Key A first emit: 201, captures the persisted message_id.
 	statusA1, bodyA1 := h.httpPostAs(t, path, map[string]any{
 		"kind":    "invalidate",
 		"target":  "root",
@@ -296,7 +296,7 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	msgAID, _ := bodyA1["message_id"].(string)
 	require.NotEmpty(t, msgAID)
 
-	// (2) Key B first emit with the same Idempotency-Key: MUST be a
+	// @constraint: (2) Key B first emit with the same Idempotency-Key: MUST be a
 	// fresh 201 with a distinct message_id. If sender_subject did not
 	// participate in the dedup tuple this would 200-replay Key A's
 	// message and return msgAID — that's the regression this test is
@@ -313,7 +313,7 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	require.NotEqual(t, msgAID, msgBID,
 		"distinct sender_subject MUST return a distinct message_id; got both = %s", msgAID)
 
-	// (3) Key A replays with the same Idempotency-Key and a different
+	// @constraint: (3) Key A replays with the same Idempotency-Key and a different
 	// payload (P3). Returns 200 + msgAID (the original message_id from
 	// step 1). The replay's payload P3 is dropped on the floor; the
 	// persisted envelope still carries P1's bytes.
@@ -330,7 +330,7 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	require.NotEqual(t, msgBID, msgAReplayID,
 		"key A's replay must NOT inherit key B's message_id (would prove sender_subject did not isolate the tuple)")
 
-	// Persisted-envelope check: msgA still carries A's original
+	// @constraint: persisted-envelope check: msgA still carries A's original
 	// payload bytes (A-first), not the replay payload (A-replay-P3) and
 	// not B's payload (B-first). Same opacity discipline as
 	// @blessed-invariant 21 — payload is forwarded as-is, no

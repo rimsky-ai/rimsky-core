@@ -66,7 +66,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 		},
 	})
 
-	// All children + downstream succeed cleanly. Strict aggregation
+	// @constraint: All children + downstream succeed cleanly. Strict aggregation
 	// requires all-children-resolved for the parent to settle to fresh.
 	h.Stub.WhenType("fan-parent").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("downstream").Success(map[string]any{"ok": true}, true, "ok")
@@ -88,7 +88,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 					FanOut: &tmplspec.FanOutSpec{
 						Claim:            "data",
 						PartitionRequest: `{"partition_keys":["a","b","c"]}`,
-						// Strict aggregation — parent only settles when
+						// @constraint: Strict aggregation — parent only settles when
 						// ALL children resolve. Pins the bridge path:
 						// parent settlement via aggregation walker MUST
 						// fire cascadeSubscribersStaleInTx for the
@@ -115,7 +115,6 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 	downstreamNode := h.FindNode(iid, "downstream")
 	require.NotNil(t, downstreamNode, "downstream node missing")
 
-	// Wait for all three partition children to settle to state=fresh.
 	require.Eventually(t, func() bool {
 		var freshRuns int
 		h.QueryRowSQL(`
@@ -131,7 +130,7 @@ func TestFanOutStrictCascadeE2E(t *testing.T) {
 	}, 60*time.Second, 100*time.Millisecond,
 		"all three partition children should reach state=fresh")
 
-	// Pin: under STRICT aggregation, parent settlement goes through
+	// @constraint: Pin: under STRICT aggregation, parent settlement goes through
 	// walkUpwards (not applyTerminal on the parent), so the cascade
 	// bridge in PropagateIfChildAfterTerminal MUST fire to wake the
 	// downstream subscriber. If the bridge is missing, downstream

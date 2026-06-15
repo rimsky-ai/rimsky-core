@@ -169,25 +169,20 @@ func runSensorObjectStoreContainer(ctx context.Context, t testing.TB, networkNam
 	t.Helper()
 	env := map[string]string{
 		"RIMSKY_SENSOR_OBJECT_STORE_PORT": "9083",
-		// rimsky's stable in-network alias; the sensor POSTs message
-		// envelopes here.
-		"RIMSKY_ENDPOINT": "http://rimsky:8080",
-		// Auto-register the filesystem backend in the sensor binary.
-		// The default image otherwise registers only "memory". With
-		// this env set, Capabilities advertises and Subscribe accepts
-		// "filesystem", and the lister reads objects out of the
-		// container-local directory tree under this root.
+		"RIMSKY_ENDPOINT":                 "http://rimsky:8080",
+		// @deliberate: setting RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT auto-registers the
+		// filesystem backend in the sensor binary; the default image otherwise
+		// registers only "memory", so Capabilities would not advertise "filesystem"
+		// and Subscribe would reject it.
 		"RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT": sensorObjectStoreBucketRoot,
 	}
 	if stateDSN != "" {
-		// Durability gate. When set, sensor-object-store persists
-		// active publisher-subscriptions + their watermark cursors
-		// (watermark_name | watermark_time) to the configured Postgres
-		// so a process restart resumes the cursor instead of treating
-		// every already-listed object as new. Empty → in-memory
-		// default (loses watches AND cursors on restart; the
-		// STORY-sensor-object-store durability acceptance is not
-		// observable).
+		// @story: sensor-object-store — when set, sensor-object-store
+		// persists active publisher-subscriptions + their watermark cursors
+		// (watermark_name | watermark_time) to the configured Postgres so a process
+		// restart resumes the cursor instead of treating every already-listed object
+		// as new. Empty → in-memory default (loses watches AND cursors on restart;
+		// the durability acceptance is not observable).
 		env["RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN"] = stateDSN
 	}
 	c, err := testcontainers.Run(ctx, sensorObjectStoreImage,

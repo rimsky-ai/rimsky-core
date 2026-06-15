@@ -22,27 +22,31 @@ import (
 type PublisherClient interface {
 	Name() string
 
-	// Subscribe begins a publisher-subscription on the publisher service.
-	// The subscription_id is rimsky-generated UUIDv4; the publisher binds
-	// it internally.
-	//
-	// Subscribe MUST be idempotent per publisher_subscription_id: rimsky
-	// retries it from the reconciliation worker (one attempt per tick,
-	// no attempt cap) and the startup resync sweep can overlap the
-	// reconciler, so a publisher may receive the same Subscribe two or
-	// more times — repeats must succeed without duplicating the
-	// subscription. The publisher conformance suite pins this
-	// (checkSubscribeIdempotent).
+	// @agent-contract Subscribe begins a publisher-subscription on the
+	// publisher service. The subscription_id is rimsky-generated UUIDv4;
+	// the publisher binds it internally. Subscribe MUST be idempotent
+	// per publisher_subscription_id: rimsky retries it from the
+	// reconciliation worker (one attempt per tick, no attempt cap) and
+	// the startup resync sweep can overlap the reconciler, so a
+	// publisher may receive the same Subscribe two or more times —
+	// repeats must succeed without duplicating the subscription. The
+	// publisher conformance suite pins this (checkSubscribeIdempotent).
+	// Does NOT handle authentication or transport concerns — those are
+	// the binding layer's responsibility.
 	Subscribe(ctx context.Context, req SubscribeRequest) error
 
-	// Unsubscribe tears down a previously-started publisher-subscription.
-	// Idempotent: unsubscribing an unknown/already-removed id succeeds
-	// (also pinned by the conformance suite).
+	// @agent-contract Unsubscribe tears down a previously-started
+	// publisher-subscription. Idempotent: unsubscribing an
+	// unknown/already-removed id succeeds (also pinned by the
+	// conformance suite). Does NOT guarantee in-flight messages stop
+	// immediately — only that the subscription is removed.
 	Unsubscribe(ctx context.Context, subscriptionID shared.UUID) error
 
-	// ListSubscriptions enumerates the publisher-subscriptions the
-	// publisher currently has. Used by `ResyncPublisherSubscriptions` to
-	// reconcile state after rimsky (or the publisher) restarts.
+	// @agent-contract ListSubscriptions enumerates the
+	// publisher-subscriptions the publisher currently has. Used by
+	// `ResyncPublisherSubscriptions` to reconcile state after rimsky
+	// (or the publisher) restarts. Does NOT include transient or
+	// in-progress Subscribe attempts — only fully-bound subscriptions.
 	ListSubscriptions(ctx context.Context) ([]ListedPublisherSubscription, error)
 }
 
@@ -75,7 +79,8 @@ type ListedPublisherSubscription struct {
 // when the named publisher is not configured on this process.
 type PublisherRegistry interface {
 	Get(name string) (PublisherClient, bool)
-	// All returns every registered PublisherClient. Used by the resync
-	// sweeper, which fans out across the full set.
+	// @agent-contract All returns every registered PublisherClient.
+	// Used by the resync sweeper, which fans out across the full set.
+	// Does NOT guarantee a stable order across calls.
 	All() []PublisherClient
 }

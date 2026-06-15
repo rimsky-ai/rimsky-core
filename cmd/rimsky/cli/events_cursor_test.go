@@ -41,9 +41,9 @@ func TestEventsFollowOpaqueCursor(t *testing.T) {
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
 
-	// Seed two full pages plus a partial third (limit is 100). Distinct,
-	// strictly-increasing occurred_at timestamps make the keyset total and
-	// the page boundaries deterministic regardless of seeding speed.
+	// @constraint: seed two full pages plus a partial third (limit is 100);
+	// distinct strictly-increasing occurred_at timestamps make the keyset
+	// total and page boundaries deterministic regardless of seeding speed.
 	const total = 250
 	base := time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)
 	for i := 0; i < total; i++ {
@@ -55,7 +55,6 @@ func TestEventsFollowOpaqueCursor(t *testing.T) {
 		})
 	}
 
-	// Capture stdout without forking a process.
 	rOut, wOut, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +83,8 @@ func TestEventsFollowOpaqueCursor(t *testing.T) {
 		done <- cli.RunInstanceEvents(ctx, []string{"--follow", "--poll-interval", "20ms", inst.ID})
 	}()
 
-	// Give the follow loop time to page through all three pages and poll a
-	// few times after draining.
+	// @deliberate: 400ms lets the 20ms poll page through all three pages and
+	// poll a few more times after draining, before cancel.
 	time.Sleep(400 * time.Millisecond)
 	cancel()
 	exit := <-done
@@ -97,7 +96,6 @@ func TestEventsFollowOpaqueCursor(t *testing.T) {
 		t.Fatalf("follow loop errored (exit %d); a non-base64 cursor was rejected by the honest mock. output:\n%s", exit, out)
 	}
 
-	// Every seeded event ID must print exactly once across the full backlog.
 	for i := 0; i < total; i++ {
 		want := fmt.Sprintf("\t%d\tk%d\n", i+1, i+1)
 		if c := strings.Count(out, want); c != 1 {

@@ -32,7 +32,6 @@ type MemoryBackend struct {
 	seq   atomic.Uint64
 }
 
-// Compile-time interface check.
 var _ BlobBackend = (*MemoryBackend)(nil)
 
 // NewMemoryBackend constructs an empty MemoryBackend.

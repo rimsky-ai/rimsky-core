@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// max_open_conns_test.go — regression coverage for the SQLite driver's
-// connection-pool sizing (@decision: persistence-driver). The starvation
-// case the wider pool exists to prevent is: one long-running write tx
-// (the supervisor's settle path) holds its connection while a parallel
-// read-only path (the control-api's wait-loop polls — answering GET
-// /instances/{id} for the compose-run verb) wants a connection too. At
-// MaxOpenConns=1 the read path waits until the writer commits; the test
-// here proves the read makes progress concurrently with a held writer.
-
 package sqlite_test
 
 import (
@@ -47,16 +38,13 @@ func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 
 	db := pgsqlite.DBFromDatabase(d)
 
-	// Set up a tiny table so the writer has something concrete to hold
-	// a row-level lock on. With WAL + busy_timeout, the writer slot is
-	// held at the database file level; the conn it sits on is what the
-	// pool slots are sized against.
+	// @deliberate: probe table gives the writer something concrete to hold; under
+	// WAL + busy_timeout the writer slot is held at the file level, so the conn
+	// it sits on is what the pool-slot sizing is measured against.
 	if _, err := db.Exec(`CREATE TABLE poolprobe (id INTEGER PRIMARY KEY, payload TEXT)`); err != nil {
 		t.Fatalf("create table: %v", err)
 	}
 
-	// Start a writer tx and hold it open. The release channel lets us
-	// keep the connection occupied while we attempt the parallel read.
 	release := make(chan struct{})
 	writerStarted := make(chan struct{})
 	var writerErr error
@@ -86,11 +74,9 @@ func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 		t.Fatalf("writer tx setup: %v", writerErr)
 	}
 
-	// Now attempt a parallel read against the same *sql.DB. With
-	// MaxOpenConns=1, db.QueryRowContext would block on the conn-pool
-	// acquisition until the writer commits — and the 1-second context
-	// here would fire first. With MaxOpenConns=8 the read gets its own
-	// conn and completes immediately.
+	// @constraint: with MaxOpenConns=1 this QueryRowContext would block on
+	// conn-pool acquisition until the writer commits and the 1s context would
+	// fire first; the wider pool lets the read get its own conn and complete.
 	readCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	var one int
@@ -103,8 +89,6 @@ func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 		t.Errorf("read returned %d, want 1", one)
 	}
 
-	// Let the writer commit and wait for the goroutine to finish so
-	// the test does not leave the writer hanging.
 	close(release)
 	wg.Wait()
 	if writerErr != nil {

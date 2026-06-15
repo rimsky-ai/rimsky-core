@@ -3,7 +3,7 @@
 // See LICENSE.apache at the repo root.
 
 /**
- * rate-limit.ts — detection helpers for Anthropic API rate-limit events.
+ * Detection helpers for Anthropic API rate-limit events (`rate-limit.ts`).
  *
  * Per the 2026-05-08 platform-extensions plan J9, claude-agent should
  * convert detected rate limits into a `Park` terminal so the rimsky
@@ -61,7 +61,7 @@ export function detectRateLimit(stderr: string, now: Date = new Date()): RateLim
  * reset signal was found.
  */
 function parseResumeAt(stderr: string, now: Date): Date | null {
-  // 1. retry-after: <seconds>
+  // @deliberate: 1. retry-after: <seconds>
   const retryAfter = /retry-after:\s*(\d+)/i.exec(stderr);
   if (retryAfter) {
     const seconds = parseInt(retryAfter[1], 10);
@@ -69,7 +69,7 @@ function parseResumeAt(stderr: string, now: Date): Date | null {
       return new Date(now.getTime() + seconds * 1000);
     }
   }
-  // 2. anthropic-ratelimit-(tokens-)reset: <unix-epoch>
+  // @deliberate: 2. anthropic-ratelimit-(tokens-)reset: <unix-epoch>
   const epochReset = /anthropic-ratelimit(?:-tokens)?-reset:\s*(\d+)/i.exec(stderr);
   if (epochReset) {
     const epoch = parseInt(epochReset[1], 10);
@@ -77,7 +77,7 @@ function parseResumeAt(stderr: string, now: Date): Date | null {
       return new Date(epoch * 1000);
     }
   }
-  // 3. ResetAt: 2026-05-08T...Z (RFC3339)
+  // @deliberate: 3. ResetAt: 2026-05-08T...Z (RFC3339)
   const isoReset = /resetat[:= ]\s*([0-9T:\-+.Z]+)/i.exec(stderr);
   if (isoReset) {
     const t = new Date(isoReset[1]);

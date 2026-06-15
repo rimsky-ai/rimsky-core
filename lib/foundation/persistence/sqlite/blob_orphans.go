@@ -2,8 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// blob_orphans.go is the sqlite accessor for rimsky_blob_orphans.
-// Mirrors the postgres impl. Insert is idempotent on the handle PK.
+// @source: lib/foundation/persistence/postgres/blob_orphans.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
+
 package sqlite
 
 import (

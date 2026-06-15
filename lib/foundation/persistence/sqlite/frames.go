@@ -2,13 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// frames.go — SQLite-backed persistence.FrameTable.
-//
-// SQLite stores `source_node_ids` as a JSON array of UUID strings (TEXT).
-// Append/contains operations use json_each / json_array helpers.
-//
-// `frame_resolution` and `frame_timeout_ms` are read out of the
-// rimsky_templates.spec TEXT (JSON) column via json_extract.
+// @source: lib/foundation/persistence/postgres/frames.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
+
 package sqlite
 
 import (
@@ -27,7 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Post-stage-3: state lives on rimsky_node_runs only. The pending-set
+// ListRunningFramesNoPendingNodes state lives on rimsky_node_runs only. The pending-set
 // predicate looks at in-flight run rows whose state is stale/running.
 //
 // unresolved-work: counts parked. A parked node_run holds its frame
@@ -147,30 +144,32 @@ func (s *framesImpl) PruneTraceForRetention(ctx context.Context, recentFramesKep
 	if !countBound && !timeBound {
 		return 0, nil
 	}
-	// Sentinel binds let one SQL serve all three bound combinations:
-	// when a bound is disabled its predicate is made unsatisfiable
-	// (rk > a huge cap never matches; ended_at < zero-time never matches)
-	// so the active bound(s) drive the delete.
+	// @constraint: sentinel binds let one SQL serve all three bound
+	// combinations — when a bound is disabled its predicate is made
+	// unsatisfiable (rk > a huge cap never matches; ended_at < zero-time
+	// never matches) so the active bound(s) drive the delete.
 	countCap := recentFramesKept
 	if !countBound {
-		// The platform max int — exceeds any possible per-instance frame
-		// rank, so the rank predicate never fires when the count bound is
-		// disabled. math.MaxInt (not a 1<<62 literal) keeps the constant
-		// in range of int on a 32-bit build target, where 1<<62 would
-		// overflow and fail to compile.
+		// @constraint: math.MaxInt (not a 1<<62 literal) exceeds any
+		// possible per-instance frame rank yet stays in range of int on
+		// a 32-bit build target, where 1<<62 would overflow and fail to
+		// compile; the rank predicate then never fires when the count
+		// bound is disabled.
 		countCap = math.MaxInt
 	}
 	cutoffArg := formatTime(cutoff)
 	if !timeBound {
-		// RFC3339 zero time; ended_at (always > 0001 for terminal frames)
-		// is never < this, so the time predicate never fires.
+		// @constraint: RFC3339 zero time; ended_at (always > 0001 for
+		// terminal frames) is never < this, so the time predicate never
+		// fires.
 		cutoffArg = formatTime(time.Time{})
 	}
-	// Standalone retention sweep — no caller-supplied tx. The single
-	// DELETE is atomic on its own, so run it directly against the db handle
-	// (mirroring Lineage.DeleteOlderThan); calling s.q(nil) here would trip
-	// the no-nil-tx contract and panic the scheduler tick. The frame→
-	// node_run ON DELETE CASCADE removes each deleted frame's runs.
+	// @constraint: standalone retention sweep — no caller-supplied tx.
+	// The single DELETE is atomic on its own, so run it directly against
+	// the db handle (mirroring Lineage.DeleteOlderThan); calling s.q(nil)
+	// here would trip the no-nil-tx contract and panic the scheduler
+	// tick. The frame→node_run ON DELETE CASCADE removes each deleted
+	// frame's runs.
 	res, err := (*tablesImpl)(s).db.ExecContext(ctx, `
         DELETE FROM rimsky_frames
          WHERE frame_id IN (
@@ -372,12 +371,12 @@ func (s *framesImpl) MarkSourceNodeStale(
     `, frameID.String(), nowUTC(), instanceID.String(), nodeID.String()); err != nil {
 		return false, fmt.Errorf("frames.MarkSourceNodeStale: bind frame: %w", err)
 	}
-	// Populate required_stores from the template node-def via a JSON
-	// lookup; see postgres mirror for rationale.
+	// @constraint: populate required_stores from the template node-def
+	// via a JSON lookup; see postgres mirror for rationale.
 	//
-	// Under RunScope-first the new row lives in the instance's main
-	// RunScope (the only RunScope a frame source's run can belong to).
-	// @concept: run-scope
+	// @concept: run-scope — under RunScope-first the new row lives in
+	// the instance's main RunScope (the only RunScope a frame source's
+	// run can belong to).
 	res, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
@@ -481,10 +480,12 @@ func (s *framesImpl) ListStuckRunningFrames(ctx context.Context, tx persistence.
 		if err != nil {
 			return nil, err
 		}
-		// Per the reactive-loops + lifecycle-handlers spec §7,
-		// frame_timeout_ms measures "no progress in window" rather than
-		// frame age. Compare against last_progress_at (refreshed by every
-		// node-state transition write) instead of started_at.
+		// @constraint: frame_timeout_ms measures "no progress in window"
+		// rather than frame age — compare against last_progress_at
+		// (refreshed by every node-state transition write) instead of
+		// started_at, so a progressing self-invalidate loop does not
+		// trip the soft warning even if its total runtime exceeds the
+		// timeout.
 		if !lastProgress.Add(time.Duration(frameTimeoutMs) * time.Millisecond).Before(now) {
 			continue
 		}
@@ -568,14 +569,13 @@ func (s *framesImpl) EnqueueSerialFrame(
 ) (shared.UUID, error) {
 	frameID := uuid.New()
 	now := nowUTC()
-	// Explicitly write last_progress_at at insert time using nowUTC()
-	// (the fixed-width timeLayoutFixedNanos layout, whose lexicographic
-	// order matches chronological order) so the column is uniformly
-	// nano-precision across all rows. The migration's strftime DEFAULT
-	// only delivers
-	// millisecond precision; relying on it for runtime inserts would
-	// leave the column with mixed precision and break any future
-	// SQL-level string comparison against the column.
+	// @constraint: explicitly write last_progress_at at insert time
+	// using nowUTC() (the fixed-width timeLayoutFixedNanos layout, whose
+	// lexicographic order matches chronological order) so the column is
+	// uniformly nano-precision across all rows. The migration's strftime
+	// DEFAULT only delivers millisecond precision; relying on it for
+	// runtime inserts would leave the column with mixed precision and
+	// break any future SQL-level string comparison against the column.
 	_, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_frames
             (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, queued_at, frame_timeout_ms, last_progress_at)
@@ -595,7 +595,7 @@ func (s *framesImpl) EnqueueSerialFrame(
 func (s *framesImpl) EnqueueCoalesceFrame(
 	ctx context.Context, instanceID, sourceNodeID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
 ) (shared.UUID, error) {
-	// Look for an existing queued+coalesce frame for this instance under
+	// existing for an existing queued+coalesce frame for this instance under
 	// the surrounding tx.
 	var existing string
 	err := s.q(tx).QueryRowContext(ctx, `
@@ -604,7 +604,6 @@ func (s *framesImpl) EnqueueCoalesceFrame(
         LIMIT 1
     `, instanceID.String()).Scan(&existing)
 	if err == nil {
-		// Append sourceNodeID if not already present.
 		fid, perr := uuid.Parse(existing)
 		if perr != nil {
 			return shared.UUID{}, perr
@@ -641,8 +640,9 @@ func (s *framesImpl) EnqueueCoalesceFrame(
 		return shared.UUID{}, fmt.Errorf("frames.EnqueueCoalesceFrame: select: %w", err)
 	}
 
-	// Insert a new coalesce frame. Write last_progress_at explicitly
-	// (see EnqueueSerialFrame for the precision rationale).
+	// @constraint: insert a new coalesce frame and write
+	// last_progress_at explicitly (see EnqueueSerialFrame for the
+	// precision rationale).
 	frameID := uuid.New()
 	now := nowUTC()
 	if _, err := s.q(tx).ExecContext(ctx, `

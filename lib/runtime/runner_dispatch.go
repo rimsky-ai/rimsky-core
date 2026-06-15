@@ -97,12 +97,14 @@ type terminalEvent struct {
 	AttributesDel map[string]any
 	ErrorClass    string
 	Payload       map[string]any
-	// Park fields — set when Kind == terminalKindPark.
-	ParkReason       genv1.ParkReason
-	ParkReasonNote   string
-	ParkReasonLabel  string // freeform optional classification tag; opaque to rimsky (closed enum no longer requires it).
-	ParkPayload      []byte
-	ParkResumeAt     time.Time // zero ⇒ indefinite
+	// @constraint: Park fields populated only when Kind == terminalKindPark.
+	ParkReason     genv1.ParkReason
+	ParkReasonNote string
+	// ParkReasonLabel is a freeform optional classification tag opaque to rimsky (the closed enum no longer requires it).
+	ParkReasonLabel string
+	ParkPayload     []byte
+	// @constraint: zero value ParkResumeAt means indefinite park.
+	ParkResumeAt     time.Time
 	ParkSessionToken string
 	// NamedEvents is the optional list of non-terminal NamedEvent
 	// emissions captured during the dispatch (gRPC stream) or in the
@@ -129,7 +131,7 @@ type terminalKind int
 const (
 	terminalKindNone terminalKind = iota
 	terminalKindComplete
-	// terminalKindErrored covers every error path. Pre-2026-05-12, the
+	// @deliberate: terminalKindErrored covers every error path. Pre-2026-05-12, the
 	// wire protocol split Blocked from Errored; per spec E.2/E.9 they
 	// collapsed into Error{error_class}, and `executor_blocked` is
 	// just one of the error classes the operator's `error_types:`
@@ -137,7 +139,7 @@ const (
 	terminalKindErrored
 	terminalKindAsyncAccepted
 	terminalKindInfra
-	// terminalKindPark is the in-runner flavor of the protocol-level
+	// @constraint: terminalKindPark is the in-runner flavor of the protocol-level
 	// Park event. The supervisor's terminal-handler chain dispatches
 	// to applyTerminalPark for this kind.
 	terminalKindPark
@@ -150,7 +152,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	metrics := metricsOf(args)
 	dispatchStart := args.Clock.Now()
 	defer func() {
-		// Record dispatch latency unconditionally — async paths return
+		// @deliberate: record dispatch latency unconditionally — async paths return
 		// before the executor terminal arrives, so this measures the
 		// supervisor-side dispatch envelope rather than full executor
 		// duration. Async terminals are observed separately in the
@@ -160,7 +162,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	metrics.IncDispatch(acq.Executor, "started")
 
 	if acq.Executor == "" {
-		// Native dispatch: claim-only or pure-cascade. Synthesize a
+		// @deliberate: native dispatch (claim-only or pure-cascade) synthesizes a
 		// Success{changed: true} so dependents recalc.
 		summary := "pure_cascade"
 		for _, lk := range acq.Locks {
@@ -172,7 +174,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindComplete, Changed: true, ChangeSummary: summary}, nil, nil
 	}
 
-	// Real per-dispatch instance/run-scope context for late-bind
+	// @deliberate: real per-dispatch instance/run-scope context for late-bind
 	// resolution. A LateBindResolver consults service_bindings on the
 	// instance; a StaticResolver ignores these fields.
 	ep, ok := args.Resolver.Resolve(acq.Executor, executor.DispatchContext{
@@ -213,7 +215,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "build_request_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
-	// Stamp the executor name so a host-agent-proxy fronting the
+	// @constraint: stamp the executor name so a host-agent-proxy fronting the
 	// executor protocol can route this Execute by service name. The
 	// stream interceptor reads it off the context; a directly-dialed
 	// hosted executor ignores the header.
@@ -223,7 +225,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_dial_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
-	// At this point the executor has accepted the Execute RPC (the
+	// @deliberate: the executor has now accepted the Execute RPC (the
 	// stream handle is live). The resume metadata has been
 	// materialized into ResumeContext on the wire; clear it now so a
 	// re-park during this run, or any later retry cycle, starts a
@@ -246,7 +248,7 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 
 	if asyncAck != "" {
 		registerAsyncIfSet(dctx, asyncAck)
-		// Canonical signal emission per concept:signal. transient/
+		// @concept: signal — canonical signal emission. transient/
 		// await_async fires when the executor returns
 		// AwaitAsyncCallback; the node stays in running state and
 		// the actual settling happens via the callback path. No
@@ -392,7 +394,7 @@ func readExecutorStream(
 				}
 				return t, ""
 			case *genv1.StreamClose_AwaitAsync:
-				// AwaitAsyncCallback does not carry NamedEvents — the
+				// @constraint: AwaitAsyncCallback does not carry NamedEvents — the
 				// executor will POST them via the async-callback body's
 				// `events` array. The runtime drops `pending` here
 				// because the async-callback path handles the entire
@@ -415,7 +417,7 @@ func readExecutorStream(
 // carries source-resolved values, static-default values, and post-
 // merge L3 + L4 instance overrides.
 func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map[string]any, map[string]any, error) {
-	// Attribute-less / schema-less dispatch still passes through the
+	// @constraint: attribute-less / schema-less dispatch still passes through the
 	// before_dispatch breakpoint checkpoint. The breakpoint matcher keys on
 	// node_type / executor / graph / child_key — none of which require a
 	// resolved attribute bag — so a breakpoint installed on a bare node MUST
@@ -443,7 +445,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 		}
 		return bp, nil, nil
 	}
-	// Reapply the unified-attribute-surface check at dispatch. The
+	// @constraint: reapply the unified-attribute-surface check at dispatch. The
 	// registration-time validator soft-fails the readOnly leg when the
 	// discovery cache hasn't populated the executor's expected schema
 	// yet (e.g. test fixtures with no observability hook wired, or
@@ -474,7 +476,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 			Reason: fmt.Sprintf("attributes_schema_invalid: %s: %s", first.Path, first.Msg),
 		}
 	}
-	// Resolve the acquisition's RunScope projection ONCE here, above the
+	// @deliberate: resolve the acquisition's RunScope projection ONCE here, above the
 	// substitution-context build, and thread its partition key into both
 	// the resolve context (so `{{child.partition_key}}` binds for fan-out
 	// leaves — E14) and the override-matcher overlay below (its
@@ -504,7 +506,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	acq.MergedAttributes = resolved
 	incrementMatchCountersAfterMerge(ctx, args.Persist, args.Logger, acq.InstanceID, matched)
 
-	// Breakpoint checkpoint: before_dispatch. Runs OUTSIDE any
+	// @constraint: breakpoint checkpoint before_dispatch runs OUTSIDE any
 	// acquisition / dispatch tx (incrementMatchCountersAfterMerge
 	// committed its own short tx above; the acquisition tx committed
 	// earlier per concept:supervisor invariants). EvaluateBreakpoints
@@ -535,7 +537,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err := attributes.Validate(dispatchSchema, resolved, attributes.PhaseDispatch); err != nil {
 		return nil, schema, &attributeValidationError{Reason: "dispatch_bag_invalid", Cause: err}
 	}
-	// Defense-in-depth: re-validate the merged bag against the executor's
+	// @deliberate: defense-in-depth — re-validate the merged bag against the executor's
 	// raw schema. The dispatch-relaxed `dispatchSchema` above tolerates
 	// executor-written `required:` properties (commit gate handles them);
 	// the executor's raw schema does not have that relaxation. This pass
@@ -545,7 +547,7 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	// doesn't match what the executor declared. Per the 2026-05-21 gap-
 	// closure cycle (spec §"Effective schema computation").
 	if execSchema != nil {
-		// The executor's raw schema may carry `required:` entries for
+		// @constraint: the executor's raw schema may carry `required:` entries for
 		// `readOnly: true` properties (executor-written outputs) — those
 		// are populated at commit by write-back, not at dispatch, so
 		// enforcing `required:` for them here would fire false positives.
@@ -634,7 +636,7 @@ func evaluateBeforeDispatchBreakpoints(
 					"phase", infraErr.Phase,
 					"error", bpErr.Error())
 			}
-			// Infra failure swallowed: proceed with the pre-breakpoint bag.
+			// @deliberate: infra failure swallowed — proceed with the pre-breakpoint bag.
 			return merged, nil
 		}
 		return nil, bpErr
@@ -672,8 +674,8 @@ func buildResolveContextForDispatch(
 		}
 		claims[lk.Alias] = lk.ClaimResult
 	}
-	// Held claims (per the node's template `holds:` block) are populated at
-	// the co-holder's own acquire-tx by loadInheritedClaimsForNode. They
+	// @concept: claim-co-holdership — held claims (per the node's template `holds:` block)
+	// are populated at the co-holder's own acquire-tx by loadInheritedClaimsForNode. They
 	// carry the same `claimproducer.ClaimResult` shape (Address + ClaimScope)
 	// that an opened claim carries, so the substitution grammar resolves
 	// `{{claim.<alias>.address|payload.<f>|claim_scope}}` identically whether
@@ -683,8 +685,6 @@ func buildResolveContextForDispatch(
 	// and `holds:` the same alias, the opened entry in claims[] is
 	// authoritative and the held entry is informational. Mirrors the
 	// precedence at buildStoreHandles below.
-	//
-	// @concept: claim-co-holdership
 	for alias, held := range acq.HeldClaims {
 		if _, alreadyPresent := claims[alias]; alreadyPresent {
 			continue
@@ -720,7 +720,6 @@ func lookupEventPayload(
 	var out json.RawMessage
 	var found bool
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Map emitter node-type → emitter node-id within the instance.
 		rows, err := args.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
 		if err != nil {
 			return nil
@@ -739,7 +738,7 @@ func lookupEventPayload(
 		if err != nil || evt == nil {
 			return nil
 		}
-		// Inline payload wins; otherwise materialize the handle through
+		// @constraint: inline payload wins; otherwise materialize the handle through
 		// the configured BlobBackend.
 		if len(evt.PayloadInline) > 0 {
 			out = json.RawMessage(evt.PayloadInline)
@@ -899,7 +898,7 @@ func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveCo
 			}
 			val, err := attributes.SubstituteValue(source, rctx)
 			if err != nil {
-				// Per spec §"Resolution waterfall" step 5: a strict (no
+				// @constraint: per spec §"Resolution waterfall" step 5, a strict (no
 				// `?` marker) missing directive fails dispatch with
 				// `template_resolution_failed`, regardless of whether
 				// the property is `required`. Lenient (`?`) and
@@ -908,7 +907,7 @@ func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveCo
 				return nil, err
 			}
 			if val == nil {
-				// Lenient-recovery path: a whole-directive `source:` carrying
+				// @deliberate: lenient-recovery path — a whole-directive `source:` carrying
 				// the `?` marker over a genuinely-absent source is the ONLY
 				// way SubstituteValue returns (nil, nil) — a strict miss
 				// returns an error above, and a present value is non-nil
@@ -925,13 +924,13 @@ func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveCo
 			}
 			out[name] = val
 		case hasDefault:
-			// Static-default property — the default value flows into the
+			// @constraint: static-default property — the default value flows into the
 			// dispatch bag verbatim. No substitution is applied to
 			// defaults; an operator-supplied `"{{X}}"` is a literal
 			// string here.
 			out[name] = defaultVal
 		}
-		// Executor-written (readOnly + no source + no default) properties
+		// @constraint: executor-written (readOnly + no source + no default) properties
 		// stay absent until the executor's commit write-back populates
 		// them; nothing to do at dispatch.
 	}
@@ -988,7 +987,7 @@ func emptyValueForSchemaType(typeName string) any {
 	case "object":
 		return map[string]any{}
 	default:
-		// "string" and any unrecognized / absent type fall through to the
+		// @deliberate: "string" and any unrecognized / absent type fall through to the
 		// empty string — the spec's documented lenient-recovery value and
 		// the dominant substitution-target shape.
 		return ""
@@ -1140,11 +1139,6 @@ func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *ac
 	return out
 }
 
-// buildExecuteRequest assembles the gRPC ExecuteRequest payload. Under
-// the 2026-05-21 userdata collapse, `attributes` is the unified surface
-// for both rimsky-resolved inputs and template-author static defaults;
-// the L3/L4 merge already happened in `resolveAttributes`. The wire no
-// longer carries a separate `userdata` field.
 // priorDispositionFromStorageForm maps the lower_snake_case storage
 // form persisted on col:rimsky_node_runs.prior_dispatch_disposition
 // back to the proto PriorDispatchDisposition enum. Unknown values
@@ -1211,14 +1205,13 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	req := &genv1.ExecuteRequest{
 		NodeId:     acq.NodeID.String(),
 		InstanceId: acq.InstanceID.String(),
-		// RunScopeId keys per-run-scope spawn isolation in the
+		// @concept: host-agent-proxy — RunScopeId keys per-run-scope spawn isolation in the
 		// host-agent-proxy: two concurrent run-scopes of one instance
 		// must land on distinct late-bound child processes. Opaque to
 		// in-process executors. Empty (not the zero-UUID string) when the
 		// run-scope is unset, so the proxy's empty→instance-id fallback
 		// keeps the non-fanned-out happy path keyed per instance rather
 		// than collapsing every instance onto one shared zero-UUID child.
-		// @concept: host-agent-proxy
 		RunScopeId:       runScopeIDString(acq.RunScopeID),
 		NodeType:         acq.NodeType,
 		Attributes:       attrStruct,
@@ -1228,7 +1221,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		CancelToken:      cancelToken,
 		DispatchId:       acq.DispatchID.String(),
 	}
-	// Recovery-aware fields: surface the predecessor dispatch identity +
+	// @constraint: recovery-aware fields surface the predecessor dispatch identity +
 	// classifier when this run supersedes a prior dispatch (heartbeat
 	// stale recovery, retry-after-error, recalculate). Both unset on
 	// initial dispatches. Per spec
@@ -1242,7 +1235,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		disposition := priorDispositionFromStorageForm(acq.PriorDispatchDisposition)
 		req.PriorDispatchDisposition = &disposition
 	}
-	// Resume dispatch: when this acquisition is resuming a parked node,
+	// @deliberate: resume dispatch — when this acquisition is resuming a parked node,
 	// attach the persisted park metadata as ResumeContext so the
 	// executor can re-establish session state. Per plan E4.
 	//
@@ -1286,7 +1279,7 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 		if err != nil {
 			return nil, err
 		}
-		// Key by Alias, not ProducerName: two store entries within a node may
+		// @constraint: key by Alias, not ProducerName — two store entries within a node may
 		// share the same producer name but must have distinct aliases (e.g. a
 		// consolidate node holding both `@consolidate-queue` aliased `doc`
 		// and `@guidance-root` aliased `root`, both on the same `content`
@@ -1302,7 +1295,7 @@ func buildStoreHandles(acq *acquisition) (map[string]*genv1.StoreHandle, error) 
 	}
 	for alias, claim := range acq.HeldClaims {
 		if _, alreadyPresent := out[alias]; alreadyPresent {
-			// `claims:` ALREADY bound this alias for this run; the held
+			// @constraint: `claims:` ALREADY bound this alias for this run; the held
 			// entry is informational only.
 			continue
 		}
@@ -1369,7 +1362,7 @@ func makeHeldClaimHandle(alias string, claim claimproducer.ClaimResult) (*genv1.
 func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.StoreHandle, error) {
 	out := &genv1.StoreHandle{}
 	if lk.Producer != nil {
-		// The wire StoreHandle.kind field is informational only and
+		// @deliberate: the wire StoreHandle.kind field is informational only and
 		// the executor knows its store's kind from the
 		// deployment's operator config. Pass the
 		// operator-chosen store name as the closest analogue; the
@@ -1380,7 +1373,7 @@ func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.Stor
 	if len(lk.ClaimResult.Address) > 0 {
 		var addrAny any
 		if err := json.Unmarshal(lk.ClaimResult.Address, &addrAny); err != nil {
-			// Producer-supplied bytes did not round-trip as JSON. Per
+			// @constraint: producer-supplied bytes did not round-trip as JSON. Per
 			// @blessed-invariant 20 we MUST NOT mangle, log, or
 			// transform the bytes — refuse to dispatch instead so the
 			// failure is visible at the supervisor (rather than letting
@@ -1404,7 +1397,7 @@ func makeClaimHandle(lk AcquiredLock, spec claimproducer.ClaimSpec) (*genv1.Stor
 		return nil, fmt.Errorf("makeClaimHandle: structpb: %w", err)
 	}
 	out.Handle = s
-	// E4: a fan-out leaf's per-partition candidate handle (minted by
+	// @constraint: E4 — a fan-out leaf's per-partition candidate handle (minted by
 	// `DataProcessing.BeginCandidate`, persisted on the sub-claim row, and
 	// bound onto this lock at leaf acquisition by
 	// `bindLeafCandidateHandles`). Empty for non-fan-out / non-

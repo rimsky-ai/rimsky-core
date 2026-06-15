@@ -109,7 +109,7 @@ func (t *InstanceTerminator) Stop() {
 	select {
 	case <-t.done:
 	case <-time.After(stopBudget):
-		// After 5s the goroutine is left running; the OS reclaims it
+		// @constraint: after 5s the goroutine is left running; the OS reclaims it
 		// at process exit. The leak is not bounded by the runtime —
 		// only by process lifetime.
 	}
@@ -146,7 +146,7 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 			continue
 		}
 		if tpl == nil {
-			// Template gone (force-deleted, etc). Fall back to firing
+			// @constraint: template gone (force-deleted, etc). Fall back to firing
 			// OnInstanceTerminated against every store named in the
 			// recorded lifecycle rows so per-instance state in stores
 			// is still settled, then drop the lifecycle rows directly.
@@ -162,7 +162,7 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 		if inst.TerminatedAt != nil {
 			terminatedAtMs = inst.TerminatedAt.UnixMilli()
 		}
-		// Close the instance's main run-scope and fire OnRunScopeTerminal
+		// @constraint: Close the instance's main run-scope and fire OnRunScopeTerminal
 		// before OnInstanceTerminated, so the host-agent-proxy can reap any
 		// spawned processes scoped to this main run-scope. Sub-tick lag (vs
 		// the row's terminal mark in graph/frame/engine.go) is acceptable
@@ -185,7 +185,7 @@ func (t *InstanceTerminator) tick(ctx context.Context) {
 			EventInstanceTerminated, inst.TemplateHash, inst.ID.String(), tpl.Spec,
 			InstancePayload{TerminatedAtUnixMs: terminatedAtMs}, nil)
 		if err != nil {
-			// Per-store failure: log and try again next tick. The
+			// @constraint: per-store failure: log and try again next tick. The
 			// FanOut helper has already deleted lifecycle rows for the
 			// stores that succeeded before the failure point.
 			t.logger.Warn("instance_terminator.fanout_partial_failure",

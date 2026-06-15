@@ -109,9 +109,9 @@ func runAgentStart(args []string) int {
 	cfg.StatusFile = statusPath
 
 	if cfg.RimskyURL == "" {
-		// The hostagent daemon would error on this too, but catching it at
-		// the CLI gate gives the operator a one-line diagnostic instead of
-		// a daemonize-then-fail sequence.
+		// @deliberate: gate at CLI rather than letting the daemon error so
+		// the operator gets a one-line diagnostic instead of a
+		// daemonize-then-fail sequence.
 		fmt.Fprintln(os.Stderr, "rimsky agent: --proxy is required (or set RIMSKY_URL)")
 		return 2
 	}
@@ -144,9 +144,9 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 		return 1
 	}
 
-	// Make sure the state dir is writable + clear any stale status file
-	// from a previous run so the readiness poll doesn't read a phantom
-	// `connected:true` left behind by an unclean exit.
+	// @constraint: clear any stale status file from a previous run so the
+	// readiness poll below cannot read a phantom `connected:true` left
+	// behind by an unclean exit.
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -156,10 +156,9 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 		return 1
 	}
 
-	// Forward state-dir/proxy/api-key to the foreground child so the
-	// daemon writes its sentinel to the same file the parent polls and
-	// dials the same proxy the parent vetted. The original argv may or
-	// may not have carried these flags; pass them through explicitly.
+	// @constraint: forward --state-dir to the foreground child so the
+	// daemon writes its sentinel to the same file the parent polls; the
+	// original argv may or may not have carried it, so pass it explicitly.
 	forkArgs := append([]string{"agent", "start", "--foreground", "--state-dir", stateDir}, startArgs...)
 	cmd := exec.Command(self, forkArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
@@ -168,10 +167,10 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 		return 1
 	}
 
-	// Snapshot the child's pid BEFORE calling Process.Release. Go's
-	// os.Process.Release zeroes out the underlying handle and sets Pid
-	// to -1 to signal "no longer tracked" — which would silently break
-	// every downstream processAlive / killProcess probe in this routine.
+	// @constraint: snapshot the child's pid BEFORE calling Process.Release.
+	// Go's os.Process.Release zeroes the underlying handle and sets Pid to
+	// -1, which would silently break every downstream processAlive /
+	// killProcess probe in this routine.
 	childPid := cmd.Process.Pid
 
 	pidPath := filepath.Join(stateDir, "agent.pid")
@@ -180,16 +179,17 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 		return 1
 	}
 
-	// Release the child to the OS so its eventual exit isn't held in our
-	// process table — we manage liveness via pid probe + status file.
+	// @deliberate: release the child to the OS so its eventual exit isn't
+	// held in our process table — liveness is tracked via pid probe + the
+	// status sentinel, not via wait().
 	if err := cmd.Process.Release(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
-	// Poll-wait for connection. The success criterion is a status file
-	// whose `connected` is true; failure is the child exiting (no live
-	// process) OR the readiness window elapsing without success.
+	// @constraint: success is a status file whose `connected` is true;
+	// failure is the child exiting (no live process) OR the readiness
+	// window elapsing without success — pid liveness alone is not enough.
 	deadline := time.Now().Add(agentReadinessTimeout)
 	for time.Now().Before(deadline) {
 		snap, ok, readErr := readStatusFile(statusPath)
@@ -205,10 +205,10 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 		time.Sleep(agentReadinessPollInterval)
 	}
 
-	// Readiness window blew. The daemon is alive but never connected —
-	// kill it so a misconfigured `--proxy` doesn't leave a background
-	// process loop-dialing forever, and remove the pid file so a follow-up
-	// `agent status` doesn't claim it's "running".
+	// @constraint: on readiness-window expiry the daemon is alive but never
+	// connected — kill it so a misconfigured `--proxy` cannot leave a
+	// background process loop-dialing forever, and remove the pid file so
+	// a follow-up `agent status` does not claim it's "running".
 	killProcess(childPid)
 	_ = os.Remove(pidPath)
 	fmt.Fprintf(os.Stderr,
@@ -253,8 +253,8 @@ func runAgentStatus(args []string) int {
 	statusPath := filepath.Join(dir, "agent.status")
 	snap, present, readErr := readStatusFile(statusPath)
 	if readErr != nil {
-		// Pid is alive but we couldn't read the sentinel — surface it as
-		// "running but status unknown" rather than fabricating "connected".
+		// @constraint: pid alive but sentinel unreadable surfaces as
+		// "running but status unknown" — never fabricate "connected".
 		fmt.Fprintf(os.Stdout, "rimsky agent: running (pid %d, status unreadable: %v)\n", pid, readErr)
 		return 0
 	}
@@ -263,8 +263,9 @@ func runAgentStatus(args []string) int {
 			pid, snap.Proxy, snap.Since)
 		return 0
 	}
-	// Pid alive but the sentinel is absent → the bidi stream is down (the
-	// daemon is dialing/backoff-sleeping). DO NOT report "connected".
+	// @constraint: pid alive but sentinel absent means the bidi stream is
+	// down (the daemon is dialing/backoff-sleeping) — report
+	// "disconnected", never "connected".
 	fmt.Fprintf(os.Stdout, "rimsky agent: running, disconnected (pid %d)\n", pid)
 	return 0
 }
@@ -298,9 +299,8 @@ func runAgentStop(args []string) int {
 			fmt.Fprintf(os.Stderr, "rimsky agent: signal pid %d: %v\n", pid, termErr)
 			return 1
 		}
-		// Give the daemon time to run its reap loop. ReapGracePeriod
-		// defaults to 30s; bound the wait at 35s to cover it plus the
-		// gRPC stream teardown.
+		// @deliberate: bound the wait at 35s — ReapGracePeriod defaults to
+		// 30s and 35s leaves margin for gRPC stream teardown.
 		waitForExit(pid, 35*time.Second)
 	}
 
@@ -309,9 +309,9 @@ func runAgentStop(args []string) int {
 		fmt.Fprintln(os.Stderr, rmErr)
 		return 1
 	}
-	// The daemon removes its own status file on shutdown, but if it crashed
-	// without doing so, clear it here so a subsequent `status` doesn't see
-	// a phantom `connected:true`.
+	// @constraint: defensively clear the status file so a subsequent
+	// `status` cannot see a phantom `connected:true` left behind by a
+	// crashed daemon that didn't get to remove it itself.
 	_ = os.Remove(filepath.Join(dir, "agent.status"))
 	fmt.Fprintf(os.Stdout, "rimsky agent: stopped (pid %d)\n", pid)
 	return 0

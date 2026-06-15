@@ -116,18 +116,18 @@ func SweepOrphanedClaimHandles(ctx context.Context, args OrphanReaperArgs) error
 // when the reaper loses the race.
 func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persistence.ClaimHandleRow, log shared.Logger) error {
 	if lh.HolderSupervisorID == nil {
-		// Non-active row (state ∈ {committed, abandoned}) cannot be
-		// reaped — the orphan reaper targets active rows only. Skip
-		// silently; `ListExpired` ordinarily filters to active rows but
-		// the defense-in-depth guard avoids a panic / mis-match on a
-		// promoted row that slipped into the batch.
+		// @deliberate: non-active row (state ∈ {committed, abandoned}) cannot
+		// be reaped — the orphan reaper targets active rows only. ListExpired
+		// ordinarily filters to active rows; this defense-in-depth guard
+		// avoids a panic / mismatch on a promoted row that slipped into the
+		// batch.
 		return nil
 	}
-	// Test-only seam: the ListExpired snapshot already holds this row;
-	// the claimant-guarded DeleteIfExpired has not run yet. An injection
-	// test resolves the row through the owning supervisor's terminal
-	// release here to prove the reaper loses the race as a no-op. Nil in
-	// production (no behavior change); see OrphanReaperArgs.PreReapHook.
+	// @deliberate: test-only seam — the ListExpired snapshot already holds
+	// this row and the claimant-guarded DeleteIfExpired has not run yet. An
+	// injection test resolves the row through the owning supervisor's
+	// terminal release here to prove the reaper loses the race as a no-op.
+	// Nil in production (no behavior change); see OrphanReaperArgs.PreReapHook.
 	if args.PreReapHook != nil {
 		args.PreReapHook(ctx, lh.ID)
 	}
@@ -137,12 +137,15 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 			return fmt.Errorf("delete lock-holder row: %w", err)
 		}
 		if !deleted {
-			// Lost the race (heartbeat-extended or claimant mismatch).
+			// @deliberate: lost the race (heartbeat-extended or claimant
+			// mismatch) — skip without emitting `lock_orphan_reaped` so the
+			// reaper's race losses are not surfaced as observability noise.
 			return nil
 		}
-		// Event emission is best-effort.
+		// @deliberate: event emission is best-effort — a failed append must
+		// not roll back the successful DeleteIfExpired above (the row is
+		// already gone; surfacing the event is observability, not state).
 		nodeID := lh.HolderNodeID
-		// Look up instance_id for the event row.
 		nd, _ := args.Persist.Nodes().Get(ctx, lh.HolderNodeID, tx)
 		var instanceID *shared.UUID
 		if nd != nil {

@@ -2,7 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// instances.go — SQLite-backed persistence.InstanceTable.
+// @source: lib/foundation/persistence/postgres/instances.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
+
 package sqlite
 
 import (
@@ -48,12 +51,12 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 
-	// Empty string → the INSERT's COALESCE(?, 'serial_queue') defaults an
-	// omitted mode to 'serial_queue' (the load-bearing default; this is NOT
-	// taken from the column DEFAULT — the literal here decides it). Any
-	// other value is sent verbatim; the CHECK constraint enforces the
+	// @constraint: empty FrameDeliveryMode passes nil so the INSERT's
+	// COALESCE(?, 'serial_queue') decides the default — the literal here
+	// is load-bearing and is NOT taken from the column DEFAULT. Any other
+	// value is sent verbatim; the CHECK constraint enforces the
 	// {serial_queue, coalesce} vocabulary so a bad value surfaces as a
-	// constraint violation from SQLite.
+	// SQLite constraint violation.
 	var deliveryMode any
 	if in.FrameDeliveryMode != "" {
 		deliveryMode = in.FrameDeliveryMode
@@ -62,15 +65,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 	if in.Paused {
 		pausedArg = 1
 	}
-	// terminate_after_run stored as SQLite's boolean form (INTEGER 0/1),
-	// mirroring pausedArg. Default false (durable by default).
 	terminateAfterRunArg := 0
 	if in.TerminateAfterRun {
 		terminateAfterRunArg = 1
 	}
-	// Empty json.RawMessage → NULL service_bindings; nil *UUID → NULL
-	// created_by_api_key_id. JSONB and UUID both map to TEXT in the
-	// SQLite schema (caller marshals JSON / formats the UUID string).
 	var serviceBindingsArg any
 	if len(in.ServiceBindings) > 0 {
 		serviceBindingsArg = string(in.ServiceBindings)
@@ -169,8 +167,6 @@ func (s *instancesImpl) List(
 	if filter.TemplateHash != "" {
 		tmplHash = filter.TemplateHash
 	}
-	// Active filter: nil → no filter; true → terminated_at IS NULL;
-	// false → terminated_at IS NOT NULL.
 	var activeArg any
 	if filter.Active != nil {
 		if *filter.Active {
@@ -224,13 +220,14 @@ func (s *instancesImpl) List(
 }
 
 func (s *instancesImpl) Delete(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
-	// Mirror postgres: rely on the schema's ON DELETE CASCADE chain
-	// (migrations 007/008 declare CASCADE on rimsky_run_scopes.instance_id,
-	// parent_run_id, parent_run_scope_id, and rimsky_node_runs.run_scope_id)
-	// so a single DELETE on the instance row walks the entire scope/
-	// dispatch tree atomically. rimsky_instances.main_run_scope_id is
-	// DEFERRABLE INITIALLY DEFERRED so the simultaneous deletion of
+	// @constraint: a single DELETE on the instance row walks the entire
+	// scope/dispatch tree atomically via the schema's ON DELETE CASCADE
+	// chain (migrations 007/008 declare CASCADE on
+	// rimsky_run_scopes.instance_id, parent_run_id, parent_run_scope_id,
+	// and rimsky_node_runs.run_scope_id). rimsky_instances.main_run_scope_id
+	// is DEFERRABLE INITIALLY DEFERRED so the simultaneous deletion of
 	// instance and main scope satisfies the mutual FK at commit time.
+	// Mirrors the postgres backend.
 	_, err := s.q(tx).ExecContext(ctx, `DELETE FROM rimsky_instances WHERE id = ?`, id.String())
 	if err != nil {
 		return fmt.Errorf("instances.delete: %w", err)
@@ -301,11 +298,14 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	if len(indices) == 0 {
 		return nil
 	}
-	// Read the array length first so we can filter out-of-range indices.
-	// json_array_length returns NULL when the column is NULL or not an
-	// array; coalesce to 0 (treat as "no slots") so the loop below
-	// uniformly skips everything in that pathological case rather than
-	// emitting a no-op write.
+	// @constraint: read the array length first so we can filter
+	// out-of-range indices — SQLite's json_set at `$[N]` where
+	// N >= length EXTENDS the array (no `create_missing=false` flag like
+	// postgres jsonb_set), so without this guard we would silently grow
+	// the slot vector. json_array_length returns NULL when the column is
+	// NULL or not an array; coalesce to 0 (treat as "no slots") so the
+	// loop below uniformly skips everything in that pathological case
+	// rather than emitting a no-op write.
 	q := s.q(tx)
 	var arrLen sql.NullInt64
 	if err := q.QueryRowContext(ctx,
@@ -314,20 +314,25 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 		instanceID.String(),
 	).Scan(&arrLen); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// Instance not found — same shape as a successful no-op
-			// update (no rows affected). Callers can't distinguish via
-			// this surface today; the dispatch path only invokes us for
-			// instances it just observed via the acquire-tx snapshot.
+			// @deliberate: instance-not-found returns nil (no rows
+			// affected), matching the shape of a successful no-op
+			// update. The dispatch path only invokes us for instances
+			// it just observed via the acquire-tx snapshot, so a
+			// missing row indicates a benign race.
 			return nil
 		}
 		return fmt.Errorf("instances.incrementAttributeOverrideMatchCounts: %w", err)
 	}
-	maxIdx := int(arrLen.Int64) // 0 when NULL
+	maxIdx := int(arrLen.Int64)
 	deltas := map[int]int{}
 	order := make([]int, 0, len(indices))
 	for _, idx := range indices {
+		// @constraint: out-of-range indices are a silent no-op per
+		// the IncrementAttributeOverrideMatchCounts contract — the
+		// snapshot the caller saw may have lost rows by the time we
+		// reach this transaction, and the writer must not fault.
 		if idx < 0 || idx >= maxIdx {
-			continue // silent no-op per contract
+			continue
 		}
 		if _, seen := deltas[idx]; !seen {
 			order = append(order, idx)
@@ -337,12 +342,15 @@ func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	if len(order) == 0 {
 		return nil
 	}
-	// One UPDATE per unique index. Constant-size SQL per statement; the
-	// per-row updates serialise inside the caller-supplied write tx so
-	// concurrent callers don't see partial increments outside their own
-	// tx boundary. The idx values come from the runtime's matched-
-	// indices slice and the delta is a count, both integer-valued and
-	// locally produced, so SQL injection is not a concern.
+	// @constraint: one UPDATE per unique index gives constant-size SQL
+	// per statement; the chained single-statement json_set variant grows
+	// O(2^N) characters because each iteration substitutes the prior
+	// setExpr twice. The per-row updates serialise inside the caller-
+	// supplied write tx so concurrent callers don't see partial
+	// increments outside their own tx boundary. The idx values come from
+	// the runtime's matched-indices slice and the delta is a count, both
+	// integer-valued and locally produced, so SQL injection is not a
+	// concern.
 	for _, idx := range order {
 		path := fmt.Sprintf("$[%d]", idx)
 		query := fmt.Sprintf(
@@ -382,11 +390,10 @@ func (s *instancesImpl) SetPaused(ctx context.Context, instanceID foundationshar
 		return false, fmt.Errorf("instances.setPaused.select: %w", err)
 	}
 	priorBool := prior != 0
-	// Skip the UPDATE when already at the requested value — same
-	// no-op-avoidance rationale as the postgres mirror. SQLite writes
-	// hold the database-level writer lock under BEGIN IMMEDIATE; the
-	// redundant UPDATE would serialise unrelated writers for no behavioral
-	// change.
+	// @deliberate: skip the UPDATE when already at the requested value.
+	// SQLite writes hold the database-level writer lock under BEGIN
+	// IMMEDIATE; a redundant UPDATE would serialise unrelated writers
+	// for no behavioral change. Mirrors the postgres backend.
 	if priorBool == paused {
 		return priorBool, nil
 	}

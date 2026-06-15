@@ -23,7 +23,7 @@ Owns: the per-kind record shape, the projection-write path. Does NOT own: the pr
 - `leaf_run` records emit at the leaf-run terminal path, fired from the per-terminal handlers in the runtime.
 - `claim_terminal` records emit at the unified terminal-decision engine's forensics emit site, so every commit / abandon / force-cancelled resolution lands a record in the same shape.
 - An outcome value is REQUIRED on `claim_terminal` records. The writer rejects an empty outcome — an abandon path that forgets to set it cannot silently produce a record marked `committed`.
-- All fields are scalars (no payload bytes); held-claim references carry the claim-scope-data hash (SHA-256 over the claim-scope-data bytes), not the bytes themselves. Per `@blessed-invariant 20/21` the inert bytes don't appear in lineage records.
+- All fields are scalars (no payload bytes); held-claim references carry the claim-scope-data hash (SHA-256 over the claim-scope-data bytes), not the bytes themselves. Per `@blessed-invariant: message-inertness` the inert bytes don't appear in lineage records.
 
 ## Leaf-run record shape
 

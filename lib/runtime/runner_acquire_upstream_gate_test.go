@@ -48,7 +48,7 @@ type gateFixture struct {
 	inst    *persistence.InstanceRow
 	frameID shared.UUID
 	scopeID shared.UUID
-	nodes   map[string]persistence.NodeRow // by node type
+	nodes   map[string]persistence.NodeRow // @deliberate: by node type
 	runs    map[string]shared.UUID         // pending run id by node type
 }
 
@@ -72,7 +72,7 @@ func makeGateFixture(t *testing.T, nodes []tmplspec.TemplateNodeDef) gateFixture
 	t.Cleanup(func() { _ = d.Close() })
 	tables := d.Tables()
 
-	// Unique hash per fixture: the process-global subscription-edge
+	// @deliberate: Unique hash per fixture: the process-global subscription-edge
 	// cache is keyed on it.
 	templateHash := "sha256-" + uuid.NewString()
 	instanceID := shared.UUID(uuid.New())
@@ -253,7 +253,7 @@ func TestUpstreamGate_ThreeCycle_RunningSenderGatesEveryone(t *testing.T) {
 	t.Parallel()
 	fx := makeGateFixture(t, threeCycleNodes())
 
-	// gamma's run is genuinely progressing — alpha→beta→gamma→alpha
+	// @deliberate: gamma's run is genuinely progressing — alpha→beta→gamma→alpha
 	// gating means beta (subscribed to gamma) must gate on the active
 	// row no matter what the tie-breaker would say, and the cycle is no
 	// longer pending-only for anyone: alpha's sender beta is pending but
@@ -266,7 +266,7 @@ func TestUpstreamGate_ThreeCycle_RunningSenderGatesEveryone(t *testing.T) {
 			t.Errorf("%q must stay gated while a cycle member is genuinely running", m)
 		}
 	}
-	// gamma itself subscribes to alpha (merely-pending). The vertex
+	// @deliberate: gamma itself subscribes to alpha (merely-pending). The vertex
 	// predicate is uniform: gamma's own in-flight rows are not
 	// pending-only (its row is active), so the tie-breaker does not
 	// apply for gamma and it stays gated like everyone else.
@@ -347,7 +347,7 @@ func TestUpstreamGate_MixedPhaseCycleMember_NoDualPass(t *testing.T) {
 
 func TestUpstreamGate_PendingSenderOutsideCycleStillGates(t *testing.T) {
 	t.Parallel()
-	// The 3-cycle plus an extra pending upstream: alpha additionally
+	// @deliberate: The 3-cycle plus an extra pending upstream: alpha additionally
 	// subscribes to delta, and delta subscribes to nothing. delta's
 	// pending row must gate alpha even when alpha is the byte-wise
 	// lowest in its pending cycle.
@@ -360,7 +360,7 @@ func TestUpstreamGate_PendingSenderOutsideCycleStillGates(t *testing.T) {
 	if !fx.gated(t, "alpha") {
 		t.Errorf("alpha must gate on the merely-pending out-of-cycle sender delta, regardless of the cycle tie-break")
 	}
-	// delta has no senders at all: it passes and resolves the knot.
+	// @deliberate: delta has no senders at all: it passes and resolves the knot.
 	if fx.gated(t, "delta") {
 		t.Errorf("delta has no subscribed upstreams and must not be gated")
 	}

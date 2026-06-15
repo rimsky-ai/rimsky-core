@@ -25,11 +25,11 @@ import (
 // constraint for breakpoints) and LegacyFlat=false (breakpoints
 // accept "graph:" on any template).
 type ValidationRefs struct {
-	NodeTypes     map[string]struct{} // when non-nil, node_type must be a member
-	ExecutorNames map[string]struct{} // when non-nil, executor must be a member
-	UsedExecutors map[string]struct{} // when non-nil, executor must additionally be referenced by some template node (by_match-specific)
-	GraphNames    map[string]struct{} // when non-nil, graph must be a member (typically "main" plus declared sub-graphs)
-	LegacyFlat    bool                // when true, the "graph:" matcher key is rejected entirely (legacy template with no declared sub-graphs)
+	NodeTypes     map[string]struct{} // @constraint: when non-nil, node_type must be a member
+	ExecutorNames map[string]struct{} // @constraint: when non-nil, executor must be a member
+	UsedExecutors map[string]struct{} // @constraint: when non-nil, executor must additionally be referenced by some template node (by_match-specific)
+	GraphNames    map[string]struct{} // @constraint: when non-nil, graph must be a member (typically "main" plus declared sub-graphs)
+	LegacyFlat    bool                // @constraint: when true, the "graph:" matcher key is rejected entirely (legacy template with no declared sub-graphs)
 }
 
 // Validate enforces the matcher's grammar at registration time.
@@ -60,7 +60,8 @@ func Validate(m Matcher, refs ValidationRefs, entryIndex int) error {
 		return shared.Wrap(ErrInvalid, "matcher"+prefix+": "+msg, nil)
 	}
 
-	// Reject ordinal-shaped keys with a redirect message.
+	// @deliberate: reject ordinal-shaped keys with a redirect message
+	// pointing operators at child_key / attrs.<path> instead.
 	ordinals := []string{"dispatch_index", "nth_child", "partition_index", "seq"}
 	for _, k := range ordinals {
 		if _, ok := m[k]; ok {
@@ -104,9 +105,10 @@ func Validate(m Matcher, refs ValidationRefs, entryIndex int) error {
 				return wrap("matcher.graph must be a non-empty string (\"main\" or a declared sub-graph name)")
 			}
 			if refs.LegacyFlat {
-				// Legacy flat templates (no declared sub-graphs) accept
-				// only "main"; other graph names are not declarable.
-				// Preserves existing by_match validator behavior.
+				// @deliberate: legacy flat templates (no declared
+				// sub-graphs) accept only "main"; other graph names are
+				// not declarable. Preserves existing by_match validator
+				// behavior.
 				if s != "main" {
 					return wrap("matcher.graph: template has no declared sub-graphs; only \"main\" is valid (got %q)", s)
 				}

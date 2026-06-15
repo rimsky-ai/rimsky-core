@@ -49,9 +49,10 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	log := shared.NewSlogLogger(logger)
 
-	// Default 8080; an explicit "0" also selects the default. A non-empty
-	// unparseable value is a startup-fatal error — silently mapping garbage
-	// to the default would hide the operator's misconfiguration.
+	// @constraint: default 8080; an explicit "0" also selects the
+	// default. A non-empty unparseable value is a startup-fatal error —
+	// silently mapping garbage to the default would hide the operator's
+	// misconfiguration.
 	port := 8080
 	if s := os.Getenv("RIMSKY_CONTROL_API_PORT"); s != "" {
 		n, err := strconv.Atoi(s)
@@ -65,28 +66,29 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 		}
 	}
 
-	// Resolve the /metrics port up-front so a malformed env value fails
-	// the role at startup instead of silently disabling metrics.
+	// @deliberate: resolve the /metrics port up-front so a malformed env
+	// value fails the role at startup instead of silently disabling
+	// metrics.
 	metricsPort, err := metricsPortFor("control-api")
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
 		return nil, nil, err
 	}
 
-	// Install BlobBackend on the driver so attribute writes from
-	// control-api (e.g. instance-create-time fixture seeding via raw
-	// store calls) honor the spill threshold. Validation is identical
-	// across the three roles via ValidateBlobConfig.
+	// @constraint: install BlobBackend on the driver so attribute writes
+	// from control-api (e.g. instance-create-time fixture seeding via
+	// raw store calls) honor the spill threshold. Validation is
+	// identical across the three roles via ValidateBlobConfig.
 	if _, err := config.OpenBlobBackend(rimskyCfg.Blob, driver); err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
 		return nil, nil, err
 	}
 
-	// Per-role Prometheus registry. Constructed up-front so the
-	// control-api's admin-invalidate path can be instrumented via the
-	// MetricsHook adapter. The /metrics HTTP listener is opened below
-	// only when RIMSKY_METRICS_PORT > 0; the registry itself is built
-	// unconditionally so the hook stays wired even when the HTTP
+	// @constraint: per-role Prometheus registry constructed up-front so
+	// the control-api's admin-invalidate path can be instrumented via
+	// the MetricsHook adapter. The /metrics HTTP listener is opened
+	// below only when RIMSKY_METRICS_PORT > 0; the registry itself is
+	// built unconditionally so the hook stays wired even when the HTTP
 	// surface is disabled.
 	mreg := observability.NewMetricsRegistry()
 
@@ -99,19 +101,21 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 		Stores:     rimskyCfg.Stores,
 		NamedLocks: rimskyCfg.NamedLocks,
 		Executors:  rimskyCfg.Executors,
-		// Publishers is the parsed top-level `publishers:` block. Without
-		// it the publisher registry is empty and every publisher-
-		// subscription (sensors included) fails at instance-create with
-		// `unknown_publisher` — the entire sensor/publisher feature is
-		// dead in any multi-process deployment. The all-in-one and the
-		// three-container split both run the control-api through this
-		// runner, so the registry MUST be wired from the parsed config.
+		// @constraint: publishers is the parsed top-level `publishers:`
+		// block. Without it the publisher registry is empty and every
+		// publisher-subscription (sensors included) fails at
+		// instance-create with `unknown_publisher` — the entire
+		// sensor/publisher feature is dead in any multi-process
+		// deployment. The all-in-one and the three-container split both
+		// run the control-api through this runner, so the registry MUST
+		// be wired from the parsed config.
 		Publishers: rimskyCfg.Publishers,
 		Metrics:    observability.MetricsHookOf(mreg),
 
 		LateBindServiceProxies: rimskyCfg.LateBindServiceProxies,
-		// Operator-set registration-time reference-validation mode parsed
-		// from cfg:templates.ref_validation_mode (env-overridable via
+		// @constraint: operator-set registration-time
+		// reference-validation mode parsed from
+		// cfg:templates.ref_validation_mode (env-overridable via
 		// env:RIMSKY_REF_VALIDATION_MODE). Default strict `all`.
 		RefValidationMode: rimskyCfg.RefValidationMode,
 	})
@@ -121,29 +125,25 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 	}
 	log.Info("control api listening", "addr", h.Addr())
 
-	// Launch the gauge refresher so node-state, parked-by-reason,
-	// held-frames, and dispatch-queue-depth gauges reflect live
-	// persistence state. The refresher polls every 5s by default;
-	// cancelled on stop.
 	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
 	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
 		mhook.StartGaugeRefresher(gaugeCtx, driver.Tables(), driver.Queue(), 0, log)
 	}
 
-	// Optional Prometheus /metrics endpoint on a separate port (see
-	// metricsPortFor for resolution; 0 = disabled); binds the same host
-	// as the control API.
-	// Capacity 2: the metrics serve loop and the control-api serve loop
-	// can each report one failure.
+	// @deliberate: optional Prometheus /metrics endpoint on a separate
+	// port (see metricsPortFor for resolution; 0 = disabled); binds the
+	// same host as the control API. Capacity 2: the metrics serve loop
+	// and the control-api serve loop can each report one failure.
 	reporter := newFailureReporter(2)
 	metricsSrv := startMetricsServer(host, "control-api", metricsPort, mreg, log, reporter)
 
-	// Surface a fatal serve-loop failure (anything other than graceful
-	// shutdown) as a role failure so the supervising process exits
-	// non-zero instead of running on without its operator surface. The
-	// handle's ServeErr channel is never closed on clean shutdown, so
-	// the monitor also selects on a stop-owned done channel — otherwise
-	// each embedded start/stop cycle would leak this goroutine.
+	// @constraint: surface a fatal serve-loop failure (anything other
+	// than graceful shutdown) as a role failure so the supervising
+	// process exits non-zero instead of running on without its operator
+	// surface. The handle's ServeErr channel is never closed on clean
+	// shutdown, so the monitor also selects on a stop-owned done
+	// channel — otherwise each embedded start/stop cycle would leak this
+	// goroutine.
 	stopped := make(chan struct{})
 	var stoppedOnce sync.Once
 	go func() {
@@ -158,8 +158,9 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 
 	stop := func(stopCtx context.Context) error {
 		var firstErr error
-		// stopCtx's deadline is shared across both servers: the control-api
-		// handle's shutdown and the metrics server's drain below.
+		// @constraint: stopCtx's deadline is shared across both servers
+		// — the control-api handle's shutdown and the metrics server's
+		// drain below.
 		if err := h.Shutdown(stopCtx); err != nil {
 			log.Error("control api shutdown", "error", err.Error())
 			firstErr = err
@@ -170,10 +171,11 @@ func RunControlAPI(ctx context.Context, logger *slog.Logger, driver persistence.
 			}
 		}
 		cancelGauges()
-		// The driver is caller-owned — RunControlAPI MUST NOT close it.
-		// Release the serve-loop monitor, then close the fail channel so
-		// monitor goroutines reading it exit; RunControlAPI is embeddable
-		// and must not leak goroutines per start/stop cycle.
+		// @constraint: the driver is caller-owned — RunControlAPI MUST
+		// NOT close it. Release the serve-loop monitor, then close the
+		// fail channel so monitor goroutines reading it exit;
+		// RunControlAPI is embeddable and must not leak goroutines per
+		// start/stop cycle.
 		stoppedOnce.Do(func() { close(stopped) })
 		reporter.Close()
 		return firstErr

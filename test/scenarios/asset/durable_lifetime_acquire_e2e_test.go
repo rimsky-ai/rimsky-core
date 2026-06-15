@@ -64,7 +64,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		nodeType  = "acquirer"
 	)
 
-	// A fan-out parent node holding a durable scope claim. The producer
+	// @constraint: A fan-out parent node holding a durable scope claim. The producer
 	// advertises the DataProcessing mix-in (the canonicalizer requires
 	// it for `lifetime: durable`) and SupportsSplitScope so the fan-out
 	// sub-claim acquisition fires.
@@ -123,7 +123,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 	frameID := seedFrameAsset(ctx, t, backend, instID, acqNode.ID)
 	_ = seedRunForNodeAsset(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
 
-	// In-process Fake claim producer advertising DataProcessing +
+	// @deliberate: In-process Fake claim producer advertising DataProcessing +
 	// SupportsSplitScope. SplitScope returns three durable sub-scopes so
 	// the fan-out sub-claim acquisition exercises the inherited-lifetime
 	// path.
@@ -168,14 +168,14 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
 
-	// Drive the REAL acquire path. A fan-out parent acquires its claim,
+	// @constraint: Drive the REAL acquire path. A fan-out parent acquires its claim,
 	// splits sub-claims, creates child runs, and returns Ran=true without
 	// dispatching the parent to the (unreachable) executor.
 	res, err := runtime.RunNode(ctx, args, nil)
 	require.NoError(t, err, "RunNode must acquire the fan-out parent")
 	require.True(t, res.Ran, "the fan-out parent candidate must be acquired and dispatched")
 
-	// Parent claim handle: the row the REAL acquire path (acquireClaim)
+	// @deliberate: Parent claim handle: the row the REAL acquire path (acquireClaim)
 	// wrote must carry lifetime=durable.
 	var parent *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -194,7 +194,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 	require.Equal(t, spec.ClaimLifetimeDurable, parent.Lifetime,
 		"durable lifetime must thread through acquireClaim onto the persisted parent row")
 
-	// Fan-out sub-case: every child claim row (parent_claim_handle_id =
+	// @deliberate: Fan-out sub-case: every child claim row (parent_claim_handle_id =
 	// parent) must inherit lifetime=durable.
 	var children []persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

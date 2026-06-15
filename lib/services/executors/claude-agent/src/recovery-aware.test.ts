@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// Recovery-aware protocol unit test (per spec
+// @deliberate: recovery-aware protocol unit test (per spec
 // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
 // §Recovery-aware executor protocol).
 //
@@ -30,9 +30,11 @@
 
 import { describe, it, expect } from "vitest";
 
-// ExecuteRequest field surface visible to the gRPC handler in
-// server.ts. Mirrors the same fields the executor reads. We pin the
-// shape here so the test fails to compile if the surface drifts.
+/**
+ * ExecuteRequest field surface visible to the gRPC handler in
+ * server.ts. Mirrors the same fields the executor reads. We pin the
+ * shape here so the test fails to compile if the surface drifts.
+ */
 interface RecoveryAwareExecuteRequestShape {
   node_id?: string;
   instance_id?: string;
@@ -41,12 +43,14 @@ interface RecoveryAwareExecuteRequestShape {
   prior_dispatch_disposition?: string;
 }
 
-// AsyncCallbackAckBody is the JSON payload the Go supervisor returns
-// in response to the executor's HTTP callback POST. See
-// `code:runtime/callback.go::callbackAckBody`. HTTP status stays 200
-// for both accepted and rejected; the executor distinguishes via
-// `ack_status`. `current_dispatch_id` is set on rejection when a
-// successor dispatch already exists.
+/**
+ * AsyncCallbackAckBody is the JSON payload the Go supervisor returns
+ * in response to the executor's HTTP callback POST. See
+ * `code:runtime/callback.go::callbackAckBody`. HTTP status stays 200
+ * for both accepted and rejected; the executor distinguishes via
+ * `ack_status`. `current_dispatch_id` is set on rejection when a
+ * successor dispatch already exists.
+ */
 interface AsyncCallbackAckBody {
   ack_status: "accepted" | "rejected";
   current_dispatch_id?: string;
@@ -55,7 +59,7 @@ interface AsyncCallbackAckBody {
 describe("recovery-aware protocol", () => {
   describe("ExecuteRequest parsing", () => {
     it("reads prior_dispatch_id and prior_dispatch_disposition off an incoming payload", () => {
-      // Wire shape produced by the Go supervisor when this dispatch
+      // @deliberate: wire shape produced by the Go supervisor when this dispatch
       // supersedes a heartbeat-stale predecessor.
       const payload = JSON.parse(JSON.stringify({
         node_id: "node-a",
@@ -67,7 +71,7 @@ describe("recovery-aware protocol", () => {
 
       expect(payload.prior_dispatch_id).toBe("dispatch-old");
       expect(payload.prior_dispatch_disposition).toBe("heartbeat_stale");
-      // dispatch_id remains the supervisor-side rimsky_node_runs.id of
+      // @deliberate: dispatch_id remains the supervisor-side rimsky_node_runs.id of
       // the current row (the new one); prior_dispatch_id names the
       // superseded predecessor.
       expect(payload.dispatch_id).toBe("dispatch-new");
@@ -84,7 +88,7 @@ describe("recovery-aware protocol", () => {
     });
 
     it("accepts every documented disposition value verbatim", () => {
-      // The Go side stamps the lower_snake_case enum symbol; the TS
+      // @deliberate: the Go side stamps the lower_snake_case enum symbol; the TS
       // executor passes it through to user-code as-is (the executor
       // does not interpret the value beyond surfacing it on the
       // attribute bag / callback metadata).
@@ -117,7 +121,7 @@ describe("recovery-aware protocol", () => {
     });
 
     it("tolerates the optional current_dispatch_id being absent on a rejected ack", () => {
-      // The supervisor may reject without naming a successor (e.g. the
+      // @deliberate: the supervisor may reject without naming a successor (e.g. the
       // run was cancelled outright). HTTP status is still 200.
       const body = JSON.parse(JSON.stringify({
         ack_status: "rejected",

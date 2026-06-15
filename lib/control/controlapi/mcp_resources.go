@@ -6,8 +6,6 @@
 // with the JSON-RPC dispatcher in control/controlapi/mcp/server.go.
 //
 // This is the ONLY code site that parses the `rimsky://...` URI scheme
-// (per spec .ok-planner/specs/2026-05-24-instance-debugger-design.md
-// §6.2). The layers above (the JSON-RPC dispatcher) and below (the
 // breakpoint-hits persistence accessor) stay URI-agnostic. Adding a
 // future SSE/webhook adapter is "write a new Layer 3 file"; nothing
 // downstream has to change.
@@ -35,13 +33,13 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Resource-read pagination bounds per spec §6.2 / §6.4.
+// @constraint: resource-read pagination bounds per spec §6.2 / §6.4.
 const (
 	resourceReadDefaultLimit = 100
 	resourceReadMaxLimit     = 500
 )
 
-// MIME type advertised in resources/list entries and resources/read
+// breakpointHitsMimeType type advertised in resources/list entries and resources/read
 // envelopes per spec §6.4.
 const breakpointHitsMimeType = "application/x-rimsky-breakpoint-hits+json"
 
@@ -68,13 +66,13 @@ func newBreakpointResourceCatalog(deps AppDeps) mcp.ResourceCatalog {
 // create call returns its `breakpoint_id` and is not enumerated.
 func (c *breakpointResourceCatalog) List(r *http.Request) ([]mcp.Resource, error) {
 	ident, _ := IdentityFromContextOK(r.Context())
-	// `breakpoint:read` covers both URI families per spec §6.7. If the
+	// @constraint: `breakpoint:read` covers both URI families per spec §6.7. If the
 	// requesting identity can't read any breakpoint at all (no `*:read`,
 	// no `breakpoint:*`, no `breakpoint:read`), return an empty list.
 	if !auth.CheckGrant(ident.Permissions, "breakpoint:read", nil).Allowed {
 		return []mcp.Resource{}, nil
 	}
-	// Enumerate active instances. The list is paginated by persistence;
+	// @constraint: enumerate active instances. The list is paginated by persistence;
 	// drain every page so the catalog's enumeration is exhaustive
 	// (resources/list is expected to be small per spec — bounded by the
 	// number of live debuggable instances). Terminated instances are
@@ -125,7 +123,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 
 	ident, _ := IdentityFromContextOK(r.Context())
 	if !auth.CheckGrant(ident.Permissions, "breakpoint:read", nil).Allowed {
-		// Mirror the HTTP gateByAction shape — denials are 403 with
+		// @constraint: mirror the HTTP gateByAction shape — denials are 403 with
 		// `permission_denied`; map to JSON-RPC -32603 with the same
 		// message so the agent has a clear signal.
 		return nil, &mcp.Error{Code: mcp.CodeInternalError, Message: "permission denied: breakpoint:read"}
@@ -135,13 +133,13 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 		hits    []persistence.BreakpointHitRow
 		hitsErr error
 	)
-	// Fetch limit+1 so we can report `truncated` only when there's
+	// @constraint: fetch limit+1 so we can report `truncated` only when there's
 	// actually a hit beyond the requested page, instead of speculating
 	// every time the page size happens to be exactly `limit`.
 	fetchLimit := parsed.limit + 1
 	switch parsed.kind {
 	case bpHitsScopeInstance:
-		// Confirm the instance exists; otherwise return a clear 404-ish
+		// @constraint: confirm the instance exists; otherwise return a clear 404-ish
 		// signal (CodeInvalidParams below) instead of leaking through
 		// whatever the storage layer would surface for an unknown id.
 		hitsErr = c.deps.Persist.Transaction(r.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -169,7 +167,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 		})
 	}
 	if hitsErr != nil {
-		// Not-found sentinels map to CodeInvalidParams (the URI named a
+		// @constraint: not-found sentinels map to CodeInvalidParams (the URI named a
 		// non-existent instance / breakpoint). Anything else is internal.
 		if errors.Is(hitsErr, foundationshared.ErrBreakpointNotFound) || errors.Is(hitsErr, foundationshared.ErrInstanceNotFound) {
 			return nil, &mcp.Error{Code: mcp.CodeInvalidParams, Message: hitsErr.Error()}
@@ -177,7 +175,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 		return nil, &mcp.Error{Code: mcp.CodeInternalError, Message: hitsErr.Error()}
 	}
 
-	// Trim the probe row before serialization; `truncated` reflects
+	// @constraint: trim the probe row before serialization; `truncated` reflects
 	// whether we observed at least one row beyond the requested page,
 	// not whether the page happened to hit exactly `limit`.
 	truncated := len(hits) > parsed.limit
@@ -185,7 +183,7 @@ func (c *breakpointResourceCatalog) Read(r *http.Request, rawURI string) (*mcp.R
 		hits = hits[:parsed.limit]
 	}
 
-	// Marshal hits per spec §4.6. The snapshot stored on the hit row is
+	// @constraint: marshal hits per spec §4.6. The snapshot stored on the hit row is
 	// the canonical payload; the per-row envelope adds the
 	// row-identity fields (seq, hit_id, breakpoint_id, instance_id,
 	// node_run_id, frame_id, checkpoint, mode, hit_at).
@@ -232,12 +230,12 @@ func hitToWireShape(h persistence.BreakpointHitRow) map[string]any {
 	if h.FrameID != nil {
 		out["frame_id"] = h.FrameID.String()
 	}
-	// The snapshot map contains dispatch_context, node_run, held_claims,
+	// @constraint: the snapshot map contains dispatch_context, node_run, held_claims,
 	// open_wait_set, optionally terminal_signal and effective_schema.
 	// Surface its top-level keys directly so callers can read them
 	// without an extra unwrap.
 	for k, v := range h.Snapshot {
-		// Don't let snapshot keys shadow the row-identity fields above.
+		// @constraint: don't let snapshot keys shadow the row-identity fields above.
 		if _, taken := out[k]; taken {
 			continue
 		}
@@ -278,13 +276,13 @@ func parseBreakpointHitsURI(raw string) (*parsedBreakpointHitsURI, *mcp.Error) {
 	if u.Scheme != "rimsky" {
 		return nil, &mcp.Error{Code: mcp.CodeInvalidParams, Message: "uri scheme must be rimsky:// (got " + u.Scheme + "://)"}
 	}
-	// Combine host + path so both `rimsky://instances/{uuid}/...` and
+	// @constraint: combine host + path so both `rimsky://instances/{uuid}/...` and
 	// `rimsky://breakpoints/{uuid}/...` parse the same way regardless of
 	// whether url.Parse decided to put the leading segment in Host or
 	// Path. Different stdlib versions can vary here.
 	pathPart := strings.TrimPrefix(u.Path, "/")
 	parts := strings.Split(strings.TrimSuffix(u.Host+"/"+pathPart, "/"), "/")
-	// parts must be one of:
+	// @constraint: parts must be one of:
 	//   ["instances",   "<uuid>", "breakpoint-hits"]
 	//   ["breakpoints", "<uuid>", "hits"]
 	if len(parts) != 3 {

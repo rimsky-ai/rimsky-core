@@ -9,10 +9,6 @@
 // upstream of the check, which now happens inside
 // `graph/attribute.Validate` against the merged effective attribute
 // schema).
-//
-// Per spec
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Executor side".
 
 package observability
 

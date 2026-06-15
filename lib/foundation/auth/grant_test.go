@@ -26,7 +26,6 @@ func TestGrantRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
-		// Round-trip back; verify Action preserved.
 		var e2 GrantEntry
 		if err := json.Unmarshal(out, &e2); err != nil {
 			t.Fatalf("re-unmarshal %s: %v", out, err)
@@ -80,8 +79,6 @@ func TestGrantScopeFirstClass(t *testing.T) {
 	if _, ok := e.Extras["rate_limit"]; !ok {
 		t.Fatalf("Extras missing genuinely-unknown 'rate_limit'")
 	}
-	// Re-marshal; both scope (first-class) and rate_limit (extra)
-	// should round-trip.
 	out, err := json.Marshal(e)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

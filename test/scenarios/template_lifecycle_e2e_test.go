@@ -60,12 +60,12 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Stub script the single worker node so the cascade resolves through
+	// @deliberate: Stub script the single worker node so the cascade resolves through
 	// the REAL supervisor dispatch path (no canned handler returns); the
 	// node's resolved attributes carry the executor's delta on terminal.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "lifecycle-done")
 
-	// (1) POST /v1/templates with a valid spec — register WITHOUT deploying,
+	// @deliberate: (1) POST /v1/templates with a valid spec — register WITHOUT deploying,
 	// so we can independently exhibit the deploy/undeploy state transitions
 	// below. The harness's DeployTemplate helper bundles register+deploy;
 	// here we hit the raw HTTP routes one at a time. Canonical naming
@@ -79,7 +79,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	require.True(t, strings.HasPrefix(templateHash, "sha256-"),
 		"register response must carry a content hash (sha256-…); got %q", templateHash)
 
-	// (1b) GET /v1/templates/{hash} — the persisted row is readable by hash
+	// @constraint: (1b) GET /v1/templates/{hash} — the persisted row is readable by hash
 	// and reports state=registered (the post-register, pre-deploy state).
 	getResp := getJSON(t, h.ControlBase+"/v1/templates/"+templateHash)
 	require.Equal(t, http.StatusOK, getResp.status,
@@ -88,7 +88,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	require.Equal(t, "registered", getResp.stringField("state"),
 		"newly-registered template must be in state=registered")
 
-	// (2) POST /v1/templates/validate — pre-flight validation against a
+	// @constraint: (2) POST /v1/templates/validate — pre-flight validation against a
 	// DIFFERENT spec (so we can prove this run did not persist by counting
 	// rows before-and-after the validate call). The validate path always
 	// returns HTTP 200 (verdict in body, not status).
@@ -99,7 +99,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	require.Equal(t, http.StatusOK, validateResp.status,
 		"POST /v1/templates/validate must return 200 with the verdict in the body: %s",
 		validateResp.bodyStr())
-	// Verdict carries the `ok` boolean and a `validation_errors` array,
+	// @constraint: Verdict carries the `ok` boolean and a `validation_errors` array,
 	// independent of pass/fail (the contract is "findings without persisting").
 	_, okBool := validateResp.body["ok"].(bool)
 	require.True(t, okBool, "validate response must carry a boolean `ok` verdict")
@@ -112,7 +112,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 			"falsifier is what this assertion negates",
 		preValidateCount, postValidateCount)
 
-	// (3) POST /v1/templates/{hash}/deploy — the registered template flips
+	// @constraint: (3) POST /v1/templates/{hash}/deploy — the registered template flips
 	// to state=deployed. Before deploy, instance creation MUST be refused
 	// (the `state != deployed` guard); we exhibit the gating clause by
 	// attempting an instance create FIRST.
@@ -133,7 +133,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	require.Equal(t, "deployed", deployResp.stringField("state"),
 		"deploy response must report state=deployed")
 
-	// Now instance creation succeeds — and the supervisor begins driving
+	// @deliberate: Now instance creation succeeds — and the supervisor begins driving
 	// the instance through the real dispatch path. We use the harness's
 	// CreateInstance helper so the root-dispatch wait is bundled.
 	iid := h.CreateInstance(templateHash, "ck-lifecycle", map[string]any{})
@@ -147,7 +147,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 			"actually drives the instance once deployed (not just that the row was "+
 			"inserted)")
 
-	// (4) DELETE /v1/templates/{hash} while the template is deployed must
+	// @constraint: (4) DELETE /v1/templates/{hash} while the template is deployed must
 	// return 409 (the deployed-state guard refuses to drop a live
 	// definition). This is the first protection on the catalog: a deployed
 	// template can never be deleted, regardless of whether instances exist.
@@ -160,7 +160,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 			"reachable for new instance creation): %s",
 		deleteWhileDeployedResp.bodyStr())
 
-	// (5) Terminate the instance so the undeploy precondition (active=0)
+	// @constraint: (5) Terminate the instance so the undeploy precondition (active=0)
 	// holds, then POST /v1/templates/{hash}/undeploy — the row flips to
 	// state=undeployed. From that moment, POST /v1/instances MUST be
 	// refused (the same `state != deployed` guard now fires for the
@@ -181,7 +181,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	require.Equal(t, "undeployed", undeployResp.stringField("state"),
 		"undeploy response must report state=undeployed")
 
-	// Post-undeploy: instance creation against the same hash is refused
+	// @deliberate: Post-undeploy: instance creation against the same hash is refused
 	// (4xx) — this is the second half of the falsifier's first clause
 	// ("Deployed-vs-undeployed state is recorded but not gated on at
 	// instance creation"). Note: rejection is the `state != deployed`
@@ -196,7 +196,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	require.Less(t, postUndeployInstanceAttempt.status, 500,
 		"refusal must be a 4xx client error, not a 5xx server error")
 
-	// (6) DELETE /v1/templates/{hash} — once the template is undeployed
+	// @deliberate: (6) DELETE /v1/templates/{hash} — once the template is undeployed
 	// AND no active instances reference it, the catalog row can be retired.
 	// The current implementation returns 200 {"deleted": true} (the plan
 	// text says 204, but the handler's actual contract is 200 + body; we
@@ -222,7 +222,7 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 	require.Contains(t, deleteTemplateResp.bodyStr(), `"deleted":true`,
 		"DELETE response must report deleted:true")
 
-	// Post-DELETE: a follow-up GET 404s (the row is gone).
+	// @constraint: Post-DELETE: a follow-up GET 404s (the row is gone).
 	getAfterDelete := getJSON(t, h.ControlBase+"/v1/templates/"+templateHash)
 	require.Equal(t, http.StatusNotFound, getAfterDelete.status,
 		"GET /v1/templates/{hash} after DELETE must return 404")
@@ -268,7 +268,6 @@ func listTemplateCount(t *testing.T, base string) int {
 		"GET /v1/templates must return 200: %s", resp.bodyStr())
 	templates, ok := resp.body["templates"].([]any)
 	if !ok {
-		// Empty result may come back as nil (omitempty); treat as 0.
 		return 0
 	}
 	return len(templates)
@@ -348,7 +347,7 @@ func doRequest(t *testing.T, method, url string, body any) jsonResp {
 	require.NoError(t, err)
 	out := jsonResp{status: resp.StatusCode, raw: raw}
 	if len(raw) > 0 {
-		// Tolerate non-JSON responses (e.g. an empty body or HTML); the
+		// @deliberate: Tolerate non-JSON responses (e.g. an empty body or HTML); the
 		// status code is the load-bearing field for those.
 		_ = json.Unmarshal(raw, &out.body)
 	}

@@ -52,15 +52,14 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		sourceStr = args.SourceNodeID.String()
 	}
 
-	// Load target BEFORE emitting the audit event so the message_received
-	// row carries the owning InstanceID. STORY-event-log-read says an
-	// operator filters /v1/events by instance_id and expects to see every
-	// event of the instance; an event row without InstanceID is dropped
-	// by that filter and silently absent from the unified feed. The prior
-	// ordering (emit first, then load) dropped the InstanceID column on
-	// every message_received row — fixing here at the read-surface
-	// boundary rather than threading instance_id resolution through the
-	// payload map keeps the storage shape consistent with every other
+	// @deliberate: Load target BEFORE emitting the audit event so the
+	// message_received row carries the owning InstanceID. story:event-log-read
+	// has an operator filter /v1/events by instance_id and expect every event
+	// of the instance; a row without InstanceID is dropped by that filter and
+	// silently absent from the unified feed. The prior emit-then-load ordering
+	// dropped the InstanceID column on every message_received row — fixing at
+	// the read-surface boundary rather than threading instance_id resolution
+	// through the payload map keeps storage shape consistent with every other
 	// instance-scoped emit site.
 	var target *persistence.NodeRow
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -87,28 +86,27 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		}, tx)
 	})
 	if target.State != cascade.NodeStateStale {
-		// fresh / running / failed — no-op.
 		return nil
 	}
 
-	// Post-2026-05-14: gating predicate is "wait-set empty in this
-	// frame." The cascade-from-commit path inserts wait-set rows; the
-	// settled-state drain removes them. If any rows remain, the
-	// scheduler's ListReadyForDispatch will pick the row up on a later
-	// tick once the drain completes. Post-stage-5 the wait-set keys on
-	// receiver_run_id; resolve the target's in-flight run for the frame
-	// via the queue. Absent run means we can't gate-check here — bail to
-	// the next scheduler tick which seeds the run row via the source.
+	// @constraint: gating predicate is "wait-set empty in this frame."
+	// cascade-from-commit inserts wait-set rows; settled-state drain
+	// removes them. If any remain, code:lib/graph/scheduler::ListReadyForDispatch
+	// picks the row up on a later tick once the drain completes. The
+	// wait-set keys on receiver_run_id; resolve the target's in-flight run
+	// for the frame via the queue. Absent run means we cannot gate-check
+	// here — bail to the next scheduler tick which seeds the run row via
+	// the source.
 	if target.FrameID == nil {
 		return nil
 	}
 	var pending int
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Under RunScope-first the in-flight resolver keys on
-		// (node_id, run_scope_id). Receivers with no in-flight run
-		// have nothing for the wait-set walk to gate on; treat that
-		// as "no pending blockers" — the next scheduler tick re-runs
-		// the gate after the cascade walker affirms a row.
+		// @deliberate: Under RunScope-first the in-flight resolver keys on
+		// (node_id, run_scope_id). Receivers with no in-flight run have
+		// nothing for the wait-set walk to gate on; treat that as "no
+		// pending blockers" — the next scheduler tick re-runs the gate
+		// after the cascade walker affirms a row.
 		if target.RunScopeID == nil {
 			pending = 0
 			return nil
@@ -134,31 +132,30 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		return nil
 	}
 
-	// All deps fresh. If no executor → pure-cascade sweep handles. If executor → enqueue.
 	if target.Executor == "" {
 		return nil
 	}
-	// FrameID is sourced from the target node row — a stale node always
-	// belongs to the in-flight frame (blessed-invariant 19). A nil frame_id
-	// here means the frame engine hasn't yet advanced the source-node's
-	// queued frame; defer to the next scheduler tick.
+	// @constraint: FrameID is sourced from the target node row — a stale
+	// node always belongs to the in-flight frame (invariant:19). A nil
+	// frame_id here means the frame engine hasn't yet advanced the
+	// source-node's queued frame; defer to the next scheduler tick.
 	if target.FrameID == nil {
 		log.Debug("RecalculateNode: skip enqueue: target frame_id is nil",
 			"node_id", target.ID.String())
 		return nil
 	}
-	// RequiredStores is intentionally empty here. Per spec §6.2 an empty
-	// slice trivially satisfies the supervisor-pool predicate
+	// @deliberate: RequiredStores empty. Per spec §6.2 an empty slice
+	// trivially satisfies the supervisor-pool predicate
 	// (RequiredStores ⊆ AcceptedStores).
 	var runScopeID shared.UUID
 	if target.RunScopeID != nil {
 		runScopeID = *target.RunScopeID
 	}
-	// Recovery-aware fields: the in-flight run row on the target
-	// (if any) is the predecessor whose output is now stale; surface
-	// its id on proto:executor.proto::ExecuteRequest.prior_dispatch_id
-	// so executors maintaining per-dispatch session state can recover
-	// or hand off the recalculate.
+	// @constraint: the in-flight run row on the target (if any) is the
+	// predecessor whose output is now stale; surface its id on
+	// proto:executor.proto::ExecuteRequest.prior_dispatch_id so executors
+	// maintaining per-dispatch session state can recover or hand off the
+	// recalculate.
 	priorDispatchID := target.InFlightRunID
 	if err := args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID:                   target.ID,
@@ -170,12 +167,12 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 		PriorDispatchID:          priorDispatchID,
 		PriorDispatchDisposition: "recalculate",
 	}); err != nil {
-		// Defensive: a closed RunScope means the target's scope has
-		// terminated (parent rendezvous has fired). Walker discipline
-		// per concept:run-scope: do not enqueue into a closed scope;
-		// drop the recalculate silently. Without this skip, a benign
-		// race between the source's commit cascade and the target's
-		// scope closure would surface as a recalculate error.
+		// @constraint: a closed RunScope means the target's scope has
+		// terminated (parent rendezvous has fired). Walker discipline per
+		// concept:run-scope: do not enqueue into a closed scope; drop the
+		// recalculate silently. Without this skip, a benign race between
+		// the source's commit cascade and the target's scope closure
+		// would surface as a recalculate error.
 		if errors.Is(err, persistence.ErrRunScopeClosed) {
 			log.Debug("RecalculateNode: skip enqueue: run scope closed",
 				"node_id", target.ID.String(),

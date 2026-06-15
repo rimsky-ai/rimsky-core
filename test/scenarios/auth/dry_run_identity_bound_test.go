@@ -82,7 +82,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// Mint admin via the anonymous path so we can mint scoped keys and
+	// @deliberate: Mint admin via the anonymous path so we can mint scoped keys and
 	// authoritatively list instances afterward.
 	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
@@ -93,15 +93,13 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 		t.Fatalf("admin plaintext missing: %+v", body)
 	}
 
-	// Register + deploy the template the scenario instantiates against.
 	hash := seedDryRunTemplate(t, f, adminKey)
 
-	// Baseline: no instances yet.
 	if n := countInstances(t, f, adminKey); n != 0 {
 		t.Fatalf("expected 0 instances before any create; got %d", n)
 	}
 
-	// Mint a key whose grant pins instance:create to dry_run (attempt-only
+	// @constraint: Mint a key whose grant pins instance:create to dry_run (attempt-only
 	// floor) and otherwise grants reads. This key can preview a create but
 	// can never commit one — the floor is on the identity, not the flag.
 	_, dryBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
@@ -116,7 +114,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 		t.Fatalf("attempt-only key plaintext missing: %+v", dryBody)
 	}
 
-	// POST /instances with the mode:dry_run key and NO ?dry_run flag. The
+	// @constraint: POST /instances with the mode:dry_run key and NO ?dry_run flag. The
 	// identity-bound floor must force preview: 200 + synthetic envelope.
 	code, resp := f.request(t, "POST", "/v1/instances", dryKey, map[string]any{"template": hash})
 	if code != 200 {
@@ -133,12 +131,12 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 		t.Fatalf("mode:dry_run create instance_id should be the placeholder; got %+v", would)
 	}
 
-	// No instance row was persisted — the floor held even without the flag.
+	// @deliberate: No instance row was persisted — the floor held even without the flag.
 	if n := countInstances(t, f, adminKey); n != 0 {
 		t.Fatalf("mode:dry_run create persisted an instance; GET /instances shows %d (want 0)", n)
 	}
 
-	// The auth.access_attempted audit row for instance:create records the
+	// @deliberate: The auth.access_attempted audit row for instance:create records the
 	// floored write: mode=dry_run, executed=false.
 	f.flushAudit()
 	ctx := context.Background()
@@ -170,7 +168,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 		t.Fatalf("expected an instance:create audit row with mode=dry_run, executed=false")
 	}
 
-	// Mint a SECOND ordinary key with an execute-capable instance:create
+	// @constraint: Mint a SECOND ordinary key with an execute-capable instance:create
 	// grant (no mode). With NO flag it must really create the instance —
 	// proving attempt-only is carried by the first key's identity, not by
 	// the request flag.
@@ -194,7 +192,7 @@ func TestDryRun_IdentityBoundFloor(t *testing.T) {
 		t.Fatalf("execute-mode create must return a real persisted instance_id; got %+v", execResp)
 	}
 
-	// GET /instances now shows exactly the one committed instance — proving
+	// @deliberate: GET /instances now shows exactly the one committed instance — proving
 	// the dry-run floor was identity-bound (the first key committed
 	// nothing; the second key, same flag-absent request, committed).
 	if n := countInstances(t, f, adminKey); n != 1 {

@@ -84,65 +84,70 @@ import (
 // harness never t.Skip's), so a developer who hasn't run `make
 // core-images` sees the missing-image error directly.
 func TestE2E_ExamplePublisherAgainstRunningRimsky(t *testing.T) {
-	// Not parallel: this scenario stands up a docker network + a Postgres
-	// testcontainer + a rimsky-all-in-one container plus an in-process
-	// publisher on a host port, then RESTARTS rimsky once. The cost is
-	// real, so the in-process publisher_test.go keeps its fast shape and
-	// only this gate pays the cross-stack price.
+	// @deliberate: not parallel — this scenario stands up a docker
+	// network + a Postgres testcontainer + a rimsky-all-in-one container
+	// plus an in-process publisher on a host port, then RESTARTS rimsky
+	// once. The cost is real, so the in-process publisher_test.go keeps
+	// its fast shape and only this gate pays the cross-stack price.
 	ctx := context.Background()
 
-	// 1. Stand up the example publisher in-process on a free host port.
-	//    The container's control-api dials it at
-	//    `host.testcontainers.internal:<port>` — see the WithHostPortAccess
-	//    option below. The publisher's gRPC server is reused across the
-	//    rimsky restart so the second boot's ListSubscriptions call lands
-	//    on the SAME in-memory subscription registry, which is exactly
-	//    what proves the reconcile sweep does not re-Subscribe.
+	// @deliberate: bring-up order is load-bearing — peers must be
+	// reachable BEFORE rimsky comes up because the control-api fires a
+	// Capabilities + ListSubscriptions handshake against every declared
+	// peer at startup. The start* helpers block until the gRPC server
+	// is listening, satisfying that ordering constraint.
+	// BringUpRimskyHandle (not BringUpRimsky) returns the restart-
+	// capable handle so leg 4 can rebuild the rimsky/all container
+	// against the SAME Postgres state DB.
+	//   1. Stand up the example publisher in-process on a free host
+	//      port. The container's control-api dials it at
+	//      `host.testcontainers.internal:<port>` — see
+	//      WithHostPortAccess below. The publisher's gRPC server is
+	//      reused across the rimsky restart so the second boot's
+	//      ListSubscriptions call lands on the SAME in-memory
+	//      subscription registry, which is exactly what proves the
+	//      reconcile sweep does not re-Subscribe.
+	//   2. Stand up a tiny in-process executor stub on a SEPARATE host
+	//      port. The reactor node needs an executor to dispatch through
+	//      — the supervisor's `work_started` event (the cascade
+	//      observable) only fires on a real dispatch attempt, which
+	//      requires a reachable executor. A minimal Success-returning
+	//      stub is enough: the test's load-bearing observable is "did
+	//      the publisher emit cause a NEW dispatch on the subscribing
+	//      node", not "did the dispatch do real work". Keeping the
+	//      stub inline (instead of importing a docker image) keeps the
+	//      example self-contained at runtime.
+	//   3. Bring up rimsky-all-in-one on the harness default
+	//      (Postgres) with BOTH the example publisher and the stub
+	//      executor registered as peers.
 	pubPort := freeHostPort(t)
 	pub := startExamplePublisher(t, pubPort)
 
-	// Also stand up a tiny in-process executor stub on a SEPARATE host
-	// port. The reactor node needs an executor to dispatch through — the
-	// supervisor's `work_started` event (the cascade observable) only
-	// fires on a real dispatch attempt, which requires a reachable
-	// executor. A minimal Success-returning stub is enough: the test's
-	// load-bearing observable is "did the publisher emit cause a NEW
-	// dispatch on the subscribing node", not "did the dispatch do real
-	// work". Keeping the stub inline (instead of importing a docker
-	// image) keeps the example self-contained at runtime.
 	execPort := freeHostPort(t)
 	startStubExecutor(t, execPort)
 
-	// 2. Bring up rimsky-all-in-one on the harness default (Postgres) with
-	//    BOTH the example publisher and the stub executor registered as
-	//    peers. They must be reachable BEFORE rimsky comes up because the
-	//    control-api fires a Capabilities + ListSubscriptions handshake
-	//    against every declared peer at startup; the start* helpers block
-	//    until the gRPC server is listening, satisfying that ordering
-	//    constraint. BringUpRimskyHandle (not BringUpRimsky) returns the
-	//    restart-capable handle so leg 4 can rebuild the rimsky/all
-	//    container against the SAME Postgres state DB.
 	pubEndpoint := fmt.Sprintf("host.testcontainers.internal:%d", pubPort)
 	execEndpoint := fmt.Sprintf("host.testcontainers.internal:%d", execPort)
 	h := harness.BringUpRimskyHandle(ctx, t,
 		harness.WithPublisher("example", pubEndpoint),
 		harness.WithExecutor("stub", execEndpoint),
 		harness.WithHostPortAccess(pubPort, execPort),
-		// The reactor node in deployExampleTemplate references the stub
-		// executor by name. Strict "all" mode requires every referenced
-		// peer's schema visible at registration; the stub advertises a
-		// permissive open schema so "available" or "all" would both work,
-		// but "none" keeps the test resilient to any other unwired
+		// @deliberate: ref-validation mode `none` — the reactor node in
+		// deployExampleTemplate references the stub executor by name;
+		// strict "all" mode requires every referenced peer's schema
+		// visible at registration, and the stub advertises a permissive
+		// open schema so "available" or "all" would both work, but
+		// "none" keeps the test resilient to any other unwired
 		// reference the template may grow.
 		harness.WithRefValidationMode("none"),
 	)
 
-	// Run each acceptance leg as a sub-test against the SAME running
-	// stack — the four legs are independent observations against the
-	// same control-api, so a single bring-up is sufficient and a
-	// per-leg bring-up would only multiply the bring-up cost. Order
-	// matters here: leg 1 creates the instance + publisher-subscription
-	// that legs 2/3/4 reuse.
+	// @deliberate: each leg runs against the SAME running stack — the
+	// four legs are independent observations against the same control-
+	// api, so a single bring-up is sufficient and a per-leg bring-up
+	// would only multiply the bring-up cost. Order matters here: leg 1
+	// creates the instance + publisher-subscription that legs 2/3/4
+	// reuse.
 	state := &exampleState{}
 
 	t.Run("Subscribe_lands_on_real_publisher", func(t *testing.T) {
@@ -186,10 +191,10 @@ type exampleState struct {
 // Proof for spec acceptance leg (a): "rimsky issues a Subscribe with
 // resolved config; the publisher acknowledges".
 func exerciseSubscribeLeg(t *testing.T, ep harness.RimskyEndpoint, pub *Publisher, state *exampleState) {
-	// Wait briefly for the startup resync goroutine to run. Resync is
-	// invoked from a `go func()` after StartControlAPI returns, so
-	// /health-200 does not imply it has executed yet. Polling here makes
-	// the test ordering deterministic.
+	// @deliberate: wait briefly for the startup resync goroutine to
+	// run. Resync is invoked from a `go func()` after StartControlAPI
+	// returns, so /health-200 does not imply it has executed yet.
+	// Polling here makes the test ordering deterministic.
 	startupDeadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(startupDeadline) {
 		if pub.Calls().ListSubscriptions > 0 {
@@ -205,9 +210,9 @@ func exerciseSubscribeLeg(t *testing.T, ep harness.RimskyEndpoint, pub *Publishe
 	state.templateID = deployExampleTemplate(t, ep)
 	state.instanceID = createExampleInstance(t, ep, state.templateID, "ck-example-publisher")
 
-	// Subscribe is fired synchronously inside POST /v1/instances. Poll
-	// briefly to absorb any goroutine scheduling lag, but the count must
-	// grow within ~5 seconds.
+	// @deliberate: Subscribe is fired synchronously inside POST
+	// /v1/instances. Poll briefly to absorb any goroutine scheduling
+	// lag; the count must grow within ~5 seconds.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if pub.Calls().Subscribe > before.Subscribe {
@@ -221,12 +226,13 @@ func exerciseSubscribeLeg(t *testing.T, ep harness.RimskyEndpoint, pub *Publishe
 			before.Subscribe, after.Subscribe)
 	}
 
-	// Capture the subscription ID for leg 2. The publisher holds it in
-	// its in-memory registry, keyed by publisher_subscription_id. Rimsky
-	// generates this id when it inserts the rimsky_publisher_subscriptions
-	// row and passes it as the Subscribe request's
-	// publisher_subscription_id, so the publisher's view IS the canonical
-	// id we use for the publisher capability check on POST /messages.
+	// @deliberate: capture the subscription ID for leg 2. The publisher
+	// holds it in its in-memory registry, keyed by
+	// publisher_subscription_id. Rimsky generates this id when it
+	// inserts the rimsky_publisher_subscriptions row and passes it as
+	// the Subscribe request's publisher_subscription_id, so the
+	// publisher's view IS the canonical id used for the publisher
+	// capability check on POST /messages.
 	ids := pub.SubscriptionIDs()
 	if len(ids) != 1 {
 		t.Fatalf("publisher must hold exactly one subscription after a single instance create, got %d: %v", len(ids), ids)
@@ -245,19 +251,19 @@ func exerciseSubscribeLeg(t *testing.T, ep harness.RimskyEndpoint, pub *Publishe
 // messages to the rimsky message endpoint; the messages reach the
 // targeted instance and downstream nodes consume them".
 func exerciseMessageDeliveryLeg(t *testing.T, ep harness.RimskyEndpoint, state *exampleState) {
-	// Quiesce the reactor's initial-frame activity first — the reactor
-	// node runs once on instance create (its initial frame), then settles.
-	// Subsequent work_started growth must be attributable to the published
-	// message alone.
+	// @deliberate: quiesce the reactor's initial-frame activity first
+	// — the reactor node runs once on instance create (its initial
+	// frame), then settles. Subsequent work_started growth must be
+	// attributable to the published message alone.
 	waitForNodeDispatched(t, ep, state.instanceID, reactorNodeType, 60*time.Second)
 	waitForDispatchQuiescent(t, ep, state.instanceID, reactorNodeType, 30*time.Second)
 	baseline := workStartedCount(t, ep, state.instanceID, reactorNodeType)
 
-	// Emit a publisher message — exactly what the bundled sensors and
-	// any third-party publisher author would send through
-	// pkg:lib/protocols/publisherkit. The envelope shape mirrors
-	// lib/services/sensors/sensor-http/sensor.go::postMessage so the
-	// example tracks the production publisher wire format.
+	// @deliberate: emit a publisher message — exactly what the bundled
+	// sensors and any third-party publisher author would send through
+	// publisherkit. The envelope shape mirrors the sensor-http
+	// `postMessage` so the example tracks the production publisher wire
+	// format.
 	envelope := map[string]any{
 		"kind":                      exampleMessageKind,
 		"target":                    reactorNodeType,
@@ -273,17 +279,19 @@ func exerciseMessageDeliveryLeg(t *testing.T, ep harness.RimskyEndpoint, state *
 			state.instanceID, status, string(body))
 	}
 
-	// The cascade fires asynchronously: rimsky persists the message,
-	// schedules a frame, the supervisor dispatches the reactor node again.
+	// @deliberate: the cascade fires asynchronously — rimsky persists
+	// the message, schedules a frame, the supervisor dispatches the
+	// reactor node again.
 	requireWorkStartedGrew(t, ep, state.instanceID, reactorNodeType, baseline, 60*time.Second,
 		"published message must propagate through the cascade and re-dispatch the subscribing node")
 
-	// Read back the persisted message via GET /v1/instances/{id}/messages
-	// and assert sender_kind=publisher + sender=publisher_name. Per the
-	// publisher capability check (lib/control/controlapi/messages.go),
-	// rimsky overwrites the request body's `sender` with the
-	// publisher-subscription row's PublisherName — proof that
-	// sender_kind discrimination is server-derived, not client-trusted.
+	// @constraint: read back the persisted message via GET
+	// /v1/instances/{id}/messages and assert sender_kind=publisher +
+	// sender=publisher_name. Per the publisher capability check
+	// (lib/control/controlapi/messages.go), rimsky overwrites the
+	// request body's `sender` with the publisher-subscription row's
+	// PublisherName — proof that sender_kind discrimination is server-
+	// derived, not client-trusted.
 	requirePublisherMessage(t, ep, state.instanceID, "example")
 }
 
@@ -303,16 +311,16 @@ func exerciseMissingDedupHeaderLeg(t *testing.T, ep harness.RimskyEndpoint, stat
 		"sender_kind":               "publisher",
 		"publisher_subscription_id": state.subscriptionID,
 	}
-	// Headers map intentionally empty — no Idempotency-Key.
+	// @deliberate: headers map intentionally empty — no Idempotency-Key.
 	status, body := postWithHeader(t, ep, "/v1/instances/"+state.instanceID+"/messages",
 		envelope, map[string]string{})
 	if status != http.StatusBadRequest {
 		t.Fatalf("POST /v1/instances/%s/messages WITHOUT Idempotency-Key: status=%d want=400 body=%s (falsifier: publisher emits without dedup header and is silently accepted)",
 			state.instanceID, status, string(body))
 	}
-	// Diagnostic must name the missing header so an operator knows what
-	// to fix. Lower-case search keeps the assertion resilient to body
-	// capitalization.
+	// @constraint: diagnostic must name the missing header so an
+	// operator knows what to fix. Lower-case search keeps the
+	// assertion resilient to body capitalization.
 	bodyLower := strings.ToLower(string(body))
 	if !strings.Contains(bodyLower, "idempotency-key") {
 		t.Fatalf("400 body must name the Idempotency-Key header: %s", string(body))
@@ -334,16 +342,17 @@ func exerciseRestartReconcileLeg(ctx context.Context, t *testing.T, h *harness.R
 	beforeIDs := pub.SubscriptionIDs()
 	beforeCalls := pub.Calls()
 
-	// Restart rimsky. The Postgres testcontainer + the example publisher
-	// both survive; only the rimsky-all-in-one container is recycled.
-	// The new control-api dials the same publisher endpoint
-	// (host.testcontainers.internal:<port>), fires the Capabilities
-	// handshake, and runs ResyncPublisherSubscriptions in a goroutine
-	// against every configured publisher.
+	// @deliberate: restart rimsky. The Postgres testcontainer + the
+	// example publisher both survive; only the rimsky-all-in-one
+	// container is recycled. The new control-api dials the same
+	// publisher endpoint (host.testcontainers.internal:<port>), fires
+	// the Capabilities handshake, and runs
+	// ResyncPublisherSubscriptions in a goroutine against every
+	// configured publisher.
 	h.Restart(ctx, t)
 
-	// Resync runs in a startup goroutine (lib/control/config/controlapi.go,
-	// after StartControlAPI returns), so /health-200 does not imply
+	// @deliberate: resync runs in a startup goroutine (after
+	// StartControlAPI returns), so /health-200 does not imply
 	// reconcile has run yet. Poll for ListSubscriptions to be called.
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
@@ -354,11 +363,12 @@ func exerciseRestartReconcileLeg(ctx context.Context, t *testing.T, h *harness.R
 	}
 	after := pub.Calls()
 	if after.ListSubscriptions <= beforeCalls.ListSubscriptions {
-		// Dump the rimsky container logs so the failure surface enumerates
-		// what the control-api was actually doing — the resync goroutine
-		// logs `publisher.resync.*` keys on every step (list_failed,
-		// subscribe_failed, orphan_subscription, unsubscribe_orphan_failed),
-		// so an absent log line says the goroutine never ran the
+		// @deliberate: dump the rimsky container logs so the failure
+		// surface enumerates what the control-api was actually doing
+		// — the resync goroutine logs `publisher.resync.*` keys on
+		// every step (list_failed, subscribe_failed,
+		// orphan_subscription, unsubscribe_orphan_failed), so an
+		// absent log line says the goroutine never ran the
 		// ListSubscriptions branch.
 		h.DumpRimskyLogs(t)
 		t.Fatalf("ListSubscriptions count did NOT grow after rimsky restart: before(after-initial-startup)=%d after-restart=%d (snapshot of all counters at end: subscribe=%d unsubscribe=%d listSubs=%d) — the new control-api must invoke runtime.ResyncPublisherSubscriptions, which calls PublisherClient.ListSubscriptions on every configured publisher",
@@ -366,11 +376,12 @@ func exerciseRestartReconcileLeg(ctx context.Context, t *testing.T, h *harness.R
 			after.Subscribe, after.Unsubscribe, after.ListSubscriptions)
 	}
 
-	// Falsifier guard: Subscribe must NOT have grown — the publisher
-	// reported the still-active subscription on ListSubscriptions, so
-	// the reconcile must have observed it as already-present and left
-	// it alone. Wait briefly for any racing in-flight Subscribe to land
-	// before snapshotting, so a slow re-Subscribe still fails this gate.
+	// @constraint: falsifier guard — Subscribe must NOT have grown. The
+	// publisher reported the still-active subscription on
+	// ListSubscriptions, so the reconcile must have observed it as
+	// already-present and left it alone. Wait briefly for any racing
+	// in-flight Subscribe to land before snapshotting, so a slow
+	// re-Subscribe still fails this gate.
 	time.Sleep(2 * time.Second)
 	after = pub.Calls()
 	if after.Subscribe > beforeCalls.Subscribe {
@@ -378,8 +389,8 @@ func exerciseRestartReconcileLeg(ctx context.Context, t *testing.T, h *harness.R
 			beforeCalls.Subscribe, after.Subscribe)
 	}
 
-	// The publisher's in-memory registry must still hold the same
-	// subscription id (nothing has removed it).
+	// @constraint: the publisher's in-memory registry must still hold
+	// the same subscription id (nothing has removed it).
 	afterIDs := pub.SubscriptionIDs()
 	if len(afterIDs) != len(beforeIDs) {
 		t.Fatalf("publisher subscription set changed across restart: before=%v after=%v", beforeIDs, afterIDs)
@@ -388,8 +399,6 @@ func exerciseRestartReconcileLeg(ctx context.Context, t *testing.T, h *harness.R
 		t.Fatalf("publisher subscription id changed across restart: was %q, now %v", state.subscriptionID, afterIDs)
 	}
 }
-
-// --- template + envelope helpers ----------------------------------------------
 
 // reactorNodeType is both the publisher's `target_node` and the subscribing
 // node's type. The publisher's envelope carries target=<this>; the reactor
@@ -443,11 +452,12 @@ func deployExampleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 			},
 			"publishers": []map[string]any{
 				{
-					// `name` must match the key under `publishers:` in
-					// rimsky.yml (the harness's WithPublisher option uses
-					// "example"). StartPublisherSubscriptionsForInstance
-					// looks up the publisher client by Name, so a name
-					// mismatch means Subscribe is never dispatched.
+					// @constraint: `name` must match the key under
+					// `publishers:` in rimsky.yml (the harness's
+					// WithPublisher option uses "example").
+					// StartPublisherSubscriptionsForInstance looks up
+					// the publisher client by Name, so a name mismatch
+					// means Subscribe is never dispatched.
 					"name":         "example",
 					"kind":         exampleKind,
 					"config":       json.RawMessage(`{}`),
@@ -512,8 +522,6 @@ func postWithHeader(t *testing.T, ep harness.RimskyEndpoint, path string, body a
 	return ep.PostJSONWithHeaders(t, path, body, headers)
 }
 
-// --- observability helpers ---------------------------------------------------
-
 // nodeStateResponse is the shape of
 // `GET /v1/observability/nodes/{instance_id}/{node_type}`.
 type nodeStateResponse struct {
@@ -564,9 +572,10 @@ func waitForDispatchQuiescent(t *testing.T, ep harness.RimskyEndpoint, instanceI
 			return
 		}
 	}
-	// Non-fatal at this stage: an undispatched-executor configuration means
-	// the reactor may keep retrying. The follow-up requireWorkStartedGrew
-	// still discriminates publisher-emit-caused growth from baseline.
+	// @deliberate: non-fatal at this stage — an undispatched-executor
+	// configuration means the reactor may keep retrying. The follow-up
+	// requireWorkStartedGrew still discriminates publisher-emit-caused
+	// growth from baseline.
 	t.Logf("warning: node %q never went fully quiescent within %v (work_started kept moving, last=%d); proceeding with baseline=%d",
 		nodeType, deadline, last, last)
 }
@@ -651,8 +660,6 @@ func requirePublisherMessage(t *testing.T, ep harness.RimskyEndpoint, instanceID
 		instanceID, lastSeen)
 }
 
-// --- in-process publisher bring-up -------------------------------------------
-
 // freeHostPort grabs an OS-assigned TCP port and returns it. The brief
 // close-then-reuse race is acceptable for an in-process test fixture
 // (matches the pattern in examples/executor/main_e2e_test.go::freeHostPort).
@@ -689,11 +696,11 @@ func startExamplePublisher(t *testing.T, port int) *Publisher {
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
-	// Poll-dial to confirm the gRPC server is up before returning.
-	// rimsky-all-in-one's startup publisher dial is eager — if the
-	// publisher isn't listening at the configured endpoint when rimsky
-	// boots, the container exits non-zero. Blocking here makes the
-	// ordering deterministic without a sleep.
+	// @deliberate: poll-dial to confirm the gRPC server is up before
+	// returning. rimsky-all-in-one's startup publisher dial is eager —
+	// if the publisher isn't listening at the configured endpoint
+	// when rimsky boots, the container exits non-zero. Blocking here
+	// makes the ordering deterministic without a sleep.
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {

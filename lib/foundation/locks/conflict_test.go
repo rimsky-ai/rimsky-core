@@ -44,8 +44,8 @@ func TestClaimScopesByteEqual(t *testing.T) {
 // §4.10 invariant 4b / spec §8.5 carry-forward. Sync block: r×r ✓; r×w /
 // w×r / w×w ✗. Async block: r×r / r×w / w×r ✓; w×w ✗.
 func TestModeCoexistsMatrix(t *testing.T) {
-	// Helper: every sync write_semantics value should behave the same
-	// way; assert both Direct and StagedBlocking pairings.
+	// @deliberate: every sync write_semantics value should behave the
+	// same way; assert both Direct and StagedBlocking pairings.
 	syncSemantics := []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync, claimproducer.WriteSemanticsBlockingAsync}
 	for _, sem := range syncSemantics {
 		t.Run("sync-"+string(sem)+"-r-r", func(t *testing.T) {
@@ -70,7 +70,7 @@ func TestModeCoexistsMatrix(t *testing.T) {
 		})
 	}
 
-	// Async block (staged_async).
+	// @constraint: async block (staged_async).
 	async := claimproducer.WriteSemanticsStagedAsync
 	t.Run("async-r-r", func(t *testing.T) {
 		if !ModeCoexists(claimproducer.IntentRead, async, claimproducer.IntentRead, async) {

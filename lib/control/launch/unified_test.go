@@ -38,8 +38,8 @@ func TestUnifiedStack_DrainReversesStartOrder(t *testing.T) {
 		}
 	)
 
-	// Start order matches the production StartUnifiedStack:
-	// scheduler, supervisor, control-api.
+	// @constraint: start order matches the production
+	// StartUnifiedStack — scheduler, supervisor, control-api.
 	stack := &UnifiedStack{
 		stops: []StopFunc{
 			makeStop("scheduler"),
@@ -73,7 +73,7 @@ func TestUnifiedStack_DrainEmptyIsNoOp(t *testing.T) {
 		failCh:   make(chan RoleFailure, 3),
 		failBufN: 3,
 	}
-	// Should return without panic.
+	// @constraint: should return without panic.
 	stack.Drain(context.Background(), time.Second)
 }
 

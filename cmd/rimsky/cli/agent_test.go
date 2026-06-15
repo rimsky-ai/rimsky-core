@@ -52,7 +52,6 @@ func TestAgentStatusStopLifecycle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// A real child that ignores nothing and sleeps until signalled.
 	helper := exec.Command("sleep", "60")
 	if err := helper.Start(); err != nil {
 		t.Fatalf("start helper: %v", err)
@@ -75,12 +74,10 @@ func TestAgentStatusStopLifecycle(t *testing.T) {
 		t.Fatalf("stop = %d, want 0", got)
 	}
 
-	// The pid file should be gone.
 	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
 		t.Fatalf("pid file should be removed after stop, stat err = %v", err)
 	}
 
-	// The helper should have been terminated.
 	_, _ = helper.Process.Wait()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -98,7 +95,7 @@ func TestAgentStatusStalePID(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// Spawn and immediately reap a child so its pid is dead but reusable-ish.
+	// @deliberate: run-then-reap leaves a dead pid we can write into the pid file.
 	helper := exec.Command("true")
 	if err := helper.Run(); err != nil {
 		t.Fatalf("run helper: %v", err)
@@ -112,7 +109,7 @@ func TestAgentStatusStalePID(t *testing.T) {
 		t.Fatalf("write pid: %v", err)
 	}
 
-	// status returns 0 regardless; we just assert it doesn't error.
+	// @deliberate: status returns 0 even on a stale pid; this only guards against errors.
 	if got := runAgentStatus(nil); got != 0 {
 		t.Fatalf("status (stale pid) = %d, want 0", got)
 	}

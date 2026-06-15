@@ -131,18 +131,18 @@ func TestDrain_SIGTERMThenSIGKILLChildren_BoundedTime(t *testing.T) {
 	code := coord.Drain(context.Background(), compose.ReasonAllSuccess)
 	elapsed := time.Since(start)
 
-	// Drain must escalate SIGTERM → SIGKILL within the grace window
-	// + signal-delivery slack. The grace is 5s; 8s allows for
-	// scheduler jitter on a loaded CI host while still failing if
-	// the coordinator does not escalate at all.
+	// @constraint: Drain must escalate SIGTERM -> SIGKILL within the
+	// 5s grace window plus signal-delivery slack; the 8s bound
+	// tolerates scheduler jitter on a loaded CI host while still
+	// failing if the coordinator does not escalate at all.
 	if elapsed > 8*time.Second {
 		t.Fatalf("drain took %v, want <= 8s (grace window + slack)", elapsed)
 	}
 
-	// The child must be gone — signal 0 against a dead pid returns
-	// ESRCH (no such process). Some POSIX implementations also
-	// return EPERM after reap if pid recycling has not happened
-	// yet; treat either as "no longer a live target".
+	// @constraint: signal 0 against a dead pid returns ESRCH (no such
+	// process); some POSIX implementations return EPERM after reap if
+	// pid recycling has not yet happened. Both outcomes are accepted
+	// as "no longer a live signal target".
 	if processStillAlive(pid) {
 		t.Fatalf("pid %d still alive after Drain (elapsed %v)", pid, elapsed)
 	}

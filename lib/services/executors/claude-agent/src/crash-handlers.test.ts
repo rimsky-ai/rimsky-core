@@ -31,7 +31,7 @@ function makeStubLogger(captured: CapturedLogEntry[]): Logger {
 }
 
 describe("registerCrashHandlers", () => {
-  // Capture and restore Node's listener state so the test runner isn't
+  // @deliberate: capture and restore Node's listener state so the test runner isn't
   // poisoned by handlers we register here. We can't use the deprecated
   // NodeJS.UncaughtExceptionListener / UnhandledRejectionListener types,
   // so we type via process.listeners() which infers correctly.
@@ -77,7 +77,7 @@ describe("registerCrashHandlers", () => {
     });
 
     const err = new Error("rejected promise");
-    // Construct a placeholder Promise that's already settled so emitting
+    // @deliberate: construct a placeholder Promise that's already settled so emitting
     // a synthetic unhandledRejection event doesn't leave a real pending
     // rejection lying around in the test process.
     const placeholderPromise = Promise.resolve();

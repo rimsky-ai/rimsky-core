@@ -53,7 +53,6 @@ func LoadConfig() (Config, error) {
 	}
 	state := os.Getenv("RIMSKY_OPENLINEAGE_STATE_DSN")
 	if state == "" {
-		// Default to the rimsky DB (table `rimsky_openlineage_cursor`).
 		state = rimsky
 	}
 	backend := os.Getenv("RIMSKY_OPENLINEAGE_BACKEND_URL")

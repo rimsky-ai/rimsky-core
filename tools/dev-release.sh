@@ -4,45 +4,42 @@
 # license. See LICENSE.agpl and COPYRIGHT at the repo root.
 set -euo pipefail
 
-# tools/dev-release.sh — mechanical dev-channel release.
+# @agent-contract: Mechanical dev-channel release driver invoked by
+# `make dev-release`. Derives a SemVer-2.0 pre-release version of the
+# form v<next-minor>.0-dev.<YYYYMMDD>.g<sha> from the latest stable tag,
+# then drives the same `make release` chain a formal release uses, with
+# LATEST_TAG=dev so the floating :dev Hub tag moves (not :latest). Also
+# bumps lib/protocols/package.json transiently for the npm publish, then
+# reverts. Does NOT handle: preconditions (clean tree, docker/npm/gh
+# login, branch) — the Make targets it invokes catch the dirty-tree case
+# via VERSION override, broader preconditions are the operator's concern.
 #
-# Invoked by `make dev-release`. Derives a SemVer-2.0 pre-release version
-# of the form v<next-minor>.0-dev.<YYYYMMDD>.g<sha> from the latest stable
-# tag, then drives the same `make release` chain a formal release uses,
-# with LATEST_TAG=dev so the floating :dev Hub tag moves (not :latest).
-# Also bumps lib/protocols/package.json transiently for the npm publish,
-# then reverts.
+# @constraint: SHA folded into the SemVer pre-release identifier
+# (dot-joined after the date) rather than carried in `+gSHA` SemVer build
+# metadata. Build metadata after `+` is invalid in Docker image tag
+# grammar ([a-zA-Z0-9_][a-zA-Z0-9_.-]*), is stripped silently by
+# `npm version` (so the package.json bump would diverge from the git
+# tag), and is rejected by `go get` (Go canonical-version rule). Keeping
+# the SHA inside the pre-release segment preserves SemVer-2.0 ordering
+# (it still sorts below the corresponding stable) without tripping any
+# of those tools.
 #
-# The SHA is folded into the SemVer pre-release identifier (dot-joined
-# after the date) rather than carried in `+gSHA` SemVer build metadata.
-# Build metadata after `+` is invalid in Docker image tag grammar
-# ([a-zA-Z0-9_][a-zA-Z0-9_.-]*), is stripped silently by `npm version`
-# (so the package.json bump diverges from the git tag), and is rejected
-# by `go get` (Go canonical-version rule). Keeping the SHA inside the
-# pre-release segment preserves SemVer-2.0 ordering (it still sorts
-# below the corresponding stable) without tripping any of those tools.
-#
-# Preconditions: clean working tree, docker login, npm login, gh login,
-# branch on default. The script does not verify preconditions itself —
-# the Make targets it invokes (check-clean) catch the dirty-tree case
-# via VERSION=$(DEV_VERSION) override; broader preconditions are the
-# operator's concern (or are handled by the /release skill, not this
-# mechanical path).
-#
-# `make release`'s host-side gates (lint, license-lint, test-all) run
-# AFTER step 3's transient package.json bump. The dev-release flow
-# depends on those gates being tolerant of an in-flight package.json
-# version change — lint targets Go, license-lint scans source headers,
-# test-all runs Go tests, none of which read package.json. If a future
-# gate ever reads package.json, the bump must move to after the gates.
+# @deliberate: `make release`'s host-side gates (lint, license-lint,
+# test-all) run AFTER step 3's transient package.json bump. The
+# dev-release flow depends on those gates being tolerant of an in-flight
+# package.json version change — lint targets Go, license-lint scans
+# source headers, test-all runs Go tests, none of which read
+# package.json. If a future gate ever reads package.json, the bump must
+# move to after the gates.
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Cleanup trap: if any step after DEV_VERSION is derived fails, undo the
-# transient package.json bump and remove any locally-created tags. The
-# script is intended to be cron- or CI-driven; without this trap a partial
-# failure leaves a dirty tree + local tags that block the next run.
-# Successful completion clears the trap before exiting.
+# @deliberate: Cleanup trap with per-step gate flags. If any step after
+# DEV_VERSION is derived fails, undo the transient package.json bump and
+# remove any locally-created tags. The script is intended to be cron- or
+# CI-driven; without this trap a partial failure leaves a dirty tree +
+# local tags that block the next run. Successful completion clears the
+# trap before exiting.
 #
 # Per-step flags gate each cleanup action so we only undo work this run
 # actually performed:
@@ -70,9 +67,10 @@ cleanup() {
         fi
     fi
     if [ "${BUMP_DONE}" -eq 1 ]; then
-        # `git checkout -- <path>` is a no-op when the working-tree copy
-        # already matches HEAD. The 2>/dev/null swallows "did not match
-        # any file(s) known to git" if the path is somehow missing.
+        # @deliberate: `git checkout -- <path>` is a no-op when the
+        # working-tree copy already matches HEAD. The 2>/dev/null swallows
+        # "did not match any file(s) known to git" if the path is somehow
+        # missing.
         git checkout -- lib/protocols/package.json 2>/dev/null || true
         if [ -f lib/protocols/package-lock.json ]; then
             git checkout -- lib/protocols/package-lock.json 2>/dev/null || true
@@ -82,26 +80,27 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- 1. Derive DEV_VERSION ---
+# @deliberate: --- 1. Derive DEV_VERSION ---
 LAST_STABLE="$(git describe --tags --match='v[0-9]*' --exclude='*-dev*' --abbrev=0 2>/dev/null || true)"
 if [ -z "${LAST_STABLE}" ]; then
     echo "no stable tag found (expected something like v0.X.Y); cut a stable release first" >&2
     exit 1
 fi
-# LAST_STABLE is vMAJOR.MINOR.PATCH; bump minor, zero patch for the dev base.
+# @deliberate: LAST_STABLE is vMAJOR.MINOR.PATCH; bump minor, zero patch for the dev base.
 STABLE_NO_V="${LAST_STABLE#v}"
 IFS='.' read -r MAJOR MINOR PATCH <<<"${STABLE_NO_V}"
 NEXT_MINOR_BASE="v${MAJOR}.$((MINOR + 1)).0"
 DATE="$(date -u +%Y%m%d)"
 SHA="$(git rev-parse --short=7 HEAD)"
-# SHA folded into the pre-release segment (dot-joined) rather than carried
-# as `+gSHA` SemVer build metadata. See header comment for the reasoning.
+# @constraint: SHA folded into the pre-release segment (dot-joined)
+# rather than carried as `+gSHA` SemVer build metadata. See header
+# comment for the reasoning.
 DEV_VERSION="${NEXT_MINOR_BASE}-dev.${DATE}.g${SHA}"
 DEV_VERSION_NOPREFIX="${DEV_VERSION#v}"
 
 echo "dev-release: deriving ${DEV_VERSION} (last stable: ${LAST_STABLE})"
 
-# --- 2. Tag locally ---
+# @deliberate: --- 2. Tag locally ---
 # Idempotent against the cleanup trap from a previous failed run (which
 # would have deleted any locally-created tags before exit). If the tag
 # already exists here it indicates a remote-side conflict, not a
@@ -112,15 +111,15 @@ TAG1_CREATED=1
 git tag "lib/protocols/${DEV_VERSION}"
 TAG2_CREATED=1
 
-# --- 3. Transient package.json bump ---
+# @deliberate: --- 3. Transient package.json bump ---
 (cd lib/protocols && npm version --no-git-tag-version "${DEV_VERSION_NOPREFIX}")
 BUMP_DONE=1
 
-# --- 4. Build + scan + push with LATEST_TAG=dev ---
+# @deliberate: --- 4. Build + scan + push with LATEST_TAG=dev ---
 # VERSION override stops check-clean from seeing the dirty suffix from step 3.
 LATEST_TAG=dev VERSION="${DEV_VERSION}" make release
 
-# --- 5. Push git tags ---
+# @constraint: --- 5. Push git tags ---
 # `--atomic` is load-bearing: without it, a partial-push (e.g. the second
 # tag fails on a transient network glitch after the first has already
 # landed on origin) leaves an orphan tag on the remote that the cleanup
@@ -130,7 +129,7 @@ LATEST_TAG=dev VERSION="${DEV_VERSION}" make release
 git push --atomic origin "${DEV_VERSION}" "lib/protocols/${DEV_VERSION}"
 PUSHED=1
 
-# --- 6. npm publish with dev dist-tag ---
+# @deliberate: --- 6. npm publish with dev dist-tag ---
 # Guard against re-publish of the same version (npm forbids this and
 # errors out). If the version is already on the registry from a prior
 # partial-success run, skip the publish step and continue.
@@ -140,7 +139,7 @@ else
     VERSION="${DEV_VERSION}" make publish-protocols-dev
 fi
 
-# --- 7. Revert transient package.json bump ---
+# @deliberate: --- 7. Revert transient package.json bump ---
 # This runs on the happy path; the cleanup trap handles the failure path
 # (which would also revert these files). Doing it explicitly here means
 # the bump does not survive a successful run either.
@@ -149,7 +148,7 @@ if [ -f lib/protocols/package-lock.json ]; then
     git checkout -- lib/protocols/package-lock.json
 fi
 
-# --- 8. (Optional) GitHub prerelease ---
+# @deliberate: --- 8. (Optional) GitHub prerelease ---
 # Toggleable via env var: set SKIP_GH_PRERELEASE=1 to skip this step.
 # Idempotent: if a release for this tag already exists from a prior
 # partial-success run, `gh release view` returns 0 and we skip.
@@ -161,7 +160,7 @@ if [ -z "${SKIP_GH_PRERELEASE:-}" ]; then
     fi
 fi
 
-# Clear the trap — success path doesn't want the cleanup to fire (and
-# blow away the now-published tags).
+# @deliberate: Clear the trap — success path doesn't want the cleanup
+# to fire (and blow away the now-published tags).
 trap - EXIT
 echo "dev-release: shipped ${DEV_VERSION}"

@@ -59,7 +59,6 @@ func RunLs(ctx context.Context, args []string) int {
 	case "tags":
 		return RunTagList(ctx, args[1:])
 	}
-	// Treat unrecognized first positional as instance-list args.
 	return RunInstanceList(ctx, args)
 }
 
@@ -116,7 +115,6 @@ func RunRun(ctx context.Context, args []string) int {
 	}
 	rest := fs.Args()
 
-	// Source resolution: exactly one of (positional <file>) or (--template).
 	if templateName != "" && len(rest) > 0 {
 		fmt.Fprintln(os.Stderr, "rimsky run: --template and a positional <file> are mutually exclusive")
 		return 2
@@ -125,7 +123,7 @@ func RunRun(ctx context.Context, args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: rimsky run {<file>|--template <name>} [--params ...] [--param k=v ...] [--service <name>=<path> ...] [--instance-key ...] [--tag ...] [--no-keep]")
 		return 2
 	}
-	// "Don't keep the instance" can be expressed two equivalent ways —
+	// @constraint: "Don't keep the instance" can be expressed two equivalent ways —
 	// `--no-keep` (sets noKeep=true) or `--keep=false` (clears keep).
 	// Both must drive the same waitAndCleanup path AND both must imply
 	// terminate-after-run, otherwise the polling loop in waitAndCleanup
@@ -134,10 +132,6 @@ func RunRun(ctx context.Context, args []string) int {
 	// flow keys off the single `keep` boolean.
 	if noKeep || !keep {
 		keep = false
-		// Imply terminate-after-run so the dev-loop verb stays coherent.
-		// The instance self-terminates once its nodes settle, the
-		// terminal-flag polling in waitAndCleanup exits, and the
-		// instance + template are deleted.
 		terminateAfterRun = true
 	}
 
@@ -161,8 +155,6 @@ func RunRun(ctx context.Context, args []string) int {
 	c := NewClient(endpoint)
 	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
 
-	// Resolve the template hash: either by registering a positional spec
-	// file, or by naming an already-registered template via --template.
 	var hash string
 	if templateName != "" {
 		tpl, rerr := c.GetTemplate(ctx, templateName)
@@ -186,9 +178,6 @@ func RunRun(ctx context.Context, args []string) int {
 		return reportError(err)
 	}
 
-	// Auto-start the local host-agent when service bindings are supplied and
-	// no live agent daemon is recorded. v1 connection-state contract is
-	// PID-existence only (read ~/.rimsky/agent.pid + signal-0 liveness probe).
 	if len(bindings) > 0 {
 		if startErr := ensureAgentRunning(); startErr != nil {
 			fmt.Fprintf(os.Stderr, "rimsky run: could not start host-agent: %v\n", startErr)
@@ -289,7 +278,6 @@ func resolveServiceBindings(values RepeatedFlag) (map[string]bindingSpec, error)
 			out[name] = bindingSpec{Path: path}
 			continue
 		}
-		// Bare name: resolve via aliases (loaded lazily, once).
 		if aliases == nil {
 			aliases = LoadServiceAliases()
 		}
@@ -311,7 +299,7 @@ func resolveServiceBindings(values RepeatedFlag) (map[string]bindingSpec, error)
 // before submitting.
 func ensureAgentRunning() error {
 	if pid, ok, err := readAgentPID(); err == nil && ok && processAlive(pid) {
-		return nil // already running
+		return nil
 	}
 	if code := runAgentStart(nil); code != 0 {
 		return fmt.Errorf("`rimsky agent start` exited with code %d", code)

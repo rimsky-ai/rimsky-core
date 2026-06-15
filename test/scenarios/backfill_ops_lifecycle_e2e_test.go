@@ -295,7 +295,7 @@ func TestBackfillOpsLifecycle_ListGetPartitions_FullStack(t *testing.T) {
 	t.Parallel()
 	h := startBackfillFanOutHarness(t)
 
-	// Each partition child parks (await-callback that never arrives) so
+	// @constraint: Each partition child parks (await-callback that never arrives) so
 	// the partition rows persist through the test's assertion window.
 	// The fan-out parent run terminates fast in the V1 lifecycle (the
 	// moment SubClaims commit — children handle their own dispatch
@@ -315,7 +315,7 @@ func TestBackfillOpsLifecycle_ListGetPartitions_FullStack(t *testing.T) {
 
 	require.NotNil(t, h.FindNode(iid, "fan-parent"), "fan-parent node missing")
 
-	// Submit a backfill with a two-key partition override. The override is
+	// @deliberate: Submit a backfill with a two-key partition override. The override is
 	// the only way partitions appear (the template default resolves to the
 	// inert `"all"` fallback that produces zero partitions); the override's
 	// two keys are the entire universe of partitions to compare against.
@@ -331,7 +331,7 @@ func TestBackfillOpsLifecycle_ListGetPartitions_FullStack(t *testing.T) {
 	msgID, ok := body["message_id"].(string)
 	require.True(t, ok && msgID != "", "create response must carry message_id; got %v", body)
 
-	// --- LIST leg: the new backfill appears in the per-instance list ----
+	// @deliberate: LIST leg: the new backfill appears in the per-instance list
 	// Eventually because the listing reads message rows that the create
 	// transaction committed; the read goes through the real /v1/.. route.
 	require.Eventually(t, func() bool {
@@ -347,7 +347,7 @@ func TestBackfillOpsLifecycle_ListGetPartitions_FullStack(t *testing.T) {
 	}, 15*time.Second, 100*time.Millisecond,
 		"newly created backfill must appear in the per-instance list with its target_node + reason + message_id round-tripped")
 
-	// --- GET leg: single-op status resolves the same identity ----------
+	// @deliberate: GET leg: single-op status resolves the same identity
 	// Polls until delivered_at / frame_id are populated (the supervisor
 	// drives the invalidate to a frame); these fields prove the partition
 	// surface is consulting real persistence rather than synthesizing.
@@ -367,7 +367,7 @@ func TestBackfillOpsLifecycle_ListGetPartitions_FullStack(t *testing.T) {
 	require.Equal(t, "lifecycle scenario", st.Reason)
 	require.False(t, st.Cancelled, "status must not be cancelled on a backfill that ran to completion")
 
-	// --- PARTITIONS leg: per-child drill-down reports the real children
+	// @deliberate: PARTITIONS leg: per-child drill-down reports the real children
 	// the supervisor materialized via SplitScope. We assert:
 	//   (a) exactly two partition rows exist (the override's two keys);
 	//   (b) the child_key set is {"region-x","region-y"} — proving the
@@ -408,7 +408,7 @@ func TestBackfillOpsLifecycle_ListGetPartitions_FullStack(t *testing.T) {
 	}, 30*time.Second, 200*time.Millisecond,
 		"partition surface must list children keyed region-x / region-y, matching the override")
 
-	// Stub-side cross-check: the supervisor really did dispatch the
+	// @deliberate: Stub-side cross-check: the supervisor really did dispatch the
 	// partition children to the executor (the partition surface is not a
 	// fiction; it agrees with the ground truth of what dispatched).
 	require.Eventually(t, func() bool {
@@ -418,7 +418,7 @@ func TestBackfillOpsLifecycle_ListGetPartitions_FullStack(t *testing.T) {
 				count++
 			}
 		}
-		// >= 2 because the parent fan-out may also dispatch (e.g. the
+		// @deliberate: >= 2 because the parent fan-out may also dispatch (e.g. the
 		// open run), but the partition surface returns the override's
 		// two keys; we verified those above and here only verify that
 		// the dispatch path the surface reports against really fired.
@@ -471,7 +471,7 @@ func TestBackfillCancelPendingThroughRealRoute(t *testing.T) {
 	t.Parallel()
 	h := startBackfillFanOutHarness(t)
 
-	// Park-style children. If the cancel race were lost (i.e. the
+	// @deliberate: Park-style children. If the cancel race were lost (i.e. the
 	// supervisor delivered the invalidate before cancel landed), the
 	// partition children would park (no callback ever arrives) and the
 	// test's "zero observed dispatches" assertion would fail loudly. We
@@ -481,7 +481,7 @@ func TestBackfillCancelPendingThroughRealRoute(t *testing.T) {
 	// fired." (A Success terminal would clean itself up and the test
 	// might pass by accident.)
 	h.Stub.WhenType("fan-parent").Park(
-		// Park reason: AWAIT_CALLBACK with no callback ever delivered
+		// @deliberate: Park reason: AWAIT_CALLBACK with no callback ever delivered
 		// and no resumeAt — children, if delivered, stay parked
 		// indefinitely. This makes the "did dispatches escape after
 		// cancel?" assertion below sharp: a leaked dispatch persists
@@ -497,7 +497,7 @@ func TestBackfillCancelPendingThroughRealRoute(t *testing.T) {
 
 	require.NotNil(t, h.FindNode(iid, "fan-parent"), "fan-parent node missing")
 
-	// Submit the backfill and IMMEDIATELY cancel via the real route. The
+	// @deliberate: Submit the backfill and IMMEDIATELY cancel via the real route. The
 	// scheduler poll interval bounds how long the parent invalidate stays
 	// pending; in practice cancel issued back-to-back with create lands
 	// before delivery the overwhelming majority of the time. If a single
@@ -515,7 +515,7 @@ func TestBackfillCancelPendingThroughRealRoute(t *testing.T) {
 	_, err := uuid.Parse(opID)
 	require.NoError(t, err, "backfill_operation_id must be a uuid")
 
-	// Cancel through the REAL `POST /v1/backfills/{op}/cancel` route —
+	// @constraint: Cancel through the REAL `POST /v1/backfills/{op}/cancel` route —
 	// NOT via a direct SQL UPDATE. This is the load-bearing point of
 	// the spec acceptance: the cancel must be observable as the result
 	// of traversing the supervisor cancel path (handler → runtime →
@@ -525,13 +525,13 @@ func TestBackfillCancelPendingThroughRealRoute(t *testing.T) {
 		"cancel POST must return 200: body=%v", cancelBody)
 	require.Equal(t, true, cancelBody["cancelled"],
 		"cancel response must report cancelled=true: %v", cancelBody)
-	// `messages_voided` must be non-zero when the cancel landed on a
+	// @constraint: `messages_voided` must be non-zero when the cancel landed on a
 	// pending row — proving MarkCancelled really updated something.
 	voided, _ := cancelBody["messages_voided"].(float64)
 	require.GreaterOrEqual(t, voided, float64(1),
 		"cancel must void at least one pending message (the parent invalidate) — got %v", cancelBody)
 
-	// GET /v1/backfills/{op} must subsequently report cancelled=true
+	// @constraint: GET /v1/backfills/{op} must subsequently report cancelled=true
 	// (the read goes through the SAME route the operator would use to
 	// confirm the cancel landed). delivered_at is stamped by
 	// MarkCancelled to settle the row; we assert the cancelled flag
@@ -540,7 +540,7 @@ func TestBackfillCancelPendingThroughRealRoute(t *testing.T) {
 	require.True(t, st.Cancelled,
 		"GET /v1/backfills/{op} must report cancelled=true after the cancel route fired: %+v", st)
 
-	// Hold window: the supervisor never delivers a cancelled row. We
+	// @constraint: Hold window: the supervisor never delivers a cancelled row. We
 	// hold for 5s and assert zero fan-parent dispatches happened for the
 	// cancelled operation. Five seconds is several scheduler polls — if
 	// the supervisor were going to ignore the cancel, partition
@@ -569,7 +569,7 @@ func TestBackfillCancelPendingThroughRealRoute(t *testing.T) {
 	}, 5*time.Second, 250*time.Millisecond,
 		"after cancel, NO new fan-parent dispatches must fire — the supervisor must refuse to deliver the cancelled backfill")
 
-	// Cross-check: no partition RunScope was ever materialized for the
+	// @deliberate: Cross-check: no partition RunScope was ever materialized for the
 	// cancelled override's keys. (The override drove zero materialization
 	// because the parent invalidate never delivered.) We read this from
 	// rimsky_run_scopes — the SAME table the override test asserts
@@ -585,7 +585,7 @@ func TestBackfillCancelPendingThroughRealRoute(t *testing.T) {
 	require.Equal(t, 0, partitionRunScopes,
 		"cancelled backfill must not have materialized any partition RunScope keyed by the override's keys")
 
-	// Cross-check: the partition surface for the cancelled op returns
+	// @deliberate: Cross-check: the partition surface for the cancelled op returns
 	// an empty list — frame_id is NULL (MarkCancelled resets it), so
 	// the drill-down handler short-circuits.
 	parts := listBackfillPartitions(t, h, opID)

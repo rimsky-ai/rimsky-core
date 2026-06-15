@@ -50,9 +50,12 @@ type Watch struct {
 	TargetNode        string
 	MessageKind       string
 
-	mu              sync.Mutex
-	StartedAt       time.Time
-	LastIdempotency string // most-recent idempotency key seen
+	mu        sync.Mutex
+	StartedAt time.Time
+	// @constraint: holds the most-recent idempotency-header value seen on
+	// this subscription; serveWebhook reads/writes it under w.mu to
+	// suppress duplicate emissions when the inbound header repeats.
+	LastIdempotency string
 }
 
 // SensorService implements genv1.PublisherServer for HTTP webhook
@@ -108,9 +111,9 @@ func NewSensorService(rimskyEndpoint string, router *chi.Mux, log logger) *Senso
 		clock:          time.Now,
 		logger:         log,
 	}
-	// Single dispatcher route per service instance. Subsequent
-	// Subscribe / Unsubscribe calls only touch the in-memory map; the
-	// chi tree is never mutated after this point.
+	// @deliberate: single dispatcher route per service instance — chi has
+	// no route-unregistration API, so Subscribe / Unsubscribe mutate only
+	// the in-memory map and the chi tree is never touched after this point.
 	router.Post("/*", s.dispatchWebhook)
 	return s
 }
@@ -185,9 +188,9 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		MessageKind:       messageKind,
 		StartedAt:         s.clock(),
 	}
-	// Restart-replay: pre-populate the most-recent idempotency key from
-	// durable storage before registering the Watch so dedup against the
-	// header continues to function after a restart.
+	// @deliberate: restart-replay — pre-populate the most-recent
+	// idempotency key from durable storage before registering the Watch
+	// so header-based dedup continues to function across restarts.
 	s.mu.Lock()
 	state := s.state
 	s.mu.Unlock()
@@ -202,8 +205,8 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.mu.Lock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
 		s.mu.Unlock()
-		// Idempotent Subscribe: the state-DB row is already present from
-		// the prior call, so we skip the UpsertSubscription below.
+		// @deliberate: idempotent Subscribe — the state-DB row is already
+		// present from the prior call, so skip UpsertSubscription below.
 		return &genv1.SubscribeResponse{}, nil
 	}
 	if existing, taken := s.pathToWatch[w.PathPrefix]; taken {
@@ -241,7 +244,7 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		http.Error(rw, "read body", http.StatusBadRequest)
 		return
 	}
-	// Idempotency suppression — operator-opt-in.
+	// inboundIdem suppression — operator-opt-in.
 	var inboundIdem string
 	if w.IdempotencyHeader != "" {
 		inboundIdem = req.Header.Get(w.IdempotencyHeader)
@@ -254,8 +257,8 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 			}
 			w.LastIdempotency = inboundIdem
 			w.mu.Unlock()
-			// Read s.state under the service mu to avoid racing with
-			// AttachStateDB (which sets s.state under the same mu).
+			// @constraint: read s.state under s.mu — AttachStateDB writes
+			// it under the same mu, so a bare read here would race.
 			s.mu.Lock()
 			state := s.state
 			s.mu.Unlock()
@@ -273,7 +276,7 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 		"path":        req.URL.Path,
 		"method":      req.Method,
 	}
-	// Best-effort: decode the body as JSON for substitution-friendly
+	// decoded decode the body as JSON for substitution-friendly
 	// observations. Non-JSON surfaces as a string.
 	var decoded any
 	if json.Unmarshal(body, &decoded) == nil {
@@ -284,8 +287,6 @@ func (s *SensorService) serveWebhook(w *Watch, rw http.ResponseWriter, req *http
 	if inboundIdem != "" {
 		obs["idempotency_key"] = inboundIdem
 	}
-	// Compose dedup key. When inbound provides an idempotency header
-	// use that; otherwise fall back to a stable per-request key.
 	idemKey := inboundIdem
 	if idemKey == "" {
 		idemKey = fmt.Sprintf("%s+%d", w.SubscriptionID, now.UnixNano())

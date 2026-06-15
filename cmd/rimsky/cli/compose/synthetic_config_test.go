@@ -14,9 +14,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// repoRoot is defined in example_manifest_test.go in the same
-// package; reuse it for the byte-compare against the baked
-// supervisor-config file at the repo root.
+// TestWriteSyntheticRimskyYAML_PathsCorrect verifies the synthetic
+// rimsky.yml round-trips with persistence.driver=sqlite, a sqlite path
+// rooted at the run dir, blob backend = filesystem, and a blob root
+// also rooted at the run dir.
 
 func TestWriteSyntheticRimskyYAML_PathsCorrect(t *testing.T) {
 	tmp := t.TempDir()
@@ -328,9 +329,6 @@ func TestWriteSyntheticSupervisorYAMLWithCallbackPort_PortRoundTrips(t *testing.
 	if probe.Callback.Port != wantPort {
 		t.Fatalf("callback.port: got %d, want %d\n%s", probe.Callback.Port, wantPort, string(body))
 	}
-	// Sanity-check the splice did not also corrupt the surrounding
-	// fields. host stays 0.0.0.0 and advertise_host stays 127.0.0.1
-	// per the baked default.
 	if probe.Callback.Host != "0.0.0.0" {
 		t.Fatalf("callback.host: got %q, want %q\n%s", probe.Callback.Host, "0.0.0.0", string(body))
 	}

@@ -265,7 +265,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		InstanceID:       acq.InstanceID,
 		FrameID:          acq.FrameID,
 		ChildGraphName:   acq.GraphName,
-		// Child run rows carry the zero policy; the author policy
+		// @constraint: child run rows carry the zero policy; the author policy
 		// lives on the PARENT row via the snapshot below (that is the
 		// row PropagateFromChildState consults at settlement).
 		AggregationPolicy: spec.AggregationPolicy{},
@@ -278,7 +278,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}},
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Snapshot the parent's aggregation policy so PropagateFromChildState
+		// @constraint: snapshot the parent's aggregation policy so PropagateFromChildState
 		// + Aggregate use the right rule table. UpdateAggregationPolicy
 		// is idempotent for a no-op write.
 		if err := args.Persist.RunTree().UpdateAggregationPolicy(ctx, tx, acq.DispatchID, policy); err != nil {
@@ -288,7 +288,7 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		if err != nil {
 			return fmt.Errorf("dispatchFanOutChildren: %w", err)
 		}
-		// Audit-log the fan-out wave for operator observability. Two
+		// @deliberate: audit-log the fan-out wave for operator observability. Two
 		// events fire: the legacy `fan_out_dispatched` (kept for
 		// transitioning observers) and the post-2026-05-16 forensics
 		// kind `fanout.children_created` summarizing the child-run
@@ -326,9 +326,3 @@ func dispatchFanOutChildren(ctx context.Context, args RunArgs, acq *acquisition)
 		}, tx)
 	})
 }
-
-// (requiredStoresForAcq lives in runner_error_policy.go — re-used here
-// for the per-child required-stores list. For V1 every child inherits
-// the parent's declared stores list; the producer disambiguates the
-// parent claim's alias from the sub-claim's via SplitScope's per-
-// partition address.)

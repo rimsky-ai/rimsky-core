@@ -70,7 +70,10 @@ const breakpointResumePollInterval = 250 * time.Millisecond
 //
 // @concept: breakpoint
 type BreakpointInfraError struct {
-	Phase string // "list_breakpoints", "create_hit", "overflow_check", "drop_oldest", "wait_resume", "ctx_cancelled"
+	// @constraint: Phase values are the closed set list_breakpoints, create_hit,
+	// overflow_check, drop_oldest, wait_resume, ctx_cancelled — matched by
+	// the before_dispatch caller's *BreakpointInfraError type-switch.
+	Phase string
 	Cause error
 }
 
@@ -99,14 +102,16 @@ func (e *BreakpointInfraError) Unwrap() error { return e.Cause }
 // @concept: breakpoint
 type CheckpointContext struct {
 	InstanceID shared.UUID
-	// NodeID is the owning graph node (rimsky_nodes.id) for the dispatch
-	// — distinct from DispatchID (the rimsky_node_runs.id run row). It is
-	// the node-scoped key for the co-transactional breakpoint.hit
-	// event-log row (concept:event-log): events scope to the owning node,
-	// not the run. All three call sites already hold acq.NodeID, so this
-	// is threaded in directly rather than re-read from the node-run row.
-	NodeID           shared.UUID // rimsky_nodes.id
-	DispatchID       shared.UUID // rimsky_node_runs.id
+	// @constraint: NodeID is the owning graph node (rimsky_nodes.id), distinct
+	// from DispatchID (rimsky_node_runs.id). The co-transactional breakpoint.hit
+	// event-log row (concept:event-log) scopes to the owning node, not the run;
+	// all three call sites already hold acq.NodeID and thread it in directly
+	// rather than re-reading it from the node-run row.
+	NodeID shared.UUID
+	// @constraint: DispatchID is rimsky_node_runs.id; persisted column is the
+	// run row, but the Go field stays DispatchID for consistency with the rest
+	// of the runtime code.
+	DispatchID       shared.UUID
 	FrameID          shared.UUID
 	Executor         string
 	NodeType         string
@@ -114,7 +119,10 @@ type CheckpointContext struct {
 	ChildKey         string
 	MergedAttributes map[string]any
 	Checkpoint       persistence.BreakpointCheckpoint
-	TerminalSignal   *signalpkg.Signal // non-nil only for after_terminal
+	// @constraint: TerminalSignal is non-nil only for after_terminal checkpoints;
+	// before_dispatch evaluations leave it nil and the signal_type prefix filter
+	// is skipped.
+	TerminalSignal *signalpkg.Signal
 	// EffectiveSchema is the per-dispatch effective attribute schema
 	// (executor.expected_attributes_schema ∪ L1 template defaults ∪
 	// L2 node schema), threaded so buildSnapshot can record it on the
@@ -125,8 +133,6 @@ type CheckpointContext struct {
 	// supervisor-side defense-in-depth gate at the blocked runner's
 	// resume is the only schema check that fires.
 	EffectiveSchema map[string]any
-	// Snapshot inputs (collected by callers via
-	// runtime/breakpoint_snapshot.go helpers):
 	NodeRunSnapshot map[string]any
 	HeldClaims      []map[string]any
 	OpenWaitSet     []map[string]any
@@ -194,9 +200,9 @@ func EvaluateBreakpoints(
 		return cc.MergedAttributes, &BreakpointInfraError{Phase: "list_breakpoints", Cause: err}
 	}
 
-	// Matcher-input snapshot: bind once at entry so iteration N+1's
-	// matcher does not observe iteration N's L6 resume overlay (spec
-	// §4.4 — matcher reads the post-L5 snapshot).
+	// @constraint: matcher-input snapshot bound once at entry so iteration N+1's
+	// matcher does not observe iteration N's L6 resume overlay (spec §4.4 —
+	// matcher reads the post-L5 snapshot).
 	matcherInput := cc.MergedAttributes
 	result := cc.MergedAttributes
 	for _, bp := range bps {
@@ -212,30 +218,28 @@ func EvaluateBreakpoints(
 		}, args.Logger, 0) {
 			continue
 		}
-		// signal_type prefix filter: spec §4.5. Applies only to
-		// after_terminal hits where the breakpoint declared a
-		// signal_type. before_dispatch breakpoints have signal_type
-		// nil at create-time validation (§7.1 / Pass 2 matcher
-		// package).
+		// @constraint: signal_type prefix filter per spec §4.5 — applies only to
+		// after_terminal hits where the breakpoint declared a signal_type.
+		// before_dispatch breakpoints have signal_type nil at create-time
+		// validation (§7.1 / Pass 2 matcher package).
 		if bp.SignalType != nil && cc.TerminalSignal != nil {
 			if !cc.TerminalSignal.Type.HasPrefix(signalpkg.TypePath(*bp.SignalType)) {
 				continue
 			}
 		}
 
-		// Pre-write overflow handling per spec §4.8.
+		// @constraint: pre-write overflow handling per spec §4.8 — runs before the
+		// hit row is created so the queue cap is enforced even under bursty hits.
 		if err := handleOverflow(ctx, args, bp); err != nil {
 			return result, err
 		}
 
-		// Write the hit row in a short tx. NodeRunID / FrameID are
-		// nullable on the schema; pass nil pointers when the
-		// CheckpointContext carries the zero-UUID so the persisted
-		// column honors its nullability semantics rather than recording
-		// a meaningless all-zero value. The before_dispatch path always
-		// populates both; some after_terminal call sites (e.g. callback
-		// paths with partial AsyncContext) may pass zero values, which
-		// the schema represents as NULL.
+		// @constraint: NodeRunID / FrameID are nullable on the schema; pass nil
+		// pointers when the CheckpointContext carries the zero-UUID so the
+		// persisted column honors its nullability semantics rather than recording
+		// a meaningless all-zero value. The before_dispatch path always populates
+		// both; some after_terminal call sites (e.g. callback paths with partial
+		// AsyncContext) may pass zero values, which the schema represents as NULL.
 		var (
 			hitID       shared.UUID
 			nodeRunIDPt *shared.UUID
@@ -249,17 +253,13 @@ func EvaluateBreakpoints(
 			id := cc.FrameID
 			frameIDPt = &id
 		}
-		// Co-transactional hit + event-log row. The breakpoint.hit
-		// event is appended inside the SAME tx that creates the ledger
-		// hit row, so a recorded hit is ALWAYS reflected on /events —
-		// the two are atomic (both commit or both roll back). An Append
-		// failure rolls the hit back with it and routes through the
-		// debugger-infra path (Phase:"create_hit"), never leaving an
-		// orphaned hit with no event or vice-versa.
-		//
-		// @concept: event-log (the breakpoint.hit row and its ledger
-		// hit are co-transactional; the event scopes to the owning
-		// NodeID, not the node-run).
+		// @constraint: co-transactional hit + event-log row — the breakpoint.hit
+		// event is appended inside the SAME tx that creates the ledger hit row, so
+		// a recorded hit is ALWAYS reflected on /events (both commit or both roll
+		// back). An Append failure rolls the hit back with it and routes through
+		// the debugger-infra path (Phase:"create_hit"), never leaving an orphaned
+		// hit with no event or vice-versa.
+		// @concept: event-log
 		nodeIDPt := nodeIDPtr(cc.NodeID)
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
@@ -296,7 +296,6 @@ func EvaluateBreakpoints(
 			continue
 		}
 
-		// Pause mode: block until resume.
 		hit, err := waitForResume(ctx, args, hitID)
 		if err != nil {
 			return result, err
@@ -304,13 +303,11 @@ func EvaluateBreakpoints(
 		if hit != nil && hit.ResumeOverlay != nil {
 			merged, _ := shared.DeepMergeJSON(result, hit.ResumeOverlay).(map[string]any)
 			if merged != nil {
-				// Defense-in-depth validation runs in the caller
-				// before dispatch — this function returns the
-				// merged bag; the caller routes validation failures
-				// through template_validation_failed per
-				// concept:error-policy. matcherInput stays bound to
-				// the pre-overlay snapshot so later iterations'
-				// matchers don't observe this overlay.
+				// @constraint: defense-in-depth validation runs in the caller before
+				// dispatch — this function returns the merged bag and the caller
+				// routes validation failures through template_validation_failed per
+				// concept:error-policy. matcherInput stays bound to the pre-overlay
+				// snapshot so later iterations' matchers don't observe this overlay.
 				result = merged
 			}
 		}
@@ -354,22 +351,21 @@ func handleOverflow(ctx context.Context, args RunArgs, bp persistence.Breakpoint
 			}
 			return nil
 		case persistence.OverflowBlockDispatch, persistence.OverflowAutoResumeAfterTTL:
-			// Block until something drains. The sweeper handles
+			// @constraint: block until something drains — the sweeper handles
 			// auto_resume_after_ttl drainage in the background.
 			select {
 			case <-ctx.Done():
-				// Wrap as infra error so the before_dispatch caller's
-				// errors.As(*BreakpointInfraError) routes this through
-				// the debugger-infra path rather than the attribute-
-				// failure chain (which would surface ctx-cancel as
-				// `template_resolution_failed`).
+				// @deliberate: wrap as *BreakpointInfraError so the before_dispatch
+				// caller's errors.As routes ctx-cancel through the debugger-infra
+				// path rather than the attribute-failure chain (which would surface
+				// ctx-cancel as `template_resolution_failed`).
 				return &BreakpointInfraError{Phase: "ctx_cancelled", Cause: ctx.Err()}
 			case <-time.After(breakpointResumePollInterval):
 			}
 		default:
-			// Unknown policy — defensive default to block. Log once at
-			// Warn so operators can spot a corrupted policy value
-			// instead of watching the loop spin silently.
+			// @deliberate: unknown policy defaults to block; log once at Warn so
+			// operators can spot a corrupted policy value instead of watching the
+			// loop spin silently.
 			if !warnedUnknownPolicy && args.Logger != nil {
 				args.Logger.Warn("breakpoint.overflow.unknown_policy",
 					"breakpoint_id", bp.ID.String(),
@@ -405,10 +401,9 @@ func waitForResume(ctx context.Context, args RunArgs, hitID shared.UUID) (*persi
 			return nil, &BreakpointInfraError{Phase: "wait_resume", Cause: err}
 		}
 		if hit == nil {
-			// Hit was cascade-deleted (FK ON DELETE CASCADE on
-			// rimsky_breakpoint_hits.breakpoint_id removes hits when
-			// their parent breakpoint is deleted). Treat as
-			// auto-resume with no overlay.
+			// @constraint: hit was cascade-deleted — FK ON DELETE CASCADE on
+			// rimsky_breakpoint_hits.breakpoint_id removes hits when their parent
+			// breakpoint is deleted; treat as auto-resume with no overlay.
 			return nil, nil
 		}
 		if hit.ResumedAt != nil {
@@ -416,8 +411,8 @@ func waitForResume(ctx context.Context, args RunArgs, hitID shared.UUID) (*persi
 		}
 		select {
 		case <-ctx.Done():
-			// Wrap so the before_dispatch caller routes ctx-cancel
-			// through the debugger-infra path instead of the
+			// @deliberate: wrap as *BreakpointInfraError so the before_dispatch caller
+			// routes ctx-cancel through the debugger-infra path instead of the
 			// attribute-failure chain.
 			return nil, &BreakpointInfraError{Phase: "ctx_cancelled", Cause: ctx.Err()}
 		case <-time.After(breakpointResumePollInterval):

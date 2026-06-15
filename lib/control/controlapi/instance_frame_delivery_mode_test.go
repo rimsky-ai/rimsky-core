@@ -43,7 +43,7 @@ func TestInstanceCreate_FrameDeliveryMode_DefaultIsSerialQueue(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, out)
 	instID, _ := out["instance_id"].(string)
 
-	// GET response echoes the persisted value. An omitted mode is defaulted
+	// @constraint: GET response echoes the persisted value. An omitted mode is defaulted
 	// by the INSERT literal (COALESCE(?, 'serial_queue')) to 'serial_queue'
 	// — the new default per spec 2026-05-29 (one message per frame; coalesce
 	// is now the opt-in mode).
@@ -51,7 +51,7 @@ func TestInstanceCreate_FrameDeliveryMode_DefaultIsSerialQueue(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, "serial_queue", out["frame_delivery_mode"])
 
-	// Row inspection confirms persistence.
+	// @constraint: row inspection confirms persistence.
 	id, err := uuid.Parse(instID)
 	require.NoError(t, err)
 	var inst *persistence.InstanceRow
@@ -118,6 +118,6 @@ func TestInstanceCreate_FrameDeliveryMode_RejectsUnknownValue(t *testing.T) {
 	})
 	require.Equal(t, http.StatusBadRequest, status, out)
 	require.Contains(t, fmt.Sprint(out["error"]), "frame_delivery_mode")
-	// Silence unused-helper lint when only invoked from other tests.
+	// @constraint: silence unused-helper lint when only invoked from other tests.
 	_ = strPtr
 }

@@ -69,7 +69,6 @@ func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Advance the clock past the next-fire time.
 	s.clock = func() time.Time { return registerTime.Add(6 * time.Minute) }
 	s.Tick(context.Background())
 
@@ -101,9 +100,10 @@ func TestMultiReplica_TwoInProcessInstancesEachFireIndependently(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Two independent SensorService instances; same
-	// publisher_subscription_id. Each replica is shape-isolated; no
-	// shared state.
+	// @deliberate: two independent SensorService instances share a
+	// publisher_subscription_id. Each replica is shape-isolated with no
+	// shared state — this is the v1 single-replica contract surface
+	// under test.
 	replicaA := NewSensorService(srv.URL, noopLogger{})
 	replicaB := NewSensorService(srv.URL, noopLogger{})
 
@@ -121,8 +121,9 @@ func TestMultiReplica_TwoInProcessInstancesEachFireIndependently(t *testing.T) {
 		}
 	}
 
-	// Advance both clocks; both ticks should fire — single-replica is
-	// the v1 contract per `concept:replica`.
+	// @concept: replica — advancing both clocks must fire both ticks;
+	// the v1 contract is single-replica and rimsky does not coordinate
+	// across replicas, so N replicas yield N× fan-out.
 	for _, s := range []*SensorService{replicaA, replicaB} {
 		s.clock = func() time.Time { return registerTime.Add(6 * time.Minute) }
 		s.Tick(context.Background())

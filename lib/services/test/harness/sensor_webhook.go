@@ -58,21 +58,21 @@ func StartSensorWebhook(ctx context.Context, t testing.TB, networkName, alias st
 	env := map[string]string{
 		"RIMSKY_SENSOR_WEBHOOK_PORT":      "9084",
 		"RIMSKY_SENSOR_WEBHOOK_HTTP_PORT": "9184",
-		// rimsky's stable in-network alias; known before rimsky is up.
+		// @constraint: rimsky's stable in-network alias; known before rimsky is up.
 		"RIMSKY_ENDPOINT": "http://rimsky:8080",
 	}
 	opts := []testcontainers.ContainerCustomizer{
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(env),
-		// Both ports are exposed: 9084 for in-network gRPC (needed for
-		// rimsky's Subscribe handshake), 9184 for inbound webhook (the
-		// host-side test POSTs to it via the mapped port).
+		// @constraint: both ports exposed — 9084 for in-network gRPC (rimsky's
+		// Subscribe handshake), 9184 for inbound webhook (host-side test POSTs
+		// via the mapped port).
 		testcontainers.WithExposedPorts("9084/tcp", "9184/tcp"),
 		testcontainers.WithWaitStrategy(
-			// Wait on the inbound-webhook port — `/health` is mounted on
-			// the chi router there, and the gRPC server is started right
-			// after on the same goroutine boundary. Listening on 9184 is a
-			// sufficient signal that the sensor is up.
+			// @deliberate: wait on the inbound-webhook port — `/health` is on
+			// the chi router there, and the gRPC server starts right after on
+			// the same goroutine boundary, so listening on 9184 is a sufficient
+			// readiness signal for both ports.
 			wait.ForListeningPort("9184/tcp").WithStartupTimeout(60 * time.Second),
 		),
 	}
@@ -95,13 +95,13 @@ func StartSensorWebhook(ctx context.Context, t testing.TB, networkName, alias st
 		t.Fatalf("harness: sensor-webhook mapped http port: %v", err)
 	}
 	return &SensorWebhookHandle{
-		// In-network gRPC endpoint — the value passed to BringUpRimsky
-		// via WithPublisher. Bare host:port matches the executor / claim-
-		// producer / sensor-http peers' YAML rendering.
+		// @constraint: bare host:port (no scheme) matches the executor /
+		// claim-producer / sensor-http peers' YAML rendering — the value is
+		// passed to BringUpRimsky via WithPublisher.
 		GRPCEndpoint: fmt.Sprintf("%s:9084", alias),
-		// Host-side inbound-webhook URL the test drives. The mapped port
-		// is a random high port assigned by docker; resolve via Host()
-		// + MappedPort().
+		// @constraint: docker assigns a random high port for 9184; the test
+		// process reaches the sensor's inbound HTTP listener only via Host()
+		// + MappedPort(), never via the in-network alias.
 		WebhookBaseURL: fmt.Sprintf("http://%s:%s", hostIP, mapped.Port()),
 	}
 }

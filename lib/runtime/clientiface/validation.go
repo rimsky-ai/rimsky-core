@@ -35,24 +35,21 @@ type ValidationOutcome struct {
 // `runtime/peer/validation_client.go` (the wired gRPC client) or in
 // test fixtures.
 type ValidationClient interface {
-	// Name returns the operator-configured peer name.
 	Name() string
 
-	// SupportedRoles is the advertised `validation_supported_roles`
-	// from the service's Capabilities handshake. Empty when the peer
-	// does not advertise the Validation mix-in.
+	// @agent-contract: SupportedRoles mirrors the advertised
+	// `validation_supported_roles` from the service's Capabilities
+	// handshake. Empty slice means the peer does not advertise the
+	// Validation mix-in — callers must treat that as "no validation
+	// available for this peer" rather than "all roles supported".
 	SupportedRoles() []string
 
-	// ValidateExecutor runs the executor-role check.
 	ValidateExecutor(ctx context.Context, in ValidateExecutorInput) ([]ValidationFinding, []ValidationFinding, error)
 
-	// ValidateClaimProducer runs the claim_producer-role check.
 	ValidateClaimProducer(ctx context.Context, in ValidateClaimProducerInput) ([]ValidationFinding, []ValidationFinding, error)
 
-	// ValidateSensor runs the sensor-role check.
 	ValidateSensor(ctx context.Context, in ValidateSensorInput) ([]ValidationFinding, []ValidationFinding, error)
 
-	// ValidateLifecycleSubscriber runs the lifecycle_subscriber-role check.
 	ValidateLifecycleSubscriber(ctx context.Context, in ValidateLifecycleSubscriberInput) ([]ValidationFinding, []ValidationFinding, error)
 }
 

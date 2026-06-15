@@ -42,7 +42,7 @@ import (
 
 func TestHitQueueOverflowDropOldest(t *testing.T) {
 	t.Parallel()
-	// Belt-and-suspenders deadline: bind a "test must finish by" budget
+	// @constraint: Belt-and-suspenders deadline: bind a "test must finish by" budget
 	// at entry. Asserting at the end against this anchored deadline
 	// turns a hung run (e.g. handleOverflow looping forever) into a
 	// targeted test failure rather than a CI timeout. The budget is
@@ -50,7 +50,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 	// complete in well under a second on any sane backend.
 	testStart := time.Now()
 	testBudget := 30 * time.Second
-	// We don't need the dispatch loop here — disable supervisor +
+	// @deliberate: We don't need the dispatch loop here — disable supervisor +
 	// scheduler so they don't race with the direct EvaluateBreakpoints
 	// calls. The harness still provides Postgres, persistence, and the
 	// control-API.
@@ -72,7 +72,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 		},
 	})
 
-	// Create the instance paused so the (disabled) supervisor never
+	// @constraint: Create the instance paused so the (disabled) supervisor never
 	// touches it; we only care about the breakpoint surface.
 	iid := createInstanceWithPause(t, h, tid, "ck-overflow-drop-oldest", map[string]any{})
 	bpID := breakpointCreate(t, h, iid, map[string]any{
@@ -81,7 +81,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 		"overflow_policy": "drop_oldest",
 	})
 
-	// Drive 150 EvaluateBreakpoints calls against the harness's persist.
+	// @deliberate: Drive 150 EvaluateBreakpoints calls against the harness's persist.
 	// Each call writes one hit row; once the per-breakpoint unresumed
 	// count reaches the 100 cap, the overflow handler evicts the oldest
 	// row and bumps dropped_count.
@@ -99,7 +99,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 	}
 	const total = 150
 	for i := 0; i < total; i++ {
-		// Rotate DispatchID/FrameID so each hit carries a fresh
+		// @deliberate: Rotate DispatchID/FrameID so each hit carries a fresh
 		// (synthetic) provenance.
 		cc.DispatchID = shared.UUID(uuid.New())
 		cc.FrameID = shared.UUID(uuid.New())
@@ -107,7 +107,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 		require.NoError(t, err, "EvaluateBreakpoints iteration %d", i)
 	}
 
-	// Read back: exactly 100 hit rows remain; dropped_count = 50.
+	// @deliberate: Read back: exactly 100 hit rows remain; dropped_count = 50.
 	var hits []persistence.BreakpointHitRow
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := h.Persist.BreakpointHits().ListSinceForBreakpoint(ctx, bpID, 0, 1000, tx)
@@ -122,7 +122,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 	require.Equal(t, int64(50), row.DroppedCount,
 		"dropped_count must equal (writes - cap) = 150-100 = 50; got %d", row.DroppedCount)
 
-	// The remaining 100 hits should be the most recent ones — drop_oldest
+	// @deliberate: The remaining 100 hits should be the most recent ones — drop_oldest
 	// evicts from the head. Sequence numbers should be the upper tail of
 	// the BIGSERIAL range; pin that the earliest seq in the kept set is
 	// strictly greater than the dropped count.
@@ -130,7 +130,7 @@ func TestHitQueueOverflowDropOldest(t *testing.T) {
 		"earliest kept hit seq=%d should be > 50 (the dropped count) since drop_oldest evicts from the head",
 		hits[0].Seq)
 
-	// Assert the test stayed under the per-entry budget bound at the
+	// @deliberate: Assert the test stayed under the per-entry budget bound at the
 	// top of the function. A hung handleOverflow under drop_oldest
 	// would blow this out and produce a targeted failure.
 	require.LessOrEqual(t, time.Since(testStart), testBudget,

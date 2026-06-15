@@ -82,16 +82,15 @@ func acquireNamedLock(
 			return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: CountByNamedLock(%q): %w", spec.Name, err)
 		}
 		if count >= cfg.Limit {
-			// Saturation bail. Counted as "unavailable" (mirroring the
-			// producer-claim intent vocabulary) even though the per-
-			// candidate tx rolls back — the metric is a monotonic
-			// counter of attempts, not persisted state, so the
-			// rollback does not (and must not) un-count it. The
-			// "acquired" outcome, by contrast, increments post-commit
-			// (see the audit step in acquireCandidate) so a later spec
-			// failing the same tx never leaves a phantom acquisition.
-			// Labeled with the bounded pre-substitution template name
-			// (namedLockMetricLabel) — the concrete per-entity name
+			// @deliberate: saturation bail counts as "unavailable" (mirroring
+			// producer-claim intent vocabulary) even though the per-candidate
+			// tx rolls back — the metric is a monotonic counter of attempts,
+			// not persisted state, so the rollback does not (and must not)
+			// un-count it. The "acquired" outcome, by contrast, increments
+			// post-commit (see the audit step in acquireCandidate) so a later
+			// spec failing the same tx never leaves a phantom acquisition.
+			// @constraint: label with the bounded pre-substitution template
+			// name (namedLockMetricLabel) — the concrete per-entity name
 			// would mint one Prometheus series per runtime value.
 			metricsOf(args).IncNamedLockAcquisition(namedLockMetricLabel(spec), "unavailable")
 			return AcquiredLock{}, false, nil
@@ -110,8 +109,8 @@ func acquireNamedLock(
 		HolderNodeID:       cand.NodeID,
 		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
 		FrameID:            &frameID,
-		// Named locks are never held past active terminal; they release
-		// at the node-run's active-phase terminal.
+		// @constraint: named locks are never held past active terminal; they
+		// release at the node-run's active-phase terminal.
 		IsHeld: false,
 	}
 	if err := args.ClaimHandles.Insert(ctx, in, tx); err != nil {

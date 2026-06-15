@@ -167,8 +167,8 @@ type Subscriber struct {
 	emitter  *Emitter
 	logger   *slog.Logger
 	nowFn    func() time.Time
-	cursorAt time.Time // in-memory mirror of `rimsky_openlineage_cursor.last_observed_at`
-	cursorID uuid.UUID // in-memory mirror of `rimsky_openlineage_cursor.last_id`
+	cursorAt time.Time // @constraint: in-memory mirror of `rimsky_openlineage_cursor.last_observed_at`
+	cursorID uuid.UUID // @constraint: in-memory mirror of `rimsky_openlineage_cursor.last_id`
 }
 
 // New constructs a Subscriber against the two configured DSNs +
@@ -251,7 +251,7 @@ func (s *Subscriber) ensureCursorTable(ctx context.Context) error {
 		    ADD COLUMN IF NOT EXISTS last_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'`); err != nil {
 		return err
 	}
-	// Repair pre-cycle-2 cursors that came through the ADD COLUMN
+	// @deliberate: Repair pre-cycle-2 cursors that came through the ADD COLUMN
 	// default path. Idempotent: rows whose `last_id` was set by a
 	// prior persistCursor (non-zero) are left alone.
 	_, err := s.state.Exec(ctx, `
@@ -362,7 +362,7 @@ func (s *Subscriber) tick(ctx context.Context) error {
 				"id", r.ID.String(),
 				"record_kind", r.RecordKind,
 				"error", err.Error())
-			// Decode failures are permanent. Advance past the
+			// @deliberate: Decode failures are permanent. Advance past the
 			// undecodable row so the cursor doesn't stall here.
 			lastAt = r.ObservedAt
 			lastID = r.ID

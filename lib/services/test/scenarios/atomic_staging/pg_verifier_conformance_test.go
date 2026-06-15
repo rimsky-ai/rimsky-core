@@ -35,7 +35,7 @@ import (
 
 	cpconf "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
 	executorconf "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
-	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios" // init() registration
+	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios" // @constraint: blank import drives init()-time scenario registration into the executor conformance runner
 	"github.com/rimsky-ai/rimsky-core/lib/services/test/harness"
 )
 
@@ -77,12 +77,13 @@ func TestPGFusedStore_ClaimProducerConformance(t *testing.T) {
 		t.Fatalf("%d/%d claim-producer conformance checks failed", failed, len(results))
 	}
 
-	// Per S-conformance-claimproducer-terminals: the suite MUST drive the
-	// full claim lifecycle — Commit, Abandon, Release on real claims it
-	// Open'd — plus a retried-terminal idempotency check, each reported as
-	// its own pass/fail row. Against the real fused postgres producer
-	// (whose terminal verbs are idempotent in claim_id, store.go §Commit),
-	// every one of these rows MUST be present AND passing (Err == nil).
+	// @story: claim-producer-conformance — the suite MUST drive the full
+	// claim lifecycle (Commit, Abandon, Release on real claims it Open'd)
+	// plus a retried-terminal idempotency check, each reported as its own
+	// pass/fail row. Against the real fused postgres producer (whose
+	// terminal verbs are idempotent in claim_id per
+	// code:lib/services/stores/postgres/store.go::Commit), every one of
+	// these rows MUST be present AND passing (Err == nil).
 	for _, name := range []string{"Commit", "Abandon", "Release", "TerminalIdempotency"} {
 		assertResultPassing(t, results, name)
 	}
@@ -160,8 +161,9 @@ func TestPGFusedStore_ExecutorConformance(t *testing.T) {
 	if passed == 0 {
 		t.Fatalf("executor conformance: 0 scenarios passed (skipped=%d)", skipped)
 	}
-	// Sanity: the happy_path scenario is not stub-gated; it MUST be in
-	// the passing set.
+	// @constraint: execute_happy_path is not stub-gated, so a real
+	// (non-stub) executor MUST land it in the passing set; a missing or
+	// failing row here means the runner silently skipped the baseline.
 	foundHappy := false
 	for _, r := range results {
 		if r.Scenario == "execute_happy_path" && r.Passed {

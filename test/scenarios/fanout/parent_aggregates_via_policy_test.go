@@ -49,7 +49,7 @@ func TestParentAggregatesViaPolicy_StrictFailsOnAnyFailure(t *testing.T) {
 
 func TestParentAggregatesViaPolicy_StrictAllSuccessYieldsFreshChanged(t *testing.T) {
 	t.Parallel()
-	// Mixed fresh_changed + fresh_unchanged outcomes; the parent
+	// @deliberate: Mixed fresh_changed + fresh_unchanged outcomes; the parent
 	// inherits fresh_changed if any child reported it (cascade-firing
 	// gate).
 	children := []runtime.ChildState{
@@ -117,7 +117,7 @@ func TestParentAggregatesViaPolicy_FirstCancelsNonWinners(t *testing.T) {
 	}
 }
 
-// FanOutAggregationPolicy pulls the policy from the template's fan_out
+// @deliberate: FanOutAggregationPolicy pulls the policy from the template's fan_out
 // block. Validates the runtime helper extracts the right shape.
 func TestFanOutAggregationPolicy_ReadsTemplateBlock(t *testing.T) {
 	t.Parallel()

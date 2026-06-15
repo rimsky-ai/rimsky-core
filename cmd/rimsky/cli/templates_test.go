@@ -61,10 +61,11 @@ func TestRunTemplateRegister_RejectComposePrefix(t *testing.T) {
 	}
 }
 
-// G6: --warnings-as-errors forwards `?warnings_as_errors=true` to the
-// control-API. We verify both directions: the flag-not-set path leaves
-// the query empty, and the flag-set path sets it. The fake server
-// captures r.URL.RawQuery and surfaces it back for assertion.
+// TestRunTemplateRegister_WarningsAsErrors_QueryParam — --warnings-as-errors
+// forwards `?warnings_as_errors=true` to the control-API. We verify both
+// directions: the flag-not-set path leaves the query empty, and the
+// flag-set path sets it. The fake server captures r.URL.RawQuery and
+// surfaces it back for assertion.
 func TestRunTemplateRegister_WarningsAsErrors_QueryParam(t *testing.T) {
 	var seenQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,9 +95,10 @@ func TestRunTemplateRegister_WarningsAsErrors_QueryParam(t *testing.T) {
 	}
 }
 
-// G6: when the server rejects with validation_warnings, the CLI exits
-// non-zero and the body's warnings/errors are surfaced. We assert the
-// exit code is 1 (control-api error) and the registration was refused.
+// TestRunTemplateRegister_WarningsAsErrors_Rejected — when the server
+// rejects with validation_warnings, the CLI exits non-zero and the
+// body's warnings/errors are surfaced. We assert the exit code is 1
+// (control-api error) and the registration was refused.
 func TestRunTemplateRegister_WarningsAsErrors_Rejected(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("warnings_as_errors") != "true" {
@@ -265,6 +267,4 @@ func TestReadSpec_NonObject(t *testing.T) {
 	if got := cli.RunTemplateRegister(context.Background(), []string{path}); got != 2 {
 		t.Errorf("exit %d", got)
 	}
-	// Sanity: error message mentions YAML object.
-	_ = strings.Contains // keep import
 }

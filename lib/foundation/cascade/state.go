@@ -52,129 +52,117 @@ var (
 	ReasonInvalidateReceived = TransitionReason{Kind: "invalidate_received"}
 	ReasonDispatchClaimed    = TransitionReason{Kind: "dispatch_claimed"}
 	ReasonPolicyRetry        = TransitionReason{Kind: "policy_retry"}
-	// ReasonPolicyInvalidate retired 2026-05-23 alongside the
-	// `invalidate` ErrorPolicy action (retired 2026-05-14). The 4-value
+	// @deliberate: no ReasonPolicyInvalidate exists — the 4-value
 	// ErrorPolicy vocabulary (pass | give_up | retry |
 	// discard_claims_then_retry) has no invalidate verb; receivers
-	// declare cascade coupling via SubscriptionEntry.
+	// declare cascade coupling via SubscriptionEntry instead.
 	ReasonPolicyGiveUp       = TransitionReason{Kind: "policy_give_up"}
 	ReasonOperatorReset      = TransitionReason{Kind: "operator_reset"}
 	ReasonOperatorInvalidate = TransitionReason{Kind: "operator_invalidate"}
 	ReasonHeartbeatLost      = TransitionReason{Kind: "heartbeat_lost"}
-	// ReasonInfraReenqueue is used when ApplyTerminalOutcome observes an
-	// infra-level failure (stream_error, executor_dial_failed,
-	// stream_closed_without_terminal, etc.) and re-enqueues the node for
-	// another attempt without bumping the retry counter. Semantically it's
-	// identical to `running → stale` but distinguishes an explicit infra
-	// re-enqueue from the scheduler's stale-heartbeat sweep, which uses
-	// ReasonHeartbeatLost. Event-log honesty.
+	// @deliberate: distinguishes an explicit infra re-enqueue
+	// (stream_error, executor_dial_failed,
+	// stream_closed_without_terminal) from the scheduler's
+	// stale-heartbeat sweep — both produce `running → stale` but
+	// ReasonHeartbeatLost flags the latter; event-log honesty depends
+	// on this separation.
 	ReasonInfraReenqueue = TransitionReason{Kind: "infra_reenqueue"}
 	ReasonPureCascade    = TransitionReason{Kind: "pure_cascade"}
-	// ReasonDispatchImpossible transitions `stale → failed` directly when the
-	// supervisor determines a node cannot be dispatched at all (e.g. the
-	// template references an executor name not configured on any supervisor).
-	// Unlike `ReasonPolicyGiveUp`, there is no policy chain involved — the
-	// failure is infrastructural, not application-level, and the node never
-	// entered `running`. Event log reflects the stale→failed transition
-	// honestly.
+	// @constraint: transitions `stale → failed` directly when the
+	// supervisor determines a node cannot be dispatched at all (e.g.
+	// the template references an executor name not configured on any
+	// supervisor). Unlike ReasonPolicyGiveUp there is no policy chain
+	// involved — the failure is infrastructural, not application-level,
+	// and the node never entered `running`.
 	ReasonDispatchImpossible = TransitionReason{Kind: "dispatch_impossible"}
 
-	// ReasonAcquirePass — stale → fresh, settling_signal_type
-	// carries the canonical `terminal/error/<class>` envelope.
-	// Fired when the operator's `error_types:` chain for the synthetic
+	// @constraint: drives stale → fresh with settling_signal_type
+	// carrying the canonical `terminal/error/<class>` envelope. Fired
+	// when the operator's `error_types:` chain for the synthetic
 	// `acquire/unavailable` class resolves `pass` (pre-dispatch
 	// acquisition failure absolved by template policy); the node
 	// transitions without invoking the executor and without firing
 	// the cascade.
 	ReasonAcquirePass = TransitionReason{Kind: "acquire_pass"}
 
-	// ReasonHandlerComplete — running → fresh. Fired by the runtime
-	// after the executor's Success terminal verdict has been applied
-	// (the pre-2026-05-23 lifecycle-handler slot retired; the
-	// transition is now driven directly by the terminal-handler in
-	// `runtime/runner_terminal.go::applyTerminalComplete`).
+	// @constraint: drives running → fresh. Fired by the runtime after
+	// the executor's Success terminal verdict has been applied; the
+	// transition is driven directly by the terminal-handler, not a
+	// separate lifecycle-handler slot.
 	ReasonHandlerComplete = TransitionReason{Kind: "handler_complete"}
 
-	// ReasonHandlerError — RESERVED NEGATIVE. The state machine
-	// deliberately does NOT accept this reason as a direct transition
-	// trigger; an executor Error terminal must route through the
-	// operator's `error_types:` policy chain and resolve to one of
-	// policy_retry / policy_give_up.
+	// @deliberate: RESERVED NEGATIVE. The state machine deliberately
+	// does NOT accept this reason as a direct transition trigger; an
+	// executor Error terminal must route through the operator's
+	// `error_types:` policy chain and resolve to one of policy_retry /
+	// policy_give_up.
 	//
-	// The constant exists so this rejection is encoded in the
-	// transition-reason vocabulary and pinned by a negative test
-	// (`TestNextState_HandlerErrorIsAuditOnly` — name predates this
-	// docstring rewrite). A code change that tries to use this reason
-	// as a NextState input fails closed at the test, not silently in
-	// production.
+	// @deliberate: the constant exists so this rejection is encoded in
+	// the transition-reason vocabulary and pinned by a negative test
+	// (TestNextState_HandlerErrorIsAuditOnly). A code change that tries
+	// to use this reason as a NextState input fails closed at the test,
+	// not silently in production.
 	//
-	// No production code path emits this reason; if you find yourself
-	// wanting to, the right move is to add a policy outcome that maps
-	// to one of the existing accepted reasons, not to relax NextState.
+	// @deliberate: no production code path emits this reason; if you
+	// find yourself wanting to, the right move is to add a policy
+	// outcome that maps to one of the existing accepted reasons, not
+	// to relax NextState.
 	ReasonHandlerError = TransitionReason{Kind: "handler_error"}
 
-	// ReasonHandlerPass — running → fresh, settling_signal_type
-	// carries the canonical `terminal/error/<class>` envelope. Fired
+	// @constraint: drives running → fresh with settling_signal_type
+	// carrying the canonical `terminal/error/<class>` envelope. Fired
 	// when the operator's `error_types:` chain for an executor Error
 	// resolves `pass` (template explicitly opts to ignore the
 	// terminal). The chain advances so a subsequent same-class error
 	// doesn't pass again.
 	ReasonHandlerPass = TransitionReason{Kind: "handler_pass"}
 
-	// ReasonHandlerPark — running → parked.
-	// Executor emitted Park as its terminal event. The node's
-	// held claims are retained across the park boundary. See section B
-	// of .ok-planner/plans/2026-05-08-platform-extensions-for-agent-consumers.md.
+	// @constraint: drives running → parked when the executor emits Park
+	// as its terminal event. The node's held claims are retained
+	// across the park boundary.
 	ReasonHandlerPark = TransitionReason{Kind: "handler_park"}
 
-	// ReasonHandlerResume — parked → stale.
-	// SweepParkedNodes (deadline_elapsed) or an external invalidate
-	// (admin endpoint or in-graph on_event) resumed a parked node.
-	// The node transitions to stale so the standard
-	// SelectCandidates → atomic-acquisition → transitionToRunning path
-	// re-dispatches with ResumeContext populated from the persisted
-	// park metadata; rimsky's wake supervisor doesn't need to be the
-	// one that runs the resume.
+	// @constraint: drives parked → stale. SweepParkedNodes
+	// (deadline_elapsed) or an external invalidate (admin endpoint or
+	// in-graph on_event) resumed a parked node. The node transitions
+	// to stale so the standard SelectCandidates → atomic-acquisition →
+	// transitionToRunning path re-dispatches with ResumeContext
+	// populated from the persisted park metadata; the wake supervisor
+	// doesn't need to be the one that runs the resume.
 	ReasonHandlerResume = TransitionReason{Kind: "handler_resume"}
 
-	// ReasonParkTimeout — parked → failed.
-	// The watchdog observed parked_at + max_park_duration ≤ now and
-	// transitioned the node to failed with
-	// settling_signal_type=terminal/error/park_timeout (carrying
-	// error_class="park_timeout" in the payload).
+	// @constraint: drives parked → failed. The watchdog observed
+	// parked_at + max_park_duration ≤ now and transitioned the node to
+	// failed with settling_signal_type=terminal/error/park_timeout
+	// (carrying error_class="park_timeout" in the payload).
 	ReasonParkTimeout = TransitionReason{Kind: "park_timeout"}
 
-	// ReasonChildTransitioned — parent-run-only. Fired by the
-	// state-propagation engine in runtime/state_propagation.go when a
-	// child run transitions and the parent re-aggregates. Allowed
-	// transitions under this reason are constrained to parent rows
-	// (rimsky_node_runs.parent_run_id IS NULL is FALSE for the child's
-	// parent), but the state machine cannot inspect persistence — the
+	// @constraint: parent-run-only — fired by the state-propagation
+	// engine when a child run transitions and the parent re-aggregates.
+	// Allowed transitions under this reason are constrained to parent
+	// rows, but the state machine cannot inspect persistence — the
 	// caller is responsible for restricting NextStateParent to parent
-	// rows. Per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §State machine.
+	// rows.
 	ReasonChildTransitioned = TransitionReason{Kind: "child_transitioned"}
 
-	// ReasonSubGraphInternalCascadeFired — parent-run-only. Fired when
-	// a sub-graph's entry node completed (success terminal) and the
-	// parent stays running while internal cascade dispatches the
-	// internal child nodes. Same parent-row restriction as
-	// ReasonChildTransitioned.
+	// @constraint: parent-run-only. Fired when a sub-graph's entry
+	// node completed (success terminal) and the parent stays running
+	// while internal cascade dispatches the internal child nodes. Same
+	// parent-row restriction as ReasonChildTransitioned.
 	ReasonSubGraphInternalCascadeFired = TransitionReason{Kind: "subgraph_internal_cascade_fired"}
 
-	// ReasonInstanceKilled — forced instance teardown. Drives a
-	// resource-holding non-terminal node-run (running | parked) → failed
-	// when an operator force-terminates the instance. State-machine-
-	// validation-only: NOT emitted as an audit-event kind (the teardown's
-	// audit identity is the `instance_terminated` event-log row written by
-	// the control handler).
+	// @constraint: drives a resource-holding non-terminal node-run
+	// (running | parked) → failed when an operator force-terminates
+	// the instance. State-machine-validation only: NOT emitted as an
+	// audit-event kind (the teardown's audit identity is the
+	// instance_terminated event-log row written by the control
+	// handler).
 	ReasonInstanceKilled = TransitionReason{Kind: "instance_killed"}
 )
 
 // NextState returns the new state for a transition.
 //
-// @blessed-invariant (§17): NextState NEVER short-circuits when
+// @blessed-invariant 17: NextState NEVER short-circuits when
 // current == requested. Specifically `running → running` under reason
 // `dispatch_claimed` returns ErrIllegalTransition. This is the load-bearing
 // guard against double-execute. Any Go implementation that adds an
@@ -210,12 +198,13 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		if reason.Kind == "acquire_pass" {
 			return NodeStateFresh, nil
 		}
-		// policy_give_up from stale supports on_acquire_unavailable:
-		// { resolve: error } with an error_types[X].policy ending in
-		// give_up. The node never entered running because the claim
-		// returned Unavailable; the operator's policy decision is to
-		// fail it permanently instead of retrying. Mirrors the
-		// running → failed transition for the same reason kind.
+		// @deliberate: policy_give_up from stale supports
+		// on_acquire_unavailable: { resolve: error } with an
+		// error_types[X].policy ending in give_up. The node never
+		// entered running because the claim returned Unavailable; the
+		// operator's policy decision is to fail it permanently instead
+		// of retrying. Mirrors the running → failed transition for the
+		// same reason kind.
 		if reason.Kind == "policy_give_up" {
 			return NodeStateFailed, nil
 		}
@@ -226,18 +215,17 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		if reason.Kind == "handler_pass" {
 			return NodeStateFresh, nil
 		}
-		// handler_park transitions running → parked. The held claim is
-		// retained across the park boundary; the orphan-claim reaper
-		// skips phase='parked' rows.
+		// @deliberate: handler_park transitions running → parked. The
+		// held claim is retained across the park boundary; the
+		// orphan-claim reaper skips phase='parked' rows.
 		if reason.Kind == "handler_park" {
 			return NodeStateParked, nil
 		}
-		// handler_error transitions follow the policy chain; expressed as
-		// policy_retry / policy_give_up at the call site after the
-		// policy chain resolves. ReasonHandlerError itself is NOT a
-		// direct NextState input — see its docstring for why it's
-		// reserved-negative. The `policy_invalidate` reason retired
-		// 2026-05-23 alongside the `invalidate` ErrorPolicy action.
+		// @deliberate: handler_error transitions follow the policy
+		// chain; expressed as policy_retry / policy_give_up at the call
+		// site after the policy chain resolves. ReasonHandlerError
+		// itself is NOT a direct NextState input — see its docstring
+		// for why it's reserved-negative.
 		if reason.Kind == "policy_retry" ||
 			reason.Kind == "heartbeat_lost" ||
 			reason.Kind == "infra_reenqueue" {
@@ -246,9 +234,9 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		if reason.Kind == "policy_give_up" {
 			return NodeStateFailed, nil
 		}
-		// instance_killed force-fails a running node-run during forced
-		// instance teardown (covers the await_async-stuck case too —
-		// such a run is still `running` and holds its claim).
+		// @deliberate: instance_killed force-fails a running node-run
+		// during forced instance teardown (covers the await_async-stuck
+		// case too — such a run is still `running` and holds its claim).
 		if reason.Kind == "instance_killed" {
 			return NodeStateFailed, nil
 		}
@@ -257,26 +245,26 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 			return NodeStateStale, nil
 		}
 	case NodeStateParked:
-		// Parked nodes leave only via resume (deadline-elapsed wake or
-		// external invalidate) or via watchdog timeout. parked → fresh
-		// is explicitly rejected — a parked node re-enters work via
-		// the standard dispatch path (parked → stale → claim →
-		// running). The handler_resume reason routes through stale
-		// rather than directly to running so the wake supervisor (which
-		// may not be one running an executor pool, e.g. control-api)
-		// doesn't have to run the dispatch — the next supervisor
-		// tick's SelectCandidates picks up the stale row and runs the
-		// standard atomic-acquisition path.
+		// @deliberate: parked nodes leave only via resume
+		// (deadline-elapsed wake or external invalidate) or via
+		// watchdog timeout. parked → fresh is explicitly rejected — a
+		// parked node re-enters work via the standard dispatch path
+		// (parked → stale → claim → running). The handler_resume
+		// reason routes through stale rather than directly to running
+		// so the wake supervisor (which may not be one running an
+		// executor pool, e.g. control-api) doesn't have to run the
+		// dispatch — the next supervisor tick's SelectCandidates picks
+		// up the stale row and runs the standard atomic-acquisition path.
 		if reason.Kind == "handler_resume" {
 			return NodeStateStale, nil
 		}
 		if reason.Kind == "park_timeout" {
 			return NodeStateFailed, nil
 		}
-		// instance_killed force-fails a parked node-run during forced
-		// instance teardown. A parked node retains its held claim across
-		// the park boundary, so it is resource-holding and must be torn
-		// down too.
+		// @deliberate: instance_killed force-fails a parked node-run
+		// during forced instance teardown. A parked node retains its
+		// held claim across the park boundary, so it is
+		// resource-holding and must be torn down too.
 		if reason.Kind == "instance_killed" {
 			return NodeStateFailed, nil
 		}
@@ -321,36 +309,37 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 func NextStateParent(current NodeState, reason TransitionReason) (NodeState, error) {
 	switch reason.Kind {
 	case "child_transitioned":
-		// Parent re-aggregates from child state. The new state is
-		// determined by the aggregation rule in runtime; the state
-		// machine's contract is to accept any of the legitimate
+		// @deliberate: parent re-aggregates from child state. The new
+		// state is determined by the aggregation rule in runtime; the
+		// state machine's contract is to accept any of the legitimate
 		// parent target states from any of the legitimate parent
 		// source states. The state-propagation engine writes the
 		// computed state directly; the machine permits it.
 		switch current {
 		case NodeStateFresh, NodeStateFailed:
-			// Permit fresh/failed → running (new frame starting) or
-			// fresh/failed → stale (re-trigger).
+			// @deliberate: permit fresh/failed → running (new frame
+			// starting) or fresh/failed → stale (re-trigger).
 			return "", &parentAggregateOK{From: current}
 		case NodeStateStale, NodeStateRunning:
-			// Permit running → running | fresh | failed | parked | stale.
-			// Permit stale → running | fresh | failed | parked.
+			// @deliberate: permit running → running | fresh | failed |
+			// parked | stale; permit stale → running | fresh | failed |
+			// parked.
 			return "", &parentAggregateOK{From: current}
 		case NodeStateParked:
-			// Parked → running is permitted when an external
-			// invalidate or wake fires for the parent; otherwise
-			// illegal.
+			// @deliberate: parked → running is permitted when an
+			// external invalidate or wake fires for the parent;
+			// otherwise illegal.
 			return "", &parentAggregateOK{From: current}
 		}
 	case "subgraph_internal_cascade_fired":
-		// Only valid when parent is running.
+		// @constraint: only valid when parent is running.
 		if current == NodeStateRunning {
 			return NodeStateRunning, nil
 		}
 	}
-	// Fall through to the standard leaf transition table for the
-	// remaining reasons. (Parent runs share all leaf transitions
-	// except they're broader on the reasons above.)
+	// @deliberate: fall through to the standard leaf transition table
+	// for the remaining reasons — parent runs share all leaf transitions
+	// except they're broader on the reasons above.
 	return NextState(current, reason)
 }
 

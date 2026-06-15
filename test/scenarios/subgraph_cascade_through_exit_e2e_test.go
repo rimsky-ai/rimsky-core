@@ -36,7 +36,6 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Stub scripts.
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("inner-exit").Success(map[string]any{"done": true}, true, "exit")
 	h.Stub.WhenType("downstream").Success(map[string]any{"ok": true}, true, "down")
@@ -59,7 +58,7 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 						node.TemplateNodeDef{Type: "caller", Delegate: "worker"},
 						openAttrs,
 					),
-					// downstream subscribes to the calling node — the
+					// @constraint: downstream subscribes to the calling node — the
 					// cascade walker must reach it after the sub-graph's
 					// exit carry-rule transitions the caller's state.
 					scenario.MakeNode(
@@ -96,12 +95,12 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 	downstreamNode := h.FindNode(iid, "downstream")
 	require.NotNil(t, downstreamNode, "downstream node missing")
 
-	// Exit must complete first (its terminal fires the carry-rule).
+	// @constraint: Exit must complete first (its terminal fires the carry-rule).
 	require.True(t,
 		h.WaitForNodeState(exitNode.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inner-exit must reach fresh — its terminal fires the carry-rule")
 
-	// downstream subscribes to caller; the cascade walker must reach
+	// @constraint: downstream subscribes to caller; the cascade walker must reach
 	// it across the carry-rule's bridge between the sub-graph RunScope
 	// (where exit lives) and the main RunScope (where caller +
 	// downstream live).
@@ -134,7 +133,7 @@ func TestSubgraphCascadeThroughExitE2E(t *testing.T) {
 		t.Fatalf("downstream must reach fresh via cascade traversal back through the calling node")
 	}
 
-	// Downstream's run lives in the MAIN RunScope (not the sub-graph
+	// @deliberate: Downstream's run lives in the MAIN RunScope (not the sub-graph
 	// scope). Verifies the cascade walker correctly resolved the
 	// receiver's RunScope as main, not as the exit's sub-graph scope.
 	mainScopeID := h.GetMainRunScopeID(iid)

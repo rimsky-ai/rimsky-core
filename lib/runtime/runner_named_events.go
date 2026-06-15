@@ -53,10 +53,10 @@ func processNamedEvents(ctx context.Context, args RunArgs, acq *acquisition, eve
 				"event_name", evt.Name,
 				"error", err.Error())
 		}
-		// Receiver-side `subscribes: [{node: <sender>, type:
-		// event/<name>}]` handles downstream cascade-fire via the
-		// subscription-edge match in cascadeSubscribersStaleInTx;
-		// no per-emit handler dispatch here.
+		// @deliberate: no per-emit handler dispatch — receiver-side
+		// `subscribes: [{node: <sender>, type: event/<name>}]` handles
+		// downstream cascade-fire via the subscription-edge match in
+		// cascadeSubscribersStaleInTx.
 	}
 }
 
@@ -69,8 +69,8 @@ func persistOneNamedEvent(ctx context.Context, args RunArgs, acq *acquisition, e
 		handle        string
 		handleBackend string
 	)
-	// If the record already carries a handle (e.g. from the
-	// async-callback path that has already spilled), pass through.
+	// @deliberate: pass through pre-spilled handles from the
+	// async-callback path, which spills before reaching the runner.
 	if evt.PayloadHandle != "" {
 		handle = evt.PayloadHandle
 		handleBackend = evt.PayloadHandleBackend
@@ -107,11 +107,10 @@ func persistOneNamedEvent(ctx context.Context, args RunArgs, acq *acquisition, e
 			return fmt.Errorf("NodeEvents.Insert(%s/%s/%s): %w",
 				acq.InstanceID, acq.NodeID, evt.Name, err)
 		}
-		// Canonical signal emission per concept:signal — event/<name>.
-		// The payload's `event_payload` field carries the executor-
-		// provided bytes decoded to a map when JSON-shaped (so CEL
-		// when: predicates can reach into it); falls back to a
-		// raw-bytes wrapper otherwise.
+		// @concept: signal — event/<name> is the canonical emission shape.
+		// The payload's `event_payload` field must be a map (decoded from
+		// JSON when possible, raw-bytes wrapper otherwise) so CEL when:
+		// predicates can reach into it.
 		eventSig := signalpkg.Signal{
 			Type: signalpkg.TypePath("event/" + evt.Name),
 			Payload: map[string]any{
@@ -119,25 +118,20 @@ func persistOneNamedEvent(ctx context.Context, args RunArgs, acq *acquisition, e
 				"event_payload": eventPayloadAsMap(evt.PayloadInline),
 			},
 		}
-		// event/<name> signal above is the canonical audit row per
-		// concept:signal. The pre-Pass-5 fixed-string
-		// "named_event_emitted" audit-row retired alongside spec
-		// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+		// @deliberate: the event/<name> signal above is the canonical
+		// audit row; the pre-Pass-5 fixed-string "named_event_emitted"
+		// audit-row retired with the signal-taxonomy reshape.
 		return signalaudit.EmitSignal(ctx, args.Persist.Events(),
 			acq.InstanceID, acq.NodeID, eventSig, args.Clock.Now(), tx)
 	}); err != nil {
 		return err
 	}
-	// Increment the named-event counter only after a successful persist
-	// so failed inserts don't inflate `rimsky_named_events_total`.
+	// @constraint: increment the named-event counter only after a
+	// successful persist so failed inserts don't inflate
+	// `rimsky_named_events_total`.
 	metricsOf(args).IncNamedEvent(acq.Executor, evt.Name)
 	return nil
 }
-
-// fireOnEventHandler retired by the 2026-05-14 subscription-cascade
-// resolution. Receiver-side `subscribes: [{node: <sender>, type:
-// event/<name>}]` replaces the substitution path and the cascade-fire
-// path uniformly.
 
 // eventPayloadAsMap decodes inline named-event bytes into a
 // map[string]any when the bytes are JSON-shaped; returns a stub map

@@ -78,8 +78,8 @@ func setupRoleStackEnv(t *testing.T) (runDir, endpoint string, port int) {
 	t.Setenv("RIMSKY_PROCESS_ROLE", "unified")
 	t.Setenv("RIMSKY_CONTROL_API_HOST", "127.0.0.1")
 	t.Setenv("RIMSKY_CONTROL_API_PORT", strconv.Itoa(port))
-	// Disable metrics so the per-role offset doesn't collide with
-	// any other process on the host and so a metrics bind failure
+	// @deliberate: disable metrics so the per-role offset doesn't collide
+	// with any other process on the host and so a metrics bind failure
 	// can't masquerade as a role-stack startup failure.
 	t.Setenv("RIMSKY_METRICS_PORT", "")
 	return runDir, endpoint, port
@@ -116,7 +116,6 @@ func TestStartRoleStack_BootsAndDrains(t *testing.T) {
 		stack.Drain(context.Background(), 5*time.Second)
 		t.Fatalf("WaitForControlAPIReady: %v", err)
 	}
-	// Drain must not panic and must complete within the deadline.
 	drainDone := make(chan struct{})
 	go func() {
 		stack.Drain(context.Background(), 5*time.Second)
@@ -127,7 +126,6 @@ func TestStartRoleStack_BootsAndDrains(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Drain did not return within 10s")
 	}
-	// No role-failure should be pending in the happy-path drain.
 	select {
 	case rf := <-stack.FailCh():
 		t.Fatalf("unexpected role failure after clean drain: role=%s err=%v", rf.Role, rf.Err)
@@ -158,13 +156,13 @@ func TestMigrationsRunBeforeRunners(t *testing.T) {
 	}
 	t.Cleanup(func() { stack.Drain(context.Background(), 5*time.Second) })
 
-	// Open state.db directly with database/sql to verify the migrate
-	// bookkeeping row landed BEFORE any runner could open the file.
-	// The role runners' open path holds their own connection, but
-	// sqlite permits a concurrent reader on the same file via a
-	// separate connection — this read does not race the runners'
-	// migrate (because migrate already ran to completion before
-	// StartRoleStack returned).
+	// @deliberate: open state.db directly with database/sql to verify
+	// the migrate bookkeeping row landed BEFORE any runner could open
+	// the file. The role runners' open path holds their own connection,
+	// but sqlite permits a concurrent reader on the same file via a
+	// separate connection — this read does not race the runners' migrate
+	// (because migrate already ran to completion before StartRoleStack
+	// returned).
 	dbPath := filepath.Join(runDir, "state.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {

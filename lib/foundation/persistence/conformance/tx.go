@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// tx.go — TxAtomicity conformance area.
-//
+// @constraint: TxAtomicity conformance area.
 // Verifies that Transaction(ctx, fn) rolls back on error and commits on
 // nil return — the load-bearing primitive every other test depends on.
 package conformance
@@ -23,8 +22,8 @@ func testTxAtomicity(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Roll back: insert a tag inside a tx that returns an error. After
-	// return the tag must not exist.
+	// @constraint: Transaction(ctx, fn) must roll back when fn returns an
+	// error; rows written inside the tx must not be visible after return.
 	tagA := "rollback-tag-" + uuid.NewString()
 	tryRollback := errors.New("rollback me")
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -48,8 +47,8 @@ func testTxAtomicity(t *testing.T, d persistence.Database) {
 		t.Fatalf("rollback failed: tag %q is present after rollback", tagA)
 	}
 
-	// Commit: insert two tags in a tx with nil return. Both rows
-	// must persist.
+	// @constraint: Transaction(ctx, fn) must commit when fn returns nil;
+	// every row written inside the tx must persist after return.
 	tagB := "commit-tag-b-" + uuid.NewString()
 	tagC := "commit-tag-c-" + uuid.NewString()
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

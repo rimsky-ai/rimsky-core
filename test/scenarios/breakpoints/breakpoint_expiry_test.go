@@ -36,7 +36,7 @@ import (
 func TestBreakpointExpiry(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{
-		// Fast tick so SweepExpired fires soon after the TTL elapses.
+		// @deliberate: Fast tick so SweepExpired fires soon after the TTL elapses.
 		SchedulerTick: 100 * time.Millisecond,
 	})
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "ok")
@@ -64,20 +64,19 @@ func TestBreakpointExpiry(t *testing.T) {
 		"mode":        "pause",
 		"ttl_seconds": ttl,
 	})
-	// The breakpoint exists right now.
 	require.NotNil(t, getBreakpointRow(t, h, bpID),
 		"breakpoint should exist immediately after creation")
 
-	// Wait past the TTL + a sweep tick or two. The sweep is scheduled
+	// @deliberate: Wait past the TTL + a sweep tick or two. The sweep is scheduled
 	// every 100ms; SweepExpired uses NOW() > expires_at.
 	require.Eventually(t, func() bool {
-		// Use includeExpired=true via direct row lookup; SweepExpired
+		// @deliberate: Use includeExpired=true via direct row lookup; SweepExpired
 		// physically DELETEs the row, so Get returns nil once it fires.
 		return getBreakpointRow(t, h, bpID) == nil
 	}, 5*time.Second, 100*time.Millisecond,
 		"breakpoint row should be deleted by SweepExpired within TTL + sweep cadence")
 
-	// Resume the instance — the worker should dispatch unimpeded since
+	// @deliberate: Resume the instance — the worker should dispatch unimpeded since
 	// the breakpoint is gone.
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
@@ -87,7 +86,7 @@ func TestBreakpointExpiry(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker should reach Fresh after the breakpoint expired (no pause)")
 
-	// And no hit row should have landed — the breakpoint was already
+	// @deliberate: And no hit row should have landed — the breakpoint was already
 	// gone by dispatch time. Probe the hit table via the InstanceID
 	// scan; an expired breakpoint deletes hits via FK CASCADE, so 0
 	// rows is the assertion.

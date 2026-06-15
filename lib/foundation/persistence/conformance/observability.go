@@ -175,12 +175,11 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("template/instance insert: %v", err)
 	}
-	// The kinds below are real operational kinds (work_started,
-	// state_transition, work_completed) chosen so the pagination
-	// test exercises the read path through ParseKindString at the
-	// unmarshal boundary (per decision:event-log-kind-enum). The
-	// ordering assertions below rely on insertion order; the three
-	// kinds are just stand-ins for "three rows."
+	// @decision: event-log-kind-enum — real operational kinds (work_started,
+	// state_transition, work_completed) exercise the read path through
+	// ParseKindString at the unmarshal boundary; the three kinds are
+	// stand-ins for "three rows" and ordering assertions rely on
+	// insertion order.
 	cases := []struct {
 		kind events.Kind
 		wire string
@@ -218,12 +217,6 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 	}
 }
 
-// (testSchedulesDenseSameTimestampPagination retired by the 2026-05-15
-// data-platform-extensions plan B10 / D7 / E16 schedule-retirement
-// cascade. The rimsky_schedules table and the
-// `ScheduleTable.ListForObservability` helper it exercised are gone;
-// cron firing is owned by `sensors/sensor-cron/`.)
-
 // testEventsListAuthPayloadFilters exercises the JSONB-payload filters
 // on EventListFilter that back GET /audit (spec
 // 2026-05-29-console-upstream-auth-audit-and-fixes). It inserts
@@ -244,9 +237,9 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 	keyA := uuid.NewString()
 	keyB := uuid.NewString()
 
-	// Each row's payload mirrors the shape of auth.AccessAttemptedPayload
-	// (the keys GET /audit filters on). response_status is a JSON number;
-	// mode is a string.
+	// @constraint: each row's payload mirrors the shape of
+	// auth.AccessAttemptedPayload (the keys GET /audit filters on) —
+	// response_status is a JSON number; mode is a string.
 	rows := []map[string]any{
 		{"key_id": keyA, "key_name": "alpha", "action": "instance:create", "response_status": 201, "mode": "execute", "request_path": "/instances"},
 		{"key_id": keyA, "key_name": "alpha", "action": "instance:read", "response_status": 200, "mode": "execute", "request_path": "/instances/abc"},
@@ -283,22 +276,18 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 
 	kindIn := []string{"auth.access_attempted", "auth.access_denied"}
 
-	// No payload filter → all 4 rows (nil pointers are no-ops).
 	if got := list(persistence.EventListFilter{KindIn: kindIn}); len(got) != 4 {
 		t.Fatalf("no-filter = %d rows, want 4", len(got))
 	}
 
-	// key_id narrows to the two rows for keyA.
 	if got := list(persistence.EventListFilter{KindIn: kindIn, KeyID: sp(keyA)}); len(got) != 2 {
 		t.Fatalf("KeyID = %d rows, want 2", len(got))
 	}
 
-	// key_name narrows to the two beta rows.
 	if got := list(persistence.EventListFilter{KindIn: kindIn, KeyName: sp("beta")}); len(got) != 2 {
 		t.Fatalf("KeyName = %d rows, want 2", len(got))
 	}
 
-	// action exact narrows to the single instance:create row.
 	got := list(persistence.EventListFilter{KindIn: kindIn, ActionExact: sp("instance:create")})
 	if len(got) != 1 {
 		t.Fatalf("ActionExact = %d rows, want 1", len(got))
@@ -307,16 +296,13 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		t.Fatalf("ActionExact row action = %q, want instance:create", a)
 	}
 
-	// action prefix "instance:" narrows to the two instance:* rows.
 	if got := list(persistence.EventListFilter{KindIn: kindIn, ActionPrefix: sp("instance:")}); len(got) != 2 {
 		t.Fatalf("ActionPrefix instance: = %d rows, want 2", len(got))
 	}
-	// action prefix "auth:" narrows to the two auth:* rows.
 	if got := list(persistence.EventListFilter{KindIn: kindIn, ActionPrefix: sp("auth:")}); len(got) != 2 {
 		t.Fatalf("ActionPrefix auth: = %d rows, want 2", len(got))
 	}
 
-	// response_status narrows: 200 → two rows; 403 → one row.
 	if got := list(persistence.EventListFilter{KindIn: kindIn, ResponseStatus: ip(200)}); len(got) != 2 {
 		t.Fatalf("ResponseStatus 200 = %d rows, want 2", len(got))
 	}
@@ -324,7 +310,6 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		t.Fatalf("ResponseStatus 403 = %d rows, want 1", len(got))
 	}
 
-	// mode narrows: dry_run → one row; execute → three rows.
 	if got := list(persistence.EventListFilter{KindIn: kindIn, Mode: sp("dry_run")}); len(got) != 1 {
 		t.Fatalf("Mode dry_run = %d rows, want 1", len(got))
 	}
@@ -332,8 +317,8 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		t.Fatalf("Mode execute = %d rows, want 3", len(got))
 	}
 
-	// request_path (the audit "target") narrows to the single matching
-	// row; a path with no row matches nothing.
+	// @constraint: the RequestPath filter (audit "target") MUST narrow
+	// to the single matching row; a path with no row matches nothing.
 	got = list(persistence.EventListFilter{KindIn: kindIn, RequestPath: sp("/instances")})
 	if len(got) != 1 {
 		t.Fatalf("RequestPath /instances = %d rows, want 1", len(got))
@@ -348,8 +333,6 @@ func testEventsListAuthPayloadFilters(t *testing.T, d persistence.Database) {
 		t.Fatalf("RequestPath /nonexistent = %d rows, want 0", len(got))
 	}
 
-	// Composed filters AND together: keyB + status 200 → the single
-	// auth:create dry_run row.
 	got = list(persistence.EventListFilter{KindIn: kindIn, KeyID: sp(keyB), ResponseStatus: ip(200)})
 	if len(got) != 1 {
 		t.Fatalf("KeyID(B)+Status(200) = %d rows, want 1", len(got))

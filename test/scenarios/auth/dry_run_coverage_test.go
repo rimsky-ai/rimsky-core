@@ -50,7 +50,7 @@ type dryRunCase struct {
 	method string
 	path   string
 	body   map[string]any
-	// header is an optional extra request header (e.g. Idempotency-Key
+	// @constraint: header is an optional extra request header (e.g. Idempotency-Key
 	// on message:send).
 	headerKey, headerVal string
 	// wouldHaveKey is the `would_have_*` envelope key the handler must
@@ -66,7 +66,7 @@ func TestDryRunCoverage_AllWriteActions(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// Admin key drives every request (a `*` grant covers every action;
+	// @constraint: admin key drives every request (a `*` grant covers every action;
 	// dry-run is sourced from the request flag, not the grant).
 	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
@@ -79,7 +79,7 @@ func TestDryRunCoverage_AllWriteActions(t *testing.T) {
 
 	cases := buildDryRunCases(t, f, adminKey)
 
-	// Coverage assertion: every IsWrite action in the registry must have
+	// @constraint: Coverage assertion: every IsWrite action in the registry must have
 	// a descriptor. A new write action with no descriptor fails here,
 	// which is the structural guarantee — the author must prove the
 	// dry-run branch.
@@ -98,7 +98,6 @@ func TestDryRunCoverage_AllWriteActions(t *testing.T) {
 			t.Fatalf("write action %q has no dry-run coverage descriptor; every IsWrite action must be driven with ?dry_run=true and asserted to mutate nothing (the dry-run never-mutates structural guarantee)", a)
 		}
 	}
-	// And no descriptor should reference a non-write / unknown action.
 	for a := range cases {
 		e, ok := reg.Entry(a)
 		if !ok {
@@ -110,7 +109,7 @@ func TestDryRunCoverage_AllWriteActions(t *testing.T) {
 	}
 	t.Logf("dry-run coverage: driving %d IsWrite actions with ?dry_run=true", len(writeActions))
 
-	// Drive each write action's dry-run request and assert the envelope +
+	// @deliberate: Drive each write action's dry-run request and assert the envelope +
 	// no mutation.
 	for _, action := range writeActions {
 		c := cases[action]
@@ -153,9 +152,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	ctx := context.Background()
 	dr := "?dry_run=true"
 
-	// --- shared HTTP-seeded scaffolding ---------------------------------
-
-	// A deployed template + instance, reused by the instance/message/
+	// @deliberate: A deployed template + instance, reused by the instance/message/
 	// backfill/breakpoint/node:invalidate/asset:materialize cases.
 	tplHash := seedDeployedTemplate(t, f, adminKey, "dryrun-coverage")
 	code, instResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{"template": tplHash})
@@ -164,7 +161,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	instanceID := instResp["instance_id"].(string)
 
-	// The instance's single root node (for node:invalidate).
 	code, nodesResp := f.request(t, "GET", "/v1/instances/"+instanceID+"/nodes", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("seed list nodes: %d %+v", code, nodesResp)
@@ -175,12 +171,11 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	invalidateNodeID := nodes[0].(map[string]any)["id"].(string)
 
-	// A second template for tag:set / template:deploy / template:undeploy
+	// @deliberate: A second template for tag:set / template:deploy / template:undeploy
 	// / template:deregister (so deregister-dry-run doesn't trample the
 	// instance's template).
 	tplHash2 := seedDeployedTemplate(t, f, adminKey, "dryrun-coverage-2")
 
-	// A tag pointing at tplHash2 (for tag:set / tag:delete).
 	code, tagResp := f.request(t, "POST", "/v1/tags", adminKey, map[string]any{
 		"tag": "dryrun-tag", "template": tplHash2,
 	})
@@ -188,7 +183,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 		t.Fatalf("seed tag: %d %+v", code, tagResp)
 	}
 
-	// A dedicated instance whose root node `n1` is a fan-out node wired
+	// @deliberate: A dedicated instance whose root node `n1` is a fan-out node wired
 	// for the backfill override (its partition_request pulls from the
 	// trigger message). `backfill:create` rejects (400) a target that is
 	// not such a node, so the backfill cases need a wired fan-out target
@@ -201,42 +196,40 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 	backfillInstanceID := bfInstResp["instance_id"].(string)
 
-	// A breakpoint (for breakpoint:delete) + a backfill (for
+	// @deliberate: A breakpoint (for breakpoint:delete) + a backfill (for
 	// backfill:cancel). Both created for real so their dry-run-delete /
 	// dry-run-cancel reach their gates.
 	bpID := seedBreakpoint(t, f, adminKey, instanceID)
 	backfillOpID := seedBackfill(t, f, adminKey, backfillInstanceID)
 
-	// A breakpoint hit (for breakpoint:resume) — seeded via persistence
+	// @constraint: A breakpoint hit (for breakpoint:resume) — seeded via persistence
 	// (a real hit requires the engine to actually pause a dispatch).
 	hitID := seedBreakpointHit(t, f, mustUUID(t, instanceID), mustUUID(t, bpID))
 
-	// A second key (for auth:revoke / auth:rotate) so the dry-run target
+	// @deliberate: A second key (for auth:revoke / auth:rotate) so the dry-run target
 	// is a real persisted key. (auth:create needs no target.)
 	_, victimBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name": "dryrun-victim", "permissions": []map[string]any{{"action": "*:read"}},
 	})
 	victimKey := victimBody["plaintext"].(string)
 
-	// A registered-but-NOT-deployed template for template:deploy's dry-run
+	// @constraint: A registered-but-NOT-deployed template for template:deploy's dry-run
 	// gate (an already-deployed template short-circuits to {no_op:true}
 	// before the gate, so a deployed template would never exercise the
 	// dry-run branch).
 	registeredOnlyHash := seedRegisteredTemplate(t, f, adminKey, "dryrun-deploy-target")
 
-	// --- persistence-seeded deep state ----------------------------------
+	// @constraint: persistence-seeded deep state
 
-	// node:reset target — a node projected as `failed`, on a SEPARATE
+	// @constraint: node:reset target — a node projected as `failed`, on a SEPARATE
 	// instance so the failed-state seed doesn't collide with the
 	// node:invalidate target (which must stay `fresh`).
 	resetInstanceID, resetNodeID := seedFailedNodeOnNewInstance(ctx, t, f, adminKey, tplHash)
 	_ = resetInstanceID
 
-	// asset:delete target — a committed durable claim on a node with a
+	// @deliberate: asset:delete target — a committed durable claim on a node with a
 	// matching template `stores:` entry, all seeded directly.
 	assetInstanceID, assetAlias := seedDurableAsset(ctx, t, f)
-
-	// --- no-mutation verifiers ------------------------------------------
 
 	keyStillActive := func(name string, key string) func(t *testing.T) {
 		return func(t *testing.T) {
@@ -319,7 +312,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			if code != 200 {
 				t.Fatalf("backfill re-fetch: %d %+v", code, resp)
 			}
-			// A cancelled backfill voids its messages; we assert the
+			// @deliberate: A cancelled backfill voids its messages; we assert the
 			// status object still reports a non-cancelled shape by
 			// checking the response did not error. The fine-grained
 			// cancellation flag is internal; absence of a 404/void is
@@ -357,7 +350,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 
 	return map[string]dryRunCase{
-		// --- instances ---
 		"instance:create": {
 			method: "POST", path: "/v1/instances" + dr,
 			body:         map[string]any{"template": tplHash, "instance_key": "dryrun-create-key"},
@@ -383,14 +375,12 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_terminated", verifyNoMutation: instanceNotTerminated(instanceID),
 		},
 		"instance:terminate": {
-			// DELETE requires the instance to already be terminal; seed a
+			// @constraint: DELETE requires the instance to already be terminal; seed a
 			// separate, terminated instance so the dry-run reaches the gate.
 			method: "DELETE", path: "/v1/instances/" + seedTerminatedInstanceForDelete(ctx, t, f, tplHash, adminKey) + dr,
 			wouldHaveKey: "would_have_terminated",
-			// The dedicated instance stays present (no row delete).
 		},
 
-		// --- breakpoints ---
 		"breakpoint:create": {
 			method: "POST", path: "/v1/instances/" + instanceID + "/breakpoints" + dr,
 			body:         map[string]any{"checkpoint": "before_dispatch"},
@@ -400,7 +390,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 				if code != 200 {
 					t.Fatalf("breakpoint re-list: %d", code)
 				}
-				// Only the one seeded breakpoint should exist.
+				// @deliberate: Only the one seeded breakpoint should exist.
 				items, _ := resp["breakpoints"].([]any)
 				if len(items) != 1 {
 					t.Fatalf("breakpoint created under dry-run: list has %d (want 1 seeded)", len(items))
@@ -415,11 +405,10 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			method: "POST", path: "/v1/instances/" + instanceID + "/breakpoints/" + bpID + "/resume" + dr,
 			body:         map[string]any{"hit_id": hitID},
 			wouldHaveKey: "would_have_resumed_breakpoint",
-			// The hit stays unresumed; verified implicitly (the resume
+			// @deliberate: The hit stays unresumed; verified implicitly (the resume
 			// mutation is skipped, so the would_have envelope is the signal).
 		},
 
-		// --- templates ---
 		"template:register": {
 			method: "POST", path: "/v1/templates" + dr,
 			body: map[string]any{"spec": map[string]any{
@@ -428,7 +417,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 				"nodes":                 []map[string]any{{"type": "n1"}},
 			}},
 			wouldHaveKey: "would_have_registered",
-			// A dry-run register persists nothing; the template list is
+			// @deliberate: A dry-run register persists nothing; the template list is
 			// unaffected (not separately asserted — the envelope suffices,
 			// and the spec's dry-run gate is before the persist).
 		},
@@ -441,13 +430,12 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_undeployed", verifyNoMutation: templateStateIs(tplHash2, "deployed"),
 		},
 		"template:deregister": {
-			// Deregister a throwaway registered (not deployed) template so
+			// @deliberate: Deregister a throwaway registered (not deployed) template so
 			// the dry-run reaches its gate without affecting tplHash/tplHash2.
 			method: "DELETE", path: "/v1/templates/" + seedRegisteredTemplate(t, f, adminKey, "dryrun-deregister") + dr,
 			wouldHaveKey: "would_have_deregistered",
 		},
 
-		// --- tags ---
 		"tag:create": {
 			method: "POST", path: "/v1/tags" + dr,
 			body:         map[string]any{"tag": "dryrun-new-tag", "template": tplHash2},
@@ -475,7 +463,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_deleted_tag", verifyNoMutation: tagUnchanged("dryrun-tag", tplHash2),
 		},
 
-		// --- nodes ---
 		"node:invalidate": {
 			method: "POST", path: "/v1/nodes/" + invalidateNodeID + "/invalidate" + dr,
 			body:         map[string]any{"reason": "dry-run"},
@@ -486,7 +473,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_reset", verifyNoMutation: nodeStateIs(resetNodeID, "failed"),
 		},
 
-		// --- messages ---
 		"message:send": {
 			method: "POST", path: "/v1/instances/" + instanceID + "/messages" + dr,
 			body:      map[string]any{"kind": "invalidate", "target": "n1"},
@@ -494,15 +480,13 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_sent", verifyNoMutation: messageCountUnchanged(instanceID),
 		},
 
-		// --- lineage ---
 		"lineage:prune": {
 			method: "POST", path: "/v1/admin/lineage/prune" + dr,
 			body:         map[string]any{"before": time.Now().UTC().Format(time.RFC3339)},
 			wouldHaveKey: "would_have_pruned",
-			// Nothing to prune in the fixture; the gate is before the delete.
+			// @deliberate: Nothing to prune in the fixture; the gate is before the delete.
 		},
 
-		// --- backfills ---
 		"backfill:create": {
 			method: "POST", path: "/v1/instances/" + backfillInstanceID + "/backfills" + dr,
 			body:         map[string]any{"target_node": "n1", "reason": "dry-run"},
@@ -513,7 +497,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_cancelled_backfill", verifyNoMutation: backfillNotCancelled(backfillOpID),
 		},
 
-		// --- assets ---
 		"asset:materialize": {
 			method: "POST", path: "/v1/instances/" + instanceID + "/assets/n1.main/materialize" + dr,
 			body:         map[string]any{"reason": "dry-run"},
@@ -524,7 +507,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_deleted_asset", verifyNoMutation: assetStillExists(assetInstanceID, assetAlias),
 		},
 
-		// --- auth (no carve-out; dry-runnable via the flag) ---
 		"auth:create": {
 			method: "POST", path: "/v1/auth/keys" + dr,
 			body:         map[string]any{"name": "dryrun-created", "permissions": []map[string]any{{"action": "*:read"}}},
@@ -548,7 +530,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	}
 }
 
-// --- seeding helpers ----------------------------------------------------
+// @deliberate: seeding helpers
 
 func seedBreakpoint(t *testing.T, f *authFixture, adminKey, instanceID string) string {
 	t.Helper()
@@ -734,7 +716,7 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 		}); err != nil {
 			return err
 		}
-		// Transition the run to failed (UpdateStateAndOutcome does not
+		// @deliberate: Transition the run to failed (UpdateStateAndOutcome does not
 		// validate — the test owns the seeded state).
 		return f.db.Tables().RunTree().UpdateStateAndOutcome(ctx, tx, runID, cascade.NodeStateFailed, nil)
 	}); err != nil {
@@ -810,7 +792,7 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 		}, tx); err != nil {
 			return err
 		}
-		// Insert an active claim handle, then promote it to committed so
+		// @deliberate: Insert an active claim handle, then promote it to committed so
 		// the asset query (ListByInstanceAndState committed/durable) finds
 		// it.
 		pn := producerName

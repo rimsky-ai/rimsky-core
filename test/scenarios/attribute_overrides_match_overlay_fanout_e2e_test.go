@@ -62,7 +62,7 @@ import (
 func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *testing.T) {
 	t.Parallel()
 
-	// Start a remote stub store-service. The testfixture always
+	// @constraint: Start a remote stub store-service. The testfixture always
 	// enables DataProcessing, and the stub's ClaimProducer surface
 	// advertises SupportsSplitScope=true unconditionally — so the
 	// fan-out acquisition path's call to SplitScope reaches a live
@@ -90,14 +90,14 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 			},
 		},
 	})
-	// Per-child stub script: success with a no-op attributes_delta so
+	// @deliberate: Per-child stub script: success with a no-op attributes_delta so
 	// the supervisor's commit gate doesn't reject the bag. Each child
 	// dispatch arrives with NodeType="fan-child" (children re-use the
 	// parent's node id + node-type per the fan-out dispatch wrapper); the
 	// matcher-applied `tag` field is the per-dispatch witness.
 	h.Stub.WhenType("fan-child").Success(map[string]any{"ok": true}, true, "ok")
 
-	// Open attribute schema — the matcher overlays land `tag` as a
+	// @constraint: Open attribute schema — the matcher overlays land `tag` as a
 	// top-level string. `ok` is the executor-write-back slot the stub
 	// fills. The schema must be open enough that the L5 overlay's
 	// `tag` value doesn't violate the post-dispatch validator.
@@ -117,7 +117,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 					Type:     "fan-child",
 					Executor: "stub",
 					FanOut: &tmplspec.FanOutSpec{
-						// `claim:` references the alias declared on this
+						// @deliberate: `claim:` references the alias declared on this
 						// node's stores list. The acquisition path
 						// `runtime/runner_acquire_helpers.go::acquireFanOutIfDeclared`
 						// resolves the alias to the acquired
@@ -125,7 +125,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 						// that producer.
 						Claim:            "data",
 						PartitionRequest: `{"partition_keys":["a","b","c"]}`,
-						// `best_effort` tolerates any child outcome —
+						// @deliberate: `best_effort` tolerates any child outcome —
 						// this scenario asserts dispatch-time overlay
 						// routing, not aggregation semantics, so we
 						// don't want a per-child commit issue to mask
@@ -139,7 +139,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 		},
 	})
 
-	// Three by_match entries, one per child_key. Each matcher fires
+	// @constraint: Three by_match entries, one per child_key. Each matcher fires
 	// for exactly the child whose dispatch carries the matching
 	// `acq.ChildKey`; the other two children must NOT see this
 	// overlay's `tag`.
@@ -161,7 +161,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 	}
 	iid := h.CreateInstanceWithOverrides(tid, "ck-bm-fanout", map[string]any{}, overrides)
 
-	// All three children dispatch under the parent's node row. The
+	// @deliberate: All three children dispatch under the parent's node row. The
 	// stub's Observed log records each dispatch's NodeType +
 	// Attributes; the per-child tags are the witness for the
 	// `child_key:` matcher path. We don't get the ChildKey directly
@@ -199,7 +199,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 		time.Sleep(50 * time.Millisecond)
 	}
 	if !converged {
-		// Diagnostic dump: what does the stub see, and what does
+		// @deliberate: Diagnostic dump: what does the stub see, and what does
 		// the DB say about per-child runs?
 		obs := h.Stub.Observed()
 		t.Logf("stub observed %d dispatches:", len(obs))
@@ -207,7 +207,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 			t.Logf("  [%d] node_type=%s attributes=%#v", i, o.NodeType, o.Attributes)
 		}
 		t.Logf("rimsky_node_runs rows for this instance:")
-		// Post-RunScope-first: parent_run_id + child_key moved off
+		// @deliberate: Post-RunScope-first: parent_run_id + child_key moved off
 		// rimsky_node_runs onto rimsky_run_scopes (parent_run_id) and
 		// rimsky_run_scopes.partition_key. Project the partition_key
 		// via the run's run_scope_id so the diagnostic mirrors the
@@ -266,7 +266,7 @@ func TestAttributeOverridesMatchOverlayFanout_ChildKeyMatcherRoutesPerChild(t *t
 		t.Fatalf("each child_key matcher should fire on its own child's dispatch exactly once; observed tag distribution did not converge")
 	}
 
-	// Counter assertion: per-entry counter advances to exactly 1 per
+	// @deliberate: Counter assertion: per-entry counter advances to exactly 1 per
 	// matcher entry, regardless of child dispatch ordering. The L5
 	// supervisor-side increment runs inside
 	// `runtime/attribute_overrides.go::incrementMatchCountersAfterMerge`

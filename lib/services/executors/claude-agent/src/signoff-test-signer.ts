@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// Test-only helper: real Ed25519 crypto, reused by signoff.test.ts and the
+// @deliberate: test-only helper: real Ed25519 crypto, reused by signoff.test.ts and the
 // acceptance e2e test. Named without a `.test.ts` suffix because it is imported
 // by multiple test files; no runtime code imports it. It is excluded from the
 // build via tsconfig.json's `exclude` so it never lands in dist/.
@@ -12,7 +12,7 @@ import { buildSignoffMessage } from "./signoff.js";
 
 export interface TestSigner {
   publicKeyPem: string;
-  sign(dispatchId: string, value: unknown): string; // base64
+  sign(dispatchId: string, value: unknown): string;
 }
 
 export function makeTestSigner(): TestSigner {

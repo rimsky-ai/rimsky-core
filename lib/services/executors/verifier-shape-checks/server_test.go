@@ -92,8 +92,8 @@ func TestExecuteCore_FailureClassifiesAsHierarchicalCheckFailed(t *testing.T) {
 	if errOut == nil {
 		t.Fatalf("expected Error, got %T", term.Outcome)
 	}
-	// Hierarchical leaf carries the failed check's kind suffix per
-	// `concept:signal`. Validator accepts this via the declared
+	// @concept: signal — the hierarchical leaf carries the failed check's
+	// kind suffix; validators accept it via the declared
 	// `verifier/check_failed/*` wildcard.
 	if errOut.GetErrorClass() != "verifier/check_failed/pk_unique" {
 		t.Errorf("error_class: got %q, want verifier/check_failed/pk_unique", errOut.GetErrorClass())
@@ -104,7 +104,7 @@ func TestExecuteCore_InvalidAttributesRejected(t *testing.T) {
 	srv := NewServer(false)
 	req := buildReq(t, map[string]any{
 		"rows": []any{map[string]any{"id": "x"}},
-		// missing `checks`
+		// @deliberate: `checks` omitted to exercise attribute-validation rejection.
 	})
 	fs := &fakeStream{}
 	if err := srv.executeCore(req, fs.send); err != nil {
@@ -177,10 +177,11 @@ func TestCapabilities_AdvertisesValidationSupportedRoles(t *testing.T) {
 func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *testing.T) {
 	srv := NewServer(false)
 
-	// Dispatch A: a failing warning-severity check (pk_unique over a column
-	// with a duplicate) alongside a passing error-severity check (no_nulls).
-	// Because the only failure is warning-severity, the dispatch must succeed
-	// and surface the warning as a non-blocking finding in the delta/summary.
+	// @deliberate: dispatch A pairs a failing warning-severity check
+	// (pk_unique over a column with a duplicate) with a passing
+	// error-severity check (no_nulls); because the only failure is
+	// warning-severity, the dispatch must succeed and surface the warning
+	// as a non-blocking finding in the delta/summary.
 	t.Run("warning_fail_is_non_blocking", func(t *testing.T) {
 		req := buildReq(t, map[string]any{
 			"checks": []any{
@@ -197,7 +198,7 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 			},
 			"rows": []any{
 				map[string]any{"id": "a"},
-				map[string]any{"id": "a"}, // duplicate → pk_unique (warning) FAILS
+				map[string]any{"id": "a"}, // @deliberate: duplicate id forces pk_unique (warning) to FAIL.
 			},
 		})
 		fs := &fakeStream{}
@@ -211,10 +212,10 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 		if term.GetSuccess() == nil {
 			t.Fatalf("expected Success terminal (warning-only failure must not block), got %T", term.Outcome)
 		}
-		// The non-blocking warning failure must be observable: assert the
-		// failed warning check's kind is surfaced in the Success delta's
-		// warnings list (the operator needs to see the soft finding even
-		// though it did not block).
+		// @deliberate: the non-blocking warning failure must be observable —
+		// assert the failed warning check's kind is surfaced in the Success
+		// delta's warnings list so operators see soft findings that did not
+		// block.
 		delta := term.GetSuccess().GetAttributesDelta()
 		if delta == nil {
 			t.Fatal("Success terminal carried no attributes_delta")
@@ -224,8 +225,8 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 		}
 	})
 
-	// Dispatch B: a failing error-severity check must block with the
-	// hierarchical `verifier/check_failed/<kind>` Error terminal.
+	// @deliberate: dispatch B asserts a failing error-severity check blocks
+	// with the hierarchical `verifier/check_failed/<kind>` Error terminal.
 	t.Run("error_fail_blocks", func(t *testing.T) {
 		req := buildReq(t, map[string]any{
 			"checks": []any{
@@ -237,7 +238,7 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 			},
 			"rows": []any{
 				map[string]any{"id": "a"},
-				map[string]any{"id": "a"}, // duplicate → pk_unique (error) FAILS
+				map[string]any{"id": "a"}, // @deliberate: duplicate id forces pk_unique (error) to FAIL.
 			},
 		})
 		fs := &fakeStream{}

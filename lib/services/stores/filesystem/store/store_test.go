@@ -60,7 +60,6 @@ func TestOpenEchoesPathUnderRoot(t *testing.T) {
 		t.Fatalf("filesystem store should always return Available; got Unavailable")
 	}
 
-	// Scope is a JSON-encoded path string identical to the selector.
 	var scope string
 	if err := json.Unmarshal(outcome.Result.ClaimScope, &scope); err != nil {
 		t.Fatalf("unmarshal scope: %v", err)
@@ -69,7 +68,6 @@ func TestOpenEchoesPathUnderRoot(t *testing.T) {
 		t.Fatalf("scope = %q, want %q", scope, "alpha/beta.txt")
 	}
 
-	// Address is the joined path under the root.
 	var addr string
 	if err := json.Unmarshal(outcome.Result.Address, &addr); err != nil {
 		t.Fatalf("unmarshal address: %v", err)

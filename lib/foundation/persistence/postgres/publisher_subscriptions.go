@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Postgres impl of persistence.PublisherSubscriptionsTable —
-// publisher-subscription lifecycle state per spec §Publisher protocol
-// unification.
-
 package postgres
 
 import (
@@ -18,6 +14,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// publisherSubscriptionsImpl is the Postgres-backed
+// persistence.PublisherSubscriptionsTable — publisher-subscription
+// lifecycle state per spec §Publisher protocol unification.
 type publisherSubscriptionsImpl tablesImpl
 
 var _ persistence.PublisherSubscriptionsTable = (*publisherSubscriptionsImpl)(nil)
@@ -117,7 +116,7 @@ func (b *publisherSubscriptionsImpl) Get(ctx context.Context, tx persistence.Tx,
 	return &out[0], nil
 }
 
-// CompareAndSetState flips state from→to only when the row is still in
+// casPublisherSubscriptionStateSQL flips state from→to only when the row is still in
 // `from` (guarded single-statement UPDATE; see the interface contract in
 // persistence.PublisherSubscriptionsTable for the race it defends).
 const casPublisherSubscriptionStateSQL = `

@@ -19,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// HTTP+JSON bridge wire format (§7.1):
+// httpClient implements the HTTP+JSON bridge. Wire format (§7.1):
 //   POST <endpoint.URL>/v1/Execute
 //     Content-Type: application/json
 //     body: JSON form of ExecuteRequest
@@ -54,9 +54,9 @@ func NewHTTPClient(endpoint Endpoint) (Client, error) {
 	if u.Scheme != "https" {
 		return nil, fmt.Errorf("executor.NewHTTPClient: peer %q (tls: required): endpoint scheme %q is not https — a tls: required HTTP-bridge executor must use an https:// URL", endpoint.URL, u.Scheme)
 	}
-	// Verified TLS with the same root-pool posture as the gRPC dial
-	// sites (system roots, test-injectable). Cloning the default
-	// transport keeps proxy/timeouts/HTTP2 behavior.
+	// @constraint: verified TLS uses the same root-pool posture as the gRPC dial
+	// sites (system roots, test-injectable); cloning the default transport
+	// preserves proxy/timeouts/HTTP2 behavior.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = peer.TLSClientConfig()
 	return &httpClient{
@@ -79,9 +79,9 @@ func (c *httpClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (Ev
 	httpReq.Header.Set("Accept", "application/x-ndjson")
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		// Mirror the gRPC TLSMode interceptors: failures under
-		// `tls: required` name the peer and the mode so a handshake
-		// failure surfaces loudly with the operator's intent attached.
+		// @deliberate: mirror the gRPC TLSMode interceptors — failures under
+		// `tls: required` name the peer and the mode so a handshake failure
+		// surfaces loudly with the operator's intent attached.
 		if c.tlsMode == peer.TLSModeRequired {
 			return nil, fmt.Errorf("peer %q (tls: required): %w", c.endpoint, err)
 		}
@@ -109,10 +109,8 @@ func (e *httpEventStream) Recv() (*genv1.ExecuteEvent, error) {
 		}
 		return nil, err
 	}
-	// Trim trailing newline.
 	line = bytes.TrimRight(line, "\r\n")
 	if len(line) == 0 {
-		// Empty line: skip, try again.
 		return e.Recv()
 	}
 	var ev genv1.ExecuteEvent

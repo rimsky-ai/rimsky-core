@@ -112,8 +112,8 @@ func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequ
 	}
 	pool := e.store.Pool()
 	if pool == nil {
-		// No live pool is a transient connection-state defect, not an
-		// attribute defect. Per concept:signal, this is `pg/connection_lost`.
+		// @concept: signal — no live pool is a transient connection-state
+		// defect, not an attribute defect, so emit `pg/connection_lost`.
 		return sendVerifierError(send, "pg/connection_lost", "postgres store has no live connection pool", nil)
 	}
 	conn := pgxPoolConn{pool: pool}
@@ -125,10 +125,11 @@ func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequ
 		failedKind := firstFailedCheckKind(results)
 		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				// 2026-05-23 signal-taxonomy Pass 6: per-check-kind leaf
-				// under the `pg/verifier_check_failed/*` prefix. Subscribers
-				// can pattern-match the prefix to react to any verifier
-				// failure, or pin to a specific check kind by leaf.
+				// @constraint: per-check-kind leaf under the
+				// `pg/verifier_check_failed/*` prefix so subscribers can match
+				// the prefix for any verifier failure or pin to a specific
+				// check kind by leaf — the hierarchical-error-class pattern the
+				// signal taxonomy applies across all bundled executors.
 				ErrorClass: "pg/verifier_check_failed/" + failedKind,
 				Payload:    buildVerifierFailurePayload(results),
 			}}},

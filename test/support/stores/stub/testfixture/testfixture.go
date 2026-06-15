@@ -33,7 +33,7 @@ func Start(t *testing.T, cfg stubstore.Config) (endpoint string, store *stubstor
 	st := stubstore.New(cfg)
 	done := make(chan struct{})
 	go func() {
-		// t.Logf is unsafe to call after the test has returned; teardown
+		// @deliberate: t.Logf is unsafe to call after the test has returned; teardown
 		// blocks on `done` so we just discard the return value here.
 		_ = server.RunWithStore(ctx, server.Config{
 			Substrate:            cfg,

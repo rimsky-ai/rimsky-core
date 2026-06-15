@@ -114,7 +114,6 @@ func TestExecute_HappyPath_200JSON(t *testing.T) {
 	if got["ok"] != true || got["name"] != "alice" {
 		t.Errorf("unexpected attributes_delta: %+v", got)
 	}
-	// First event should be a heartbeat.
 	if c.events[0].GetHeartbeat() == nil {
 		t.Error("expected leading heartbeat")
 	}
@@ -144,7 +143,7 @@ func TestExecute_404_ReturnsHTTPUnexpectedStatus(t *testing.T) {
 func TestExecute_NetworkError_ReturnsHTTPRequestFailed(t *testing.T) {
 	s := testServer(t, false)
 	c := &collector{}
-	// Use a port that nothing is listening on.
+	// @deliberate: port 1 is reserved and unbound, so the dial fails synchronously and exercises the network_error path.
 	req := newRequest(t, map[string]any{"url": "http://127.0.0.1:1/does-not-exist"})
 	_ = s.executeCore(context.Background(), req, c.send)
 
@@ -175,7 +174,7 @@ func TestExecute_MalformedAttributes_MissingURL(t *testing.T) {
 func TestStubMode_ReturnsCannedResponse(t *testing.T) {
 	s := testServer(t, true)
 	c := &collector{}
-	// No upstream server will be contacted; URL is ignored in stub mode.
+	// @constraint: stub mode must not dial the URL, so an unreachable host must still resolve to Success.
 	req := newRequest(t, map[string]any{"url": "http://unreachable.invalid/"})
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
@@ -200,7 +199,7 @@ func TestStubMode_ReturnsCannedResponse(t *testing.T) {
 func TestStubMode_RejectsMalformedAttributes(t *testing.T) {
 	s := testServer(t, true)
 	c := &collector{}
-	req := newRequest(t, map[string]any{}) // no url
+	req := newRequest(t, map[string]any{})
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
 		t.Fatalf("executeCore: %v", err)
 	}
@@ -388,8 +387,7 @@ func TestExecute_PostWithStructBody(t *testing.T) {
 			"method": "POST",
 			"body":   map[string]any{"name": "bob"},
 		},
-		// Attributes are present but should be ignored when attributes.body
-		// overrides.
+		// @constraint: per-run attributes carry sentinel values the upstream must NOT see, proving attributes.body wins over the attributes channel.
 		map[string]any{"name": "ignored", "extra": "ignored"},
 	)
 	if err := s.executeCore(context.Background(), req, c.send); err != nil {
@@ -500,10 +498,7 @@ func TestExecute_NonObjectJSONResponse_ReturnsParseFailed(t *testing.T) {
 func TestHttpNode_429ParksWithResumeAtAndAutoWakes(t *testing.T) {
 	const retryAfterSeconds = 7
 
-	// The upstream returns 429 + Retry-After on the first call and 200 with a
-	// JSON object body on every subsequent call, modeling a rate-limited
-	// upstream that recovers by the time the supervisor re-dispatches at
-	// resume_at.
+	// @deliberate: first call returns 429+Retry-After, subsequent calls return 200, modeling a rate-limited upstream that recovers before the supervisor's resume_at auto-wake.
 	var mu sync.Mutex
 	calls := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -524,7 +519,6 @@ func TestHttpNode_429ParksWithResumeAtAndAutoWakes(t *testing.T) {
 
 	s := testServer(t, false)
 
-	// First dispatch: upstream 429 → must Park (SNOOZE) with resume_at, not Error.
 	c1 := &collector{}
 	req1 := newRequest(t, map[string]any{"url": ts.URL, "method": "GET"})
 	before := time.Now()
@@ -551,16 +545,13 @@ func TestHttpNode_429ParksWithResumeAtAndAutoWakes(t *testing.T) {
 		t.Fatalf("expected Park.ResumeAt computed from Retry-After, got nil")
 	}
 	resumeAt := park.GetResumeAt().AsTime()
-	// resume_at ≈ now + Retry-After seconds. Allow a generous tolerance window
-	// bounded by the wall-clock instants straddling the dispatch.
+	// @deliberate: tolerance window is bounded by before/after wall-clock readings straddling the dispatch, with a 2s slack on each side for scheduler jitter.
 	lo := before.Add(retryAfterSeconds*time.Second - 2*time.Second)
 	hi := after.Add(retryAfterSeconds*time.Second + 2*time.Second)
 	if resumeAt.Before(lo) || resumeAt.After(hi) {
 		t.Errorf("resume_at=%v out of expected window [%v, %v] (now + %ds)", resumeAt, lo, hi, retryAfterSeconds)
 	}
 
-	// Second dispatch: the supervisor's auto-wake re-dispatches at resume_at;
-	// the upstream now returns 200 → must reach Success.
 	c2 := &collector{}
 	req2 := newRequest(t, map[string]any{"url": ts.URL, "method": "GET"})
 	if err := s.executeCore(context.Background(), req2, c2.send); err != nil {
@@ -602,18 +593,13 @@ func TestHttpNode_ConfigurableErrorClassFieldAndUnspecifiedFallback(t *testing.T
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			// The upstream names its error class in `code`, NOT in the default
-			// `error_class` field. Note there is deliberately no `error_class`
-			// key, so a hardcoded-`error_class` reader finds nothing and the
-			// configured field is the only source of the token.
+			// @constraint: body deliberately omits `error_class` and names the token only in `code`, so a hardcoded-`error_class` reader would find nothing and the configured field is the only source of the token.
 			_, _ = w.Write([]byte(`{"code":"quota_exhausted","message":"over quota"}`))
 		}))
 		defer ts.Close()
 
 		s := testServer(t, false)
 		c := &collector{}
-		// Configure the error-class field per-node via the `error_class_field`
-		// attribute (the per-node form the fix threads through executeCore).
 		req := newRequest(t, map[string]any{
 			"url":               ts.URL,
 			"method":            "GET",
@@ -634,9 +620,7 @@ func TestHttpNode_ConfigurableErrorClassFieldAndUnspecifiedFallback(t *testing.T
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
-			// A parseable 4xx JSON body with NO error-class field at all (neither
-			// the default `error_class` nor any configured one). This must yield
-			// the stable `/_unspecified` leaf, not the generic catch-all.
+			// @constraint: body parses but carries neither the default `error_class` nor any configured token field, forcing the fallback to the stable `/_unspecified` leaf instead of the catch-all.
 			_, _ = w.Write([]byte(`{"message":"bad request","detail":"missing param"}`))
 		}))
 		defer ts.Close()

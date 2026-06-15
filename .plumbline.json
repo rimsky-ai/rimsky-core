@@ -2,7 +2,7 @@
   "tags_extend": ["@concept:", "@story:", "@decision:"],
   "ignore": ["lib/protocols/proto/v1/gen/", ".ok-planner/"],
   "checks": {
-    "comment_hygiene": false,
+    "comment_hygiene": true,
     "source_validity": true,
     "blessed_invariant_test_coverage": true
   }

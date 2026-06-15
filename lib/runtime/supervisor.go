@@ -81,12 +81,14 @@ type Config struct {
 	Queue persistence.Queue
 	// AdvisoryLocker carries advisory-lock primitives the acquisition tx uses.
 	// Required.
-	AdvisoryLocker    persistence.AdvisoryLocker
-	Clock             shared.Clock
-	Logger            shared.Logger
-	Concurrency       int
-	HeartbeatInterval time.Duration // default 5s
-	ClaimPollInterval time.Duration // default 1s
+	AdvisoryLocker persistence.AdvisoryLocker
+	Clock          shared.Clock
+	Logger         shared.Logger
+	Concurrency    int
+	// HeartbeatInterval defaults to 5s when zero.
+	HeartbeatInterval time.Duration
+	// ClaimPollInterval defaults to 1s when zero.
+	ClaimPollInterval time.Duration
 	Resolver          executor.Resolver
 	// StoreRegistry is the per-process store registry built by
 	// config.StartSupervisor from the YAML stores config (spec §6.1).
@@ -198,8 +200,8 @@ type Handle struct {
 	// auxiliary ack_ids against an in-flight run (e.g. the F4 scenario
 	// pinning the callback-determinism rule).
 	callbackReg *CallbackRegistry
-	// callbackServeErr is the callback server's serve-loop fail channel
-	// (see CallbackServer.ServeErr). Exposed via CallbackServeErr so the
+	// @constraint: callback server's serve-loop fail channel (see
+	// CallbackServer.ServeErr); exposed via CallbackServeErr so the
 	// launch wiring can forward a post-start listener death onto the
 	// role fail channel.
 	callbackServeErr <-chan error
@@ -213,7 +215,6 @@ type Handle struct {
 func (h *Handle) Shutdown(ctx context.Context) error {
 	select {
 	case <-h.stop:
-		// already stopped
 	default:
 		close(h.stop)
 	}
@@ -279,13 +280,13 @@ func Start(cfg Config) (*Handle, error) {
 	lockHolders := cfg.Persist.ClaimHandles()
 
 	callbackReg := NewCallbackRegistry()
-	// Build the unified-invalidate adapter once and share it between the
-	// sync path (per-tryClaim RunArgs below) and the async-callback path
-	// (CallbackServer). Without this, handler-emitted invalidates that
-	// arrive via async callback fall back to bare InvalidateNode and
-	// cannot wake parked targets through the H2 unified path.
+	// @constraint: the unified-invalidate adapter must be shared between
+	// the sync path (per-tryClaim RunArgs below) and the async-callback
+	// path (CallbackServer). Without this, handler-emitted invalidates
+	// that arrive via async callback fall back to bare InvalidateNode
+	// and cannot wake parked targets through the H2 unified path.
 	//
-	// Metrics threaded through here so InvalidateNode's
+	// @constraint: Metrics threaded through so InvalidateNode's
 	// `rimsky_invalidates_total` counter increments at every async-
 	// callback-driven invalidate. Callers that already populated
 	// ia.Metrics (e.g. handler emits that built their own InvalidateArgs)
@@ -320,10 +321,11 @@ func Start(cfg Config) (*Handle, error) {
 		return nil, err
 	}
 
-	// Register the *advertised* callback host:port — the address peers use
-	// to reach this supervisor — into rimsky_supervisors, NOT the listener
-	// bind address (e.g. 0.0.0.0), which is not dialable. Falls back to the
-	// listener host:port when no advertise host is configured.
+	// @constraint: register the *advertised* callback host:port — the
+	// address peers use to reach this supervisor — into
+	// rimsky_supervisors, NOT the listener bind address (e.g. 0.0.0.0),
+	// which is not dialable. Falls back to the listener host:port when
+	// no advertise host is configured.
 	host, port := effectiveCallbackHostPort(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	accepted := cfg.Resolver.AcceptedNames()
 	acceptedStores := storeRegistryNames(cfg.StoreRegistry)
@@ -407,13 +409,14 @@ func runLoop(
 		"accepts", accepted,
 		"concurrency", cfg.Concurrency)
 
-	// activeCount tracks the supervisor's in-flight tryClaim goroutines
-	// (incremented before launch, decremented when the goroutine exits).
-	// Used for the concurrency guard below and the shutdown drain wait;
-	// NOT used for the supervisor's `active_node_count` heartbeat field —
-	// that comes from a DB query so async dispatches whose goroutines
-	// have already returned (post-AwaitAsyncCallback) are still counted.
-	// See doHeartbeat below.
+	// @constraint: activeCount tracks the supervisor's in-flight
+	// tryClaim goroutines (incremented before launch, decremented when
+	// the goroutine exits). Used for the concurrency guard below and
+	// the shutdown drain wait; NOT used for the supervisor's
+	// `active_node_count` heartbeat field — that comes from a DB query
+	// so async dispatches whose goroutines have already returned
+	// (post-AwaitAsyncCallback) are still counted. See doHeartbeat
+	// below.
 	var activeMu sync.Mutex
 	activeCount := 0
 
@@ -425,16 +428,17 @@ func runLoop(
 	doHeartbeat := func() {
 		hbCtx := context.Background()
 
-		// DB-driven view of "what this supervisor is currently running."
-		// The result of this query drives both the per-node
-		// last_heartbeat_at refresh below AND the active_node_count we
-		// stamp into rimsky_supervisors via Supervisors().Heartbeat.
-		// Both must reflect the same source of truth — the in-memory
-		// goroutine counter (`activeCount`, retained for the concurrency
-		// guard below) under-counts async dispatches whose RunNode
-		// goroutine returned at AwaitAsyncCallback while the actual work
-		// continues on the executor side. Reading the DB here covers
-		// sync + async + any future "RunNode returned early" path.
+		// @constraint: DB-driven view of "what this supervisor is
+		// currently running." The result of this query drives both the
+		// per-node last_heartbeat_at refresh below AND the
+		// active_node_count we stamp into rimsky_supervisors via
+		// Supervisors().Heartbeat. Both must reflect the same source of
+		// truth — the in-memory goroutine counter (`activeCount`,
+		// retained for the concurrency guard below) under-counts async
+		// dispatches whose RunNode goroutine returned at
+		// AwaitAsyncCallback while the actual work continues on the
+		// executor side. Reading the DB here covers sync + async + any
+		// future "RunNode returned early" path.
 		var running []persistence.NodeRow
 		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
 			rows, err := cfg.Persist.Nodes().ListRunningBySupervisor(ctx, cfg.SupervisorID, tx)
@@ -442,9 +446,10 @@ func runLoop(
 			return err
 		}); err != nil {
 			cfg.Logger.Warn("supervisor: list running nodes by supervisor failed", "error", err.Error())
-			// Fall through to the supervisor + lock-holder heartbeats with a
-			// zero count — keeping THIS supervisor's row alive matters more
-			// than the running-nodes count being momentarily wrong.
+			// @deliberate: fall through to the supervisor + lock-holder
+			// heartbeats with a zero count — keeping THIS supervisor's
+			// row alive matters more than the running-nodes count being
+			// momentarily wrong.
 			running = nil
 		}
 
@@ -453,13 +458,14 @@ func runLoop(
 		}); err != nil {
 			cfg.Logger.Warn("supervisor: supervisors.Heartbeat failed", "error", err.Error())
 		}
-		// §7.5 lock-holder heartbeat refresh. ExtendHeartbeat issues the
-		// SQL with the running-nodes subquery filter so preserve-for-resume
-		// rows (anchored to nodes that have transitioned out of `running`
-		// to `stale`) are NOT refreshed — the resume-grace cutoff
-		// would never fire otherwise. The expiresAt budget is `5 ×
-		// HeartbeatInterval` per the spec; the persistence layer converts
-		// the duration back to integer seconds for the §7.5 SQL literal.
+		// @constraint: §7.5 lock-holder heartbeat refresh.
+		// ExtendHeartbeat issues the SQL with the running-nodes
+		// subquery filter so preserve-for-resume rows (anchored to
+		// nodes that have transitioned out of `running` to `stale`) are
+		// NOT refreshed — the resume-grace cutoff would never fire
+		// otherwise. The expiresAt budget is `5 × HeartbeatInterval`
+		// per the spec; the persistence layer converts the duration
+		// back to integer seconds for the §7.5 SQL literal.
 		expiresAt := cfg.Clock.Now().Add(5 * cfg.HeartbeatInterval)
 		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
 			return lockHolders.ExtendHeartbeat(ctx, cfg.SupervisorID, expiresAt, tx)
@@ -488,9 +494,10 @@ func runLoop(
 			activeMu.Unlock()
 			return
 		}
-		// Reserve a slot before launching. RunNode does its own §7.3
-		// candidate selection; if there's no eligible candidate it bails
-		// quickly and we release the slot in the defer below.
+		// @deliberate: reserve a slot before launching. RunNode does its
+		// own §7.3 candidate selection; if there's no eligible
+		// candidate it bails quickly and we release the slot in the
+		// defer below.
 		activeCount++
 		activeMu.Unlock()
 
@@ -499,11 +506,12 @@ func runLoop(
 		go func() {
 			defer h.wg.Done()
 			defer cancel()
-			// Build the unified-invalidate adapter on the supervisor's
-			// own persistence handle so handler-emitted invalidates (H2
-			// on_event) wake parked targets through the same path as
-			// the admin endpoint (G3) and the parked-node sweep (E3).
-			// Metrics fallback matches the async-callback adapter above.
+			// @constraint: build the unified-invalidate adapter on the
+			// supervisor's own persistence handle so handler-emitted
+			// invalidates (H2 on_event) wake parked targets through the
+			// same path as the admin endpoint (G3) and the parked-node
+			// sweep (E3). Metrics fallback matches the async-callback
+			// adapter above.
 			invalidateAdapter := func(ctx context.Context, ia InvalidateArgs) error {
 				if ia.Metrics == nil {
 					ia.Metrics = cfg.Metrics
@@ -541,33 +549,35 @@ func runLoop(
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())
 			}
 
-			// Per-node heartbeat tracking is DB-driven (see doHeartbeat
-			// above) — no in-memory bookkeeping of result.NodeID is
-			// needed here. The heartbeat tick reads
+			// @deliberate: per-node heartbeat tracking is DB-driven (see
+			// doHeartbeat above) — no in-memory bookkeeping of
+			// result.NodeID is needed here. The heartbeat tick reads
 			// `rimsky_nodes WHERE state='running' AND assigned_supervisor_id=$self`
-			// directly, which is correct for both sync (RunNode in-flight)
-			// and async (handed off, still running in the DB) dispatches.
+			// directly, which is correct for both sync (RunNode
+			// in-flight) and async (handed off, still running in the
+			// DB) dispatches.
 
-			// Release the reserved slot.
 			defer func() {
 				activeMu.Lock()
 				activeCount--
 				activeMu.Unlock()
 			}()
 
-			// Async path: the callback endpoint owns dispatch cleanup.
+			// @constraint: async path — the callback endpoint owns
+			// dispatch cleanup.
 			if result.Async {
 				return
 			}
-			// Defensive idempotent re-completion. Post-2026-05-21
-			// lifecycle reorder, every apply* terminal function flips
-			// the dispatch row to a terminal phase inside its own tx
-			// (applyTerminalComplete via RemoveForNodeInTx;
-			// applyErrorPolicy + applyTerminalInfraError the same;
-			// applyTerminalPark via ParkActiveInTx). This outer call
-			// is a WHERE-clause-guarded no-op on every known happy
-			// path; it survives as a belt-and-suspenders against any
-			// future terminal path that forgets to flip in-tx.
+			// @deliberate: defensive idempotent re-completion.
+			// Post-2026-05-21 lifecycle reorder, every apply* terminal
+			// function flips the dispatch row to a terminal phase
+			// inside its own tx (applyTerminalComplete via
+			// RemoveForNodeInTx; applyErrorPolicy +
+			// applyTerminalInfraError the same; applyTerminalPark via
+			// ParkActiveInTx). This outer call is a
+			// WHERE-clause-guarded no-op on every known happy path; it
+			// survives as a belt-and-suspenders against any future
+			// terminal path that forgets to flip in-tx.
 			if result.Ran && result.DispatchID != (shared.UUID{}) {
 				_ = cfg.Queue.Complete(context.Background(), result.DispatchID, cfg.SupervisorID)
 			}
@@ -577,10 +587,11 @@ func runLoop(
 	for {
 		select {
 		case <-h.stop:
-			// Shutdown: stop claiming and wait up to 30s for active runs to
-			// drain via wg. Using a WaitGroup (incremented inside tryClaim
-			// when a run goroutine launches, decremented on its defer)
-			// replaces the old 50ms polling loop.
+			// @deliberate: shutdown — stop claiming and wait up to 30s
+			// for active runs to drain via wg. Using a WaitGroup
+			// (incremented inside tryClaim when a run goroutine
+			// launches, decremented on its defer) replaces the old 50ms
+			// polling loop.
 			waitCtx, cancelWait := context.WithTimeout(context.Background(), 30*time.Second)
 			waitDone := make(chan struct{})
 			go func() {

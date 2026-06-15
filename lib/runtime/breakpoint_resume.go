@@ -82,19 +82,19 @@ func ValidateAndPersistResume(
 			return nil
 		}
 		if overlay != nil {
-			// after_terminal hits cannot consume an overlay — the
-			// dispatch the breakpoint observed has already committed,
-			// so any L6 mutation would silently land in the row but
-			// never feed back into the run. Reject explicitly so the
-			// agent sees a clear diagnostic instead of having the
-			// overlay accepted-and-ignored.
+			// @deliberate: reject overlays on after_terminal hits — the dispatch
+			// the breakpoint observed has already committed, so any L6 mutation
+			// would silently land in the row but never feed back into the run.
+			// Explicit rejection gives the agent a clear diagnostic instead of
+			// accepting-and-ignoring the overlay.
 			if hit.Checkpoint == persistence.CheckpointAfterTerminal {
 				return shared.Wrap(shared.ErrResumeOverlayInvalid,
 					"overlay rejected on after_terminal hit (dispatch is already complete; the overlay can never affect the run)",
 					nil)
 			}
-			// Pull the post-L5 merged bag from the snapshot for the
-			// per-spec §4.7 step 2 pre-merge.
+			// @constraint: per spec §4.7 step 2, pre-merge the overlay against
+			// the post-L5 merged bag pulled from the snapshot before schema
+			// validation.
 			snapDC, _ := hit.Snapshot["dispatch_context"].(map[string]any)
 			mergedAttrs, _ := snapDC["merged_attributes"].(map[string]any)
 			postOverlay, _ := shared.DeepMergeJSON(mergedAttrs, overlay).(map[string]any)
@@ -107,11 +107,11 @@ func ValidateAndPersistResume(
 					return shared.Wrap(shared.ErrResumeOverlayInvalid, vErr.Error(), nil)
 				}
 			} else if args.Logger != nil {
-				// `buildSnapshot` populates `snapshot.effective_schema`
-				// for before_dispatch hits; if it's absent (malformed
-				// snapshot or test fixture) the supervisor-side
-				// defense-in-depth gate at the blocked runner is the
-				// only schema check that fires.
+				// @deliberate: when `snapshot.effective_schema` is absent (malformed
+				// snapshot or test fixture — `buildSnapshot` normally populates it
+				// for before_dispatch hits), warn and defer to the supervisor-side
+				// defense-in-depth gate at the blocked runner as the only schema
+				// check that fires.
 				args.Logger.Warn("breakpoint.resume.schema_not_in_snapshot",
 					"hit_id", hitID.String(),
 					"reason", "effective_schema absent from snapshot; deferring to supervisor-side defense-in-depth")

@@ -43,10 +43,10 @@ func TestCanonicalSpecHash_Deterministic(t *testing.T) {
 }
 
 func TestCanonicalSpecHash_KeyOrderInvariant(t *testing.T) {
-	// Two structurally-identical specs that differ only in the field
-	// declaration order at construction time. encoding/json emits Go
-	// struct fields in struct-declaration order, but JCS sorts keys —
-	// so the two ParamsSchema maps below (whose Go literal order
+	// @deliberate: Two structurally-identical specs that differ only in
+	// the field declaration order at construction time. encoding/json emits
+	// Go struct fields in struct-declaration order, but JCS sorts
+	// keys — so the two ParamsSchema maps below (whose Go literal order
 	// differs) must canonicalize identically.
 	specA := minimalSpec()
 	specA.ParamsSchema = map[string]any{"a": 1, "b": 2, "c": 3}

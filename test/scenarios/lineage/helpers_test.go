@@ -81,7 +81,7 @@ func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables,
 func seedRunRow(ctx context.Context, t *testing.T, backend persistence.Tables, nodeID, frameID shared.UUID) shared.UUID {
 	t.Helper()
 	runID := shared.UUID(uuid.New())
-	// Resolve the node's instance + main RunScope so the run row
+	// @deliberate: Resolve the node's instance + main RunScope so the run row
 	// satisfies the run_scope_id NOT NULL constraint.
 	var scopeID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

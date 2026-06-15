@@ -2,28 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// ClaimProducer interface — the rimsky-side contract every
-// claim-producer implementation satisfies. Per spec
-// docs/specs/2026-05-04-service-protocol-contract.md §2.
-//
-// Standard producer implementations live in standalone binaries under
-// stores/ and rimsky talks to them via the gRPC client in
-// runtime/peer/. Type assertions to a concrete producer
-// from any rimsky package are forbidden — the ClaimProducer interface is
-// the only contract.
-//
-// Lifecycle events live in a separate LifecycleSubscriber interface
-// (lifecycle.go in this package; spec §3). A producer binary that wishes
-// to react to control-plane events implements both interfaces and
-// declares both protocols in rimsky.yml.
-//
-// Per the layer-crystallization design (2026-05-04), the canonical Go
-// interface lives in github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer;
-// foundation/locks.ClaimProducer is a Go type alias of that interface so
-// rimsky-internal callers and external implementers share one nominal
-// type. External authors should import protocols/claimproducer; rimsky-
-// internal code may use either.
-
 package locks
 
 import (

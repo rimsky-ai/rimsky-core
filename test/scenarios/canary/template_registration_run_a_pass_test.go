@@ -66,11 +66,10 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Both nodes use the stub executor and return a Success terminal.
 	h.Stub.WhenType("root-worker").Success(map[string]any{"phase": "root"}, true, "root-pass")
 	h.Stub.WhenType("downstream-worker").Success(map[string]any{"phase": "downstream"}, true, "downstream-pass")
 
-	// Non-trivial template: two nodes, one node-subscription edge,
+	// @deliberate: Non-trivial template: two nodes, one node-subscription edge,
 	// per-node attributes_schema. This is the smallest shape that
 	// exercises the YAML grammar surface a downstream consumer cares
 	// about (template_hash content-addressing, deploy verb, instance
@@ -104,13 +103,13 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 		},
 	}
 
-	// Register + deploy via the harness shortcut — the in-process
+	// @constraint: Register + deploy via the harness shortcut — the in-process
 	// analog of an external consumer's `registerTemplate` +
 	// `deployTemplate` calls.
 	templateHash := h.DeployTemplate(tmpl)
 	require.NotEmpty(t, templateHash, "DeployTemplate must return a non-empty template_hash")
 
-	// Drive instance creation through the public control-API surface
+	// @deliberate: Drive instance creation through the public control-API surface
 	// (raw HTTP, same wire shape an external consumer hits). The
 	// harness's CreateInstance helper rides the same path; using the
 	// raw HTTP form here pins the wire-surface specifically because
@@ -118,7 +117,7 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 	instanceID := createInstanceViaHTTP(t, h, templateHash)
 	require.NotEqual(t, uuid.Nil, instanceID, "POST /instances must return a non-nil instance_id")
 
-	// Walk: the supervisor should pick up the root-worker node, drive
+	// @constraint: Walk: the supervisor should pick up the root-worker node, drive
 	// it to terminal, then cascade-fire the downstream-worker via the
 	// subscribes: edge.
 	rootNode := h.FindNode(instanceID, "root-worker")
@@ -137,7 +136,7 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 // non-empty body shape.
 func createInstanceViaHTTP(t *testing.T, h *scenario.Harness, templateHash string) uuid.UUID {
 	t.Helper()
-	// Use the public field name `template` (accepts hash or tag) per
+	// @deliberate: Use the public field name `template` (accepts hash or tag) per
 	// `code:control/controlapi/instances.go::createInstanceRequest`.
 	body := map[string]any{
 		"template": templateHash,

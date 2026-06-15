@@ -104,7 +104,7 @@ func resolveConnectionString(
 			return dsn, nil
 		}
 		lastErr = err
-		// Retry only on the documented "port not found" race; any other
+		// @deliberate: Retry only on the documented "port not found" race; any other
 		// error (context cancelled, container terminated, daemon
 		// unreachable) is non-recoverable and surfaces immediately.
 		if !strings.Contains(err.Error(), "port") || !strings.Contains(err.Error(), "not found") {

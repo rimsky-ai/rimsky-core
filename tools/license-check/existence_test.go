@@ -13,7 +13,6 @@ import (
 
 func TestVerifyEntriesExist_FlagsMissingClassificationEntries(t *testing.T) {
 	dir := t.TempDir()
-	// Present entries (one apache, one agpl).
 	for _, d := range []string{"protocols/action", "runtime"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
@@ -40,8 +39,9 @@ exempt:
 			t.Errorf("expected a violation naming %q; got %q", want, joined)
 		}
 	}
-	// Present classification entries must NOT be flagged, and the absent
-	// exempt entry (bin/) must NOT be flagged — exempt is skip-rules.
+	// @deliberate: present classification entries and absent exempt
+	// entries (bin/) must NOT be flagged — exempt is skip-rules, not
+	// classification.
 	for _, unwanted := range []string{"protocols", "runtime", "bin"} {
 		if strings.Contains(joined, `"`+unwanted) {
 			t.Errorf("did not expect a violation naming %q; got %q", unwanted, joined)

@@ -86,9 +86,10 @@ func TestWriteErrorProducerRejectionIs422(t *testing.T) {
 	}
 }
 
-// A producer fault transmitted with NO ErrorInfo class still gets the
-// 502 + producer_name + message treatment; error_class is "" (the
-// producer named no class — nothing was discarded).
+// TestWriteErrorProducerUnclassedFailure — a producer fault transmitted
+// with NO ErrorInfo class still gets the 502 + producer_name + message
+// treatment; error_class is "" (the producer named no class — nothing
+// was discarded).
 func TestWriteErrorProducerUnclassedFailure(t *testing.T) {
 	t.Parallel()
 	grpcErr := status.Error(codes.Unavailable, "connection refused")
@@ -104,8 +105,9 @@ func TestWriteErrorProducerUnclassedFailure(t *testing.T) {
 	require.Equal(t, "connection refused", body["message"])
 }
 
-// A wrapped ProducerCallError (handlers often add context via %w) is
-// still recognized through errors.As.
+// TestWriteErrorRecognizesWrappedProducerError — a wrapped
+// ProducerCallError (handlers often add context via %w) is still
+// recognized through errors.As.
 func TestWriteErrorRecognizesWrappedProducerError(t *testing.T) {
 	t.Parallel()
 	grpcErr := classedGRPCError(t, codes.Internal, "fs/root_unavailable", "root gone")
@@ -121,9 +123,10 @@ func TestWriteErrorRecognizesWrappedProducerError(t *testing.T) {
 	require.Equal(t, "fs/root_unavailable", body["error_class"])
 }
 
-// Rimsky-internal errors keep the pre-existing classification: a plain
-// error stays a bare 500 with the {"error": ...} envelope and no
-// producer fields. Producer-error handling must not reclassify them.
+// TestWriteErrorInternalErrorsUnchanged — internal errors keep the
+// pre-existing classification: a plain error stays a bare 500 with the
+// {"error": ...} envelope and no producer fields. Producer-error
+// handling must not reclassify them.
 func TestWriteErrorInternalErrorsUnchanged(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()

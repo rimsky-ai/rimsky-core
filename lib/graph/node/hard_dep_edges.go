@@ -13,9 +13,6 @@
 // lookup from a freshly-invalidated receiver). The divergence is
 // intentional per spec §"hard-dep cascade extension".
 //
-// Per .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
-// §"hard_dep flag" and §"hard-dep cascade extension".
-//
 //	@concept: attribute
 //	@concept: cascade
 package node
@@ -48,8 +45,8 @@ type HardDepEdgeMap map[string][]string
 // future spec extension could iterate, but today we reject at
 // registration so the wait-set semantics stay unambiguous.
 func BuildHardDepEdges(tmpl spec.TemplateSpec) (HardDepEdgeMap, error) {
-	// Index node-types that declare `fan_out:` so we can reject
-	// hard_dep edges pointing at them.
+	// @deliberate: Index node-types that declare `fan_out:` so we can
+	// reject hard_dep edges pointing at them.
 	fanoutTypes := make(map[string]struct{})
 	for _, n := range tmpl.Nodes {
 		if n.FanOut != nil {
@@ -111,8 +108,9 @@ func hardDepSendersOf(n TemplateNodeDef) []string {
 		refs := substitutionDirectiveRe.FindAllStringSubmatch(src, -1)
 		for _, m := range refs {
 			body := strings.TrimSpace(m[1])
-			// Strip an optional fallback `| <literal>` suffix so the
-			// hard-dep walker can still parse the upstream reference.
+			// @deliberate: strip an optional fallback `| <literal>`
+			// suffix so the hard-dep walker can still parse the upstream
+			// reference.
 			if idx := strings.Index(body, "|"); idx >= 0 {
 				body = strings.TrimSpace(body[:idx])
 			}
@@ -121,10 +119,13 @@ func hardDepSendersOf(n TemplateNodeDef) []string {
 				continue
 			}
 			if ref.SenderNodeType == "" || ref.SenderNodeType == n.Type {
-				continue // skip self
+				continue
 			}
+			// @constraint: only attribute reads create a hard-dep edge;
+			// state and message topics do not establish a topological
+			// dependency between the consumer and the named sender.
 			if ref.TopicKind != "attribute" {
-				continue // only attribute reads hard-dep
+				continue
 			}
 			if _, dup := seen[ref.SenderNodeType]; dup {
 				continue
@@ -150,30 +151,32 @@ func detectHardDepCycle(edges HardDepEdgeMap) error {
 	)
 	color := make(map[string]int)
 	var path []string
-	// Collected cycles, each represented as the path of node-types
+	// @deliberate: Collected cycles, each represented as the path of node-types
 	// involved (closing with the repeated entry). Accumulated across
 	// DFS roots; a non-empty slice at the end produces the aggregate
 	// error.
 	var cycles [][]string
-	// Deduplicate cycles by their canonical-form key so a cycle
-	// discovered from multiple DFS roots only reports once.
+	// @deliberate: Deduplicate cycles by their canonical-form key so a
+	// cycle discovered from multiple DFS roots only reports once.
 	seenCycles := make(map[string]struct{})
 
 	var dfs func(node string)
 	dfs = func(node string) {
 		color[node] = gray
 		path = append(path, node)
-		// Deferred pop mirrors the gray→black colour transition: even
-		// when a cycle is recorded, the path slice is restored to its
-		// caller-visible state so sibling DFS branches see a clean path.
+		// @deliberate: deferred pop mirrors the gray→black colour
+		// transition — even when a cycle is recorded, the path slice is
+		// restored to its caller-visible state so sibling DFS branches
+		// see a clean path.
 		defer func() {
 			path = path[:len(path)-1]
 		}()
 		for _, next := range edges[node] {
 			switch color[next] {
 			case gray:
-				// Cycle detected. Copy path before appending to avoid
-				// sharing backing array with the live `path` slice.
+				// @deliberate: cycle detected. Copy path before appending
+				// to avoid sharing backing array with the live `path`
+				// slice.
 				cyclePath := append([]string(nil), path...)
 				cyclePath = append(cyclePath, next)
 				key := canonicalCycleKey(cyclePath)
@@ -181,8 +184,9 @@ func detectHardDepCycle(edges HardDepEdgeMap) error {
 					seenCycles[key] = struct{}{}
 					cycles = append(cycles, cyclePath)
 				}
-				// Continue searching other edges so further cycles on
-				// disjoint components get reported in the same error.
+				// @deliberate: continue searching other edges so further
+				// cycles on disjoint components get reported in the same
+				// error.
 			case white:
 				dfs(next)
 			}
@@ -221,9 +225,7 @@ func canonicalCycleKey(path []string) string {
 	if len(path) < 2 {
 		return strings.Join(path, "→")
 	}
-	// Strip the closing repetition (first==last by construction).
 	body := path[:len(path)-1]
-	// Find rotation that starts at lexicographically smallest entry.
 	minIdx := 0
 	for i := 1; i < len(body); i++ {
 		if body[i] < body[minIdx] {

@@ -36,7 +36,7 @@ describe("internal-mcp-tools schemas", () => {
   });
 
   it("ReportCompleteInput surfaces the optional signoffs field (sign-off gate bag)", () => {
-    // signoffs is declared in three places that drift-check by eye only:
+    // @deliberate: signoffs is declared in three places that drift-check by eye only:
     // the ReportCompleteInput zod schema, TOOL_DEFINITIONS[0].inputSchema,
     // and the runtime inline schema in internal-mcp-server.ts. Pin the two
     // definition-surface declarations so a drop / rename here fails loudly.
@@ -47,16 +47,15 @@ describe("internal-mcp-tools schemas", () => {
     });
     expect(parsed.signoffs).toEqual(["c2lnLW9uZQ==", "c2lnLXR3bw=="]);
 
-    // signoffs is optional — omission is valid.
+    // @deliberate: signoffs is optional — omission is valid.
     const noSignoffs = ReportCompleteInput.parse({ token: "tok", changed: true });
     expect(noSignoffs.signoffs).toBeUndefined();
 
-    // A non-string entry is rejected (array of string).
     expect(() =>
       ReportCompleteInput.parse({ token: "tok", changed: true, signoffs: [42] }),
     ).toThrow();
 
-    // The descriptor surface (TOOL_DEFINITIONS[0] = report_complete) declares
+    // @deliberate: the descriptor surface (TOOL_DEFINITIONS[0] = report_complete) declares
     // signoffs as an optional array-of-string too.
     const reportComplete = TOOL_DEFINITIONS[0]!;
     expect(reportComplete.name).toBe("report_complete");
@@ -67,7 +66,7 @@ describe("internal-mcp-tools schemas", () => {
     expect(props).toHaveProperty("signoffs");
     expect(props.signoffs!.type).toBe("array");
     expect(props.signoffs!.items?.type).toBe("string");
-    // signoffs is NOT in the required list (only token + changed are).
+    // @deliberate: signoffs is NOT in the required list (only token + changed are).
     const required = (reportComplete.inputSchema as { required?: string[] }).required ?? [];
     expect(required).not.toContain("signoffs");
   });
@@ -133,11 +132,11 @@ describe("internal-mcp-tools schemas", () => {
     expect(parsed.name).toBe("progress");
     expect(parsed.payload).toEqual({ pct: 42, nested: { ok: true } });
 
-    // payload is optional — name-only emission is valid.
+    // @deliberate: payload is optional — name-only emission is valid.
     const minimal = EmitNamedEventInput.parse({ token: "tok", name: "ping" });
     expect(minimal.payload).toBeUndefined();
 
-    // token + name are required.
+    // @deliberate: token + name are required.
     expect(() => EmitNamedEventInput.parse({ token: "tok" })).toThrow();
     expect(() => EmitNamedEventInput.parse({ name: "x" } as unknown)).toThrow();
   });

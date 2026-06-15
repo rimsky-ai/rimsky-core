@@ -86,20 +86,19 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// 1. Shared docker network. The sensor and rimsky both attach.
 	netName := harness.NewNetwork(ctx, t)
 
-	// 2. Bring up the sensor BEFORE rimsky so rimsky's eager-Dial of the
-	//    declared publisher at startup succeeds. The sensor sits on the
-	//    network at alias `sensor-webhook` with its inbound HTTP port
-	//    mapped to the host so the test can drive real POSTs at it.
+	// @constraint: bring up the sensor BEFORE rimsky so rimsky's eager-Dial
+	// of the declared publisher at startup succeeds. The sensor sits on
+	// the network at alias `sensor-webhook` with its inbound HTTP port
+	// mapped to the host so the test can drive real POSTs at it.
 	sensor := harness.StartSensorWebhook(ctx, t, netName, "sensor-webhook")
 
-	// 3. A stub executor so the reactor node has somewhere to dispatch
-	//    when an invalidate message lands. The reactor's actual run is
-	//    not under test here — the proof axis is the PERSISTED publisher
-	//    message in rimsky — but the executor declaration keeps
-	//    registration on the strict (default) ref_validation_mode.
+	// @deliberate: a stub executor so the reactor node has somewhere to
+	// dispatch when an invalidate message lands. The reactor's actual run
+	// is not under test here — the proof axis is the PERSISTED publisher
+	// message in rimsky — but the executor declaration keeps registration
+	// on the strict (default) ref_validation_mode.
 	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
 
 	ep := harness.BringUpRimsky(ctx, t,
@@ -111,25 +110,24 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 	templateID := deploySensorWebhookTemplate(t, ep)
 	instanceID := createSensorWebhookInstance(t, ep, templateID, "ck-sensor-webhook-e2e")
 
-	// Wait on OBSERVABLE subscription state — mounting is asynchronous
-	// (instance-create returns 201 with the row in `mounting`; the
-	// reconciler drives Subscribe to `active`), so the instance surface,
-	// not a wall-clock budget, says when the Subscribe handshake has
-	// landed on the sensor (mounting the path in sensor-webhook's
-	// pathToWatch).
+	// @constraint: wait on OBSERVABLE subscription state — mounting is
+	// asynchronous (instance-create returns 201 with the row in
+	// `mounting`; the reconciler drives Subscribe to `active`), so the
+	// instance surface, not a wall-clock budget, says when the Subscribe
+	// handshake has landed on the sensor (mounting the path in
+	// sensor-webhook's pathToWatch).
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	// Then confirm sensor-side liveness: until Subscribe lands, the
-	// catch-all dispatcher returns 404 for any path; polling for the
+	// @constraint: confirm sensor-side liveness — until Subscribe lands,
+	// the catch-all dispatcher returns 404 for any path; polling for the
 	// first 200 on the configured path is observable evidence the
 	// subscription is live on the sensor itself.
 	waitForWebhookSubscriptionActive(t, sensor.WebhookBaseURL, webhookPathPrefix, 30*time.Second)
 
-	// 4. PROOF — path-prefix filter is honored (Falsifier prong 2).
-	//
-	// POST to a path OUTSIDE the configured `path_prefix`. The sensor's
-	// dispatcher MUST return 404 ("no active sensor-webhook subscription
-	// for this path"). No message must persist in rimsky.
+	// @constraint: PROOF — path-prefix filter is honored (Falsifier prong
+	// 2). POST to a path OUTSIDE the configured `path_prefix`. The
+	// sensor's dispatcher MUST return 404 ("no active sensor-webhook
+	// subscription for this path"). No message must persist in rimsky.
 	preCount := publisherMessageCount(t, ep, instanceID)
 	outsideStatus, outsideBody := postWebhook(t, sensor.WebhookBaseURL+"/wh/unrelated",
 		[]byte(`{"should":"not-route"}`))
@@ -138,21 +136,19 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 			"path-prefix filter is declared but unused; any POST is being routed",
 			outsideStatus, string(outsideBody))
 	}
-	// And no message must have landed — read once, no polling, so a
-	// sensor that accepted the off-prefix POST and async-emitted would
+	// @constraint: no message must have landed — read once, no polling, so
+	// a sensor that accepted the off-prefix POST and async-emitted would
 	// also be caught after a short stability window.
 	requirePublisherMessageCountStable(t, ep, instanceID, preCount, 2*time.Second,
 		"off-prefix-post-must-not-emit")
 
-	// 5. PROOF — inbound body is acknowledged ONLY after rimsky has
-	//    persisted the message (Falsifier prong 1) AND the persisted
-	//    payload reflects the real inbound bytes (Falsifier prong 3).
-	//
-	// The inbound body carries a distinctive marker the test will read
-	// back from the persisted message row — a canned payload would not
-	// surface this marker. The body shape is intentionally non-trivial
-	// (nested object + scalar + array) to make a canned-payload defect
-	// obvious.
+	// @constraint: PROOF — inbound body is acknowledged ONLY after rimsky
+	// has persisted the message (Falsifier prong 1) AND the persisted
+	// payload reflects the real inbound bytes (Falsifier prong 3). The
+	// inbound body carries a distinctive marker the test will read back
+	// from the persisted message row — a canned payload would not surface
+	// this marker. The body shape is intentionally non-trivial (nested
+	// object + scalar + array) to make a canned-payload defect obvious.
 	inboundBody := map[string]any{
 		"event": "deploy.requested",
 		"id":    "ck-sensor-webhook-payload-marker",
@@ -168,10 +164,10 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 		t.Fatalf("marshal inbound body: %v", err)
 	}
 
-	// Snapshot the persisted count BEFORE the inbound POST so the
-	// post-ack read can prove the count grew to 1 immediately, without
-	// any polling. If the sensor ack'd before rimsky persisted, the
-	// count would still be at preCount on that first read.
+	// @constraint: snapshot the persisted count BEFORE the inbound POST so
+	// the post-ack read can prove the count grew to 1 immediately,
+	// without any polling. If the sensor ack'd before rimsky persisted,
+	// the count would still be at preCount on that first read.
 	beforePost := publisherMessageCount(t, ep, instanceID)
 
 	postPath := sensor.WebhookBaseURL + webhookPathPrefix
@@ -182,12 +178,11 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 			"mount did not register", postPath, status, string(ackBody))
 	}
 
-	// CRITICAL: read the persisted message NOW, no sleeps, no polling.
-	// The sensor's serveWebhook is synchronous against postMessage,
-	// which calls publisherkit.Send (blocking until rimsky returns); the
-	// 200 ack MUST follow the persistence. A non-synchronous sensor
-	// would race here — the message would not be visible on the first
-	// read.
+	// @constraint: read the persisted message NOW, no sleeps, no polling.
+	// The sensor's serveWebhook is synchronous against postMessage, which
+	// calls publisherkit.Send (blocking until rimsky returns); the 200
+	// ack MUST follow the persistence. A non-synchronous sensor would
+	// race here — the message would not be visible on the first read.
 	immediateCount := publisherMessageCount(t, ep, instanceID)
 	if immediateCount != beforePost+1 {
 		t.Fatalf("persisted publisher message count was %d immediately after the inbound "+
@@ -196,8 +191,8 @@ func TestSensorWebhook_InboundPostPersistsBeforeAck(t *testing.T) {
 			immediateCount, beforePost+1)
 	}
 
-	// 6. PROOF — persisted payload reflects the real inbound bytes
-	//    (Falsifier prong 3).
+	// @constraint: PROOF — persisted payload reflects the real inbound
+	// bytes (Falsifier prong 3).
 	persisted := readSinglePublisherMessage(t, ep, instanceID, webhookPublisherName)
 	requirePersistedWebhookPayload(t, persisted, inboundBody, webhookPathPrefix)
 }
@@ -289,10 +284,10 @@ func readSinglePublisherMessage(t *testing.T, ep harness.RimskyEndpoint, instanc
 				"derive sender from publisher_subscriptions.publisher_name, not the "+
 				"sensor's request body sender", m["sender"], wantSender)
 		}
-		// Find the message that carries the real inbound marker (the
-		// probe POSTs the wait emitted will also be present under the
-		// same sender; the proof message is the one carrying the test's
-		// distinctive id marker).
+		// @constraint: find the message that carries the real inbound
+		// marker — the probe POSTs the wait emitted will also be present
+		// under the same sender; the proof message is the one carrying the
+		// test's distinctive id marker.
 		if payloadCarriesMarker(m, "ck-sensor-webhook-payload-marker") {
 			matches = append(matches, m)
 		}
@@ -352,9 +347,9 @@ func requirePersistedWebhookPayload(t *testing.T, persisted map[string]any, inbo
 			"JSON-decode the inbound body; canned-string fallback was used: %+v",
 			payload["body"])
 	}
-	// Element-wise equality on every scalar / array / nested object the
-	// inbound carried. JSON round-trips numbers as float64, so a deep
-	// equality on the inbound vs the persisted body must round-trip
+	// @constraint: element-wise equality on every scalar / array / nested
+	// object the inbound carried. JSON round-trips numbers as float64, so
+	// a deep equality on the inbound vs the persisted body must round-trip
 	// inbound through json.Marshal/Unmarshal first.
 	wantBody := jsonRoundTrip(t, inbound)
 	if !deepEqualJSON(wantBody, body) {

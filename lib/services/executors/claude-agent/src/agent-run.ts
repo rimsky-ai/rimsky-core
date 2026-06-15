@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
 import type { Logger } from "pino";
-// ajv ships CJS — under ESM+NodeNext we reach the constructor through the
+// @deliberate: ajv ships CJS — under ESM+NodeNext we reach the constructor through the
 // interop namespace; the `.default` arm handles the nested form.
 import * as AjvNs from "ajv";
 type AjvCtor = new (opts?: object) => { compile: (schema: object) => (v: unknown) => boolean };
@@ -31,9 +31,25 @@ import { verifyRequiredSignoffs } from "./signoff.js";
 import type { NamedEventEmission } from "./token-registry.js";
 
 /**
- * Outcome the executor relays back to the rimsky supervisor via the async
- * callback URL. Per spec §12.2 the legacy `result` field has been retired in
- * favour of `attributes_delta`.
+ * AgentOutcomeBase is the shared shape every `AgentOutcome` variant
+ * embeds, so callback-body serialization can read cross-variant fields
+ * uniformly without per-variant casing.
+ */
+export type AgentOutcomeBase = {
+  /**
+   * Non-terminal named events the agent emitted via the
+   * `emit_named_event` MCP tool during the dispatch. Rides the
+   * async-callback body's `events[]` array (the gRPC stream already
+   * closed at dispatch, so events cannot ride it). Absent / empty when
+   * the agent emitted nothing.
+   */
+  emittedEvents?: NamedEventEmission[];
+};
+
+/**
+ * AgentOutcome is the discriminated-union outcome the executor relays back
+ * to the rimsky supervisor via the async callback URL. Per spec §12.2 the
+ * legacy `result` field has been retired in favour of `attributes_delta`.
  *
  * - `complete`: terminal success — maps to a StreamClose `Success` outcome on
  *   the wire. `attributesDelta` is the terminal-final writeback (may be `null`
@@ -48,17 +64,6 @@ import type { NamedEventEmission } from "./token-registry.js";
  *
  * @source rimsky/src/supervisor/agentic-runner.ts (semantic port)
  */
-/**
- * Non-terminal named events the agent emitted via the `emit_named_event`
- * MCP tool during the dispatch. Rides the async-callback body's `events[]`
- * array (the gRPC stream already closed at dispatch, so events cannot ride
- * it). Absent / empty when the agent emitted nothing. Threaded onto every
- * outcome variant so `outcomeToCallbackBody` can read it uniformly.
- */
-export type AgentOutcomeBase = {
-  emittedEvents?: NamedEventEmission[];
-};
-
 export type AgentOutcome = AgentOutcomeBase &
   (
   | {
@@ -70,24 +75,21 @@ export type AgentOutcome = AgentOutcomeBase &
   | { kind: "blocked"; reason: string; context: unknown }
   | { kind: "errored"; errorClass: string; payload: unknown }
   | {
-      // J9 rate-limit auto-park (and any other voluntary park trigger).
-      // The supervisor receives the `Park` terminal via the gRPC stream
-      // or async callback (see plan A3).
-      //
-      // `reason` is the typed ParkReason snake_case value from the
-      // closed two-value set (await_callback | snooze) per spec
-      // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-      // §ParkReason collapse. `reasonNote` is the free-form
-      // annotation (`col:rimsky_node_runs.parked_reason_note`). The
-      // MCP `report_park` tool resolves this same outcome shape; the
-      // rate-limit detection path emits `reason: snooze` (deadline-
-      // based wake via SweepParkedNodes) with a descriptive
-      // `reasonNote`.
+      // @deliberate: J9 rate-limit auto-park (and any other voluntary
+      // park trigger). The supervisor receives the `Park` terminal via
+      // the gRPC stream or async callback (see plan A3). `reason` is
+      // the typed ParkReason snake_case value from the closed two-value
+      // set (await_callback | snooze) per the fan-out-safety-scope-first
+      // §ParkReason collapse. `reasonNote` is the free-form annotation
+      // (col:rimsky_node_runs.parked_reason_note). The MCP `report_park`
+      // tool resolves this same outcome shape; the rate-limit detection
+      // path emits `reason: snooze` (deadline-based wake via
+      // SweepParkedNodes) with a descriptive `reasonNote`.
       kind: "park_requested";
       reason: string;
       reasonNote: string;
       payload: Uint8Array;
-      resumeAt: Date | null; // null → indefinite park
+      resumeAt: Date | null; // @deliberate: null → indefinite park
       sessionToken: string;
     }
   );
@@ -231,7 +233,7 @@ export interface AgentRunOptions {
    */
   mcpCatalog?: McpCatalog;
   /**
-   * `allow_inline` policy (default false). When false, an inline
+   * Inline-server policy (`allow_inline`, default false). When false, an inline
    * `cli.mcp_servers` entry (`{ name, url }`, not a `{ ref: }`) is rejected
    * at dispatch with a config error — the catalog is the authoritative
    * server source. When true, inline servers are permitted alongside refs.
@@ -279,7 +281,7 @@ export interface AgentRunOptions {
 }
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
-  // Protocol contract: executors must reject malformed attribute bags
+  // @deliberate: protocol contract: executors must reject malformed attribute bags
   // consistently across stub and live modes. The probe escape hatch
   // (`stub_probe: true`) is *only* honored in stub mode; conformance
   // scenarios that exercise malformed-shape rejection deliberately
@@ -311,15 +313,8 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
   await new Promise((r) => setTimeout(r, 50));
   const attrs = opts.attributes ?? {};
 
-  // Conformance-probe escape hatch (mirrors http-node/server.go): when the
-  // suite flags attributes with `stub_probe: true`, return either the
-  // configured stub_response or the canonical {stub: true}. Malformed-
-  // attribute rejection runs in `runAgent` before this function is
-  // reached, so non-probe attributes that arrived here are known good.
   const isProbe = attrs.stub_probe === true;
   if (!isProbe) {
-    // Stub-mode fallthrough for non-probe attributes: honor the §14.4
-    // contract by returning the canonical stub response.
     return {
       kind: "complete",
       attributesDelta: { stub: true },
@@ -352,14 +347,16 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
   };
 }
 
-// malformedAttributesReason returns a non-null reason string when the
-// attribute bag matches a known "malformed" shape the conformance
-// `malformed_attributes` scenario uses. Keep this list aligned with the
-// scenario in `conformance/scenarios/malformed_attributes.go`.
-//
-// Reserved-key convention: malformed-shape markers MUST be `_`-prefixed
-// (`_invalid`, `_missing_url`, …) so plain field names a template
-// author might legitimately use cannot trip the rejection.
+/**
+ * Returns a non-null reason string when the attribute bag matches a
+ * known "malformed" shape the conformance `malformed_attributes`
+ * scenario uses. Keep this list aligned with the scenario in
+ * `conformance/scenarios/malformed_attributes.go`.
+ *
+ * Reserved-key convention: malformed-shape markers MUST be `_`-prefixed
+ * (`_invalid`, `_missing_url`, …) so plain field names a template
+ * author might legitimately use cannot trip the rejection.
+ */
 function malformedAttributesReason(attrs: Record<string, unknown>): string | null {
   if (attrs._invalid !== undefined) return "attributes._invalid present (reserved)";
   if (attrs._missing_url === true) return "attributes._missing_url is set (reserved)";
@@ -405,15 +402,13 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   }
   const cwd = cwdResolution.cwd;
 
-  // Generate the per-run callback token. The agent (Claude Code CLI
-  // subprocess) needs this token to call any rimsky-callback MCP tool.
+  // @deliberate: deliver the per-run callback token + resume metadata
+  // to the agent via a fixed `---`-delimited footer appended to the
+  // user prompt ONLY; the system prompt stays clean to preserve
+  // prompt caching (per-run mutable content invalidates the cache).
   // Post-2026-05-21 userdata collapse the executor no longer runs a
   // template-rendering pass against the prompts — rimsky resolved the
-  // prompt attributes at dispatch. The token + resume metadata are
-  // delivered to the agent via a fixed `---`-delimited metadata footer
-  // appended to the user prompt only (the system prompt stays clean to
-  // preserve prompt caching: per-run mutable content invalidates the
-  // cache).
+  // prompt attributes at dispatch.
   const callbackToken = randomUUID();
   const resumePayload = resumeContext?.payload && resumeContext.payload.length > 0
     ? Buffer.from(resumeContext.payload).toString("utf8")
@@ -421,7 +416,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   const resumeReason = resumeContext?.resumeReason ?? "";
 
   const renderedSystem = systemPrompt;
-  // `binding_id` is the raw `ExecuteRequest.dispatch_id`. Validators sign
+  // @deliberate: `binding_id` is the raw `ExecuteRequest.dispatch_id`. Validators sign
   // `domain ‖ binding_id ‖ canonical(content)`; the agent relays this id to
   // each validator so the signature it returns binds to this exact dispatch,
   // letting the sign-off gate re-derive identical bytes. Empty when the
@@ -435,7 +430,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     `resume_reason: ${resumeReason}\n` +
     "---\n";
 
-  // Per-dispatch internal MCP server. The shared / global server on `callback`
+  // @deliberate: per-dispatch internal MCP server. The shared / global server on `callback`
   // (passed in via RunArgs) was found to mishandle multi-spawn lifecycles —
   // a second dispatch's CLI couldn't `initialize` the MCP after the first
   // dispatch ran, and the rimsky-callback tools silently disappeared from
@@ -458,7 +453,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     }
   };
 
-  // Per-dispatch teardowns for any catalog transport stood up at the
+  // @deliberate: per-dispatch teardowns for any catalog transport stood up at the
   // `hostServers` build site (module / http-loopback loopback listeners).
   // Wired into the dispatch-end cleanup so a long-lived loopback HTTP
   // listener never leaks past its dispatch.
@@ -478,12 +473,12 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       }
     }
   };
-  // Effective callback handle for THIS dispatch. The passed-in `callback`
-  // parameter is preserved on the RunArgs interface for back-compat but its
-  // url/registry are not used by this run.
+  // @constraint: the passed-in `callback` parameter is preserved on the
+  // RunArgs interface for back-compat but its url/registry are not
+  // used by this run; effective callback handle is `dispatchMcp`.
   const effectiveCallback = dispatchMcp;
 
-  // Lazily compile the attributes schema if one is provided; ajv throws on
+  // @deliberate: lazily compile the attributes schema if one is provided; ajv throws on
   // an invalid schema shape which we surface as an errored outcome before
   // we spawn. Per spec §5.7.1 rimsky also re-validates at commit, but
   // catching obviously broken schemas pre-spawn fails fast.
@@ -559,14 +554,14 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     teardownResolveRef.fn();
   };
 
-  // Wire the writeback function the `attributes_set` MCP tool calls.
+  // @deliberate: wire the writeback function the `attributes_set` MCP tool calls.
   // Path segment is `run_id` (= dispatch_id) per the 2026-05-20 per-run
   // keying refactor; the URL builder accepts the run id directly.
   const post = postAttributes ?? defaultPostAttributes;
   const writebackUrl = callbackUrl
     ? buildAttributesWritebackUrl(callbackUrl, runId)
     : "";
-  // Run-local mirror of the incremental `attributes_set` writeback state the
+  // @deliberate: run-local mirror of the incremental `attributes_set` writeback state the
   // supervisor accumulates. Each accepted (non-error POST) `delta` is shallow-
   // merged here, last-write-wins — mirroring the supervisor's own merge — so
   // that at sign-off-gate time the executor can reconstruct the EFFECTIVE bound
@@ -585,7 +580,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     }
     try {
       const result = await post(writebackUrl, { delta }, cancelToken);
-      // Accumulate only on a supervisor-accepted writeback (2xx). A rejected
+      // @deliberate: accumulate only on a supervisor-accepted writeback (2xx). A rejected
       // POST never reaches the supervisor's committed state, so it must not
       // enter the bag the gate binds — otherwise the gate would bind output the
       // supervisor never persisted.
@@ -602,17 +597,17 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     }
   };
 
-  // J8: track corrective `report_complete` retries. After more than
-  // maxSchemaCorrections (default 3) consecutive validation failures,
-  // the run terminates with a StreamClose `Error{error_class:
-  // "agent/schema_violation"}` outcome on the wire.
+  // @deliberate: J8 — track corrective `report_complete` retries. After more than
+  // maxSchemaCorrections (default 3) consecutive validation failures, the run
+  // terminates with a StreamClose `Error{error_class: "agent/schema_violation"}`
+  // outcome on the wire.
   const maxSchemaCorrections =
     typeof cliConfig?.maxSchemaCorrections === "number" && cliConfig.maxSchemaCorrections >= 0
       ? cliConfig.maxSchemaCorrections
       : 3;
   let schemaCorrectionFailures = 0;
 
-  // rejectWithCorrection bumps the corrective-retry counter. When the
+  // @deliberate: rejectWithCorrection bumps the corrective-retry counter. When the
   // counter exceeds the cap, it schedules teardown with an `errored`
   // outcome AND returns "accepted" so the agent's tool call resolves
   // (the run is committed; the agent sees the success but the
@@ -653,7 +648,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     };
   };
 
-  // Sign-off gate correction loop, mirroring `rejectWithCorrection`. The
+  // @deliberate: sign-off gate correction loop, mirroring `rejectWithCorrection`. The
   // sign-off gate runs in `onComplete` AFTER schema validation passes: get
   // the shape right (rejectWithCorrection), then get it signed (rejectSignoff).
   // Each layer carries its own retry budget. On exhausting
@@ -698,7 +693,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     };
   };
 
-  // Per-dispatch named-event sink. The `emit_named_event` MCP tool
+  // @deliberate: per-dispatch named-event sink. The `emit_named_event` MCP tool
   // appends one `{name, payload}` per accepted emission; the buffer rides
   // the async-callback body's `events[]` array when the run resolves. The
   // declared-events list is the executor's resolved `declared_events`
@@ -721,13 +716,13 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       attributesDelta,
       changed,
       changeSummary,
-      // `signoffs` is the agent-presented Ed25519 signature bag. The sign-off
+      // @deliberate: `signoffs` is the agent-presented Ed25519 signature bag. The sign-off
       // gate below verifies it against the dispatch-time `required_signoffs`
       // before the dispatch can resolve to terminal success.
       signoffs,
       scheduleTeardown,
     ) => {
-      // Validate any executor-supplied terminal-final delta before
+      // @deliberate: validate any executor-supplied terminal-final delta before
       // accepting. Per spec §12.2, the delta is optional (executors using
       // incremental writeback omit it).
       if (attributesDelta !== null) {
@@ -746,7 +741,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           );
         }
         if (validateAttributes) {
-          // The delta merged on top of the dispatch-time attributes is
+          // @deliberate: the delta merged on top of the dispatch-time attributes is
           // what the supervisor will validate authoritatively; we do a
           // best-effort local check on the same merged shape.
           const merged = { ...attributes, ...attributesDelta };
@@ -760,11 +755,11 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           }
         }
       }
-      // Validation passed — reset the corrective-retry counter so a
+      // @deliberate: validation passed — reset the corrective-retry counter so a
       // future delta replacement starts fresh.
       schemaCorrectionFailures = 0;
 
-      // The EFFECTIVE bound bag = the accumulated incremental `attributes_set`
+      // @deliberate: the EFFECTIVE bound bag = the accumulated incremental `attributes_set`
       // writebacks with the terminal-final `report_complete` delta layered on
       // top (last-write-wins). This is exactly the bag the supervisor will
       // commit: on the terminal-delta path the accumulator is empty so the merge
@@ -778,7 +773,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         ...(attributesDelta ?? {}),
       };
 
-      // Sign-off gate (the second sequential layer, after schema validation).
+      // @deliberate: sign-off gate (the second sequential layer, after schema validation).
       // `required` and `dispatchId` come from DISPATCH-TIME inputs
       // (`cliConfig.requiredSignoffs` resolved at spawn, and the raw
       // `dispatch_id` plumbed onto the run options) — NEVER from
@@ -791,9 +786,9 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       const required = cliConfig?.requiredSignoffs ?? [];
       if (required.length > 0) {
         if (!dispatchId || dispatchId.length === 0) {
-          // A configured gate with no dispatch_id cannot be bound or verified
-          // (the binding id is empty, so no honest signature can re-derive the
-          // same bytes). Treat it as a configuration/usage error rather than a
+          // @deliberate: a configured gate with no dispatch_id cannot be bound or
+          // verified (the binding id is empty, so no honest signature can re-derive
+          // the same bytes). Treat it as a configuration/usage error rather than a
           // silently-ungated run that would let unsigned output through.
           logger.warn(
             { runId },
@@ -823,12 +818,12 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
             .join(", ");
           return rejectSignoff(`unmet sign-offs: ${detail}`, scheduleTeardown);
         }
-        // Gate satisfied — reset the sign-off retry counter so a future
+        // @deliberate: gate satisfied — reset the sign-off retry counter so a future
         // correction round (e.g. after a schema re-edit) starts fresh.
         signoffFailures = 0;
       }
 
-      // Commit the EFFECTIVE bound bag, not the raw terminal-final delta. The
+      // @deliberate: commit the EFFECTIVE bound bag, not the raw terminal-final delta. The
       // gate verified its signature over this exact value, so the committed
       // output is the one bound. On the incremental path the bag is the
       // accumulated writeback (which the agent omitted from `report_complete`);
@@ -863,7 +858,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       });
     },
     onPark: async (reason, reasonNote, resumeAtISO, scheduleTeardown) => {
-      // Agent invoked the MCP report_park tool. Resolve the per-run
+      // @deliberate: agent invoked the MCP report_park tool. Resolve the per-run
       // outcome promise with the park_requested shape; the server-side
       // gRPC bridge translates the typed reason / reasonNote into the
       // Park terminal (PARK_REASON_<UPPER> + reason_note). Per
@@ -891,7 +886,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     onAttributesSet,
   });
 
-  // Host-wired MCP servers (`cli.mcp_servers`). Each declared server is
+  // @deliberate: host-wired MCP servers (`cli.mcp_servers`). Each declared server is
   // appended to the spawned CLI's `--mcp-config` (the per-spawn `tools`
   // list) so the agent can actually dial it — a URL only mentioned in a
   // prompt is unreachable; the Claude CLI only speaks MCP to servers it was
@@ -921,7 +916,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       catalogTeardowns,
       logger,
     );
-    // Resolve `${env:VAR}` references in host-server connection headers at
+    // @deliberate: resolve `${env:VAR}` references in host-server connection headers at
     // this single spawn-boundary site (S-executors-validator-header-secret-refs).
     // `resolveHeaderEnvRefs` returns a FRESH header map, so the persisted/traced
     // `cliConfig.mcpServers` form (read from the parsed node attributes, never
@@ -952,7 +947,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       payload: { reason: String(e) },
     };
   }
-  // Union of per-template `allowedTools` and the host-server auto-allows.
+  // @deliberate: union of per-template `allowedTools` and the host-server auto-allows.
   // Pass `undefined` when both are empty so spawn/resume preserve the
   // current behavior (the required callback tools are always added by
   // `buildAllowedTools` regardless).
@@ -964,10 +959,10 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
   let handle: CliHandle;
   try {
-    // J10: When resumeContext.sessionToken is set we resume the same
-    // CLI session so the agent's prior context (tool calls, memory,
-    // partial work) is preserved across the park boundary. Otherwise
-    // this is a fresh dispatch.
+    // @deliberate: J10 — when resumeContext.sessionToken is set we resume the
+    // same CLI session so the agent's prior context (tool calls, memory, partial
+    // work) is preserved across the park boundary. Otherwise this is a fresh
+    // dispatch.
     if (
       resumeContext?.sessionToken &&
       resumeContext.sessionToken.length > 0 &&
@@ -984,7 +979,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
           ...hostServers,
         ],
-        // Resume must re-emit the host-server allowlist too: `--allowedTools`
+        // @deliberate: resume must re-emit the host-server allowlist too: `--allowedTools`
         // is process-local invocation config, not session state, so a resumed
         // dispatch that omits it cannot call the host validators' tools.
         allowedTools: allowedToolsUnion,
@@ -1008,13 +1003,13 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           RIMSKY_CALLBACK_TOKEN: callbackToken,
         },
         cwd,
-        // runId is the rimsky-side UUID for this dispatch. Reusing it as
+        // @deliberate: runId is the rimsky-side UUID for this dispatch. Reusing it as
         // the CLI's session-id gives stable trace correlation AND lets us
         // resume the same session on the post-exit retry path below.
         sessionId: runId,
         bare: cliConfig?.bare,
         permissionMode: cliConfig?.permissionMode,
-        // Union of per-template allowed tools and the host-server
+        // @deliberate: union of per-template allowed tools and the host-server
         // auto-allows; `undefined` when both are empty (current behavior).
         allowedTools: allowedToolsUnion,
         disallowedTools: cliConfig?.disallowedTools,
@@ -1037,8 +1032,8 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   } catch (e) {
     effectiveCallback.registry.release(callbackToken);
     void closeDispatchMcp();
-    // Spawn failed after catalog transports were stood up; tear them down so
-    // a loopback listener doesn't leak past the aborted dispatch.
+    // @constraint: spawn failed after catalog transports were stood up; tear them
+    // down so a loopback listener doesn't leak past the aborted dispatch.
     await tearDownCatalogServers();
     return {
       kind: "errored",
@@ -1049,7 +1044,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   handleRef = handle;
 
   let lastStdoutAt = Date.now();
-  // Bounded stderr buffer for J9 rate-limit detection. We only care
+  // @deliberate: bounded stderr buffer for J9 rate-limit detection. We only care
   // about the most recent ~16 KB; older bytes are dropped via shift.
   const stderrCap = 16 * 1024;
   let stderrBuf = "";
@@ -1100,7 +1095,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           ]);
           if (killTimer) clearTimeout(killTimer);
         } catch {
-          // subprocess may already be gone.
+          // @deliberate: subprocess may already be gone.
         }
         teardownResolve();
         safeResolve({
@@ -1135,14 +1130,16 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     ]);
     if (raceTimer) clearTimeout(raceTimer);
     if (teardownInProgress) return;
-    if (resolved) return; // a terminal MCP callback fired between exit and now
+    // @constraint: skip if a terminal MCP callback already fired
+    // between the CLI's exit and now — `resolved` means the
+    // outcome is already locked.
+    if (resolved) return;
 
-    // J9: rate-limit auto-park. When the CLI dies non-zero AND its
-    // stderr carries a rate-limit signal AND attributes.cli.handle_rate_limits
-    // is enabled (default true), emit `park_requested` instead of
-    // bouncing through the recovery path. The supervisor receives the
-    // `Park` terminal and parks the node until the reset window (or
-    // external invalidate) fires.
+    // @deliberate: J9 — rate-limit auto-park. When the CLI dies non-zero AND its
+    // stderr carries a rate-limit signal AND attributes.cli.handle_rate_limits is
+    // enabled (default true), emit `park_requested` instead of bouncing through
+    // the recovery path. The supervisor receives the `Park` terminal and parks
+    // the node until the reset window (or external invalidate) fires.
     const handleRateLimits = cliConfig?.handleRateLimits !== false;
     if (
       exitCode !== 0 &&
@@ -1150,7 +1147,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       stderrBuf.length > 0
     ) {
       const signalRL = detectRateLimit(stderrBuf, new Date());
-      // When the operator has opted OUT of auto-park (handle_rate_limits=false),
+      // @deliberate: when the operator has opted OUT of auto-park (handle_rate_limits=false),
       // a detected rate-limit surfaces as the declared `agent/rate_limited`
       // Error class instead of a Park — so a subscriber/policy keyed on that
       // class actually fires (S-executors-claude-agent-error-classes). The
@@ -1188,7 +1185,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
         );
         safeResolve({
           kind: "park_requested",
-          // Rate-limit-aware waits classify as PARK_REASON_SNOOZE
+          // @deliberate: rate-limit-aware waits classify as PARK_REASON_SNOOZE
           // (the closed two-value set's deadline-based reason) — the
           // CLI surfaces a wall-clock resume_at, which the supervisor
           // wakes via SweepParkedNodes. Per spec
@@ -1204,7 +1201,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
                 (signalRL.resumeAt?.toISOString() ?? "indefinite"),
           payload: new Uint8Array(),
           resumeAt: signalRL.resumeAt,
-          // The CLI session id is the rimsky run id; resume passes
+          // @deliberate: the CLI session id is the rimsky run id; resume passes
           // it back via ResumeContext.session_token for `--resume`.
           sessionToken: runId,
         });
@@ -1212,7 +1209,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       }
     }
 
-    // Recovery path: subprocess exited cleanly (code 0) but never called
+    // @deliberate: recovery path: subprocess exited cleanly (code 0) but never called
     // mcp__rimsky-callback__report_complete. The orchestrator pattern's
     // long Task-subagent chains seem prone to this — the agent loses the
     // imperative for the final tool call after several context-heavy
@@ -1246,7 +1243,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
             { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
             ...hostServers,
           ],
-          // Re-emit the host-server allowlist on the recovery resume too.
+          // @deliberate: re-emit the host-server allowlist on the recovery resume too.
           allowedTools: allowedToolsUnion,
           env: {
             RIMSKY_CALLBACK_URL: effectiveCallback.url,
@@ -1281,7 +1278,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           },
           "cli.exited",
         );
-        // #11: the resumed CLI's terminal report (`report_complete`)
+        // @deliberate: #11: the resumed CLI's terminal report (`report_complete`)
         // drives `onComplete`, which DEFERS teardown via setTimeout(0);
         // teardown then sends SIGTERM (which is what just resolved
         // `retryHandle.waitExit()` above) and only AFTERWARD runs the
@@ -1304,12 +1301,15 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
             }),
           ]);
           if (graceTimer) clearTimeout(graceTimer);
-          // Yield once more so the terminal `safeResolve` sequenced right
+          // @deliberate: yield once more so the terminal `safeResolve` sequenced right
           // after `teardownDone` inside the deferred teardown runs before
           // we re-check `resolved`.
           await new Promise<void>((r) => setImmediate(r));
         }
-        if (resolved) return; // retry's MCP callback fired — outcome already set
+        // @constraint: skip if the retry's MCP callback already
+        // fired — the outcome is already set and re-emitting would
+        // double-report.
+        if (resolved) return;
         safeResolve({
           kind: "errored",
           errorClass: "agent/subprocess_exit/before_complete",
@@ -1334,7 +1334,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       }
     }
 
-    // Classify the subprocess failure to the precise declared leaf
+    // @deliberate: classify the subprocess failure to the precise declared leaf
     // (agent/context_exceeded, agent/refused, agent/tool_use_failed/<tool>)
     // when the stderr carries a recognized signature, so a subscriber/policy
     // keyed on one of those classes fires (S-executors-claude-agent-error-
@@ -1350,7 +1350,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
   try {
     const outcome = await outcomePromise;
-    // Stamp the per-dispatch named-event buffer onto the resolved outcome
+    // @deliberate: stamp the per-dispatch named-event buffer onto the resolved outcome
     // so `outcomeToCallbackBody` can ride the events on the async-callback
     // body's `events[]` array (the gRPC stream already closed at dispatch).
     // Buffer is captured before the registry entry is released below.
@@ -1364,7 +1364,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     await silenceLoop.catch(() => {});
     effectiveCallback.registry.release(callbackToken);
     void closeDispatchMcp();
-    // Tear down any per-dispatch catalog transport listener (module /
+    // @deliberate: tear down any per-dispatch catalog transport listener (module /
     // http-loopback). Awaited so a fast follow-on dispatch doesn't race a
     // still-listening loopback server on a leaked port.
     await tearDownCatalogServers();
@@ -1420,7 +1420,7 @@ async function resolveHostServers(
       allowedTools.push(...autoAllow(s.ref, resolved.allowedTools));
       continue;
     }
-    // Inline server: rejected only when the policy is EXPLICITLY off
+    // @deliberate: inline server: rejected only when the policy is EXPLICITLY off
     // (`allow_inline === false`). An unset policy (`undefined`) is the
     // legacy no-catalog deployment where inline is the only mechanism, so
     // it stays permissive. A real deployment always sets the policy via
@@ -1528,7 +1528,7 @@ function validateDirectory(path: string, source: string): CwdResolution {
   return { kind: "ok", cwd: path };
 }
 
-// renderTemplate retired in the 2026-05-21 userdata collapse.
+// @deliberate: renderTemplate retired in the 2026-05-21 userdata collapse.
 // Substitution now happens entirely at the rimsky layer
 // (`code:graph/attribute/substitution.go::SubstituteValue`); the
 // executor consumes resolved prompts verbatim and appends a fixed

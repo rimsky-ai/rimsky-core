@@ -205,9 +205,9 @@ func (s *RoleStack) Endpoint() string { return s.endpoint }
 // perspective; the caller drains the stack and exits non-zero.
 func WaitForControlAPIReady(ctx context.Context, endpoint string, deadline time.Duration) error {
 	healthURL := endpoint + "/v1/health"
-	// Short timeout per attempt so a hung connection cannot eat the
-	// whole budget on a single dial; the readiness deadline bounds
-	// the overall wait via the for-loop check.
+	// @constraint: per-attempt timeout must be short so a hung connection
+	// cannot eat the whole readiness budget on a single dial; the overall
+	// wait is bounded by the for-loop check against the readiness deadline.
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	pollCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()

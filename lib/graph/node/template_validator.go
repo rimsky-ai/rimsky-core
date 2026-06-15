@@ -50,7 +50,7 @@ var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 // dispatchDirectiveRe matches `{{<inside>}}` directives.
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
-// dispatchDirectiveRe / directiveBodyRe accept the five substitution
+// @deliberate: dispatchDirectiveRe / directiveBodyRe accept the five substitution
 // kinds: `claim`, `params`, `nodes`, `trigger`, and `child`. The
 // legacy `deps.X.Y` form retired post-2026-05-14. The `trigger` and
 // `child` kinds were added by spec §E14 (data-platform-extensions).
@@ -86,17 +86,18 @@ const (
 	// is not visible (the readOnly leg becomes a hard error instead of a
 	// silent skip).
 	RefValidateAll RefValidationMode = iota
-	// RefValidateAvailable validates references to provisioned services
-	// (declared=true / schema visible) and skips references whose target
-	// is not yet provisioned. This is exactly the previously-implicit
-	// always-on soft-fail heuristic, made explicit and uniform across the
-	// executor / store / lock / schema legs. A genuinely-invalid
-	// reference to a PROVISIONED service is still rejected.
+	// @deliberate: RefValidateAvailable validates references to
+	// provisioned services (declared=true / schema visible) and skips
+	// references whose target is not yet provisioned. A
+	// genuinely-invalid reference to a PROVISIONED service is still
+	// rejected; this mode is the always-on soft-fail behaviour made
+	// explicit and uniform across the executor / store / lock / schema
+	// legs.
 	RefValidateAvailable
-	// RefValidateNone performs no registration-time reference validation
-	// at all: the four reference legs (executor-declared, store-declared,
-	// lock-declared, executor-schema) are skipped entirely regardless of
-	// provisioning state.
+	// @deliberate: RefValidateNone performs no registration-time
+	// reference validation at all: the four reference legs
+	// (executor-declared, store-declared, lock-declared, executor-schema)
+	// are skipped entirely regardless of provisioning state.
 	RefValidateNone
 )
 
@@ -238,11 +239,9 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	}
 	validateFrameResolution(spec, &res)
 
-	// D1 — canonicalize nested `graphs:` shape into flat Nodes for the
-	// downstream per-node validation. Pre-v1 accepts both shapes; the
-	// canonicalizer rejects templates that mix them. Per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Sub-graphs.
+	// @deliberate: D1 — canonicalize nested `graphs:` shape into flat
+	// Nodes for the downstream per-node validation. Pre-v1 accepts both
+	// shapes; the canonicalizer rejects templates that mix them.
 	canonicalizeGraphs(spec, &res)
 
 	if len(spec.Nodes) == 0 {
@@ -250,12 +249,12 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		return res
 	}
 
-	// Template-author defaults validation runs after canonicalization so
-	// it sees the flattened Nodes list and can cross-check each
-	// `defaults.attributes.by_executor.<name>` routing key against the
-	// template's actual executor names. Per the structural-inertness
-	// discipline (concept:inertness), only routing keys are inspected;
-	// fragment values are never read.
+	// @deliberate: Template-author defaults validation runs after
+	// canonicalization so it sees the flattened Nodes list and can
+	// cross-check each `defaults.attributes.by_executor.<name>` routing
+	// key against the template's actual executor names. Per the
+	// structural-inertness discipline (concept:inertness), only routing
+	// keys are inspected; fragment values are never read.
 	validateDefaults(spec, &res)
 
 	declared := make(map[string]int, len(spec.Nodes))
@@ -285,34 +284,25 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
-		// 2026-05-23 (Pass 4): lifecycle-handler validators retired
-		// alongside the OnAcquireUnavailable / OnExecutorComplete /
-		// OnExecutorErrored handler types. The replacement surfaces
-		// (error_types: { "acquire/unavailable": ... } and per-error
-		// pass via error_types policy) are validated by
-		// validateErrorTypes above.
 		validateAcquireUnavailablePolicyAdvised(n, base, &res)
 		validateMaxParkDuration(n, base, &res)
-		// D3 + D4 — data-platform-extensions additions.
 		validateHolds(n, base, spec, declared, &res)
 		validateFanOut(n, base, hooks, &res)
-		// 2026-05-19 Item 4: operator-facing tags admit only
+		// @deliberate: operator-facing tags admit only
 		// `{{params.<key>}}` substitution at materialization time.
 		validateTagsAtRegistration(n, base, spec, &res)
 	}
 
-	// Publishers block validation. The persisted column is
-	// `target_node TEXT NOT NULL` with no empty-string sentinel, so
+	// @deliberate: Publishers block validation. The persisted column
+	// is `target_node TEXT NOT NULL` with no empty-string sentinel, so
 	// reject empty entries here rather than surfacing a pgx NOT NULL
-	// violation at instance-create time. Per spec
-	// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-	// §Open items #1.
+	// violation at instance-create time.
 	validatePublishers(spec, declared, &res)
 
-	// Post-pass: substitution-ref cross-check (T17). Iterate all
-	// `{{nodes.<X>.<kind>.<name>}}` directives in the attribute
-	// schemas and confirm the sender + attribute/event name are
-	// defined on the upstream node.
+	// @deliberate: post-pass substitution-ref cross-check — iterate
+	// every `{{nodes.<X>.<kind>.<name>}}` directive in the attribute
+	// schemas and confirm the sender + attribute/event name are defined
+	// on the upstream node.
 	refs := ExtractSubstitutionRefsFromTemplate(*spec)
 	for receiverType, list := range refs {
 		for _, ref := range list {
@@ -354,15 +344,16 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 							})
 						}
 					}
-					// Silent skip when executor capabilities are not visible.
+					// @deliberate: silent skip when executor capabilities
+					// are not visible.
 				}
 			}
 		}
 	}
 
-	// Hard-dep cycle detection. The cascade walker assumes the hard-dep
-	// edge graph is acyclic; surface cycles at registration so they
-	// cannot reach runtime.
+	// @deliberate: Hard-dep cycle detection. The cascade walker assumes the hard-dep
+	// assumes the hard-dep edge graph is acyclic; surface cycles at
+	// registration so they cannot reach runtime.
 	if _, err := BuildHardDepEdges(*spec); err != nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: "graphs",
@@ -422,9 +413,6 @@ func validateFrameResolution(spec *TemplateSpec, res *ValidationResult) {
 // name does not match any node's `Executor`. The fragment values are
 // never inspected (preserves the structural-inertness discipline for
 // attribute values; concept:inertness). Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 1.
-//
 // @concept: attribute
 func validateDefaults(spec *TemplateSpec, res *ValidationResult) {
 	if spec.Defaults == nil || spec.Defaults.Attributes == nil {
@@ -603,8 +591,9 @@ func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res
 	if len(n.Stores) == 0 {
 		return
 	}
-	// Skip the advisory when an entry matches `acquire/unavailable`
-	// exactly OR via a prefix wildcard (e.g. `acquire/*`).
+	// @deliberate: skip the advisory when an entry matches
+	// `acquire/unavailable` exactly OR via a prefix wildcard (e.g.
+	// `acquire/*`).
 	for key := range n.ErrorTypes {
 		if key == "acquire/unavailable" {
 			return
@@ -636,7 +625,7 @@ func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res
 func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
-		// Mutual exclusion: Node and Instance.
+		// @deliberate: node and Instance are mutually exclusive.
 		if s.Node == "" && !s.Instance {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase,
@@ -651,7 +640,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
-		// `node:` must reference a declared node-type.
+		// @deliberate: `node:` must reference a declared node-type.
 		if s.Node != "" {
 			if _, ok := declared[s.Node]; !ok {
 				res.Errors = append(res.Errors, ValidationError{
@@ -661,7 +650,8 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				continue
 			}
 		}
-		// `type:` is required and must match the canonical taxonomy.
+		// @deliberate: `type:` is required and must match the canonical
+		// taxonomy.
 		if strings.TrimSpace(s.Type) == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: sbase + ".type",
@@ -676,7 +666,7 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
-		// `frame:` must be in | next | "".
+		// @deliberate: `frame:` must be in | next | "".
 		switch s.Frame {
 		case "", FrameIn, FrameNext:
 		default:
@@ -685,7 +675,8 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				Msg:  fmt.Sprintf("`frame:` must be empty | %q | %q, got %q", FrameIn, FrameNext, s.Frame),
 			})
 		}
-		// `when:` must compile against the resolved payload schema.
+		// @deliberate: `when:` must compile against the resolved payload
+		// schema.
 		if s.When != "" {
 			if _, err := signal.CompileWhen(signal.TypePath(s.Type), s.When); err != nil {
 				res.Errors = append(res.Errors, ValidationError{
@@ -694,31 +685,31 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				})
 			}
 		}
-		// Cross-check `terminal/error/<class>` exact-path subscriptions
-		// against the union of the sender's declared vocabularies: its
-		// executor's declared_error_classes AND every producer in its
-		// stores: block (producer-classified acquisition failures land
-		// as `terminal/error/<producer class>` — e.g.
-		// `terminal/error/pg/claim_unavailable` — so the validator must
-		// accept what the runtime routes). Match rule: leaf matches a
-		// declared class iff (a) the class is exact and equals leaf, or
-		// (b) the class ends in `*` and is a prefix of leaf (e.g.
-		// `http/server_error/*` matches `http/server_error/500`). An
-		// unmatched leaf is an advisory WARNING, never a hard rejection
-		// — same semantics as `validateErrorTypes` above: peers MAY
-		// declare nothing, and an incomplete vocabulary must not lock
-		// operators out of routing classes the system emits.
-		// Silent-skip when no vocabulary information is available at
-		// all (hooks unwired / every lookup ok=false).
+		// @deliberate: cross-check `terminal/error/<class>` exact-path
+		// subscriptions against the union of the sender's declared
+		// vocabularies — its executor's declared_error_classes AND
+		// every producer in its stores: block (producer-classified
+		// acquisition failures land as `terminal/error/<producer
+		// class>`, so the validator must accept what the runtime
+		// routes). Match rule: leaf matches a declared class iff (a)
+		// the class is exact and equals leaf, or (b) the class ends in
+		// `*` and is a prefix of leaf. An unmatched leaf is an
+		// advisory WARNING, never a hard rejection — same semantics as
+		// `validateErrorTypes`: peers MAY declare nothing, and an
+		// incomplete vocabulary must not lock operators out of routing
+		// classes the system emits. Silent-skip when no vocabulary
+		// information is available at all (hooks unwired / every
+		// lookup ok=false).
 		if s.Node != "" && tmpl != nil && strings.HasPrefix(s.Type, "terminal/error/") &&
 			!strings.HasSuffix(s.Type, "*") {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
 			leaf := strings.TrimPrefix(s.Type, "terminal/error/")
-			// Bypass for runtime-synthesized error classes (`acquire/*`
-			// and the attribute-pipeline classes): emitted by rimsky,
-			// not by any peer — no vocabulary declares them. Mirrors
-			// the bypass in `validateErrorTypes` above.
+			// @deliberate: bypass runtime-synthesized error classes
+			// (`acquire/*` and the attribute-pipeline classes) — they
+			// are emitted by rimsky, not by any peer, so no vocabulary
+			// declares them. Mirrors the bypass in
+			// `validateErrorTypes` above.
 			if !isRuntimeSynthesizedErrorClass(leaf) {
 				vocabularyKnown := false
 				matched := false
@@ -746,9 +737,9 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				}
 			}
 		}
-		// Cross-check `event/<name>` exact-path subscriptions against
-		// the sender's executor declared_events (carry-forward from the
-		// pre-reshape `on: event` check).
+		// @deliberate: Cross-check `event/<name>` exact-path subscriptions against
+		// subscriptions against the sender's executor declared_events
+		// (carry-forward from the pre-reshape `on: event` check).
 		if s.Node != "" && hooks.ExecutorDeclaredEvents != nil && tmpl != nil {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
@@ -775,23 +766,16 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 	}
 }
 
-// isBuiltinErrorClass retired 2026-05-23 alongside the lifecycle-handler
-// validators (the only callers). Built-in rimsky-raised error classes
-// flow through `error_types:` policy by name without a registration
-// validator check (the runtime evaluator treats unknown classes as
-// give_up("unknown_error_class")).
-
 func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationResult) {
-	// D2 — `delegate:` and `executor:` are mutually exclusive. Per
-	// spec §Sub-graphs / Identity and absorption, a node declares
-	// EITHER a leaf executor OR a sub-graph delegation. Both set or
-	// neither set is rejected. The "neither set" rejection is
-	// constrained to nodes that have neither claims nor holds —
-	// pure-cascade pseudo-nodes remain legal.
+	// @deliberate: D2 — `delegate:` and `executor:` are mutually
+	// exclusive. A node declares EITHER a leaf executor OR a sub-graph
+	// delegation; both set or neither set is rejected. The "neither
+	// set" rejection is constrained to nodes that have neither claims
+	// nor holds — pure-cascade pseudo-nodes remain legal.
 	//
 	// Post-absorption skip: when canonicalizeGraphs has absorbed a
-	// sub-graph entry into this calling node, `Executor` is the
-	// entry's (canonicalizer-merged), not the author's. The
+	// absorbed a sub-graph entry into this calling node, `Executor` is
+	// the entry's (canonicalizer-merged), not the author's. The
 	// mutual-exclusion check on the author's declaration moved to
 	// `absorbEntryIntoCaller`, where it sees the original caller +
 	// entry shapes before the merge collapses them. Skipping here
@@ -807,9 +791,9 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationRe
 		})
 	}
 	if !hasExecutor && !hasDelegate {
-		// Pure-cascade pseudo-node — legal. Warn only if an attribute
-		// schema is declared (those properties have no executor to
-		// consume them).
+		// @deliberate: Pure-cascade pseudo-node — legal. Warn only if an attribute
+		// an attribute schema is declared (those properties have no
+		// executor to consume them).
 		if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 			res.Warnings = append(res.Warnings, ValidationWarning{
 				Path: fmt.Sprintf("%s.attributes", base),
@@ -827,15 +811,15 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 	if n.Executor == "" || hooks.ExecutorDeclared == nil {
 		return
 	}
-	// Mode none drops the reference leg entirely.
+	// @deliberate: Mode none drops the reference leg entirely.
 	if hooks.RefValidationMode == RefValidateNone {
 		return
 	}
 	if hooks.ExecutorDeclared(n.Executor) {
 		return
 	}
-	// The executor is not provisioned. Mode available skips the
-	// not-yet-provisioned reference (deferring it to the mandatory
+	// @deliberate: executor is not provisioned — mode available skips
+	// the not-yet-provisioned reference (deferring it to the mandatory
 	// instantiation gate); mode all hard-fails.
 	if hooks.RefValidationMode == RefValidateAvailable {
 		return
@@ -865,11 +849,11 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 			})
 			continue
 		}
-		// Store-declared reference leg. Governed by the operator-set
-		// reference-validation mode: none skips it; available skips a
-		// not-yet-provisioned store (falling through to the structural
-		// intent/selector checks, which apply regardless); all hard-fails
-		// on an undeclared store.
+		// @deliberate: Store-declared reference leg. Governed by the operator-set
+		// operator-set reference-validation mode — none skips it;
+		// available skips a not-yet-provisioned store (falling through
+		// to the structural intent/selector checks, which apply
+		// regardless); all hard-fails on an undeclared store.
 		if hooks.StoreDeclared != nil && hooks.RefValidationMode != RefValidateNone {
 			if !hooks.StoreDeclared(name) && hooks.RefValidationMode != RefValidateAvailable {
 				res.Errors = append(res.Errors, ValidationError{
@@ -912,9 +896,9 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 		}
 		seenAlias[alias] = j
 
-		// D5: claim `lifetime:` validation. Per spec
-		// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-		// §Lifetime and the asset pattern.
+		// @deliberate: D5 — claim `lifetime:` validation per the
+		// data-platform-extensions design (§Lifetime and the asset
+		// pattern).
 		switch s.Lifetime {
 		case "", ClaimLifetimeSubgraph, ClaimLifetimeDurable:
 		default:
@@ -925,10 +909,11 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 					s.Lifetime, ClaimLifetimeSubgraph, ClaimLifetimeDurable),
 			})
 		}
-		// `lifetime: durable` requires the producer to advertise the
-		// DataProcessing mix-in protocol. The hook reports per-store
-		// capability snapshot when available; silent skip when the
-		// hook is nil (e.g. unit-test paths without a registry).
+		// @deliberate: `lifetime: durable` requires the producer to
+		// advertise the DataProcessing mix-in protocol. The hook
+		// reports the per-store capability snapshot when available;
+		// silent skip when the hook is nil (e.g. unit-test paths
+		// without a registry).
 		if s.Lifetime == ClaimLifetimeDurable && hooks.StoreAdvertisesDataProcessing != nil {
 			if !hooks.StoreAdvertisesDataProcessing(name) {
 				res.Errors = append(res.Errors, ValidationError{
@@ -942,7 +927,7 @@ func validateStores(n TemplateNodeDef, base string, hooks RegistryHooks, res *Va
 	}
 }
 
-// ClaimLifetimeSubgraph and ClaimLifetimeDurable mirror the constants
+// @deliberate: ClaimLifetimeSubgraph and ClaimLifetimeDurable mirror the constants
 // in foundation/spec; they're re-declared here as local constants only
 // for readability inside the validator. The canonical source is
 // foundation/spec/graphs.go.
@@ -976,13 +961,15 @@ func validateLocks(n TemplateNodeDef, base string, hooks RegistryHooks, res *Val
 			continue
 		}
 		seen[name] = j
-		// Named-lock-declared reference leg. Governed by the operator-set
-		// reference-validation mode: none skips it; available skips a
-		// not-yet-provisioned (undeclared) lock; all hard-fails.
+		// @deliberate: named-lock-declared reference leg, governed by
+		// the operator-set reference-validation mode — none skips it;
+		// available skips a not-yet-provisioned (undeclared) lock; all
+		// hard-fails.
 		if hooks.NamedLockDeclared != nil && hooks.RefValidationMode != RefValidateNone {
-			// Skip the check when the name carries an unresolved
-			// substitution placeholder (e.g. "model-{params.tier}");
-			// the resolved name is unknown until dispatch.
+			// @deliberate: skip the check when the name carries an
+			// unresolved substitution placeholder (e.g.
+			// "model-{params.tier}") — the resolved name is unknown
+			// until dispatch.
 			if !strings.ContainsAny(name, "{") && !hooks.NamedLockDeclared(name) &&
 				hooks.RefValidationMode != RefValidateAvailable {
 				res.Errors = append(res.Errors, ValidationError{
@@ -1047,16 +1034,18 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		})
 	}
 
-	// Aliases this node directly acquires.
+	// @deliberate: directAliases enumerates the aliases this node
+	// directly acquires.
 	directAliases := make(map[string]struct{}, len(n.Stores))
 	for _, s := range n.Stores {
 		directAliases[s.AliasOf()] = struct{}{}
 	}
-	// Aliases this node co-holds via `holds:` (the sole co-holdership
-	// directive; concept:claim-co-holdership). Each holds entry's local
-	// alias is bound into the leaf's per-claim slot at dispatch, so
-	// `{{claim.<alias>...}}` reads against it are valid — same as a direct
-	// alias.
+	// @deliberate: heldAliases enumerates the aliases this node
+	// co-holds via `holds:` (the sole co-holdership directive;
+	// concept:claim-co-holdership). Each holds entry's local alias is
+	// bound into the leaf's per-claim slot at dispatch, so
+	// `{{claim.<alias>...}}` reads against it are valid — same as a
+	// direct alias.
 	heldAliases := make(map[string]struct{}, len(n.Holds))
 	for alias := range n.Holds {
 		heldAliases[alias] = struct{}{}
@@ -1083,7 +1072,6 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 			}
 			checkAttributeSource(src, fmt.Sprintf("%s.properties.%s.source", sbase, fname), declared, directAliases, heldAliases, res)
 
-			// Validate hard_dep, if present.
 			if hd, present := propMap["hard_dep"]; present {
 				hdBool, ok := hd.(bool)
 				if !ok {
@@ -1092,10 +1080,11 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 						Msg:  "hard_dep must be a boolean",
 					})
 				} else if hdBool {
-					// hard_dep only applies to nodes.<X>.attribute.<Y> reads.
-					// Reject the flag on other source kinds (claim, params,
-					// trigger, child, event) — those are intrinsically per-frame
-					// or instance-scoped and the flag is meaningless.
+					// @deliberate: hard_dep only applies to
+					// nodes.<X>.attribute.<Y> reads. Reject the flag on
+					// other source kinds (claim, params, trigger, child,
+					// event) — those are intrinsically per-frame or
+					// instance-scoped and the flag is meaningless.
 					if !isAttributeSourceDirective(src) {
 						res.Errors = append(res.Errors, ValidationError{
 							Path: fmt.Sprintf("%s.properties.%s.hard_dep", sbase, fname),
@@ -1107,35 +1096,28 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		}
 	}
 
-	// Compute the effective schema (executor's expected schema ∪ L1
-	// defaults ∪ L2 node declaration) and run the unified-attribute-
-	// surface check against it. The merged schema is also what the
-	// runtime recomputes at dispatch (recompute-rather-than-persist;
-	// see runtime/runner_dispatch.go::substituteAttributesSchema).
+	// @deliberate: Compute the effective schema (executor's expected schema ∪ L1
+	// schema ∪ L1 defaults ∪ L2 node declaration) and run the unified-
+	// attribute-surface check against it. The merged schema is also
+	// what the runtime recomputes at dispatch (recompute-rather-than-
+	// persist).
 	//
-	// The executor-schema reference legs (readOnly-fallback,
-	// L2-readOnly-authorship, and validateCompositionAgainstExecutor)
-	// are governed by the operator-set reference-validation mode:
-	//
-	//   - none: the executor-schema legs are skipped entirely. The
-	//     schema is not even looked up; the unified-surface check runs
-	//     with execSchemaVisible=false so only the mode-independent
-	//     "at most one of source/default" rule fires.
-	//   - available: validate against the executor's schema when it is
-	//     visible; soft-skip when it is not (the previously-implicit
-	//     always-on heuristic, now explicit). A not-yet-provisioned
-	//     executor whose schema is invisible is deferred to the
-	//     mandatory instantiation gate.
-	//   - all: validate against the executor's schema when visible;
-	//     HARD-FAIL when the executor has a schema reference that is not
-	//     visible (no discovery hook resolves it / executor not yet
-	//     handshaked) — the readOnly leg becomes a hard error instead of
-	//     a silent skip, so a reference whose schema cannot be validated
-	//     at registration is rejected.
+	// @deliberate: the executor-schema reference legs (readOnly-
+	// fallback, L2-readOnly-authorship, and
+	// validateCompositionAgainstExecutor) are governed by the
+	// operator-set reference-validation mode — none skips the legs
+	// entirely (the schema isn't even looked up; the unified-surface
+	// check runs with execSchemaVisible=false so only the
+	// mode-independent "at most one of source/default" rule fires);
+	// available validates against the executor's schema when it is
+	// visible and soft-skips when it is not; all validates against the
+	// executor's schema when visible and HARD-FAILS when the executor
+	// has a schema reference that is not visible.
 	if hooks.RefValidationMode == RefValidateNone {
-		// Mode none: no registration-time executor-schema reference
-		// validation. Run only the executor-independent unified-surface
-		// rule ("at most one of source/default") over the L2 schema.
+		// @deliberate: mode none — no registration-time executor-schema
+		// reference validation. Run only the executor-independent
+		// unified-surface rule ("at most one of source/default") over
+		// the L2 schema.
 		effective := MergeAttributeDefaults(nil, nil, n.Attributes.Schema)
 		checkAttributesSchema(effective, n.Attributes.Schema, nil, map[string]bool{}, false, sbase, res)
 		return
@@ -1161,12 +1143,12 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		execReadOnlyProps = map[string]bool{}
 	}
 
-	// Mode all hard-fails when the node references an executor whose
-	// expected_attributes_schema cannot be validated at registration
-	// (the executor is named but its schema is not visible). This is the
-	// strict counterpart of the available-mode soft-skip below: under
-	// `all`, an unvalidatable schema reference is a missing-reference
-	// error rather than a deferral.
+	// @deliberate: Mode all hard-fails when the node references an executor whose
+	// executor whose expected_attributes_schema cannot be validated at
+	// registration (the executor is named but its schema is not
+	// visible). Strict counterpart of the available-mode soft-skip
+	// below: under `all`, an unvalidatable schema reference is a
+	// missing-reference error rather than a deferral.
 	if !execSchemaVisible && hooks.RefValidationMode == RefValidateAll &&
 		n.Executor != "" && hooks.ExecutorExpectedAttributesSchema != nil {
 		res.Errors = append(res.Errors, ValidationError{
@@ -1211,10 +1193,6 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 // `res.Errors`; surfaces at the operator layer as
 // `template_validation_failed`.
 //
-// Per spec
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Effective schema computation" / §"Error handling".
-//
 // @concept: attribute
 func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[string]any, sbase string, res *ValidationResult) {
 	if execSchema == nil {
@@ -1223,10 +1201,11 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 	execProps, _ := execSchema["properties"].(map[string]any)
 	nodeProps, _ := nodeSchema["properties"].(map[string]any)
 	additionalProperties, hasAddProps := execSchema["additionalProperties"]
-	// The closed-schema gate fires only when the executor's schema both
-	// has a `properties` block (i.e. is not permissive) and explicitly
-	// declares `additionalProperties: false`. JSON Schema's default for
-	// `additionalProperties` is true; absence ⇒ open.
+	// @deliberate: the closed-schema gate fires only when the
+	// executor's schema both has a `properties` block (i.e. is not
+	// permissive) and explicitly declares `additionalProperties:
+	// false`. JSON Schema's default for `additionalProperties` is true;
+	// absence ⇒ open.
 	closed := false
 	if hasAddProps {
 		if b, ok := additionalProperties.(bool); ok && !b {
@@ -1234,7 +1213,8 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 		}
 	}
 
-	// (1) Type-redeclaration conflicts. Walk L2's declared properties.
+	// @deliberate: type-redeclaration conflicts — walk L2's declared
+	// properties.
 	for name, raw := range nodeProps {
 		nodeProp, ok := raw.(map[string]any)
 		if !ok {
@@ -1262,7 +1242,7 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 		}
 	}
 
-	// (2) Closed-schema-forbidden properties (L2 and L1).
+	// @deliberate: closed-schema-forbidden properties (L2 and L1).
 	if closed && execProps != nil {
 		for name := range nodeProps {
 			if _, declared := execProps[name]; !declared {
@@ -1278,7 +1258,8 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 			if _, declared := execProps[name]; declared {
 				continue
 			}
-			// Avoid duplicate reporting if L2 also declared it.
+			// @deliberate: avoid duplicate reporting if L2 also
+			// declared it.
 			if _, declaredInNode := nodeProps[name]; declaredInNode {
 				continue
 			}
@@ -1291,10 +1272,10 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 		}
 	}
 
-	// (3) Default-value-vs-executor-type checks. Compose L1 + L2 default
-	// values into a single map; L2 wins on collision per the most-
-	// specific-wins rule. Then JSON-Schema-validate the composed bag
-	// against the executor's raw schema. This catches deep-nested type
+	// @deliberate: default-value-vs-executor-type checks. Compose L1 +
+	// L2 default values into a single map; L2 wins on collision per the
+	// most-specific-wins rule. Then JSON-Schema-validate the composed
+	// bag against the executor's raw schema. Catches deep-nested type
 	// mismatches the flat property-type check above cannot see.
 	defaultsBag := map[string]any{}
 	for name, val := range l1Defaults {
@@ -1312,14 +1293,14 @@ func validateCompositionAgainstExecutor(execSchema, l1Defaults, nodeSchema map[s
 	if len(defaultsBag) == 0 {
 		return
 	}
-	// Strip `required:` from the executor schema before validating the
-	// defaults bag. The defaults bag is an intentionally-partial subset
-	// of what the dispatch bag will hold — properties bound via
-	// `source:` and properties the executor will write (`readOnly:
-	// true`) have no entry in defaults. Enforcing `required:` against
-	// that subset would fire false-positive missing-property errors at
-	// registration. We only want this pass to catch type / nested-shape
-	// mismatches on values that *are* present.
+	// @deliberate: Strip `required:` from the executor schema before validating the
+	// validating the defaults bag. The defaults bag is an
+	// intentionally-partial subset of what the dispatch bag will hold —
+	// properties bound via `source:` and properties the executor will
+	// write (`readOnly: true`) have no entry in defaults. Enforcing
+	// `required:` against that subset would fire false-positive
+	// missing-property errors at registration. This pass only catches
+	// type / nested-shape mismatches on values that are present.
 	schemaForDefaults := schemaWithoutTopLevelRequired(execSchema)
 	if err := validateAgainstSchema(schemaForDefaults, defaultsBag); err != nil {
 		res.Errors = append(res.Errors, ValidationError{
@@ -1402,9 +1383,6 @@ func jsonValuesEqual(a, b any) bool {
 // on the right side of the substitution fallback operator: `null`,
 // `true`, `false`, a JSON number, or a quoted JSON string. Composite
 // literals (`{}`, `[]`) are rejected. Per spec
-// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
-// §"Fallback operator".
-//
 // Numeric admission goes through json.Unmarshal rather than
 // strconv.ParseFloat so the validator rejects the same shapes the
 // runtime rejects (`NaN`, `Inf`, `.5`, etc. — non-JSON-number forms).
@@ -1433,8 +1411,9 @@ func isAttributeSourceDirective(src string) bool {
 		return false
 	}
 	body := strings.TrimSpace(m[1])
-	// Strip an optional fallback `| <literal>` suffix; the hard-dep
-	// gate looks at the directive's source-kind, not the fallback.
+	// @deliberate: strip an optional fallback `| <literal>` suffix —
+	// the hard-dep gate looks at the directive's source-kind, not the
+	// fallback.
 	if idx := strings.Index(body, "|"); idx >= 0 {
 		body = strings.TrimSpace(body[:idx])
 	}
@@ -1479,8 +1458,9 @@ func checkAttributeSource(src, path string, declared map[string]int, directAlias
 // to per-kind validation.
 func checkAttributeDirectiveBody(body, path string, declared map[string]int, directAliases, heldAliases map[string]struct{}, res *ValidationResult) {
 	body = strings.TrimSpace(body)
-	// Pipe-fallback parsing first (longest reach) so a trailing `?` is
-	// still recognised on the left side of the pipe if present.
+	// @deliberate: pipe-fallback parsing first (longest reach) so a
+	// trailing `?` is still recognised on the left side of the pipe if
+	// present.
 	hasFallback := false
 	hasLenient := false
 	if idx := strings.Index(body, "|"); idx >= 0 {
@@ -1503,9 +1483,9 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 		body = left
 		hasFallback = true
 	}
-	// Lenient `?` marker (must appear at the end of the directive body
-	// after optional whitespace and before the optional `| <literal>`
-	// fallback, which we already stripped).
+	// @deliberate: Lenient `?` marker (must appear at the end of the directive body
+	// directive body after optional whitespace and before the optional
+	// `| <literal>` fallback (already stripped).
 	if strings.HasSuffix(body, "?") {
 		hasLenient = true
 		body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
@@ -1530,7 +1510,8 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 	parts := strings.Split(rest, ".")
 	switch kind {
 	case "claim":
-		// Valid forms: claim.<alias>.address, claim.<alias>.claim_scope,
+		// @deliberate: valid forms are claim.<alias>.address,
+		// claim.<alias>.claim_scope, and
 		// claim.<alias>.payload(.<field-path>?). The bare-form
 		// `claim.<alias>.payload` (no trailing field path) resolves to
 		// the whole payload object per spec §Item 3 "Empty trailing
@@ -1552,9 +1533,10 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				})
 			}
 		case "payload":
-			// Bare form `claim.<alias>.payload` is admitted (whole-
-			// payload pull). A trailing path is also fine; an explicit
-			// empty trailing segment (`...payload.`) is rejected.
+			// @deliberate: bare form `claim.<alias>.payload` is
+			// admitted (whole-payload pull). A trailing path is also
+			// fine; an explicit empty trailing segment (`...payload.`)
+			// is rejected.
 			if len(parts) > 2 && parts[2] == "" {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
@@ -1567,7 +1549,8 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				Msg:  fmt.Sprintf("claim directive %q second segment must be address|claim_scope|payload", body),
 			})
 		}
-		// Alias must be acquired here (stores:) or co-held (holds:).
+		// @deliberate: alias must be acquired here (stores:) or
+		// co-held (holds:).
 		_, isOwn := directAliases[alias]
 		_, isHeld := heldAliases[alias]
 		if !isOwn && !isHeld {
@@ -1584,12 +1567,11 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 			})
 		}
 	case "nodes":
-		// Post-2026-05-14 substitution forms:
-		//   nodes.<node>.attribute(.<field>?…)     (replaces deps.X.Y)
-		//   nodes.<emitter>.event.<event_name>(.<json-path>?)
-		//
-		// Bare forms `nodes.<node>.attribute` and `nodes.<node>.event.<name>`
-		// (no trailing field path) resolve to the whole attribute object /
+		// @deliberate: substitution forms are
+		// nodes.<node>.attribute(.<field>?…) and
+		// nodes.<emitter>.event.<event_name>(.<json-path>?). Bare forms
+		// `nodes.<node>.attribute` and `nodes.<node>.event.<name>` (no
+		// trailing field path) resolve to the whole attribute object /
 		// whole event payload per spec §Item 3 "Empty trailing path".
 		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
@@ -1600,8 +1582,8 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 		}
 		switch parts[1] {
 		case "attribute":
-			// nodes.<node>.attribute(.<field>?…)
-			// An explicit empty trailing segment (`...attribute.`) is
+			// @deliberate: nodes.<node>.attribute(.<field>?…) — an
+			// explicit empty trailing segment (`...attribute.`) is
 			// rejected; a missing trailing path is the bare form.
 			if len(parts) > 2 && parts[2] == "" {
 				res.Errors = append(res.Errors, ValidationError{
@@ -1617,9 +1599,9 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				})
 			}
 		case "event":
-			// nodes.<node>.event.<name>(.<path>?…)
-			// Event name is required; a missing field path is the bare
-			// form (resolves to the whole event payload).
+			// @deliberate: nodes.<node>.event.<name>(.<path>?…) — event
+			// name is required; a missing field path is the bare form
+			// (resolves to the whole event payload).
 			if len(parts) < 3 || parts[2] == "" {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: path,
@@ -1647,9 +1629,10 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 			})
 		}
 	case "trigger":
-		// trigger.message.payload(.<field-path>?). The bare form
-		// `trigger.message.payload` (no trailing field path) resolves to
-		// the whole trigger message payload per spec §Item 3.
+		// @deliberate: trigger.message.payload(.<field-path>?) — the
+		// bare form `trigger.message.payload` (no trailing field path)
+		// resolves to the whole trigger message payload per spec §Item
+		// 3.
 		if len(parts) < 2 || parts[0] != "message" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
@@ -1671,7 +1654,7 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 			})
 		}
 	case "child":
-		// child.partition_key
+		// @deliberate: only child.partition_key is admitted.
 		if len(parts) != 1 || parts[0] != "partition_key" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
@@ -1729,7 +1712,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 	}
 }
 
-// (detectCycles + validateOnEvent removed by the 2026-05-14
+// validateMaxParkDuration + validateOnEvent removed by the 2026-05-14
 // subscription-cascade resolution: cycles are now a runtime concern
 // driven by the deferred `frame: next` queue, and `on_event:` is
 // retired in favor of receiver-side subscriptions.)
@@ -1794,14 +1777,16 @@ func CheckEffectiveAttributesSchema(effective, nodeSchema, execSchema map[string
 			continue
 		}
 		_, execEnumerates := execProps[name]
-		// A property the executor does not enumerate is unconstrained when
-		// the executor's schema is open: it declares no `properties` block
-		// at all (fully permissive — e.g. `{"type":"object"}`), or it admits
-		// extensions via `additionalProperties` (not `false`). The executor
-		// has delegated naming authority for such properties, so the
-		// readOnly-fallback and readOnly-authorship legs below don't apply:
-		// there's no fixed set of executor-written properties to compare
-		// against. An enumerated property still goes through both legs.
+		// @deliberate: a property the executor does not enumerate is
+		// unconstrained when the executor's schema is open — it
+		// declares no `properties` block (fully permissive, e.g.
+		// `{"type":"object"}`) or admits extensions via
+		// `additionalProperties` (not `false`). The executor has
+		// delegated naming authority for such properties, so the
+		// readOnly-fallback and readOnly-authorship legs below don't
+		// apply — there is no fixed set of executor-written properties
+		// to compare against. An enumerated property still goes through
+		// both legs.
 		propUnconstrained := schemaHasNoProps || (execOpen && !execEnumerates)
 		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !propUnconstrained {
 			out = append(out, AttributesSchemaCheckError{
@@ -1879,7 +1864,8 @@ func executorSchemaAllowsExtensions(execSchema map[string]any) bool {
 	if b, ok := add.(bool); ok {
 		return b
 	}
-	// Schema-object value ⇒ extensions admitted (subject to that subschema).
+	// @deliberate: schema-object value ⇒ extensions admitted (subject
+	// to that subschema).
 	return true
 }
 
@@ -1912,10 +1898,6 @@ func executorSchemaAllowsExtensions(execSchema map[string]any) bool {
 // (`code:runtime/runner_dispatch.go` calls
 // `node.CheckEffectiveAttributesSchema`).
 //
-// Per spec
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Attribute as the unified surface".
-//
 // @concept: attribute
 func checkAttributesSchema(effective, nodeSchema, execSchema map[string]any, executorReadOnlyProps map[string]bool, execSchemaVisible bool, sbase string, res *ValidationResult) {
 	if effective == nil {
@@ -1942,13 +1924,13 @@ func checkAttributesSchema(effective, nodeSchema, execSchema map[string]any, exe
 			continue
 		}
 		_, execEnumerates := execProps[name]
-		// readOnly-fallback leg: see CheckEffectiveAttributesSchema for
-		// the open-schema rationale. A property the executor does not
-		// enumerate is unconstrained when the executor's schema declares no
-		// `properties` block (fully permissive) or admits extensions via
-		// `additionalProperties` (not `false`) — the executor has delegated
-		// naming authority, so there is no per-name comparison to make. An
-		// enumerated property still goes through both legs.
+		// @deliberate: readOnly-fallback leg. A property the executor
+		// does not enumerate is unconstrained when the executor's
+		// schema declares no `properties` block (fully permissive) or
+		// admits extensions via `additionalProperties` (not `false`) —
+		// the executor has delegated naming authority, so there is no
+		// per-name comparison to make. An enumerated property still
+		// goes through both legs.
 		propUnconstrained := schemaHasNoProps || (execOpen && !execEnumerates)
 		if !hasSource && !hasDefault && !execRO && execSchemaVisible && !propUnconstrained {
 			res.Errors = append(res.Errors, ValidationError{
@@ -1957,13 +1939,14 @@ func checkAttributesSchema(effective, nodeSchema, execSchema map[string]any, exe
 			})
 			continue
 		}
-		// L2 cannot grant `readOnly: true` on a property the executor's
-		// schema does not also mark `readOnly: true`. The executor is
-		// authoritative on which of its attributes it produces.
+		// @deliberate: L2 cannot grant `readOnly: true` on a property
+		// the executor's schema does not also mark `readOnly: true` —
+		// the executor is authoritative on which of its attributes it
+		// produces.
 		//
-		// Skipped when the executor's schema isn't visible at
-		// validation time — we cannot tell whether the executor
-		// produces the property or not, so we trust the author's
+		// Skipped when the executor's schema isn't visible
+		// at validation time — without it the executor's set of
+		// produced properties is unknown, so trust the author's
 		// declaration. Runtime dispatch reapplies the rule once the
 		// executor schema is known. Also skipped for properties the
 		// executor leaves unconstrained under an open schema — the
@@ -2031,7 +2014,8 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 		props = map[string]any{}
 		out["properties"] = props
 	}
-	// L1: for each (attr, value), set properties[attr].default.
+	// @deliberate: L1 — for each (attr, value), set
+	// properties[attr].default.
 	for attr, val := range l1Defaults {
 		prop, _ := props[attr].(map[string]any)
 		if prop == nil {
@@ -2040,7 +2024,7 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 		}
 		prop["default"] = val
 	}
-	// L2: deep-merge the node's properties on top.
+	// @deliberate: L2 — deep-merge the node's properties on top.
 	if nodeSchema != nil {
 		if nodeProps, ok := nodeSchema["properties"].(map[string]any); ok {
 			for attr, raw := range nodeProps {
@@ -2050,19 +2034,18 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 				}
 				existing, _ := props[attr].(map[string]any)
 				if existing == nil {
-					// Deep copy so L2's prop isn't aliased.
+					// @deliberate: Deep copy so L2's prop isn't aliased.
 					props[attr] = deepCopyJSON(nodeProp)
 					continue
 				}
-				// `source:` and `default:` are mutually exclusive on a
-				// property. If L2 supplies one, it overrides L1's choice
-				// of the other — drop the pre-existing key so the
-				// effective schema doesn't carry both into
-				// checkAttributesSchema (which would reject the
-				// template). Most-specific-wins per spec
-				// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-				// §"Resolution waterfall" / §"Effective schema
-				// computation".
+				// @deliberate: `source:` and `default:` are mutually
+				// exclusive on a property. If L2 supplies one, it
+				// overrides L1's choice of the other — drop the
+				// pre-existing key so the effective schema doesn't
+				// carry both into checkAttributesSchema (which would
+				// reject the template). Most-specific-wins per the
+				// userdata-collapse "Resolution waterfall" / "Effective
+				// schema computation".
 				if _, l2HasSource := nodeProp["source"]; l2HasSource {
 					delete(existing, "default")
 				}
@@ -2074,8 +2057,8 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 				}
 			}
 		}
-		// Carry over `required` from the node schema (union with any
-		// existing list from the executor's schema).
+		// @deliberate: Carry over `required` from the node schema (union with any
+		// (union with any existing list from the executor's schema).
 		if nodeReq, ok := nodeSchema["required"].([]any); ok && len(nodeReq) > 0 {
 			existingReq, _ := out["required"].([]any)
 			seen := map[string]bool{}
@@ -2092,9 +2075,10 @@ func MergeAttributeDefaults(execSchema map[string]any, l1Defaults map[string]any
 			}
 			out["required"] = existingReq
 		}
-		// additionalProperties: the executor is authoritative when it
-		// declared the key (closed-schema policy); if the executor
-		// didn't declare it, fall back to the node's declaration.
+		// @deliberate: additionalProperties — the executor is
+		// authoritative when it declared the key (closed-schema
+		// policy); if the executor didn't declare it, fall back to the
+		// node's declaration.
 		if _, execHas := out["additionalProperties"]; !execHas {
 			if v, ok := nodeSchema["additionalProperties"]; ok {
 				out["additionalProperties"] = v
@@ -2130,10 +2114,6 @@ func parseDurationStrict(s string) (time.Duration, error) {
 //     kinds resolve at instance creation).
 //   - The `<key>` MUST be declared in TemplateSpec.ParamsSchema.properties.
 //
-// Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// §Item 4 — Validation at template registration.
-//
 // @concept: node
 func validateTagsAtRegistration(n TemplateNodeDef, base string, spec *TemplateSpec, res *ValidationResult) {
 	if len(n.Tags) == 0 {
@@ -2161,8 +2141,8 @@ func validateTagsAtRegistration(n TemplateNodeDef, base string, spec *TemplateSp
 				})
 				continue
 			}
-			// Take the top-level params key only — params.<key>.<sub>...
-			// resolves the same root key.
+			// @deliberate: Take the top-level params key only — params.<key>.<sub>...
+			// params.<key>.<sub>... resolves the same root key.
 			topKey := rest
 			if dot := strings.Index(rest, "."); dot >= 0 {
 				topKey = rest[:dot]

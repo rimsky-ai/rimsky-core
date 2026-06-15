@@ -155,8 +155,10 @@ func (p *Producer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 	p.mu.Lock()
 	p.openCalls++
 	p.mu.Unlock()
-	// Marshal the claim_id as a JSON-quoted string so the resulting bytes
-	// are valid JSON. json.Marshal of a string never returns an error.
+	// @deliberate: marshal claim_id as a JSON-quoted string so Address is
+	// valid JSON — the producer's canonical encoding can be anything, but
+	// invalid JSON is not a free choice. json.Marshal of a string never
+	// errors, so the discarded error is safe.
 	addressJSON, _ := json.Marshal(req.GetClaimId())
 	return &genv1.OpenResponse{
 		Result: &genv1.OpenResponse_Acquired{

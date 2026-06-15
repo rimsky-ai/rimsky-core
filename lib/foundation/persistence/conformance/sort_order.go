@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// sort_order.go — SortOrderCoordination conformance area.
-//
+// @constraint: SortOrderCoordination conformance area.
 // Inv 3, inv 10: when multiple goroutines take the same set of locks in
 // sorted order, no deadlock occurs.
 package conformance
@@ -24,7 +23,6 @@ func testSortOrderCoordination(t *testing.T, d persistence.Database) {
 		t.Fatalf("driver.Coordinator() returned nil")
 	}
 
-	// Three named locks, lexically sorted.
 	names := []string{"lock-a", "lock-b", "lock-c"}
 
 	const iterations = 5
@@ -51,7 +49,6 @@ func testSortOrderCoordination(t *testing.T, d persistence.Database) {
 	go run("B")
 	wg.Wait()
 
-	// Scope locks: same drill.
 	storeName := "scope-sort-store"
 	scopes := [][]byte{
 		[]byte(`{"r":1}`),

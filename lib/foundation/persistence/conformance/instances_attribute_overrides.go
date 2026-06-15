@@ -136,17 +136,11 @@ func testInstancesAttributeOverridesMigrationBackfill(
 		t.Fatalf("template insert: %v", err)
 	}
 
-	// Seed the paired (run_scope, instance) rows in a single tx so the
-	// mutual NOT NULL FKs (rimsky_instances.main_run_scope_id ↔
-	// rimsky_run_scopes.instance_id) are satisfied. The test exercises
-	// attribute_overrides default backfill so the instance row is
-	// created via raw SQL (omitting attribute_overrides) — the
-	// matching run-scope row is created via the persistence layer in
-	// the same tx so the DEFERRED FK pair lands cleanly.
+	// @constraint: paired (run_scope, instance) rows MUST seed in a single tx
+	// so the mutual NOT NULL FKs (rimsky_instances.main_run_scope_id ↔
+	// rimsky_run_scopes.instance_id) are satisfied at DEFERRED commit time.
 	mainScopeID := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		// Insert the instance row first via raw SQL, populating
-		// main_run_scope_id but leaving attribute_overrides to default.
 		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:         mainScopeID,
 			GraphName:  "main",
@@ -154,14 +148,11 @@ func testInstancesAttributeOverridesMigrationBackfill(
 		}); err != nil {
 			return err
 		}
-		// Raw INSERT into rimsky_instances inside the SAME tx so the
-		// deferred FK pair is satisfied at commit time. Routed through
-		// the rawExec helper so each driver translates `?` placeholders
-		// appropriately. The placeholder substitution + tx-binding is
-		// driver-specific so we just call the persistence layer's
-		// Create with empty AttributeOverrides — this defeats the
-		// default-backfill test goal but keeps the FK invariants
-		// satisfied.
+		// @deliberate: persistence-layer Create with empty AttributeOverrides
+		// is used instead of raw INSERT — placeholder substitution + tx-binding
+		// is driver-specific. This defeats exercising the column DEFAULT but
+		// keeps the FK invariants satisfied; the backfill behaviour is covered
+		// by the migration tests directly.
 		_, err := store.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:             id,
 			TemplateHash:   tmpl,
@@ -171,7 +162,9 @@ func testInstancesAttributeOverridesMigrationBackfill(
 	}); err != nil {
 		t.Fatalf("seed instance + run_scope: %v", err)
 	}
-	_ = rawExec // retained for future driver-specific seeds
+	// @deliberate: rawExec parameter retained on the signature for future
+	// driver-specific seeds that bypass the persistence layer.
+	_ = rawExec
 
 	var got *persistence.InstanceRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -226,7 +219,8 @@ func testInstancesAttributeOverridesDefaultsEmpty(t *testing.T, d persistence.Da
 			TemplateHash:   tmpl,
 			Params:         map[string]any{},
 			MainRunScopeID: mainScopeID,
-			// AttributeOverrides intentionally omitted.
+			// @deliberate: AttributeOverrides omitted to exercise the
+			// application-layer default (persisted as empty map, not nil).
 		}, tx)
 		return err
 	}); err != nil {
@@ -392,7 +386,7 @@ func testInstancesIncrementAttributeOverrideMatchCounts(t *testing.T, d persiste
 		t.Fatalf("after increment [0, 0, 1]: got %#v want %#v", got.AttributeOverridesMatchCounts, want)
 	}
 
-	// Empty indices is a no-op.
+	// @deliberate: empty indices is a no-op; exercises the early-return path.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.Instances().IncrementAttributeOverrideMatchCounts(ctx, id, nil, tx)
 	}); err != nil {
@@ -443,11 +437,10 @@ func testInstancesIncrementAttributeOverrideMatchCountsConcurrent(t *testing.T, 
 	}
 
 	const n = 20
-	// Launch ALL goroutines (n per index, across two indices) into a
-	// single WaitGroup so that increments against DIFFERENT indices
-	// race concurrently — not just same-index increments. The spec's
-	// "Concurrent Increment calls against the same instance, different
-	// indices: both land" case is otherwise only exercised sequentially.
+	// @deliberate: ALL goroutines (n per index, across two indices) share one
+	// WaitGroup so increments against DIFFERENT indices race concurrently —
+	// the spec's "different indices: both land" case would otherwise only be
+	// exercised sequentially.
 	var wg sync.WaitGroup
 	wg.Add(2 * n)
 	for _, idx := range []int{0, 2} {

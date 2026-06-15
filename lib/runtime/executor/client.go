@@ -30,7 +30,10 @@ type Client interface {
 // EventStream abstracts gRPC streaming + HTTP-bridge newline-delimited
 // JSON so the supervisor loop is transport-agnostic.
 type EventStream interface {
-	Recv() (*genv1.ExecuteEvent, error) // returns io.EOF when stream ends
+	// @agent-contract: io.EOF marks normal stream end; any other error is
+	// a transport-level failure the supervisor loop must surface to its
+	// caller.
+	Recv() (*genv1.ExecuteEvent, error)
 	Close() error
 }
 
@@ -50,11 +53,11 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	}
 	conn, err := grpc.NewClient(endpoint.URL,
 		grpc.WithTransportCredentials(peer.TransportCredentials(endpoint.TLS)),
-		// Stamp x-rimsky-service-name from the per-call context so a
-		// host-agent-proxy fronting the executor protocol can route by
-		// service name. No-op when the dispatch site set no name.
-		// The TLSMode interceptors annotate RPC errors with the peer +
-		// mode under tls: required (no-op otherwise).
+		// @deliberate: stamp x-rimsky-service-name from the per-call
+		// context so a host-agent-proxy fronting the executor protocol can
+		// route by service name (no-op when the dispatch site set no
+		// name); the TLSMode interceptors annotate RPC errors with the
+		// peer + mode under tls: required (no-op otherwise).
 		grpc.WithChainUnaryInterceptor(peer.ServiceNameUnaryInterceptor, peer.TLSModeUnaryInterceptor(endpoint.URL, endpoint.TLS)),
 		grpc.WithChainStreamInterceptor(peer.ServiceNameStreamInterceptor, peer.TLSModeStreamInterceptor(endpoint.URL, endpoint.TLS)),
 	)
@@ -99,11 +102,11 @@ type ClientPool struct {
 func NewClientPool() *ClientPool { return &ClientPool{clients: map[string]Client{}} }
 
 func (p *ClientPool) GetOrCreate(ep Endpoint) (Client, error) {
-	// Normalize the empty mode to "off" — the two dial identically
-	// (plaintext), so keying them separately would mint a redundant
-	// second connection to the same endpoint. Unreachable via config
-	// (parseTLSMode normalizes), but ad-hoc Endpoint literals reach
-	// this pool directly.
+	// @deliberate: normalize the empty mode to "off" — the two dial
+	// identically (plaintext), so keying them separately would mint a
+	// redundant second connection to the same endpoint; unreachable via
+	// config (parseTLSMode normalizes), but ad-hoc Endpoint literals
+	// reach this pool directly.
 	tlsMode := ep.TLS
 	if tlsMode == "" {
 		tlsMode = "off"

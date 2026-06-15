@@ -3,7 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // HTTP handlers backing the /auth/keys/* surface. See spec
-// .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md
 // "Control-api endpoints / Auth endpoints".
 //
 // @concept: api-key
@@ -83,7 +82,7 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "name is required")
 			return
 		}
-		// Canonicalize: trim whitespace on action strings before
+		// @constraint: canonicalize: trim whitespace on action strings before
 		// validation so an operator's accidental `"node:invalidate "`
 		// surfaces as either accepted (after trim) or rejected with
 		// a precise error rather than a confusing
@@ -95,7 +94,7 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		// Reject any exact action string that isn't in the registry.
+		// @constraint: reject any exact action string that isn't in the registry.
 		// Wildcards (`*`, `<noun>:*`, `*:<verb>`) are accepted without
 		// registry lookup — they match what's registered at request
 		// time, not at mint time.
@@ -108,7 +107,7 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 				return
 			}
 		}
-		// Reject any grant whose scope map carries a key the action
+		// @constraint: reject any grant whose scope map carries a key the action
 		// doesn't declare. The action-grammar check above only verifies
 		// the action STRING; a typo like `{action:"template:register",
 		// scope:{"templet_tag":"analytics"}}` (note the missing 'a')
@@ -122,7 +121,7 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			badRequest(w, err.Error())
 			return
 		}
-		// Dry-run: grant validation passed; skip the mint + insert. Mint
+		// @constraint: dry-run: grant validation passed; skip the mint + insert. Mint
 		// NO plaintext (a previewed key must never surface a usable
 		// credential) and persist no row — return a placeholder id
 		// mirroring instance:create's "dry-run-not-persisted". In
@@ -169,7 +168,7 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 				return
 			}
 			if errors.Is(err, persistence.ErrAPIKeyHashCollision) {
-				// Genuinely impossible at random for SHA-256 over
+				// @constraint: genuinely impossible at random for SHA-256 over
 				// 264 random bits; in practice this surfaces when a
 				// previous deploy left a stale row. 500 is the
 				// honest status code (the operator's
@@ -274,7 +273,7 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// Dry-run: key resolved and the last-key guard passed; skip the
+		// @constraint: dry-run: key resolved and the last-key guard passed; skip the
 		// MarkRevoked mutation and write the envelope before any state
 		// change (the dry-run never-mutates property; @concept: dry-run).
 		if WriteDryRunResponse(w, r, "would_have_revoked_key", map[string]any{
@@ -288,14 +287,14 @@ func handleRevokeKey(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if !found {
-			// Row was deleted between the lookup above and the
+			// @constraint: row was deleted between the lookup above and the
 			// UPDATE — vanishingly unlikely pre-v1 (no DELETE path
 			// exists), but keep the branch defensive.
 			notFoundResp(w, "no such key")
 			return
 		}
 		if !changed {
-			// Row exists but a prior revoker (typically the
+			// @constraint: row exists but a prior revoker (typically the
 			// rotation-grace sweep) already set revoked_at. The
 			// original revoker already fired auth.key_revoked +
 			// dropped the anon cache; emitting another row here
@@ -362,7 +361,7 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			writeJSON(w, http.StatusConflict, map[string]any{"error": "cannot rotate a revoked key"})
 			return
 		}
-		// Dry-run: key resolved, grace parsed, and not-revoked confirmed;
+		// @constraint: dry-run: key resolved, grace parsed, and not-revoked confirmed;
 		// skip the rotate transaction. The gate is BEFORE auth.Mint so a
 		// previewed rotate mints no plaintext and persists nothing (the
 		// dry-run never-mutates property; @concept: dry-run).
@@ -397,9 +396,11 @@ func handleRotateKey(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		deps.AuthState.InvalidateAnonCache()
+		// @constraint: uniform actor key — a rotation is found by its
+		// new key id; KeyName is preserved across the rotation.
 		deps.AuthState.EmitKeyRotated(ctx, auth.KeyRotatedPayload{
-			KeyID:    newRow.ID,   // uniform actor key: a rotation is found by its new key id
-			KeyName:  oldRow.Name, // name is preserved across the rotation
+			KeyID:    newRow.ID,
+			KeyName:  oldRow.Name,
 			OldKeyID: oldRow.ID,
 			NewKeyID: newRow.ID,
 			Name:     oldRow.Name,
@@ -427,7 +428,7 @@ func handleAuthStatus(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// Sum admin keys by listing all active keys and inspecting
+		// @constraint: sum admin keys by listing all active keys and inspecting
 		// their grants. Cheap in V1 (few keys); cache by V2 if it
 		// becomes a hot path.
 		//

@@ -21,7 +21,7 @@ import (
 func TestCoalesceCollapsesInvalidates(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Slow stub so the first frame is genuinely in flight while we fire follow-ups.
+	// @deliberate: Slow stub so the first frame is genuinely in flight while we fire follow-ups.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok").Delay(2 * time.Second)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -35,21 +35,18 @@ func TestCoalesceCollapsesInvalidates(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Wait until the first frame is running.
 	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
 		"first frame did not enter running")
 
-	// Fire 9 additional invalidates while the first is running. They
+	// @deliberate: Fire 9 additional invalidates while the first is running. They
 	// should all collapse into a single queued coalesce row.
 	for i := 0; i < 9; i++ {
 		fireInvalidate(t, h, iid, worker.ID)
 	}
 
-	// uq_rimsky_frames_coalesce_queued enforces at most one queued coalesce row.
 	require.LessOrEqual(t, countFramesByState(t, h, iid, "queued"), 1,
 		"more than one queued coalesce row")
 
-	// Wait for both frames to terminate.
 	require.Eventually(t, func() bool {
 		return countFramesByState(t, h, iid, "completed") == 2
 	}, 30*time.Second, 100*time.Millisecond,
@@ -63,7 +60,7 @@ func TestCoalesceCollapsesInvalidates(t *testing.T) {
 		require.Equal(t, "coalesce", f.Mode)
 		require.Equal(t, "completed", f.State)
 	}
-	// The trailing coalesce frame's source set is the union of the 9
+	// @deliberate: The trailing coalesce frame's source set is the union of the 9
 	// follow-ups. Since they all targeted worker.ID, the dedupe leaves
 	// a single source. (Spec §3.2: "append sourceNodeID to source_node_ids
 	// (deduped)".)

@@ -91,14 +91,14 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// 1. Host-side watched source. The body is mutable under a mutex so
-	//    the test can fire the "real external change" by swapping it
-	//    between matching / non-matching JSON shapes. Initial body's
-	//    deployment.status is "pending" — does NOT match the body
-	//    filter the template configures (value="healthy"), so a sensor
-	//    that honored the filter would NOT emit while this body is in
-	//    place. A request counter lets the test confirm the sensor IS
-	//    actually polling (refutes "polling skips a window" silently).
+	// @deliberate: Host-side watched source. The body is mutable under a mutex so
+	// the test can fire the "real external change" by swapping it
+	// between matching / non-matching JSON shapes. Initial body's
+	// deployment.status is "pending" — does NOT match the body
+	// filter the template configures (value="healthy"), so a sensor
+	// that honored the filter would NOT emit while this body is in
+	// place. A request counter lets the test confirm the sensor IS
+	// actually polling (refutes "polling skips a window" silently).
 	var (
 		bodyMu   sync.RWMutex
 		body     = `{"deployment":{"status":"pending","gen":0}}`
@@ -116,28 +116,28 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 
 	hostPort := hostPortOf(t, upstream.URL)
 
-	// 2. Shared docker network + a sibling Postgres for sensor-http's
-	//    state DSN. BringUpRimsky brings up its own `rimsky-pg`
-	//    Postgres for rimsky's schema; the sensor-http uses a SEPARATE
-	//    Postgres testcontainer on the same network so the sensor's
-	//    durable state survives the sensor's Terminate + fresh
-	//    container — exactly the durability isolation the watermark
-	//    proof requires.
+	// @deliberate: Shared docker network + a sibling Postgres for sensor-http's
+	// state DSN. BringUpRimsky brings up its own `rimsky-pg`
+	// Postgres for rimsky's schema; the sensor-http uses a SEPARATE
+	// Postgres testcontainer on the same network so the sensor's
+	// durable state survives the sensor's Terminate + fresh
+	// container — exactly the durability isolation the watermark
+	// proof requires.
 	netName := harness.NewNetwork(ctx, t)
 	statePG := startSensorHTTPStatePostgres(ctx, t, netName)
 
-	// 3. Bring up the sensor BEFORE rimsky so rimsky's eager-Dial of
-	//    the declared publisher at startup succeeds. The sensor sits on
-	//    the network at alias `sensor-http` with the durable state DSN
-	//    wired in and host-port-access opened for the host-side
-	//    httptest.Server.
+	// @constraint: Bring up the sensor BEFORE rimsky so rimsky's eager-Dial of
+	// the declared publisher at startup succeeds. The sensor sits on
+	// the network at alias `sensor-http` with the durable state DSN
+	// wired in and host-port-access opened for the host-side
+	// httptest.Server.
 	sensor := harness.StartSensorHTTPHandle(ctx, t, netName, "sensor-http", statePG.internalDSN, hostPort)
 
-	// 4. A stub executor so the reactor node has somewhere to dispatch
-	//    when an invalidate message lands. The reactor's actual run is
-	//    not under test here — the proof axis is the PERSISTED publisher
-	//    message — but the executor declaration keeps registration on
-	//    the strict (default) ref_validation_mode.
+	// @deliberate: A stub executor so the reactor node has somewhere to dispatch
+	// when an invalidate message lands. The reactor's actual run is
+	// not under test here — the proof axis is the PERSISTED publisher
+	// message — but the executor declaration keeps registration on
+	// the strict (default) ref_validation_mode.
 	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
 
 	ep := harness.BringUpRimsky(ctx, t,
@@ -146,24 +146,23 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 		harness.WithPublisher(httpPublisherName, sensor.Endpoint),
 	)
 
-	// 5. The watched URL the sensor polls is per-subscription
-	//    (resolved_config.url). Inside the sensor container the
-	//    host-side httptest.Server is reachable via the host-gateway
-	//    alias.
+	// @constraint: The watched URL the sensor polls is per-subscription
+	// (resolved_config.url). Inside the sensor container the
+	// host-side httptest.Server is reachable via the host-gateway
+	// alias.
 	watchedURL := fmt.Sprintf("http://host.testcontainers.internal:%d/", hostPort)
 
 	templateID := deploySensorHttpTemplate(t, ep, watchedURL)
 	instanceID := createSensorHttpInstance(t, ep, templateID, "ck-sensor-http-e2e")
 
-	// Wait on OBSERVABLE subscription state — mounting is asynchronous
+	// @constraint: Wait on OBSERVABLE subscription state — mounting is asynchronous
 	// (instance-create returns 201 with the row in `mounting`; the
 	// reconciler drives Subscribe to `active`), so the upstream-poll
 	// wait below must not race the mount under load: the sensor only
 	// starts polling once Subscribe lands.
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	// 6. PROOF — body filter is honored (Falsifier prong 2).
-	//
+	// @story: sensor-http — body filter is honored (Falsifier prong 2).
 	// The upstream body has deployment.status="pending"; the template's
 	// match.jsonpath filter requires deployment.status="healthy". With
 	// the body NOT matching, the sensor MUST NOT emit, even as polling
@@ -173,9 +172,8 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	waitForUpstreamPolls(t, &pollHits, 3, 30*time.Second)
 	requirePublisherMessageCount(t, ep, instanceID, 0, "body-filter-not-matching")
 
-	// 7. PROOF — body change with matching filter causes an emit
-	//    (Falsifier prong 1: polling does not skip a window).
-	//
+	// @story: sensor-http — body change with matching filter causes an emit
+	// (Falsifier prong 1: polling does not skip a window).
 	// Swap the upstream body so deployment.status="healthy" — the
 	// filter now matches. Wait until exactly one publisher message
 	// lands in rimsky, bounded by a multiple of the poll interval so a
@@ -186,24 +184,23 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 
 	requirePublisherMessagePersistedHTTP(t, ep, instanceID, httpPublisherName,
 		20*time.Second, "first-match-after-filter-flip")
-	// Pin the exact count so a sensor that emits MULTIPLE times on a
+	// @deliberate: Pin the exact count so a sensor that emits MULTIPLE times on a
 	// single body change (no watermark) breaks the gate too.
 	requirePublisherMessageCountStable(t, ep, instanceID, 1,
 		5*httpPollInterval, "exactly-one-after-first-match")
 
-	// 8. Independently verify the durable row carries the body-hash
-	//    watermark. The sensor writes LastHash on every successful emit
-	//    (sensor.go::pollOne → state.UpdateLastHash); the row's
-	//    last_hash column is the load-bearing watermark the restart
-	//    will rely on.
+	// @deliberate: Independently verify the durable row carries the body-hash
+	// watermark. The sensor writes LastHash on every successful emit
+	// (sensor.go::pollOne → state.UpdateLastHash); the row's
+	// last_hash column is the load-bearing watermark the restart
+	// will rely on.
 	statePool := connectSensorHTTPStatePostgres(ctx, t, statePG.hostDSN)
 	defer statePool.Close()
 	subID, originalLastHash := waitForSensorHttpRowWithHash(t, ctx, statePool, 20*time.Second)
 	t.Logf("sensor-http persisted subscription %s with last_hash=%s before restart",
 		subID, originalLastHash)
 
-	// 9. PROOF — restart preserves the watermark (Falsifier prong 3).
-	//
+	// @story: sensor-http — restart preserves the watermark (Falsifier prong 3).
 	// Stop the sensor container; rimsky stays up. With rimsky's
 	// ResyncPublisherSubscriptions running only at control-api startup
 	// (NOT periodically), no fresh Subscribe will be re-issued to the
@@ -217,7 +214,7 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	t.Logf("sensor-http stopped; pre-restart message count=%d, upstream polls=%d",
 		preRestartCount, preRestartPolls)
 
-	// Give the host server a quiet window so post-restart polls are
+	// @deliberate: Give the host server a quiet window so post-restart polls are
 	// unambiguously attributable to the revived sensor. With the sensor
 	// down, pollHits MUST NOT grow.
 	time.Sleep(2 * httpPollInterval)
@@ -231,25 +228,25 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	t.Logf("sensor-http restarted at %s; recovered watermark should suppress re-emit",
 		postRestartAt.Format(time.RFC3339Nano))
 
-	// 10. The load-bearing observable: the body has NOT changed since
-	//     the first emit, so the post-restart poll observes the SAME
-	//     content-hash. If the watermark was recovered, the sensor MUST
-	//     NOT re-emit. We assert (a) the sensor IS polling again
-	//     (pollHits grew past preRestartPolls), and (b) the message
-	//     count stays pinned at preRestartCount across a stability
-	//     window of several poll intervals.
+	// @deliberate: The load-bearing observable: the body has NOT changed since
+	// the first emit, so the post-restart poll observes the SAME
+	// content-hash. If the watermark was recovered, the sensor MUST
+	// NOT re-emit. We assert (a) the sensor IS polling again
+	// (pollHits grew past preRestartPolls), and (b) the message
+	// count stays pinned at preRestartCount across a stability
+	// window of several poll intervals.
 	waitForUpstreamPolls(t, &pollHits, int(preRestartPolls)+3, 30*time.Second)
 	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount,
 		5*httpPollInterval, "watermark-suppressed-re-emit-after-restart")
 
-	// 11. PROOF — recovered sensor is fully live (the filter, the
-	//     polling cadence, and the emit path all survived). Mutate the
-	//     body to a NEW matching shape (different content-hash, still
-	//     matches the filter); the revived sensor MUST observe the
-	//     change and emit exactly one more message. This is the cross-
-	//     check that the post-restart no-emit was due to the watermark
-	//     and not due to the sensor being broken end-to-end after
-	//     restart.
+	// @story: sensor-http — recovered sensor is fully live (the filter, the
+	// polling cadence, and the emit path all survived). Mutate the
+	// body to a NEW matching shape (different content-hash, still
+	// matches the filter); the revived sensor MUST observe the
+	// change and emit exactly one more message. This is the cross-
+	// check that the post-restart no-emit was due to the watermark
+	// and not due to the sensor being broken end-to-end after
+	// restart.
 	bodyMu.Lock()
 	body = `{"deployment":{"status":"healthy","gen":2}}`
 	bodyMu.Unlock()
@@ -259,9 +256,9 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount+1,
 		5*httpPollInterval, "exactly-one-after-second-match")
 
-	// 12. Watermark advanced past the original. The durable row's
-	//     last_hash MUST differ from the pre-restart hash — the second
-	//     emit overwrote it through state.UpdateLastHash.
+	// @deliberate: Watermark advanced past the original. The durable row's
+	// last_hash MUST differ from the pre-restart hash — the second
+	// emit overwrote it through state.UpdateLastHash.
 	requireSensorHttpHashAdvanced(t, ctx, statePool, subID, originalLastHash, 20*time.Second)
 }
 

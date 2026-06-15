@@ -68,8 +68,8 @@ func startExecutorStub(ctx context.Context, t testing.TB, networkName, alias str
 	if forceError {
 		env["EXECUTOR_STUB_FORCE_ERROR"] = "1"
 	}
-	// Serialize the dockerfile build so parallel sub-tests don't race on
-	// the fixed image tag (see stubBuildMu).
+	// @constraint: serialize the dockerfile build so parallel sub-tests don't
+	// race on the fixed image tag (see stubBuildMu).
 	stubBuildMu.Lock()
 	c, err := testcontainers.Run(ctx, "",
 		testcontainers.WithDockerfile(testcontainers.FromDockerfile{

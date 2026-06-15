@@ -104,7 +104,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// The calling node's executor IS the absorbed entry's executor
+	// @deliberate: The calling node's executor IS the absorbed entry's executor
 	// (per the canonicalizer's D2 step 4 entry-absorption); the stub
 	// dispatches against `caller` are the entry's executions. Per-leaf
 	// Delay on the internals creates a natural window between the
@@ -137,7 +137,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 				Name: tmplspec.MainGraphName,
 				Nodes: []node.TemplateNodeDef{
 					scenario.MakeNode(
-						// The delegating node: `delegate: worker` names the
+						// @deliberate: The delegating node: `delegate: worker` names the
 						// sub-graph. Canonicalization absorbs the worker's
 						// entry executor onto this node so the standard
 						// dispatch path runs the entry; the runtime then
@@ -150,7 +150,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 				},
 			},
 			{
-				// The named sub-graph: entry/exit declared per the
+				// @deliberate: The named sub-graph: entry/exit declared per the
 				// concept:sub-graph contract. inner-entry is the
 				// absorbed entry (its executor lives on the calling
 				// node); inner-mid + inner-exit dispatch as children
@@ -192,7 +192,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 	midNode := h.FindNode(iid, "inner-mid")
 	require.NotNil(t, midNode, "inner-mid node missing")
 
-	// === (a) Sub-graph RunScope is created. =============================
+	// @deliberate: (a) Sub-graph RunScope is created.
 	// applyTerminalCompleteSubgraphCaller inserts a rimsky_run_scopes row
 	// for the delegate graph at the calling node's entry-success
 	// terminal — proves the dispatch routed through the sub-graph
@@ -212,9 +212,9 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 		"sub-graph RunScope (graph_name='worker') must be created at the calling-node entry-success terminal "+
 			"(applyTerminalCompleteSubgraphCaller's RunScope INSERT)")
 
-	// === (b) Internal nodes dispatch INSIDE the sub-graph RunScope. =====
-	// Falsifier complement: if the delegating node weren't actually
-	// running the sub-graph as its execution unit, inner-mid /
+	// @deliberate: (b) Internal nodes dispatch INSIDE the sub-graph
+	// RunScope. Falsifier complement: if the delegating node weren't
+	// actually running the sub-graph as its execution unit, inner-mid /
 	// inner-exit would either never run or would run in the main scope.
 	for _, internal := range []struct {
 		typ    string
@@ -236,8 +236,8 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 				"the sub-graph is the delegating node's execution unit", internal.typ)
 	}
 
-	// === (c) ORDERING: caller held NON-SETTLED while sub-graph in flight.
-	// THE LOAD-BEARING ASSERTION for this story's Falsifier brief
+	// @deliberate: (c) ORDERING: caller held NON-SETTLED while sub-graph
+	// in flight. THE LOAD-BEARING ASSERTION for this story's Falsifier brief
 	// ("delegate node settles before the sub-graph does").
 	//
 	// At the calling node's entry-success terminal,
@@ -255,7 +255,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 	heldWitnessed := false
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
-		// Is the sub-graph in flight? Defined as: at least one
+		// @deliberate: Is the sub-graph in flight? Defined as: at least one
 		// rimsky_node_runs row in the worker scope whose phase is not
 		// yet terminal (= still pending/active/held/parked or whose
 		// state column hasn't yet flipped to a terminal value).
@@ -268,7 +268,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 			   AND r.phase IN ('pending','active','held','parked')
 		`, []any{iid}, &inflightInternals)
 
-		// Has the sub-graph exit settled? Once exit's run reaches
+		// @deliberate: Has the sub-graph exit settled? Once exit's run reaches
 		// phase='completed' the carry-rule has fired and the caller's
 		// aggregation will follow imminently — close the window.
 		var exitTerminal int
@@ -279,7 +279,7 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 		`, []any{exitNode.ID}, &exitTerminal)
 
 		if inflightInternals >= 1 && exitTerminal == 0 {
-			// In the held-window. Read the caller's run row state.
+			// @deliberate: In the held-window. Read the caller's run row state.
 			var callerState string
 			h.QueryRowSQL(`
 				SELECT COALESCE(state, 'fresh')
@@ -308,8 +308,8 @@ func TestTemplateSubGraphDelegation_SuccessPropagates(t *testing.T) {
 			"the %s per-leaf inner-delay should have created a wide enough window for the 25ms poll. "+
 			"If this fails without a delegate-pre-settles bug, widen innerDelay.", innerDelay)
 
-	// === (d) Outcome propagation: caller settles to fresh after exit. ===
-	// Once the sub-graph exit terminates (carry-rule fires; the
+	// @deliberate: (d) Outcome propagation: caller settles to fresh after
+	// exit. Once the sub-graph exit terminates (carry-rule fires; the
 	// internal cascade completes), state_propagation.go::walkUpwards
 	// aggregates the sub-graph children's terminal states to the
 	// calling node's run under strict aggregation. All-success children
@@ -363,11 +363,11 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Caller (= absorbed entry) succeeds; inner-mid errors with an
+	// @constraint: caller (= absorbed entry) succeeds; inner-mid errors with an
 	// unknown class so the default-policy give_up fires immediately.
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("inner-mid").Error("subgraph_doom", map[string]any{"why": "internal failure"})
-	// inner-exit is scripted to succeed but must NEVER run — strict
+	// @constraint: inner-exit is scripted to succeed but must NEVER run — strict
 	// aggregation with cancel-siblings retires it. Scripting it
 	// defensively ensures any accidental fire still produces a
 	// deterministic terminal (rather than a stub-mismatch hang) so the
@@ -408,7 +408,7 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 							Subscribes: []tmplspec.SubscriptionEntry{
 								{Node: "inner-entry", Type: "terminal/*"},
 							},
-							// No error_types: declared — default policy on
+							// @deliberate: No error_types: declared — default policy on
 							// an unknown class is give_up (immediate
 							// terminal failure). Strict aggregation
 							// projects to parent Failed.
@@ -433,7 +433,7 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 	require.NotNil(t, callerNode, "caller node missing")
 	midNode := h.FindNode(iid, "inner-mid")
 	require.NotNil(t, midNode, "inner-mid node missing")
-	// inner-exit's row is created by provisionInstanceTx (canonicalized
+	// @deliberate: inner-exit's row is created by provisionInstanceTx (canonicalized
 	// sub-graph nodes get rimsky_nodes rows on instance create) — confirm
 	// the row exists so a missing-node bug is caught at setup time
 	// rather than as a mysterious behavioural difference downstream. The
@@ -444,8 +444,8 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 	// in (b) below.
 	require.NotNil(t, h.FindNode(iid, "inner-exit"), "inner-exit node missing")
 
-	// === (a) Sub-graph internal errors. =================================
-	// The calling node's entry-success fires the internal cascade; the
+	// @deliberate: (a) Sub-graph internal errors. The calling node's
+	// entry-success fires the internal cascade; the
 	// internal cascade dispatches inner-mid; inner-mid errors with an
 	// unknown class; default policy give_up fires; inner-mid's run
 	// transitions to NodeStateFailed.
@@ -453,8 +453,8 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 		h.WaitForNodeState(midNode.ID, cascade.NodeStateFailed, 60*time.Second),
 		"inner-mid must reach NodeStateFailed (default give_up policy on unknown error class)")
 
-	// === (b) Sub-graph's terminal-error outcome propagates to the parent.
-	// THE LOAD-BEARING ASSERTION for this story's Falsifier brief
+	// @deliberate: (b) Sub-graph's terminal-error outcome propagates to
+	// the parent. THE LOAD-BEARING ASSERTION for this story's Falsifier brief
 	// ("sub-graph's terminal outcome doesn't propagate to the parent").
 	// PropagateFromChildState walks from inner-mid's run through the
 	// sub-graph RunScope's ParentRunID to the calling node's run, and
@@ -483,7 +483,7 @@ func TestTemplateSubGraphDelegation_ErrorPropagates(t *testing.T) {
 			"outcome must propagate to the parent via strict aggregation "+
 			"(runtime/state_propagation.go::walkUpwards + runtime/run_tree.go::aggregateStrict)")
 
-	// Pin the SIGNAL on the caller's run row: strict aggregator
+	// @deliberate: Pin the SIGNAL on the caller's run row: strict aggregator
 	// projects settling_signal_type=terminal/error/aggregate/strict_failed
 	// from a child Failed. Without this, the parent might fail for an
 	// unrelated reason (e.g. an internal-error during the cascade-fire

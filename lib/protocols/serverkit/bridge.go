@@ -122,10 +122,10 @@ func dispatchProducer(ctx context.Context, srv genv1.ClaimProducerServer, verb s
 		if err := decodeOptional(body, &req); err != nil {
 			return nil, fmt.Errorf("%w: %s", errBadRequest, err.Error())
 		}
-		// The proto types `intent` as a bare string; the wire schema
-		// permits only "r" or "rw". Validate at the server-side bridge
-		// so a malformed client cannot reach a producer-service's Open
-		// implementation with an unrecognized value.
+		// @constraint: the proto types `intent` as a bare string but the
+		// wire schema permits only "r" or "rw" — validate at the server-side
+		// bridge so a malformed client cannot reach a producer-service's
+		// Open implementation with an unrecognized value.
 		if req.Intent != "r" && req.Intent != "rw" {
 			return nil, fmt.Errorf("%w: intent must be \"r\" or \"rw\", got %q", errBadRequest, req.Intent)
 		}
@@ -249,8 +249,8 @@ type actionBody struct {
 // fields decode to zero values, which is treated as "no payload".
 type templateScopeBody struct {
 	TemplateHash string   `json:"template_hash"`
-	Spec         []byte   `json:"spec,omitempty"` // populated for on_template_registered
-	Tags         []string `json:"tags,omitempty"` // populated for on_template_deployed
+	Spec         []byte   `json:"spec,omitempty"` // @constraint: populated for on_template_registered
+	Tags         []string `json:"tags,omitempty"` // @constraint: populated for on_template_deployed
 }
 
 // instanceScopeBody is the JSON shape decoded from the two instance-
@@ -259,9 +259,9 @@ type templateScopeBody struct {
 type instanceScopeBody struct {
 	TemplateHash       string `json:"template_hash"`
 	InstanceID         string `json:"instance_id"`
-	InstanceKey        string `json:"instance_key,omitempty"`          // populated for on_instance_created
-	Params             []byte `json:"params,omitempty"`                // populated for on_instance_created
-	TerminatedAtUnixMs int64  `json:"terminated_at_unix_ms,omitempty"` // populated for on_instance_terminated
+	InstanceKey        string `json:"instance_key,omitempty"`          // @constraint: populated for on_instance_created
+	Params             []byte `json:"params,omitempty"`                // @constraint: populated for on_instance_created
+	TerminatedAtUnixMs int64  `json:"terminated_at_unix_ms,omitempty"` // @constraint: populated for on_instance_terminated
 }
 
 // decodeOptional accepts either an empty body or a JSON object.

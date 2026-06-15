@@ -114,7 +114,7 @@ type traceTestExecutor struct {
 	// exercise the live-streaming code path on its own.
 	gateBefore int
 
-	// dispatchStarted fires (capacity 1) on the first Execute call so
+	// @deliberate: dispatchStarted fires (capacity 1) on the first Execute call so
 	// the test can read the dispatch_id without polling, and
 	// releaseGate is closed by the test to let the dispatch continue
 	// past the gate. The test orchestrates these in lockstep with
@@ -132,15 +132,15 @@ type traceTestRecord struct {
 
 // traceTestSub is one live StreamTrace listener.
 type traceTestSub struct {
-	wake chan struct{} // capacity 1; coalesces appends
-	done chan struct{} // closed when terminal
+	wake chan struct{} // @deliberate: capacity 1; coalesces appends
+	done chan struct{} // @deliberate: closed when terminal
 }
 
 func newTraceTestExecutor() *traceTestExecutor {
 	return &traceTestExecutor{
 		traces:          map[string]*traceTestRecord{},
 		subs:            map[string]map[*traceTestSub]struct{}{},
-		gateBefore:      1, // emit one event, gate, emit more, terminal
+		gateBefore:      1, // @deliberate: emit one event, gate, emit more, terminal
 		dispatchStarted: make(chan string, 1),
 		releaseGate:     make(chan struct{}),
 	}
@@ -154,7 +154,7 @@ func (e *traceTestExecutor) Capabilities(_ context.Context, _ *genv1.ExecutorCap
 		SupportsTraceGet:              true,
 		SupportsTraceStream:           true,
 		RetentionAfterTerminalSeconds: 3600,
-		// Permissive open schema so rimsky's dispatch-time
+		// @deliberate: Permissive open schema so rimsky's dispatch-time
 		// expected_attributes_schema gate accepts a node with no
 		// attribute config.
 		ExpectedAttributesSchema: []byte(`{"type":"object"}`),
@@ -175,12 +175,12 @@ func (e *traceTestExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.Exec
 		return status.Error(codes.InvalidArgument, "dispatch_id required")
 	}
 
-	// Register the dispatch so AppendEvent / GetTrace / StreamTrace
+	// @deliberate: Register the dispatch so AppendEvent / GetTrace / StreamTrace
 	// recognise it (forged ids cannot create records). Modeled on
 	// http-node's RegisterDispatch.
 	e.registerDispatch(dispatchID)
 
-	// Emit one event before the gate — this is the snapshot the
+	// @deliberate: Emit one event before the gate — this is the snapshot the
 	// post-subscribe StreamTrace handshake will replay before live
 	// streaming begins.
 	e.appendEvent(dispatchID, &genv1.TraceEvent{
@@ -191,7 +191,7 @@ func (e *traceTestExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.Exec
 		Message:   "dispatch starting",
 	})
 
-	// Surface the dispatch_id to the test (non-blocking; only the
+	// @deliberate: Surface the dispatch_id to the test (non-blocking; only the
 	// first Execute call signals — subsequent calls (if any) are
 	// dropped on the capacity-1 channel).
 	select {
@@ -199,7 +199,7 @@ func (e *traceTestExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.Exec
 	default:
 	}
 
-	// Block until the test has subscribed via StreamTrace. The
+	// @constraint: Block until the test has subscribed via StreamTrace. The
 	// remaining events the test asserts as "live-streamed" emit
 	// AFTER this release — exactly what the real-time streaming
 	// property requires.
@@ -209,7 +209,7 @@ func (e *traceTestExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.Exec
 		return stream.Context().Err()
 	}
 
-	// Emit a sequence of trace events post-gate. Small sleeps
+	// @deliberate: Emit a sequence of trace events post-gate. Small sleeps
 	// between emits keep the live subscriber's drain loop honest:
 	// the wakeup channel coalesces multiple appends into one drain
 	// pass, but with delays each append corresponds to a separate
@@ -226,7 +226,7 @@ func (e *traceTestExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.Exec
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// Emit the close-out trace event then mark the trace terminal
+	// @deliberate: Emit the close-out trace event then mark the trace terminal
 	// just before the StreamClose so the live subscriber's "drain
 	// then emit trace_complete" loop is exercised correctly.
 	e.appendEvent(dispatchID, &genv1.TraceEvent{
@@ -239,7 +239,7 @@ func (e *traceTestExecutor) Execute(req *genv1.ExecuteRequest, stream genv1.Exec
 	})
 	e.markTerminal(dispatchID)
 
-	// Send the Success terminal to the supervisor. AttributesDelta
+	// @deliberate: Send the Success terminal to the supervisor. AttributesDelta
 	// nil — the node has no attribute schema beyond the permissive
 	// default, so an empty writeback is fine.
 	return stream.Send(&genv1.ExecuteEvent{
@@ -367,7 +367,7 @@ func (e *traceTestExecutor) StreamTrace(req *genv1.StreamTraceRequest, stream ge
 		case <-stream.Context().Done():
 			return nil
 		case <-sub.done:
-			// Drain the tail one more time before closing — events
+			// @constraint: Drain the tail one more time before closing — events
 			// the dispatch emitted between drainFrom and markTerminal
 			// must not be dropped (Falsifier: silently drops events
 			// under load).
@@ -379,7 +379,6 @@ func (e *traceTestExecutor) StreamTrace(req *genv1.StreamTraceRequest, stream ge
 			}
 			return stream.Send(traceTestCompleteEvent())
 		case <-sub.wake:
-			// Loop back to drain the next batch.
 		}
 	}
 }
@@ -490,7 +489,6 @@ func TestExecutorTraceObservability(t *testing.T) {
 		},
 	})
 
-	// --- Boot the assembled product: register + deploy + instantiate ---
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name:                "trace-observability-" + traceExecutorName,
 		Version:             "v1",
@@ -507,7 +505,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w, "worker node should exist on instance")
 
-	// --- Wait for the real dispatch to reach the executor ---
+	// @deliberate: Wait for the real dispatch to reach the executor
 	// The supervisor enqueues and dispatches; the executor signals
 	// dispatchStarted on its first Execute. This is the dispatch_id
 	// the operator-side query surfaces will key on.
@@ -519,7 +517,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 	}
 	require.NotEmpty(t, dispatchID, "executor must record a real dispatch_id")
 
-	// --- Dial the executor's observability surface as a dashboard would ---
+	// @deliberate: Dial the executor's observability surface as a dashboard would
 	// This is the spec's "operator-side query" — gRPC to the executor's
 	// own endpoint, NOT to rimsky's control-api. The Falsifier "trace
 	// surface is absent for an executor that advertised trace support"
@@ -530,7 +528,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 	obsClient := genv1.NewExecutorObservabilityClient(conn)
 
-	// Verify the executor's discovery handshake honestly advertises
+	// @constraint: Verify the executor's discovery handshake honestly advertises
 	// trace support. Per the Falsifier, a "surface absent" executor
 	// would set these flags false; the spec's STORY-… body requires
 	// trace support to be advertised AND queryable.
@@ -539,7 +537,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 	require.True(t, caps.GetSupportsTraceGet(), "trace executor must advertise GetTrace")
 	require.True(t, caps.GetSupportsTraceStream(), "trace executor must advertise StreamTrace")
 
-	// --- Subscribe to the live stream BEFORE releasing the gate ---
+	// @constraint: Subscribe to the live stream BEFORE releasing the gate
 	// This is the load-bearing real-time-streaming property: events
 	// emitted by Execute AFTER this subscribe must reach the test
 	// over the wire while the dispatch is still in flight. The
@@ -552,7 +550,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 	streamClient, err := obsClient.StreamTrace(streamCtx, &genv1.StreamTraceRequest{DispatchId: dispatchID})
 	require.NoError(t, err, "StreamTrace open")
 
-	// The replay should deliver the one pre-gate event the
+	// @constraint: The replay should deliver the one pre-gate event the
 	// executor emitted before signaling dispatchStarted. We do
 	// not require a strict snapshot-vs-live boundary because the
 	// http-node-style implementation interleaves them — what the
@@ -590,7 +588,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 		}
 	}()
 
-	// Drain at least the first (pre-gate) event before releasing
+	// @deliberate: Drain at least the first (pre-gate) event before releasing
 	// the gate. This guarantees the subscriber's cursor advances
 	// past the snapshot replay before live events begin, so the
 	// post-gate events truly exercise the wakeup-driven live path.
@@ -600,12 +598,11 @@ func TestExecutorTraceObservability(t *testing.T) {
 		return len(streamedEvents) >= 1
 	}, 5*time.Second, 25*time.Millisecond, "snapshot replay (ev-start) should reach subscriber before gate release")
 
-	// Release the dispatch — the executor emits ev-step-1..3 +
+	// @constraint: Release the dispatch — the executor emits ev-step-1..3 +
 	// ev-done after this. The live subscriber must observe them
 	// before the supervisor sees Success.
 	close(traceExec.releaseGate)
 
-	// --- Wait for the live stream to drain and close ---
 	select {
 	case streamErr := <-streamDone:
 		require.NoError(t, streamErr, "StreamTrace should close cleanly with trace_complete")
@@ -613,7 +610,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 		t.Fatal("StreamTrace never closed; live streaming may have stalled or dropped trace_complete")
 	}
 
-	// --- Wait for the node to reach a terminal cascade state ---
+	// @deliberate: Wait for the node to reach a terminal cascade state
 	// The supervisor only flips a node to Fresh after the StreamClose
 	// terminal — proves the dispatch the trace captures is the same
 	// dispatch rimsky terminaled.
@@ -621,7 +618,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 		h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker node should settle Fresh on Success terminal")
 
-	// --- Live-stream contents: real-time events must include the
+	// @constraint: Live-stream contents: real-time events must include the
 	//     post-gate sequence in the order emitted ---
 	// Filter out the trace_complete sentinel and assert the event
 	// sequence matches what the executor emitted. The Falsifier
@@ -643,7 +640,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 		streamedIDs,
 		"live stream must deliver every emitted event in order — no drops, no reorder")
 
-	// --- Query the trace history through GetTrace ---
+	// @deliberate: Query the trace history through GetTrace
 	// Per the Falsifier "trace history returns rows that don't
 	// correspond to what the executor actually emitted", we
 	// compare the GetTrace event list event-id-for-event-id with
@@ -662,7 +659,7 @@ func TestExecutorTraceObservability(t *testing.T) {
 	require.Equal(t, streamedIDs, historyIDs,
 		"GetTrace history must match the streamed events exactly — same ids, same order")
 
-	// Also assert the structured per-event fields (category, message,
+	// @deliberate: Also assert the structured per-event fields (category, message,
 	// severity, parent linkage) round-trip — defends against the
 	// "returns rows that don't correspond" Falsifier from a different
 	// angle (canned ids but wrong bodies).

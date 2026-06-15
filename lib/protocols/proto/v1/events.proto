@@ -239,10 +239,6 @@ message UnresolvedExecutorPayload {
   string supervisor_id = 3;
 }
 
-// ---------------------------------------------------------------------------
-// New payloads (stores-redesign, spec §9.8)
-// ---------------------------------------------------------------------------
-
 // LockAcquiredPayload is emitted when a supervisor successfully acquires a
 // lock-holder row (§13.3). `lock_kind` is one of "named" | "scope" | "claim"
 // and selects which of the kind-specific fields are populated.

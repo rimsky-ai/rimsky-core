@@ -9,10 +9,8 @@
 // = `map[string]any`); the caller is responsible for loading the data
 // from the upstream claim's address.
 //
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Verifier executors / verifier-shape-checks.
-//
-//	@concept: verifier-pattern
+// @deliberate: implements the verifier-executor pattern
+// (documentation-only, no successor concept).
 package checks
 
 import (
@@ -36,16 +34,16 @@ type Row = map[string]any
 type Result struct {
 	Kind    string
 	Pass    bool
-	Failed  []Row    // when Pass=false, the offending rows (bounded)
-	Counts  Counters // useful diagnostic counters
-	Message string   // human-readable summary
+	Failed  []Row    // @constraint: populated only when Pass=false; capped at 100 rows by appendBounded.
+	Counts  Counters // @constraint: diagnostic counters returned to the executor for aggregation.
+	Message string   // @constraint: human-readable summary surfaced in the Error terminal.
 }
 
 // Counters carry numeric diagnostics shared across the check set.
 type Counters struct {
 	Rows      int
 	Failed    int
-	Threshold float64 // populated by checks that compare against a ratio
+	Threshold float64 // @constraint: populated by ratio-comparing checks (row_count_ratio); zero otherwise.
 }
 
 // Severity classifies how a failed check is treated at run time. An
@@ -239,7 +237,7 @@ func joinParts(parts []string) string {
 	out := ""
 	for i, p := range parts {
 		if i > 0 {
-			out += "\x1f" // ASCII unit separator
+			out += "\x1f" // @deliberate: ASCII unit separator avoids collision with field-value contents in the composite key.
 		}
 		out += p
 	}
@@ -416,8 +414,7 @@ func numeric(v any) (float64, bool) {
 	case int32:
 		return float64(x), true
 	}
-	// Reflect for other numeric kinds we might encounter from non-JSON
-	// loaders (e.g. Arrow Decimal128 surfaced as int64).
+	// @deliberate: reflect-fallback handles numeric kinds non-JSON loaders may surface (e.g. Arrow Decimal128 as int64).
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
 	case reflect.Float32, reflect.Float64:

@@ -27,12 +27,12 @@ type Result struct {
 // RunnerOpts configures a single conformance run.
 type RunnerOpts struct {
 	Endpoint        Endpoint
-	RequireStubMode bool          // if true, probe must return {stub:true}; else fail
-	Only            []string      // run only these scenario names
-	Skip            []string      // skip these scenario names
-	Timeout         time.Duration // per-scenario; default 30s
-	CallbackBind    string        // BindHost for the callback receiver (default "127.0.0.1")
-	CallbackHost    string        // AdvertiseHost for the callback receiver (default same as BindHost)
+	RequireStubMode bool          // @constraint: if true, probe must return {stub:true}; else fail
+	Only            []string      // @constraint: run only these scenario names
+	Skip            []string      // @constraint: skip these scenario names
+	Timeout         time.Duration // @constraint: per-scenario; default 30s
+	CallbackBind    string        // @constraint: BindHost for the callback receiver (default "127.0.0.1")
+	CallbackHost    string        // @constraint: AdvertiseHost for the callback receiver (default same as BindHost)
 }
 
 // Run dials the endpoint, starts a CallbackReceiver, probes capabilities, and
@@ -127,11 +127,11 @@ func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 	defer stream.Close()
 	ev, err := AwaitTerminal(pctx, stream, env)
 	if err != nil {
-		// AwaitTerminal failures are indeterminate — the caller
-		// (`--require-stub-mode`) MUST treat this as a probe failure
-		// rather than "executor isn't stubbed". Returning (false, nil)
-		// here would let a non-stub executor pass the require gate when
-		// the probe RPC merely timed out.
+		// @constraint: AwaitTerminal failures are indeterminate — the caller
+		// (`--require-stub-mode`) MUST treat this as a probe failure rather
+		// than "executor isn't stubbed". Returning (false, nil) here would
+		// let a non-stub executor pass the require gate when the probe RPC
+		// merely timed out.
 		return false, err
 	}
 	if sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose); ok {

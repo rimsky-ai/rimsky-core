@@ -2,7 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// messages.go — MessagesTable conformance fixture. Exercises the
+// @concept: message
+
+// @constraint: conformance area conformance area.
 // MessageListFilter.FrameID predicate against both drivers (postgres +
 // sqlite) so the per-driver `frame_id = ?` clause is honored by the real
 // engine, not just the application layer.
@@ -40,18 +42,15 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// frameA is the fixture's running frame; frameB is a second distinct
-	// frame id so a FrameID filter has a genuine cross-frame negative to
-	// exclude. rimsky_messages.frame_id carries no FK and an instance
+	// @constraint: frameB is a synthetic UUID, not a second concurrent
+	// frame row — rimsky_messages.frame_id carries no FK and an instance
 	// holds at most one live frame row (uq on rimsky_frames.instance_id,
-	// the serial-queue model), so frameB is a synthetic id rather than a
-	// second concurrent frame row — the filter under test reads
-	// rimsky_messages.frame_id, not rimsky_frames.
+	// the serial-queue model). The filter under test reads
+	// rimsky_messages.frame_id, not rimsky_frames, so a synthetic id is
+	// sufficient to drive a cross-frame negative.
 	frameA := fix.FrameID
 	frameB := shared.UUID(uuid.New())
 
-	// enqueueAndDeliver inserts one message and, when frame is non-zero,
-	// marks it delivered into that frame. Returns the message id.
 	enqueueAndDeliver := func(t *testing.T, frame shared.UUID, payload map[string]any) shared.UUID {
 		t.Helper()
 		msgID := shared.UUID(uuid.New())
@@ -91,7 +90,8 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 
 	msgA := enqueueAndDeliver(t, frameA, map[string]any{"partition_request_override": map[string]any{"a": 1}})
 	msgB := enqueueAndDeliver(t, frameB, map[string]any{"partition_request_override": map[string]any{"b": 2}})
-	// A still-pending message (no frame) must never match a FrameID filter.
+	// @constraint: a still-pending message (no frame) must never match a
+	// FrameID filter — seeded as a negative the predicate must exclude.
 	_ = enqueueAndDeliver(t, shared.UUID{}, map[string]any{"partition_request_override": map[string]any{"c": 3}})
 
 	list := func(f persistence.MessageListFilter) []persistence.MessageRow {
@@ -103,12 +103,10 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		return res.Rows
 	}
 
-	// nil FrameID is a no-op: all three messages for the instance.
 	if got := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID}); len(got) != 3 {
 		t.Fatalf("no FrameID filter = %d rows, want 3", len(got))
 	}
 
-	// FrameID = frameA returns exactly msgA.
 	gotA := list(persistence.MessageListFilter{FrameID: &frameA})
 	if len(gotA) != 1 {
 		t.Fatalf("FrameID(A) = %d rows, want 1", len(gotA))
@@ -120,7 +118,8 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		t.Fatalf("FrameID(A) row frame_id mismatch: %v", gotA[0].FrameID)
 	}
 
-	// FrameID = frameB returns exactly msgB (proves cross-frame exclusion).
+	// @constraint: FrameID(B) must return exactly msgB — proves the
+	// predicate excludes rows from a different frame, not just filters in.
 	gotB := list(persistence.MessageListFilter{FrameID: &frameB})
 	if len(gotB) != 1 {
 		t.Fatalf("FrameID(B) = %d rows, want 1", len(gotB))
@@ -129,18 +128,19 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		t.Fatalf("FrameID(B) returned %s, want %s", gotB[0].ID, msgB)
 	}
 
-	// FrameID for a frame with no delivered message returns nothing —
-	// guards against a predicate that always matches.
+	// @constraint: a FrameID for which no message was delivered must
+	// return zero rows — guards against a predicate that degenerates to
+	// always-match.
 	unknownFrame := shared.UUID(uuid.New())
 	if got := list(persistence.MessageListFilter{FrameID: &unknownFrame}); len(got) != 0 {
 		t.Fatalf("FrameID(unknown) = %d rows, want 0", len(got))
 	}
 
-	// ListDeliveredForFrame is the tx-aware sibling fan-out acquisition
-	// calls from inside the open acquisition tx (the tx-less List would
-	// deadlock the single-conn SQLite driver there). It must return the
-	// same single message for frameA, run cleanly inside a tx, and never
-	// pick up the still-pending row.
+	// @constraint: ListDeliveredForFrame is the tx-aware sibling fan-out
+	// acquisition calls from inside the open acquisition tx — the tx-less
+	// List would deadlock the single-conn SQLite driver there. It must
+	// return the same single message for frameA, run cleanly inside a tx,
+	// and never pick up the still-pending row.
 	var deliveredA []persistence.MessageRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.Messages().ListDeliveredForFrame(ctx, tx, frameA)

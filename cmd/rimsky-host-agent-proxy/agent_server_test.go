@@ -50,7 +50,7 @@ func TestConnectRequiresRegisterFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open stream: %v", err)
 	}
-	// Send a Heartbeat first instead of Register — should be rejected.
+	// @deliberate: Send a Heartbeat first instead of Register — should be rejected.
 	if err := stream.Send(&genv1.ClientFrame{Body: &genv1.ClientFrame_Heartbeat{Heartbeat: &genv1.HostAgentHeartbeat{}}}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -113,11 +113,9 @@ func TestDuplicateRegisterDisplacesPrior(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// First connection.
 	s1, _ := client.Connect(ctx)
 	registerAndAck(t, s1, "key-1", "")
 
-	// Second connection for the same key.
 	s2, _ := client.Connect(ctx)
 	mustSend(t, s2, &genv1.ClientFrame{Body: &genv1.ClientFrame_Register{Register: &genv1.Register{ApiKey: "key-1", AgentLabel: "host-b"}}})
 	frame, err := s2.Recv()
@@ -145,7 +143,7 @@ func TestSpawnAckCorrelation(t *testing.T) {
 		t.Fatalf("agent not registered")
 	}
 
-	// Register a pending spawn, then have the agent client deliver an ack.
+	// @deliberate: Register a pending spawn, then have the agent client deliver an ack.
 	ackCh := conn.registerSpawnPending("spawn-1")
 
 	mustSend(t, stream, &genv1.ClientFrame{Body: &genv1.ClientFrame_SpawnAck{SpawnAck: &genv1.SpawnAck{
@@ -172,16 +170,15 @@ func TestStreamCloseDropsAgentAndNotifies(t *testing.T) {
 	registerAndAck(t, stream, "key-1", "")
 	conn, _ := state.lookupAgent("key-1")
 
-	// Open an in-flight dispatch stream channel.
 	respCh := conn.registerStream("stream-1")
 
-	// Close the client side; the server should drop the agent and close
-	// the in-flight dispatch channel.
+	// @constraint: close the client side; the server must drop the
+	// agent and close the in-flight dispatch channel.
 	if err := stream.CloseSend(); err != nil {
 		t.Fatalf("close send: %v", err)
 	}
 
-	// The dispatch channel should be closed (signalling disconnect).
+	// @constraint: the dispatch channel must be closed to signal disconnect.
 	select {
 	case _, open := <-respCh:
 		if open {
@@ -191,7 +188,7 @@ func TestStreamCloseDropsAgentAndNotifies(t *testing.T) {
 		t.Fatalf("dispatch channel not closed on disconnect")
 	}
 
-	// The agent should be dropped from state.
+	// @constraint: the agent must be dropped from state after disconnect.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, ok := state.lookupAgent("key-1"); !ok {
@@ -201,8 +198,6 @@ func TestStreamCloseDropsAgentAndNotifies(t *testing.T) {
 	}
 	t.Fatalf("agent not dropped after stream close")
 }
-
-// --- helpers ---
 
 func mustSend(t *testing.T, stream genv1.HostAgent_ConnectClient, frame *genv1.ClientFrame) {
 	t.Helper()

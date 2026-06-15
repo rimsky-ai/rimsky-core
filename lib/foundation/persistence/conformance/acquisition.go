@@ -2,9 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// acquisition.go — AcquisitionTxAtomicity conformance area.
-//
-// Inv 10: lock acquisition is atomic with dispatch claim. The supervisor's
+// @constraint: Inv 10 (AcquisitionTxAtomicity) — lock acquisition is atomic with dispatch claim. The supervisor's
 // §7.3 acquisition transaction either claims dispatch + INSERTs all
 // required lock-holder rows + UPDATEs lock-holder addresses, or none of
 // these.
@@ -44,8 +42,8 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	lockName := "acquisition-lock"
 	rollbackErr := errors.New("rollback the whole acquisition")
 
-	// Roll back: claim dispatch + insert lock-holder + update address all
-	// inside a tx that returns an error. None should land.
+	// @deliberate: rollback half of the atomicity check — claim dispatch + insert
+	// lock-holder + update address inside a tx that returns an error; none should land.
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{
 			AcceptedExecutors: []string{"test-executor"},
@@ -85,7 +83,6 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		t.Fatalf("expected rollback err, got %v", err)
 	}
 
-	// Verify nothing landed.
 	var got *persistence.ClaimHandleRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.ClaimHandles().Get(ctx, lockHolderID, tx)
@@ -97,7 +94,6 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	if got != nil {
 		t.Fatalf("rollback failed: lock-holder %s present", lockHolderID)
 	}
-	// Find dispatch row + verify unclaimed.
 	rows, err := q.ListOrphanedClaims(ctx, time.Now().Add(1*time.Hour))
 	if err != nil {
 		t.Fatalf("ListOrphanedClaims: %v", err)
@@ -108,7 +104,8 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// Commit: same operations, but return nil. All three must land.
+	// @deliberate: commit half of the atomicity check — same three operations, tx returns nil;
+	// all three must land.
 	addressBytes := json.RawMessage(`{"addr":"committed"}`)
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		cands, err := q.SelectCandidates(ctx, tx, persistence.SelectCandidatesRequest{

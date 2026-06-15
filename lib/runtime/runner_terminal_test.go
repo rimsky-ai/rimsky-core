@@ -40,7 +40,7 @@ func TestWaitSetTopicKindFor_FullTaxonomy(t *testing.T) {
 		{"message/invalidate/operator/n", signalpkg.TypePath("message/invalidate/operator/n"), "message"},
 	}
 
-	got := make(map[string]string, len(cases)) // signal class name → mapped bucket
+	got := make(map[string]string, len(cases))
 	for _, tc := range cases {
 		bucket := waitSetTopicKindFor(tc.pattern)
 		if bucket != tc.want {
@@ -51,7 +51,7 @@ func TestWaitSetTopicKindFor_FullTaxonomy(t *testing.T) {
 		got[tc.name] = bucket
 	}
 
-	// No two DISTINCT signal classes may collapse onto the same bucket —
+	// @deliberate: No two DISTINCT signal classes may collapse onto the same bucket —
 	// the legacy mapper folded terminal/transient/message all onto
 	// "state", which is exactly the lossiness this taxonomy widening
 	// exists to remove.

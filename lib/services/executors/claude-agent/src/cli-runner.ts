@@ -55,8 +55,7 @@ export function buildAllowedTools(templateAllowed?: string[]): string[] {
  *     binary with system prompt + MCP config passed via tmpfiles and user
  *     prompt via stdin.
  *   - Fake runners for tests construct their own {@link CliHandle}.
- */
-/**
+ *
  * A single MCP server wired into the spawned CLI's `--mcp-config`.
  *
  * Two leaf shapes, discriminated by `kind`:
@@ -203,8 +202,7 @@ export interface CliRunner {
  * `CliSpawnRequest.env` (e.g. `RIMSKY_CALLBACK_URL`,
  * `RIMSKY_CALLBACK_TOKEN`), reaches the subprocess. This keeps unrelated
  * pod env (DB DSNs, internal callback secrets) out of the CLI.
- */
-/**
+ *
  * Builds the argv passed to the `claude` binary for one dispatch.
  *
  * Args follow the working pattern from skillprompting/brain
@@ -244,7 +242,7 @@ export function buildClaudeCliArgs(
   const maxBudgetUsd = req.maxBudgetUsd ?? process.env.RIMSKY_DISPATCH_MAX_USD;
   return [
     "--print",
-    // stream-json + --verbose make the CLI emit incremental NDJSON events
+    // @deliberate: stream-json + --verbose make the CLI emit incremental NDJSON events
     // (one per assistant message, tool call, tool result, etc.) on stdout
     // while it works — without this, an orchestrator pattern that waits on
     // long Task subagent calls produces no parent stdout for minutes,
@@ -259,7 +257,7 @@ export function buildClaudeCliArgs(
     permissionMode,
     ...(req.sessionId ? ["--session-id", req.sessionId] : []),
     ...(req.bare ? ["--bare"] : []),
-    // Always emit --allowedTools: the executor's own rimsky-callback MCP
+    // @deliberate: always emit --allowedTools: the executor's own rimsky-callback MCP
     // tools must be allowlisted regardless of the per-template config, or
     // Claude Code 2.1.x's deferred-MCP permission surface blocks the
     // terminal callback even under bypassPermissions. Per-template tools
@@ -303,13 +301,13 @@ export function buildClaudeCliResumeArgs(
     "--resume",
     req.sessionId,
     "--print",
-    // Keep stream-json + verbose for parity with spawn — the executor's
+    // @deliberate: keep stream-json + verbose for parity with spawn — the executor's
     // silence-tracker still watches stdout, and the resume run is
     // typically short (one prompt → one tool call).
     "--output-format",
     "stream-json",
     "--verbose",
-    // Resume runs the reminder/park-recovery prompt whose whole purpose is to
+    // @deliberate: resume runs the reminder/park-recovery prompt whose whole purpose is to
     // land a rimsky-callback terminal outcome, so the callback tools MUST be
     // allowlisted here too — otherwise the deferred-MCP permission gate
     // blocks the very call we resumed to make. `--allowedTools` is NOT
@@ -344,10 +342,9 @@ function mcpConfigJson(tools: CliToolConfig[]): string {
         headers: t.headers ?? {},
       };
     } else if (t.kind === "mcp-stdio") {
-      // Claude CLI's `--mcp-config` stdio leaf: a local server the CLI
-      // spawns as a subprocess. `env` is omitted entirely when unset so
-      // the child inherits the CLI's environment (matching the CLI's own
-      // default).
+      // @deliberate: omit `env` entirely when unset so the spawned stdio MCP
+      // subprocess inherits the CLI's environment, matching the Claude CLI's
+      // own default for `--mcp-config` stdio leaves.
       mcpServers[t.name] = {
         type: "stdio",
         command: t.command,
@@ -394,7 +391,7 @@ function buildHandleFromChild(
   const runCleanup = (): void => {
     if (cleanupRan) return;
     cleanupRan = true;
-    try { onCleanup(); } catch { /* ignore */ }
+    try { onCleanup(); } catch { /* @deliberate: ignore */ }
   };
 
   child.on("exit", (code, signal) => {
@@ -459,11 +456,11 @@ export function createClaudeCliRunner(opts: {
         void unlink(systemPromptPath).catch(() => {});
         void unlink(mcpConfigPath).catch(() => {});
         void rm(tmp, { recursive: true, force: true }).catch(() => {});
-        try { cleanupAuthEnv(); } catch { /* ignore */ }
+        try { cleanupAuthEnv(); } catch { /* @deliberate: ignore */ }
       });
     },
     async resume(req: CliResumeRequest): Promise<CliHandle> {
-      // The CLI session carries the model + system prompt across resume,
+      // @deliberate: the CLI session carries the model + system prompt across resume,
       // so we don't re-pass `--system-prompt-file`. MCP config, however,
       // is NOT session-persisted — it's process-local runtime config —
       // so we must write a fresh `mcp.json` and pass `--mcp-config` on
@@ -487,7 +484,7 @@ export function createClaudeCliRunner(opts: {
       return buildHandleFromChild(child, () => {
         void unlink(mcpConfigPath).catch(() => {});
         void rm(tmp, { recursive: true, force: true }).catch(() => {});
-        try { cleanupAuthEnv(); } catch { /* ignore */ }
+        try { cleanupAuthEnv(); } catch { /* @deliberate: ignore */ }
       });
     },
   };

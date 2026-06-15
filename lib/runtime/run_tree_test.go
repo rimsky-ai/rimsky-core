@@ -118,7 +118,7 @@ func TestAggregate_StrictActiveBlocks(t *testing.T) {
 	}
 }
 
-// TestAggregate_Threshold — threshold below max_failures → success.
+// TestAggregate_ThresholdBelowMax — threshold below max_failures → success.
 func TestAggregate_ThresholdBelowMax(t *testing.T) {
 	children := []ChildState{
 		success(true),

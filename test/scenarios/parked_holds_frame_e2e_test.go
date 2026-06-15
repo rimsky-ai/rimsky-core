@@ -67,7 +67,7 @@ func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// The worker parks indefinitely on first dispatch (no resume_at), so the
+	// @deliberate: The worker parks indefinitely on first dispatch (no resume_at), so the
 	// frame stays held until an external invalidate wakes it. The resolving
 	// Success script is registered after the parked-state probes below (the
 	// same ordering parked_lifecycle_test.go uses).
@@ -82,34 +82,34 @@ func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 		},
 	})
 
-	// Create the instance with terminate_after_run = true via the real HTTP
+	// @deliberate: Create the instance with terminate_after_run = true via the real HTTP
 	// create path (the harness CreateInstance helper does not set the flag).
 	iid := createInstanceTerminateAfterRun(t, h, tid)
 
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// --- Parked: the frame is held, the instance is NOT terminated --------
+	// @constraint: Parked: the frame is held, the instance is NOT terminated
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
-	// The instance must NOT be terminated while a node is parked, even with
+	// @constraint: The instance must NOT be terminated while a node is parked, even with
 	// terminate_after_run set (Pass-3 parked-aware instance-terminal guard).
 	require.Nil(t, getInstance(t, h, iid).TerminatedAt,
 		"instance must NOT be terminated while a node is parked, even with terminate_after_run set")
 
-	// The held-frames diagnostic must report this frame held (running) —
+	// @constraint: The held-frames diagnostic must report this frame held (running) —
 	// the Pass-1 fix keeps the frame open while the node is parked, so the
 	// diagnostic (running frame + parked node_run) and the frame-end rule
 	// agree.
 	require.True(t, waitForHeldFrame(t, h, worker.ID.String(), 10*time.Second),
 		"held-frames diagnostic should report the frame held while the node is parked")
 
-	// --- Wake: resume → resolve → frame ends → only THEN terminate -------
+	// @deliberate: Wake: resume → resolve → frame ends → only THEN terminate
 	// Re-script the worker so the resume dispatch resolves to Success.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "after-callback")
 
-	// Wake via admin invalidate (NOT /v1/callback — a parked node is not
+	// @deliberate: Wake via admin invalidate (NOT /v1/callback — a parked node is not
 	// woken by the callback endpoint).
 	resp, err := http.Post(
 		h.ControlBase+"/v1/admin/instances/"+worker.InstanceID.String()+"/nodes/"+worker.ID.String()+"/invalidate",
@@ -123,7 +123,7 @@ func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should resolve to Success after the wake dispatch")
 
-	// Only after the real frame-end does terminate_after_run fire. terminated_at
+	// @constraint: Only after the real frame-end does terminate_after_run fire. terminated_at
 	// must not have been set while parked (asserted above); it becomes set once
 	// the resolved frame ends.
 	require.True(t, waitForInstanceTerminated(t, h, iid, 30*time.Second),
@@ -156,12 +156,11 @@ func createInstanceTerminateAfterRun(t *testing.T, h *scenario.Harness, template
 	id, err := uuid.Parse(out.InstanceID)
 	require.NoError(t, err)
 
-	// Confirm the flag round-trips on the GET projection (the thread-through
+	// @deliberate: Confirm the flag round-trips on the GET projection (the thread-through
 	// is what makes terminate_after_run reach the instance-terminal predicate).
 	require.True(t, getInstance(t, h, id).TerminateAfterRun,
 		"created instance should report terminate_after_run=true")
 
-	// Wait for the worker's root dispatch to land (a node_run row exists).
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		var count int

@@ -19,7 +19,7 @@ Operators curate the catalog of workflows their rimsky deployment offers, with a
 
 ## Acceptance
 
-Through the control-api or the `rimsky template …` CLI, an operator submits a template definition; afterward, the same operator can retrieve it by name or content hash, can mark it deployed and from that point create instances of it that proceed to run, can mark it undeployed and from that point have new instance-creation refused, and can delete it once no instance references it. The operator can also pre-flight a definition through a validation surface and get back findings without the template being persisted.
+Through the control-api or the template-lifecycle CLI surface, an operator submits a template definition; afterward, the same operator can retrieve it by name or content hash, can mark it deployed and from that point create instances of it that proceed to run, can mark it undeployed and from that point have new instance-creation refused, and can delete it once no instance references it. The operator can also pre-flight a definition through a validation surface and get back findings without the template being persisted.
 
 ## Falsifier
 

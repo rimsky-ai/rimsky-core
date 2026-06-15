@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Pluggable backend interface (`inline`, `pg-largeobject`, `filesystem`, `memory`).
+Pluggable backend interface across the inline, Postgres-large-object, filesystem, and memory backends (see `concept:blob-backend`).
 
 ## Rationale
 

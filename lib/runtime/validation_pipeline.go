@@ -37,9 +37,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/clientiface"
 )
 
-// Re-exports of the wire-shape types from `runtime/clientiface/`
-// (Apache-licensed). The canonical docs live on the alias targets.
-// See `data_processing.go` for the licensing-boundary rationale.
+// @constraint: re-exports of the wire-shape types from
+// `runtime/clientiface/` (Apache-licensed). The canonical docs live on
+// the alias targets. See `data_processing.go` for the licensing-boundary
+// rationale.
 type (
 	ValidationFinding                = clientiface.ValidationFinding
 	ValidationOutcome                = clientiface.ValidationOutcome
@@ -53,25 +54,14 @@ type (
 	UnreachableValidatorPolicy       = clientiface.UnreachableValidatorPolicy
 )
 
-const (
-	// UnreachableValidatorPermissiveWarn is the default — registration
-	// succeeds with a warning.
-	UnreachableValidatorPermissiveWarn = clientiface.UnreachableValidatorPermissiveWarn
-	// UnreachableValidatorStrict — registration fails when any
-	// referenced service cannot be reached.
-	UnreachableValidatorStrict = clientiface.UnreachableValidatorStrict
-)
+// UnreachableValidatorPermissiveWarn is the default policy: registration
+// succeeds with a warning when a referenced service cannot be reached.
+const UnreachableValidatorPermissiveWarn = clientiface.UnreachableValidatorPermissiveWarn
 
-// RunValidationPipeline iterates the canonicalized template, walks the
-// services each node references, and aggregates findings into a single
-// `ValidationOutcome`. Unreachable validators obey `policy`.
-//
-// The pipeline is intentionally additive — it does not re-run the
-// static `expected_attributes_schema` checks the template validator
-// already performs at canonicalization against the merged effective
-// attribute schema. Errors at the static step were already reported
-// with a 400; this pipeline runs only after static validation passes.
-//
+// UnreachableValidatorStrict makes registration fail when any referenced
+// service cannot be reached.
+const UnreachableValidatorStrict = clientiface.UnreachableValidatorStrict
+
 // ExpectedAttributesSchemaLookup returns the named executor's
 // advertised `expected_attributes_schema` JSON bytes (the
 // ObservabilityCapabilities contribution to the merged effective
@@ -80,7 +70,16 @@ const (
 // behaviour). Empty bytes also mean "no schema visible".
 type ExpectedAttributesSchemaLookup func(executor string) ([]byte, bool)
 
-// Empty registry (`reg == nil` or returns nothing) → no-op success.
+// RunValidationPipeline iterates the canonicalized template, walks the
+// services each node references, and aggregates findings into a single
+// `ValidationOutcome`. Unreachable validators obey `policy`. With a nil
+// registry (or one returning nothing), the pipeline is a no-op success.
+//
+// @deliberate: the pipeline is additive — it does not re-run the
+// static `expected_attributes_schema` checks the template validator
+// already performs at canonicalization against the merged effective
+// attribute schema. Errors at the static step were already reported
+// with a 400; this pipeline runs only after static validation passes.
 func RunValidationPipeline(
 	ctx context.Context,
 	reg ValidationRegistry,
@@ -97,7 +96,6 @@ func RunValidationPipeline(
 		policy = UnreachableValidatorPermissiveWarn
 	}
 
-	// Executor-role + ClaimProducer-role checks per node.
 	for _, n := range tpl.Nodes {
 		if err := runExecutorRoleCheck(ctx, reg, policy, n, tpl, execSchemaLookup, &out); err != nil {
 			return out, err
@@ -107,12 +105,11 @@ func RunValidationPipeline(
 		}
 	}
 
-	// Sensor-role validation checks per declared publisher entry.
-	// The validation protocol's per-role surface is unchanged; the
-	// template-DSL block renames from `sensors:` to `publishers:` but
-	// the inner role name on the Validation protocol stays "sensor"
-	// (sensors are one kind of publisher; the validation role is
-	// kind-shaped).
+	// @deliberate: the validation protocol's per-role surface is
+	// unchanged across the publisher-unification rename; the template-DSL
+	// block renames from `sensors:` to `publishers:` but the inner role
+	// name on the Validation protocol stays "sensor" (sensors are one
+	// kind of publisher; the validation role is kind-shaped).
 	for _, publisher := range tpl.Publishers {
 		client, ok := reg.Get(publisher.Name)
 		if !ok || !clientAdvertisesRole(client, "sensor") {
@@ -126,11 +123,11 @@ func RunValidationPipeline(
 		appendFindings(&out, client.Name(), "sensor", "", errs, warns, err, policy)
 	}
 
-	// LifecycleSubscriber-role: no per-template iteration unless
-	// the operator's config maps lifecycle subscribers explicitly.
-	// V1 ships without that iteration; the per-template lifecycle
-	// validation is covered by the `OnTemplateRegistered` fan-out
-	// the templates handler already performs.
+	// @deliberate: LifecycleSubscriber-role has no per-template iteration
+	// in V1 — the per-template lifecycle validation is covered by the
+	// `OnTemplateRegistered` fan-out the templates handler already
+	// performs. Per-template iteration is gated on a future operator
+	// config that maps lifecycle subscribers explicitly.
 	_ = templateID
 
 	return out, nil
@@ -149,15 +146,15 @@ func runExecutorRoleCheck(
 	if !ok || !clientAdvertisesRole(client, "executor") {
 		return nil
 	}
-	// Send the merged effective attribute schema (executor's
+	// @constraint: send the merged effective attribute schema (executor's
 	// expected_attributes_schema ∪ L1 template defaults ∪ L2 node
 	// schema) to executor-side validators. Pre-collapse, the bare L2
 	// schema was sufficient because L1 defaults lived in a separate
 	// userdata bag; post-collapse, executor validators that read
-	// `properties.<key>.default` (e.g. verifier-shape-checks's
-	// `checks` field) need to see L1 contributions too. Per spec
+	// `properties.<key>.default` (e.g. verifier-shape-checks's `checks`
+	// field) need to see L1 contributions too. Per spec
 	// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-	// §"Design changes" / `concept:validation`.
+	// §"Design changes" / @concept: validation.
 	var nodeSchema map[string]any
 	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 		nodeSchema = n.Attributes.Schema
@@ -165,9 +162,10 @@ func runExecutorRoleCheck(
 	var execSchema map[string]any
 	if execSchemaLookup != nil {
 		if bytesIn, ok := execSchemaLookup(n.Executor); ok && len(bytesIn) > 0 {
-			// Unmarshal failures fall back to a nil executor schema —
-			// the static-schema check earlier in registration already
-			// reports those, so the pipeline doesn't double-error.
+			// @deliberate: unmarshal failures fall back to a nil executor
+			// schema — the static-schema check earlier in registration
+			// already reports those, so the pipeline doesn't
+			// double-error.
 			_ = json.Unmarshal(bytesIn, &execSchema)
 		}
 	}
@@ -207,7 +205,6 @@ func runClaimProducerRoleChecks(
 	if len(n.Stores) == 0 {
 		return nil
 	}
-	// Group per producer name so each producer sees its claims.
 	byProducer := map[string][]spec.NodeStoreRef{}
 	for _, s := range n.Stores {
 		byProducer[s.Name] = append(byProducer[s.Name], s)
@@ -289,5 +286,4 @@ func appendFindings(
 	}
 }
 
-// keep shared imports alive.
 var _ = shared.UUID{}

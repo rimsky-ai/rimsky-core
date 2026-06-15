@@ -65,28 +65,27 @@ func RunWatch(ctx context.Context, args []string) int {
 	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	var lastSeenID int64 // event-log high-watermark
+	var lastSeenID int64
 	for {
-		// Accumulate this cycle's new event-log rows into one slice, then
-		// stable-sort by timestamp and render. The event log is a single
-		// stream (breakpoint hits included as `breakpoint.hit` rows), so one
-		// drain is the whole chronological feed. lastSeenID does cross-cycle
-		// dedup; the sort is within-cycle — pages arrive newest-first, so the
-		// sort restores chronological print order.
+		// @deliberate: accumulate this cycle's event-log rows into one slice
+		// and stable-sort by timestamp before rendering. The event log is a
+		// single stream (breakpoint hits included as `breakpoint.hit` rows),
+		// so one drain is the whole chronological feed. lastSeenID does
+		// cross-cycle dedup; the sort is within-cycle because pages arrive
+		// newest-first and the sort restores chronological print order.
 		var batch []watchLine
 
-		// Drain new event-log rows. Mirror the events follow-loop cursor
-		// discipline (RunInstanceEvents): the live control-api reads the
-		// event log newest-first ((occurred_at, id) DESC) and NextCursor is
-		// an OPAQUE base64 keyset token — pass that exact token back to walk
-		// the backlog, never a fabricated numeric seq (which 500s with
-		// "events.list: bad cursor", issue #1). NextCursor is set only on a
-		// full page; "" signals the backlog is drained.
-		//
-		// lastSeenID is a purely-local dedup high-watermark, never sent as a
-		// cursor. Pages arrive newest-first, so the skip test compares
-		// against a per-poll snapshot (prevSeen): advancing the watermark
-		// mid-drain would suppress every older event on the following pages.
+		// @constraint: NextCursor is an OPAQUE base64 keyset token from the
+		// control-api's newest-first ((occurred_at, id) DESC) read — pass
+		// that exact token back to walk the backlog, never a fabricated
+		// numeric seq (which 500s with "events.list: bad cursor", issue #1).
+		// NextCursor is set only on a full page; "" signals the backlog is
+		// drained.
+		// @deliberate: lastSeenID is a purely-local dedup high-watermark,
+		// never sent as a cursor. Pages arrive newest-first, so the skip
+		// test compares against a per-poll snapshot (prevSeen): advancing
+		// the watermark mid-drain would suppress every older event on the
+		// following pages.
 		prevSeen := lastSeenID
 		nextCursor := ""
 		for {
@@ -104,7 +103,7 @@ func RunWatch(ctx context.Context, args []string) int {
 				if e.ID > lastSeenID {
 					lastSeenID = e.ID
 				}
-				e := e // capture for the render closure
+				e := e
 				batch = append(batch, watchLine{
 					ts:     parseWatchTime(e.OccurredAt),
 					render: func() { printWatchEvent(common.Format, e) },
@@ -116,9 +115,9 @@ func RunWatch(ctx context.Context, args []string) int {
 			nextCursor = page.NextCursor
 		}
 
-		// Render the cycle's rows in timestamp order. SliceStable keeps
-		// equal-timestamp rows in drain order; pages arrive newest-first, so
-		// the sort restores chronological print order within the cycle.
+		// @deliberate: SliceStable (not Slice) keeps equal-timestamp rows in
+		// drain order; pages arrive newest-first, so the sort restores
+		// chronological print order within the cycle.
 		sort.SliceStable(batch, func(i, j int) bool {
 			return batch[i].ts.Before(batch[j].ts)
 		})
@@ -126,7 +125,6 @@ func RunWatch(ctx context.Context, args []string) int {
 			line.render()
 		}
 
-		// Check the terminal flag; exit when set.
 		inst, err := c.GetInstance(signalCtx, id)
 		if err != nil {
 			if signalCtx.Err() != nil {

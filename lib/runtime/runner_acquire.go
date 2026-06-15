@@ -78,7 +78,9 @@ func lookupGraphName(graphs []spec.GraphSpec, nodeType string) string {
 // non-nil, the runner attaches a ResumeContext to the ExecuteRequest
 // the executor receives. Per plan E4.
 type resumeMetadata struct {
-	Payload      []byte // Park.payload (post-spill resolution)
+	// @constraint: post-spill resolution of Park.payload — bytes have
+	// already been expanded from any spill reference.
+	Payload      []byte
 	SessionToken string
 	Reason       WakeReason
 }
@@ -361,8 +363,6 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 			return acq, ok, err
 		}
 		if len(candidates) < limit {
-			// The batch wasn't full: there is nothing beyond it to page
-			// to this poll.
 			return acquisition{}, false, nil
 		}
 		last := candidates[len(candidates)-1]
@@ -394,11 +394,11 @@ func tryAcquireBatch(
 			continue
 		}
 		if err == errAcquireRestampLost {
-			// Expected concurrent-supervisor race on the linked sub-claim
-			// holder restamp: this candidate's tx rolled back; the row
-			// stays pending and is re-selected next poll. Skip ONLY this
-			// candidate — aborting the batch would cost every sibling a
-			// poll cycle for a non-fault.
+			// @deliberate: expected concurrent-supervisor race on the linked
+			// sub-claim holder restamp. The candidate's tx rolled back; the
+			// row stays pending and is re-selected next poll. Skip ONLY this
+			// candidate — aborting the batch would cost every sibling a poll
+			// cycle for a non-fault.
 			args.Logger.Info("tryAcquire: sub-claim holder restamp lost CAS to concurrent supervisor; skipping candidate",
 				"dispatch_id", cand.DispatchID.String(),
 				"node_id", cand.NodeID.String())
@@ -410,11 +410,11 @@ func tryAcquireBatch(
 		if !ok {
 			continue
 		}
-		// Test-only seam: deterministically inject behavior into the
-		// post-commit / pre-verify window so an integration test can force
-		// the cross-transaction ownership flip that @blessed-invariant 5's
-		// verify-before-run guard catches. Nil in production (no behavior
-		// change); see RunArgs.PostCommitHook.
+		// @deliberate: test-only seam that deterministically injects behavior
+		// into the post-commit / pre-verify window so an integration test
+		// can force the cross-transaction ownership flip that
+		// `@blessed-invariant 5`'s verify-before-run guard catches. Nil in
+		// production (no behavior change); see RunArgs.PostCommitHook.
 		if args.PostCommitHook != nil {
 			args.PostCommitHook(ctx)
 		}
@@ -426,20 +426,21 @@ func tryAcquireBatch(
 			handleOrphanedClaim(ctx, args, acq)
 			return acquisition{}, false, nil
 		}
-		// Post-commit named-lock "acquired" counters. Incremented here —
-		// not inside the per-candidate tx — so a later spec failing that
-		// tx never leaves a phantom acquisition behind a rollback.
-		// Labeled with the bounded template name (namedLockMetricLabel).
+		// @deliberate: increment named-lock "acquired" counters post-commit,
+		// not inside the per-candidate tx, so a later spec failing that tx
+		// never leaves a phantom acquisition behind a rollback. Labeled with
+		// the bounded template name (namedLockMetricLabel).
 		for _, lk := range acq.Locks {
 			if nls, isNamed := lk.Spec.(locks.NamedLockSpec); isNamed {
 				metricsOf(args).IncNamedLockAcquisition(namedLockMetricLabel(nls), "acquired")
 			}
 		}
-		// Post-acquisition audit-log tx: heartbeat refresh, `work_started`
-		// event append, per-lock `lock_acquired` event appends. Best-effort
-		// — the dispatch has already committed at this point, so a failed
-		// audit append must not abort the dispatch. We WARN-and-continue
-		// so the loss is visible without losing the in-flight work.
+		// @constraint: post-acquisition audit-log tx — heartbeat refresh,
+		// `work_started` event append, per-lock `lock_acquired` event
+		// appends. Best-effort: the dispatch has already committed at this
+		// point, so a failed audit append must not abort the dispatch.
+		// WARN-and-continue so the loss is visible without losing the
+		// in-flight work.
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			if err := args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, acq.RunScopeID, args.Clock.Now(), args.SupervisorID, tx); err != nil {
 				return err
@@ -525,28 +526,28 @@ func tryAcquireWithTx(
 			return inner
 		}
 		if !ok {
-			// Roll back so partial mutations from a non-eligible
-			// candidate don't leak.
+			// @constraint: roll back so partial mutations from a non-eligible
+			// candidate don't leak into the next candidate's tx.
 			return errTryAcquireRollback
 		}
 		return nil
 	})
 	if err == errAcquireUnavailable {
-		// Tx rolled back via the sentinel. acq carries PartialLocks /
-		// UnavailableSpec for the outer caller to route through the
-		// `error_types: { acquire/unavailable: ... }` chain.
+		// @constraint: tx rolled back via the sentinel; acq carries
+		// PartialLocks / UnavailableSpec for the outer caller to route
+		// through the `error_types: { acquire/unavailable: ... }` chain.
 		return acq, false, errAcquireUnavailable
 	}
 	if err == errAcquireProducerErrored {
-		// Tx rolled back via the sentinel. acq carries PartialLocks /
-		// ErroredSpec / ProducerErrorClass for the outer caller to route
-		// through the operator's `error_types:` chain.
+		// @constraint: tx rolled back via the sentinel; acq carries
+		// PartialLocks / ErroredSpec / ProducerErrorClass for the outer
+		// caller to route through the operator's `error_types:` chain.
 		return acq, false, errAcquireProducerErrored
 	}
 	if err == errAcquireRestampLost {
-		// Tx rolled back via the sentinel: the sub-claim holder restamp
-		// lost its CAS to a concurrent supervisor. The batch loop logs
-		// and skips to the next candidate.
+		// @constraint: tx rolled back via the sentinel — the sub-claim
+		// holder restamp lost its CAS to a concurrent supervisor. The batch
+		// loop logs and skips to the next candidate.
 		return acquisition{}, false, errAcquireRestampLost
 	}
 	if err != nil && err != errTryAcquireRollback {
@@ -586,23 +587,23 @@ func tryAcquire(
 	}
 	inst, err := args.Persist.Instances().Get(ctx, nd.InstanceID, tx)
 	if err != nil {
-		// Per the per-instance attribute-overrides feature: instance row
-		// is load-bearing for dispatch (template lookup AND override
-		// blob). Surface the error to the caller (mirrors the Nodes().Get
-		// path above) so a sustained DB issue produces a visible signal
-		// rather than a silent log-spammy skip on every candidate. The
-		// outer dispatch loop logs and aborts the tick; the candidate's
-		// dispatch row remains in `pending` (we bailed before
-		// ClaimDispatchRow) and will be re-selected on the next tick.
+		// @constraint: the instance row is load-bearing for dispatch
+		// (template lookup AND override blob). Surface the error to the
+		// caller (mirrors the Nodes().Get path above) so a sustained DB
+		// issue produces a visible signal rather than a silent log-spammy
+		// skip on every candidate. The outer dispatch loop logs and aborts
+		// the tick; the candidate's dispatch row remains in `pending` (we
+		// bailed before ClaimDispatchRow) and will be re-selected on the
+		// next tick.
 		return acquisition{}, false, fmt.Errorf("tryAcquire: instances.Get: %w", err)
 	}
 	tmpl := lookupTemplate(ctx, args, tx, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
 	templateAttributeDefaults := templateAttributeDefaultsFor(tmpl, nd.Executor)
-	// Derive the dispatch-time graph name for the L5 matcher-overlay
-	// layer. Graph name comes from the bound template's Graphs list
-	// (or `spec.MainGraphName` for legacy flat-Nodes templates).
-	// RunScopeID comes from the run-tree row; partition_key /
+	// @concept: attribute — derive the dispatch-time graph name for the L5
+	// matcher-overlay layer. Graph name comes from the bound template's
+	// Graphs list (or `spec.MainGraphName` for legacy flat-Nodes
+	// templates). RunScopeID comes from the run-tree row; partition_key /
 	// parent_run_id are looked up on demand via the RunScope
 	// (resolveAcqScopeTuple / resolveAcqPartitionKey).
 	graphName := spec.MainGraphName
@@ -613,21 +614,20 @@ func tryAcquire(
 	if rt := args.Persist.RunTree(); rt != nil {
 		row, err := rt.GetByID(ctx, tx, cand.DispatchID)
 		if err != nil {
-			// The run-scope key is load-bearing for the upstream gate
-			// below (a zero scope would dispatch ungated — the gate
-			// fails closed on it). Surface the error like the
-			// instances.Get path above: the outer loop logs and aborts
-			// the tick; the row stays pending and is re-selected.
+			// @constraint: the run-scope key is load-bearing for the
+			// upstream gate below (a zero scope would dispatch ungated —
+			// the gate fails closed on it). Surface the error like the
+			// instances.Get path above: the outer loop logs and aborts the
+			// tick; the row stays pending and is re-selected.
 			return acquisition{}, false, fmt.Errorf("tryAcquire: run-tree GetByID: %w", err)
 		}
 		if row == nil {
-			// Benign selection race: the dispatch row legally retired
-			// (completed / removed by another supervisor or sweep)
-			// between candidate selection and this lookup. Skip ONLY
-			// this candidate — aborting the whole tick would cost every
-			// sibling candidate a poll cycle for a non-fault. The
-			// fail-closed posture is reserved for the lookup-errored
-			// branch above.
+			// @deliberate: benign selection race — the dispatch row legally
+			// retired (completed / removed by another supervisor or sweep)
+			// between candidate selection and this lookup. Skip ONLY this
+			// candidate — aborting the whole tick would cost every sibling
+			// candidate a poll cycle for a non-fault. The fail-closed
+			// posture is reserved for the lookup-errored branch above.
 			args.Logger.Info("tryAcquire: run row absent (retired between selection and acquire); skipping candidate",
 				"dispatch_id", cand.DispatchID.String(),
 				"node_id", cand.NodeID.String())
@@ -635,13 +635,13 @@ func tryAcquire(
 		}
 		runScopeID = row.RunScopeID
 	}
-	// Upstream-gating eligibility condition (pre-claim, pre-mutation):
-	// skip the candidate while any subscribed upstream has an in-flight
-	// run in the candidate's (frame, run scope), regardless of which
-	// propagation path made the receiver stale. The row stays pending;
-	// the sender's settlement re-triggers selection. Sits beside the
-	// other in-Go eligibility checks so it shares the candidate context
-	// and the §7.3 try tx (a bail here rolls back cleanly). See
+	// @constraint: upstream-gating eligibility condition (pre-claim,
+	// pre-mutation) — skip the candidate while any subscribed upstream has
+	// an in-flight run in the candidate's (frame, run scope), regardless
+	// of which propagation path made the receiver stale. The row stays
+	// pending; the sender's settlement re-triggers selection. Sits beside
+	// the other in-Go eligibility checks so it shares the candidate
+	// context and the §7.3 try tx (a bail here rolls back cleanly). See
 	// runner_acquire_upstream_gate.go for the invariant.
 	gated, err := candidateGatedByInFlightUpstream(ctx, args, tx, nd, inst, cand, runScopeID)
 	if err != nil {
@@ -676,12 +676,12 @@ func tryAcquire(
 	for _, sp := range specs {
 		al, res, err := acquireOneLock(ctx, args, tx, nd.InstanceID, sp, cand, heartbeatInterval, heldSubgraphs)
 		if res == openResultErrored {
-			// A producer Open RPC faulted. err is the *peer.ProducerCallError
-			// carrying the translated error_class; recover it and carry the
-			// partial-acquired list + errored spec out across the rollback so
-			// the outer caller routes the class through the operator's
-			// `error_types:` chain — the same chain executor Error{error_class}
-			// terminals use.
+			// @constraint: a producer Open RPC faulted. err is the
+			// *peer.ProducerCallError carrying the translated error_class;
+			// recover it and carry the partial-acquired list + errored spec
+			// out across the rollback so the outer caller routes the class
+			// through the operator's `error_types:` chain — the same chain
+			// executor Error{error_class} terminals use.
 			erroredSpec, _ := sp.(claimproducer.ClaimSpec)
 			out := acquisition{
 				DispatchID:                cand.DispatchID,
@@ -715,10 +715,10 @@ func tryAcquire(
 		case openResultAcquired:
 			acquiredLocks = append(acquiredLocks, al)
 		case openResultUnavailable:
-			// Carry the partial-acquired list and the unavailable spec
-			// out across the rollback so the outer caller can route
-			// through the operator's `error_types: { acquire/unavailable:
-			// ... }` chain.
+			// @constraint: carry the partial-acquired list and the
+			// unavailable spec out across the rollback so the outer caller
+			// can route through the operator's
+			// `error_types: { acquire/unavailable: ... }` chain.
 			unavailableSpec, _ := sp.(claimproducer.ClaimSpec)
 			out := acquisition{
 				DispatchID:                cand.DispatchID,
@@ -773,50 +773,50 @@ func tryAcquire(
 	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, heartbeatInterval); err != nil {
 		return acquisition{}, false, err
 	}
-	// Cross-supervisor sub-claim handoff. The sub-claim rows linked to
-	// this leaf run were INSERTed at the PARENT's acquisition under the
-	// parent acquirer's supervisor id, but ANY replica can claim the leaf
-	// run — without the restamp, the leaf's terminal would resolve under
-	// a supervisor that fails every claimant guard (Promote no-ops with a
-	// WARN, the parent's settlement walk stalls, and the chain unwinds
-	// only via the orphan reaper's spurious Abandon AFTER the producer
-	// already saw Commit). Re-stamping inside the leaf's acquisition tx
-	// makes the acquiring supervisor the legitimate holder, CAS-guarded
-	// from the holder observed in this same tx (@blessed-invariant 4).
-	// NOT best-effort: a failed restamp aborts this candidate's tx so the
-	// leaf never runs under a supervisor that cannot settle it.
+	// @constraint: cross-supervisor sub-claim handoff. The sub-claim rows
+	// linked to this leaf run were INSERTed at the PARENT's acquisition
+	// under the parent acquirer's supervisor id, but ANY replica can claim
+	// the leaf run — without the restamp, the leaf's terminal would
+	// resolve under a supervisor that fails every claimant guard (Promote
+	// no-ops with a WARN, the parent's settlement walk stalls, and the
+	// chain unwinds only via the orphan reaper's spurious Abandon AFTER
+	// the producer already saw Commit). Re-stamping inside the leaf's
+	// acquisition tx makes the acquiring supervisor the legitimate holder,
+	// CAS-guarded from the holder observed in this same tx
+	// (`@blessed-invariant 4`). NOT best-effort: a failed restamp aborts
+	// this candidate's tx so the leaf never runs under a supervisor that
+	// cannot settle it.
 	if err := restampLinkedSubClaimHolders(ctx, args, tx, cand); err != nil {
 		return acquisition{}, false, err
 	}
-	// E4 leaf candidate-handle binding. A fan-out LEAF (a child run in a
-	// fanout_partition RunScope) Open's a fresh parent-selector claim of
-	// its own at acquisition above, but the candidate handle the producer
-	// minted for THIS partition lives on the linked sub-claim row (whose
-	// node_run_id was repointed to this leaf in
-	// `child_execution.go::DispatchChildren`). Resolve it now and carry
+	// @concept: fan-out — E4 leaf candidate-handle binding. A fan-out LEAF
+	// (a child run in a fanout_partition RunScope) Open's a fresh
+	// parent-selector claim of its own at acquisition above, but the
+	// candidate handle the producer minted for THIS partition lives on the
+	// linked sub-claim row (whose node_run_id was repointed to this leaf
+	// in `child_execution.go::DispatchChildren`). Resolve it now and carry
 	// it onto the matching AcquiredLock so `makeClaimHandle` can stamp
 	// `StoreHandle.candidate_handle` at dispatch. Best-effort: a lookup
-	// failure logs and leaves the candidate empty (degrades to the
-	// pre-E4 behaviour) rather than failing the leaf dispatch.
+	// failure logs and leaves the candidate empty (degrades to the pre-E4
+	// behaviour) rather than failing the leaf dispatch.
 	bindLeafCandidateHandles(ctx, args, tx, &out, cand)
-	// E4b co-holder row registration. For each `holds:` declaration on
-	// this node, find the upstream's claim handle and INSERT a
-	// `rimsky_claim_holders` row with `holder_run_id = this run`. The
-	// co-holder's dispatch-time INSERT replaces the eager acquire-time
-	// INSERTs the previous model used. Done inside the acquisition tx
-	// for atomicity per plan E4b step 2 — a co-holder run is either
-	// fully bound (own claims acquired AND co-held claims registered) or
-	// not bound at all.
+	// @concept: claim-co-holdership — E4b co-holder row registration. For
+	// each `holds:` declaration on this node, find the upstream's claim
+	// handle and INSERT a `rimsky_claim_holders` row with
+	// `holder_run_id = this run`. The co-holder's dispatch-time INSERT
+	// replaces the eager acquire-time INSERTs the previous model used.
+	// Done inside the acquisition tx for atomicity per plan E4b step 2 — a
+	// co-holder run is either fully bound (own claims acquired AND
+	// co-held claims registered) or not bound at all.
 	//
-	// @blessed-invariant 13: the holders set is the auto-terminal's input.
-	// @concept: claim-co-holdership
+	// `@blessed-invariant 13`: the holders set is the auto-terminal's input.
 	if err := insertCoHolderClaimHoldersAtAcquire(ctx, args, tx, cand, nodeDef, tmpl); err != nil {
 		return acquisition{}, false, fmt.Errorf("tryAcquire: co-holder rows: %w", err)
 	}
-	// Bind co-held addresses into the dispatch-time `ExecuteRequest`:
-	// load the upstream claim handles' addresses per alias and stash on
-	// the acquisition. Same lookup the substitution context uses
-	// (loadInheritedClaimsForNode); read once and reuse.
+	// @constraint: bind co-held addresses into the dispatch-time
+	// `ExecuteRequest` — load the upstream claim handles' addresses per
+	// alias and stash on the acquisition. Same lookup the substitution
+	// context uses (loadInheritedClaimsForNode); read once and reuse.
 	if held := loadInheritedClaimsForNode(ctx, args, tx, nd); len(held) > 0 {
 		out.HeldClaims = held
 	}
@@ -874,11 +874,11 @@ func restampLinkedSubClaimHolders(
 		}
 		if err := ch.ReassignHolderSupervisor(ctx, row.ID, *row.HolderSupervisorID, args.SupervisorID, tx); err != nil {
 			if errors.Is(err, spec.ErrIllegalClaimHandleTransition) {
-				// CAS lost: a concurrent resolution or competing handoff
-				// changed the holder between our read and the guarded
-				// UPDATE. Expected race under ≥2 supervisors — signal the
-				// skip-this-candidate sentinel so the batch loop moves on
-				// instead of aborting every remaining candidate.
+				// @deliberate: CAS lost — a concurrent resolution or
+				// competing handoff changed the holder between the read and
+				// the guarded UPDATE. Expected race under ≥2 supervisors;
+				// signal the skip-this-candidate sentinel so the batch loop
+				// moves on instead of aborting every remaining candidate.
 				return errAcquireRestampLost
 			}
 			return fmt.Errorf("restampLinkedSubClaimHolders: sub-claim %s (holder %s → %s): %w",
@@ -928,8 +928,8 @@ func bindLeafCandidateHandles(ctx context.Context, args RunArgs, tx persistence.
 	}
 	for i := range rows {
 		row := rows[i]
-		// Only sub-claim rows (parent_claim_handle_id set) carry a leaf
-		// candidate handle. Skip the leaf's own freshly-Open'd
+		// @constraint: only sub-claim rows (parent_claim_handle_id set)
+		// carry a leaf candidate handle. Skip the leaf's own freshly-Open'd
 		// parent-selector claim and any non-DataProcessing producer (empty
 		// handle).
 		if row.ParentClaimHandleID == nil || len(row.ProducerCandidateHandle) == 0 || row.ProducerName == nil {
@@ -940,9 +940,9 @@ func bindLeafCandidateHandles(ctx context.Context, args RunArgs, tx persistence.
 			if !ok || sp.ProducerName != *row.ProducerName {
 				continue
 			}
-			// Don't overwrite an already-bound handle (defensive against a
-			// future multi-fan-out-claim leaf; first match wins per
-			// claimed_at ordering).
+			// @deliberate: don't overwrite an already-bound handle —
+			// defensive against a future multi-fan-out-claim leaf; first
+			// match wins per claimed_at ordering.
 			if len(out.Locks[j].ProducerCandidateHandle) > 0 {
 				continue
 			}

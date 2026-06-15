@@ -7,7 +7,7 @@ import { verifyRequiredSignoffs } from "./signoff.js";
 import { makeTestSigner } from "./signoff-test-signer.js";
 
 describe("verifyRequiredSignoffs", () => {
-  // (a) a valid signature for path "endpoints" ⇒ ok:true
+  // @deliberate: (a) a valid signature for path "endpoints" ⇒ ok:true
   it("accepts a valid per-path signature", () => {
     const signer = makeTestSigner();
     const dispatchId = "disp-1";
@@ -23,7 +23,7 @@ describe("verifyRequiredSignoffs", () => {
     expect(res.unmet).toEqual([]);
   });
 
-  // (b) no signatures ⇒ ok:false with reason:"missing"
+  // @deliberate: (b) no signatures ⇒ ok:false with reason:"missing"
   it("rejects when the signature bag is empty (missing)", () => {
     const signer = makeTestSigner();
     const dispatchId = "disp-1";
@@ -38,12 +38,12 @@ describe("verifyRequiredSignoffs", () => {
     expect(res.unmet).toEqual([{ path: "endpoints", reason: "missing" }]);
   });
 
-  // (c) a signature over a different value ⇒ ok:false reason:"invalid"
+  // @deliberate: (c) a signature over a different value ⇒ ok:false reason:"invalid"
   it("rejects a signature over a different value (invalid)", () => {
     const signer = makeTestSigner();
     const dispatchId = "disp-1";
     const delta = { endpoints: [{ url: "x" }] };
-    // Sign a different value than the one submitted at the path.
+    // @deliberate: sign a different value than the one submitted at the path.
     const sig = signer.sign(dispatchId, [{ url: "WRONG" }]);
     const res = verifyRequiredSignoffs(
       [{ publicKey: signer.publicKeyPem, path: "endpoints" }],
@@ -55,13 +55,13 @@ describe("verifyRequiredSignoffs", () => {
     expect(res.unmet).toEqual([{ path: "endpoints", reason: "invalid" }]);
   });
 
-  // (d) a signature from a different signer's key ⇒ unmet
+  // @deliberate: (d) a signature from a different signer's key ⇒ unmet
   it("rejects a signature minted by a different key", () => {
     const required = makeTestSigner();
     const attacker = makeTestSigner();
     const dispatchId = "disp-1";
     const delta = { endpoints: [{ url: "x" }] };
-    // The attacker signs the correct value+dispatch, but with the wrong key.
+    // @deliberate: the attacker signs the correct value+dispatch, but with the wrong key.
     const sig = attacker.sign(dispatchId, delta.endpoints);
     const res = verifyRequiredSignoffs(
       [{ publicKey: required.publicKeyPem, path: "endpoints" }],
@@ -73,11 +73,11 @@ describe("verifyRequiredSignoffs", () => {
     expect(res.unmet).toEqual([{ path: "endpoints", reason: "invalid" }]);
   });
 
-  // (e) anti-replay: a signature bound to a different dispatchId ⇒ unmet
+  // @deliberate: (e) anti-replay: a signature bound to a different dispatchId ⇒ unmet
   it("rejects a signature bound to a different dispatchId (anti-replay)", () => {
     const signer = makeTestSigner();
     const delta = { endpoints: [{ url: "x" }] };
-    // Mint the signature against a different dispatch, then try to replay it.
+    // @deliberate: mint the signature against a different dispatch, then try to replay it.
     const sig = signer.sign("other-dispatch", delta.endpoints);
     const res = verifyRequiredSignoffs(
       [{ publicKey: signer.publicKeyPem, path: "endpoints" }],
@@ -89,7 +89,7 @@ describe("verifyRequiredSignoffs", () => {
     expect(res.unmet).toEqual([{ path: "endpoints", reason: "invalid" }]);
   });
 
-  // (f) two required keys at two paths, both signed ⇒ ok:true; only one signed ⇒ unmet
+  // @deliberate: (f) two required keys at two paths, both signed ⇒ ok:true; only one signed ⇒ unmet
   it("requires every key when multiple paths are required (multi-signer AND)", () => {
     const a = makeTestSigner();
     const b = makeTestSigner();
@@ -117,18 +117,18 @@ describe("verifyRequiredSignoffs", () => {
       ],
       delta,
       dispatchId,
-      [sigA], // b's signature absent
+      [sigA], // @deliberate: b's signature absent
     );
     expect(onlyOne.ok).toBe(false);
     expect(onlyOne.unmet).toEqual([{ path: "summary", reason: "invalid" }]);
   });
 
-  // (g) per-path isolation: a signature for endpoints does not satisfy summary
+  // @deliberate: (g) per-path isolation: a signature for endpoints does not satisfy summary
   it("isolates paths: a signature for one path does not satisfy another", () => {
     const signer = makeTestSigner();
     const dispatchId = "disp-1";
     const delta = { endpoints: [{ url: "x" }], summary: "done" };
-    // The same key signs only the endpoints value; the required entry is at summary.
+    // @deliberate: the same key signs only the endpoints value; the required entry is at summary.
     const sigEndpoints = signer.sign(dispatchId, delta.endpoints);
     const res = verifyRequiredSignoffs(
       [{ publicKey: signer.publicKeyPem, path: "summary" }],
@@ -140,14 +140,14 @@ describe("verifyRequiredSignoffs", () => {
     expect(res.unmet).toEqual([{ path: "summary", reason: "invalid" }]);
   });
 
-  // (h) canonicalization equivalence: signature over {a:1,b:2} verifies
+  // @deliberate: (h) canonicalization equivalence: signature over {a:1,b:2} verifies
   //     against the key-reordered {b:2,a:1}
   it("verifies across key-order variants (RFC 8785 canonicalization)", () => {
     const signer = makeTestSigner();
     const dispatchId = "disp-1";
-    // Signature minted over the value with keys in one order.
+    // @deliberate: signature minted over the value with keys in one order.
     const sig = signer.sign(dispatchId, { a: 1, b: 2 });
-    // Submitted delta carries the same value with keys reordered.
+    // @deliberate: submitted delta carries the same value with keys reordered.
     const delta = { payload: { b: 2, a: 1 } };
     const res = verifyRequiredSignoffs(
       [{ publicKey: signer.publicKeyPem, path: "payload" }],
@@ -159,7 +159,7 @@ describe("verifyRequiredSignoffs", () => {
     expect(res.unmet).toEqual([]);
   });
 
-  // Root-path binding (omitted path ⇒ whole attributes_delta), confirming the
+  // @deliberate: root-path binding (omitted path ⇒ whole attributes_delta), confirming the
   // "$" placeholder used in unmet reporting and root signing both work.
   it("supports a root signature over the whole delta (path omitted)", () => {
     const signer = makeTestSigner();

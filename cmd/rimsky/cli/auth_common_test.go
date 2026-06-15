@@ -58,9 +58,6 @@ func TestApplyGrantPatches_AddRemove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("applyGrantPatches: %v", err)
 	}
-	// After: both --add entries appended; the --remove dropped the base
-	// `*:read`. Grant entries carry only an action string — there is no
-	// per-grant mode.
 	if len(got) != 2 {
 		t.Fatalf("expected 2 entries; got %d: %+v", len(got), got)
 	}

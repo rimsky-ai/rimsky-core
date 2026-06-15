@@ -78,7 +78,7 @@ func TestServer_InstanceLifecycle(t *testing.T) {
 	if inst.UUID() == "" {
 		t.Fatal("uuid empty")
 	}
-	// Deleting non-terminal instance fails 409.
+	// @constraint: non-terminal instances cannot be deleted; DELETE returns 409.
 	if err := c.DeleteInstance(context.Background(), inst.UUID()); !cli.IsConflict(err) {
 		t.Errorf("want 409, got %v", err)
 	}
@@ -87,8 +87,7 @@ func TestServer_InstanceLifecycle(t *testing.T) {
 	if err := c.DeleteInstance(context.Background(), inst.UUID()); err != nil {
 		t.Fatal(err)
 	}
-	// Idempotent re-create on same key returns existing if not deleted;
-	// since we just deleted, recreating works.
+	// @constraint: CreateInstance is idempotent on instance_key for live rows; after deletion the key is free and creation succeeds.
 	_, err = c.CreateInstance(context.Background(), cli.CreateInstanceRequest{Template: "t1", InstanceKey: &key})
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +103,7 @@ func TestServer_FailureInjection(t *testing.T) {
 	if _, err := c.Health(context.Background()); err == nil {
 		t.Fatal("want error")
 	}
-	// Second call recovers.
+	// @constraint: SetFailure injects a one-shot failure; the next call hits the real handler.
 	if _, err := c.Health(context.Background()); err != nil {
 		t.Errorf("second call should pass: %v", err)
 	}
@@ -119,7 +118,7 @@ func TestServer_TagCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Hash-shape tag is rejected.
+	// @constraint: tags shaped like a content hash (sha256-<hex64>) are reserved and rejected with 400.
 	_, err = c.CreateTag(context.Background(), cli.CreateTagRequest{Tag: "sha256-" + makeHex64(), Template: tpl.Hash()})
 	if !cli.IsBadRequest(err) {
 		t.Errorf("want 400, got %v", err)

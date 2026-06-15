@@ -87,8 +87,6 @@ func readSpecFile(path string) (node.TemplateSpec, error) {
 	if err != nil {
 		return node.TemplateSpec{}, err
 	}
-	// Decode to generic structure first so we can resolve source_file:
-	// references before typed-spec decode.
 	var generic any
 	if err := yaml.Unmarshal(raw, &generic); err != nil {
 		return node.TemplateSpec{}, fmt.Errorf("parse %s: %w", path, err)
@@ -160,7 +158,6 @@ func resolveSourceFileRefs(node any, baseDir string) (any, error) {
 		}
 		return out, nil
 	default:
-		// scalars (string, int, float, bool, nil) pass through unchanged.
 		return v, nil
 	}
 }
@@ -178,9 +175,8 @@ func readSourceFile(inputPath, baseDir string) (string, error) {
 		return "", fmt.Errorf("source_file: %q is absolute; only template-relative paths are allowed", inputPath)
 	}
 	cleaned := filepath.Clean(filepath.Join(baseDir, inputPath))
-	// Use absolute baseDir for the containment check so that both sides
-	// of filepath.Rel are anchored the same way regardless of the
-	// caller's cwd.
+	// @deliberate: anchor both sides of filepath.Rel via filepath.Abs so the
+	// containment check is independent of the caller's cwd.
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
 		return "", fmt.Errorf("source_file: resolve base dir: %w", err)

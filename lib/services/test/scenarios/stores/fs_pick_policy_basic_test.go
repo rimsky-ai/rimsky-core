@@ -137,7 +137,7 @@ func startFilesystemStore(t *testing.T, cfg server.Config) (grpcAddr string, tea
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		// server.Run blocks until ctx is cancelled; close `done` on
+		// @deliberate: Server.Run blocks until ctx is cancelled; close `done` on
 		// return so the teardown can wait for orderly shutdown.
 		_ = server.Run(ctx, cfg, grpcLis, httpLis, adminLis)
 		close(done)

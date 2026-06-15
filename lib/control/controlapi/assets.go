@@ -4,10 +4,6 @@
 
 // assets.go — F5. Asset endpoints.
 //
-// Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Lifetime and the asset pattern + spec §Content lineage.
-//
 //   - GET    /instances/{id}/assets                                  — list
 //   - GET    /instances/{id}/assets/{alias}                          — single
 //   - GET    /instances/{id}/assets/{alias}/versions                 — proxies DataProcessing.ListVersions
@@ -149,7 +145,7 @@ func handleListAssets(deps AppDeps) http.HandlerFunc {
 				continue
 			}
 			node := nodeByID[r.HolderNodeID]
-			// Precise alias resolution: the template node carries one or
+			// @constraint: precise alias resolution: the template node carries one or
 			// more `stores:` entries; the producer_name on the claim
 			// handle pinpoints which entry. The (alias, producer) pair
 			// is unique per node so the first match is canonical.
@@ -356,7 +352,7 @@ func handleGetAsset(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, "asset not found")
 			return
 		}
-		// The path parameter is the user-supplied alias; pass it through
+		// @constraint: the path parameter is the user-supplied alias; pass it through
 		// verbatim. resolveAsset already validated that the (node_type,
 		// claim_alias) pair matches a stores entry on the template.
 		writeJSON(w, http.StatusOK, toAssetItem(*row, ifNode(node), claimAlias))
@@ -376,8 +372,6 @@ func ifNode(node *persistence.NodeRow) persistence.NodeRow {
 // `ListVersions`. Returns 503 when no DataProcessing registry is wired
 // (no producer advertised the protocol at startup) or 404 when the
 // asset's producer does not advertise data_processing. Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Protocol surfaces / DataProcessing.
 func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		instanceID, err := uuid.Parse(chi.URLParam(req, "id"))
@@ -435,7 +429,7 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 			ClaimHandleID: row.ID.String(),
 		})
 		if err != nil {
-			// A remote producer returns *peer.ProducerCallError; writeError
+			// @constraint: A remote producer returns *peer.ProducerCallError; writeError
 			// surfaces the producer's error class + message under 502/422
 			// instead of discarding them into a generic body.
 			writeError(w, err)
@@ -443,7 +437,7 @@ func handleAssetVersions(deps AppDeps) http.HandlerFunc {
 		}
 		items := make([]map[string]any, 0, len(resp.Versions))
 		for _, v := range resp.Versions {
-			// `producer_metadata` is opaque bytes per @blessed-invariant
+			// @constraint: `producer_metadata` is opaque bytes per @blessed-invariant
 			// 20-class; surface as raw JSON when valid, otherwise base64
 			// is implicit via the JSON-encoded byte slice.
 			items = append(items, map[string]any{
@@ -537,7 +531,7 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 		}
 		var body materializeRequest
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-			// Empty body is acceptable; surface only true JSON errors.
+			// @constraint: empty body is acceptable; surface only true JSON errors.
 			// `json.Decoder.Decode` returns `io.EOF` on empty input.
 			if !errors.Is(err, io.EOF) {
 				badRequest(w, "invalid JSON body: "+err.Error())
@@ -546,7 +540,7 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 		}
 		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		msgID := shared.UUID(uuid.New())
-		// Fold `reason` into the payload as a named field so the
+		// @constraint: fold `reason` into the payload as a named field so the
 		// receiver's `{{trigger.message.payload.reason}}` substitution
 		// resolves. Empty when not provided.
 		payload := body.Payload
@@ -578,7 +572,7 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
 			}
-			// Dry-run gate: validation (instance exists + not terminated)
+			// @constraint: dry-run gate: validation (instance exists + not terminated)
 			// has succeeded. Signal the outer code to write the synthetic
 			// envelope; the tx rolls back without enqueuing the message.
 			if isDryRun {
@@ -587,7 +581,7 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq); err != nil {
 				return err
 			}
-			// Seed a delivery frame so the just-enqueued invalidate is
+			// @constraint: seed a delivery frame so the just-enqueued invalidate is
 			// actually delivered. Messages are delivered ONLY into a
 			// running frame (`SweepDeliverMessagesForRunningFrames`); a
 			// quiescent instance (e.g. one whose producer node already
@@ -608,7 +602,7 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 				return srcErr
 			}
 			if !ok {
-				// Degenerate: no nodes in the instance — nothing to
+				// @constraint: degenerate: no nodes in the instance — nothing to
 				// source a frame on. Leave the message pending; mirrors
 				// the `POST /instances/{id}/messages` path.
 				return nil
@@ -685,7 +679,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 					active = append(active, h)
 				}
 			}
-			// Dry-run gate: instance + asset resolved successfully.
+			// @constraint: dry-run gate: instance + asset resolved successfully.
 			// Defer the in-flight-holder check to outside the tx (a real
 			// call surfaces it as 409 after the tx commits) — both real
 			// and dry-run paths share the same downstream check.
@@ -695,7 +689,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			return nil
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
-			// In-flight-holder check matches the real-call's post-tx
+			// @constraint: in-flight-holder check matches the real-call's post-tx
 			// behaviour: a dry-run against an asset with active holders
 			// surfaces the same 409 a real call would.
 			if len(active) > 0 {
@@ -731,12 +725,12 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// Producer.Release — the producer registry holds the concrete
+		// @constraint: Producer.Release — the producer registry holds the concrete
 		// ClaimProducer. Skip when no producer name is recorded (defensive).
 		if deps.Stores != nil && row.ProducerName != nil {
 			if producer, ok := deps.Stores.Get(*row.ProducerName); ok {
 				if err := producer.Release(req.Context(), claimproducer.ClaimID(row.ID.String()), row.ClaimScopeData, row.Address); err != nil {
-					// A remote producer returns *peer.ProducerCallError;
+					// @constraint: A remote producer returns *peer.ProducerCallError;
 					// writeError surfaces the producer's error class +
 					// message under 502/422 ("your producer rejected this")
 					// instead of the bare 500 that used to mask them as a
@@ -748,7 +742,7 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 				}
 			}
 		}
-		// Delete the row via the absence-guarded DeleteResolved path —
+		// @constraint: delete the row via the absence-guarded DeleteResolved path —
 		// the row is state='committed' / lifetime='durable' with
 		// holder_supervisor_id IS NULL by construction post-Promote
 		// (Stage 4 of the claim-handle state-column refactor: the CHECK
@@ -763,7 +757,6 @@ func handleDeleteAsset(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// Audit (the events table accepts a free-form `kind`).
 		deps.Logger.Info("asset.deleted",
 			"claim_id", row.ID.String(),
 			"instance_id", instanceID.String(),

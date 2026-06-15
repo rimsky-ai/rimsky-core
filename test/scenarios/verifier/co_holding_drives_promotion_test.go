@@ -31,7 +31,7 @@ import (
 // the supervisor's terminal handler routes the parent to Commit.
 func TestCoHoldingDrivesPromotion_VerifierPassEmitsSuccess(t *testing.T) {
 	t.Parallel()
-	// Synthetic Success terminal mimicking verifier-shape-checks
+	// @deliberate: Synthetic Success terminal mimicking verifier-shape-checks
 	// happy-path output (see executors/verifier-shape-checks/server.go).
 	delta, _ := structpb.NewStruct(map[string]any{
 		"verifier_pass":   true,

@@ -68,7 +68,7 @@ func validateAttributeOverrides(
 		if !ok {
 			return wrapInvalid("attribute_overrides.by_executor must be an object")
 		}
-		// Build the set of executor names this template actually
+		// @constraint: build the set of executor names this template actually
 		// dispatches to. An override targeting an executor declared in
 		// rimsky.yml but not used by any template node would be a silent
 		// no-op at dispatch — reject it loudly.
@@ -132,7 +132,7 @@ func validateMatchEntries(
 	templateGraphs []spec.GraphSpec,
 	executors map[string]ExecutorEntry,
 ) error {
-	// Build name sets once.
+	// @constraint: build name sets once.
 	nodeNames := make(map[string]struct{}, len(templateNodes))
 	usedExecutors := make(map[string]struct{}, len(templateNodes))
 	for _, n := range templateNodes {
@@ -142,7 +142,8 @@ func validateMatchEntries(
 		}
 	}
 	graphNames := make(map[string]struct{}, len(templateGraphs)+1)
-	graphNames[spec.MainGraphName] = struct{}{} // "main" always valid
+	// @constraint: "main" graph is always valid.
+	graphNames[spec.MainGraphName] = struct{}{}
 	for _, g := range templateGraphs {
 		graphNames[g.Name] = struct{}{}
 	}
@@ -167,7 +168,8 @@ func validateMatchEntries(
 		var matcher map[string]any
 		if rawM, present := entry["matcher"]; present {
 			if rawM == nil {
-				matcher = map[string]any{} // explicit null → wildcard
+				// @constraint: explicit null → wildcard.
+				matcher = map[string]any{}
 			} else {
 				m, isObj := rawM.(map[string]any)
 				if !isObj {
@@ -176,9 +178,10 @@ func validateMatchEntries(
 				matcher = m
 			}
 		} else {
-			matcher = map[string]any{} // absent → wildcard
+			// @constraint: absent → wildcard.
+			matcher = map[string]any{}
 		}
-		// overlay must be present AND be an object. A single
+		// @constraint: overlay must be present AND be an object. A single
 		// type-assertion catches both the missing-key case (zero-value
 		// nil fails the assertion) and the wrong-type case.
 		if _, isObj := entry["overlay"].(map[string]any); !isObj {
@@ -208,7 +211,7 @@ func validateMatcherKeys(
 	graphNames map[string]struct{},
 	legacyFlat bool,
 ) error {
-	// Project the locally-typed ExecutorEntry map down to the generic
+	// @constraint: project the locally-typed ExecutorEntry map down to the generic
 	// name set the matcher package consumes. The matcher package can't
 	// import controlapi.ExecutorEntry (back-cycle).
 	execNames := make(map[string]struct{}, len(executors))
@@ -223,7 +226,7 @@ func validateMatcherKeys(
 		LegacyFlat:    legacyFlat,
 	}, entryIdx)
 	if err != nil {
-		// Re-wrap to preserve the existing errAttributeOverridesInvalid
+		// @constraint: re-wrap to preserve the existing errAttributeOverridesInvalid
 		// sentinel so by_match's existing test assertions and
 		// HTTP-status translation continue to work unchanged. The
 		// breakpoint code path (Pass 4) calls matcher.Validate directly

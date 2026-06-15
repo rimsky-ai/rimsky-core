@@ -219,8 +219,8 @@ func (s *SensorService) Subscribe(_ context.Context, req *genv1.SubscribeRequest
 	}
 	s.mu.Lock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
-		// Already active; idempotent. The state-DB row is already present
-		// from the prior call, so we skip the UpsertSubscription below.
+		// @deliberate: duplicate Subscribe is a no-op; the state-DB row was
+		// written by the prior call, so we skip the UpsertSubscription below.
 		s.mu.Unlock()
 		return &genv1.SubscribeResponse{}, nil
 	}
@@ -306,14 +306,15 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 		"cron":        w.CronExpr,
 		"fire_at":     w.NextFireAt.UTC().Format(time.RFC3339),
 	}
-	// Idempotency key: subscription_id + fire-window. A retry within
-	// the same fire window dedupes on the server side; a fresh window
-	// is a fresh message.
+	// @constraint: idempotency key is subscription_id + fire-window, so a
+	// retry within the same window dedupes server-side while a fresh window
+	// produces a fresh message.
 	idemKey := fmt.Sprintf("%s+%s", w.SubscriptionID, w.NextFireAt.UTC().Format(time.RFC3339))
 	if err := s.postMessage(ctx, w, body, idemKey); err != nil {
 		s.logger.Warn("sensor-cron.message_post_failed",
 			"publisher_subscription_id", w.SubscriptionID, "error", err.Error())
-		// Do not advance on failure; the next tick retries the same fire.
+		// @deliberate: do not advance next_fire_at on failure — the next
+		// tick retries the same fire window.
 		return
 	}
 	sched, err := cron.ParseStandard(w.CronExpr)
@@ -323,7 +324,8 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 		return
 	}
 	s.mu.Lock()
-	// Re-find to defend against concurrent Unsubscribe.
+	// @constraint: re-find under the lock to defend against a concurrent
+	// Unsubscribe that may have removed the watch since the due-list snapshot.
 	cur, ok := s.watches[w.SubscriptionID]
 	if !ok {
 		s.mu.Unlock()
@@ -331,10 +333,12 @@ func (s *SensorService) fireOne(ctx context.Context, w *Watch, now time.Time) {
 	}
 	t := now
 	cur.LastFireAt = &t
-	cur.NextFireAt = sched.Next(cur.NextFireAt) // advance from prior, not now
-	// Snapshot the advanced watermark under the lock, then persist it
-	// off-lock: the durable next_fire_at must advance with each fire so a
-	// restart resumes from the next un-fired window, never a re-fire.
+	// @deliberate: advance from the prior next_fire_at, not from now() —
+	// missed fires are not backfilled (mirrors the retired internal scheduler).
+	cur.NextFireAt = sched.Next(cur.NextFireAt)
+	// @constraint: snapshot the advanced watermark under the lock and
+	// persist it off-lock — the durable next_fire_at must advance with each
+	// fire so a restart resumes from the next un-fired window, never a re-fire.
 	nextFireAt := cur.NextFireAt
 	lastFireAt := cur.LastFireAt
 	state := s.state

@@ -102,7 +102,7 @@ func TestComposeRunSpawnedServices_NoLeakAfterExit(t *testing.T) {
 
 	stderrStr := stderr.String()
 
-	// The mixed-outcome manifest classifies as any-failure → exit 1.
+	// @deliberate: The mixed-outcome manifest classifies as any-failure → exit 1.
 	// The PRIMARY proof for STORY-spawned-local-services is the PID-
 	// reaped check below; the exit-code shape is the corroborating
 	// "verb exited on its own" surface, not the load-bearing one.
@@ -110,7 +110,7 @@ func TestComposeRunSpawnedServices_NoLeakAfterExit(t *testing.T) {
 		t.Fatalf("expected exit code 1 (any-failure for mixed-outcome manifest); got %d\nstderr:\n%s", rc, stderrStr)
 	}
 
-	// Falsifier #1: the spawn must have happened. The verb emits a
+	// @constraint: Falsifier #1: the spawn must have happened. The verb emits a
 	// `spawned service` info-level slog line at spawn time carrying
 	// the child PID, port, name, and path. Parsing the structured
 	// envelope (not a regex against the human-readable message)
@@ -122,7 +122,7 @@ func TestComposeRunSpawnedServices_NoLeakAfterExit(t *testing.T) {
 		t.Fatalf("could not locate `spawned service` log envelope for name=stub in stderr:\n%s", stderrStr)
 	}
 
-	// Falsifier #2: the manifest's nodes must have actually reached
+	// @constraint: Falsifier #2: the manifest's nodes must have actually reached
 	// the spawned binary. The per-instance summary lines prove the
 	// dispatches landed at the stub executor (any other executor or
 	// a never-reachable spawn would have failed the dispatch). Both
@@ -136,7 +136,7 @@ func TestComposeRunSpawnedServices_NoLeakAfterExit(t *testing.T) {
 		t.Fatalf("missing 'oops: failure' summary — failure-leg dispatch never reached the spawned stub:\n%s", stderrStr)
 	}
 
-	// Falsifier #3 (the load-bearing claim): the stub PID must be
+	// @constraint: Falsifier #3 (the load-bearing claim): the stub PID must be
 	// gone after the verb returns. Allow a short grace window —
 	// SIGTERM propagation through the gRPC server's GracefulStop is
 	// asynchronous but bounded; the verb's drain coordinator gives
@@ -173,7 +173,7 @@ func parseSpawnedServicePID(t *testing.T, stderrStr, name string) int {
 		if envName, _ := env["name"].(string); envName != name {
 			continue
 		}
-		// JSON numbers decode as float64 by default through
+		// @deliberate: JSON numbers decode as float64 by default through
 		// encoding/json; cast to int after a non-zero check.
 		pidVal, ok := env["pid"].(float64)
 		if !ok {
@@ -184,7 +184,7 @@ func parseSpawnedServicePID(t *testing.T, stderrStr, name string) int {
 	return 0
 }
 
-// waitProcessGone is defined in host_agent_control_plane_demo_test.go;
+// @constraint: waitProcessGone is defined in host_agent_control_plane_demo_test.go;
 // re-using it here keeps the no-leak check uniform with the host-agent
 // reap proof. The pattern: `syscall.Kill(pid, 0)` returns
 // process-not-found (ESRCH) once the OS reclaims the PID; polling

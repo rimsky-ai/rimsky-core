@@ -69,7 +69,7 @@ func startClassifyingProducer(t *testing.T) (*scenario.Harness, *stubstore.Store
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// Empty queue — Open returns Unavailable, classified
+				// @deliberate: Empty queue — Open returns Unavailable, classified
 				// with the producer-declared class.
 				UnavailableClass: producerClassUnavailable,
 			},
@@ -104,7 +104,7 @@ func driveProducerClassifiedRetry(
 	t.Helper()
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": 1}, true, "ran")
 
-	// Registration must SUCCEED (DeployTemplate fails the test on any
+	// @constraint: Registration must SUCCEED (DeployTemplate fails the test on any
 	// non-2xx registration response) AND — the falsifiable half, since
 	// error_types: keys never hard-reject under the advisory-warning
 	// semantics — the response's validation_warnings must carry no
@@ -135,7 +135,7 @@ func driveProducerClassifiedRetry(
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// The configured retry action must FIRE against the
+	// @constraint: The configured retry action must FIRE against the
 	// producer-classified failure: the run-disposition signal
 	// transient/retry/<attempt>/<class> is keyed on the PRODUCER class
 	// (pg/claim_unavailable) in both template shapes — the acquire/*
@@ -144,7 +144,7 @@ func driveProducerClassifiedRetry(
 		h.WaitForEventKind(worker.ID, "transient/retry/1/"+producerClassUnavailable, 30*time.Second),
 		"retry action must emit transient/retry/1/%s on the event log", producerClassUnavailable)
 
-	// The retry chain holds the node — it must NOT have failed fast
+	// @deliberate: The retry chain holds the node — it must NOT have failed fast
 	// (failed here would mean the policy did not match and the
 	// unknown-class give_up default fired).
 	var wRow *persistence.NodeRow
@@ -157,7 +157,7 @@ func driveProducerClassifiedRetry(
 	require.NotEqual(t, cascade.NodeStateFailed, wRow.State,
 		"retry policy must hold the node; failed means the producer class did not route")
 
-	// Seed an item — a subsequent retry acquires it and the node runs
+	// @deliberate: Seed an item — a subsequent retry acquires it and the node runs
 	// to fresh, proving the retries are live dispatch attempts.
 	_, err := sub.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":1}`))
 	require.NoError(t, err, "seed item")
@@ -178,7 +178,7 @@ func TestProducerClassRouting_ExactMatch(t *testing.T) {
 		map[string]node.ErrorTypePolicy{
 			producerClassUnavailable: {
 				Policy: []node.PolicyAction{
-					// Generous retry budget so the test has time to seed
+					// @deliberate: Generous retry budget so the test has time to seed
 					// the queue before chain exhaustion would fail the node.
 					{Action: "retry", Count: 1000, BaseDelayMs: 100},
 					{Action: "give_up"},

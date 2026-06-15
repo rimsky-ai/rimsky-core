@@ -18,7 +18,7 @@ func TestValidate(t *testing.T) {
 	refs := ValidationRefs{
 		NodeTypes:     map[string]struct{}{"area-pass": {}, "deploy": {}},
 		ExecutorNames: map[string]struct{}{"claude-agent": {}, "noop": {}},
-		UsedExecutors: map[string]struct{}{"claude-agent": {}}, // noop declared but unused
+		UsedExecutors: map[string]struct{}{"claude-agent": {}}, // @deliberate: noop is declared but unused, so UsedExecutors must reject it
 		GraphNames:    map[string]struct{}{"main": {}, "ingest": {}},
 	}
 
@@ -88,7 +88,7 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("node_type cross-check skipped when NodeTypes nil", func(t *testing.T) {
-		r := ValidationRefs{} // all nil
+		r := ValidationRefs{}
 		if err := Validate(Matcher{"node_type": "anything"}, r, 0); err != nil {
 			t.Fatalf("when NodeTypes is nil, any node_type should validate; got %v", err)
 		}
@@ -105,7 +105,6 @@ func TestValidate(t *testing.T) {
 	})
 
 	t.Run("executor cross-check against UsedExecutors", func(t *testing.T) {
-		// noop is in ExecutorNames but not UsedExecutors → rejected.
 		err := Validate(Matcher{"executor": "noop"}, refs, 0)
 		if err == nil || !errors.Is(err, ErrInvalid) {
 			t.Fatalf("declared-but-unused executor should be rejected; got %v", err)
@@ -115,7 +114,7 @@ func TestValidate(t *testing.T) {
 	t.Run("executor UsedExecutors check skipped when nil (breakpoint mode)", func(t *testing.T) {
 		r := ValidationRefs{
 			ExecutorNames: map[string]struct{}{"claude-agent": {}, "noop": {}},
-			// UsedExecutors intentionally nil
+			// @deliberate: UsedExecutors left nil to exercise the breakpoint-mode skip path
 		}
 		if err := Validate(Matcher{"executor": "noop"}, r, 0); err != nil {
 			t.Fatalf("when UsedExecutors is nil, declared-but-unused executor should validate; got %v", err)
@@ -196,7 +195,7 @@ func TestValidate(t *testing.T) {
 		if strings.Contains(err.Error(), "[-1]") {
 			t.Fatalf("error message must not contain [-1]; got %v", err)
 		}
-		// Make sure no other [N] prefix accidentally leaks.
+		// @deliberate: guard against a stray [N] prefix leaking when entryIndex<0.
 		if strings.Contains(err.Error(), "matcher[") {
 			t.Fatalf("error message must not contain a 'matcher[' prefix when entryIndex<0; got %v", err)
 		}

@@ -48,7 +48,7 @@ func newAdminHarness(t *testing.T) *adminHarness {
 
 func buildRouter(register func(chi.Router, AppDeps), deps AppDeps) http.Handler {
 	r := chi.NewRouter()
-	// Mirror NewApp's `/v1/` mount: the test fires requests at
+	// @constraint: mirror NewApp's `/v1/` mount: the test fires requests at
 	// `/v1/...` paths and the production router lives under that
 	// prefix, so unit tests of single-group registrations must mount
 	// the same way.
@@ -87,11 +87,11 @@ func TestClaimHoldersRoute(t *testing.T) {
 	}
 	router := buildRouter(registerClaimsRoutes, deps)
 
-	// Missing UUID → 400.
+	// @constraint: missing UUID → 400.
 	status, _ := doJSON(t, router, http.MethodGet, "/v1/lock-holders/not-a-uuid/claim-holders", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 
-	// Unknown lock-holder UUID returns 200 + empty list.
+	// @constraint: unknown lock-holder UUID returns 200 + empty list.
 	emptyID := uuid.New().String()
 	status, body := doJSON(t, router, http.MethodGet, "/v1/lock-holders/"+emptyID+"/claim-holders", nil)
 	require.Equal(t, http.StatusOK, status, string(body))
@@ -101,7 +101,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &emptyResp))
 	require.Empty(t, emptyResp.Holders)
 
-	// Insert a lock-holder + claim-holder pair, then re-fetch.
+	// @constraint: insert a lock-holder + claim-holder pair, then re-fetch.
 	// Post-stage-5 the claim-holders row keys on holder_run_id, so seed
 	// a real run row alongside the node.
 	holderNodeID := seedThrowawayNode(t, h)
@@ -129,7 +129,7 @@ func TestClaimHoldersRoute(t *testing.T) {
 	require.Equal(t, "active", resp.Holders[0]["state"])
 }
 
-// (TestAdminForceFireRoute retired by the 2026-05-15 plan B10 / D7 /
+// seedThrowawayNode retired by the 2026-05-15 plan B10 / D7 /
 // E16 schedule-retirement cascade. The /admin/scheduled-nodes/.../
 // force-fire endpoint and the rimsky_schedules table are gone; cron
 // firing is owned by `sensors/sensor-cron/`.)
@@ -154,7 +154,7 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 		tplHash,
 	)
 	mainScopeID := uuid.New()
-	// rimsky_instances.main_run_scope_id ↔ rimsky_run_scopes.instance_id
+	// @constraint: rimsky_instances.main_run_scope_id ↔ rimsky_run_scopes.instance_id
 	// are mutually FK'd DEFERRABLE INITIALLY DEFERRED. Use the persistence
 	// layer to seed both rows in one tx.
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -174,7 +174,7 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 		}, tx)
 		return err
 	}))
-	// Post-stage-3 cutover: state column dropped from rimsky_nodes.
+	// @constraint: post-stage-3 cutover: state column dropped from rimsky_nodes.
 	pgtest.ExecForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_nodes (
 		   id, instance_id, node_type, executor,
@@ -195,7 +195,7 @@ func seedThrowawayNode(t *testing.T, h *adminHarness) shared.UUID {
 // claim-holders route tests need a real run id per fixture row.
 func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID shared.UUID) shared.UUID {
 	t.Helper()
-	// Seed a 'running' frame for the node's instance first so the FK
+	// @constraint: seed a 'running' frame for the node's instance first so the FK
 	// rimsky_node_runs.frame_id resolves.
 	var instID, frameID, mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver,

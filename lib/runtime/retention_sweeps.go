@@ -132,16 +132,16 @@ func SweepRunTreeRetention(
 	ctx context.Context, cfg RetentionConfig, tables persistence.Tables,
 	now time.Time, log shared.Logger,
 ) (int, error) {
-	// Either retention dimension alone must reap. A config with only
-	// trace_trailing set (no count cap) passes the scheduler gate; if this
-	// guard required RecentFramesKept it would silently reap nothing —
+	// @constraint: either retention dimension alone must reap. A config with
+	// only trace_trailing set (no count cap) passes the scheduler gate; if
+	// this guard required RecentFramesKept it would silently reap nothing —
 	// that is the load-bearing "either dimension alone reaps" property.
 	if cfg.RecentFramesKept <= 0 && cfg.TraceTrailing <= 0 {
 		return 0, nil
 	}
-	// A zero cutoff (time.Time{}) is the persistence layer's "no time
-	// bound" sentinel; compute a real cutoff only when the time dimension
-	// is enabled.
+	// @constraint: a zero cutoff (time.Time{}) is the persistence layer's
+	// "no time bound" sentinel; compute a real cutoff only when the time
+	// dimension is enabled.
 	var cutoff time.Time
 	if cfg.TraceTrailing > 0 {
 		cutoff = now.Add(-cfg.TraceTrailing)
@@ -155,8 +155,9 @@ func SweepRunTreeRetention(
 			"deleted", frames, "recent_frames_kept", cfg.RecentFramesKept,
 			"cutoff", cutoffLogValue(cutoff))
 	}
-	// Event logs age out by the time window alone (no count cap, no frame
-	// FK). Skip them entirely when the time dimension is disabled.
+	// @constraint: event logs age out by the time window alone (no count
+	// cap, no frame FK). Skip them entirely when the time dimension is
+	// disabled.
 	if cfg.TraceTrailing > 0 {
 		events, err := tables.Events().DeleteOlderThan(ctx, cutoff)
 		if err != nil {
@@ -166,13 +167,14 @@ func SweepRunTreeRetention(
 			log.Info("retention.trace.events.sweep",
 				"deleted", events, "cutoff", cutoff.Format(time.RFC3339))
 		}
-		// DeleteOlderThan reaps the rows AND queues any spilled-payload blob
-		// handles into rimsky_blob_orphans atomically (one transaction inside
-		// the driver) — a reaped named-event row is never deleted without its
-		// blob handle durably queued, so the bytes can't leak. For a durable
-		// instance this is the only reclamation path (the instance-delete
-		// cascade never runs). The returned orphans are surfaced here for
-		// observability only; they are already persisted.
+		// @constraint: DeleteOlderThan reaps the rows AND queues any
+		// spilled-payload blob handles into rimsky_blob_orphans atomically
+		// (one transaction inside the driver) — a reaped named-event row is
+		// never deleted without its blob handle durably queued, so the bytes
+		// can't leak. For a durable instance this is the only reclamation
+		// path (the instance-delete cascade never runs). The returned orphans
+		// are surfaced here for observability only; they are already
+		// persisted.
 		nodeEvents, orphans, err := tables.NodeEvents().DeleteOlderThan(ctx, cutoff)
 		if err != nil {
 			return frames, fmt.Errorf("SweepRunTreeRetention: node_events: %w", err)

@@ -144,8 +144,6 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 		logf("observability: StreamTrace evicted-shape received %d events\n", len(got))
 	}
 
-	// Canned-dispatch round-trip: drive an Execute via the executor's
-	// Executor and verify the in-memory trace surfaces events.
 	cannedID := fmt.Sprintf("conformance-canned-%d", time.Now().UnixNano())
 	if caps.GetSupportsTraceGet() {
 		if err := runCannedDispatch(ctx, conn, client, cannedID, logf); err != nil {

@@ -181,7 +181,7 @@ func TestWriteClaimTerminalLineage_EmptyOutcomeRejected(t *testing.T) {
 		NodeID:        shared.UUID(uuid.New()),
 		FrameID:       shared.UUID(uuid.New()),
 		ProducerName:  "store",
-		// Outcome left empty intentionally.
+		// @deliberate: Outcome left empty intentionally.
 	}
 	err := WriteClaimTerminalLineage(context.Background(), nil, lt,
 		shared.UUID(uuid.New()), rec.FrameID, time.Now().UTC(), rec)
@@ -217,7 +217,7 @@ func TestWriteLeafRunLineage_ParentRunIDPersistedAndQueryable(t *testing.T) {
 	if err := WriteLeafRunLineage(ctx, nil, lt, inst, frame, time.Now().UTC(), rec); err != nil {
 		t.Fatalf("WriteLeafRunLineage: %v", err)
 	}
-	// Round-trip through the JSON column to confirm `parent_run_id`
+	// @deliberate: Round-trip through the JSON column to confirm `parent_run_id`
 	// is present and lookup-by-parent returns the child row.
 	rows, err := lt.QueryByParentRunID(ctx, parent, 10)
 	if err != nil {
@@ -307,7 +307,7 @@ func (f *emitFakePersist) BreakpointHits() persistence.BreakpointHitTable {
 }
 
 func (f *emitFakePersist) Transaction(ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error) error {
-	// The writer is tx-agnostic — the in-memory fake doesn't care about
+	// @deliberate: The writer is tx-agnostic — the in-memory fake doesn't care about
 	// the tx handle, so we pass nil through and run the body inline.
 	return fn(ctx, nil)
 }
@@ -344,12 +344,12 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 			NodeID:             shared.UUID(uuid.New()),
 			State:              string(cascade.NodeStateFresh),
 			SettlingSignalType: "terminal/success",
-			ParentRunID:        nil, // root run
+			ParentRunID:        nil, // @deliberate: root run
 		})
 		if len(lt.rows) != 1 {
 			t.Fatalf("expected 1 row, got %d", len(lt.rows))
 		}
-		// Decode into the typed record: ParentRunID must be empty.
+		// @deliberate: Decode into the typed record: ParentRunID must be empty.
 		var rec LeafRunRecord
 		if err := json.Unmarshal(lt.rows[0].Record, &rec); err != nil {
 			t.Fatalf("unmarshal typed: %v", err)
@@ -357,7 +357,7 @@ func TestEmitLeafRunLineage_OmitsEmptyParentRunID(t *testing.T) {
 		if rec.ParentRunID != "" {
 			t.Fatalf("root run: ParentRunID got %q want \"\"", rec.ParentRunID)
 		}
-		// Decode into the raw map: the JSON key must be absent (the
+		// @deliberate: Decode into the raw map: the JSON key must be absent (the
 		// omitempty drop is what protects the postgres predicate
 		// `record->>'parent_run_id' = $1` from matching the empty
 		// string).

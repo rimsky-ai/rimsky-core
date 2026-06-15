@@ -70,7 +70,7 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// The frame is already terminal (completed) so the frames-in-flight
+	// @constraint: frame seeded terminal (completed) so the frames-in-flight
 	// guard does NOT block termination — only the node-run predicate can.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
@@ -87,8 +87,9 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
-	// One parked node_run (phase='parked', state='parked'); no
-	// stale/running runs.
+	// @constraint: exactly one parked node_run (phase='parked',
+	// state='parked') seeded; no stale/running runs, so the predicate hinges
+	// solely on the parked clause.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
@@ -167,9 +168,9 @@ func seedResolvedFrameInstance(t *testing.T, ctx context.Context, d persistence.
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// Frame already terminal so the (former) frames-in-flight clause is
-	// irrelevant; the node is fresh (no in-flight run row), so the only
-	// thing deciding the predicate is the terminate_after_run gate.
+	// @constraint: frame seeded terminal so the (former) frames-in-flight
+	// clause is irrelevant; the node is fresh (no in-flight run row), so
+	// the only thing deciding the predicate is the terminate_after_run gate.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at, ended_at)

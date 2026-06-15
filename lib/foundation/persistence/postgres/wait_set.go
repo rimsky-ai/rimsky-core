@@ -2,10 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Postgres impl of persistence.WaitSetTable — the per-frame ledger that
-// drives dispatch eligibility under the subscription-cascade model.
-//
-//	@concept: wait-set
+// @concept: wait-set
+
 package postgres
 
 import (
@@ -25,6 +23,9 @@ func (s *tablesImpl) WaitSet() persistence.WaitSetTable {
 	return (*waitSetImpl)(s)
 }
 
+// waitSetImpl is the Postgres-backed persistence.WaitSetTable — the
+// per-frame ledger that records which observations a wait-set is
+// blocked on.
 type waitSetImpl tablesImpl
 
 func (b *waitSetImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }

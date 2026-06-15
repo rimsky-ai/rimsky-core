@@ -47,9 +47,9 @@ func TestClaimProducerConformance_StubStore(t *testing.T) {
 			t.Errorf("%s: unexpected error: %v", r.Name, r.Err)
 		}
 	}
-	// Stub-store advertises both partitioning capabilities (per M
-	// dispatch / O1 fixture), so SplitScope + ScopesConflict must run
-	// as full checks — NOT the Skipped variants.
+	// @deliberate: stub-store advertises both partitioning capabilities
+	// (per M dispatch / O1 fixture), so SplitScope + ScopesConflict must
+	// run as full checks — NOT the Skipped variants.
 	wantNames := map[string]bool{"SplitScope": false, "ScopesConflict": false}
 	for _, r := range results {
 		if _, ok := wantNames[r.Name]; ok {
@@ -71,9 +71,9 @@ func TestClaimProducerConformance_NoPartitioning(t *testing.T) {
 	fake := storetest.NewFake("no-partitioning", claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	})
-	// The default Fake.Open echoes the selector as scope/address but
-	// leaves RealizedWriteSemantics unset; tighten to the advertised
-	// sync semantics for the uniformity probe.
+	// @constraint: the default Fake.Open echoes the selector as scope/address
+	// but leaves RealizedWriteSemantics unset; tighten to the advertised sync
+	// semantics for the uniformity probe.
 	fake.OpenFunc = func(_ claimproducer.ClaimID, spec claimproducer.ClaimSpec) (claimproducer.OpenOutcome, error) {
 		bytes := []byte(`"` + spec.Selector + `"`)
 		return claimproducer.OpenOutcome{

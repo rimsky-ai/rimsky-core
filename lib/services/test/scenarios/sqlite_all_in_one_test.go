@@ -40,10 +40,11 @@ func TestAllInOneSQLite_DriveNodeToTerminal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable on the shared network when
-	// rimsky/all starts — the control-api fires a Capabilities handshake
-	// against declared executors at startup. Bring up the network first,
-	// then the executor peer, then rimsky on the baked SQLite default.
+	// @constraint: control-api fires a Capabilities handshake against every
+	// declared executor at startup, so the stub executor must already be
+	// reachable on the shared network before rimsky-all-in-one boots —
+	// network first, executor peer second, rimsky on the baked SQLite
+	// default last.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -53,9 +54,10 @@ func TestAllInOneSQLite_DriveNodeToTerminal(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// A single executor node, no stores. The stub executor returns
-	// Success for every dispatch, so a healthy SQLite loop settles the
-	// node into the terminal `fresh` state.
+	// @deliberate: single executor node and no stores — the stub executor
+	// returns Success for every dispatch, so a healthy SQLite loop settles
+	// the node into the terminal `fresh` state and any non-fresh terminal
+	// is an orchestration-loop defect rather than a workload failure.
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "sqlite-all-in-one",
@@ -73,18 +75,18 @@ func TestAllInOneSQLite_DriveNodeToTerminal(t *testing.T) {
 
 	instanceID := createScenarioInstance(t, ep, templateID, "ck-sqlite-all-in-one")
 
-	// 90s mirrors the stores-scenario deadline; on SQLite the loop is a
-	// single enqueue → claim → dispatch → settle, well inside that.
-	//
-	// The assertion proves a REAL dispatch, not just a state value. A node
-	// is created defaulting to `fresh` (lib/control/controlapi/instances.go
-	// "Create defaults to 'fresh'"), and a successful run also settles to
-	// `fresh` (running → fresh via ReasonHandlerComplete). So `fresh` alone
-	// is ambiguous. We additionally require a `work_started` node event —
-	// emitted only after the supervisor transitions the node to `running`
-	// on a committed claim (lib/runtime/runner_acquire.go) — which is
-	// unambiguous proof that the scheduler enqueued, the supervisor claimed
-	// and dispatched, and the executor ran, all against SQLite.
+	// @deliberate: 90s mirrors the stores-scenario deadline; on SQLite the
+	// loop is a single enqueue → claim → dispatch → settle, well inside
+	// that budget. The assertion proves a REAL dispatch, not just a state
+	// value: a node is created defaulting to `fresh`
+	// (`code:lib/control/controlapi/instances.go`) and a successful run
+	// also settles to `fresh` (running → fresh via ReasonHandlerComplete),
+	// so `fresh` alone is ambiguous. The wait loop additionally requires a
+	// `work_started` node event — emitted only after the supervisor
+	// transitions the node to `running` on a committed claim
+	// (`code:lib/runtime/runner_acquire.go`) — which is unambiguous proof
+	// that the scheduler enqueued, the supervisor claimed and dispatched,
+	// and the executor ran, all against SQLite.
 	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 }
 

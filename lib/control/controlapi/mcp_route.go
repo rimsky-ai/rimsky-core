@@ -37,20 +37,18 @@ func (rr *routerRef) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rr.h.ServeHTTP(w, r)
 }
 
-// mcpRouterRef is a per-NewApp routerRef. registerMCPRoute populates
-// it with the catalog; NewApp's tail assigns the built router into
-// rr.h so MCP tool calls can re-enter the chi pipeline.
-//
-// Currently the routerRef is per-call (NewApp creates one), but
-// because the catalog closes over it, it lives for the life of the
-// returned http.Handler.
-
+// registerMCPRoute mounts the MCP protocol skin on r and stashes a
+// per-NewApp routerRef on deps.AuthState.mcpRouterRef. NewApp's tail
+// assigns the built router into that routerRef's .h field so MCP tool
+// calls can re-enter the chi pipeline. The routerRef is per-call
+// (NewApp creates one) but, because the catalog closes over it, it
+// lives for the life of the returned http.Handler.
 func registerMCPRoute(r chi.Router, deps AppDeps) {
 	if deps.AuthState == nil {
 		return
 	}
 	rr := &routerRef{}
-	// Stash the routerRef on the AppDeps via AuthState so NewApp's
+	// @constraint: stash the routerRef on the AppDeps via AuthState so NewApp's
 	// tail can populate it after route registration completes.
 	deps.AuthState.mcpRouterRef = rr
 	catalog := &mcp.Catalog{
@@ -58,7 +56,7 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 		Router:      rr,
 		Description: descriptionForTool,
 		Schemas:     builtinSchemas(),
-		// Inject the identity reader + protocol-skin tagger directly
+		// @constraint: inject the identity reader + protocol-skin tagger directly
 		// rather than poking package-global hooks (which raced under
 		// parallel tests). Both reference controlapi's own helpers, which
 		// know the unexported context keys; the mcp package never imports
@@ -66,9 +64,8 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 		ResolveIdentity:  IdentityFromContextOK,
 		WithProtocolSkin: WithProtocolSkin,
 	}
-	// Resources skin: a parallel-shaped catalog for the breakpoint-hits
+	// @constraint: resources skin: a parallel-shaped catalog for the breakpoint-hits
 	// URI family. Per spec
-	// .ok-planner/specs/2026-05-24-instance-debugger-design.md §6 the
 	// only resource family v1 exposes is `rimsky://instances/{id}/
 	// breakpoint-hits` and `rimsky://breakpoints/{bp_id}/hits`; the URI
 	// scheme parsing lives in mcp_resources.go::parseBreakpointHitsURI
@@ -77,7 +74,7 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 		Tools:     catalog,
 		Resources: newBreakpointResourceCatalog(deps),
 	}
-	// Gate /mcp itself with the `mcp:read` umbrella so initialize /
+	// @constraint: gate /mcp itself with the `mcp:read` umbrella so initialize /
 	// tools/list calls produce audit rows (per spec section "Audit
 	// and dry-run" — every authenticated request lands in the event
 	// log, including dry-runs and metadata calls). The per-tool gate
@@ -108,7 +105,6 @@ func registerMCPRoute(r chi.Router, deps AppDeps) {
 func builtinSchemas() map[string][]byte {
 	obj := []byte(`{"type":"object","additionalProperties":true}`)
 	return map[string][]byte{
-		// Instances.
 		"instance_list":      obj,
 		"instance_get":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_create":    []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"},"frame_delivery_mode":{"type":"string","enum":["serial_queue","coalesce"]}},"required":["template"]}`),
@@ -117,13 +113,12 @@ func builtinSchemas() map[string][]byte {
 		"instance_resume":    []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_kill":      []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"reason":{"type":"string","description":"optional reason recorded on the teardown audit event"}},"required":["idOrKey"]}`),
 
-		// Breakpoints (concept:breakpoint — instance-debugger surface; spec §4).
+		// @concept: breakpoint — instance-debugger surface.
 		"breakpoint_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"breakpoint_create":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"checkpoint":{"type":"string","enum":["before_dispatch","after_terminal"]},"matcher":{"type":"object"},"signal_type":{"type":"string","description":"only valid on after_terminal checkpoints"},"mode":{"type":"string","enum":["pause","notify_only"]},"overflow_policy":{"type":"string","enum":["drop_oldest","block_dispatch","auto_resume_after_ttl"]},"hit_ttl_seconds":{"type":"integer"},"ttl_seconds":{"type":"integer"}},"required":["idOrKey","checkpoint"]}`),
 		"breakpoint_delete":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"breakpoint_id":{"type":"string","description":"breakpoint UUID"}},"required":["idOrKey","breakpoint_id"]}`),
 		"breakpoint_resume_hit": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"breakpoint_id":{"type":"string","description":"breakpoint UUID"},"hit_id":{"type":"string","description":"breakpoint hit UUID"},"overlay":{"type":"object","description":"optional one-shot attribute overlay"}},"required":["idOrKey","breakpoint_id","hit_id"]}`),
 
-		// Templates.
 		"template_list":       obj,
 		"template_get":        []byte(`{"type":"object","properties":{"id":{"type":"string","description":"template tag or content hash"}},"required":["id"]}`),
 		"template_validate":   []byte(`{"type":"object","properties":{"spec":{"type":"object"}},"required":["spec"]}`),
@@ -132,43 +127,35 @@ func builtinSchemas() map[string][]byte {
 		"template_undeploy":   []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		"template_deregister": []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 
-		// Tags.
 		"tag_list":   obj,
 		"tag_create": []byte(`{"type":"object","properties":{"tag":{"type":"string"},"template":{"type":"string"}},"required":["tag","template"]}`),
 		"tag_set":    []byte(`{"type":"object","properties":{"tag":{"type":"string"},"template":{"type":"string"}},"required":["tag","template"]}`),
 		"tag_delete": []byte(`{"type":"object","properties":{"tag":{"type":"string"}},"required":["tag"]}`),
 
-		// Nodes.
 		"node_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string"}},"required":["idOrKey"]}`),
 		"node_get":        []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 		"node_invalidate": []byte(`{"type":"object","properties":{"id":{"type":"string"},"reason":{"type":"string"},"frame":{"type":"string","enum":["","in","next"]}},"required":["id"]}`),
 		"node_reset":      []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 
-		// Messages.
 		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"kind":{"type":"string"},"target":{"type":"string"},"payload":{},"sender":{"type":"string"},"sender_kind":{"type":"string","enum":["operator","publisher"]},"publisher_subscription_id":{"type":"string"}},"required":["id","kind"]}`),
 		"message_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"message_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"message id"}},"required":["id"]}`),
 
-		// Events.
 		"event_list": obj,
 
-		// Lineage.
 		"lineage_get":   []byte(`{"type":"object","properties":{"run_id":{"type":"string"},"claim_handle_id":{"type":"string"},"source_type":{"type":"string"},"source_id":{"type":"string"},"executor_name":{"type":"string"}}}`),
 		"lineage_prune": []byte(`{"type":"object","properties":{"before":{"type":"string","description":"RFC3339 timestamp"}},"required":["before"]}`),
 
-		// Parked nodes / wait-sets / claim holders.
 		"parked_node_list":   []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`),
 		"waitset_list":       obj,
 		"claim_holders_list": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"}},"required":["claim_handle_id"]}`),
 
-		// Backfills.
 		"backfill_create":     []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"target_node":{"type":"string"},"partition_request_override":{},"reason":{"type":"string"}},"required":["id","target_node"]}`),
 		"backfill_list":       []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"backfill_get":        []byte(`{"type":"object","properties":{"op_id":{"type":"string"}},"required":["op_id"]}`),
 		"backfill_partitions": []byte(`{"type":"object","properties":{"op_id":{"type":"string"}},"required":["op_id"]}`),
 		"backfill_cancel":     []byte(`{"type":"object","properties":{"op_id":{"type":"string"}},"required":["op_id"]}`),
 
-		// Assets.
 		"asset_list":                    []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"asset_get":                     []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
 		"asset_versions":                []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
@@ -176,10 +163,8 @@ func builtinSchemas() map[string][]byte {
 		"asset_materialize":             []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"},"payload":{},"reason":{"type":"string"}},"required":["id","alias"]}`),
 		"asset_delete":                  []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
 
-		// Diagnostics.
 		"held_frames_list": obj,
 
-		// Auth.
 		"auth_list":       obj,
 		"auth_get":        []byte(`{"type":"object","properties":{"nameOrID":{"type":"string"}},"required":["nameOrID"]}`),
 		"auth_status":     obj,

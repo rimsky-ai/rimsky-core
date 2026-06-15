@@ -85,7 +85,7 @@ func TestHostAgentControlPlaneDemo(t *testing.T) {
 		t.Fatalf("host-agent-control-plane-demo.sh exited %d (want 0)\noutput:\n%s", code, out)
 	}
 
-	// Failure-path diagnostic must surface — proves step 1 actually ran
+	// @constraint: Failure-path diagnostic must surface — proves step 1 actually ran
 	// (a test that skipped step 1 silently would still print the happy
 	// path; the explicit step-1 OK line is the falsifier-defeating
 	// witness).
@@ -93,25 +93,24 @@ func TestHostAgentControlPlaneDemo(t *testing.T) {
 		t.Fatalf("demo did not exhibit step 1 (failure path); output:\n%s", out)
 	}
 
-	// Happy-path start must say `connected to` — proves the readiness
+	// @constraint: Happy-path start must say `connected to` — proves the readiness
 	// handshake fired (not a silent fork + cache).
 	match := connectedLineRE.FindStringSubmatch(out)
 	if match == nil {
 		t.Fatalf("demo did not print `rimsky agent started (pid N, connected to ADDR)`; output:\n%s", out)
 	}
 
-	// Status must say `connected` — proves the sentinel-backed report.
+	// @constraint: Status must say `connected` — proves the sentinel-backed report.
 	if !strings.Contains(out, "rimsky agent: connected") {
 		t.Fatalf("demo did not exhibit a `connected` status; output:\n%s", out)
 	}
 
-	// Stop must say `stopped (pid N)` — proves the daemon was signaled
+	// @constraint: Stop must say `stopped (pid N)` — proves the daemon was signaled
 	// and the recorded state was cleared.
 	if !strings.Contains(out, "rimsky agent: stopped (pid "+match[1]+")") {
 		t.Fatalf("demo did not exhibit a clean stop for pid %s; output:\n%s", match[1], out)
 	}
 
-	// Final aggregate witness.
 	if !strings.Contains(out, "all steps OK") {
 		t.Fatalf("demo did not reach `all steps OK`; output:\n%s", out)
 	}
@@ -130,7 +129,7 @@ func TestHostAgentControlPlaneDemo(t *testing.T) {
 // `rimsky agent start` CLI subprocess against the same proxy port,
 // so the CLI path is the integrating wiring under test.
 func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
-	// Stand up control-api + proxy + stub binary without an in-process
+	// @deliberate: Stand up control-api + proxy + stub binary without an in-process
 	// agent — we'll launch the agent via the CLI subprocess.
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: false})
 
@@ -141,12 +140,12 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 	termLog := filepath.Join(t.TempDir(), "stubchild-term.log")
 	t.Setenv("STUBCHILD_TERM_LOG", termLog)
 
-	// Launch the agent via the CLI subprocess. The pid file lands in
+	// @deliberate: Launch the agent via the CLI subprocess. The pid file lands in
 	// stateDir; the status file is gated on a successful RegisterAck so
 	// `start` won't return until the bidi stream is up — that is the
 	// integrating handshake under test.
 	startEnv := []string{
-		"HOME=" + t.TempDir(), // isolate ~/.rimsky for any fallback paths
+		"HOME=" + t.TempDir(), // @deliberate: isolate ~/.rimsky for any fallback paths
 		"PATH=" + os.Getenv("PATH"),
 		"STUBCHILD_TERM_LOG=" + termLog,
 	}
@@ -163,7 +162,6 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 		t.Fatalf("rimsky agent start did not report `connected to %s`; stdout:\n%s", fx.proxyAddr, startOut)
 	}
 
-	// Read the daemon pid for the post-stop liveness check.
 	pidRaw, err := os.ReadFile(filepath.Join(stateDir, "agent.pid"))
 	if err != nil {
 		t.Fatalf("read agent.pid: %v", err)
@@ -173,7 +171,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 		t.Fatalf("parse agent.pid: %v", err)
 	}
 
-	// Drive a real dispatch through the proxy → the CLI-launched agent
+	// @deliberate: Drive a real dispatch through the proxy → the CLI-launched agent
 	// → the spawned stubchild. The dispatch reaching `fresh` is proof
 	// the agent exec()d the child and the Execute stream ran to a
 	// Success outcome.
@@ -188,7 +186,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 		t.Fatal("late-bound worker did not reach fresh — agent did not spawn the child via dispatch")
 	}
 
-	// Snapshot the set of pids that look like our spawned stubchild
+	// @constraint: Snapshot the set of pids that look like our spawned stubchild
 	// BEFORE stop, so we can assert none of them survive after stop.
 	// The stubchild is the test fixture binary at fx.stubBinary; any
 	// process whose argv carries that path is a live spawn under
@@ -198,7 +196,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 		t.Fatal("no stubchild processes alive after dispatch — the agent never spawned the child")
 	}
 
-	// Tear the daemon down through the CLI. The stop verb SIGTERMs the
+	// @deliberate: Tear the daemon down through the CLI. The stop verb SIGTERMs the
 	// daemon, which runs its reap loop with ReapGracePeriod budget.
 	stopOut, stopErr, stopCode := runCmdWithEnv(t, binPath,
 		[]string{"agent", "stop", "--state-dir", stateDir},
@@ -210,12 +208,12 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 		t.Fatalf("rimsky agent stop did not report `stopped (pid %d)`; stdout:\n%s", daemonPid, stopOut)
 	}
 
-	// Falsifier check #1: the daemon process itself must be gone.
+	// @constraint: Falsifier check #1: the daemon process itself must be gone.
 	if !waitProcessGone(daemonPid, 5*time.Second) {
 		t.Fatalf("daemon pid %d still alive after `agent stop` — stop did not fully tear down", daemonPid)
 	}
 
-	// Falsifier check #2: every stubchild process the agent spawned
+	// @constraint: Falsifier check #2: every stubchild process the agent spawned
 	// before stop must be GONE. A surviving stubchild is the "zombie
 	// children" failure mode the Falsifier names. Allow a brief grace
 	// window because SIGTERM propagation through the agent's reap loop
@@ -226,7 +224,7 @@ func TestHostAgentControlPlaneDispatchReap(t *testing.T) {
 			len(survivors), survivors)
 	}
 
-	// Sanity: the stubchild's term log must have been touched, proving
+	// @constraint: Sanity: the stubchild's term log must have been touched, proving
 	// the agent actually signaled it (not killed by some other path).
 	if _, statErr := os.Stat(termLog); statErr != nil {
 		t.Fatalf("stubchild term log %s missing — the agent did not signal the spawned child during stop: %v",
@@ -245,7 +243,7 @@ func runHostAgentDemoScript(t *testing.T, scriptPath, binPath, proxyBin string, 
 	cmd.Env = append(os.Environ(),
 		"RIMSKY_BIN="+binPath,
 		"RIMSKY_PROXY_BIN="+proxyBin,
-		// Isolate HOME so any default ~/.rimsky lookup the script's
+		// @deliberate: Isolate HOME so any default ~/.rimsky lookup the script's
 		// CLI calls perform doesn't trip on an operator-installed
 		// agent state directory.
 		"HOME="+t.TempDir(),

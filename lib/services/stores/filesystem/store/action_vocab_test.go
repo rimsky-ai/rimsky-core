@@ -41,16 +41,13 @@ func TestAction_Pop_FolderStays(t *testing.T) {
 	}
 	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 
-	// Folder still on disk.
 	if _, err := os.Stat(filepath.Join(root, sub, "alpha")); err != nil {
 		t.Errorf("pop should leave folder in place; stat err = %v", err)
 	}
-	// in_progress sentinel removed.
 	inProgDir := filepath.Join(root, ".fs-store", "r", "in_progress")
 	if entries, _ := os.ReadDir(inProgDir); len(entries) != 0 {
 		t.Errorf("expected in_progress/ empty after pop commit; got %v", entries)
 	}
-	// available sentinel for that folder NOT recreated (queue truly drained).
 	availDir := filepath.Join(root, ".fs-store", "r", "available")
 	if entries, _ := os.ReadDir(availDir); len(entries) != 0 {
 		t.Errorf("expected available/ empty after pop commit; got %v", entries)
@@ -81,14 +78,12 @@ func TestAction_PopAndMove_FolderRenamed(t *testing.T) {
 	}
 	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 
-	// Folder moved to archive/.
 	if _, err := os.Stat(filepath.Join(root, "archive", "alpha")); err != nil {
 		t.Errorf("expected folder at archive/alpha; stat err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, sub, "alpha")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("source folder should be gone; stat err = %v", err)
 	}
-	// in_progress sentinel removed.
 	inProgDir := filepath.Join(root, ".fs-store", "r", "in_progress")
 	if entries, _ := os.ReadDir(inProgDir); len(entries) != 0 {
 		t.Errorf("expected in_progress/ empty after pop_and_move commit; got %v", entries)
@@ -175,17 +170,14 @@ func TestAction_Recycle_QueueCycles(t *testing.T) {
 	must(t, err)
 	must(t, st.Commit(context.Background(), "c", o.Result.ClaimScope, o.Result.Address))
 
-	// Folder still on disk.
 	if _, err := os.Stat(filepath.Join(root, sub, "alpha")); err != nil {
 		t.Errorf("recycle should leave folder in place; stat err = %v", err)
 	}
-	// available sentinel re-created.
 	availDir := filepath.Join(root, ".fs-store", "r", "available")
 	entries, _ := os.ReadDir(availDir)
 	if len(entries) != 1 || entries[0].Name() != "alpha" {
 		t.Errorf("expected available/alpha after recycle; got %v", entries)
 	}
-	// Re-pick succeeds.
 	o2, err := st.Open(context.Background(), "c2", "@r")
 	must(t, err)
 	if !o2.Available {

@@ -84,11 +84,11 @@ const healthPollInterval = 500 * time.Millisecond
 // are empty when the stack is brought up on SQLite (WithSQLite) — there
 // is no Postgres in that mode.
 type RimskyEndpoint struct {
-	BaseURL     string // e.g. http://127.0.0.1:32678 — reach from the test process
-	InternalURL string // e.g. http://rimsky:8080 — reach from sibling containers on Network
-	HostDSN     string // postgres DSN reachable from the test process
-	InternalDSN string // postgres DSN reachable from sibling containers (host=rimsky-pg, port=5432)
-	Network     string // docker network name; pass to siblings via testcontainers.WithNetwork
+	BaseURL     string // @constraint: e.g. http://127.0.0.1:32678 — reach from the test process
+	InternalURL string // @constraint: e.g. http://rimsky:8080 — reach from sibling containers on Network
+	HostDSN     string // @constraint: postgres DSN reachable from the test process
+	InternalDSN string // @constraint: postgres DSN reachable from sibling containers (host=rimsky-pg, port=5432)
+	Network     string // @constraint: docker network name; pass to siblings via testcontainers.WithNetwork
 }
 
 // Option configures the rimsky.yml rendered for the rimsky/all
@@ -156,7 +156,7 @@ type producerCfg struct {
 
 type executorCfg struct {
 	endpoint  string
-	transport string // grpc | http (default grpc)
+	transport string // @constraint: grpc | http (default grpc)
 	// extraProtocols are mix-in protocol names appended to the
 	// rendered `protocols:` list alongside the always-present
 	// `executor`. Used by tests that exercise an executor advertising
@@ -410,7 +410,7 @@ type RimskyHandle struct {
 	// through the methods, not the raw container.
 	container testcontainers.Container
 
-	// configBuilder + yamlBytes carry the bring-up inputs so Restart
+	// @constraint: configBuilder + yamlBytes carry the bring-up inputs so Restart
 	// can replay them verbatim against a fresh container.
 	cb        *configBuilder
 	yamlBytes []byte
@@ -518,10 +518,10 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 		opt(cb)
 	}
 
-	// 1. Shared docker network for the rimsky container + any
-	//    peer-service siblings. Either reuse an existing network (so
-	//    sibling claim producers can come up FIRST and be reachable
-	//    when rimsky starts) or create a fresh throwaway network.
+	// @constraint: shared docker network for the rimsky container + any
+	// peer-service siblings. Either reuse an existing network (so
+	// sibling claim producers can come up FIRST and be reachable
+	// when rimsky starts) or create a fresh throwaway network.
 	var networkName string
 	if cb.existingNetwork != "" {
 		networkName = cb.existingNetwork
@@ -536,11 +536,11 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 		networkName = nw.Name
 	}
 
-	// 2. Persistence backend. In Postgres mode (default) bring up a
-	//    Postgres testcontainer on the shared network and point rimsky at
-	//    its in-network DSN. In SQLite mode (WithSQLite) skip Postgres
-	//    entirely — the all-in-one image runs all three roles against its
-	//    baked, nonroot-writable SQLite file.
+	// @constraint: persistence backend. In Postgres mode (default) bring up a
+	// Postgres testcontainer on the shared network and point rimsky at
+	// its in-network DSN. In SQLite mode (WithSQLite) skip Postgres
+	// entirely — the all-in-one image runs all three roles against its
+	// baked, nonroot-writable SQLite file.
 	var (
 		hostDSN     string
 		internalDSN string
@@ -551,15 +551,14 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 	} else {
 		hostDSN, internalDSN = startPostgresOnNetwork(ctx, t, networkName)
 
-		// 3. Render rimsky.yml referencing the in-network DSN.
 		yamlBytes = []byte(renderRimskyYAML(internalDSN, cb))
 	}
 
-	// 4. Bring up rimsky/all. The unified entrypoint runs migrations
-	//    then runs scheduler + supervisor + control-api in one
-	//    process. Extracted to
-	//    runRimskyContainer so RimskyHandle.Restart can re-run only the
-	//    rimsky/all bring-up step (the persistence container persists).
+	// @constraint: bring up rimsky/all. The unified entrypoint runs migrations
+	// then runs scheduler + supervisor + control-api in one
+	// process. Extracted to runRimskyContainer so RimskyHandle.Restart
+	// can re-run only the rimsky/all bring-up step (the persistence
+	// container persists).
 	rimsky, baseURL := runRimskyContainer(ctx, t, cb, yamlBytes, networkName)
 
 	internalURL := "http://rimsky:8080"
@@ -612,7 +611,7 @@ func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName strin
 	if err != nil {
 		t.Fatalf("harness: postgres host DSN: %v", err)
 	}
-	// In-network DSN; siblings on the same network reach Postgres at hostname `rimsky-pg`.
+	// @constraint: in-network DSN; siblings on the same network reach Postgres at hostname `rimsky-pg`.
 	internalDSN = "postgres://rimsky:rimsky@rimsky-pg:5432/rimsky?sslmode=disable"
 	return hostDSN, internalDSN
 }
@@ -630,7 +629,7 @@ func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, ya
 		"RIMSKY_SUPERVISOR_CONFIG": "/etc/rimsky/supervisor-config.yml",
 		"RIMSKY_CONTROL_API_HOST":  "0.0.0.0",
 		"RIMSKY_CONTROL_API_PORT":  "8080",
-		// In a docker-network deployment the supervisor binds 0.0.0.0
+		// @constraint: in a docker-network deployment the supervisor binds 0.0.0.0
 		// for its callback listener; executors need a service-
 		// reachable hostname to dial back.
 		"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": "rimsky",
@@ -671,7 +670,7 @@ func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, ya
 	}
 	mapped, err := rimsky.MappedPort(ctx, "8080")
 	if err != nil {
-		// Most likely cause: rimsky-all-in-one exited non-zero between
+		// @deliberate: most likely cause: rimsky-all-in-one exited non-zero between
 		// the wait-strategy port-up observation and the mapped-port
 		// lookup — typically a peer the startup eager-dial cannot
 		// reach. Dump container logs so the failure mode is visible
@@ -681,7 +680,6 @@ func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, ya
 	}
 	baseURL := fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
 
-	// Poll /health until control-api accepts traffic.
 	if err := waitForHealth(ctx, baseURL, healthDeadline); err != nil {
 		dumpLogsForFailure(t, rimsky)
 		t.Fatalf("harness: rimsky /health did not return 200: %v", err)
@@ -920,7 +918,7 @@ func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 		for name, p := range cb.claimProducers {
 			fmt.Fprintf(b, "  %s:\n", name)
 			fmt.Fprintf(b, "    endpoint: %q\n", p.endpoint)
-			// `claim_producer` is the primary protocol; mix-in
+			// @constraint: `claim_producer` is the primary protocol; mix-in
 			// protocols added via WithClaimProducerProtocols follow.
 			// Order is significant only for documentation — the
 			// validate-protocols loader treats the list as a set.
@@ -959,7 +957,7 @@ func writePeerBlocks(b *strings.Builder, cb *configBuilder) {
 			fmt.Fprintf(b, "    transport: %s\n", e.transport)
 			fmt.Fprintf(b, "    endpoint: %q\n", e.endpoint)
 			b.WriteString("    tls: off\n")
-			// `executor` is the primary protocol; mix-in protocols
+			// @constraint: `executor` is the primary protocol; mix-in protocols
 			// added via WithExecutorProtocols follow. Order is
 			// significant only for documentation — the protocols
 			// loader treats the list as a set.

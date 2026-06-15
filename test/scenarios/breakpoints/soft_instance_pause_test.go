@@ -55,7 +55,7 @@ func TestSoftInstancePause(t *testing.T) {
 
 	iid := h.CreateInstance(tid, "ck-soft-pause", map[string]any{})
 
-	// Wait for the first dispatch's terminal so we know the harness
+	// @deliberate: Wait for the first dispatch's terminal so we know the harness
 	// has a running supervisor + the in-flight dispatch settled.
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
@@ -65,23 +65,23 @@ func TestSoftInstancePause(t *testing.T) {
 	require.GreaterOrEqual(t, startCount, 1,
 		"first dispatch fired before pause")
 
-	// Pause the instance. Subsequent claims should be held.
+	// @deliberate: Pause the instance. Subsequent claims should be held.
 	status, _ := instancePause(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	// Provoke a re-dispatch by invalidating the worker node (a
+	// @deliberate: Provoke a re-dispatch by invalidating the worker node (a
 	// node-level invalidate is the simplest way to force the supervisor
 	// to enqueue another dispatch). The new dispatch should NOT fire
 	// because the candidate-selection filter excludes paused instances.
 	invalidateNode(t, h, n.ID)
 
-	// Give the supervisor a few ticks to (not) pick the row up.
+	// @constraint: Give the supervisor a few ticks to (not) pick the row up.
 	time.Sleep(1 * time.Second)
 	heldCount := stubObservedCount(h, "worker")
 	require.Equal(t, startCount, heldCount,
 		"soft-pause should hold new claims; observed count must not advance while paused")
 
-	// Resume the instance; the supervisor's next tick claims the
+	// @deliberate: Resume the instance; the supervisor's next tick claims the
 	// pending dispatch.
 	status, _ = instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)

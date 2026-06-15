@@ -38,7 +38,8 @@ func TestFailureReporter_Close(t *testing.T) {
 		t.Fatal("channel should be closed after Close")
 	}
 
-	// Idempotent: a second Close must not panic (close of closed channel).
+	// @constraint: idempotent — a second Close must not panic (close of
+	// closed channel).
 	r.Close()
 }
 
@@ -49,7 +50,7 @@ func TestFailureReporter_ReportAfterClose(t *testing.T) {
 	r := newFailureReporter(1)
 	r.Close()
 
-	// Must not panic, must not deliver anything.
+	// @constraint: must not panic, must not deliver anything.
 	r.Report(errors.New("late failure"))
 
 	if _, ok := <-r.ch; ok {
@@ -65,7 +66,8 @@ func TestFailureReporter_OverCapacity(t *testing.T) {
 	r := newFailureReporter(1)
 	first := errors.New("first failure")
 	r.Report(first)
-	// Buffer (capacity 1) is full; this must return without blocking.
+	// @constraint: over-capacity Report must return without blocking;
+	// the failure-reporter's buffer (capacity 1) is full here.
 	r.Report(errors.New("second failure"))
 
 	if got := <-r.ch; got != first {
@@ -144,7 +146,7 @@ func TestMetricsPortFor(t *testing.T) {
 		if port != 9200 {
 			t.Errorf("metricsPortFor(control-api) = %d, want per-role override 9200", port)
 		}
-		// Other roles still resolve from the base.
+		// @constraint: other roles still resolve from the base.
 		port, err = metricsPortFor("scheduler")
 		if err != nil {
 			t.Fatalf("metricsPortFor(scheduler): %v", err)

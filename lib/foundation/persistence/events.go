@@ -44,7 +44,7 @@ type EventAppendInput struct {
 	NodeID     *shared.UUID
 	Kind       events.Kind
 	Payload    map[string]any
-	OccurredAt *time.Time // nil → server NOW()
+	OccurredAt *time.Time // @constraint: nil → server NOW()
 }
 
 // EventListFilter is the observability/list filter.
@@ -66,8 +66,8 @@ type EventListFilter struct {
 	Since  *time.Time
 	Until  *time.Time
 
-	// Auth-payload filters (JSONB payload keys; meaningful for auth.*
-	// kinds). Each is AND-composed; a nil pointer is a no-op.
+	// @constraint: auth-payload filters (JSONB payload keys; meaningful
+	// for auth.* kinds). Each is AND-composed; a nil pointer is a no-op.
 	KeyID          *string // payload->>'key_id'
 	KeyName        *string // payload->>'key_name'
 	ActionExact    *string // payload->>'action' = ?
@@ -87,19 +87,20 @@ type EventListResult struct {
 type EventTable interface {
 	Append(ctx context.Context, in EventAppendInput, tx Tx) error
 	List(ctx context.Context, filter EventListFilter, pag ListPagination, tx Tx) (EventListResult, error)
-	// LastTerminalByNodes returns the most-recent dispatch-terminal event
-	// (kind in {work_completed, error}) per node id. Used by the
-	// observability cascade-graph projection to avoid an N+1 List per
-	// node. Nodes with no matching event are absent from the map.
+	// @agent-contract: returns the most-recent dispatch-terminal event
+	// (kind in {work_completed, error}) per node id. Nodes with no
+	// matching event are absent from the map. Does NOT scan kinds outside
+	// {work_completed, error}. Exists so the observability cascade-graph
+	// projection avoids an N+1 List per node.
 	LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx Tx) (map[shared.UUID]EventRow, error)
 
-	// DeleteOlderThan deletes rimsky_events rows whose occurred_at is
-	// before cutoff. The audit log is time-keyed (no frame FK), so it is
-	// reaped by the trailing trace-retention window alone — the count cap
-	// applies only to structural frame/node_run rows. Standalone sweep:
-	// no caller-supplied tx, run directly against the db handle (mirrors
-	// LineageTable.DeleteOlderThan). Returns the number of rows deleted.
-	//
-	// concept:event-log trace retention.
+	// @agent-contract: deletes rimsky_events rows whose occurred_at is
+	// before cutoff and returns the number of rows deleted. Standalone
+	// sweep — does NOT accept a caller-supplied tx; drivers run it
+	// directly against the db handle (mirrors LineageTable.DeleteOlderThan).
+	// Does NOT apply a count cap — the audit log is time-keyed (no frame
+	// FK), so it is reaped by the trailing trace-retention window alone;
+	// the count cap applies only to structural frame/node_run rows.
+	// @concept: event-log trace retention.
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 }

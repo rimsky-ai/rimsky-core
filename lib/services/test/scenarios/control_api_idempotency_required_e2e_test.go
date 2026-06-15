@@ -59,10 +59,10 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable on the shared network before
-	// rimsky/all starts — the control-api fires a Capabilities handshake
-	// against declared executors at startup. Network first, then the
-	// executor peer, then rimsky on the baked SQLite default.
+	// @constraint: the stub executor must be reachable on the shared network
+	// before rimsky starts — the control-api fires a Capabilities handshake
+	// against declared executors at startup, so the order is network first,
+	// then the executor peer, then rimsky on the baked SQLite default.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -72,9 +72,9 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// A single worker node gives the message-emit path a real node to source
-	// a delivery frame on (resolveMessageFrameSource needs at least one node)
-	// and a real target for the invalidate envelope.
+	// @constraint: a single worker node gives the message-emit path a real
+	// node to source a delivery frame on (resolveMessageFrameSource needs at
+	// least one node) and a real target for the invalidate envelope.
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "idempotency-required-e2e",
@@ -89,17 +89,19 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 
 	messagesPath := "/v1/instances/" + instanceID + "/messages"
 
-	// A valid invalidate body — targets the worker node by type. The ONLY
-	// difference between the rejected and accepted POSTs below is the presence
-	// of the Idempotency-Key header, so the body is held constant.
+	// @deliberate: the body is held constant across all three POSTs below so
+	// the ONLY variable under test is the presence/absence of the
+	// Idempotency-Key header — any other delta would muddy what the wire
+	// response is asserting about.
 	invalidateBody := map[string]any{
 		"kind":   "invalidate",
 		"target": "worker",
 	}
 
-	// (1) Keyless emit: valid body, NO Idempotency-Key header → 400 with a
-	// header-required diagnostic. This is the heart of the story: a missing key
-	// can never silently bypass dedup.
+	// @constraint: control-api MCP requires Idempotency-Key on emit — a
+	// keyless emit with an otherwise valid body must be refused 400 with a
+	// header-required diagnostic, so a missing key can never silently bypass
+	// dedup.
 	status, raw, _ := postMessage(t, ep, messagesPath, invalidateBody, "")
 	if status != http.StatusBadRequest {
 		t.Fatalf("keyless POST %s returned %d, want 400 — a missing Idempotency-Key must be refused, not silently accepted\nbody: %s",
@@ -109,19 +111,19 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 		t.Fatalf("keyless POST 400 body did not name the required Idempotency-Key header; got: %s", string(raw))
 	}
 
-	// The rejected emit must have left NO trace. The dedup INSERT and the
-	// envelope insert share one tx and both run only AFTER the key guard, so a
-	// rejected keyless POST inserts neither: GET shows zero messages. (No
-	// envelope ⇒ no idempotency row, since the row is written in the same tx as
-	// the envelope it points at.)
+	// @constraint: the rejected keyless emit must leave NO trace — the dedup
+	// INSERT and the envelope insert share one tx and both run only AFTER the
+	// key guard, so a rejected keyless POST inserts neither and GET shows zero
+	// messages (no envelope ⇒ no idempotency row, since the row is written in
+	// the same tx as the envelope it points at).
 	if n := countInstanceMessages(t, ep, messagesPath); n != 0 {
 		t.Fatalf("after a rejected keyless POST, GET %s shows %d messages, want 0 — the rejected emit must leave no envelope (and thus no idempotency row)",
 			messagesPath, n)
 	}
 
-	// (2) Keyed emit: same valid body, WITH an Idempotency-Key → 201 Created
-	// with a message_id. The status-code distinction (201 first insert vs 200
-	// replay) is operator-visible, so it is asserted exactly.
+	// @constraint: a keyed emit must return 201 Created with a message_id.
+	// The status-code distinction (201 first insert vs 200 replay) is
+	// operator-visible, so it is asserted exactly.
 	const idemKey = "idem-key-e2e-0001"
 	status, raw, firstMsgID := postMessage(t, ep, messagesPath, invalidateBody, idemKey)
 	if status != http.StatusCreated {
@@ -131,14 +133,13 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 		t.Fatalf("first keyed POST returned no message_id; body: %s", string(raw))
 	}
 
-	// Exactly one envelope now exists.
 	if n := countInstanceMessages(t, ep, messagesPath); n != 1 {
 		t.Fatalf("after the first keyed POST, GET %s shows %d messages, want exactly 1", messagesPath, n)
 	}
 
-	// (3) Replay: a third POST with the SAME key → 200 OK with the IDENTICAL
-	// message_id, and NO second envelope. This is the dedup guarantee the
-	// mandatory key exists to deliver.
+	// @constraint: a replay POST carrying the SAME key must return 200 OK
+	// with the IDENTICAL message_id and insert no second envelope. This is
+	// the dedup guarantee the mandatory key exists to deliver.
 	status, raw, replayMsgID := postMessage(t, ep, messagesPath, invalidateBody, idemKey)
 	if status != http.StatusOK {
 		t.Fatalf("replay keyed POST %s returned %d, want 200 OK (idempotent dedup)\nbody: %s", messagesPath, status, string(raw))
@@ -196,10 +197,10 @@ func postMessage(t *testing.T, ep harness.RimskyEndpoint, path string, body map[
 // invariant would itself be a defect, so a single page is the right read.
 func countInstanceMessages(t *testing.T, ep harness.RimskyEndpoint, path string) int {
 	t.Helper()
-	// A short settle window: the GET is against the same control-api process
-	// that just handled the POST, so the envelope is durably committed before
-	// the POST returns — but a tiny retry guards against any read-after-write
-	// projection lag on SQLite rather than racing on the first GET.
+	// @deliberate: a short retry settle window guards against any
+	// read-after-write projection lag on SQLite rather than racing on the
+	// first GET. The envelope is durably committed before the POST returns,
+	// so the loop usually completes on the first iteration.
 	deadline := time.Now().Add(5 * time.Second)
 	var last int
 	for {

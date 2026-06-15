@@ -65,7 +65,7 @@ func TestSpawnService_HappyPath(t *testing.T) {
 		t.Fatal("expected non-zero port")
 	}
 
-	// The child's port must be reachable — the helper's whole point is
+	// @deliberate: The child's port must be reachable — the helper's whole point is
 	// that on nil-error the listener is up.
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", spawned.Port), 2*time.Second)
 	if err != nil {
@@ -75,7 +75,7 @@ func TestSpawnService_HappyPath(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	// Sanity-check the HTTP handler so we know we reached the stub-service,
+	// @deliberate: Sanity-check the HTTP handler so we know we reached the stub-service,
 	// not some lingering socket that happened to be on the port.
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", spawned.Port))
 	if err != nil {
@@ -90,7 +90,7 @@ func TestSpawnService_HappyPath(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	// Caller owns lifecycle: signal SIGTERM, await Exited, confirm cmd.Wait
+	// @deliberate: Caller owns lifecycle: signal SIGTERM, await Exited, confirm cmd.Wait
 	// has returned (ProcessState non-nil).
 	if err := spawned.Cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("signal sigterm: %v", err)
@@ -125,7 +125,7 @@ func TestSpawnService_ReadyTimeoutReapsChild(t *testing.T) {
 		ReadyTimeout: 200 * time.Millisecond,
 	})
 	if err == nil {
-		// Make sure we clean up before failing if the contract is broken.
+		// @deliberate: Make sure we clean up before failing if the contract is broken.
 		if spawned != nil && spawned.Cmd != nil && spawned.Cmd.Process != nil {
 			_ = spawned.Cmd.Process.Kill()
 			<-spawned.Exited
@@ -136,7 +136,7 @@ func TestSpawnService_ReadyTimeoutReapsChild(t *testing.T) {
 		t.Fatalf("expected nil SpawnedService on error, got %+v", spawned)
 	}
 
-	// SpawnService must have reaped synchronously before returning. The
+	// @deliberate: SpawnService must have reaped synchronously before returning. The
 	// bound on elapsed time is the load-bearing claim: without the reap,
 	// the goroutine could run on for the full 60s sleep in stub-no-bind.
 	// Cap generously at 5s: 200ms timeout + Kill + Wait overhead.
@@ -144,7 +144,7 @@ func TestSpawnService_ReadyTimeoutReapsChild(t *testing.T) {
 		t.Fatalf("SpawnService took %v on readiness timeout, want < 5s (suggests no reap)", elapsed)
 	}
 
-	// We can't read the reaped PID off the returned handle (it's nil), so
+	// @deliberate: We can't read the reaped PID off the returned handle (it's nil), so
 	// we verify the no-leak property by negative observation: the elapsed
 	// time bound above + the sync wait inside SpawnService (the `<-exited`
 	// after killProcess) together mean any stray child would have to be

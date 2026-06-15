@@ -2,8 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// affirm_node_run_row.go — AffirmNodeRunRow conformance area.
-//
+// @concept: run-scope
+
+// @constraint: AffirmNodeRunRow conformance area.
 // Covers NodeTable.AffirmNodeRunRow — the narrow primitive that
 // ensures an in-flight rimsky_node_runs row exists for a given
 // (node_id, run_scope_id). Lazy allocation today; eager rewriting is a
@@ -88,7 +89,6 @@ func testAffirmNodeRunRow_Idempotent(t *testing.T, d persistence.Database) {
 		t.Fatalf("Affirm idempotent: no in-flight row after two affirms")
 	}
 
-	// Lookup again must return the same id (no second row created).
 	var secondID shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		id, _, err := q.GetInFlightRunForNode(ctx, tx, fix.NodeID, fix.MainRunScopeID)
@@ -109,9 +109,8 @@ func testAffirmNodeRunRow_ErrorsOnClosedScope(t *testing.T, d persistence.Databa
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Create a fresh RunScope so we can close it without disturbing the
-	// fixture's main scope (which the seedConformanceRunForNode helper
-	// uses).
+	// @deliberate: fresh RunScope so closing it does not disturb the
+	// fixture's main scope used by seedConformanceRunForNode.
 	scopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -146,13 +145,11 @@ func testAffirmNodeRunRow_NoReturnValueDependency(t *testing.T, d persistence.Da
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Compile-time witness: assign the method value to a variable
-	// declared with the exact signature `func(...) error`. If
-	// AffirmNodeRunRow grows another return value, this assignment
-	// fails to type-check.
+	// @constraint: compile-time witness — assigning the method value to a
+	// variable declared with the exact signature `func(...) error` fails to
+	// type-check if AffirmNodeRunRow grows another return value.
 	var fn func(context.Context, shared.UUID, shared.UUID, shared.UUID, persistence.Tx) error = store.Nodes().AffirmNodeRunRow
 
-	// Smoke-call once to exercise the runtime path too.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return fn(ctx, fix.NodeID, fix.MainRunScopeID, fix.FrameID, tx)
 	}); err != nil {
@@ -186,8 +183,6 @@ func testAffirmThenRead(t *testing.T, d persistence.Database) {
 		t.Fatalf("Affirm+lookup: %v", err)
 	}
 
-	// Read the run-tree projection's phase + state; the affirmed row
-	// must be phase='pending', state='stale'.
 	var treeRow *persistence.RunTreeRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.RunTree().GetByID(ctx, tx, runID)
@@ -205,6 +200,6 @@ func testAffirmThenRead(t *testing.T, d persistence.Database) {
 	if string(treeRow.State) != "stale" {
 		t.Fatalf("AffirmThenRead: state = %q, want stale", treeRow.State)
 	}
-	// Use q to silence unused-import if Queue.GetByID got dropped above.
+	// @deliberate: silence unused-variable error if Queue.GetByID is dropped above.
 	_ = q
 }

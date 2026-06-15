@@ -3,8 +3,8 @@
 // See LICENSE.apache at the repo root.
 
 /**
- * expected-attributes-schema.ts — JSON Schema for claude-agent's
- * accepted attribute shape.
+ * JSON Schema for claude-agent's accepted attribute shape
+ * (`expected-attributes-schema.ts`).
  *
  * Drives two paths:
  *   1. Returned in `Capabilities.expected_attributes_schema` so rimsky
@@ -23,18 +23,19 @@
  * so authors may declare extension attributes used purely for inter-
  * node dataflow (e.g. a `warnings_block` attribute used in a producer-
  * owned-recovery cycle that this executor does not read).
+ *
+ * Schema property names match parseCliConfig in server.ts /
+ * http-bridge.ts: snake_case. Mismatched names (camelCase here +
+ * snake_case in the parser) would cause templates that use the
+ * real key names to fail schema validation, while templates using
+ * camelCase would pass validation but be silently ignored at run
+ * time. The parser is the source of truth; schema follows it.
  */
-// Schema property names match parseCliConfig in server.ts /
-// http-bridge.ts: snake_case. Mismatched names (camelCase here +
-// snake_case in the parser) would cause templates that use the
-// real key names to fail schema validation, while templates using
-// camelCase would pass validation but be silently ignored at run
-// time. The parser is the source of truth; schema follows it.
 export const expectedAttributesSchema = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
   type: "object",
   properties: {
-    // cwd_from_store / cwd are top-level attribute fields read by
+    // @deliberate: cwd_from_store / cwd are top-level attribute fields read by
     // server.ts and http-bridge.ts to resolve the agent's working
     // directory. Both default to empty string so a template that
     // doesn't override them clears rimsky's "property has no
@@ -44,20 +45,20 @@ export const expectedAttributesSchema = {
     // (the cwd resolution logic falls through to the default).
     cwd_from_store: { type: "string", default: "" },
     cwd: { type: "string", default: "" },
-    // model / system_prompt / user_prompt are read at the top level
+    // @deliberate: model / system_prompt / user_prompt are read at the top level
     // by the dispatch entrypoint in agent-run.ts. They are NOT under
     // `cli.*` even though they affect the spawned CLI. Keeping them
     // at the schema's top level matches the dispatch entrypoint.
     model: { type: "string", default: "claude-sonnet-4-5" },
     system_prompt: { type: "string" },
-    // user_prompt is the fully rimsky-resolved user prompt (post-
+    // @deliberate: user_prompt is the fully rimsky-resolved user prompt (post-
     // collapse the executor reads the resolved value verbatim and
     // appends a fixed metadata footer; the old `user_prompt_template`
     // two-stage substitution is gone).
     user_prompt: { type: "string" },
     cli: {
       type: "object",
-      // The cli.* fields below are exactly those parseCliConfig
+      // @deliberate: the cli.* fields below are exactly those parseCliConfig
       // reads (server.ts / http-bridge.ts). Adding a field here
       // without a matching reader would silently no-op at runtime;
       // adding a reader without a schema entry would reject
@@ -70,7 +71,7 @@ export const expectedAttributesSchema = {
         add_dirs: { type: "array", items: { type: "string" } },
         max_budget_usd: { type: "string" },
         permission_mode: {
-          // Real Claude CLI `--permission-mode` values. `bypassPermissions`
+          // @deliberate: real Claude CLI `--permission-mode` values. `bypassPermissions`
           // is the executor's own default (cli-runner.ts). The prior
           // ["default","ask","deny"] set was wrong: it rejected the
           // executor's default and omitted every other real mode.
@@ -86,7 +87,7 @@ export const expectedAttributesSchema = {
           type: "boolean",
           default: true,
         },
-        // Sign-off gate (parsed by parseCliConfig as mcpServers /
+        // @deliberate: sign-off gate (parsed by parseCliConfig as mcpServers /
         // requiredSignoffs / maxSignoffAttempts). Host-wired validator
         // MCP servers and the required (public_key, path) signature
         // pairs. Kept in lock-step with the parser per the comment above.
@@ -139,7 +140,7 @@ export const expectedAttributesSchema = {
           type: "array",
           items: {
             type: "object",
-            // public_key is mandatory and non-empty: a present-but-
+            // @deliberate: public_key is mandatory and non-empty: a present-but-
             // malformed sign-off entry is a misconfigured security gate.
             // Rejecting it here (and erroring in the parser) prevents the
             // gate from silently disabling itself — a load-bearing safety
@@ -159,10 +160,10 @@ export const expectedAttributesSchema = {
       },
     },
   },
-  // Open schema: author-declared extension attributes used purely for
-  // inter-node dataflow (cycle communication, source-bound state
-  // pulls) are admitted. The executor reads only the keys it knows;
-  // unknown keys flow through untouched.
+  // @deliberate: open schema — author-declared extension attributes used
+  // purely for inter-node dataflow (cycle communication, source-bound state
+  // pulls) are admitted. The executor reads only the keys it knows; unknown
+  // keys flow through untouched.
   additionalProperties: true,
 } as const;
 

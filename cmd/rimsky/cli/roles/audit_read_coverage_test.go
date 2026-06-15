@@ -39,12 +39,12 @@ func TestRolesCoverAuditRead(t *testing.T) {
 		role string
 		want bool
 	}{
-		{"admin", true},              // "*" wildcard
-		{"read-only", true},          // "*:read" wildcard
-		{"operator", true},           // explicit { "action": "audit:read" }
-		{"debug-operator", true},     // "*:read" wildcard
-		{"agent-supervisor", true},   // "*:read" wildcard
-		{"publisher-service", false}, // message:send only — must not cover audit
+		{"admin", true},
+		{"read-only", true},
+		{"operator", true},
+		{"debug-operator", true},
+		{"agent-supervisor", true},
+		{"publisher-service", false},
 	}
 	for _, c := range cases {
 		c := c

@@ -44,7 +44,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Seed a frame + run row so the FK on rimsky_claim_holders.holder_run_id
+	// @deliberate: Seed a frame + run row so the FK on rimsky_claim_holders.holder_run_id
 	// resolves. Post-stage-5 the holder ledger keys on run id. The
 	// instance's initial frame + source-node run row are enqueued by
 	// the harness's CreateInstance path; reuse them rather than seeding
@@ -104,7 +104,7 @@ func TestHeldClaimRowRoundTrip(t *testing.T) {
 	require.Equal(t, runID, row.HolderRunID)
 	require.Equal(t, persistence.ClaimHolderStateActive, row.State)
 
-	// Second insert on same (claim_handle_id, holder_run_id) must fail
+	// @constraint: Second insert on same (claim_handle_id, holder_run_id) must fail
 	// per the unique index.
 	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return h.Persist.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{

@@ -87,7 +87,7 @@ func (r *stubDataProcessorRegistry) Get(name string) (runtime.DataProcessingClie
 type assetHarness struct {
 	*harness
 	dp *stubDataProcessor
-	// release captures whether ClaimProducer.Release fired (asserted by the
+	// @constraint: release captures whether ClaimProducer.Release fired (asserted by the
 	// delete test). The content fake records all calls.
 	content *storetest.Fake
 }
@@ -98,7 +98,7 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 	d := pgtest.OpenDriver(ctx, t)
 
 	reg := locks.NewRegistry()
-	// `content` advertises data_processing so handleListAssets's predicate
+	// @constraint: `content` advertises data_processing so handleListAssets's predicate
 	// includes the seeded durable claim and handleDeleteAsset can resolve a
 	// producer to Release.
 	contentFake := storetest.NewFake("content", claimproducer.Capabilities{
@@ -188,7 +188,6 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 	instID, err := uuid.Parse(instStr)
 	require.NoError(t, err)
 
-	// Resolve the `producer` node id + an existing frame for the FK chain.
 	var (
 		mainScopeID shared.UUID
 	)
@@ -204,7 +203,7 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 			}
 		}
 		producerNodeID = uuid.UUID(prodNodeUUID)
-		// Re-use a seeded frame so the node-run + lineage FKs are satisfiable.
+		// @constraint: re-use a seeded frame so the node-run + lineage FKs are satisfiable.
 		fid, err := h.persist.Frames().EnqueueSerialFrame(ctx, shared.UUID(instID), prodNodeUUID, 600000, tx)
 		if err != nil {
 			return err
@@ -218,7 +217,7 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
 		[]any{instID}, &mainScopeID)
 
-	// A node-run for the producer node so a claim_holder can FK against it.
+	// @constraint: A node-run for the producer node so a claim_holder can FK against it.
 	nodeRunID := uuid.New()
 	pgtest.ExecForTest(ctx, t, h.driver, `
 		INSERT INTO rimsky_node_runs
@@ -226,7 +225,7 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 		VALUES ($1, $2, 'worker', ARRAY[]::text[], now(), 'completed', 'fresh', $3, $4)
 	`, nodeRunID, producerNodeID, frameID, mainScopeID)
 
-	// The durable, committed asset row. holder_supervisor_id is NULL per the
+	// @constraint: the durable, committed asset row. holder_supervisor_id is NULL per the
 	// inactive-has-no-holder CHECK; lock_kind='claim_scope' with producer +
 	// scope + intent set per the claim_handle_kind_fields CHECK.
 	claimID = uuid.New()
@@ -259,9 +258,9 @@ func TestAssetEndpoints_ListSurfacesDurableCommittedRows(t *testing.T) {
 	require.Equal(t, "committed", item["state"])
 	require.Equal(t, "durable", item["lifetime"])
 	require.Equal(t, "v-001", item["version_id"])
-	// Alias resolves through the template: {node_type}.{claim_alias}.
+	// @constraint: alias resolves through the template: {node_type}.{claim_alias}.
 	require.Equal(t, "producer.dataset", item["alias"])
-	// Scope is surfaced; address is never leaked (blessed-invariant 20).
+	// @constraint: scope is surfaced; address is never leaked (blessed-invariant 20).
 	scope, _ := item["scope"].(map[string]any)
 	require.Equal(t, "north", scope["area"])
 	require.NotContains(t, item, "address")
@@ -279,11 +278,11 @@ func TestAssetEndpoints_GetSingleAsset(t *testing.T) {
 	require.Equal(t, claimID.String(), out["claim_id"])
 	require.Equal(t, "producer.dataset", out["alias"])
 
-	// A well-formed but unknown alias resolves to no row → 404.
+	// @constraint: A well-formed but unknown alias resolves to no row → 404.
 	status, _ = ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/producer.ghost", nil)
 	require.Equal(t, http.StatusNotFound, status)
 
-	// A malformed alias (no dot) → 400.
+	// @constraint: A malformed alias (no dot) → 400.
 	status, _ = ah.harness.httpJSON(t, "GET", "/v1/instances/"+instID.String()+"/assets/nodot", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
@@ -309,7 +308,7 @@ func TestAssetEndpoints_VersionsProxiesDataProcessor(t *testing.T) {
 	v1 := got[1].(map[string]any)
 	require.Equal(t, "v-002", v1["version_id"])
 
-	// The proxy dialed the stub with the resolved claim handle id.
+	// @constraint: the proxy dialed the stub with the resolved claim handle id.
 	require.Len(t, ah.dp.listVersions, 1)
 	require.Equal(t, "content", ah.dp.listVersions[0].ProducerName)
 	require.Equal(t, claimID.String(), ah.dp.listVersions[0].ClaimHandleID)
@@ -323,7 +322,7 @@ func TestAssetEndpoints_MaterializationHistoryJoinsLineage(t *testing.T) {
 
 	instID, claimID, _, frameID := ah.seedAsset(t, "asset-hist")
 
-	// Two claim_terminal lineage rows keyed to the seeded claim handle.
+	// @constraint: two claim_terminal lineage rows keyed to the seeded claim handle.
 	insertClaimTerminal := func(versionID string, observedAt time.Time) {
 		rec, err := json.Marshal(map[string]any{
 			"claim_handle_id": claimID.String(),
@@ -351,7 +350,7 @@ func TestAssetEndpoints_MaterializationHistoryJoinsLineage(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	hist, _ := out["materialization_history"].([]any)
 	require.Len(t, hist, 2, "both claim_terminal rows for this claim handle must join in")
-	// GetByClaimHandleID is observed_at ASC.
+	// @constraint: GetByClaimHandleID is observed_at ASC.
 	first := hist[0].(map[string]any)
 	require.Equal(t, "claim_terminal", first["record_kind"])
 }
@@ -370,14 +369,12 @@ func TestAssetEndpoints_DeleteReleasesAndDeletes(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["deleted"])
 
-	// The claim handle row is gone.
 	var remaining int
 	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
 		[]any{claimID}, &remaining)
 	require.Equal(t, 0, remaining, "asset row must be deleted")
 
-	// ClaimProducer.Release fired against the producer.
 	var releaseFired bool
 	for _, c := range ah.content.Calls() {
 		if c.Verb == "release" && c.ClaimID == claimproducer.ClaimID(claimID.String()) {
@@ -387,7 +384,7 @@ func TestAssetEndpoints_DeleteReleasesAndDeletes(t *testing.T) {
 	require.True(t, releaseFired, "Release must fire on the producer before row delete")
 }
 
-// TestAssetEndpoints_DeleteAndMaterializeRefuseInFlight pins the
+// TestAssetEndpoints_DeleteRefusesInFlightHolder pins the
 // 409-if-in-flight gate: an active claim_holder row makes both DELETE
 // (in-flight holder) and POST /materialize (instance still active uses a
 // different gate, so we assert the holder-driven delete refusal) return 409.
@@ -399,7 +396,7 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 
 	instID, claimID, producerNodeID, frameID := ah.seedAsset(t, "asset-del-busy")
 
-	// An active node-run + an active claim_holder row → the delete gate
+	// @constraint: an active node-run + an active claim_holder row → the delete gate
 	// must refuse (409) and NOT call Release or delete the row.
 	holderRunID := uuid.New()
 	var mainScopeID shared.UUID
@@ -420,14 +417,13 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	require.Equal(t, http.StatusConflict, status, out)
 	require.EqualValues(t, 1, out["active_count"])
 
-	// The row survives the refused delete.
 	var remaining int
 	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE id = $1`,
 		[]any{claimID}, &remaining)
 	require.Equal(t, 1, remaining, "asset row must survive a refused delete")
 
-	// Release must NOT have fired.
+	// @constraint: release must NOT have fired.
 	for _, c := range ah.content.Calls() {
 		require.NotEqual(t, "release", c.Verb, "Release must not fire when delete is refused")
 	}
@@ -450,14 +446,13 @@ func TestAssetEndpoints_MaterializeEnqueuesInvalidate(t *testing.T) {
 	msgID, _ := out["message_id"].(string)
 	require.NotEmpty(t, msgID)
 
-	// A message row landed targeting the producer node_type with kind=invalidate.
 	var msgCount int
 	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
 		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND kind = 'invalidate' AND target = 'producer'`,
 		[]any{instID}, &msgCount)
 	require.Equal(t, 1, msgCount)
 
-	// Drive the instance terminal — materialize must then refuse with 409.
+	// @constraint: drive the instance terminal — materialize must then refuse with 409.
 	pgtest.ExecForTest(ctx, t, ah.harness.driver,
 		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
 	status, _ = ah.harness.httpJSON(t, "POST", "/v1/instances/"+instID.String()+"/assets/producer.dataset/materialize",

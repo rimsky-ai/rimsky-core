@@ -51,15 +51,15 @@ func TestActionRegistry_RejectsDuplicates(t *testing.T) {
 	if err := r.Register(ActionEntry{Action: "a:read", Routes: []Route{{"GET", "/a"}}, MCPTools: []string{"a"}}); err != nil {
 		t.Fatal(err)
 	}
-	// Same action twice.
+	// @constraint: same action twice.
 	if err := r.Register(ActionEntry{Action: "a:read", Routes: []Route{{"GET", "/x"}}}); err == nil {
 		t.Fatalf("expected duplicate-action error")
 	}
-	// Same route under a different action.
+	// @constraint: same route under a different action.
 	if err := r.Register(ActionEntry{Action: "b:read", Routes: []Route{{"GET", "/a"}}}); err == nil {
 		t.Fatalf("expected route-collision error")
 	}
-	// Same MCP tool under a different action.
+	// @constraint: same MCP tool under a different action.
 	if err := r.Register(ActionEntry{Action: "c:read", Routes: []Route{{"GET", "/c"}}, MCPTools: []string{"a"}}); err == nil {
 		t.Fatalf("expected tool-collision error")
 	}
@@ -102,7 +102,7 @@ func TestValidateGrantScope_RejectsScopeOnNonscopeableAction(t *testing.T) {
 	if err := r.Register(ActionEntry{
 		Action: "thing:read",
 		Routes: []Route{{"GET", "/things"}},
-		// ScopeDimensions left nil — action has no scopeable dimension.
+		// @constraint: ScopeDimensions left nil — action has no scopeable dimension.
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestActionRegistry_BadActionString(t *testing.T) {
 func TestV1Registry(t *testing.T) {
 	r := BuildV1Registry()
 
-	// Spec-table actions (from spec section "Action grammar").
+	// @constraint: spec-table actions (from spec section "Action grammar").
 	specTableActions := []string{
 		"instance:read", "instance:create", "instance:terminate",
 		"template:read", "template:register", "template:deploy",
@@ -254,7 +254,7 @@ func TestV1Registry(t *testing.T) {
 			t.Errorf("V1 registry missing spec-table action %q", a)
 		}
 	}
-	// Surplus actions in registry beyond the spec table.
+	// @constraint: surplus actions in registry beyond the spec table.
 	specSet := map[string]bool{}
 	for _, a := range specTableActions {
 		specSet[a] = true
@@ -266,15 +266,14 @@ func TestV1Registry(t *testing.T) {
 		}
 	}
 	sort.Strings(surplus)
-	// Actions sanctioned by specs beyond the original control-plane spec
+	// @constraint: actions sanctioned by specs beyond the original control-plane spec
 	// table are listed here so the cross-check stays loud about
 	// truly-unsanctioned additions while admitting the instance-debugger
 	// surface added by spec
-	// .ok-planner/specs/2026-05-24-instance-debugger-design.md.
 	allowed := map[string]bool{
 		"observability:read": true,
 		"mcp:read":           true,
-		// Instance-debugger surface (concept:breakpoint).
+		// @constraint: instance-debugger surface (concept:breakpoint).
 		"instance:pause":    true,
 		"instance:resume":   true,
 		"instance:kill":     true,
@@ -282,12 +281,12 @@ func TestV1Registry(t *testing.T) {
 		"breakpoint:create": true,
 		"breakpoint:resume": true,
 		"breakpoint:delete": true,
-		// Template lint surface (spec 2026-05-28-quality-of-life-features).
+		// @constraint: template lint surface (spec 2026-05-28-quality-of-life-features).
 		"template:validate": true,
-		// Audit read surface (spec 2026-05-29-console-upstream-auth-audit-and-fixes):
+		// @constraint: audit read surface (spec 2026-05-29-console-upstream-auth-audit-and-fixes):
 		// the auth.* slice of the event log, granted separately from event:read.
 		"audit:read": true,
-		// Compose-origin capability marker: gates the privileged
+		// @constraint: compose-origin capability marker: gates the privileged
 		// `compose:<project>:<...>` reserved-prefix bypass on tag-create
 		// / instance-create. No route maps to this action; CheckGrant
 		// consults it server-side when the X-Rimsky-Compose-Origin
@@ -351,7 +350,8 @@ func TestBuiltinSchemasLockstep(t *testing.T) {
 //     produce no audit row.
 func TestRegistryCoversRouter(t *testing.T) {
 	state := &AuthState{
-		Tables:   nil, // unused during route registration
+		// @constraint: tables is unused during route registration.
+		Tables:   nil,
 		Registry: BuildV1Registry(),
 		Clock:    shared.SystemClock{},
 		Logger:   shared.SilentLogger{},
@@ -360,7 +360,7 @@ func TestRegistryCoversRouter(t *testing.T) {
 		AuthState: state,
 	}
 	r := chi.NewRouter()
-	// Mirror NewApp's `/v1/` mount so chi.Walk reports `/v1/...`
+	// @constraint: mirror NewApp's `/v1/` mount so chi.Walk reports `/v1/...`
 	// patterns — the action registry stores routes under their full
 	// `/v1/` paths so the byRoutePattern lookup below matches.
 	r.Route("/v1", func(v1 chi.Router) {
@@ -381,7 +381,7 @@ func TestRegistryCoversRouter(t *testing.T) {
 		registerMCPRoute(v1, deps)
 	})
 
-	// Build a quick (METHOD pattern → action) lookup from the
+	// @constraint: build a quick (METHOD pattern → action) lookup from the
 	// registry.
 	reg := state.Registry
 	byRoutePattern := map[string]string{}
@@ -457,7 +457,7 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 		Clock:    clock,
 		Logger:   shared.SilentLogger{},
 	}
-	// Seed a single active key so IsAnonymousMode returns false and
+	// @constraint: seed a single active key so IsAnonymousMode returns false and
 	// no-Bearer requests get the 401 path rather than the anonymous-
 	// mode synthetic identity.
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -495,14 +495,14 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 		if exempt(method, route) {
 			return nil
 		}
-		// Replace chi param placeholders with concrete values.
+		// @constraint: replace chi param placeholders with concrete values.
 		url := substituteChiParams(route)
 		req, err := http.NewRequest(method, srv.URL+url, strings.NewReader("{}"))
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		// Intentionally no Authorization header — we want to verify the
+		// @constraint: intentionally no Authorization header — we want to verify the
 		// gate fires before the handler.
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -526,7 +526,6 @@ func TestRegistryRoutesAreActuallyGated(t *testing.T) {
 
 // TestV1Registry_ExposesDebuggerTools verifies the 6 debugger-surface
 // actions added by spec
-// .ok-planner/specs/2026-05-24-instance-debugger-design.md auto-expose
 // as MCP tools through the existing action-registry → tools/list
 // pipeline. Belt-and-braces with TestV1Registry's surplus check —
 // that test asserts the action strings exist; this test asserts they
@@ -572,7 +571,7 @@ func substituteChiParams(route string) string {
 		}
 		name := out[i+1 : i+j]
 		var v string
-		// Heuristic: param names containing "id" get UUIDs; everything
+		// @constraint: heuristic: param names containing "id" get UUIDs; everything
 		// else gets a safe literal. Wildcard suffixes (e.g. `{*}`) get
 		// the empty string.
 		switch {

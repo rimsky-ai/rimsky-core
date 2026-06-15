@@ -59,7 +59,7 @@ func TestPauseResumeHappyPath(t *testing.T) {
 		},
 	})
 
-	// Install the pause-mode breakpoint BEFORE creating the instance so
+	// @deliberate: Install the pause-mode breakpoint BEFORE creating the instance so
 	// the breakpoint is already present when the supervisor reaches the
 	// before_dispatch checkpoint. The breakpoint matches the worker by
 	// node_type — the cleanest "fire on this dispatch" predicate.
@@ -78,19 +78,19 @@ func TestPauseResumeHappyPath(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
 
-	// Wait for the hit row to appear. This proves the supervisor reached
+	// @deliberate: Wait for the hit row to appear. This proves the supervisor reached
 	// the breakpoint and is parked inside waitForResume.
 	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
 	require.NotNil(t, hit.NodeRunID, "hit should carry the node_run_id of the parked dispatch")
 
-	// Before resume, the executor must NOT have been called — the
+	// @constraint: Before resume, the executor must NOT have been called — the
 	// before_dispatch checkpoint fires before Execute. A short wait
 	// guards against a racing dispatch that was already in flight.
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor should not see the dispatch while paused at the breakpoint")
 
-	// Resume without an overlay. First call → first_resume:true.
+	// @deliberate: Resume without an overlay. First call → first_resume:true.
 	status, out := breakpointResume(t, h, iid, bpID, map[string]any{
 		"hit_id": hit.ID.String(),
 	})
@@ -98,13 +98,12 @@ func TestPauseResumeHappyPath(t *testing.T) {
 	require.Equal(t, true, out["resumed"])
 	require.Equal(t, true, out["first_resume"])
 
-	// The persisted hit row should now carry resumed_at and no overlay.
 	row := getHitRow(t, h, hit.ID)
 	require.NotNil(t, row, "hit row should still exist post-resume")
 	require.NotNil(t, row.ResumedAt, "resumed_at should be stamped after resume")
 	require.Nil(t, row.ResumeOverlay, "no overlay supplied → resume_overlay stays nil")
 
-	// Supervisor's poll cadence is 250ms; the dispatch should reach the
+	// @deliberate: Supervisor's poll cadence is 250ms; the dispatch should reach the
 	// executor and the node should transition to Fresh well within 10s.
 	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
 		"stub should observe the worker dispatch after resume")

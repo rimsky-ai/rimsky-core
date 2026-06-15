@@ -29,7 +29,6 @@ func TestCheckGrant_ModeFloor(t *testing.T) {
 		t.Fatalf("unset mode: Mode = %q, want default %q", got, ModeExecute)
 	}
 
-	// A denied request reports no allow and the zero Mode.
 	denied := CheckGrant(dryRun, "instance:read", nil)
 	if denied.Allowed {
 		t.Fatalf("non-matching action should deny: %+v", denied)
@@ -69,10 +68,9 @@ func TestCheckGrant_ExecuteBeatsDryRun_OrderIndependent(t *testing.T) {
 		})
 	}
 
-	// Same shape but the two entries' Scopes both subset-satisfy a
-	// concrete target: a tag-scoped dry_run entry and an unscoped
-	// execute entry both match a request for that tag. Execute still
-	// wins; the entry indices are not significant.
+	// @deliberate: a tag-scoped dry_run entry and an unscoped execute
+	// entry both subset-satisfy a request for that tag — execute still
+	// wins, and entry indices remain insignificant.
 	scopedMix := Grant{
 		{Action: "template:deploy", Scope: map[string]string{"template_tag": "analytics"}, Mode: ModeDryRun},
 		{Action: "template:deploy", Mode: ModeExecute},
@@ -112,8 +110,8 @@ func TestCheckGrant_ScopeMatch(t *testing.T) {
 		t.Fatalf("nil target against a scoped entry must deny: %+v", nilTarget)
 	}
 
-	// An unscoped entry for the same action matches any target,
-	// including extra keys, so least-privilege is opt-in per entry.
+	// @deliberate: an unscoped entry for the same action matches any target
+	// regardless of extra keys, so least-privilege is opt-in per entry.
 	unscoped := Grant{{Action: "template:register"}}
 	if !CheckGrant(unscoped, "template:register", map[string]string{"template_tag": "billing"}).Allowed {
 		t.Fatalf("unscoped entry should allow any target")

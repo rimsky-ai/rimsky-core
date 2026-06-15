@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// advisory_locker_test.go pins the cross-process exclusion of the
-// flock-based scheduler-tick and migration locks. The load-bearing
-// property: exclusion must hold across OS processes sharing one
-// database file, not merely across goroutines. flock(2) contends per
-// open file description and every acquisition opens its own fd, so two
-// independent locker instances inside one test process contend exactly
-// the way two processes do — each TrySchedulerTick / migration
-// acquisition locks a fresh fd on the same lock-file inode.
-
 package sqlite
 
 import (
@@ -95,7 +86,6 @@ func TestAcquireMigrationLock_BlocksAcrossLockerInstances(t *testing.T) {
 	case err := <-errCh:
 		t.Fatalf("locker B AcquireMigrationLock: %v", err)
 	case <-time.After(150 * time.Millisecond):
-		// expected: B is still blocked.
 	}
 
 	if err := releaseA(); err != nil {

@@ -63,7 +63,7 @@ func TestAuditRoute_NoKindReturnsAllAuthRows(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	rows, ok := body["audit"].([]any)
 	require.True(t, ok)
-	// All five seeded auth.* rows show up.
+	// @constraint: all five seeded auth.* rows show up.
 	require.GreaterOrEqual(t, len(rows), 5)
 }
 

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Hub images + npm (`@rimsky-ai/protocols`) + Go modules + GitHub Releases.
+Container-registry images + the protocols npm package + Go modules + GitHub Releases.
 
 ## Rationale
 

@@ -70,7 +70,6 @@ func TestSubstitute(t *testing.T) {
 		missingSubstr string
 	}
 	cases := []tcase{
-		// nodes.<X>.attribute.<...> source (post-2026-05-14)
 		{name: "attribute simple", raw: "{{nodes.claim-topic.attribute.area}}", want: "northwest"},
 		{name: "attribute nested path", raw: "{{nodes.claim-topic.attribute.nested.deep}}", want: "value"},
 		{name: "attribute in template", raw: "items/{{nodes.claim-topic.attribute.area}}/{{nodes.claim-topic.attribute.subtopic}}.md",
@@ -82,16 +81,16 @@ func TestSubstitute(t *testing.T) {
 		{name: "deps prefix retired", raw: "{{deps.claim-topic.area}}", wantMissing: true,
 			missingSubstr: "retired"},
 
-		// claim payload
 		{name: "claim payload simple", raw: "{{claim.topics-ring.payload.area}}", want: "rocky-shore"},
 		{name: "claim payload nested", raw: "{{claim.topics-ring.payload.nested.deep}}", want: "from-claim"},
 		{name: "claim unknown alias", raw: "{{claim.no-store.payload.area}}", wantMissing: true,
 			missingSubstr: "no claim for alias"},
 		{name: "claim missing field", raw: "{{claim.topics-ring.payload.no_field}}", wantMissing: true,
 			missingSubstr: "payload field path not found"},
-		// Post-spec 2026-05-19 Item 3: the bare `claim.<alias>.payload` form
-		// is admitted as a whole-payload pull. Substitute (string-returning)
-		// stringifies the JSON object via stringifyAny.
+		// @deliberate: the bare `claim.<alias>.payload` form is admitted as
+		// a whole-payload pull (spec §Item 3). Substitute is
+		// string-returning so it stringifies the JSON object via
+		// stringifyAny.
 		{name: "claim bare payload (whole-object pull, embedded mode)", raw: " before {{claim.topics-ring.payload}} after",
 			want: ` before {"area":"rocky-shore","nested":{"deep":"from-claim"},"subtopic":"tidepools"} after`},
 		{name: "claim invalid second segment", raw: "{{claim.topics-ring.metadata.x}}", wantMissing: true,
@@ -99,30 +98,24 @@ func TestSubstitute(t *testing.T) {
 		{name: "claim empty payload", raw: "{{claim.empty-payload.payload.area}}", wantMissing: true,
 			missingSubstr: "claim payload is empty"},
 
-		// claim address
 		{name: "claim address", raw: "{{claim.topics-ring.address}}", want: "/data/topics/row-7"},
 		{name: "claim address takes no field", raw: "{{claim.topics-ring.address.x}}", wantMissing: true,
 			missingSubstr: "address takes no further field path"},
 
-		// claim claim_scope
 		{name: "claim claim_scope", raw: "{{claim.topics-ring.claim_scope}}", want: "row-7"},
 		{name: "claim claim_scope takes no field", raw: "{{claim.topics-ring.claim_scope.x}}", wantMissing: true,
 			missingSubstr: "claim_scope takes no further field path"},
 
-		// params
 		{name: "params simple", raw: "{{params.customer_id}}", want: "cust-123"},
 		{name: "params nested map", raw: "{{params.flags.verbose}}", want: "true"},
 		{name: "params missing key", raw: "{{params.no_key}}", wantMissing: true,
 			missingSubstr: "param key not found"},
 
-		// no-op / mixed
 		{name: "no directives", raw: "literal text", want: "literal text"},
 		{name: "empty input", raw: "", want: ""},
 
-		// recursion not performed
 		{name: "result containing braces is literal", raw: "{{nodes.recursive.attribute.template}}"},
 
-		// unknown source kind
 		{name: "unknown kind", raw: "{{userdata.foo}}", wantMissing: true,
 			missingSubstr: "unknown source kind"},
 		{name: "malformed empty directive", raw: "{{}}", wantMissing: true},
@@ -207,7 +200,6 @@ func TestSubstitute_ErrorRedaction(t *testing.T) {
 			},
 		},
 	}
-	// Walk a path that doesn't exist.
 	_, err := Substitute("{{claim.alias.payload.no_such_field}}", ctx)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -481,10 +473,10 @@ func TestSubstituteValue_WholeDirective(t *testing.T) {
 	})
 
 	t.Run("bare {{params}} is NOT admitted (universal len(parts)<2 guard)", func(t *testing.T) {
-		// Spec §Item 3 deliberately keeps "whole params" out of the
-		// grammar. The universal len(parts) < 2 guard at
-		// resolveDirective#202 rejects it; consumers wrap in a top-
-		// level key (params.config: {...}) and pull {{params.config}}.
+		// @deliberate: Spec §Item 3 deliberately keeps "whole params" out of the
+		// grammar. The universal len(parts) < 2 guard at resolveDirective
+		// rejects it; consumers wrap in a top-level key
+		// (params.config: {...}) and pull {{params.config}}.
 		_, err := SubstituteValue("{{params}}", ctx)
 		if !IsMissingSource(err) {
 			t.Fatalf("want ErrMissingSource, got %v", err)
@@ -696,7 +688,6 @@ func TestSubstitute_ClaimScope(t *testing.T) {
 		},
 	}
 
-	// Canonical spelling resolves to the stringified scope bytes.
 	got, err := Substitute("{{claim.a.claim_scope}}", ctx)
 	if err != nil {
 		t.Fatalf("{{claim.a.claim_scope}}: unexpected error: %v", err)
@@ -705,8 +696,8 @@ func TestSubstitute_ClaimScope(t *testing.T) {
 		t.Fatalf("{{claim.a.claim_scope}}: want %q, got %q", "/scope-A", got)
 	}
 
-	// Legacy spelling is rejected as a concrete *ErrMissingSource — the
-	// second segment `scope` is not recognized.
+	// @deliberate: Legacy spelling is rejected as a concrete *ErrMissingSource — the
+	// *ErrMissingSource — the second segment `scope` is not recognized.
 	_, legacyErr := Substitute("{{claim.a.scope}}", ctx)
 	if legacyErr == nil {
 		t.Fatalf("{{claim.a.scope}}: expected *ErrMissingSource, got nil error")
@@ -763,16 +754,14 @@ var liveResolverKinds = []string{"claim", "params", "nodes", "trigger", "child"}
 func TestSubstitutionDocstringMatchesResolver(t *testing.T) {
 	t.Parallel()
 
-	// (0) Prove liveResolverKinds reflects the resolver's actual dispatch
-	// arms, so the membership target below is coupled to the code rather
-	// than a free-floating literal. Each declared live kind must NOT route
-	// to the unknown-source-kind default arm; the retired `deps` form MUST
-	// be rejected (and therefore is correctly excluded from the live set).
+	// @deliberate: prove liveResolverKinds reflects the resolver's actual
+	// dispatch arms, so the membership target below is coupled to the code
+	// rather than a free-floating literal. Each declared live kind must
+	// NOT route to the unknown-source-kind default arm; the retired `deps`
+	// form MUST be rejected (and therefore is correctly excluded from the
+	// live set).
 	assertResolverArms(t)
 
-	// (1) Locate and read the substitution.go source relative to this test
-	// file (same package directory) — the real header is the artifact under
-	// test, parsed from source rather than re-typed into the test.
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller(0) failed; cannot locate substitution.go")
@@ -785,15 +774,14 @@ func TestSubstitutionDocstringMatchesResolver(t *testing.T) {
 
 	declaredCount, bulletKinds := parseHeaderSourceKinds(t, string(srcBytes))
 
-	// (2a) Declared count word must match the bullet count.
 	if declaredCount != len(bulletKinds) {
 		t.Errorf("header declares %d recognized source kinds but lists %d bullets (%v): the count word and the bullet list disagree",
 			declaredCount, len(bulletKinds), bulletKinds)
 	}
 
-	// (2b) The distinct kind-prefixes the header enumerates must equal the
-	// live resolver kind set exactly — no recognized kind omitted
-	// (trigger/child today), no listed kind the resolver does not handle.
+	// @deliberate: the distinct kind-prefixes the header enumerates must
+	// equal the live resolver kind set exactly — no recognized kind
+	// omitted, no listed kind the resolver does not handle.
 	gotSet := distinctSorted(bulletKinds)
 	wantSet := distinctSorted(liveResolverKinds)
 	if !equalStringSlices(gotSet, wantSet) {
@@ -813,10 +801,10 @@ func TestSubstitutionDocstringMatchesResolver(t *testing.T) {
 func assertResolverArms(t *testing.T) {
 	t.Helper()
 
-	// Well-formed-but-unresolvable directive per kind: each exercises the
-	// kind's own resolver arm against an empty context, so the error Reason
-	// is the arm's own missing-source reason, not the default arm's
-	// "unknown source kind" reason.
+	// @deliberate: Well-formed-but-unresolvable directive per kind: each exercises the
+	// exercises the kind's own resolver arm against an empty context, so
+	// the error Reason is the arm's own missing-source reason, not the
+	// default arm's "unknown source kind" reason.
 	probes := map[string]string{
 		"claim":   "claim.a.payload",
 		"params":  "params.k",
@@ -831,8 +819,9 @@ func assertResolverArms(t *testing.T) {
 		}
 		_, err := resolveDirectiveValueRaw(probe, ResolveContext{})
 		if err == nil {
-			// An empty context cannot resolve any of these probes; a nil
-			// error would mean the probe is wrong, not that the arm is gone.
+			// @deliberate: an empty context cannot resolve any of these
+			// probes; a nil error would mean the probe is wrong, not that
+			// the arm is gone.
 			t.Fatalf("probe %q for kind %q resolved against an empty context; tighten the probe", probe, kind)
 		}
 		var missing *ErrMissingSource
@@ -845,9 +834,10 @@ func assertResolverArms(t *testing.T) {
 		}
 	}
 
-	// The retired `deps` form must be rejected by its own migration-pointer
-	// arm (NOT the unknown-source-kind default arm), confirming it is a
-	// recognized-but-retired form correctly excluded from the live set.
+	// @deliberate: the retired `deps` form must be rejected by its own
+	// migration-pointer arm (NOT the unknown-source-kind default arm),
+	// confirming it is a recognized-but-retired form correctly excluded
+	// from the live set.
 	_, depsErr := resolveDirectiveValueRaw("deps.x.y", ResolveContext{})
 	var depsMissing *ErrMissingSource
 	if !errors.As(depsErr, &depsMissing) {
@@ -897,24 +887,25 @@ func parseHeaderSourceKinds(t *testing.T, src string) (declaredCount int, bullet
 			sawBullet = true
 			continue
 		}
-		// A blank comment line ("//") inside the block (between the count
-		// line and the bullets, or as a trailing spacer) is not a
-		// terminator on its own; only end the enumeration once at least one
-		// bullet has been seen and a non-bullet content line appears.
+		// @deliberate: a blank comment line ("//") inside the block
+		// (between the count line and the bullets, or as a trailing
+		// spacer) is not a terminator on its own; only end the enumeration
+		// once at least one bullet has been seen and a non-bullet content
+		// line appears.
 		if trimmed == "//" || trimmed == "" {
 			if sawBullet {
 				break
 			}
 			continue
 		}
-		// A non-bullet comment line after the bullets (e.g. the
+		// @deliberate: A non-bullet comment line after the bullets (e.g. the
 		// `deps`-retirement paragraph) ends the enumeration.
 		if sawBullet {
 			break
 		}
-		// Non-blank, non-bullet content before any bullet means the header
-		// shape is not what this parser expects — fail loudly rather than
-		// silently parse an empty enumeration.
+		// @deliberate: Non-blank, non-bullet content before any bullet means
+		// the header shape is not what this parser expects — fail
+		// loudly rather than silently parse an empty enumeration.
 		t.Fatalf("unexpected line inside source-kind header before any bullet: %q", line)
 	}
 

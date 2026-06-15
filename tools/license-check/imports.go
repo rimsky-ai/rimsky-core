@@ -25,17 +25,18 @@ import (
 // resolve to local directories. Each entry maps a module path to the
 // repo-relative directory that contains its go.mod.
 var modulePathPrefixes = []struct {
-	module string // import-path prefix (with no trailing slash)
-	dir    string // repo-relative dir of the module's go.mod (with no trailing slash; "" = repo root)
+	module string
+	dir    string
 }{
 	{"github.com/rimsky-ai/rimsky-core/lib/foundation", "foundation"},
 	{"github.com/rimsky-ai/rimsky-core/lib/protocols", "protocols"},
-	{"github.com/rimsky-ai/rimsky-core", ""}, // root module — must come last; longest-prefix-first sort below.
+	{"github.com/rimsky-ai/rimsky-core", ""},
 }
 
 func init() {
-	// Defense-in-depth: ensure longest module-path comes first so the
-	// nested submodules (foundation/, protocols/) win the prefix match.
+	// @constraint: ensure longest module-path comes first so the nested
+	// submodules (foundation/, protocols/) win the prefix match in
+	// importToRepoPath below.
 	for i := 0; i < len(modulePathPrefixes); i++ {
 		for j := i + 1; j < len(modulePathPrefixes); j++ {
 			if len(modulePathPrefixes[j].module) > len(modulePathPrefixes[i].module) {

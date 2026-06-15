@@ -32,8 +32,6 @@ import (
 //
 // Server-initiated push (resources/subscribe +
 // notifications/resources/updated, live event streaming) is out of v1
-// scope per spec .ok-planner/specs/2026-05-24-instance-debugger-design.md
-// §6 and spec .ok-planner/specs/2026-06-02-rimsky-core-remediation-design.md
 // (#7: connect-and-control only; live push is V2). The GET stream
 // therefore stays idle — it exists so the probe succeeds, and pushes
 // nothing in v1.
@@ -45,12 +43,12 @@ type Server struct {
 // ToolCatalog is the dependency Server uses to render the tools/list
 // response and dispatch tools/call.
 type ToolCatalog interface {
-	// Filtered returns the subset of the catalog that the requesting
+	// @constraint: filtered returns the subset of the catalog that the requesting
 	// identity is allowed to see, based on the per-request identity
 	// already attached to r.Context() by the auth middleware.
 	Filtered(r *http.Request) []Tool
 
-	// Invoke runs the named tool by dispatching to its underlying
+	// @constraint: invoke runs the named tool by dispatching to its underlying
 	// HTTP route. Returns the result (JSON-marshalable) or an
 	// *Error.
 	Invoke(r *http.Request, name string, args json.RawMessage) (any, *Error)
@@ -59,17 +57,16 @@ type ToolCatalog interface {
 // ResourceCatalog is the dependency Server uses to render
 // resources/list and resources/read responses. It mirrors
 // ToolCatalog's identity-and-permission-aware shape. Per spec
-// .ok-planner/specs/2026-05-24-instance-debugger-design.md §6, v1
 // exposes only the polling-shaped subset (list + read); subscribe and
 // server-pushed notifications require an MCP transport upgrade and are
 // deferred to a future spec.
 type ResourceCatalog interface {
-	// List returns the resources the requesting identity is allowed
+	// @constraint: list returns the resources the requesting identity is allowed
 	// to see, based on the identity attached to r.Context() by the
 	// auth middleware.
 	List(r *http.Request) ([]Resource, error)
 
-	// Read fetches the contents of one resource by URI, gated by
+	// @constraint: read fetches the contents of one resource by URI, gated by
 	// permission (the implementation gates against breakpoint:read
 	// for breakpoint-hits URIs). Returns the response body shape
 	// per spec §6.4. The returned *Error, when non-nil, carries the
@@ -131,7 +128,7 @@ func (s *Server) servePost(w http.ResponseWriter, r *http.Request) {
 		writeRPCError(w, req.ID, CodeInvalidRequest, "jsonrpc must be 2.0")
 		return
 	}
-	// A JSON-RPC notification carries no `id` (absent or JSON null). It
+	// @constraint: A JSON-RPC notification carries no `id` (absent or JSON null). It
 	// must be consumed with no response body — 202 Accepted, empty. This
 	// covers notifications/initialized (the post-initialize handshake
 	// step) and any other notifications/* the client emits. We branch on
@@ -174,7 +171,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	if sid := r.Header.Get(sessionHeader); sid != "" {
-		// Echo the session the client bound the stream to.
+		// @constraint: echo the session the client bound the stream to.
 		w.Header().Set(sessionHeader, sid)
 	}
 	w.WriteHeader(http.StatusOK)
@@ -188,7 +185,7 @@ func (s *Server) serveStream(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// SSE comment line — a no-op keep-alive that carries no MCP
+			// @constraint: SSE comment line — a no-op keep-alive that carries no MCP
 			// message (v1 pushes nothing). If the write fails the peer is
 			// gone; ctx.Done will also fire, so just return.
 			if _, err := io.WriteString(w, ": keep-alive\n\n"); err != nil {
@@ -220,7 +217,7 @@ func isNotification(id json.RawMessage) bool {
 func newSessionID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand failure is fatal-grade; fall back to a time-seed so
+		// @constraint: crypto/rand failure is fatal-grade; fall back to a time-seed so
 		// the handshake still completes rather than handing the client an
 		// empty session id (which it would treat as no-session).
 		return fmt.Sprintf("mcp-%d", time.Now().UnixNano())
@@ -229,7 +226,7 @@ func newSessionID() string {
 }
 
 func (s *Server) handleInitialize(w http.ResponseWriter, req Request) {
-	// Issue a session id so the client can run as a session-aware
+	// @constraint: issue a session id so the client can run as a session-aware
 	// Streamable-HTTP peer (echoing the header on subsequent requests and
 	// binding its GET stream to it). v1 holds no per-session state, so the
 	// id is opaque and unvalidated beyond connect.
@@ -323,7 +320,7 @@ func (s *Server) handleResourcesRead(w http.ResponseWriter, r *http.Request, req
 		return
 	}
 	if contents == nil {
-		// Defensive: ResourceCatalog implementations shouldn't return
+		// @constraint: defensive: ResourceCatalog implementations shouldn't return
 		// (nil, nil), but if they do, surface as an internal error so
 		// the agent isn't left holding a malformed response.
 		writeRPCError(w, req.ID, CodeInternalError, "resources/read: empty contents from catalog")

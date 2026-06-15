@@ -93,8 +93,6 @@ func TestPostgresStores_EmitsHierarchicalErrorClasses(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
-	// Verify the observability handshake advertises the hierarchical
-	// pg/* vocabulary.
 	obsClient := genv1.NewExecutorObservabilityClient(conn)
 	caps, err := obsClient.Capabilities(ctx, &genv1.ExecutorCapabilitiesRequest{})
 	if err != nil {
@@ -107,8 +105,6 @@ func TestPostgresStores_EmitsHierarchicalErrorClasses(t *testing.T) {
 		assertHierarchical(t, "pg-executor", c)
 	}
 
-	// Drive an Execute with missing attributes to surface
-	// pg/attribute_invalid.
 	ud, _ := structpb.NewStruct(map[string]any{})
 	execClient := genv1.NewExecutorClient(conn)
 	stream, err := execClient.Execute(ctx, &genv1.ExecuteRequest{Attributes: ud})

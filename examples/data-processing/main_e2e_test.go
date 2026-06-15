@@ -95,18 +95,21 @@ import (
 func TestE2E_ExampleDataProcessingProtocolSurfaces(t *testing.T) {
 	t.Parallel()
 
-	// 1. In-process example DataProcessing server on a free loopback port.
+	// @deliberate: bring-up order — start the in-process example
+	// DataProcessing server FIRST so the dial against it succeeds.
+	//   1. In-process example DataProcessing server on a free loopback
+	//      port.
+	//   2. Dial the example through the EXACT rimsky-side client
+	//      constructor. peer.DialDataProcessing is what
+	//      lib/runtime/peer/registry runs at rimsky startup for every
+	//      operator-declared claim_producer that lists "data_processing"
+	//      in its protocols block; the returned client satisfies
+	//      clientiface.DataProcessingClient, the same interface
+	//      lib/runtime/data_processing.go drives against during fan-out
+	//      sub-claim acquisition.
 	dp, endpoint, stop := startExampleDataProcessing(t)
 	defer stop()
 
-	// 2. Dial the example through the EXACT rimsky-side client
-	//    constructor. peer.DialDataProcessing is what
-	//    lib/runtime/peer/registry runs at rimsky startup for every
-	//    operator-declared claim_producer that lists "data_processing"
-	//    in its protocols block; the returned client satisfies
-	//    clientiface.DataProcessingClient, the same interface
-	//    lib/runtime/data_processing.go drives against during fan-out
-	//    sub-claim acquisition.
 	dialCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	client, err := peer.DialDataProcessing(dialCtx, "example", endpoint, peer.TLSModeOff)
@@ -115,17 +118,17 @@ func TestE2E_ExampleDataProcessingProtocolSurfaces(t *testing.T) {
 	}
 	defer client.Close()
 
-	// Compile-time sanity check: the dialed client really is the
-	// interface rimsky's runtime drives against. A future signature
-	// change in clientiface that breaks this assignment surfaces here
-	// at compile time, not as a silent drift between this example and
-	// the rimsky-side wiring.
+	// @constraint: compile-time sanity check — the dialed client really
+	// is the interface rimsky's runtime drives against. A future
+	// signature change in clientiface that breaks this assignment
+	// surfaces here at compile time, not as a silent drift between this
+	// example and the rimsky-side wiring.
 	var _ clientiface.DataProcessingClient = client
 
-	// Each leg runs as a sub-test against the SAME running example so
-	// the four legs share a single bring-up. The legs are independent
-	// observations against distinct claim handles, so order does not
-	// matter; t.Run keeps the failure isolation per-leg.
+	// @deliberate: each leg runs as a sub-test against the SAME running
+	// example so the four legs share a single bring-up. The legs are
+	// independent observations against distinct claim handles, so
+	// order does not matter; t.Run keeps the failure isolation per-leg.
 
 	t.Run("Capabilities_advertises_non_empty_set", func(t *testing.T) {
 		exerciseCapabilitiesLeg(t, endpoint)
@@ -163,10 +166,10 @@ func exerciseCapabilitiesLeg(t *testing.T, endpoint string) {
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
 	}
-	// The example advertises one entry in each of the four envelope
-	// fields. A real producer might be sparser; the load-bearing
-	// observation is "non-empty" — an empty set means the producer
-	// materializes nothing.
+	// @constraint: the example advertises one entry in each of the four
+	// envelope fields. A real producer might be sparser; the load-
+	// bearing observation is "non-empty" — an empty set means the
+	// producer materializes nothing.
 	if len(caps.GetDataShapes()) == 0 && len(caps.GetMaterializations()) == 0 &&
 		len(caps.GetPartitionKinds()) == 0 && len(caps.GetAggregators()) == 0 {
 		t.Fatal("Capabilities advertised an empty capability set — a producer that materializes nothing is silently non-functional")
@@ -244,11 +247,11 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			"the per-version metadata via the parent's writeback; empty metadata would mean " +
 			"the rimsky-side commit lands but the producer's metadata is canned")
 	}
-	// Decode the example's metadata blob to extract the version_id the
-	// producer declared. A real consumer (operator, dashboard) reads
-	// this through ListVersions; the example threads it through
-	// metadata too so the proof can correlate the surface-level read
-	// against the commit-time declaration.
+	// @deliberate: decode the example's metadata blob to extract the
+	// version_id the producer declared. A real consumer (operator,
+	// dashboard) reads this through ListVersions; the example threads
+	// it through metadata too so the proof can correlate the surface-
+	// level read against the commit-time declaration.
 	var meta struct {
 		VersionID string `json:"version_id"`
 		Status    string `json:"status"`
@@ -265,9 +268,10 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			"time, so an empty value would mean the producer's effect is canned")
 	}
 
-	// ListVersions must return the version the commit just declared —
-	// the falsifier "a declared version doesn't appear in ListVersions"
-	// fails when this list is empty or missing the declared version_id.
+	// @constraint: ListVersions must return the version the commit just
+	// declared — the falsifier "a declared version doesn't appear in
+	// ListVersions" fails when this list is empty or missing the
+	// declared version_id.
 	lvOut, err := client.ListVersions(ctx, clientiface.ListVersionsInput{
 		ProducerName:  "example",
 		ClaimHandleID: claimID,
@@ -281,10 +285,10 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			meta.VersionID, lvOut.Versions)
 	}
 
-	// ListPartitions must return the partition descriptor the example
-	// seeds at commit time, keyed by the sub-scope BeginCandidate
-	// received. A canned partition list that ignores the sub-scope
-	// would fail the key check.
+	// @constraint: ListPartitions must return the partition descriptor
+	// the example seeds at commit time, keyed by the sub-scope
+	// BeginCandidate received. A canned partition list that ignores the
+	// sub-scope would fail the key check.
 	lpOut, err := client.ListPartitions(ctx, clientiface.ListPartitionsInput{
 		ProducerName:  "example",
 		ClaimHandleID: claimID,
@@ -304,9 +308,9 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			lpOut.Partitions, subScope)
 	}
 
-	// GetVersionSchema must return non-empty schema bytes — the
-	// example seeds an illustrative JSON Schema at commit; a canned
-	// handler that returns nothing fails the length check.
+	// @constraint: GetVersionSchema must return non-empty schema bytes
+	// — the example seeds an illustrative JSON Schema at commit; a
+	// canned handler that returns nothing fails the length check.
 	gsOut, err := client.GetVersionSchema(ctx, clientiface.GetVersionSchemaInput{
 		ProducerName:  "example",
 		ClaimHandleID: claimID,
@@ -320,9 +324,10 @@ func exerciseBeginCommitListLeg(t *testing.T, dp *DataProcessing, client *peer.D
 			"— the example seeds a JSON Schema at commit time so an empty response means the " +
 			"producer's effect is canned")
 	}
-	// A producer that returns canned non-JSON bytes would surface here:
-	// the example seeds JSON Schema, so the response must parse as
-	// JSON. The check is a weak shape gate, not a JSON-Schema parse.
+	// @constraint: a producer that returns canned non-JSON bytes would
+	// surface here — the example seeds JSON Schema, so the response
+	// must parse as JSON. The check is a weak shape gate, not a JSON-
+	// Schema parse.
 	if !json.Valid(gsOut.Schema) {
 		t.Fatalf("GetVersionSchema returned non-JSON schema bytes %q — the example seeds a JSON "+
 			"Schema at commit, so non-JSON bytes mean the producer is returning a stale or "+
@@ -391,8 +396,8 @@ func exerciseBeginAbandonLeg(t *testing.T, dp *DataProcessing, client *peer.Data
 			beforeCommit, afterCommit)
 	}
 
-	// ListVersions for the abandoned claim must be empty: no version
-	// was ever committed against it.
+	// @constraint: ListVersions for the abandoned claim must be empty;
+	// no version was ever committed against it.
 	lvOut, err := client.ListVersions(ctx, clientiface.ListVersionsInput{
 		ProducerName:  "example",
 		ClaimHandleID: claimID,
@@ -406,12 +411,12 @@ func exerciseBeginAbandonLeg(t *testing.T, dp *DataProcessing, client *peer.Data
 			claimID, lvOut.Versions)
 	}
 
-	// Repeat Abandon: an idempotent no-op success. The supervisor may
-	// retry a terminal verb on a partial outage, so the producer MUST
-	// tolerate a second Abandon on the same (now-cleared) handle.
-	// AbandonCount does NOT grow because the handle is no longer
-	// staged; this is the documented behavior in dataprocessing.go's
-	// AbandonCandidate comment.
+	// @constraint: repeat Abandon is an idempotent no-op success. The
+	// supervisor may retry a terminal verb on a partial outage, so the
+	// producer MUST tolerate a second Abandon on the same (now-cleared)
+	// handle. AbandonCount does NOT grow because the handle is no
+	// longer staged; this is the documented behavior in
+	// dataprocessing.go's AbandonCandidate comment.
 	if err := client.AbandonCandidate(ctx, clientiface.AbandonCandidateInput{
 		ProducerName:    "example",
 		ClaimHandleID:   claimID,
@@ -421,8 +426,6 @@ func exerciseBeginAbandonLeg(t *testing.T, dp *DataProcessing, client *peer.Data
 			"terminal verb on an unknown handle", err)
 	}
 }
-
-// --- helpers ---------------------------------------------------------------
 
 // startExampleDataProcessing stands up the example DataProcessing server
 // on a loopback port and returns the producer, the endpoint string, and a
@@ -439,11 +442,12 @@ func startExampleDataProcessing(t *testing.T) (*DataProcessing, string, func()) 
 	genv1.RegisterDataProcessingServer(srv, dp)
 	go func() { _ = srv.Serve(lis) }()
 
-	// Poll-dial gate: the test's first peer.DialDataProcessing call
-	// returns immediately because grpc.NewClient is non-blocking, but
-	// the first actual RPC would race the listener if we didn't wait.
-	// 100 ms / 100 attempts mirrors the pattern in
-	// examples/claimproducer/main_e2e_test.go::startExampleProducerInProcess.
+	// @deliberate: poll-dial gate — the test's first
+	// peer.DialDataProcessing call returns immediately because
+	// grpc.NewClient is non-blocking, but the first actual RPC would
+	// race the listener if we didn't wait. 100 ms / 100 attempts
+	// mirrors the startExampleProducerInProcess pattern in
+	// the claimproducer example.
 	endpoint := lis.Addr().String()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {

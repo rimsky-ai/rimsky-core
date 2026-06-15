@@ -103,10 +103,6 @@ type ResolveContext struct {
 	// Bound by the runtime at dispatch time from the frame's trigger
 	// message lookup. Inert in rimsky per @blessed-invariant 20/21
 	// (claim opacity + structural-inertness).
-	//
-	// Per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Substitution-layer extensions.
 	TriggerMessagePayload json.RawMessage
 
 	// ChildPartitionKey is the per-child-run partition key value bound
@@ -187,17 +183,14 @@ func ReferencesTriggerMessage(rawValue string) bool {
 		if inside == "" {
 			continue
 		}
-		// Strip the `| <literal>` fallback tail: only the left-hand
-		// directive determines the source kind.
+		// @deliberate: only the left-hand directive determines the source
+		// kind, so the `| <literal>` fallback tail must be stripped before
+		// the source-kind check.
 		if idx := strings.Index(inside, "|"); idx >= 0 {
 			inside = strings.TrimSpace(inside[:idx])
 		}
-		// Strip the trailing `?` lenient marker.
 		inside = strings.TrimSpace(strings.TrimSuffix(inside, "?"))
 		parts := strings.Split(inside, ".")
-		// trigger.message.payload[.<field>…] — the exact prefix
-		// resolveTriggerValue admits (kind=trigger, second=message,
-		// third=payload).
 		if len(parts) >= 3 && parts[0] == "trigger" && parts[1] == "message" && parts[2] == "payload" {
 			return true
 		}
@@ -265,23 +258,16 @@ func Substitute(rawValue string, ctx ResolveContext) (string, error) {
 // (existing `walkPath` behaviour); whole-directive lift of `null` is
 // not supported.
 //
-// Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 3.
-//
 // @concept: attribute
 func SubstituteValue(rawValue string, ctx ResolveContext) (any, error) {
 	trimmed := strings.TrimSpace(rawValue)
 	if trimmed != "" && directivePattern.FindString(trimmed) == trimmed {
-		// Whole-directive mode: the trimmed input is exactly one directive.
 		inside := strings.TrimSpace(trimmed[2 : len(trimmed)-2])
 		if inside == "" {
 			return nil, &ErrMissingSource{Directive: inside, Reason: "empty directive"}
 		}
 		return resolveDirectiveValue(inside, ctx)
 	}
-	// Embedded mode (or no directive at all): fall through to the
-	// string-returning path.
 	s, err := Substitute(rawValue, ctx)
 	if err != nil {
 		return nil, err
@@ -309,22 +295,21 @@ func SubstituteValue(rawValue string, ctx ResolveContext) (any, error) {
 // values (objects/arrays) are JSON-encoded for embedded-mode
 // concatenation; primitives go through stringify.
 func resolveDirective(directive string, ctx ResolveContext) (string, error) {
-	// All source kinds (including `claim.*`) route through
-	// resolveDirectiveValue so the `?` lenient marker and the
-	// `| <literal>` fallback are honoured uniformly. Splitting the
-	// directive on `.` to peek at parts[0] before stripping markers
-	// previously mis-routed `claim.<alias>.payload | "x"` and
-	// `claim.<alias>.payload?` directly through resolveClaim, which
-	// then read the marker/fallback into rest[1] and surfaced
-	// ErrMissingSource without honouring the marker.
+	// @deliberate: all source kinds (including `claim.*`) route through
+	// resolveDirectiveValue so the `?` lenient marker and `| <literal>`
+	// fallback are honoured uniformly. Splitting the directive on `.` to
+	// peek at parts[0] before stripping markers mis-routes
+	// `claim.<alias>.payload | "x"` and `claim.<alias>.payload?` directly
+	// through resolveClaim, which then reads the marker/fallback into
+	// rest[1] and surfaces ErrMissingSource without honouring the marker.
 	val, err := resolveDirectiveValue(directive, ctx)
 	if err != nil {
 		return "", err
 	}
 	if val == nil {
-		// Lenient resolve (or any other null result) renders as empty
-		// string in embedded mode — null in the middle of a composed
-		// string has no sensible textual representation.
+		// @deliberate: Lenient resolve (or any other null result) renders as empty
+		// as empty string in embedded mode — null in the middle of a
+		// composed string has no sensible textual representation.
 		return "", nil
 	}
 	return stringifyAny(val), nil
@@ -347,30 +332,24 @@ func resolveDirective(directive string, ctx ResolveContext) (string, error) {
 //   - `<directive>?` — lenient. Resolves to the directive's value when
 //     present, else JSON null (Go nil). Strict (no marker) is the
 //     default; missing without a marker returns ErrMissingSource.
-//
-// Per spec
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Substitution grammar" (?-marker) and
-// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
-// §"Fallback operator" (|-fallback).
 func resolveDirectiveValue(directive string, ctx ResolveContext) (any, error) {
 	if idx := strings.Index(directive, "|"); idx >= 0 {
 		leftRaw := strings.TrimSpace(directive[:idx])
 		rightRaw := strings.TrimSpace(directive[idx+1:])
-		// Reject multi-pipe chains as a FATAL grammar error. The
-		// validator catches `{{X | Y | Z}}` at registration; this path
-		// guards against malformed directives produced by runtime
-		// interpolation. Returning ErrFallbackChain (not
-		// ErrMissingSource) prevents silent fallthrough on optional
-		// fields and silent drops on required fields.
+		// @deliberate: multi-pipe chains are a FATAL grammar error, not
+		// ErrMissingSource. The validator catches `{{X | Y | Z}}` at
+		// registration; this path guards against malformed directives
+		// produced by runtime interpolation. Returning ErrFallbackChain
+		// prevents silent fallthrough on optional fields and silent drops
+		// on required fields.
 		if strings.Contains(rightRaw, "|") {
 			return nil, &ErrFallbackChain{Directive: directive}
 		}
-		// The `?` marker is mutually exclusive with `|` at registration,
+		// @deliberate: `?` and `|` are mutually exclusive at registration,
 		// but if a runtime-malformed directive carries both, strip the
 		// trailing `?` so resolveDirectiveValueRaw sees a clean source
-		// kind. Fallback wins (the validator already rejected the
-		// combination; this is defensive).
+		// kind. Fallback wins — the validator already rejected the
+		// combination, so this is defensive.
 		leftRaw = strings.TrimSpace(strings.TrimSuffix(leftRaw, "?"))
 		val, err := resolveDirectiveValueRaw(leftRaw, ctx)
 		if err == nil {
@@ -458,7 +437,7 @@ func parseFallbackLiteral(raw string) (any, error) {
 		}
 		return nil, fmt.Errorf("invalid literal in fallback: %q", raw)
 	}
-	// JSON-number admission. json.Unmarshal rejects `NaN`, `Inf`, `.5`,
+	// @deliberate: JSON-number admission. json.Unmarshal rejects `NaN`, `Inf`, `.5`,
 	// and other non-JSON-number shapes — exactly the rejection set the
 	// spec requires.
 	var n float64
@@ -510,7 +489,6 @@ func stringifyAny(v any) string {
 // as `@blessed-invariant 20/21` (claim content, blob content /
 // named-event payloads).
 func resolveTriggerValue(directive string, rest []string, ctx ResolveContext) (any, error) {
-	// Expected form: trigger.message.payload(.field-path…)?
 	if len(rest) < 2 {
 		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive needs trigger.message.payload[.<field>]"}
 	}
@@ -577,7 +555,6 @@ func resolveNodesValue(directive string, rest []string, ctx ResolveContext) (any
 		}
 		return val, nil
 	case "event":
-		// Expected: <node>.event.<event_name>(.<field-path…>)?
 		if len(rest) < 3 {
 			return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.event.<name>[.<field>]"}
 		}

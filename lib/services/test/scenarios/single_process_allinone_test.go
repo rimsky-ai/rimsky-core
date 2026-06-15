@@ -50,24 +50,23 @@ import (
 const singleProcessSpillThreshold = 256
 
 // singleProcessPayload is the attribute value that must round-trip
-// through the memory blob backend across roles. Comfortably above the
-// threshold so the attribute-bag JSON spills.
-var singleProcessPayload = strings.Repeat("rimsky-memory-blob-roundtrip/", 300) // ~8.7 KiB
+// through the memory blob backend across roles. Sized at ~8.7 KiB,
+// comfortably above the threshold so the attribute-bag JSON spills.
+var singleProcessPayload = strings.Repeat("rimsky-memory-blob-roundtrip/", 300)
 
 func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable when rimsky starts (startup
-	// Capabilities handshake), so bring the network + peer up first.
+	// @constraint: stub executor must be reachable when rimsky starts
+	// (startup Capabilities handshake), so bring the network + peer up
+	// before BringUpRimskyHandle.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
-	// Boot the all-in-one image on its baked SQLite default with the
-	// memory blob backend, a tiny spill threshold, and an aggressive
-	// orphan-sweep cadence (1s sweep / 1s retention) so the sweep's
-	// cross-role reap is observable inside the test budget. Debug log
-	// level makes the sweep's per-handle line visible.
+	// @deliberate: 1s/1s sweep cadence + debug log level make the
+	// cross-role orphan-blob reap observable inside the test budget; the
+	// tiny spill threshold forces ordinary string attributes to spill.
 	h := harness.BringUpRimskyHandle(ctx, t,
 		harness.WithSQLite(),
 		harness.WithExistingNetwork(netName),
@@ -77,20 +76,14 @@ func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 	)
 	ep := h.Endpoint
 
-	// --- 1. Single process. The daemon-side process table (docker top;
-	// no in-container ps needed against the distroless image) must show
-	// exactly one rimsky process — the entrypoint itself — and zero
-	// spawned role children. /health already returned 200, so the
-	// synchronous migrate child has long exited and all three roles are
-	// up; any rimsky-scheduler/supervisor/control-api process here would
-	// mean the entrypoint still spawns children.
+	// @constraint: /health already returned 200 so the synchronous
+	// migrate child has long exited and all three roles are up; any
+	// rimsky-scheduler/supervisor/control-api process visible here would
+	// mean the entrypoint still spawns children rather than running the
+	// roles in-process.
 	assertSingleRimskyProcess(ctx, t, h)
 
-	// --- 2 + 3 (write half). A single stub-executor node whose
-	// attribute bag carries a payload above the spill threshold. The
-	// dispatch bag is written to rimsky_node_attributes by the
-	// supervisor role (pre-dispatch and again at terminal), spilling
-	// the bytes into the memory backend.
+	// @deliberate: phase 2+3 (write half) — the dispatch bag is written to rimsky_node_attributes by the supervisor role and SPILLS the bytes into the memory blob backend (legal only because RIMSKY_PROCESS_ROLE=unified means scheduler/supervisor/control-api share one in-process map; per-role processes cannot).
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "single-process-all-in-one",
@@ -118,31 +111,26 @@ func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 	})
 	instanceID := createScenarioInstance(t, ep, templateID, "ck-single-process-all-in-one")
 
-	// Drive the node to terminal `fresh` through a REAL dispatch
-	// (work_started event + fresh settle) — this is the all-three-roles
-	// proof: scheduler enqueued, supervisor claimed and dispatched, the
-	// executor ran, and the control-api served every observation.
 	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 
-	// --- 3 (read half). Read the spilled attribute back through the
-	// control-api role's observability surface. The control-api opened
-	// its OWN persistence driver; only the process-shared memory map
-	// makes the supervisor-written blob readable here. A lost blob does
-	// not error — scanAttributeRow degrades a missing handle to an empty
-	// bag — so equality on the payload is the assertion that matters.
+	// @constraint: scanAttributeRow silently degrades a missing blob
+	// handle to an empty bag (no error), so payload-equality is the
+	// discriminating assertion — the control-api role opened its OWN
+	// persistence driver, and only the process-shared in-process blob
+	// map makes the supervisor-written blob readable here.
 	if got := readWorkerPayload(t, ep, instanceID); got != singleProcessPayload {
 		h.DumpRimskyLogs(t)
 		t.Fatalf("cross-role memory-blob read-back mismatch: got %d bytes (want %d) — an empty/short payload means the control-api could not read the blob the supervisor spilled, i.e. the roles are not sharing one in-process blob map",
 			len(got), len(singleProcessPayload))
 	}
 
-	// --- 4. The orphan-blob sweep reaps across roles. The terminal
-	// attribute overwrite queued the pre-dispatch spill handle into
-	// rimsky_blob_orphans; with 1s retention + 1s sweep interval the
-	// scheduler role's next ticks must delete it from the shared map and
-	// log the per-handle debug line. A failed reap (the cross-process
-	// failure mode is the handle missing from a per-process map) logs
-	// "reap blob orphan failed" instead.
+	// @constraint: cross-role reap is the load-bearing assertion. The
+	// terminal attribute overwrite queued the pre-dispatch spill handle
+	// into rimsky_blob_orphans; the scheduler role's sweep must delete
+	// it from the shared in-process map. The cross-process failure mode
+	// (handle missing from a per-process map) surfaces as
+	// "reap blob orphan failed" rather than a successful "reaped blob
+	// orphan" line — both are checked below.
 	logs := waitForLogLine(ctx, t, h, "reaped blob orphan", 60*time.Second)
 	if strings.Contains(logs, "reap blob orphan failed") {
 		t.Fatalf("orphan-blob sweep logged reap failures — the scheduler role cannot delete blobs the supervisor role wrote:\n%s", logs)
@@ -151,8 +139,10 @@ func TestSingleProcessAllInOne_MemoryBlobAcrossRoles(t *testing.T) {
 		t.Fatalf("orphan-blob sweep itself failed:\n%s", logs)
 	}
 
-	// The sweep must have reaped ONLY the orphaned prior handle: the
-	// live terminal attribute is still readable afterwards.
+	// @constraint: sweep must reap ONLY the orphaned prior handle —
+	// re-reading after the sweep proves the live terminal attribute
+	// survived (a sweep that nuked the live handle would degrade to an
+	// empty bag via the same scanAttributeRow path above).
 	if got := readWorkerPayload(t, ep, instanceID); got != singleProcessPayload {
 		h.DumpRimskyLogs(t)
 		t.Fatalf("attribute payload lost after orphan-blob sweep: got %d bytes (want %d) — the sweep reaped a live handle", len(got), len(singleProcessPayload))

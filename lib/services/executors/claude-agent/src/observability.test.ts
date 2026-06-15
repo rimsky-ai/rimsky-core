@@ -22,7 +22,7 @@ describe("Observability ledger", () => {
   it("returns evicted shape for unknown dispatch (spec §2.6)", () => {
     const obs = new Observability();
     const t = obs.getTrace("missing");
-    // Per spec §2.6, missing dispatches surface as the evicted-shape
+    // @deliberate: per spec §2.6, missing dispatches surface as the evicted-shape
     // envelope: evicted=true, complete=true, events=[]. This makes
     // "we don't have it" a single observable signal regardless of
     // whether the dispatch never existed or was evicted by retention.
@@ -73,7 +73,7 @@ describe("RIMSKY_EXECUTOR_DECLARED_EVENTS env override", () => {
   it('parses "a,b" into ["a","b"] and surfaces it in capabilitiesPayload (HTTP surface)', () => {
     process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS = "a,b";
     expect(resolveDeclaredEvents()).toEqual(["a", "b"]);
-    // The HTTP+JSON observability surface advertises declared_events from
+    // @deliberate: the HTTP+JSON observability surface advertises declared_events from
     // the resolved list.
     expect(capabilitiesPayload().declared_events).toEqual(["a", "b"]);
   });

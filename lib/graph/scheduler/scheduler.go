@@ -46,8 +46,6 @@
 //     breakpoints, and reap orphaned-unresumed hit rows abandoned
 //     mid-block (block_dispatch / unknown-policy waits whose
 //     supervisor crashed or context-canceled before resume). Per
-//     spec
-//     `.ok-planner/specs/2026-05-24-instance-debugger-design.md` §7.4.
 package scheduler
 
 import (
@@ -80,12 +78,13 @@ type Config struct {
 	Queue persistence.Queue
 	// AdvisoryLocker carries the cross-process synchronization primitives
 	// (scheduler-tick exclusion, etc.). Required for the per-tick guard.
-	AdvisoryLocker       persistence.AdvisoryLocker
-	Clock                shared.Clock
-	Logger               shared.Logger
-	TickInterval         time.Duration
-	HeartbeatTimeout     time.Duration
-	OrphanedClaimTimeout time.Duration // default: 5 × HeartbeatTimeout
+	AdvisoryLocker   persistence.AdvisoryLocker
+	Clock            shared.Clock
+	Logger           shared.Logger
+	TickInterval     time.Duration
+	HeartbeatTimeout time.Duration
+	// @constraint: OrphanedClaimTimeout defaults to 5 × HeartbeatTimeout.
+	OrphanedClaimTimeout time.Duration
 	ClaimHandles         persistence.ClaimHandleTable
 	// SupervisorID is the scheduler's own supervisor id. Used by the
 	// parked-nodes sweep (E3) to claim wakes against — every wake
@@ -150,7 +149,7 @@ type Handle struct {
 func (h *Handle) Shutdown(ctx context.Context) error {
 	select {
 	case <-h.stop:
-		// already closed; still wait for done
+		// @deliberate: already closed; still wait for done.
 	default:
 		close(h.stop)
 	}
@@ -179,15 +178,15 @@ func Start(cfg Config) *Handle {
 	if cfg.HeartbeatTimeout == 0 {
 		cfg.HeartbeatTimeout = 15 * time.Second
 	}
-	// @blessed-invariant "orphan-claim cutoff default = 5 × heartbeat_timeout"
-	//
-	// A tighter cutoff (e.g. 2 × heartbeat_timeout) can sweep a live-but-slow
-	// supervisor's claim — when the supervisor has issued Claim() but hasn't
-	// yet flipped the node's state to running (slow dep-data fetch, cold
-	// start, etc.). The fresh supervisor would then run the handler
-	// concurrently with the original. The runners defensively re-read the
-	// claim before entering the handler as a hard backstop, but preserving
-	// the 5× floor keeps the window small enough in practice.
+	// @blessed-invariant: orphan-claim-cutoff-five-times-heartbeat-timeout
+	// A tighter cutoff (e.g. 2 × heartbeat_timeout) can sweep a
+	// live-but-slow supervisor's claim — when the supervisor has issued
+	// Claim() but hasn't yet flipped the node's state to running (slow
+	// dep-data fetch, cold start, etc.). The fresh supervisor would then
+	// run the handler concurrently with the original. The runners
+	// defensively re-read the claim before entering the handler as a
+	// hard backstop, but preserving the 5× floor keeps the window small
+	// enough in practice.
 	if cfg.OrphanedClaimTimeout == 0 {
 		cfg.OrphanedClaimTimeout = 5 * cfg.HeartbeatTimeout
 	}
@@ -220,7 +219,7 @@ func runLoop(cfg Config, h *Handle) {
 		if err := tick(context.Background(), cfg, h); err != nil {
 			cfg.Logger.Error("scheduler tick failed", "error", err.Error())
 		}
-		// Sleep with early-wake on stop.
+		// @deliberate: Sleep with early-wake on stop.
 		timer := time.NewTimer(cfg.TickInterval)
 		select {
 		case <-h.stop:
@@ -250,16 +249,17 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		log = shared.SilentLogger{}
 	}
 
-	// 1. Scheduler-tick exclusion (skipped when no advisory locker wired).
+	// @deliberate: scheduler-tick exclusion (skipped when no advisory
+	// locker wired).
 	if cfg.AdvisoryLocker != nil {
 		held, release, err := cfg.AdvisoryLocker.TrySchedulerTick(ctx)
 		if err != nil {
-			// A lock-attempt error is treated as lock-held: the sweeps
-			// are periodic recovery, so skipping one interval is benign,
-			// while running unlocked under DB flakiness permits exactly
-			// the concurrent multi-replica sweeping the lock exists to
-			// prevent (@blessed-invariant 7 — mutual exclusion over
-			// availability of a single pass).
+			// @deliberate: lock-attempt error is treated as lock-held —
+			// the sweeps are periodic recovery, so skipping one interval
+			// is benign, while running unlocked under DB flakiness
+			// permits exactly the concurrent multi-replica sweeping the
+			// lock exists to prevent (@blessed-invariant 7 — mutual
+			// exclusion over availability of a single pass).
 			log.Warn("tick: TrySchedulerTick failed; skipping sweep pass",
 				"error", err.Error())
 			return nil
@@ -271,9 +271,9 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		defer release()
 	}
 
-	// 2. Pure-cascade sweep. (The cron-fire sweep retired with the
-	//    2026-05-15 plan B10 / D7 / E16; cron firing is owned by the
-	//    bundled `sensors/sensor-cron/` service.)
+	// @deliberate: pure-cascade sweep — the cron-fire sweep retired
+	// with cron firing now owned by the bundled `sensors/sensor-cron/`
+	// service.
 	if _, err := ProcessPureCascade(ctx, PureCascadeArgs{
 		Persist: cfg.Persist, Queue: cfg.Queue,
 		Clock: cfg.Clock, Logger: log,
@@ -290,19 +290,14 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		OrphanedClaimTimeout: cfg.OrphanedClaimTimeout,
 	}
 
-	// 4. Stale-heartbeat sweep.
 	if err := runtime.SweepStaleHeartbeats(ctx, conductorArgs); err != nil {
 		return err
 	}
 
-	// 5. Dispatch-claim sweep (predicate: last_heartbeat_at < cutoff).
 	if err := runtime.SweepOrphanedNodeRuns(ctx, conductorArgs); err != nil {
 		return err
 	}
 
-	// 6. Lock-holder sweep. Skipped when wiring is incomplete. No
-	// store verb fired — store's own TTL handles internal state
-	// (per v3 spec §7.5).
 	if cfg.ClaimHandles != nil {
 		if err := runtime.SweepOrphanedClaimHandles(ctx, runtime.OrphanReaperArgs{
 			Persist:      cfg.Persist,
@@ -313,14 +308,12 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 6b. Claim-handle retention sweep. Reaps terminal claim_handle rows
-	// past the configured trailing window (default disabled —
-	// `Retention.ClaimHandlesTrailing == 0` skips the sweep). Wired only
-	// when ClaimHandles is present; the sweep is idempotent across
-	// invocations and runs under the scheduler-tick advisory lock for
-	// cross-replica serialization. Spec
-	// .ok-planner/specs/2026-05-17-post-data-platform-cleanup-design.md
-	// §Claim-handle state-column refactor / retention.
+	// @deliberate: claim-handle retention sweep reaps terminal
+	// claim_handle rows past the configured trailing window (default
+	// disabled — `Retention.ClaimHandlesTrailing == 0` skips the
+	// sweep). Wired only when ClaimHandles is present; the sweep is
+	// idempotent across invocations and runs under the scheduler-tick
+	// advisory lock for cross-replica serialization.
 	if cfg.ClaimHandles != nil && cfg.Retention.ClaimHandlesTrailing > 0 {
 		now := time.Now()
 		if cfg.Clock != nil {
@@ -331,13 +324,11 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 6c. rimsky_message_idempotencies retention sweep. Reaps dedup
-	// rows past the configured trailing window (default 24h). Dedup
-	// tokens are short-lived by design — operators with longer retry
-	// windows can raise the cap. Runs under the scheduler-tick
-	// advisory lock for cross-replica serialization. Spec
-	// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-	// §Message idempotency.
+	// @deliberate: rimsky_message_idempotencies retention sweep reaps
+	// dedup rows past the configured trailing window (default 24h).
+	// Dedup tokens are short-lived by design — operators with longer
+	// retry windows can raise the cap. Runs under the scheduler-tick
+	// advisory lock for cross-replica serialization.
 	if cfg.Persist != nil && cfg.Retention.MessageIdempotenciesTrailing > 0 {
 		now := time.Now()
 		if cfg.Clock != nil {
@@ -348,12 +339,14 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 6d. Lineage retention sweep (E10). Reaps rimsky_lineage rows past the
-	// configured trailing window whose corresponding run / claim_handle is
-	// gone. Default disabled — `Retention.LineageTrailing == 0` skips the
-	// sweep. Runs under the scheduler-tick advisory lock for cross-replica
-	// serialization; errors are logged at Warn and swallowed (matching the
-	// SweepClaimHandleRetention / SweepMessageIdempotencies discipline).
+	// @deliberate: lineage retention sweep reaps rimsky_lineage rows
+	// past the configured trailing window whose corresponding run /
+	// claim_handle is gone. Default disabled —
+	// `Retention.LineageTrailing == 0` skips the sweep. Runs under the
+	// scheduler-tick advisory lock for cross-replica serialization;
+	// errors are logged at Warn and swallowed (matching the
+	// SweepClaimHandleRetention / SweepMessageIdempotencies
+	// discipline).
 	if cfg.Persist != nil && cfg.Retention.LineageTrailing > 0 {
 		now := time.Now()
 		if cfg.Clock != nil {
@@ -364,14 +357,16 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 6e. Trace retention sweep (E10). Reaps the whole per-instance
-	// execution trace under one policy: terminal frame rows (cascading
-	// their node_runs) by the lesser of `Retention.RecentFramesKept` (the
-	// count cap) and `Retention.TraceTrailing` (the trailing time window),
-	// plus the time-keyed event logs by that same window. Fires when
-	// EITHER dimension is enabled — a config with only trace_trailing set
-	// (no count cap) must still reap, so we cannot gate on RecentFramesKept
-	// alone. `now` feeds the trailing-window cutoff inside the sweep.
+	// @deliberate: trace retention sweep reaps the whole per-instance
+	// execution trace under one policy — terminal frame rows
+	// (cascading their node_runs) by the lesser of
+	// `Retention.RecentFramesKept` (the count cap) and
+	// `Retention.TraceTrailing` (the trailing time window), plus the
+	// time-keyed event logs by that same window. Fires when EITHER
+	// dimension is enabled — a config with only trace_trailing set (no
+	// count cap) must still reap, so the gate cannot be on
+	// RecentFramesKept alone. `now` feeds the trailing-window cutoff
+	// inside the sweep.
 	if cfg.Persist != nil && (cfg.Retention.RecentFramesKept > 0 || cfg.Retention.TraceTrailing > 0) {
 		now := time.Now()
 		if cfg.Clock != nil {
@@ -382,23 +377,13 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 7. Claim-holder GC is no longer needed:
-	// rimsky_claim_holders.claim_handle_id has ON DELETE CASCADE, so when
-	// the lock-holder row is deleted (at terminal or by orphan reap), the
-	// claim-holder rows are cleaned up automatically.
-
-	// 8. (v2's visibility-timeout sweep is gone — each store-service
-	// runs its own internal sweep per v3 spec §7.8 obligation #1.)
-
-	// 9. Ready sweep.
 	if err := runtime.SweepReady(ctx, conductorArgs); err != nil {
 		return err
 	}
 
-	// 9b. Parked-nodes sweep (E3 of plan
-	// .ok-planner/plans/2026-05-08-platform-extensions-for-agent-consumers.md).
-	// Wakes parked rows whose resume_at has elapsed and forces park_timeout
-	// failure on rows that overran max_park_duration_seconds.
+	// @deliberate: parked-nodes sweep wakes parked rows whose
+	// resume_at has elapsed and forces park_timeout failure on rows
+	// that overran max_park_duration_seconds.
 	if cfg.SupervisorID != "" {
 		if err := runtime.SweepParkedNodes(ctx, runtime.ParkedSweepArgs{
 			Persist:          cfg.Persist,
@@ -416,11 +401,12 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 9c. Orphan-blob sweep (D8). Drains rimsky_blob_orphans entries
-	// whose reap_after has elapsed; calls BlobBackend.Delete for each
-	// and removes the tracker row. Throttled to OrphanBlobSweepInterval
-	// (default 1h) so it doesn't run every 1.5s tick. Wired only when
-	// both BlobBackend and BlobOrphans are present.
+	// @deliberate: orphan-blob sweep drains rimsky_blob_orphans
+	// entries whose reap_after has elapsed — calls
+	// BlobBackend.Delete for each and removes the tracker row.
+	// Throttled to OrphanBlobSweepInterval (default 1h) so it doesn't
+	// run every 1.5s tick. Wired only when both BlobBackend and
+	// BlobOrphans are present.
 	if cfg.BlobBackend != nil && cfg.BlobOrphans != nil {
 		now := cfg.Clock.Now()
 		if h == nil || h.lastOrphanBlobSweep.IsZero() || now.Sub(h.lastOrphanBlobSweep) >= cfg.OrphanBlobSweepInterval {
@@ -439,44 +425,29 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 		}
 	}
 
-	// 10. Frame engine tick (frame-end detection, queue advancement,
-	// stuck-frame warning (advisory only), orphan-frame-dispatch reap).
 	if cfg.Persist != nil && cfg.Queue != nil {
 		if err := frame.RunTick(ctx, cfg.Persist, cfg.Queue, log, frameMetricsAdapter(cfg.Metrics)); err != nil {
 			log.Warn("tick: frame.RunTick failed", "error", err.Error())
 		}
 	}
 
-	// 11. Message-delivery sweep — for each running frame, deliver
-	// pending messages per the per-instance frame_delivery_mode. Fired
-	// after frame.RunTick so newly-promoted running frames pick up
-	// their messages on the same tick. Idempotent re-fire is safe: a
-	// row that's already delivered_at + frame_id is filtered out by
-	// `ListPendingForInstance`. Per spec §Unified message layer.
 	if cfg.Persist != nil && cfg.Clock != nil {
 		if err := runtime.SweepDeliverMessagesForRunningFrames(ctx, cfg.Persist, cfg.Queue, log, cfg.Clock.Now()); err != nil {
 			log.Warn("tick: SweepDeliverMessagesForRunningFrames failed", "error", err.Error())
 		}
 	}
 
-	// 12. Breakpoint sweeps — delete TTL-expired breakpoints,
-	// auto-resume stale hits on auto_resume_after_ttl breakpoints, and
-	// reap unresumed hits abandoned mid-block by a supervisor crash /
-	// context cancel. Per spec
-	// .ok-planner/specs/2026-05-24-instance-debugger-design.md §7.4.
-	// Errors are logged at Warn and swallowed (matching the
-	// SweepClaimHandleRetention / SweepMessageIdempotencies discipline).
 	if cfg.Persist != nil {
 		bpNow := time.Now()
 		if cfg.Clock != nil {
 			bpNow = cfg.Clock.Now()
 		}
-		// Orphaned-unresumed cutoff: how stale an unresumed hit must
-		// get before the reaper deletes it. 5 minutes is generous
-		// enough that legitimately-paused dispatches under operator
-		// inspection don't get yanked out from under their waiters,
-		// while still bounding the table size after supervisor
-		// restarts under steady load.
+		// @deliberate: Orphaned-unresumed cutoff: how stale an unresumed hit must
+		// unresumed hit must get before the reaper deletes it. 5
+		// minutes is generous enough that legitimately-paused
+		// dispatches under operator inspection don't get yanked out
+		// from under their waiters, while still bounding the table
+		// size after supervisor restarts under steady load.
 		orphanedHitCutoff := bpNow.Add(-5 * time.Minute)
 		if err := cfg.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			deleted, err := cfg.Persist.Breakpoints().SweepExpired(ctx, bpNow, tx)

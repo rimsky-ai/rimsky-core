@@ -43,9 +43,9 @@ func main() {
 	slog.SetDefault(logger)
 	log := shared.NewSlogLogger(logger)
 
-	// Register the signal handler BEFORE the role starts: startup can be
-	// slow (DB dials, handshakes), and as a container PID-1 an
-	// unregistered SIGTERM during that window would be silently dropped
+	// @constraint: register the signal handler BEFORE the role starts —
+	// startup can be slow (DB dials, handshakes), and as a container PID-1
+	// an unregistered SIGTERM during that window would be silently dropped
 	// (default disposition is ignored for PID-1), hanging the container
 	// until SIGKILL. The buffered channel queues a signal received
 	// mid-start.
@@ -55,18 +55,19 @@ func main() {
 	ctx := context.Background()
 	driver, cfg, err := launch.OpenDriverFromEnv(ctx, logger)
 	if err != nil {
-		// OpenDriverFromEnv already logged the failure with full context.
+		// @constraint: OpenDriverFromEnv already logged the failure with
+		// full context — exit silently rather than double-log.
 		os.Exit(1)
 	}
 	defer func() { _ = driver.Close() }()
 
 	stop, failCh, err := launch.RunScheduler(ctx, logger, driver, cfg)
 	if err != nil {
-		// RunScheduler already logged the failure with full context.
-		// @constraint: os.Exit does not run deferred functions, so the
-		// `defer driver.Close()` above would leak the driver — its sqlite
-		// WAL would not checkpoint and the file lock would survive until
-		// kernel reap. Close inline before exit.
+		// @constraint: RunScheduler already logged the failure; os.Exit
+		// does not run deferred functions, so the `defer driver.Close()`
+		// above would leak the driver — its sqlite WAL would not
+		// checkpoint and the file lock would survive until kernel reap.
+		// Close inline before exit.
 		_ = driver.Close()
 		os.Exit(1)
 	}
@@ -76,8 +77,8 @@ func main() {
 	defer cancel()
 	_ = stop(shutdownCtx)
 	if roleErr != nil {
-		// A dead role must restart the container, not linger degraded.
-		// @constraint: as above, os.Exit skips defers — close inline.
+		// @constraint: a dead role must restart the container, not linger
+		// degraded; as above, os.Exit skips defers — close inline.
 		_ = driver.Close()
 		os.Exit(1)
 	}

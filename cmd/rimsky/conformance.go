@@ -29,7 +29,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/dataprocessing"
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
-	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios" // init() registration
+	_ "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor/scenarios" // @constraint: blank import for init() scenario registration
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/publisher"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/validation"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -192,9 +192,9 @@ func runConformanceClaimProducer(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	// Conformance targets are dialed plaintext: the runner exercises
-	// the wire protocol, and TLS termination is the deployment's
-	// concern when pointing it at a TLS-fronted peer.
+	// @deliberate: dial plaintext — the runner exercises the wire
+	// protocol; TLS termination is the deployment's concern when
+	// pointing it at a TLS-fronted peer.
 	client, err := peer.Dial(ctx, "conformance-target", *endpoint, peer.TLSModeOff)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "rimsky conformance claim-producer: dial: %v\n", err)
@@ -480,7 +480,7 @@ func (a *blobBackendAdapter) Delete(ctx context.Context, handle blobbackend.Hand
 func openBlobBackend(ctx context.Context, name, root, dsn string) (persistence.BlobBackend, func(), error) {
 	switch name {
 	case "memory":
-		// Bypass the unified-only gate; conformance is single-process.
+		// @deliberate: assert unified process role to bypass the unified-only memory-backend gate; conformance is single-process.
 		_ = os.Setenv(persistence.ProcessRoleEnv, "unified")
 		return persistence.NewMemoryBackend(), func() {}, nil
 	case "filesystem":
@@ -576,7 +576,7 @@ func runConformanceProbe(args []string) int {
 	}
 	switch oc := sc.StreamClose.Outcome.(type) {
 	case *genv1.StreamClose_Success:
-		// Stub mode signals via attributes_delta on Success.
+		// @constraint: stub mode signals via attributes_delta on Success — probe asserts {stub:true} in the success delta.
 		m := oc.Success.GetAttributesDelta().AsMap()
 		if v, ok := m["stub"].(bool); !ok || !v {
 			fmt.Fprintf(os.Stderr, "conformance: stub-mode probe did not return {stub:true}, got %+v\n", m)

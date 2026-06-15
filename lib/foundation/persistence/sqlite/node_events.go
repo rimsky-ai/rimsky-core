@@ -2,9 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// node_events.go is the sqlite accessor for the rimsky_node_events
-// ledger (migration C6, sqlite variant). Mirrors postgres but uses
-// last_insert_rowid() and TEXT (UUID-as-text) columns.
+// @source: lib/foundation/persistence/postgres/node_events.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
+
 package sqlite
 
 import (
@@ -30,13 +31,13 @@ var _ persistence.NodeEventTable = (*nodeEventsImpl)(nil)
 
 // Insert appends a row and returns its auto-generated id.
 func (b *nodeEventsImpl) Insert(ctx context.Context, evt persistence.NodeEvent, tx persistence.Tx) (int64, error) {
-	// emitted_at is stored as fixed-width UTC TEXT (timeLayoutFixedNanos,
-	// whose lexicographic order matches chronological order) — the same
-	// convention as the audit log's occurred_at and what DeleteOlderThan
-	// compares against — so the insert and the time-window reaper share one
-	// time format (a raw time.Time bind would store modernc's t.String()
-	// layout instead, which orders differently from the fixed-width cutoff
-	// the reaper binds).
+	// @constraint: emitted_at is stored as fixed-width UTC TEXT
+	// (timeLayoutFixedNanos, whose lexicographic order matches chronological
+	// order) — same convention as the audit log's occurred_at and what
+	// DeleteOlderThan compares against — so the insert and the time-window
+	// reaper share one time format. A raw time.Time bind would store
+	// modernc's t.String() layout instead, which orders differently from the
+	// fixed-width cutoff the reaper binds.
 	now := formatTime(time.Now().UTC())
 	res, err := b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_events
@@ -104,9 +105,10 @@ func (b *nodeEventsImpl) LatestByName(ctx context.Context, instanceID, emitterNo
 	if fid.Valid {
 		out.FrameID = fid.String
 	}
-	// emitted_at is fixed-width UTC TEXT (timeLayoutFixedNanos; same
-	// convention as the audit log's occurred_at); parse it back the way
-	// events.List does rather than scanning straight into a time.Time.
+	// @constraint: emitted_at is fixed-width UTC TEXT (timeLayoutFixedNanos;
+	// same convention as the audit log's occurred_at) — parse it back the
+	// way events.List does rather than scanning straight into a time.Time so
+	// the storage and read formats stay paired.
 	emittedAt, err := parseTime(whenStr)
 	if err != nil {
 		return nil, fmt.Errorf("node_events.LatestByName: parse emitted_at: %w", err)
@@ -219,7 +221,9 @@ func (b *nodeEventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) 
 	}
 	_ = rows.Close()
 
-	// Queue spilled handles before the DELETE, inside the same tx.
+	// @constraint: queue spilled handles BEFORE the DELETE, inside the same
+	// tx — a post-delete queue that failed would orphan the bytes with no
+	// row left to re-discover.
 	pTx := &sqliteTx{tx: stx}
 	for _, o := range orphans {
 		if qerr := persistence.QueueBlobOrphan(

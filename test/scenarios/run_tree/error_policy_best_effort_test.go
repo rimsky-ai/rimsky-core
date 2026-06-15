@@ -44,7 +44,7 @@ func TestErrorPolicyBestEffort_AllFailedStillSucceeds(t *testing.T) {
 	if !res.IsSettled {
 		t.Fatal("best_effort should always settle when all children terminal")
 	}
-	// best_effort defaults to fresh_unchanged when no successful child
+	// @deliberate: best_effort defaults to fresh_unchanged when no successful child
 	// is available; the engine's exact outcome is implementation-
 	// defined as long as state == fresh.
 	if res.ParentState != cascade.NodeStateFresh {

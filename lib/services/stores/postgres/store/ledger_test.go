@@ -69,7 +69,7 @@ func TestPgLedgerNilSafe(t *testing.T) {
 	if out != nil || next != "" {
 		t.Fatalf("nil ledger List should return (nil, ''); got %+v %q", out, next)
 	}
-	// RecordEvent on the nil receiver must also be a no-op.
+	// @constraint: RecordEvent on the nil receiver must also be a no-op.
 	l.RecordEvent("x", "claim_commit_failed", "ERROR", nil)
 }
 
@@ -103,7 +103,6 @@ func TestPgLedgerRecordEvent_NonTerminal(t *testing.T) {
 	if tail.Attributes["error"] != "deadlock" {
 		t.Fatalf("tail attrs[error] = %v, want deadlock", tail.Attributes["error"])
 	}
-	// A subsequent terminal event still works.
 	l.RecordTerminal("c1", "claim_committed", nil)
 	rec2, _ := l.Get("c1")
 	if rec2.State != ClaimStateCommitted {

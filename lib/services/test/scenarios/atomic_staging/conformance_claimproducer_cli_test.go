@@ -63,20 +63,12 @@ import (
 func TestConformanceClaimProducerTerminalsCLI(t *testing.T) {
 	t.Parallel()
 
-	// Build the real `rimsky` CLI once for both halves. The binary lives in the
-	// root module (cmd/rimsky); build it from the repo root so the root go.mod
-	// is in scope. A build failure is a hard test failure — the acceptance is
-	// "the shipped CLI prints these rows and exits with this code".
 	cliPath := buildRimskyCLI(t)
 
 	t.Run("real_producer_passes", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 		dsn := harness.StartFreshPostgres(ctx, t)
-		// The real value-delivering producer: the bundled fused postgres
-		// claim-producer, booted in-process over a real Postgres. staged_async
-		// write-semantics — its terminal verbs (Commit/Abandon/Release) are the
-		// real atomic-staging lifecycle, idempotent in claim_id.
 		endpoint, teardown := startPgStore(t, dsn, true)
 		t.Cleanup(teardown)
 
@@ -86,8 +78,6 @@ func TestConformanceClaimProducerTerminalsCLI(t *testing.T) {
 			t.Fatalf("conformance CLI against real producer exited %d (want 0)\nstdout:\n%s",
 				exitCode, stdout)
 		}
-		// Each terminal verb + the retried-terminal idempotency probe MUST print
-		// a passing `ok    <Name>` row against the real producer.
 		for _, want := range []string{
 			"ok    Commit",
 			"ok    Abandon",
@@ -111,9 +101,6 @@ func TestConformanceClaimProducerTerminalsCLI(t *testing.T) {
 			t.Fatalf("conformance CLI against broken producer exited 0 (want non-zero)\nstdout:\n%s",
 				stdout)
 		}
-		// The broken producer's Commit returns a status error; the runner reports
-		// it as a failing Commit row and the CLI prints `FAIL  Commit: ...` and
-		// returns 1.
 		if !strings.Contains(stdout, "FAIL  Commit") {
 			t.Errorf("conformance CLI stdout missing %q against broken producer\nstdout:\n%s",
 				"FAIL  Commit", stdout)
@@ -213,17 +200,19 @@ type brokenClaimProducer struct {
 }
 
 func (*brokenClaimProducer) Capabilities(context.Context, *genv1.CapabilitiesRequest) (*genv1.CapabilitiesResponse, error) {
-	// sync write-semantics: a concrete, non-empty envelope that keeps the
-	// staged_async-specific Serialization9b probe in its SKIP path.
+	// @deliberate: advertise sync write-semantics so the staged_async-specific
+	// Serialization9b probe stays in its SKIP path; the broken half asserts only
+	// the Commit FAIL row.
 	return &genv1.CapabilitiesResponse{
 		WriteSemanticsAllowed: []genv1.WriteSemantics{genv1.WriteSemantics_WRITE_SEMANTICS_SYNC},
 	}, nil
 }
 
 func (*brokenClaimProducer) Open(_ context.Context, req *genv1.OpenRequest) (*genv1.OpenResponse, error) {
-	// Acquired on every Open: the claim_scope echoes the selector (byte-stable
-	// per identical selector, satisfying the uniformity precondition) and the
-	// realized write-semantics is in the advertised envelope.
+	// @deliberate: return Acquired on every Open with a claim_scope that echoes
+	// the selector (byte-stable per identical selector, satisfying the
+	// uniformity precondition) so the conformance runner reaches the terminal
+	// probe and the failing Commit row is what the CLI exit-code logic keys on.
 	return &genv1.OpenResponse{
 		Result: &genv1.OpenResponse_Acquired{
 			Acquired: &genv1.Acquired{
@@ -235,7 +224,8 @@ func (*brokenClaimProducer) Open(_ context.Context, req *genv1.OpenRequest) (*ge
 }
 
 func (*brokenClaimProducer) Commit(context.Context, *genv1.CommitRequest) (*genv1.CommitResponse, error) {
-	// The break: Commit always errors, so the conformance runner's Commit row
-	// fails and the CLI exits non-zero.
+	// @deliberate: always return a status error from Commit so the conformance
+	// runner emits a failing Commit row and the CLI exits non-zero — the FAIL
+	// path the test asserts on.
 	return nil, status.Error(codes.Internal, "broken producer: Commit deliberately fails")
 }

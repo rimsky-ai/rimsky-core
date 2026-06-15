@@ -27,7 +27,6 @@ import (
 // they morally are.
 type InlineBackend struct{}
 
-// Compile-time interface check.
 var _ BlobBackend = InlineBackend{}
 
 // errInlineNotSpillable is returned by InlineBackend.Write to surface

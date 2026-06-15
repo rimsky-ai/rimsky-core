@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// Reference sign-off validator (copy-and-modify) — Apache-licensed.
+// @deliberate: reference sign-off validator (copy-and-modify) — Apache-licensed.
 //
 // This is the copyable artifact a host operator adapts to build their own
 // sign-off validator for the claude-agent sign-off gate. It demonstrates the
@@ -32,13 +32,16 @@
 import { sign as edSign, createPublicKey } from "node:crypto";
 import * as canonicalizeModule from "canonicalize";
 
-// `canonicalize` is a CommonJS package whose runtime export is a bare function
-// (`module.exports = serialize`), but whose bundled `.d.ts` declares it as an
-// ESM `export default`. Under NodeNext that mismatch makes a plain default
-// import non-callable at type-check time even though it is callable at runtime.
-// Normalize both layers here: prefer the synthesized `default`, fall back to the
-// namespace object itself (the CJS function under esModuleInterop's runtime).
-// @source: lib/services/executors/claude-agent/src/signoff.ts (canonicalize import normalization)
+/**
+ * Canonicalize wraps the `canonicalize` CommonJS package, whose runtime export
+ * is a bare function (`module.exports = serialize`) but whose bundled `.d.ts`
+ * declares it as an ESM `export default`. Under NodeNext that mismatch makes
+ * a plain default import non-callable at type-check time even though it is
+ * callable at runtime. Normalize both layers here: prefer the synthesized
+ * `default`, fall back to the namespace object itself (the CJS function under
+ * esModuleInterop's runtime).
+ * @source: lib/services/executors/claude-agent/src/signoff.ts (canonicalize import normalization)
+ */
 type Canonicalize = (input: unknown) => string | undefined;
 const canonicalizeAny = canonicalizeModule as unknown as {
   default?: Canonicalize;

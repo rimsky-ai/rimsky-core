@@ -231,7 +231,7 @@ func (s *claimHandlesImpl) ReassignHolderSupervisor(
 	ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx persistence.Tx,
 ) error {
 	if toSupervisorID == "" {
-		// Active rows must carry a holder (migration-009 CHECK pair); an
+		// @constraint: active rows must carry a holder (migration-009 CHECK pair); an
 		// empty target would be a disguised release.
 		return fmt.Errorf("lockholders.ReassignHolderSupervisor: empty toSupervisorID")
 	}
@@ -525,7 +525,7 @@ func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID str
 	if heartbeatSeconds < 1 {
 		heartbeatSeconds = 1
 	}
-	// Non-active rows are excluded from the heartbeat: committed +
+	// @deliberate: non-active rows are excluded from the heartbeat: committed +
 	// abandoned rows have `holder_supervisor_id IS NULL` and unbounded
 	// lifetime (released only by the retention sweep or, for committed-
 	// durable, by `ReleaseHeldDurableClaims`), so they do not need
@@ -855,8 +855,6 @@ func (s *claimHandlesImpl) BumpChildOutcomeCount(
 	return nil
 }
 
-// ---- helpers ----
-
 func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	var (
 		r                  persistence.ClaimHandleRow
@@ -908,7 +906,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	if rws != nil {
 		r.RealizedWriteSemantics = *rws
 	}
-	// HolderSupervisorID is nullable: non-active rows always carry NULL
+	// @constraint: HolderSupervisorID is nullable: non-active rows always carry NULL
 	// per the `rimsky_claim_handles_inactive_has_no_holder` CHECK. The
 	// `*string` mirrors the column nullability so callers cannot
 	// inadvertently compare against the zero value (empty string) and

@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// messages_test.go — exercises the sqlite impl of
-// persistence.MessagesTable's scan path against NULL payload columns.
-//
-// The scan path uses a nullable `[]byte` indirect so a NULL payload
-// column lands as a nil MessageRow.Payload (the database/sql driver
-// cannot scan SQL NULL into a *json.RawMessage directly — distinct
-// from pgx, which tolerates NULL). Without coverage a future "let's
-// simplify the scan back to *json.RawMessage" refactor would silently
-// regress to a runtime scan error any time a NULL-payload row is
-// projected.
-//
 // @concept: message
 
 package sqlite_test
@@ -95,9 +84,8 @@ func TestMessagesScan_NullPayload(t *testing.T) {
 	messages := d.Tables().Messages()
 	msgID := shared.UUID(uuid.New())
 
-	// Insert a message with EXPLICITLY nil Payload (json.RawMessage(nil)),
-	// which the driver sends as NULL — exactly the column shape the scan
-	// path must tolerate.
+	// @deliberate: Payload omitted → json.RawMessage(nil) → driver sends NULL,
+	// which is the exact column shape scanMessages must tolerate (cycle-1 fix).
 	require := func(condition bool, msg string, args ...any) {
 		t.Helper()
 		if !condition {
@@ -111,17 +99,15 @@ func TestMessagesScan_NullPayload(t *testing.T) {
 			Kind:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
-			// Payload intentionally omitted → json.RawMessage(nil) → NULL
-			// in the persisted row. This is the exact shape an invalidate
-			// envelope with no body lands as on the wire.
+			// @deliberate: Payload omitted → json.RawMessage(nil) → NULL row;
+			// matches the on-wire shape of an invalidate envelope with no body.
 		})
 	}); err != nil {
 		t.Fatalf("Messages.Insert: %v", err)
 	}
 
-	// Get must not error and must return a non-nil row whose Payload is
-	// a zero-value json.RawMessage (the cycle-1 fix's intended behavior:
-	// nil → leave Payload nil; len == 0 is fine).
+	// @constraint: NULL payload column must scan into a zero-length
+	// json.RawMessage (nil or empty); cycle-1 nullable-shim contract.
 	row, err := messages.Get(ctx, msgID)
 	if err != nil {
 		t.Fatalf("Messages.Get: %v (NULL payload must scan without error)", err)
@@ -130,9 +116,8 @@ func TestMessagesScan_NullPayload(t *testing.T) {
 	if len(row.Payload) != 0 {
 		t.Fatalf("payload bytes = %q; want zero-length (NULL column → nil/empty json.RawMessage)", string(row.Payload))
 	}
-	// The opaque payload must serialize as JSON `null` — i.e. an empty
-	// RawMessage is fine, but an unmarshal of `null` over it must not
-	// surface a non-null value to the operator.
+	// @constraint: empty RawMessage represents JSON null at this boundary;
+	// any non-empty bytes must still parse as valid JSON.
 	if len(row.Payload) > 0 {
 		var v any
 		if err := json.Unmarshal(row.Payload, &v); err != nil {
@@ -140,8 +125,8 @@ func TestMessagesScan_NullPayload(t *testing.T) {
 		}
 	}
 
-	// List path must also tolerate NULL. Use the per-instance filter so
-	// only the NULL-payload row above is in scope.
+	// @constraint: List is a second scanMessages caller; per-instance filter
+	// narrows scope to the NULL-payload row inserted above.
 	instUUID := shared.UUID(instanceID)
 	page, err := messages.List(ctx, persistence.MessageListFilter{InstanceID: &instUUID}, persistence.ListPagination{Limit: 10})
 	if err != nil {
@@ -154,9 +139,8 @@ func TestMessagesScan_NullPayload(t *testing.T) {
 		t.Fatalf("List row payload bytes = %q; want zero-length", string(page.Rows[0].Payload))
 	}
 
-	// ListPendingForInstance is the third scanMessages caller; cover it
-	// too so a future change that drops the nullable shim in any one
-	// caller is caught.
+	// @constraint: ListPendingForInstance is the third scanMessages caller;
+	// covered so a regression dropping the nullable shim in any one caller fails here.
 	var pending []persistence.MessageRow
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := messages.ListPendingForInstance(ctx, tx, instUUID)

@@ -165,7 +165,6 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	}
 	obsMu.Unlock()
 
-	// Same body — should not push (watermark match).
 	s.clock = func() time.Time { return pin.Add(15 * time.Second) }
 	s.Tick(context.Background())
 	obsMu.Lock()
@@ -174,7 +173,6 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	}
 	obsMu.Unlock()
 
-	// Body changes — push.
 	target.Store(`{"status":"ready","version":2}`)
 	s.clock = func() time.Time { return pin.Add(30 * time.Second) }
 	s.Tick(context.Background())

@@ -43,8 +43,8 @@ func newStubServer(t *testing.T, handler http.HandlerFunc) *stubServer {
 	s := &stubServer{}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.last = r
-		// Snapshot the body so the handler closure can inspect it
-		// without re-reading after the response is written.
+		// @deliberate: snapshot the body before the handler writes the response so
+		// later assertions can inspect it without re-reading a consumed reader.
 		if r.Body != nil {
 			buf := make([]byte, r.ContentLength)
 			if r.ContentLength > 0 {
@@ -82,7 +82,6 @@ func TestAuthCreate_HappyPath(t *testing.T) {
 }
 
 func TestAuthCreate_FlagParseError(t *testing.T) {
-	// Missing required --name; subcommand should exit 2.
 	code := cli.RunAuthCreateKey(context.Background(),
 		[]string{"--endpoint", "http://unused", "--role", "admin"})
 	if code != 2 {

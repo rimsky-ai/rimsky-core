@@ -11,13 +11,13 @@
 //
 //   - default                       — emit a single Success terminal.
 //   - attributes.outcome="fail"     — emit a single Error terminal with
-//                                     error_class=stub/failed.
+//     error_class=stub/failed.
 //   - attributes.delay_ms=<int>     — time.Sleep for the configured
-//                                     duration before terminating
-//                                     (lets STORY-live-progress
-//                                     interleave a fast and slow
-//                                     instance to prove progress lines
-//                                     are emitted live, not batched).
+//     duration before terminating (lets
+//     STORY-live-progress interleave a
+//     fast and slow instance to prove
+//     progress lines are emitted live,
+//     not batched).
 //
 // This binary is intentionally lighter than examples/executor — no
 // schema, no namedevent paths, no permissive open shape — so a copy
@@ -62,7 +62,7 @@ type executor struct {
 func (e executor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
 	delay := intAttr(req, "delay_ms")
 	if delay > 0 {
-		// Bound the sleep at 60s so a malformed attribute cannot wedge
+		// @constraint: bound the sleep at 60s so a malformed attribute cannot wedge
 		// the stub forever — the test that overshoots can still drain.
 		if delay > 60_000 {
 			delay = 60_000
@@ -176,7 +176,7 @@ func main() {
 	genv1.RegisterExecutorObservabilityServer(srv, observability{})
 	slog.Info("stub-executor listening", "port", port)
 
-	// Shut down on SIGTERM/SIGINT so the verb's drain coordinator can
+	// @constraint: shut down on SIGTERM/SIGINT so the verb's drain coordinator can
 	// reap the child cleanly (GracefulStop drains in-flight RPCs first;
 	// Stop is the fallback if the in-flight set takes too long).
 	sigCh := make(chan os.Signal, 1)

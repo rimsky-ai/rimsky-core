@@ -2,10 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.APIKeyTable — Bearer-token API keys for
-// control-api auth. Mirror of the postgres impl. See spec
-// .ok-planner/specs/2026-05-15-control-plane-mcp-and-auth-design.md.
-//
+// @source: lib/foundation/persistence/postgres/api_keys.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
+
 // @concept: api-key
 
 package sqlite
@@ -32,6 +32,8 @@ import (
 // has been stable since the 3.x series.
 const sqliteConstraintUnique = 2067
 
+// apiKeysImpl is the SQLite-backed persistence.APIKeyTable —
+// Bearer-token API keys for control-api auth.
 type apiKeysImpl tablesImpl
 
 var _ persistence.APIKeyTable = (*apiKeysImpl)(nil)
@@ -71,26 +73,25 @@ func (b *apiKeysImpl) Insert(ctx context.Context, k persistence.APIKey, tx persi
 		timePtrStr(k.RevokedAt),
 	)
 	if err != nil {
-		// Prefer the structured error code over a substring match
-		// on the error message: modernc.org/sqlite's wording for
-		// UNIQUE constraint violations has shifted between releases,
-		// and a future bump could silently misroute the partial
-		// unique-name index error as an "impossible key_hash
-		// collision" 500.
+		// @deliberate: prefer the structured error code over a substring
+		// match on the error message — modernc.org/sqlite's wording for
+		// UNIQUE constraint violations has shifted between releases, and
+		// a future bump could silently misroute the partial unique-name
+		// index error as an "impossible key_hash collision" 500.
 		var sErr *sqlite3.Error
 		isUnique := errors.As(err, &sErr) && sErr.Code() == sqliteConstraintUnique
-		// Fall back to a message match for older driver versions
-		// that don't expose *sqlite3.Error on this code path; the
-		// substring shape is stable enough for the secondary path.
+		// @deliberate: fall back to a message match for older driver
+		// versions that don't expose *sqlite3.Error on this code path;
+		// the substring shape is stable enough for the secondary path.
 		if !isUnique {
 			isUnique = strings.Contains(err.Error(), "UNIQUE")
 		}
 		if isUnique {
-			// The error message still carries the column / index
-			// name (modernc.org/sqlite passes the SQLite-emitted
-			// "UNIQUE constraint failed: rimsky_api_keys.<col>"
-			// text through verbatim). Distinguish hash-collision
-			// from the partial unique-name index by column.
+			// @constraint: the error message still carries the column /
+			// index name (modernc.org/sqlite passes the SQLite-emitted
+			// "UNIQUE constraint failed: rimsky_api_keys.<col>" text
+			// through verbatim) — distinguish hash-collision from the
+			// partial unique-name index by column.
 			if strings.Contains(err.Error(), "rimsky_api_keys.key_hash") {
 				return persistence.ErrAPIKeyHashCollision
 			}
@@ -145,8 +146,8 @@ func (b *apiKeysImpl) List(ctx context.Context, includeRevoked bool, nameFilter 
 	}
 	if nameFilter != "" {
 		args = append(args, globToLike(nameFilter))
-		// ESCAPE '\\' matches the backslash-escaping globToLike does
-		// on literal LIKE meta-characters in the input.
+		// @constraint: ESCAPE '\\' matches the backslash-escaping
+		// globToLike does on literal LIKE meta-characters in the input.
 		sqlStr += ` AND name LIKE ? ESCAPE '\'`
 	}
 	sqlStr += ` ORDER BY created_at DESC`
@@ -173,10 +174,10 @@ func (b *apiKeysImpl) ActiveCount(ctx context.Context, now time.Time, tx persist
 }
 
 func (b *apiKeysImpl) MarkRevoked(ctx context.Context, id shared.UUID, now time.Time, tx persistence.Tx) (changed bool, found bool, err error) {
-	// Multi-process atomicity: the guarded UPDATE and the zero-rows
-	// EXISTS re-resolution must observe one consistent row state — a
-	// concurrent process sharing the database file could delete or
-	// revoke the row between the two statements and skew the
+	// @constraint: multi-process atomicity — the guarded UPDATE and the
+	// zero-rows EXISTS re-resolution must observe one consistent row
+	// state; a concurrent process sharing the database file could delete
+	// or revoke the row between the two statements and skew the
 	// (changed, found) split. When the caller holds no tx, open an
 	// internal immediate-mode transaction (the DSN's _txlock=immediate
 	// makes BEGIN hold the writer slot) around the pair.
@@ -203,9 +204,9 @@ func (b *apiKeysImpl) markRevokedInTx(ctx context.Context, id shared.UUID, now t
 	if n == 1 {
 		return true, true, nil
 	}
-	// Either already revoked (idempotent no-op) or row missing. The
-	// (changed, found) split lets handleRevokeKey skip a duplicate
-	// auth.key_revoked emit on the already-revoked path.
+	// @deliberate: either already revoked (idempotent no-op) or row
+	// missing — the (changed, found) split lets handleRevokeKey skip a
+	// duplicate auth.key_revoked emit on the already-revoked path.
 	var exists int
 	if err := b.run(tx).QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM rimsky_api_keys WHERE id = ?)`, id.String()).Scan(&exists); err != nil {
@@ -226,7 +227,7 @@ func (b *apiKeysImpl) SetRevokeAt(ctx context.Context, id shared.UUID, at time.T
 
 func (b *apiKeysImpl) SweepRotationGrace(ctx context.Context, now time.Time, tx persistence.Tx) ([]persistence.APIKey, error) {
 	nowStr := now.UTC().Format(timeLayoutFixedNanos)
-	// sqlite supports RETURNING since 3.35.
+	// @constraint: sqlite supports RETURNING since 3.35.
 	rows, err := b.run(tx).QueryContext(ctx,
 		`UPDATE rimsky_api_keys
 		    SET revoked_at = ?

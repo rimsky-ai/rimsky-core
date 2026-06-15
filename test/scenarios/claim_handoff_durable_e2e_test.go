@@ -116,13 +116,13 @@ func testClaimHandoffDurable_CrossDispatchPersistence(t *testing.T) {
 	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
 		"acquirer should settle fresh in D1")
 
-	// Wait for the durable Promote: auto-terminal fires after the
+	// @constraint: Wait for the durable Promote: auto-terminal fires after the
 	// holding subgraph completes; the row transitions from active to
 	// committed (Promote-not-Delete on durable per @blessed-invariant
 	// 22). Without the wait the row may still read state=active.
 	requireDurableCommittedHandle(t, h, acquirer.ID)
 
-	// Force the retention sweep tick directly. The sweep MUST be a
+	// @constraint: Force the retention sweep tick directly. The sweep MUST be a
 	// no-op against a committed-durable row — that's the carve-out.
 	// Use a long trailing window so any non-durable-committed row that
 	// happened to be present would also survive (we want the
@@ -135,7 +135,7 @@ func testClaimHandoffDurable_CrossDispatchPersistence(t *testing.T) {
 	require.Equal(t, 0, n,
 		"retention sweep MUST NOT reap a committed-durable row (@blessed-invariant 22)")
 
-	// Tighter sweep: even with a zero-day trailing window the sweep
+	// @constraint: Tighter sweep: even with a zero-day trailing window the sweep
 	// must STILL preserve committed-durable rows (the lifetime+state
 	// predicate beats the time predicate for durable).
 	cfgAggressive := runtime.RetentionConfig{ClaimHandlesTrailing: 1 * time.Nanosecond}
@@ -145,7 +145,7 @@ func testClaimHandoffDurable_CrossDispatchPersistence(t *testing.T) {
 	require.Equal(t, 0, n2,
 		"aggressive retention sweep MUST NOT reap a committed-durable row")
 
-	// Re-read via persistence and confirm still committed + durable.
+	// @constraint: Re-read via persistence and confirm still committed + durable.
 	row := readDurableClaimHandle(t, h, acquirer.ID)
 	require.NotNil(t, row, "durable claim_handle row must survive the sweep")
 	require.Equal(t, spec.ClaimHandleStateCommitted, row.State)
@@ -188,20 +188,19 @@ func testClaimHandoffDurable_CrossDispatchHolds(t *testing.T) {
 	require.True(t, h.WaitForNodeState(coHolder.ID, cascade.NodeStateFresh, 30*time.Second),
 		"co-holder should settle fresh in D1 (substitution resolves on the live held claim)")
 
-	// Confirm the durable claim_handle row reaches committed-durable.
 	requireDurableCommittedHandle(t, h, acquirer.ID)
 
-	// Capture the persisted address bytes — these are the bytes we
+	// @deliberate: Capture the persisted address bytes — these are the bytes we
 	// expect the co-holder's D2 substitution to equal.
 	d1Handle := readDurableClaimHandle(t, h, acquirer.ID)
 	require.NotNil(t, d1Handle)
 	d1Address := append(json.RawMessage(nil), d1Handle.Address...)
 
-	// Capture the D1 run id so we can pick up the D2 run row that
+	// @deliberate: Capture the D1 run id so we can pick up the D2 run row that
 	// will appear after invalidate.
 	d1RunID := latestRunIDForNode(t, h, coHolder.ID)
 
-	// D2: re-invalidate the co-holder. The control-api's invalidate
+	// @deliberate: D2: re-invalidate the co-holder. The control-api's invalidate
 	// route moves the node back to stale; the scheduler re-dispatches.
 	// On D2 acquire-tx, loadInheritedClaimsForNode walks holds:asset
 	// → acquirer's durable claim_handle row (still present at
@@ -210,13 +209,13 @@ func testClaimHandoffDurable_CrossDispatchHolds(t *testing.T) {
 	// substitution context so `{{claim.asset.address}}` resolves.
 	invalidateNode(t, h, coHolder.ID)
 
-	// Wait until the co-holder has a NEW run row distinct from the
+	// @deliberate: Wait until the co-holder has a NEW run row distinct from the
 	// D1 run id, then wait for it to settle fresh.
 	requireSecondRun(t, h, coHolder.ID, d1RunID, 30*time.Second)
 	require.True(t, h.WaitForNodeState(coHolder.ID, cascade.NodeStateFresh, 30*time.Second),
 		"co-holder should settle fresh again on D2 (no terminal/error/template_resolution_failed)")
 
-	// Read the D2 substituted bytes through real persistence and
+	// @constraint: Read the D2 substituted bytes through real persistence and
 	// compare byte-for-byte with the D1-captured Address.
 	d2RunID := latestRunIDForNode(t, h, coHolder.ID)
 	require.NotEqual(t, d1RunID, d2RunID,
@@ -239,7 +238,7 @@ func testClaimHandoffDurable_CrossDispatchHolds(t *testing.T) {
 // committed-durable rows."
 func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 
-	// Boot a single harness; both instances share the same producer
+	// @deliberate: Boot a single harness; both instances share the same producer
 	// process so the scope conflict is real (the producer's claim-scope
 	// guard is what surfaces unavailability to rimsky).
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -266,7 +265,7 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 
 	const sharedSelector = "/durable-C-shared"
 
-	// First template + instance: opens the durable claim on the
+	// @deliberate: First template + instance: opens the durable claim on the
 	// contested scope. Drive to committed-durable.
 	durableTid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-C-owner", Version: "1",
@@ -291,7 +290,7 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 		"durable acquirer should settle fresh and Promote its claim to committed-durable")
 	requireDurableCommittedHandle(t, h, durableAcq.ID)
 
-	// Second template: a different node type, same store + same
+	// @deliberate: Second template: a different node type, same store + same
 	// selector, declaring error_types: {acquire/unavailable: [give_up]}
 	// so the produced terminal/error/acquire/unavailable lands as a
 	// failed-color settlement we can assert.
@@ -322,10 +321,10 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 	competingAcq := h.FindNode(competingIID, "competing-acquirer")
 	require.NotNil(t, competingAcq)
 
-	// The competing acquirer must settle failed — the durable row's
+	// @constraint: The competing acquirer must settle failed — the durable row's
 	// participation in conflict detection denies the Open.
 	if !h.WaitForNodeState(competingAcq.ID, cascade.NodeStateFailed, 30*time.Second) {
-		// Diagnostic: surface the competitor's current state + the
+		// @deliberate: Diagnostic: surface the competitor's current state + the
 		// durable row's lifetime/state so a failing run names what the
 		// conflict detection saw.
 		var compRow *persistence.NodeRow
@@ -353,11 +352,11 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 			compRow.State, compRow.SettlingSignalType, owSummary)
 	}
 
-	// And the settling signal must carry the canonical
+	// @constraint: And the settling signal must carry the canonical
 	// terminal/error/acquire/unavailable shape per concept:signal.
 	requireSettlingSignalTypePrefix(t, h, competingAcq.ID, "terminal/error/acquire/unavailable")
 
-	// The competing acquirer's executor MUST NOT have been invoked.
+	// @constraint: The competing acquirer's executor MUST NOT have been invoked.
 	for _, obs := range h.Stub.Observed() {
 		require.NotEqual(t, "competing-acquirer", obs.NodeType,
 			"competing-acquirer must not be dispatched to the executor when acquire/unavailable fires")
@@ -411,7 +410,7 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 
 	const sharedSelector = "/durable-D-shared"
 
-	// Durable owner template — single durable-acquirer node.
+	// @deliberate: Durable owner template — single durable-acquirer node.
 	durableTid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-D-owner", Version: "1",
 		FrameResolutionMode: node.FrameResolutionSerialQueue,
@@ -434,7 +433,7 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	require.True(t, h.WaitForNodeState(durableAcq.ID, cascade.NodeStateFresh, 30*time.Second))
 	requireDurableCommittedHandle(t, h, durableAcq.ID)
 
-	// Competing template — give_up on unavailable so we can re-trigger
+	// @deliberate: Competing template — give_up on unavailable so we can re-trigger
 	// it via /invalidate after the durable row releases.
 	competingTid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-D-competitor", Version: "1",
@@ -463,21 +462,21 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	competingAcq := h.FindNode(competingIID, "competing-acquirer")
 	require.NotNil(t, competingAcq)
 
-	// First competing attempt: must fail (the durable owner has the
+	// @constraint: First competing attempt: must fail (the durable owner has the
 	// scope).
 	require.True(t, h.WaitForNodeState(competingAcq.ID, cascade.NodeStateFailed, 30*time.Second),
 		"competing acquirer must initially fail with acquire/unavailable")
 
-	// Operator releases the durable claim through the sanctioned asset
+	// @deliberate: Operator releases the durable claim through the sanctioned asset
 	// delete path. The asset alias is the dotted `{node_type}.{alias}`
 	// form per code:assets.go::parseAssetAlias.
 	deleteAsset(t, h, durableIID, "durable-acquirer.asset")
 
-	// Confirm the durable row is gone from the active-scope set —
+	// @deliberate: Confirm the durable row is gone from the active-scope set —
 	// `Get` returns nil.
 	requireClaimHandleAbsent(t, h, durableAcq.ID)
 
-	// Create a THIRD instance — a fresh subsequent acquirer against the
+	// @deliberate: Create a THIRD instance — a fresh subsequent acquirer against the
 	// same scope. With the durable row gone, the producer's scope is
 	// free; the Open succeeds and this competitor settles fresh.
 	thirdIID := h.CreateInstance(competingTid, "ck-claim-handoff-durable-D-third", map[string]any{})
@@ -523,32 +522,30 @@ func testClaimHandoffDurable_InstanceTerminationRelease(t *testing.T) {
 		"acquirer should settle fresh and Promote its durable claim")
 	requireDurableCommittedHandle(t, h, acquirer.ID)
 
-	// Capture the claim_handle id so we can read it back through Get
+	// @deliberate: Capture the claim_handle id so we can read it back through Get
 	// after the DELETE.
 	durableHandleID := readDurableClaimHandle(t, h, acquirer.ID).ID
 	durableClaimID := durableHandleID.String()
 	instanceID := acquirer.InstanceID
 
-	// Step 1: POST /terminate sets terminated_at on the row. The
+	// @deliberate: Step 1: POST /terminate sets terminated_at on the row. The
 	// terminate handler force-fails any in-flight runs and marks the
 	// instance terminal; required precondition for DELETE.
 	terminateInstance(t, h, instanceID)
 	require.True(t, waitForInstanceTerminatedDurable(t, h, instanceID, 15*time.Second),
 		"POST /terminate must set terminated_at on the instance row")
 
-	// Step 2: DELETE /v1/instances/{id}. This is the sole caller of
+	// @deliberate: Step 2: DELETE /v1/instances/{id}. This is the sole caller of
 	// runtime.ReleaseHeldDurableClaims (per the comment block at
 	// instances.go:804). Producer Release fires, claim_handle row is
 	// deleted, instance row is deleted.
 	deleteInstance(t, h, instanceID)
 
-	// Assert the claim_handle row is gone via persistence.
 	requireClaimHandleGoneByID(t, h, durableHandleID)
 
-	// And the instance row is gone too.
 	requireInstanceGone(t, h, instanceID)
 
-	// And the producer recorded a Release call against the durable
+	// @constraint: And the producer recorded a Release call against the durable
 	// claim_id — the held-durable-release path inside
 	// runtime.ReleaseHeldDurableClaims fired. The Falsifier names
 	// "instance termination doesn't fire the held-durable-release
@@ -573,8 +570,6 @@ func requireProducerRelease(t *testing.T, stub *stubstore.Store, claimID string)
 	}
 	t.Fatalf("expected producer Release for claim_id=%s; recorded calls=%v", claimID, calls)
 }
-
-// ---------- helpers ----------
 
 type durableOpts struct {
 	instanceKey string

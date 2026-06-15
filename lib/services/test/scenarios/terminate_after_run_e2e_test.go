@@ -42,9 +42,9 @@ func TestTerminateAfterRun_EndToEnd(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable on the shared network before
-	// rimsky starts (the control-api fires a Capabilities handshake against
-	// declared executors at startup). Network → executor peer → rimsky.
+	// @constraint: the stub executor must be reachable on the shared network
+	// before rimsky starts (the control-api fires a Capabilities handshake
+	// against declared executors at startup). Network → executor peer → rimsky.
 	netName := harness.NewNetwork(ctx, t)
 	execEP := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-ok")
 
@@ -53,24 +53,26 @@ func TestTerminateAfterRun_EndToEnd(t *testing.T) {
 		harness.WithExecutor("stub", execEP),
 	)
 
-	// A single executor node. Creating the instance enqueues an initial
-	// frame for the root node (lib/control/controlapi/instances.go Phase 2),
-	// which dispatches the stub executor to a real terminal Success — that
-	// one frame is the single run terminate_after_run permits.
+	// @constraint: a single executor node. Creating the instance enqueues an
+	// initial frame for the root node (`code:lib/control/controlapi/instances.go`
+	// Phase 2), which dispatches the stub executor to a real terminal Success —
+	// that one frame is the single run terminate_after_run permits.
 	templateID := deployTerminateAfterRunTemplate(t, ep)
 	instanceID := createTerminateAfterRunInstance(t, ep, templateID, "ck-terminate-after-run")
 
-	// The one run lands the worker in `fresh` with a real work_started
-	// dispatch — proving the executor actually ran, not just a default state.
+	// @deliberate: the one run lands the worker in `fresh` with a real
+	// work_started dispatch — proving the executor actually ran, not just a
+	// default state.
 	waitForDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 
-	// At that frame-end the strict terminal predicate fires (terminate_after_run
-	// gated): GET /instances/{id} shows terminated_at set. Poll because the
-	// frame-end transition lands shortly after the node settles to fresh.
+	// @constraint: at that frame-end the strict terminal predicate fires
+	// (terminate_after_run gated): `route:GET /instances/{id}` shows
+	// terminated_at set. Poll because the frame-end transition lands shortly
+	// after the node settles to fresh.
 	requireInstanceTerminated(t, ep, instanceID, 60*time.Second)
 
-	// A follow-up message to the now-terminated instance is rejected with
-	// 409 Conflict (lib/control/controlapi/messages.go errInstanceTerminated).
+	// @constraint: a follow-up message to the now-terminated instance is
+	// rejected with 409 Conflict (`code:lib/control/controlapi/messages.go::errInstanceTerminated`).
 	// Carry the universal Idempotency-Key header so the request is otherwise
 	// well-formed and the rejection is unambiguously on the terminal state.
 	requireMessageRejectedTerminated(t, ep, instanceID, "worker")
@@ -121,8 +123,8 @@ func createTerminateAfterRunInstance(t *testing.T, ep harness.RimskyEndpoint, te
 	if resp.InstanceID == "" {
 		t.Fatalf("instance_id empty: %s", string(raw))
 	}
-	// Confirm the flag round-tripped onto the GET projection — the wire
-	// thread-through is itself part of the feature under test.
+	// @deliberate: confirm the flag round-tripped onto the GET projection —
+	// the wire thread-through is itself part of the feature under test.
 	gstatus, graw := ep.GetJSON(t, "/v1/instances/"+resp.InstanceID, "")
 	if gstatus != http.StatusOK {
 		t.Fatalf("GET /instances/%s: %d %s", resp.InstanceID, gstatus, string(graw))

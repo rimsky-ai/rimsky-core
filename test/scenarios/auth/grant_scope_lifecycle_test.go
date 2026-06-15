@@ -51,8 +51,8 @@ func scopeLifecycleSpec(name string) map[string]any {
 type scopeLifecycleHarness struct {
 	f          *authFixture
 	adminKey   string
-	analytics  string // bearer with template_tag=analytics scoped writes
-	allActions string // bearer with the SIX scopeable actions (template:
+	analytics  string // @deliberate: bearer with template_tag=analytics scoped writes
+	allActions string // @deliberate: bearer with the SIX scopeable actions (template:
 	// register/deploy/undeploy/deregister, tag:set/delete, instance:create)
 }
 
@@ -82,7 +82,7 @@ func newScopeLifecycleHarness(t *testing.T) *scopeLifecycleHarness {
 		{"action": "tag:set", "scope": map[string]any{"template_tag": "analytics"}},
 		{"action": "tag:delete", "scope": map[string]any{"template_tag": "analytics"}},
 		{"action": "instance:create", "scope": map[string]any{"template_tag": "analytics"}},
-		// Reads (so the scoped key can verify its own writes landed and
+		// @deliberate: Reads (so the scoped key can verify its own writes landed and
 		// the gate can resolve hash→tags via the template-tag table).
 		{"action": "*:read"},
 	}
@@ -116,7 +116,7 @@ func (h *scopeLifecycleHarness) seedAnalyticsTemplate(t *testing.T, name string)
 	if hash == "" {
 		t.Fatalf("seed analytics template %q: missing template_id %+v", name, resp)
 	}
-	// Move it to deployed so undeploy/deregister/instance-create have
+	// @deliberate: Move it to deployed so undeploy/deregister/instance-create have
 	// the right precondition.
 	code, depResp := h.f.request(t, "POST", "/v1/templates/"+hash+"/deploy", h.adminKey, map[string]any{})
 	if code != 200 {
@@ -184,26 +184,22 @@ func requireOK(t *testing.T, code int, body map[string]any, what string) {
 	}
 }
 
-// =============================================================================
-// template:deploy
-// =============================================================================
-
 // TestGrantScope_TemplateDeploy proves the scope gate fires on
 // template:deploy. Each leg uses a fresh template so the deploy
 // transition is meaningful (registered → deployed).
 func TestGrantScope_TemplateDeploy(t *testing.T) {
 	h := newScopeLifecycleHarness(t)
 
-	// Move templates to the "registered" state (not yet deployed) so
+	// @deliberate: Move templates to the "registered" state (not yet deployed) so
 	// scoped-key deploy is the next legal transition. seedAnalyticsTemplate
 	// auto-deploys, so we use a manual undeploy-then-deploy here.
 
 	t.Run("in-scope tag-form admits deploy", func(t *testing.T) {
-		// register-only via admin (no deploy yet): use a hand-rolled call.
+		// @deliberate: register-only via admin (no deploy yet): use a hand-rolled call.
 		name := "deploy-tag-in-" + randomNoun(t)
 		hash := registerOnly(t, h.f, h.adminKey, name, "analytics")
 		code, body := h.f.request(t, "POST", "/v1/templates/analytics/deploy", h.analytics, map[string]any{})
-		// /templates/{id}/deploy accepts a tag in the {id} slot — the
+		// @deliberate: /templates/{id}/deploy accepts a tag in the {id} slot — the
 		// scope gate reads `template_tag=analytics` direct from URL.
 		requireOK(t, code, body, "deploy by tag-form (in-scope)")
 		_ = hash
@@ -217,12 +213,11 @@ func TestGrantScope_TemplateDeploy(t *testing.T) {
 	})
 
 	t.Run("in-scope hash-form (two tags) admits deploy", func(t *testing.T) {
-		// Register under analytics, then add a second tag pointing at the
+		// @deliberate: Register under analytics, then add a second tag pointing at the
 		// same hash. The hash now resolves to two candidates — the gate
 		// admits because "analytics" is in the set.
 		name := "deploy-hash-2tag-" + randomNoun(t)
 		hash := registerOnly(t, h.f, h.adminKey, name, "analytics")
-		// Add a second tag for the same hash.
 		if code, body := h.f.request(t, "POST", "/v1/tags", h.adminKey, map[string]any{
 			"tag":      "forecasting",
 			"template": hash,
@@ -248,10 +243,6 @@ func TestGrantScope_TemplateDeploy(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// template:undeploy
-// =============================================================================
-
 // TestGrantScope_TemplateUndeploy proves the scope gate fires on
 // template:undeploy. Mirror shape of the deploy test.
 func TestGrantScope_TemplateUndeploy(t *testing.T) {
@@ -259,7 +250,7 @@ func TestGrantScope_TemplateUndeploy(t *testing.T) {
 
 	t.Run("in-scope tag-form admits undeploy", func(t *testing.T) {
 		name := "undeploy-tag-in-" + randomNoun(t)
-		_, _ = h.seedAnalyticsTemplate(t, name) // ends in deployed
+		_, _ = h.seedAnalyticsTemplate(t, name)
 		code, body := h.f.request(t, "POST", "/v1/templates/analytics/undeploy", h.analytics, map[string]any{})
 		requireOK(t, code, body, "undeploy by tag-form (in-scope)")
 	})
@@ -293,23 +284,18 @@ func TestGrantScope_TemplateUndeploy(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// template:deregister
-// =============================================================================
-
 // TestGrantScope_TemplateDeregister proves the scope gate fires on
 // template:deregister.
 func TestGrantScope_TemplateDeregister(t *testing.T) {
 	h := newScopeLifecycleHarness(t)
 
-	// Deregister requires the template to be in 'undeployed' or 'registered'
+	// @constraint: Deregister requires the template to be in 'undeployed' or 'registered'
 	// — the scoped key is allowed to undeploy via the scoped grant; admin
 	// uses its admin grant.
 
 	t.Run("in-scope tag-form admits deregister", func(t *testing.T) {
 		name := "dereg-tag-in-" + randomNoun(t)
 		_, _ = h.seedAnalyticsTemplate(t, name)
-		// Move to undeployed first (precondition for deregister).
 		if code, body := h.f.request(t, "POST", "/v1/templates/analytics/undeploy", h.adminKey, map[string]any{}); code != 200 {
 			t.Fatalf("precondition undeploy: %d %+v", code, body)
 		}
@@ -358,10 +344,6 @@ func TestGrantScope_TemplateDeregister(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// tag:set
-// =============================================================================
-
 // TestGrantScope_TagSet proves the scope gate fires on tag:set. The
 // URL segment is the tag itself so there is no hash-form variant — the
 // only `template_tag` candidate the gate ever generates is the tag in
@@ -372,12 +354,12 @@ func TestGrantScope_TagSet(t *testing.T) {
 	h := newScopeLifecycleHarness(t)
 
 	t.Run("in-scope tag PUT admits", func(t *testing.T) {
-		// Seed an analytics tag pointing at hashA, then have the scoped
+		// @deliberate: Seed an analytics tag pointing at hashA, then have the scoped
 		// key PUT it to hashB. Both hashes are admin-registered (the
 		// scoped key has analytics-scoped template:register only — it
 		// can't register an additional billing template).
 		_, _ = h.seedAnalyticsTemplate(t, "tagset-in-a-"+randomNoun(t))
-		// Register a distinct second analytics-eligible template (via
+		// @deliberate: Register a distinct second analytics-eligible template (via
 		// admin) — the PUT moves the analytics tag to point at it.
 		hashB := registerOnly(t, h.f, h.adminKey, "tagset-in-b-"+randomNoun(t), "analytics-pending-move")
 		code, body := h.f.request(t, "PUT", "/v1/tags/analytics", h.analytics, map[string]any{
@@ -387,12 +369,12 @@ func TestGrantScope_TagSet(t *testing.T) {
 	})
 
 	t.Run("out-of-scope tag PUT rejects", func(t *testing.T) {
-		// Seed a billing tag, then the scoped key tries to PUT it. The
+		// @deliberate: Seed a billing tag, then the scoped key tries to PUT it. The
 		// gate looks at the URL segment ("billing") and finds the scope
 		// is "analytics" — reject 403.
 		hashA, _ := h.seedBillingTemplate(t, "tagset-out-a-"+randomNoun(t))
 		_ = hashA
-		// Re-target billing → any registered template. The 403 comes
+		// @deliberate: Re-target billing → any registered template. The 403 comes
 		// from the scope gate, not the target.
 		hashB := registerOnly(t, h.f, h.adminKey, "tagset-out-b-"+randomNoun(t), "billing-pending-move")
 		code, body := h.f.request(t, "PUT", "/v1/tags/billing", h.analytics, map[string]any{
@@ -402,10 +384,6 @@ func TestGrantScope_TagSet(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// tag:delete
-// =============================================================================
-
 // TestGrantScope_TagDelete proves the scope gate fires on tag:delete.
 // Same shape as tag:set — the URL segment is the tag, no hash-form.
 // Each leg uses its own local fixture (rather than the shared harness)
@@ -413,7 +391,7 @@ func TestGrantScope_TagSet(t *testing.T) {
 // is cleaner with one fixture per leg.
 func TestGrantScope_TagDelete(t *testing.T) {
 	t.Run("in-scope tag DELETE admits", func(t *testing.T) {
-		// Seed a fresh in-scope tag (use a distinct one so we don't break
+		// @deliberate: Seed a fresh in-scope tag (use a distinct one so we don't break
 		// other sub-tests that need the analytics tag). The scoped key
 		// has scope="analytics", which DOES NOT cover this fresh tag —
 		// so we re-mint a scoped key here with a per-test scope to keep
@@ -433,7 +411,7 @@ func TestGrantScope_TagDelete(t *testing.T) {
 			},
 		})
 		scopedKey, _ := sb["plaintext"].(string)
-		// Seed the tag under admin so the scoped key can delete it.
+		// @deliberate: Seed the tag under admin so the scoped key can delete it.
 		hash := registerOnly(t, fLocal, adminKey, "tagdel-in-"+randomNoun(t), "scoped-tag")
 		_ = hash
 		code, body := fLocal.request(t, "DELETE", "/v1/tags/scoped-tag", scopedKey, nil)
@@ -461,10 +439,6 @@ func TestGrantScope_TagDelete(t *testing.T) {
 		requireForbidden(t, code, body, "DELETE /tags/other-tag (out-of-scope)")
 	})
 }
-
-// =============================================================================
-// instance:create
-// =============================================================================
 
 // TestGrantScope_InstanceCreate proves the scope gate fires on
 // instance:create when the `template` field is a tag-form or hash-form
@@ -523,10 +497,6 @@ func TestGrantScope_InstanceCreate(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// instance:create with body > auditBodyCapBytes (4 MB)
-// =============================================================================
-
 // TestGrantScope_InstanceCreate_LargeBodyAboveAuditCap is a regression
 // guard for the audit-truncation bug: when a POST /instances JSON body
 // exceeds auditBodyCapBytes (4 MB) the audit pipeline records a
@@ -548,7 +518,7 @@ func TestGrantScope_InstanceCreate_LargeBodyAboveAuditCap(t *testing.T) {
 	h := newScopeLifecycleHarness(t)
 	_, _ = h.seedAnalyticsTemplate(t, "inst-large-body-"+randomNoun(t))
 
-	// Pad to 5 MB — comfortably above auditBodyCapBytes (4 MB) and well
+	// @deliberate: Pad to 5 MB — comfortably above auditBodyCapBytes (4 MB) and well
 	// below auditBodyHandlerMaxBytes (64 MB). The pad lives in `params`
 	// (a free-form map the handler tolerates), so the body's `template`
 	// field is still at the top level where requestTargets reads it.
@@ -560,7 +530,7 @@ func TestGrantScope_InstanceCreate_LargeBodyAboveAuditCap(t *testing.T) {
 		"instance_key": ckey,
 		"params":       map[string]any{"pad": pad},
 	})
-	// With the fix the gate sees the full body and authorizes the
+	// @deliberate: With the fix the gate sees the full body and authorizes the
 	// scoped grant; the handler then runs and returns 200/201. Without
 	// the fix the request fails with 403 permission_denied because the
 	// audit-truncated marker hides the `template` field from the gate.
@@ -569,10 +539,6 @@ func TestGrantScope_InstanceCreate_LargeBodyAboveAuditCap(t *testing.T) {
 	}
 	requireOK(t, code, body, "instance create with >4MB body (in-scope)")
 }
-
-// =============================================================================
-// template:register (hash-form regression coverage)
-// =============================================================================
 
 // TestGrantScope_TemplateRegister_HashForm proves the register path's
 // hash-form coverage — the existing grant_scope_test.go only exercises
@@ -601,10 +567,6 @@ func TestGrantScope_TemplateRegister_HashForm(t *testing.T) {
 		requireForbidden(t, code, body, "register tagged billing (out-of-scope)")
 	})
 }
-
-// =============================================================================
-// helpers
-// =============================================================================
 
 // registerOnly is `seedDeployedTemplate` minus the deploy step — used by
 // the deploy/undeploy/deregister sub-tests that need to drive the
@@ -638,14 +600,14 @@ func registerOnly(t *testing.T, f *authFixture, adminKey, name, tag string) stri
 // which would muddy the scope-failure assertions).
 func randomNoun(t *testing.T) string {
 	t.Helper()
-	// Use the test name as part of the salt so sub-tests under the
+	// @deliberate: Use the test name as part of the salt so sub-tests under the
 	// same parent test diverge cleanly even when called in rapid
 	// succession.
 	salt := strings.ReplaceAll(t.Name(), "/", "_")
 	return salt + "-" + nonce()
 }
 
-// nonce returns a short timestamp-derived suffix. Plain monotonic
+// @deliberate: nonce returns a short timestamp-derived suffix. Plain monotonic
 // uniqueness is sufficient because the fixture's t.TempDir() ensures a
 // fresh SQLite per test (no cross-test bleed).
 var nonceCounter uint64

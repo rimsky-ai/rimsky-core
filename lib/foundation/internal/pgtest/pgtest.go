@@ -53,8 +53,6 @@ func StartPostgres(ctx context.Context, t *testing.T) (*pgxpool.Pool, func()) {
 	if !ok {
 		t.Fatalf("pgtest: PoolFromDatabaseForTest returned !ok")
 	}
-	// Cleanup is registered inside OpenDriver; return a no-op teardown
-	// so existing call sites remain backward-compatible.
 	return pool, func() {}
 }
 
@@ -143,9 +141,10 @@ func resolveConnectionString(
 			return dsn, nil
 		}
 		lastErr = err
-		// Retry only on the documented "port not found" race; any other
-		// error (context cancelled, container terminated, daemon
-		// unreachable) is non-recoverable and surfaces immediately.
+		// @deliberate: retry only on the documented "port not found"
+		// race; any other error (context cancelled, container
+		// terminated, daemon unreachable) is non-recoverable and
+		// surfaces immediately.
 		if !strings.Contains(err.Error(), "port") || !strings.Contains(err.Error(), "not found") {
 			return "", err
 		}
@@ -298,8 +297,9 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 			return
 		}
 		released = true
-		// context.Background to avoid stranding the lock if the test ctx
-		// is already cancelled.
+		// @deliberate: context.Background here (not the test ctx) so an
+		// already-cancelled test ctx does not strand the advisory lock
+		// on the connection.
 		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key)
 		conn.Release()
 	}
@@ -314,9 +314,9 @@ func HoldAdvisoryLock(ctx context.Context, t *testing.T, d persistence.Database,
 func OpenDriver(ctx context.Context, t *testing.T) persistence.Database {
 	t.Helper()
 	dsn, terminate := StartFreshPostgresDSN(ctx, t)
-	// Register the container teardown immediately so a panic in
-	// persistence.Open does not leak the container. Cleanups run in LIFO
-	// order: the driver Close() registered below runs before this
+	// @deliberate: register the container teardown before persistence.Open
+	// so a panic inside Open does not leak the container. t.Cleanup runs in
+	// LIFO order, so the driver Close registered below executes before this
 	// terminate.
 	t.Cleanup(terminate)
 

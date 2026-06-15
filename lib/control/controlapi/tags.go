@@ -39,8 +39,9 @@ func validTag(s string) bool {
 }
 
 type createTagRequest struct {
-	Tag      string `json:"tag"`
-	Template string `json:"template"` // tag or hash
+	Tag string `json:"tag"`
+	// @constraint: template is a tag or hash.
+	Template string `json:"template"`
 }
 
 type moveTagRequest struct {
@@ -71,7 +72,7 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid tag identifier")
 			return
 		}
-		// Server-side reservation of the compose: prefix. Placed ahead of
+		// @constraint: server-side reservation of the compose: prefix. Placed ahead of
 		// any persistence write so a rejected create persists nothing.
 		// Only the privileged compose path (which stamps the trusted
 		// compose-origin marker) may create reserved-prefix tags.
@@ -88,9 +89,9 @@ func handleCreateTag(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, shared.ErrTemplateNotFound.Error())
 			return
 		}
-		// Reject when the tag already exists. Use Get to distinguish a
-		// pre-existing tag from a missing one; Upsert would silently
-		// overwrite, which the POST endpoint does not allow.
+		// @constraint: POST must reject pre-existing tags; Get distinguishes
+		// pre-existing from missing because Upsert would silently overwrite,
+		// which this endpoint does not allow.
 		var existing *persistence.TemplateTagRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.TemplateTags().Get(ctx, body.Tag, tx)
@@ -209,10 +210,9 @@ func handleMoveTag(deps AppDeps) http.HandlerFunc {
 func handleDeleteTag(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		tag := chi.URLParam(req, "tag")
-		// Tag-existence check must precede the dry-run gate: a real
-		// call returns 404 for a missing tag, so a dry-run against the
-		// same missing tag must too. Per spec section "Dry-run mode":
-		// "Errors from validation surface as in normal flow."
+		// @constraint: tag-existence check must precede the dry-run gate so
+		// that a dry-run against a missing tag returns 404 like a real call —
+		// per spec "Dry-run mode": errors from validation surface as in normal flow.
 		var existing *persistence.TemplateTagRow
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			r, err := deps.Persist.TemplateTags().Get(ctx, tag, tx)

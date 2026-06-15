@@ -52,7 +52,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Stub the single worker node for both templates so any instance the
+	// @deliberate: Stub the single worker node for both templates so any instance the
 	// supervisor drives reaches terminal through the real dispatch path.
 	// The proof does not depend on the executor's payload, only on the
 	// template_hash returned by /v1/instances — but a stubbed executor
@@ -60,7 +60,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 	// trigger 5xx-paths unrelated to the story).
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "tag-mgmt-done")
 
-	// (1) Register two distinct templates. Distinct content (via name)
+	// @constraint: (1) Register two distinct templates. Distinct content (via name)
 	// guarantees distinct hashes — the spec's "different template hash"
 	// is what the rebind asserts about, so we MUST exhibit two different
 	// hashes here. Canonical naming (`project-alpha`/`project-beta`) per
@@ -71,7 +71,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 		"two templates with distinct names must hash to distinct content hashes; "+
 			"otherwise the rebind assertion below is vacuous")
 
-	// (2) POST /v1/tags binds a new tag to alpha. The tag is a movable
+	// @deliberate: (2) POST /v1/tags binds a new tag to alpha. The tag is a movable
 	// alias the operator uses to refer to alpha without naming its hash.
 	const tagName = "tag-management-proof"
 	createResp := postJSON(t, h.ControlBase+"/v1/tags", map[string]any{
@@ -84,7 +84,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 	require.Equal(t, alphaHash, createResp.stringField("template_id"),
 		"create response must report the bound template hash (alpha)")
 
-	// (3) POST /v1/instances against the TAG (not the hash). The response's
+	// @constraint: (3) POST /v1/instances against the TAG (not the hash). The response's
 	// template_hash must equal alpha's hash — the tag-resolution path is
 	// wired through the instance-create handler, not just the read surface.
 	alphaInstance := createInstanceAgainstTag(t, h, tagName)
@@ -95,7 +95,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 	require.NotEmpty(t, alphaInstance.instanceID,
 		"create response must carry a non-empty instance_id")
 
-	// (4) PUT /v1/tags/{tag} rebinds the tag to beta. The handler
+	// @constraint: (4) PUT /v1/tags/{tag} rebinds the tag to beta. The handler
 	// atomically swaps the persisted row's template_id. There is no
 	// transitional state visible to subsequent reads — the next
 	// resolveTagOrHash call reads beta or alpha, never both.
@@ -108,7 +108,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 	require.Equal(t, betaHash, moveResp.stringField("template_id"),
 		"rebind response must report the new template hash (beta)")
 
-	// (5) A FRESH POST /v1/instances against the same tag now resolves
+	// @deliberate: (5) A FRESH POST /v1/instances against the same tag now resolves
 	// to beta — the spec's first falsifier ("Tag rebind isn't picked up
 	// by subsequent instance creation (resolves to the prior hash)").
 	betaInstance := createInstanceAgainstTag(t, h, tagName)
@@ -123,7 +123,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 			"otherwise we're observing an idempotent reuse (same instance_key) "+
 			"rather than the rebind property")
 
-	// (6) Re-read the ORIGINAL (alpha) instance. The rebind must NOT
+	// @constraint: (6) Re-read the ORIGINAL (alpha) instance. The rebind must NOT
 	// migrate it; its template_hash must still be alpha. This is the
 	// spec's "without disrupting in-flight instances" clause.
 	alphaReread := getJSON(t, h.ControlBase+"/v1/instances/"+alphaInstance.instanceID)
@@ -136,7 +136,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 			"the rebind must not migrate existing instances",
 		alphaHash, alphaReread.stringField("template_hash"))
 
-	// (7) DELETE /v1/tags/{tag} retires the alias. Subsequent reads of
+	// @constraint: (7) DELETE /v1/tags/{tag} retires the alias. Subsequent reads of
 	// the tag (via tag-resolution in instance create) must see it as
 	// absent.
 	deleteResp := doRequest(t, http.MethodDelete,
@@ -146,7 +146,7 @@ func TestTagManagement_RebindAndDeleteEndToEnd(t *testing.T) {
 	require.Contains(t, deleteResp.bodyStr(), `"deleted":true`,
 		"DELETE response must report deleted:true")
 
-	// (8) A fresh POST /v1/instances against the now-deleted tag must
+	// @constraint: (8) A fresh POST /v1/instances against the now-deleted tag must
 	// be refused. resolveTagOrHash returns empty for a missing tag,
 	// which the instance-create handler translates to a 404 with the
 	// ErrTemplateNotFound sentinel — the spec's second falsifier

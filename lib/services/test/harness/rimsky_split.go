@@ -79,8 +79,6 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 		t.Fatalf("harness: BringUpRimskySplit: WithHostPortAccess is not wired for the split mode (it would need per-container tunnels); start the peer as a network sibling instead")
 	}
 
-	// 1. Shared docker network (reuse an existing one so sibling peers
-	//    can come up first, exactly like the all-in-one mode).
 	networkName := cb.existingNetwork
 	if networkName == "" {
 		nw, err := tcnet.New(ctx)
@@ -93,19 +91,16 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 		networkName = nw.Name
 	}
 
-	// 2. Shared Postgres.
 	hostDSN, internalDSN := startPostgresOnNetwork(ctx, t, networkName)
 
-	// 3. One rendered rimsky.yml shared verbatim by all three role
-	//    containers, plus the supervisor's tuning YAML.
 	yamlBytes := []byte(renderRimskyYAML(internalDSN, cb))
 	supervisorYAML := []byte(renderSplitSupervisorYAML())
 
-	// 4. control-api FIRST — it owns the migrate-once step (see the
-	//    package preamble); the other roles need the schema it creates.
+	// @constraint:migrate-once-control-api-first — control-api owns the
+	// migrate-once step (see package preamble); scheduler + supervisor
+	// require the schema it creates before they open the store.
 	baseURL := startSplitControlAPI(ctx, t, cb, yamlBytes, networkName)
 
-	// 5. Scheduler + supervisor against the migrated store.
 	startSplitRole(ctx, t, cb, splitRoleSpec{
 		role:    "rimsky-scheduler",
 		alias:   "rimsky-scheduler",
@@ -133,10 +128,10 @@ func BringUpRimskySplit(ctx context.Context, t testing.TB, opts ...Option) Rimsk
 
 // splitRoleSpec describes one non-control-api role container.
 type splitRoleSpec struct {
-	role           string // entrypoint command argument (also the role binary name)
-	alias          string // in-network hostname
-	yaml           []byte // rendered rimsky.yml (shared across the topology)
-	supervisorYAML []byte // rendered supervisor tuning YAML; nil for non-supervisor roles
+	role           string
+	alias          string
+	yaml           []byte
+	supervisorYAML []byte
 	network        string
 	waitFor        wait.Strategy
 }

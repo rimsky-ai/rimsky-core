@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// fk.go — ForeignKeyCascade conformance area.
-//
+// @constraint: ForeignKeyCascade conformance area.
 // Inv 13 (auto-terminal cleanup); also exercises _foreign_keys=ON under
 // SQLite (without it the cascade silently fails).
 package conformance
@@ -22,8 +21,8 @@ import (
 func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
-	// Claim-holders rows key on holder_run_id post-stage-5; seed an
-	// in-flight run row for the fixture node.
+	// @constraint: claim-holders rows key on holder_run_id post-stage-5;
+	// seed an in-flight run row for the fixture node so the FK target exists.
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	store := d.Tables()
 
@@ -32,15 +31,13 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 	supID := "fk-supervisor"
 	expires := time.Now().Add(1 * time.Hour)
 	lockName := "fk-test-lock"
-	// The address payload is opaque bytes returned by ClaimProducer.Open; for
-	// the FK conformance test we just want a non-zero value to round-
-	// trip through the cascade-delete path. Pinning a real
-	// json.RawMessage keeps the column type honest without violating
-	// the named-vs-scope check constraint (scope_data must remain
-	// NULL on a named-kind row).
+	// @constraint: address is opaque bytes returned by ClaimProducer.Open; a
+	// real json.RawMessage keeps the column type honest while leaving
+	// scope_data NULL, which the named-vs-scope check constraint requires
+	// on a named-kind row.
 	address := json.RawMessage(`{"k":"fk-conformance"}`)
 
-	// Insert lock_holder + claim_holder inside a tx (Insert requires tx).
+	// @constraint: Insert requires an open tx; wrap both inserts together.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
@@ -65,7 +62,6 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 		t.Fatalf("seed lock+claim: %v", err)
 	}
 
-	// Verify both rows present.
 	var got *persistence.ClaimHandleRow
 	var gotClaims []persistence.ClaimHolderRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -84,14 +80,12 @@ func testForeignKeyCascade(t *testing.T, d persistence.Database) {
 		t.Fatalf("expected 1 claim-holder; got %d", len(gotClaims))
 	}
 
-	// Delete the lock-holder row inside a tx.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Delete(ctx, lockHolderID, supID, tx)
 	}); err != nil {
 		t.Fatalf("Delete lock-holder: %v", err)
 	}
 
-	// Cascade should have removed the claim-holder.
 	var gotClaims2 []persistence.ClaimHolderRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		c, err := store.ClaimHolders().ListByClaimHandleID(ctx, lockHolderID, tx)

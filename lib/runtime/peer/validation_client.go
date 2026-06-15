@@ -25,7 +25,8 @@ type ValidationClient struct {
 	supportedRoles []string
 }
 
-// Compile-time interface check.
+// @deliberate: compile-time interface check — fails compilation when
+// *ValidationClient no longer satisfies clientiface.ValidationClient.
 var _ clientiface.ValidationClient = (*ValidationClient)(nil)
 
 // Name returns the operator-configured peer name.
@@ -146,7 +147,6 @@ func DialValidation(_ context.Context, name, endpoint, tlsMode string, supported
 	if err != nil {
 		return nil, err
 	}
-	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
 	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
 		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),
@@ -189,7 +189,7 @@ func FetchExecutorValidationRoles(ctx context.Context, name, endpoint, tlsMode s
 	if err != nil {
 		return nil, fmt.Errorf("remote executor %q: ExecutorObservability.Capabilities handshake: %w", name, err)
 	}
-	// Defensive copy: the caller caches the slice past the proto's lifetime.
+	// @deliberate: defensive copy — the caller caches the slice past the proto's lifetime.
 	return append([]string(nil), resp.GetValidationSupportedRoles()...), nil
 }
 
@@ -215,7 +215,7 @@ func FetchPublisherValidationRoles(ctx context.Context, name, endpoint, tlsMode 
 	if err != nil {
 		return nil, fmt.Errorf("remote publisher %q: Publisher.Capabilities handshake: %w", name, err)
 	}
-	// Defensive copy: the caller caches the slice past the proto's lifetime.
+	// @deliberate: defensive copy — the caller caches the slice past the proto's lifetime.
 	return append([]string(nil), resp.GetValidationSupportedRoles()...), nil
 }
 

@@ -36,12 +36,12 @@ func TestValidateTypePath_RejectsUnknown(t *testing.T) {
 	cases := []TypePath{
 		"terminal/garbage",
 		"not_a_kind/foo",
-		"terminal/error",            // no class leaf
-		"lifecycle/node_created",    // explicitly-not-introduced kind
-		"",                          // empty
-		"attribute/changed",         // no key
-		"attribute/foo/bar/changed", // key cannot itself contain '/'
-		"transient/retry",           // no params
+		"terminal/error",
+		"lifecycle/node_created",
+		"",
+		"attribute/changed",
+		"attribute/foo/bar/changed",
+		"transient/retry",
 	}
 	for _, c := range cases {
 		c := c
@@ -62,7 +62,7 @@ func TestValidateSubscriptionType_AcceptsTrailingWildcard(t *testing.T) {
 		"transient/retry/*",
 		"attribute/*",
 		"message/*",
-		"terminal/park/snooze", // exact still accepted
+		"terminal/park/snooze",
 	}
 	for _, c := range cases {
 		c := c

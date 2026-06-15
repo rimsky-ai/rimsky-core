@@ -5,12 +5,15 @@
 import { createPublicKey, verify as edVerify } from "node:crypto";
 import * as canonicalizeModule from "canonicalize";
 
-// `canonicalize` is a CommonJS package whose runtime export is a bare function
-// (`module.exports = serialize`), but whose bundled `.d.ts` declares it as an
-// ESM `export default`. Under NodeNext that mismatch makes a plain default
-// import non-callable at type-check time even though it is callable at runtime.
-// Normalize both layers here: prefer the synthesized `default`, fall back to the
-// namespace object itself (the CJS function under esModuleInterop's runtime).
+/**
+ * Canonicalize wraps the `canonicalize` CommonJS package, whose runtime export
+ * is a bare function (`module.exports = serialize`) but whose bundled `.d.ts`
+ * declares it as an ESM `export default`. Under NodeNext that mismatch makes
+ * a plain default import non-callable at type-check time even though it is
+ * callable at runtime. Normalize both layers here: prefer the synthesized
+ * `default`, fall back to the namespace object itself (the CJS function under
+ * esModuleInterop's runtime).
+ */
 type Canonicalize = (input: unknown) => string | undefined;
 const canonicalizeAny = canonicalizeModule as unknown as {
   default?: Canonicalize;
@@ -87,8 +90,9 @@ export function verifyRequiredSignoffs(
     try {
       keyObj = createPublicKey(req.publicKey);
     } catch {
-      // A required entry whose configured key cannot be parsed can never be
-      // satisfied — treat it as invalid rather than letting the throw escape.
+      // @deliberate: a required entry whose configured key cannot be parsed
+      // can never be satisfied — treat it as invalid rather than letting the
+      // throw escape.
       unmet.push({ path, reason: "invalid" });
       continue;
     }
@@ -101,7 +105,7 @@ export function verifyRequiredSignoffs(
           break;
         }
       } catch {
-        // Malformed signature for this candidate — keep scanning the bag.
+        // @deliberate: malformed signature for this candidate — keep scanning the bag.
       }
     }
 

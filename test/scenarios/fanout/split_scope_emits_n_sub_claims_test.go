@@ -38,7 +38,6 @@ func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testi
 	parentNode := shared.UUID(uuid.New())
 	frameID := shared.UUID(uuid.New())
 
-	// Simulate the producer-returned sub-scope list: 5 partitions.
 	subClaims := []runtime.SubClaim{
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "us-east-1", Address: json.RawMessage(`{"path":"a"}`)},
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "us-west-2", Address: json.RawMessage(`{"path":"b"}`)},
@@ -46,7 +45,7 @@ func TestSplitScopeEmitsNSubClaims_InputProjectsOnePartitionPerSubScope(t *testi
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "ap-south-1", Address: json.RawMessage(`{"path":"d"}`)},
 		{ClaimHandleID: shared.UUID(uuid.New()), PartitionKey: "sa-east-1", Address: json.RawMessage(`{"path":"e"}`)},
 	}
-	// Build the input the same way the fan-out dispatch wrapper does:
+	// @deliberate: Build the input the same way the fan-out dispatch wrapper does:
 	// N partitions from the sub-claims, one child-run spec re-using the
 	// parent's node + the leaf executor + required stores.
 	in := runtime.ChildExecutionInput{

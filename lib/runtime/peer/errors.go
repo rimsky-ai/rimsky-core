@@ -33,9 +33,9 @@ import (
 //     boundary intact instead of collapsing into a bare 500.
 type ProducerCallError struct {
 	ProducerName string
-	Method       string // "Open", "Commit", "DataProcessing.ListVersions", etc.
-	ErrorClass   string // empty if no ErrorInfo on the gRPC status
-	Message      string // the producer-transmitted gRPC status message
+	Method       string
+	ErrorClass   string
+	Message      string
 	Underlying   error
 }
 

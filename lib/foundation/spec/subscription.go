@@ -53,29 +53,19 @@ type SubscriptionEntry struct {
 	ResolvesViaCallingNode bool `yaml:"resolves_via_calling_node,omitempty" json:"resolves_via_calling_node,omitempty"`
 }
 
-// MessageSenderKind values for rimsky_messages.sender_kind. Per spec
-// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher protocol unification.
-//
-// Still consumed inside signal-message payloads and at the messages
-// endpoint surface; only the per-subscription structured filter
-// retired under the 2026-05-23 signal-taxonomy reshape.
+// @constraint: rimsky_messages.sender_kind wire values from the 2026-05-17 publisher-protocol unification — still consumed inside signal-message payloads and at the messages endpoint surface; only the per-subscription structured filter retired under the 2026-05-23 signal-taxonomy reshape.
 const (
 	MessageSenderKindOperator  = "operator"
 	MessageSenderKindPublisher = "publisher"
 	MessageSenderKindInstance  = "instance"
 )
 
-// Subscription-scope constants used by the wait-set persistence layer.
 const (
 	SubscriptionScopeDirect   = "direct"
 	SubscriptionScopeInstance = "instance"
 )
 
-// Node-state values. Still referenced elsewhere (queue probes,
-// cascade walker, audit projections); redeclared here so callers can
-// avoid importing foundation/cascade across the depguard isolation
-// boundary.
+// @constraint: redeclared here (not imported from foundation/cascade) so callers — queue probes, cascade walker, audit projections — can avoid crossing the depguard isolation boundary.
 const (
 	NodeStateFresh   = "fresh"
 	NodeStateStale   = "stale"

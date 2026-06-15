@@ -364,13 +364,12 @@ func (s *Server) handleDeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isTagForm {
-		// Tag-form: count remaining tags pointing at the same hash.
+		// @deliberate: tag-form delete removes only the tag while other tags still point at the hash; the underlying template is removed only when this was the last tag.
 		if n := s.State.CountTagsForHash(hash); n > 1 {
 			s.State.DeleteTag(ref)
 			writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "tag_only": true})
 			return
 		}
-		// last tag → fall through to template delete.
 	}
 	t, ok := s.State.GetTemplate(hash)
 	if !ok {
@@ -528,11 +527,7 @@ func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash := r.URL.Query().Get("template_hash")
-	// instance_key is intentionally NOT honored here: the real
-	// control-api's /instances endpoint filters only on template_hash
-	// and active. Keeping the fake aligned with the real surface
-	// avoids tests passing against the fake while breaking against the
-	// real server.
+	// @constraint: the real control-api's /instances endpoint filters only on template_hash and active, so this fake must also ignore instance_key — otherwise tests pass here while breaking against the real server.
 	out := []map[string]any{}
 	for _, inst := range s.State.ListInstances(hash, "") {
 		out = append(out, instanceToWire(inst))
@@ -717,13 +712,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Decode the opaque keyset cursor exactly as the live persistence layer
-	// does (foundation/persistence/{sqlite,postgres}/events.go::decodeEventCursor):
-	// base64(JSON {"o":<occurred>,"i":<id>}). A non-base64 cursor (e.g. the
-	// CLI's old fmt.Sprintf("%d", lastSeenID) numeric seq) is rejected the
-	// same way the real server rejects it — `events.list: bad cursor` → an
-	// error status — so a CLI test can't silently pass against a numeric
-	// token the live server would 500 on.
+	// @constraint: cursor decode must match foundation/persistence/{sqlite,postgres}/events.go::decodeEventCursor (base64 JSON {"o":<occurred>,"i":<id>}); a non-base64 cursor (e.g. the CLI's old numeric fmt.Sprintf("%d", lastSeenID) token) must be rejected with `events.list: bad cursor` so a CLI test can't silently pass against a token the live server would 500 on.
 	cursor := q.Get("cursor")
 	var (
 		cursorOccurred time.Time
@@ -743,10 +732,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 
 	events := s.State.EventsPage(instanceID, cursorOccurred, cursorID, hasCursor, limit)
 
-	// Mirror the live control-api (`foundation/persistence/{sqlite,postgres}/events.go`):
-	// next_cursor is the opaque keyset of the last (oldest) row on the page,
-	// set only when the page is full (len == limit). A partial page returns
-	// next_cursor="" so clients know to wait rather than continue paging.
+	// @constraint: next_cursor must mirror foundation/persistence/{sqlite,postgres}/events.go — opaque keyset of the last (oldest) row on the page, set only when the page is full (len == limit); a partial page returns "" so clients wait rather than page on past the tail.
 	nextCursor := ""
 	if len(events) == limit && len(events) > 0 {
 		last := events[len(events)-1]
@@ -801,7 +787,7 @@ func instanceToWire(inst *storedInstance) map[string]any {
 	return m
 }
 
-// validTagFake mirrors the control-api's tag regex.
+// @constraint: tagFakeRe / hashFakeRe / hashFakeStr must mirror the real control-api's tag-vs-hash regexes (lib/control/api template handlers); any drift here lets CLI tests accept refs the live server would reject (or vice versa).
 var (
 	tagFakeRe   = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9._:@/-]{0,254}$`)
 	hashFakeRe  = regexp.MustCompile(`^sha256-[0-9a-f]{64}$`)

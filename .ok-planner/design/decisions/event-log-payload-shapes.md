@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Typed oneof payloads for signal-class events (the node-run-transition subset uses signal-type-path discipline); free-form JSON payload for operational events (`auth.*`, `state_transition`, etc.) whose payload is audit data rather than typed contract.
+Typed oneof payloads for signal-class events (the node-run-transition subset uses signal-type-path discipline); free-form JSON payload for operational events (auth-related, state-transition, and the rest — see `concept:event-log`) whose payload is audit data rather than typed contract.
 
 ## Rationale
 

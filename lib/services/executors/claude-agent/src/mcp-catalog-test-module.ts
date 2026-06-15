@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// Test fixture for S-executors-mcp-catalog-transports / EXECUTORS-2.3 (RED→GREEN).
+// @deliberate: test fixture for S-executors-mcp-catalog-transports / EXECUTORS-2.3 (RED→GREEN).
 //
 // A tiny in-tree MCP module exposing ONE tool (`echo`). The catalog's
 // `module` and `http-loopback` transports resolve a `{ ref: <name> }` entry

@@ -37,7 +37,7 @@ func TestLocalHTTPForwardRoundTrip(t *testing.T) {
 	fp := startFakeProxy(t)
 	port := freeTestPort(t)
 
-	// The fake proxy answers every LocalHttpForward with a 201 echo.
+	// @deliberate: The fake proxy answers every LocalHttpForward with a 201 echo.
 	go func() {
 		<-fp.connected
 		for {
@@ -65,7 +65,7 @@ func TestLocalHTTPForwardRoundTrip(t *testing.T) {
 	})
 	fp.waitConnected(t)
 
-	// POST to the agent's local listener; expect the proxy's echoed response.
+	// @deliberate: POST to the agent's local listener; expect the proxy's echoed response.
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/v1/callback/ack-1"
 	var resp *http.Response
 	var err error
@@ -102,7 +102,7 @@ func TestLocalHTTPForwardTimeout(t *testing.T) {
 	fp := startFakeProxy(t)
 	port := freeTestPort(t)
 
-	// Proxy connects but never answers forwards.
+	// @deliberate: Proxy connects but never answers forwards.
 	runAgentInBackground(t, Config{
 		RimskyURL:  fp.addr,
 		APIKey:     "k",
@@ -110,7 +110,7 @@ func TestLocalHTTPForwardTimeout(t *testing.T) {
 	})
 	fp.waitConnected(t)
 
-	// Drain forwards without replying so the handler hits its timeout. We
+	// @deliberate: Drain forwards without replying so the handler hits its timeout. We
 	// can't wait the full 30s in a test, so assert the forward is at least
 	// emitted and the channel mechanics hold; full timeout is covered by the
 	// handler's deterministic select.

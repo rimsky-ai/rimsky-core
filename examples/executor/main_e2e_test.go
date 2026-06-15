@@ -79,54 +79,53 @@ import (
 // harness never t.Skip's), so a developer who hasn't run `make
 // core-images` sees the missing-image error directly.
 func TestE2E_ExampleExecutorAgainstRunningRimsky(t *testing.T) {
-	// Not parallel: this scenario stands up a docker network + a
-	// rimsky-all-in-one container plus an in-process executor on a host
-	// port. The cost is real, so other test methods in this package
-	// (`executor_test.go`) keep their fast in-process shape and only
-	// this gate pays the cross-stack price.
+	// @deliberate: not parallel — this scenario stands up a docker
+	// network + a rimsky-all-in-one container plus an in-process executor
+	// on a host port. The cost is real, so other test methods in this
+	// package (`executor_test.go`) keep their fast in-process shape and
+	// only this gate pays the cross-stack price.
 	ctx := context.Background()
 
-	// 1. Stand up the example executor in-process on a free host port.
-	//    The container's supervisor dials it at
-	//    `host.testcontainers.internal:<port>` — see the
-	//    WithHostPortAccess option below.
+	// @deliberate: bring-up order is load-bearing. The peer must be
+	// reachable BEFORE rimsky comes up because rimsky's control-api
+	// fires a Capabilities handshake against every declared executor at
+	// startup and exits non-zero if any is unreachable.
+	//   1. Stand up the example executor in-process on a free host port;
+	//      the container's supervisor dials it at
+	//      `host.testcontainers.internal:<port>` — see the
+	//      WithHostPortAccess option below.
+	//   2. Bring up rimsky-all-in-one on the harness default (Postgres)
+	//      with the example executor registered as the "example" peer.
 	port := freeHostPort(t)
 	startExampleExecutor(t, port)
 
-	// 2. Bring up rimsky-all-in-one on the harness default (Postgres) with
-	//    the example executor registered as the "example" peer. The peer
-	//    must be reachable BEFORE rimsky comes up because rimsky's
-	//    control-api fires a Capabilities handshake against every
-	//    declared executor at startup and exits non-zero if any is
-	//    unreachable; startExampleExecutor blocks until the gRPC server
-	//    is listening, satisfying that ordering constraint.
 	endpoint := fmt.Sprintf("host.testcontainers.internal:%d", port)
-	// Postgres (the harness default) for the state DB. The SQLite-WAL
-	// path the all-in-one image ships as its baked default surfaces
-	// transient `SQLITE_BUSY` errors at the GET /v1/events read API
-	// while the supervisor is concurrently writing — too noisy for a
-	// gate that polls aggressively across four legs. Postgres is the
-	// same DB pg_error_classes scenarios use for the same reason.
+	// @deliberate: use Postgres (the harness default) for the state DB.
+	// The SQLite-WAL path the all-in-one image ships as its baked
+	// default surfaces transient `SQLITE_BUSY` errors at the GET
+	// /v1/events read API while the supervisor is concurrently writing
+	// — too noisy for a gate that polls aggressively across four legs.
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExecutor("example", endpoint),
 		harness.WithHostPortAccess(port),
 	)
 
-	// Wait for the executor's Capabilities handshake to populate the
-	// observability discovery cache. The registration-time validator
-	// reads the cache directly; in reference-validation mode `all` (the
-	// all-in-one image's baked default) a template referencing an
-	// executor whose schema isn't yet visible is rejected at registration
-	// with "expected_attributes_schema is not visible at registration".
-	// The startup handshake runs in parallel with control-api startup
-	// and may complete after /health flips to 200, so the test must wait
-	// for the cache explicitly before posting a template.
+	// @deliberate: wait for the executor's Capabilities handshake to
+	// populate the observability discovery cache. The registration-time
+	// validator reads the cache directly; in reference-validation mode
+	// `all` (the all-in-one image's baked default) a template
+	// referencing an executor whose schema isn't yet visible is
+	// rejected at registration with "expected_attributes_schema is not
+	// visible at registration". The startup handshake runs in parallel
+	// with control-api startup and may complete after /health flips to
+	// 200, so the test must wait for the cache explicitly before
+	// posting a template.
 	waitForExecutorReachable(t, ep, "example", 90*time.Second)
 
-	// Run each acceptance leg as a sub-test against the SAME running
-	// stack — the four legs are independent observations against the
-	// same control-api, so a single bring-up is sufficient and a
-	// per-leg bring-up would only multiply the bring-up cost.
+	// @deliberate: each leg runs against the SAME running stack. The
+	// four legs are independent observations against the same
+	// control-api, so a single bring-up is sufficient and a per-leg
+	// bring-up would only multiply the bring-up cost.
 	t.Run("Execute_dispatched_to_real_executor", func(t *testing.T) {
 		exerciseExecuteDispatchLeg(t, ep)
 	})
@@ -151,9 +150,10 @@ func exerciseExecuteDispatchLeg(t *testing.T, ep harness.RimskyEndpoint) {
 	tplID := deployTemplate(t, ep, exampleTemplate("example-exec-dispatch", map[string]any{
 		"type":     "worker",
 		"executor": "example",
-		// Attribute-bearing node so the supervisor's dispatch-time
-		// attribute gate runs against the executor's advertised schema.
-		// `mode: ok` (the default) routes to the Success terminal.
+		// @deliberate: attribute-bearing node so the supervisor's
+		// dispatch-time attribute gate runs against the executor's
+		// advertised schema. `mode: ok` (the default) routes to the
+		// Success terminal.
 		"attributes": map[string]any{
 			"schema": map[string]any{
 				"type": "object",
@@ -166,9 +166,10 @@ func exerciseExecuteDispatchLeg(t *testing.T, ep harness.RimskyEndpoint) {
 	}))
 	instanceID := createInstance(t, ep, tplID, "ck-exec-dispatch")
 
-	// `work_started` is the operational event the supervisor appends
-	// when it acquires + dispatches; its presence proves the Execute
-	// RPC ran (the in-process executor's Heartbeat is the wire echo).
+	// @deliberate: `work_started` is the operational event the
+	// supervisor appends when it acquires + dispatches; its presence
+	// proves the Execute RPC ran (the in-process executor's Heartbeat
+	// is the wire echo).
 	requireEventKind(t, ep, instanceID, "work_started", 60*time.Second,
 		"the supervisor must have dialed the example executor and dispatched Execute")
 }
@@ -182,9 +183,9 @@ func exerciseExecuteDispatchLeg(t *testing.T, ep harness.RimskyEndpoint) {
 // Proof for spec acceptance leg (b): "named events appear on /v1/events".
 // Falsifier: "an event the executor emits doesn't appear on the event log".
 func exerciseNamedEventLeg(t *testing.T, ep harness.RimskyEndpoint) {
-	// Hard-code the default value so the supervisor pre-populates the
-	// dispatch attributes with `mode: emit_event` even though there is
-	// no per-instance override.
+	// @deliberate: hard-code the default so the supervisor pre-populates
+	// the dispatch attributes with `mode: emit_event` even though there
+	// is no per-instance override.
 	tplID := deployTemplate(t, ep, exampleTemplate("example-named-event", map[string]any{
 		"type":     "worker",
 		"executor": "example",
@@ -203,10 +204,10 @@ func exerciseNamedEventLeg(t *testing.T, ep harness.RimskyEndpoint) {
 	}))
 	instanceID := createInstance(t, ep, tplID, "ck-named-event")
 
-	// The NamedEvent the executor emits writes a row to rimsky_events
-	// with kind `event/<name>` (per concept:signal, runner_named_events.go).
-	// The events route validates kind parameters; the slash-bearing
-	// signal type-path is accepted as opaque.
+	// @concept: signal — the NamedEvent the executor emits writes a row
+	// to rimsky_events with kind `event/<name>`. The events route
+	// validates kind parameters; the slash-bearing signal type-path is
+	// accepted as opaque.
 	requireEventKind(t, ep, instanceID, "event/"+DeclaredEventName, 60*time.Second,
 		"a NamedEvent emitted by the executor MUST land on /v1/events as kind=event/<name> "+
 			"(falsifier: event emitted but missing from the log)")
@@ -227,10 +228,11 @@ func exerciseDeclaredErrorClassLeg(t *testing.T, ep harness.RimskyEndpoint) {
 	tplID := deployTemplate(t, ep, exampleTemplate("example-error-routing", map[string]any{
 		"type":     "worker",
 		"executor": "example",
-		// Declared-class routing: the operator's error_types: chain
-		// keys on the executor-declared class. give_up drives the
-		// node-run to a terminal/error/<class> signal, which is the
-		// canonical event-log row a subscriber/operator would observe.
+		// @deliberate: declared-class routing — the operator's
+		// error_types: chain keys on the executor-declared class.
+		// give_up drives the node-run to a terminal/error/<class>
+		// signal, which is the canonical event-log row a subscriber /
+		// operator would observe.
 		"error_types": map[string]any{
 			DeclaredErrorClass: map[string]any{
 				"policy": []map[string]any{
@@ -253,11 +255,11 @@ func exerciseDeclaredErrorClassLeg(t *testing.T, ep harness.RimskyEndpoint) {
 	}))
 	instanceID := createInstance(t, ep, tplID, "ck-error-routing")
 
-	// The canonical `terminal/error/<declared_class>` row is what the
-	// supervisor emits when the error-policy chain matches the
-	// declared class. Per pg_error_classes scenarios, this row landing
-	// is the load-bearing observable for "the declared class IS the
-	// routing key".
+	// @deliberate: the canonical `terminal/error/<declared_class>` row
+	// is what the supervisor emits when the error-policy chain matches
+	// the declared class. Per pg_error_classes scenarios, this row
+	// landing is the load-bearing observable for "the declared class
+	// IS the routing key".
 	requireEventKind(t, ep, instanceID,
 		"terminal/error/"+DeclaredErrorClass, 60*time.Second,
 		"the declared error class MUST route through the operator's error_types: chain as "+
@@ -276,8 +278,8 @@ func exerciseDeclaredErrorClassLeg(t *testing.T, ep harness.RimskyEndpoint) {
 // rejects misshapen attributes at registration". Falsifier: "attributes
 // resolved against the executor's schema bypass the schema validation".
 func exerciseAttributeSchemaRejectionLeg(t *testing.T, ep harness.RimskyEndpoint) {
-	// count:-1 violates the executor's schema (minimum:0). The
-	// registration-time validator (`all` mode is the all-in-one
+	// @deliberate: count:-1 violates the executor's schema (minimum:0).
+	// The registration-time validator (`all` mode is the all-in-one
 	// image's baked default) reads the live discovery cache's schema
 	// from the real Capabilities handshake and refuses.
 	misshapenSpec := exampleTemplate("example-schema-rejection", map[string]any{
@@ -302,10 +304,10 @@ func exerciseAttributeSchemaRejectionLeg(t *testing.T, ep harness.RimskyEndpoint
 			status, string(raw))
 	}
 
-	// The rejection body must name the offending attribute (`count`)
-	// AND cite the `minimum` constraint — a genuine value check, not
-	// a generic surface error. Lower-case search keeps the assertion
-	// resilient to body capitalization.
+	// @constraint: the rejection body must name the offending attribute
+	// (`count`) AND cite the `minimum` constraint — a genuine value
+	// check, not a generic surface error. Lower-case search keeps the
+	// assertion resilient to body capitalization.
 	bodyLower := strings.ToLower(string(raw))
 	if !strings.Contains(bodyLower, "count") {
 		t.Fatalf("rejection body must name the offending attribute `count`: %s", string(raw))
@@ -314,8 +316,6 @@ func exerciseAttributeSchemaRejectionLeg(t *testing.T, ep harness.RimskyEndpoint
 		t.Fatalf("rejection body must cite the violated `minimum` constraint: %s", string(raw))
 	}
 }
-
-// --- helpers ---------------------------------------------------------------
 
 // exampleTemplate builds a single-node templatespec under a given name,
 // taking the node block as a map so each leg can vary the
@@ -397,9 +397,9 @@ func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanc
 func requireEventKind(t *testing.T, ep harness.RimskyEndpoint, instanceID, kind string, deadline time.Duration, why string) {
 	t.Helper()
 	end := time.Now().Add(deadline)
-	// URL-encoding the slash in kind for safety: chi tolerates a raw
-	// slash in the query value, but the events route's kind parser
-	// accepts the canonical slash-delimited form verbatim.
+	// @deliberate: pass the slash in `kind` verbatim — chi tolerates a
+	// raw slash in the query value and the events route's kind parser
+	// accepts the canonical slash-delimited form.
 	path := fmt.Sprintf("/v1/events?instance_id=%s&kind=%s", instanceID, kind)
 	var lastStatus int
 	var lastBody string
@@ -422,10 +422,10 @@ func requireEventKind(t *testing.T, ep harness.RimskyEndpoint, instanceID, kind 
 		}
 		time.Sleep(1 * time.Second)
 	}
-	// Diagnostic: enumerate every event kind that DID land on the
-	// instance so the developer can tell whether routing fired under a
-	// different class (e.g. unknown_error_class) vs the value path
-	// never engaged at all.
+	// @deliberate: diagnostic — enumerate every event kind that DID
+	// land on the instance so the developer can tell whether routing
+	// fired under a different class (e.g. unknown_error_class) vs the
+	// value path never engaged at all.
 	dump := dumpEventKindsForInstance(t, ep, instanceID)
 	t.Fatalf("event kind %q never landed on the event log for instance %s within %v (last GET status=%d body=%s) — %s\nobserved event kinds on this instance: %v",
 		kind, instanceID, deadline, lastStatus, lastBody, why, dump)
@@ -494,8 +494,6 @@ func waitForExecutorReachable(t *testing.T, ep harness.RimskyEndpoint, name stri
 				Peer struct {
 					ReachabilityStatus        string `json:"reachability_status"`
 					ObservabilityCapabilities struct {
-						// base64-encoded JSON Schema bytes; non-empty when
-						// the executor advertised a schema.
 						ExpectedAttributesSchema string `json:"expected_attributes_schema"`
 					} `json:"observability_capabilities"`
 				} `json:"peer"`
@@ -550,11 +548,11 @@ func startExampleExecutor(t *testing.T, port int) {
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 
-	// Poll-dial to confirm the gRPC server is up before returning.
-	// rimsky-all-in-one's startup Capabilities handshake is eager —
-	// if the executor isn't listening at the configured endpoint
-	// when rimsky boots, the container exits non-zero. Blocking here
-	// makes the ordering deterministic without a sleep.
+	// @deliberate: poll-dial to confirm the gRPC server is up before
+	// returning. rimsky-all-in-one's startup Capabilities handshake is
+	// eager — if the executor isn't listening at the configured
+	// endpoint when rimsky boots, the container exits non-zero.
+	// Blocking here makes the ordering deterministic without a sleep.
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {

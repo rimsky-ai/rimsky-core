@@ -197,7 +197,6 @@ func TestPayloadSchemaForType(t *testing.T) {
 		{"attribute/budget_cents/changed", reflect.TypeOf(AttributeChangedPayload{}), true},
 		{"event/discovered", reflect.TypeOf(EventPayload{}), true},
 		{"message/invalidate/operator/self", reflect.TypeOf(MessagePayload{}), true},
-		// Prefix paths return (nil, false).
 		{"terminal/*", nil, false},
 		{"terminal/error/*", nil, false},
 		{"attribute/*", nil, false},

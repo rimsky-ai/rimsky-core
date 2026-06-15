@@ -155,9 +155,9 @@ func (s *Store) openStaging(ctx context.Context, claimID, selector string) (json
 				"(lowercase letters/digits/underscore; not starting with a digit)", selector)
 	}
 	staging := stagingSchemaName(claimID)
-	// CREATE SCHEMA IF NOT EXISTS so a duplicated Open under the same
-	// claim_id is idempotent (deterministic name) rather than erroring on
-	// the second reservation.
+	// @deliberate: IF NOT EXISTS makes a duplicated Open under the same
+	// claim_id idempotent (deterministic schema name) rather than erroring
+	// on the second reservation.
 	stmt := "CREATE SCHEMA IF NOT EXISTS " + pgx.Identifier{staging}.Sanitize()
 	if _, err := s.pool.Exec(ctx, stmt); err != nil {
 		return nil, nil, fmt.Errorf("postgres store: reserve staging schema %q: %w", staging, err)
@@ -189,12 +189,12 @@ func (s *Store) openStaging(ctx context.Context, claimID, selector string) (json
 // externally torn down) at cutover time; a populated/depended-upon
 // canonical yields pg/swap_failed with the staging left intact.
 func (s *Store) commitStagingSwap(ctx context.Context, canonical, staging string) error {
-	// Every failure below is a swap collision the store classes
-	// `pg/swap_failed`. Returning a *ClassedError (rather than a bare
-	// fmt.Errorf) lets the gRPC Commit boundary recover the class without
-	// string-matching the message and stamp it into a google.rpc.ErrorInfo
-	// detail so rimsky's claim-producer client routes it through the
-	// holder's `error_types:` chain.
+	// @deliberate: every failure below is a swap collision the store
+	// classes `pg/swap_failed`. Returning a *ClassedError (rather than a
+	// bare fmt.Errorf) lets the gRPC Commit boundary recover the class
+	// without string-matching the message and stamp it into a
+	// google.rpc.ErrorInfo detail so rimsky's claim-producer client routes
+	// it through the holder's `error_types:` chain.
 	swapFailed := func(err error) error { return &ClassedError{Class: SwapFailedClass, Err: err} }
 	if !schemaIdentRegex.MatchString(canonical) {
 		return swapFailed(fmt.Errorf("postgres store: canonical %q is not a valid schema identifier", canonical))
@@ -213,15 +213,16 @@ func (s *Store) commitStagingSwap(ctx context.Context, canonical, staging string
 	canonicalID := pgx.Identifier{canonical}.Sanitize()
 	stagingID := pgx.Identifier{staging}.Sanitize()
 
-	// Drop the old canonical (RESTRICT). Fails — leaving the staging
-	// intact via rollback — if the canonical is non-empty or has external
-	// dependents, which is exactly the collision the swap must refuse.
+	// @deliberate: drop the old canonical with RESTRICT (the default — no
+	// CASCADE). Fails — leaving the staging intact via rollback — if the
+	// canonical is non-empty or has external dependents, which is exactly
+	// the collision the swap must refuse.
 	if _, err := tx.Exec(ctx, "DROP SCHEMA IF EXISTS "+canonicalID); err != nil {
 		return swapFailed(fmt.Errorf("postgres store: drop canonical schema %q for swap: %w", canonical, err))
 	}
-	// Rename staging into the canonical name. With the old canonical
-	// dropped, this is the cutover; committing the tx makes it visible
-	// atomically.
+	// @deliberate: rename staging into the canonical name inside the same
+	// tx as the drop above. With the old canonical dropped, this is the
+	// cutover; committing the tx makes both steps visible atomically.
 	if _, err := tx.Exec(ctx, "ALTER SCHEMA "+stagingID+" RENAME TO "+canonicalID); err != nil {
 		return swapFailed(fmt.Errorf("postgres store: rename staging schema %q into %q: %w", staging, canonical, err))
 	}

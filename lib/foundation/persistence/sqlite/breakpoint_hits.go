@@ -2,9 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.BreakpointHitTable — append-only ledger of
-// breakpoint matches per concept:breakpoint. Mirror of the postgres impl.
-//
+// @source: lib/foundation/persistence/postgres/breakpoint_hits.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
+
 // @concept: breakpoint
 
 package sqlite
@@ -23,8 +24,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// breakpointHitsImpl is the per-row-type aspect of *tablesImpl, exposing
-// the BreakpointHitTable method set. Mirrors the postgres-side pattern.
+// breakpointHitsImpl is the SQLite-backed persistence.BreakpointHitTable
+// — append-only ledger of breakpoint matches per concept:breakpoint.
+// Aspect-type pattern; mirrors the postgres-side shape.
 type breakpointHitsImpl tablesImpl
 
 var _ persistence.BreakpointHitTable = (*breakpointHitsImpl)(nil)
@@ -185,7 +187,8 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 	if n == 1 {
 		return nil
 	}
-	// Zero rows: replay or missing? Probe.
+	// @deliberate: zero rows could mean missing or already-resumed; probe to
+	// distinguish ErrBreakpointHitNotFound from idempotent replay.
 	var resumedAt sql.NullString
 	err = ex.QueryRowContext(ctx,
 		`SELECT resumed_at FROM rimsky_breakpoint_hits WHERE id = ?`, id.String()).Scan(&resumedAt)
@@ -195,7 +198,7 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 		}
 		return fmt.Errorf("sqlite.breakpointHits.resume.probe: %w", err)
 	}
-	// Row exists; treat as idempotent replay.
+	// @deliberate: row exists with resumed_at set — idempotent replay returns nil.
 	return nil
 }
 
@@ -206,15 +209,12 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 func (b *breakpointHitsImpl) AutoResumeStale(ctx context.Context, now time.Time, tx persistence.Tx) (int, error) {
 	ex := b.q(tx)
 	nowStr := now.UTC().Format(timeLayoutFixedNanos)
-	// Use a sub-select rather than UPDATE…FROM for maximum portability
-	// across modernc.org/sqlite versions: the rows to update are
-	// identified by their seq (the PRIMARY KEY). The ttl check is
-	// expressed via datetime() arithmetic on hit_at + hit_ttl_seconds.
-	// BOTH sides of the `<=` must go through datetime(): its output is
-	// space-separated ("YYYY-MM-DD HH:MM:SS"), and comparing it as TEXT
-	// against the fixed-width 'T'-separated parameter would always read
-	// as expired for same-day expiries (' ' < 'T' in ASCII), collapsing
-	// any TTL under ~24h to zero.
+	// @constraint: BOTH sides of `<=` must pass through datetime(). datetime()
+	// emits space-separated "YYYY-MM-DD HH:MM:SS"; comparing it as TEXT against
+	// the fixed-width 'T'-separated parameter reads as expired for same-day
+	// expiries (' ' < 'T' in ASCII), collapsing any TTL under ~24h to zero.
+	// @deliberate: sub-select on seq (PRIMARY KEY) rather than UPDATE…FROM, for
+	// portability across modernc.org/sqlite versions.
 	res, err := ex.ExecContext(ctx,
 		`UPDATE rimsky_breakpoint_hits
 		    SET resumed_at = ?, resumed_by_key = 'sweeper'

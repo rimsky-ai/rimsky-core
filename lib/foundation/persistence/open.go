@@ -67,14 +67,16 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// openPostgres and openSQLite are package-private vars so the
-// postgres/ and sqlite/ subpackages can install them via init(). This
-// avoids open.go importing those subpackages (which import persistence/)
-// and creating an import cycle.
-var (
-	openPostgres = stubOpenPostgres
-	openSQLite   = stubOpenSQLite
-)
+// openPostgres is a package-private var so the postgres/ subpackage can
+// install the real driver via init(). This avoids open.go importing
+// the postgres/ subpackage (which imports persistence/) and creating
+// an import cycle.
+var openPostgres = stubOpenPostgres
+
+// openSQLite is a package-private var so the sqlite/ subpackage can
+// install the real driver via init(); same cycle-break as
+// openPostgres.
+var openSQLite = stubOpenSQLite
 
 func stubOpenPostgres(context.Context, PostgresConfig) (Database, error) {
 	return nil, errors.New("postgres driver not yet wired")

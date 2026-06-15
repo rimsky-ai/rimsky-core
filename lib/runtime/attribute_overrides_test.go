@@ -24,7 +24,7 @@ func TestApplyAttributeOverrides(t *testing.T) {
 		if !reflect.DeepEqual(got, resolved) {
 			t.Fatalf("got %#v want %#v", got, resolved)
 		}
-		// Mutating the returned map must not affect resolved.
+		// @deliberate: Mutating the returned map must not affect resolved.
 		got["cli"].(map[string]any)["k"] = "mutated"
 		if resolved["cli"].(map[string]any)["k"] != "v" {
 			t.Fatalf("mutating the returned map affected resolved: %#v", resolved)
@@ -79,7 +79,7 @@ func TestApplyAttributeOverrides(t *testing.T) {
 		got, _ := applyAttributeOverrides(resolved, ov, "claude-agent", "area-pass", "main", "", logger)
 		want := map[string]any{
 			"cli": map[string]any{
-				"trace_to":           "/by-node",   // by_node wins
+				"trace_to":           "/by-node",   // @deliberate: by_node wins
 				"synthetic_scenario": "exit-clean", // contributed by by_executor
 			},
 		}
@@ -136,7 +136,7 @@ func TestApplyAttributeOverrides(t *testing.T) {
 	})
 
 	t.Run("malformed by_executor.<exec> fragment falls back to resolved", func(t *testing.T) {
-		// lookupFragment requires the (key, subkey) lookup to land on a
+		// @deliberate: lookupFragment requires the (key, subkey) lookup to land on a
 		// map[string]any; non-object fragment values produce a (nil,
 		// false) miss so the merge is skipped entirely.
 		resolved := map[string]any{"cli": map[string]any{"k": "resolved"}}
@@ -152,7 +152,7 @@ func TestApplyAttributeOverrides(t *testing.T) {
 	})
 
 	t.Run("malformed by_node.<node> fragment falls back to resolved", func(t *testing.T) {
-		// Mirror of the by_executor.<exec> guard: a non-object value at
+		// @deliberate: Mirror of the by_executor.<exec> guard: a non-object value at
 		// by_node.<node> must produce a (nil, false) miss so the merge
 		// is skipped entirely.
 		resolved := map[string]any{"cli": map[string]any{"k": "resolved"}}
@@ -168,7 +168,7 @@ func TestApplyAttributeOverrides(t *testing.T) {
 	})
 
 	t.Run("malformed by_executor (top-level non-map) falls back to resolved", func(t *testing.T) {
-		// lookupFragment's first guard: overrides["by_executor"] must
+		// @deliberate: lookupFragment's first guard: overrides["by_executor"] must
 		// itself be a map. A non-object top-level by_executor (string,
 		// list, scalar) produces a (nil, false) miss.
 		resolved := map[string]any{"cli": map[string]any{"k": "resolved"}}
@@ -182,7 +182,7 @@ func TestApplyAttributeOverrides(t *testing.T) {
 	})
 
 	t.Run("malformed by_node (top-level non-map) falls back to resolved", func(t *testing.T) {
-		// Mirror of by_executor top-level guard.
+		// @deliberate: Mirror of by_executor top-level guard.
 		resolved := map[string]any{"cli": map[string]any{"k": "resolved"}}
 		ov := map[string]any{
 			"by_node": float64(42),
@@ -262,7 +262,7 @@ func TestApplyAttributeOverrides(t *testing.T) {
 		want := map[string]any{
 			"cli": map[string]any{
 				"limits": map[string]any{
-					"max_corrections": float64(5),    // by_executor wins
+					"max_corrections": float64(5),    // @deliberate: by_executor wins
 					"max_tokens":      float64(3000), // by_node wins
 				},
 			},
@@ -343,7 +343,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 	})
 
 	t.Run("multiple matcher keys AND together", func(t *testing.T) {
-		// node_type AND attrs.iter_num=1 — both must match. The matcher's
+		// @deliberate: node_type AND attrs.iter_num=1 — both must match. The matcher's
 		// "attrs" key carries dotted paths that walk into the dispatch
 		// attribute bag (which IS the attrs bag).
 		resolved := map[string]any{"iter_num": float64(1)}
@@ -358,17 +358,17 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 				},
 			},
 		}
-		// Both match → fires.
+		// @deliberate: Both match → fires.
 		got, matched := applyAttributeOverrides(resolved, ov, "e", "fix", "main", "", logger)
 		if got["x"] != "applied" || !reflect.DeepEqual(matched, []int{0}) {
 			t.Fatalf("got=%#v matched=%#v want overlay applied", got, matched)
 		}
-		// node_type wrong → no fire.
+		// @deliberate: node_type wrong → no fire.
 		got2, matched2 := applyAttributeOverrides(resolved, ov, "e", "other", "main", "", logger)
 		if _, exists := got2["x"]; exists || len(matched2) != 0 {
 			t.Fatalf("got=%#v matched=%#v want overlay not applied", got2, matched2)
 		}
-		// attrs.iter_num wrong → no fire.
+		// @deliberate: attrs.iter_num wrong → no fire.
 		resolved3 := map[string]any{"iter_num": float64(2)}
 		got3, matched3 := applyAttributeOverrides(resolved3, ov, "e", "fix", "main", "", logger)
 		if _, exists := got3["x"]; exists || len(matched3) != 0 {
@@ -386,7 +386,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 				},
 			},
 		}
-		// Two arbitrary dispatch contexts — both should fire.
+		// @deliberate: Two arbitrary dispatch contexts — both should fire.
 		got1, matched1 := applyAttributeOverrides(resolved, ov, "exec-a", "node-a", "main", "", logger)
 		if got1["flag"] != true || !reflect.DeepEqual(matched1, []int{0}) {
 			t.Fatalf("dispatch A: got=%#v matched=%#v", got1, matched1)
@@ -438,17 +438,17 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 				},
 			},
 		}
-		// Specific child_key fires.
+		// @deliberate: Specific child_key fires.
 		got1, matched1 := applyAttributeOverrides(map[string]any{}, ov, "e", "n", "main", "k1", logger)
 		if got1["tag"] != "for-k1" || !reflect.DeepEqual(matched1, []int{0}) {
 			t.Fatalf("child_key=k1: got=%#v matched=%#v", got1, matched1)
 		}
-		// Different child_key does not fire.
+		// @deliberate: Different child_key does not fire.
 		got2, matched2 := applyAttributeOverrides(map[string]any{}, ov, "e", "n", "main", "k2", logger)
 		if _, exists := got2["tag"]; exists || len(matched2) != 0 {
 			t.Fatalf("child_key=k2: got=%#v matched=%#v", got2, matched2)
 		}
-		// Empty child_key does not match a matcher specifying child_key.
+		// @deliberate: Empty child_key does not match a matcher specifying child_key.
 		got3, matched3 := applyAttributeOverrides(map[string]any{}, ov, "e", "n", "main", "", logger)
 		if _, exists := got3["tag"]; exists || len(matched3) != 0 {
 			t.Fatalf("child_key=empty: got=%#v matched=%#v", got3, matched3)
@@ -479,7 +479,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 	})
 
 	t.Run("attrs.<path> equality on primitives", func(t *testing.T) {
-		// String, number, and bool primitives all match.
+		// @deliberate: String, number, and bool primitives all match.
 		ov := map[string]any{
 			"by_match": []any{
 				map[string]any{
@@ -505,7 +505,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if got["hit"] != "yes" || !reflect.DeepEqual(matched, []int{0}) {
 			t.Fatalf("all primitives matched: got=%#v matched=%#v", got, matched)
 		}
-		// Missing path → no match.
+		// @deliberate: Missing path → no match.
 		resolved2 := map[string]any{
 			"cli": map[string]any{"iter": float64(2), "allow_html": true},
 		}
@@ -513,7 +513,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if len(matched2) != 0 {
 			t.Fatalf("missing model: matched=%#v", matched2)
 		}
-		// Non-primitive value at path → no match.
+		// @deliberate: Non-primitive value at path → no match.
 		resolved3 := map[string]any{
 			"cli": map[string]any{
 				"model":      map[string]any{"nested": "obj"},
@@ -528,7 +528,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 	})
 
 	t.Run("matcher reads from post-L4 bag", func(t *testing.T) {
-		// L3 sets iter_num=1 in the dispatch bag; matcher
+		// @deliberate: L3 sets iter_num=1 in the dispatch bag; matcher
 		// attrs: {iter_num: 1} fires (matcher reads bag.iter_num).
 		resolved := map[string]any{}
 		ov := map[string]any{
@@ -551,14 +551,14 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 	})
 
 	t.Run("matcher reads from post-L4 snapshot, not running L5", func(t *testing.T) {
-		// First L5 entry sets flag=true in the bag; second L5 entry's
+		// @deliberate: First L5 entry sets flag=true in the bag; second L5 entry's
 		// matcher requires flag=true — it must NOT fire because the
 		// matcher snapshot is taken before any L5 overlay applies.
 		resolved := map[string]any{}
 		ov := map[string]any{
 			"by_match": []any{
 				map[string]any{
-					"matcher": map[string]any{}, // matches every dispatch
+					"matcher": map[string]any{}, // @deliberate: matches every dispatch
 					"overlay": map[string]any{"flag": true},
 				},
 				map[string]any{
@@ -592,7 +592,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if resolved["k"] != "resolved" {
 			t.Fatalf("resolved mutated: %#v", resolved)
 		}
-		// Overrides should not have been mutated either.
+		// @deliberate: Overrides should not have been mutated either.
 		bm, _ := ov["by_match"].([]any)
 		entry0, _ := bm[0].(map[string]any)
 		overlay0, _ := entry0["overlay"].(map[string]any)
@@ -602,7 +602,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 	})
 
 	t.Run("matcher with unknown keys is skipped (defense-in-depth)", func(t *testing.T) {
-		// Out-of-band corruption: the validator at instance-create
+		// @deliberate: Out-of-band corruption: the validator at instance-create
 		// rejects unknown matcher keys, but persistence drift could
 		// surface them at runtime. A matcher whose ONLY key is an
 		// unknown one would have len > 0 (so the empty-matcher
@@ -635,7 +635,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if !reflect.DeepEqual(matched, []int{1}) {
 			t.Fatalf("matched must contain only the valid index 1: got=%#v", matched)
 		}
-		// Confirm the warn record carries the offending entry index +
+		// @deliberate: Confirm the warn record carries the offending entry index +
 		// unknown key.
 		var sawWarn bool
 		for _, rec := range capLog.Records() {
@@ -655,7 +655,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 	})
 
 	t.Run("malformed by_match entry is skipped per-entry, valid entries still fire", func(t *testing.T) {
-		// Out-of-band data corruption: by_match[0] is a string (not an
+		// @deliberate: Out-of-band data corruption: by_match[0] is a string (not an
 		// object). The valid entry at index 1 must still fire, and the
 		// malformed slot must produce a warn log with the offending
 		// index. The prior all-or-nothing behaviour (lookupMatchList
@@ -666,7 +666,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		resolved := map[string]any{}
 		ov := map[string]any{
 			"by_match": []any{
-				"not-an-object", // malformed
+				"not-an-object", // @deliberate: malformed
 				map[string]any{
 					"matcher": map[string]any{"node_type": "fix"},
 					"overlay": map[string]any{"hit": "yes"},
@@ -680,7 +680,7 @@ func TestApplyAttributeOverrides_ByMatch(t *testing.T) {
 		if !reflect.DeepEqual(matched, []int{1}) {
 			t.Fatalf("matched must contain only the valid index 1 (preserves original index): got=%#v", matched)
 		}
-		// Find the warn record naming the offending entry index.
+		// @deliberate: Find the warn record naming the offending entry index.
 		var sawWarn bool
 		for _, rec := range capLog.Records() {
 			if rec.Level != "warn" {

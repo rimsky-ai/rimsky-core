@@ -50,7 +50,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	// messageCount reads the live envelope count for an instance off the
+	// @constraint: messageCount reads the live envelope count for an instance off the
 	// real GET /instances/{id}/messages projection — the persisted-side
 	// surface the spec names ("replay leaves a single envelope",
 	// "distinct-sender yields two envelopes").
@@ -62,7 +62,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		return len(msgs)
 	}
 
-	// first-insert → 201. A keyed operator emit creates exactly one
+	// @constraint: first-insert → 201. A keyed operator emit creates exactly one
 	// envelope; capture the message_id for the replay sub-case below.
 	t.Run("first_insert_201", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "first-insert")
@@ -76,7 +76,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		require.Equal(t, 1, messageCount(t, instID), "first insert persists exactly one envelope")
 	})
 
-	// same-key replay → 200 with the identical message_id and NO second
+	// @constraint: same-key replay → 200 with the identical message_id and NO second
 	// envelope (replay leaves a single envelope).
 	t.Run("replay_200_same_id", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "replay")
@@ -101,7 +101,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 			"replay must leave a single envelope (no duplicate insert)")
 	})
 
-	// missing Idempotency-Key → 400. This is the regression anchor: it
+	// @constraint: missing Idempotency-Key → 400. This is the regression anchor: it
 	// fails (returns 201) against the pre-CLICTRL-2 handler that gated
 	// dedup behind `if idempotencyKey != ""` with no required-header
 	// guard. The diagnostic must name the header. Nothing persists.
@@ -118,7 +118,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 			"a rejected keyless emit must persist no envelope")
 	})
 
-	// distinct-sender same key → both 201, distinct ids. The dedup tuple
+	// @constraint: distinct-sender same key → both 201, distinct ids. The dedup tuple
 	// is (instance, sender, key); operator vs publisher resolve to
 	// different senders, so the shared key cannot collide. Two envelopes
 	// result.
@@ -152,7 +152,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 			"distinct-sender same-key yields two envelopes")
 	})
 
-	// publisher-named-"operator" same key → no collision with the
+	// @constraint: publisher-named-"operator" same key → no collision with the
 	// operator-side emit. The dedup tuple now carries a structural
 	// sender_kind discriminator ("operator" vs "publisher") so a
 	// publisher whose operator-chosen publisher_name happens to be the
@@ -161,7 +161,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 	// cross-source isolation.
 	t.Run("publisher_named_operator_no_collision", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "pub-op")
-		// Operator-chosen publisher_name == "operator" — the exact
+		// @constraint: operator-chosen publisher_name == "operator" — the exact
 		// collision shape sender_kind exists to prevent.
 		subID := insertPublisherSubscription(t, h, instID, "operator", persistence.PublisherSubscriptionStateActive)
 		key := "pub-op-" + uuid.NewString()
@@ -192,7 +192,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 			"publisher-named-operator + same key as operator yields two envelopes (no false-replay collision)")
 	})
 
-	// active publisher subscription → 201. The capability check passes
+	// @constraint: active publisher subscription → 201. The capability check passes
 	// when the sub is active and bound to this instance.
 	t.Run("active_sub_success", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "active-sub")
@@ -210,7 +210,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		require.Equal(t, 1, messageCount(t, instID), "active-sub emit persists one envelope")
 	})
 
-	// stopped publisher subscription → 403. Carries a key so the 403 is
+	// @constraint: stopped publisher subscription → 403. Carries a key so the 403 is
 	// the capability reason, not the header guard.
 	t.Run("stopped_sub_403", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "stopped-sub")
@@ -228,7 +228,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		require.Equal(t, 0, messageCount(t, instID), "a rejected emit persists no envelope")
 	})
 
-	// unknown publisher subscription → 403 (not 404 — avoid leaking
+	// @constraint: unknown publisher subscription → 403 (not 404 — avoid leaking
 	// subscription-id existence). Carries a key.
 	t.Run("unknown_sub_403", func(t *testing.T) {
 		instID := newInstanceForMessages(t, h, "unknown-sub")
@@ -245,7 +245,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		require.Equal(t, 0, messageCount(t, instID), "a rejected emit persists no envelope")
 	})
 
-	// wrong-instance subscription → 403. A sub bound to instance A cannot
+	// @constraint: wrong-instance subscription → 403. A sub bound to instance A cannot
 	// emit into instance B. Carries a key.
 	t.Run("wrong_instance_403", func(t *testing.T) {
 		instA := newInstanceForMessages(t, h, "wrong-a")
@@ -264,7 +264,7 @@ func TestIdempotencyMatrix(t *testing.T) {
 		require.Equal(t, 0, messageCount(t, instB), "a rejected emit persists no envelope in instance B")
 	})
 
-	// missing publisher_subscription_id → 400. A publisher-kind sender
+	// @constraint: missing publisher_subscription_id → 400. A publisher-kind sender
 	// without a subscription id is rejected at body validation (before
 	// the tx). Carries a key so the 400 is the missing-sub-id reason, not
 	// the header guard.

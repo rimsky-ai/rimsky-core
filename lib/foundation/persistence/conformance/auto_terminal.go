@@ -2,9 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// auto_terminal.go — HeldClaimAutoTerminalSerialization conformance area.
-//
-// Inv 13: held-claim resolution is auto-terminal, single, and aggregate-
+// @constraint: Inv 13 (HeldClaimAutoTerminalSerialization) — held-claim resolution is auto-terminal, single, and aggregate-
 // outcome-driven. Two concurrent Transactions calling
 // ClaimHandles.LockForUpdate(ctx, id, tx) must serialise — the second
 // blocks until the first commits.
@@ -44,9 +42,9 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 		t.Fatalf("seed lock-holder: %v", err)
 	}
 
-	// Two concurrent transactions both call LockForUpdate. The first
-	// holds the row "lock" (Postgres FOR UPDATE; SQLite BEGIN IMMEDIATE
-	// writer slot) for ~200ms before committing. The second's start
+	// @constraint: Inv 13 — two concurrent transactions both call LockForUpdate;
+	// the first holds the row lock (Postgres FOR UPDATE; SQLite BEGIN IMMEDIATE
+	// writer slot) for ~200ms before committing, and the second's start
 	// timestamp must be after the first's commit timestamp.
 	var (
 		firstHoldStart    int64
@@ -56,7 +54,6 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Goroutine 1: grab lock, sleep, commit.
 	go func() {
 		defer wg.Done()
 		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -78,7 +75,7 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 		}
 	}()
 
-	// Give goroutine 1 a head start so it grabs the lock first.
+	// @deliberate: head-start delay ensures goroutine 1 grabs the row lock before goroutine 2 attempts it.
 	time.Sleep(50 * time.Millisecond)
 
 	go func() {
@@ -108,7 +105,6 @@ func testHeldClaimAutoTerminalSerialization(t *testing.T, d persistence.Database
 	if t1 == 0 || c1 == 0 || t2 == 0 {
 		t.Fatalf("missing timestamps: t1=%d c1=%d t2=%d", t1, c1, t2)
 	}
-	// The second tx must not grab the lock before the first commits.
 	if t2 < c1 {
 		t.Fatalf("LockForUpdate did not serialise: tx2 grabbed lock at %d, before tx1 committed at %d",
 			t2, c1)

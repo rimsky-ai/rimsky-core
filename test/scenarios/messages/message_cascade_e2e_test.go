@@ -10,10 +10,6 @@
 // the subscriber's `rimsky_nodes.state` flipped to stale within the
 // running frame's frame_id.
 //
-// Issue 2 / fixer cycle 3: the existing message tests pinned only the
-// EnqueueMessage + DeliverPendingMessages shape; this scenario closes
-// the gap on the cascade walker.
-//
 // @concept: message
 // @concept: cascade
 // @concept: frame
@@ -45,7 +41,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 	d := pgtest.OpenDriver(ctx, t)
 	backend := d.Tables()
 
-	// Template: one node (`receiver`) subscribes to instance-scoped
+	// @deliberate: Template: one node (`receiver`) subscribes to instance-scoped
 	// `on: message` messages with `kind: invalidate` (matches any
 	// target). A sibling node (`self_receiver`) subscribes with
 	// `target: self` so receiver-relative resolution rejects it on
@@ -67,7 +63,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 				Subscribes: []spec.SubscriptionEntry{
 					{
 						Instance: true,
-						// Match any message envelope with kind=invalidate,
+						// @deliberate: Match any message envelope with kind=invalidate,
 						// regardless of sender_kind / target. Prefix-bind
 						// payload as dyn; CEL filter narrows by kind.
 						Type:  "message/invalidate/*",
@@ -81,7 +77,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 				Subscribes: []spec.SubscriptionEntry{
 					{
 						Instance: true,
-						// Match invalidate envelopes; CEL filter binds
+						// @constraint: Match invalidate envelopes; CEL filter binds
 						// to receiver's own alias via payload.target.
 						// An empty broadcast envelope (payload.target ==
 						// "") never matches.
@@ -94,7 +90,6 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 	}
 	tmplRow := insertDeployedTemplate(ctx, t, backend, tmplSpec)
 
-	// Instance + one node per node-type.
 	ck := "ck-msg-cascade"
 	var inst persistence.InstanceRow
 	var senderNode, receiverNode, selfReceiverNode persistence.NodeRow
@@ -106,7 +101,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 		}); err != nil {
 			return err
 		}
-		// coalesce delivery: this scenario enqueues two envelopes (a
+		// @constraint: coalesce delivery: this scenario enqueues two envelopes (a
 		// targeted invalidate + a broadcast) and asserts BOTH are delivered
 		// into one frame so the cascade walker is exercised against both at
 		// once. The default flipped to serial_queue (one message per frame)
@@ -152,7 +147,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 	}))
 	_ = senderNode
 
-	// Enqueue two `invalidate` messages:
+	// @constraint: Enqueue two `invalidate` messages:
 	//   (1) targeted to the receiver alias — exercises the existing
 	//       receiver-resolution path.
 	//   (2) empty-target broadcast — exercises the regression coverage
@@ -173,12 +168,12 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 		return runtime.EnqueueMessage(ctx, tx, backend.Messages(), persistence.EnqueueMessageRequest{
 			ID: broadcastMsgID, InstanceID: inst.ID,
 			Kind: "invalidate", Sender: "op-A", SenderKind: "operator",
-			// Target intentionally empty — broadcast envelope.
+			// @deliberate: Target intentionally empty — broadcast envelope.
 			ReceivedAt: now.Add(time.Millisecond),
 		})
 	}))
 
-	// Open a running frame for the instance. The frame engine creates
+	// @deliberate: Open a running frame for the instance. The frame engine creates
 	// a queued frame and we promote it to running so the sweep picks
 	// it up.
 	var frameID shared.UUID
@@ -194,12 +189,12 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 		return nil
 	}))
 
-	// Drive the sweep — this dispatches DeliverPendingMessages +
+	// @deliberate: Drive the sweep — this dispatches DeliverPendingMessages +
 	// cascadeMessageSubscribersInTx for every running frame.
 	require.NoError(t, runtime.SweepDeliverMessagesForRunningFrames(
 		ctx, backend, d.Queue(), shared.SilentLogger{}, now))
 
-	// Assert: the receiver's rimsky_nodes.state is now 'stale' with
+	// @deliberate: Assert: the receiver's rimsky_nodes.state is now 'stale' with
 	// frame_id == frameID (the cascade walker fired MarkStaleForCascade).
 	var rcv *persistence.NodeRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -215,7 +210,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 	require.Equal(t, frameID, *rcv.FrameID,
 		"receiver's frame_id must equal the running frame's frame_id")
 
-	// Assert: the message row was stamped delivered_at + frame_id.
+	// @deliberate: Assert: the message row was stamped delivered_at + frame_id.
 	var deliveredMsg *persistence.MessageRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, _ persistence.Tx) error {
 		m, err := backend.Messages().Get(ctx, msgID)
@@ -230,7 +225,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 	require.Equal(t, frameID, *deliveredMsg.FrameID,
 		"message's frame_id must equal the delivering frame's frame_id")
 
-	// Assert: the broadcast (empty-target) envelope was delivered too.
+	// @deliberate: Assert: the broadcast (empty-target) envelope was delivered too.
 	// The cascade walker must NOT have stale-marked `self_receiver` —
 	// the subscription declared `target: self`, and a `target: self`
 	// subscription only matches when the envelope's target equals the
@@ -250,7 +245,7 @@ func TestMessageCascadeE2E_SubscriberFlipsStale(t *testing.T) {
 	require.Equal(t, "", broadcastDelivered.Target,
 		"broadcast envelope target must remain empty in storage")
 
-	// self_receiver MUST NOT have been stale-marked: it carries a
+	// @deliberate: self_receiver MUST NOT have been stale-marked: it carries a
 	// `target: self` subscription, which rejects the empty-target
 	// envelope at receiver-resolution. The receiver's row should remain
 	// in the pre-cascade state (`fresh`, the column default).

@@ -68,14 +68,13 @@ func TestHostAgentDisconnectMidDispatch(t *testing.T) {
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})
 
 	tid := fx.deployLateBindTemplate(t, "fail-disconnect")
-	// Drop the agent before dispatch so the proxy has no live connection.
+	// @deliberate: Drop the agent before dispatch so the proxy has no live connection.
 	fx.cancelAgent()
 	select {
 	case <-fx.agentDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("agent did not stop after cancel")
 	}
-	// Give the proxy a moment to observe the dropped stream.
 	time.Sleep(300 * time.Millisecond)
 
 	iid := fx.createLateBindInstance(t, tid, "ck-disconnect", fx.stubBinary)
@@ -94,7 +93,6 @@ func TestHostAgentDisconnectMidDispatch(t *testing.T) {
 func TestProxyReconnectAfterAgentRestart(t *testing.T) {
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})
 
-	// Drop the original agent.
 	fx.cancelAgent()
 	select {
 	case <-fx.agentDone:
@@ -103,7 +101,6 @@ func TestProxyReconnectAfterAgentRestart(t *testing.T) {
 	}
 	time.Sleep(300 * time.Millisecond)
 
-	// Reconnect a fresh agent under the same owner key.
 	cancel, done := startAgent(t, fx.proxyAddr, fx.ownerKeyID)
 	t.Cleanup(func() {
 		cancel()

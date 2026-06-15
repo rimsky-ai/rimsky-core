@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The dispatch-eligibility predicate carries the propagation-path-independent condition: a stale run is not eligible while any subscribed upstream has an in-flight run in the same frame. The wait-set ledger and its drained-rows substitution role are retained unchanged; self-edge ("drain my own queue") idioms and cycle handling keep working, pinned by scenario tests including the deterministic diamond test (see `concept:wait-set`, `concept:cascade`, `story:all-upstream-gating`).
+The dispatch-eligibility predicate carries the propagation-path-independent condition: a stale run is not eligible while any subscribed upstream has an in-flight run in the same frame. The wait-set ledger and its drained-rows substitution role are retained unchanged; self-edge ("drain my own queue") idioms and cycle handling keep working, pinned by scenario coverage of the deterministic diamond topology (see `concept:wait-set`, `concept:cascade`, `story:all-upstream-gating`).
 
 ## Rationale
 

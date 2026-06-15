@@ -36,7 +36,7 @@ import (
 
 func TestHitAutoResumeTTL(t *testing.T) {
 	t.Parallel()
-	// Use a fast scheduler tick so the AutoResumeStale sweep fires
+	// @deliberate: Use a fast scheduler tick so the AutoResumeStale sweep fires
 	// inside the assertion window. The default 250ms tick suffices but
 	// we explicitly request 100ms so the test is bounded tight.
 	h := scenario.Start(t, scenario.HarnessOpts{
@@ -70,18 +70,18 @@ func TestHitAutoResumeTTL(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	// Hit lands; we DO NOT issue a resume — the sweeper must do it.
+	// @constraint: Hit lands; we DO NOT issue a resume — the sweeper must do it.
 	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called while paused at the breakpoint")
 
-	// Within hit_ttl_seconds (1s) + a sweep tick (~100ms) + the runner's
+	// @deliberate: Within hit_ttl_seconds (1s) + a sweep tick (~100ms) + the runner's
 	// poll cadence (250ms), the dispatch should proceed. Give the loop
 	// 10s of slack to absorb CI jitter.
 	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
 		"executor should observe dispatch after the sweeper auto-resumes the stale hit")
 
-	// Verify the row reflects sweeper-driven resume.
+	// @constraint: Verify the row reflects sweeper-driven resume.
 	row := getHitRow(t, h, hit.ID)
 	require.NotNil(t, row)
 	require.NotNil(t, row.ResumedAt,

@@ -51,11 +51,10 @@ func StartSensorHTTP(ctx context.Context, t testing.TB, networkName, alias strin
 		_ = c.Terminate(termCtx)
 	})
 
-	// The publisher block renders `endpoint: %q` verbatim into rimsky.yml
-	// (writePeerBlocks); the executor/claim-producer peers use a bare
-	// `<alias>:<port>` or `grpc://<alias>:<port>`. The sensor registers a
-	// plaintext gRPC Publisher server, so a bare host:port matches the
-	// other gRPC peers' shape.
+	// @constraint: writePeerBlocks renders the publisher block's `endpoint`
+	// verbatim into rimsky.yml; the sensor registers a plaintext gRPC
+	// Publisher server, so emit a bare `<alias>:<port>` matching the other
+	// gRPC peers' shape (executor / claim-producer use the same form).
 	return fmt.Sprintf("%s:9082", alias)
 }
 
@@ -157,16 +156,15 @@ func runSensorHTTPContainer(ctx context.Context, t testing.TB, networkName, alia
 	t.Helper()
 	env := map[string]string{
 		"RIMSKY_SENSOR_HTTP_PORT": "9082",
-		// rimsky's stable in-network alias; known before rimsky is up.
-		"RIMSKY_ENDPOINT": "http://rimsky:8080",
+		"RIMSKY_ENDPOINT":         "http://rimsky:8080",
 	}
 	if stateDSN != "" {
-		// Durability gate. When set, sensor-http persists active
+		// @constraint: when set, sensor-http persists active
 		// publisher-subscriptions + their body-hash watermarks to the
 		// configured Postgres so a process restart resumes the durable
-		// watch with its body filter + watermark intact. Empty → in-
-		// memory default, which loses watches on restart (and breaks
-		// the STORY-sensor-http durability acceptance).
+		// watch with its body filter + watermark intact; empty falls back
+		// to the in-memory default, which loses watches on restart and
+		// fails the sensor-http durability acceptance story.
 		env["RIMSKY_SENSOR_HTTP_STATE_DSN"] = stateDSN
 	}
 	opts := []testcontainers.ContainerCustomizer{

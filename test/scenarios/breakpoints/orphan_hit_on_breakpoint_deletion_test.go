@@ -67,16 +67,16 @@ func TestOrphanHitOnBreakpointDeletion(t *testing.T) {
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not see the dispatch while paused at the breakpoint")
 
-	// Delete the breakpoint (cascade-deletes the hit). The
+	// @deliberate: Delete the breakpoint (cascade-deletes the hit). The
 	// waitForResume poll inside the parked runner will see the row
 	// vanish and return as if auto-resumed.
 	breakpointDelete(t, h, iid, bpID)
 
-	// Hit row must be gone (FK CASCADE).
+	// @constraint: Hit row must be gone (FK CASCADE).
 	require.Nil(t, getHitRow(t, h, hit.ID),
 		"hit row should be cascade-deleted along with the parent breakpoint")
 
-	// The dispatch should proceed without an explicit resume call.
+	// @deliberate: The dispatch should proceed without an explicit resume call.
 	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
 		"executor should observe dispatch after the orphan-hit unblocks the runner")
 	n := h.FindNode(iid, "worker")

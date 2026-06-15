@@ -3,7 +3,7 @@
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-# producer-error-demo.sh — STORY-producer-error-passthrough proof.
+# @story: producer-error-passthrough — runnable proof.
 #
 # An operator whose store fails during an API-triggered operation can
 # read the store's OWN error class and message in the API response —
@@ -67,7 +67,7 @@ for image in "${ALL_IN_ONE_IMAGE}" "${STORE_IMAGE}" "${EXECUTOR_IMAGE}"; do
     fi
 done
 
-# Unique names so concurrent runs never collide.
+# @deliberate: unique names so concurrent runs never collide.
 RUN_ID="$( date +%s )-$$"
 NET="rimsky-producer-error-demo-${RUN_ID}"
 STORE="rimsky-producer-error-demo-store-${RUN_ID}"
@@ -77,8 +77,8 @@ TMP_DIR="$( mktemp -d -t rimsky-producer-error-demo.XXXXXXXX )"
 
 cleanup() {
     local rc=$?
-    # Container-written files under workspace/ can be owned by a
-    # different UID on a native-Linux daemon; clear them from inside
+    # @constraint: container-written files under workspace/ can be owned
+    # by a different UID on a native-Linux daemon; clear them from inside
     # the container (the writer's UID) before it is removed, so the
     # host-side rm of TMP_DIR cannot EPERM.
     docker exec "${STORE}" rm -rf /workspace/data >/dev/null 2>&1 || true
@@ -89,9 +89,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# json_get <python-expr> reads JSON on stdin and prints the evaluated
-# expression against the parsed object bound as `d`. Empty output on
-# any parse/lookup error so callers can poll without aborting mid-loop.
+# @deliberate: json_get <python-expr> reads JSON on stdin and prints
+# the evaluated expression against the parsed object bound as `d`.
+# Empty output on any parse/lookup error so callers can poll without
+# aborting mid-loop.
 json_get() {
     python3 -c "
 import sys, json
@@ -107,11 +108,11 @@ except Exception:
 echo "producer-error-demo: [1/6] booting the stack (network ${NET})"
 docker network create "${NET}" >/dev/null
 
-# The filesystem store: backing root is /workspace/data INSIDE the
-# container, bind-mounted from the host so step 4 can delete it out
-# from under the running store — the "deliberately bad backing path"
-# misconfiguration the story names. The root is a SUBDIRECTORY of the
-# mount (not the mount point itself) so it can actually be unlinked.
+# @deliberate: the filesystem store backing root is /workspace/data
+# INSIDE the container, bind-mounted from the host so step 4 can delete
+# it out from under the running store — the "deliberately bad backing
+# path" misconfiguration the story names. The root is a SUBDIRECTORY of
+# the mount (not the mount point itself) so it can actually be unlinked.
 mkdir -p "${TMP_DIR}/workspace/data"
 cat > "${TMP_DIR}/store-config.yml" <<'YAML'
 root: /workspace/data
@@ -119,9 +120,10 @@ host: 0.0.0.0
 grpc_port: 9100
 http_port: 9110
 YAML
-# The store's HTTP+JSON bridge port (9110) is published so step 4 can
-# confirm — from the store's own point of view — that the sabotage has
-# propagated through the bind mount before the proof's DELETE fires.
+# @deliberate: the store's HTTP+JSON bridge port (9110) is published so
+# step 4 can confirm — from the store's own point of view — that the
+# sabotage has propagated through the bind mount before the proof's
+# DELETE fires.
 docker run -d --name "${STORE}" \
     --network "${NET}" --network-alias store \
     -e STORE_FILESYSTEM_CONFIG=/etc/store/config.yml \
@@ -132,17 +134,18 @@ docker run -d --name "${STORE}" \
 STORE_HTTP_PORT="$( docker port "${STORE}" 9110 | head -n1 | sed 's/.*://' )"
 STORE_BRIDGE="http://127.0.0.1:${STORE_HTTP_PORT}"
 
-# The http-node executor in stub mode: every Execute short-circuits to
-# a terminal Success, so the node's run (and the claim commit that
-# promotes the durable asset) completes without any upstream service.
+# @deliberate: the http-node executor in stub mode short-circuits every
+# Execute to a terminal Success, so the node's run (and the claim
+# commit that promotes the durable asset) completes without any
+# upstream service.
 docker run -d --name "${EXECUTOR}" \
     --network "${NET}" --network-alias executor \
     -e RIMSKY_EXECUTOR_STUB_MODE=1 \
     "${EXECUTOR_IMAGE}" >/dev/null
 
-# rimsky.yml: the all-in-one SQLite default plus the operator's store
-# ("docs", the producer name the API response must echo back) and the
-# stub executor.
+# @deliberate: rimsky.yml is the all-in-one SQLite default plus the
+# operator's store ("docs", the producer name the API response must
+# echo back) and the stub executor.
 cat > "${TMP_DIR}/rimsky.yml" <<'YAML'
 persistence:
   driver: sqlite
@@ -217,8 +220,9 @@ fi
 curl -fsS -X POST -H 'Content-Type: application/json' -d '{}' \
     "${BASE}/v1/templates/${TEMPLATE_ID}/deploy" >/dev/null
 
+INSTANCE_BODY="$( printf '{"template":"%s","instance_key":"demo-1","params":{"url":"http://rimsky:8080/v1/health"}}' "${TEMPLATE_ID}" )"
 INST_RESP="$( curl -sS -X POST -H 'Content-Type: application/json' \
-    -d "{\"template\": \"${TEMPLATE_ID}\", \"instance_key\": \"demo-1\", \"params\": {\"url\": \"http://rimsky:8080/v1/health\"}}" \
+    -d "${INSTANCE_BODY}" \
     "${BASE}/v1/instances" )"
 INSTANCE_ID="$( echo "${INST_RESP}" | json_get "d['instance_id']" )"
 if [ -z "${INSTANCE_ID}" ]; then
@@ -245,10 +249,10 @@ if [ "${NODE_STATE}" != "fresh" ]; then
     exit 1
 fi
 
-# The durable claim must now be resolvable as an asset on the instance
-# (the per-alias surface; the aggregate /assets listing intentionally
-# filters to data_processing-capable producers, which the standard
-# filesystem store is not).
+# @constraint: the durable claim must now be resolvable as an asset on
+# the instance via the per-alias surface; the aggregate /assets listing
+# intentionally filters to data_processing-capable producers, which the
+# standard filesystem store is not.
 ASSET_LIFETIME=""
 for _ in $( seq 1 60 ); do
     ASSET_LIFETIME="$( curl -fsS "${BASE}/v1/instances/${INSTANCE_ID}/assets/produce-report.out" 2>/dev/null \
@@ -264,22 +268,23 @@ fi
 echo "producer-error-demo:       durable asset committed: produce-report.out"
 
 echo "producer-error-demo: [4/6] sabotaging the store's backing path (rm -rf of the configured root)"
-# The store's configured root vanishes while the store keeps serving —
-# the misconfigured-backing-path condition. The store is still UP and
-# reachable; what changes is that it now REJECTS claim verbs with its
-# own classed error instead of acking against a root it cannot see.
-# Host-side rm first; on native Linux the container may have written
-# files as a different UID (Docker Desktop's VM remaps ownership, a
-# native daemon does not), making the host rm fail with EPERM — fall
-# back to removing from inside the container, where the writer's UID
-# owns the files.
+# @deliberate: the store's configured root vanishes while the store
+# keeps serving — the misconfigured-backing-path condition. The store
+# is still UP and reachable; what changes is that it now REJECTS claim
+# verbs with its own classed error instead of acking against a root it
+# cannot see. Host-side rm first; on native Linux the container may
+# have written files as a different UID (Docker Desktop's VM remaps
+# ownership, a native daemon does not), making the host rm fail with
+# EPERM — fall back to removing from inside the container, where the
+# writer's UID owns the files.
 rm -rf "${TMP_DIR}/workspace/data" 2>/dev/null     || docker exec "${STORE}" rm -rf /workspace/data
 
-# Wait until the store ITSELF observes the missing root (bind-mount
-# attribute caches can lag the host-side rm by a moment). Probed via
-# the store's HTTP+JSON bridge with a throwaway Open — once it answers
-# fs/root_unavailable, the upcoming Release will too. The probe is
-# read-intent and never reaches rimsky; it does not perturb the proof.
+# @deliberate: wait until the store ITSELF observes the missing root
+# (bind-mount attribute caches can lag the host-side rm by a moment).
+# Probed via the store's HTTP+JSON bridge with a throwaway Open — once
+# it answers fs/root_unavailable, the upcoming Release will too. The
+# probe is read-intent and never reaches rimsky; it does not perturb
+# the proof.
 SABOTAGE_SEEN=""
 for _ in $( seq 1 60 ); do
     PROBE="$( curl -sS -X POST -H 'Content-Type: application/json' \

@@ -33,8 +33,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/control/config"
 	"github.com/rimsky-ai/rimsky-core/lib/control/observability"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres" // register driver
-	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"   // register driver
+
+	// @constraint: blank imports register the persistence drivers via
+	// their init() functions.
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
@@ -46,15 +49,15 @@ const defaultRimskyConfigPath = "/etc/rimsky/rimsky.yml"
 // ctx bounds the graceful-shutdown wait (callers pass a deadline ctx).
 type StopFunc func(ctx context.Context) error
 
-// Each RunX also returns a fail channel that surfaces a fatal
-// post-start failure of the role (a serve loop dying, the metrics
-// listener failing to bind). At most one error is ever sent; a clean
-// shutdown sends nothing and the StopFunc closes the channel once
-// teardown completes, so monitor goroutines reading it exit instead of
-// leaking across embedded start/stop cycles. The role mains and the
-// unified entrypoint select on it beside the signal channel so a dead
-// role exits the process non-zero (container restart) instead of
-// running on degraded.
+// @agent-contract: each RunX returns a fail channel that surfaces a
+// fatal post-start failure of the role (a serve loop dying, the
+// metrics listener failing to bind). At most one error is ever sent; a
+// clean shutdown sends nothing and the StopFunc closes the channel
+// once teardown completes, so monitor goroutines reading it exit
+// instead of leaking across embedded start/stop cycles. The role mains
+// and the unified entrypoint select on it beside the signal channel so
+// a dead role exits the process non-zero (container restart) instead
+// of running on degraded.
 
 // failureReporter serializes post-start failure reports onto a RunX
 // fail channel. Producers (the metrics serve loop, role serve-loop
@@ -128,21 +131,23 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 	heartbeatMs := atoiDefault(os.Getenv("RIMSKY_HEARTBEAT_TIMEOUT_MS"), 15000)
 	log := shared.NewSlogLogger(logger)
 
-	// Resolve the /metrics port up-front so a malformed env value fails
-	// the role at startup instead of silently disabling metrics.
+	// @deliberate: resolve the /metrics port up-front so a malformed env
+	// value fails the role at startup instead of silently disabling
+	// metrics.
 	metricsPort, err := metricsPortFor("scheduler")
 	if err != nil {
 		log.Error("metrics port resolution", "error", err.Error())
 		return nil, nil, err
 	}
 
-	// Install BlobBackend on the driver. The scheduler does not itself
-	// spill writes (it reads via SweepParkedNodes which hits parked
-	// payload columns, but those go through queue.LoadResumeMetadataInTx
-	// at the supervisor side). Installing here keeps ValidateBlobConfig
-	// gating consistent across roles (memory backend rejection,
-	// filesystem.root presence) and exposes the backend on the driver —
-	// the scheduler-side orphan-blob sweep deletes through it.
+	// @constraint: install BlobBackend on the driver. The scheduler does
+	// not itself spill writes (it reads via SweepParkedNodes which hits
+	// parked payload columns, but those go through
+	// queue.LoadResumeMetadataInTx at the supervisor side). Installing
+	// here keeps ValidateBlobConfig gating consistent across roles
+	// (memory backend rejection, filesystem.root presence) and exposes
+	// the backend on the driver — the scheduler-side orphan-blob sweep
+	// deletes through it.
 	blobBackend, err := config.OpenBlobBackend(rimskyCfg.Blob, driver)
 	if err != nil {
 		log.Error("config.OpenBlobBackend", "error", err.Error())
@@ -151,11 +156,11 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 
 	supervisorID := os.Getenv("RIMSKY_SCHEDULER_ID")
 	if supervisorID == "" {
-		// Hostname-derived default so multi-replica deployments don't
-		// collide on a single shared id. The scheduler-tick advisory
-		// lock still single-writes against the scheduler tick, but a
-		// per-replica id keeps audit-log rows and orphan-claim
-		// attribution honest.
+		// @constraint: hostname-derived default so multi-replica
+		// deployments don't collide on a single shared id. The
+		// scheduler-tick advisory lock still single-writes against the
+		// scheduler tick, but a per-replica id keeps audit-log rows and
+		// orphan-claim attribution honest.
 		if hostname, err := os.Hostname(); err == nil && hostname != "" {
 			supervisorID = "scheduler-" + hostname
 		} else {
@@ -163,8 +168,8 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		}
 	}
 
-	// Per-role Prometheus registry. Constructed up-front so the
-	// scheduler's per-tick invalidate emits and frame.RunTick
+	// @constraint: per-role Prometheus registry constructed up-front so
+	// the scheduler's per-tick invalidate emits and frame.RunTick
 	// observations land on the shared registry via the MetricsHook
 	// adapter. The /metrics HTTP listener is opened below only when
 	// RIMSKY_METRICS_PORT > 0; the registry itself is built
@@ -191,24 +196,19 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		return nil, nil, err
 	}
 
-	// Launch the gauge refresher so node-state, parked-by-reason,
-	// held-frames, and dispatch-queue-depth gauges reflect live
-	// persistence state. The refresher polls every 5s by default;
-	// cancelled on stop.
 	gaugeCtx, cancelGauges := context.WithCancel(context.Background())
 	if mhook := observability.MetricsHookOf(mreg); mhook != nil {
 		mhook.StartGaugeRefresher(gaugeCtx, driver.Tables(), driver.Queue(), 0, log)
 	}
 
-	// Optional Prometheus /metrics endpoint on a separate port,
-	// gated by RIMSKY_METRICS_PORT (0 = disabled).
 	reporter := newFailureReporter(1)
 	metricsSrv := startMetricsServer(metricsHostFromEnv(), "scheduler", metricsPort, mreg, log, reporter)
 
 	stop := func(stopCtx context.Context) error {
 		var firstErr error
-		// stopCtx's deadline is shared across both servers: the scheduler
-		// handle's shutdown and the metrics server's drain below.
+		// @constraint: stopCtx's deadline is shared across both
+		// servers — the scheduler handle's shutdown and the metrics
+		// server's drain below.
 		if err := h.Shutdown(stopCtx); err != nil {
 			log.Error("scheduler shutdown", "error", err.Error())
 			firstErr = err
@@ -219,10 +219,10 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 			}
 		}
 		cancelGauges()
-		// The driver is caller-owned — RunScheduler MUST NOT close it.
-		// Close the fail channel so monitor goroutines reading it exit;
-		// RunScheduler is embeddable and must not leak a monitor per
-		// start/stop cycle.
+		// @constraint: the driver is caller-owned — RunScheduler MUST
+		// NOT close it. Close the fail channel so monitor goroutines
+		// reading it exit; RunScheduler is embeddable and must not leak
+		// a monitor per start/stop cycle.
 		reporter.Close()
 		return firstErr
 	}
@@ -294,7 +294,7 @@ func metricsPortFor(role string) (int, error) {
 // for the named role on the caller-resolved port (see metricsPortFor;
 // <= 0 = disabled, returns nil). Shared by all three role runners.
 //
-// @constraint: net.Listen runs up-front BEFORE the serve goroutine
+// @constraint: Net.Listen runs up-front BEFORE the serve goroutine
 // launches, so a bind failure surfaces synchronously and the caller
 // observes it on the next line. Calling srv.ListenAndServe from the
 // goroutine would race the caller's failureReporter wiring — a fast

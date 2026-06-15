@@ -60,7 +60,7 @@ func obsListClaimsHandler(srv genv1.ClaimProducerObservabilityServer) http.Handl
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// /observability/v1/claims (no trailing slash)
+		// @constraint: serve /observability/v1/claims with no trailing slash.
 		if r.URL.Path != "/observability/v1/claims" {
 			http.NotFound(w, r)
 			return
@@ -92,7 +92,8 @@ func obsClaimsHandler(srv genv1.ClaimProducerObservabilityServer) http.HandlerFu
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// /observability/v1/claims/{claim_id} or /.../{claim_id}/stream
+		// @constraint: serve /observability/v1/claims/{claim_id} or
+		// /.../{claim_id}/stream.
 		path := strings.TrimPrefix(r.URL.Path, "/observability/v1/claims/")
 		isStream := strings.HasSuffix(path, "/stream")
 		claimID := strings.TrimSuffix(path, "/stream")
@@ -156,8 +157,8 @@ func handleClaimStreamHTTP(w http.ResponseWriter, r *http.Request, srv genv1.Cla
 	flusher, _ := w.(http.Flusher)
 	stream := &sseClaimStream{w: w, ctx: r.Context(), flusher: flusher}
 	if err := srv.StreamClaim(&genv1.StreamClaimRequest{ClaimId: claimID}, stream); err != nil {
-		// Best-effort final error frame; ignore the write error since
-		// the client is already gone if Send failed.
+		// @constraint: best-effort final error frame — ignore the write
+		// error since the client is already gone if Send failed.
 		if _, werr := fmt.Fprintf(w, "data: {\"error\":%q}\n\n", err.Error()); werr == nil {
 			if flusher != nil {
 				flusher.Flush()

@@ -129,7 +129,7 @@ func startWriteSemanticsHarness(
 		},
 	})
 
-	// Writer template: a single node holding a read-write claim on the
+	// @deliberate: Writer template: a single node holding a read-write claim on the
 	// contended selector. Reader template: a single node holding a
 	// read-only claim on the SAME selector. Separate templates +
 	// instances so each contender owns its own root frame / dispatch row /
@@ -167,7 +167,7 @@ func startWriteSemanticsHarness(
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	// One shared registry holding a peer.Client to the loopback stub. Dial
+	// @deliberate: One shared registry holding a peer.Client to the loopback stub. Dial
 	// performs the Capabilities() handshake, so the dialed client's caps
 	// carry exactly `value` — the realized-value envelope check in
 	// peer/client.go::Open passes. Client + conn are concurrency-safe so two
@@ -220,7 +220,7 @@ func TestWriteSemanticsStagedAsyncReaderCoexistsWithWriter(t *testing.T) {
 	require.Equal(t, 0, activeScopeRowCount(t, h, "content"),
 		"precondition: no scope holders before any RunNode")
 
-	// Launch the writer; it Opens the rw claim (active row #1) and blocks in
+	// @deliberate: Launch the writer; it Opens the rw claim (active row #1) and blocks in
 	// the barrier executor.
 	writer := make(chan runResult, 1)
 	go func() {
@@ -232,7 +232,7 @@ func TestWriteSemanticsStagedAsyncReaderCoexistsWithWriter(t *testing.T) {
 	require.Equal(t, 1, activeScopeRowCount(t, h, "content"),
 		"writer parked mid-flight: exactly one active claim_scope row")
 
-	// Launch the reader. Under staged_async the reader-vs-writer pair
+	// @deliberate: Launch the reader. Under staged_async the reader-vs-writer pair
 	// coexists, so the reader passes the conflict predicate, Opens its own
 	// claim (active row #2), and enters the barrier too — proving genuine
 	// acquisition rather than a bail.
@@ -243,14 +243,13 @@ func TestWriteSemanticsStagedAsyncReaderCoexistsWithWriter(t *testing.T) {
 	}()
 	barrier.waitEntered(t, 15*time.Second)
 
-	// COEXISTENCE: two active claim_scope rows for the same (producer,
+	// @deliberate: COEXISTENCE: two active claim_scope rows for the same (producer,
 	// scope) exist simultaneously — the writer's and the reader's. This is
 	// the load-bearing observable; it is impossible under sync /
 	// blocking_async (the reader would have bailed without an active row).
 	require.Equal(t, 2, activeScopeRowCount(t, h, "content"),
 		"staged_async COEXISTENCE: reader and writer hold simultaneously (two active rows)")
 
-	// Free both holders; both RunNode cycles complete with Ran=true.
 	barrier.freeOne()
 	barrier.freeOne()
 	rW := <-writer
@@ -261,7 +260,7 @@ func TestWriteSemanticsStagedAsyncReaderCoexistsWithWriter(t *testing.T) {
 	require.True(t, rR.out.Ran,
 		"staged_async: reader must ACQUIRE-and-run while writer held (coexistence)")
 
-	// Disposition: after both terminal, every active scope row releases.
+	// @deliberate: Disposition: after both terminal, every active scope row releases.
 	requireScopeRowCountEventually(t, h, "content", 0, 5*time.Second)
 
 	_ = readerNodeID
@@ -287,7 +286,7 @@ func TestWriteSemanticsBlockingAsyncSerializesReaderBehindWriter(t *testing.T) {
 	require.Equal(t, 0, activeScopeRowCount(t, h, "content"),
 		"precondition: no scope holders before any RunNode")
 
-	// Launch the writer; it Opens the rw claim (active row #1) and blocks in
+	// @deliberate: Launch the writer; it Opens the rw claim (active row #1) and blocks in
 	// the barrier executor.
 	writer := make(chan runResult, 1)
 	go func() {
@@ -299,7 +298,7 @@ func TestWriteSemanticsBlockingAsyncSerializesReaderBehindWriter(t *testing.T) {
 	require.Equal(t, 1, activeScopeRowCount(t, h, "content"),
 		"writer parked mid-flight: exactly one active claim_scope row")
 
-	// While the writer holds, the reader's full RunNode cycle must BAIL:
+	// @constraint: While the writer holds, the reader's full RunNode cycle must BAIL:
 	// the candidate is selected and the dispatch row claimed, but
 	// evaluateClaimScopeConflict sees the active rw holder and ModeCoexists
 	// returns false (sync block) → the per-candidate tx rolls back. RunNode
@@ -309,24 +308,24 @@ func TestWriteSemanticsBlockingAsyncSerializesReaderBehindWriter(t *testing.T) {
 	require.False(t, rGated.out.Ran,
 		"blocking_async SERIALIZATION: reader must BAIL (Ran=false) while writer holds the same claim-scope")
 
-	// Serialization observable: still exactly one active row (the writer's);
+	// @constraint: serialization observable: still exactly one active row (the writer's);
 	// the reader's bail left nothing behind.
 	require.Equal(t, 1, activeScopeRowCount(t, h, "content"),
 		"after the reader bails, still exactly one active claim_scope row (writer)")
 
-	// The reader's dispatch row must remain pending+unclaimed (the bail
+	// @constraint: The reader's dispatch row must remain pending+unclaimed (the bail
 	// rolled back the dispatch claim), so it is re-acquirable once the
 	// writer releases.
 	requireDispatchPending(t, h, readerNodeID)
 
-	// Release the writer → it terminals → its active row releases.
+	// @constraint: Release the writer → it terminals → its active row releases.
 	barrier.freeOne()
 	rW := <-writer
 	require.NoError(t, rW.err, "writer RunNode error")
 	require.True(t, rW.out.Ran, "writer must have run")
 	requireScopeRowCountEventually(t, h, "content", 0, 5*time.Second)
 
-	// Now the scope is free: the formerly-gated reader can acquire and run.
+	// @deliberate: Now the scope is free: the formerly-gated reader can acquire and run.
 	// It enters the barrier (proving genuine acquisition, not a bail),
 	// bringing the active count back to 1 — second-after-first serialization.
 	reader := make(chan runResult, 1)

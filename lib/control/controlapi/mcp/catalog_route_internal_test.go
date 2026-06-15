@@ -50,11 +50,11 @@ func TestPickCanonicalRoute(t *testing.T) {
 		args   map[string]json.RawMessage
 		want   string
 	}{
-		// `node_list` supplies idOrKey → the by-instance collection route,
+		// @constraint: `node_list` supplies idOrKey → the by-instance collection route,
 		// NOT the shorter by-id /nodes/{id}.
 		{"node_list → by-instance collection", "node_list", nodeRoutes, withArgs("idOrKey"), "/instances/{idOrKey}/nodes"},
 		{"node_get → by-id item", "node_get", nodeRoutes, withArgs("id"), "/nodes/{id}"},
-		// message_list and message_get BOTH supply `id`; only the suffix
+		// @constraint: message_list and message_get BOTH supply `id`; only the suffix
 		// disambiguates the otherwise-equally-satisfiable routes.
 		{"message_list → instance messages", "message_list", msgRoutes, withArgs("id"), "/instances/{id}/messages"},
 		{"message_get → message item", "message_get", msgRoutes, withArgs("id"), "/messages/{id}"},
@@ -62,7 +62,7 @@ func TestPickCanonicalRoute(t *testing.T) {
 		{"instance_get → item", "instance_get", instRoutes, withArgs("idOrKey"), "/instances/{idOrKey}"},
 		{"template_list → collection", "template_list", tmplRoutes, withArgs(), "/templates"},
 		{"template_get → item", "template_get", tmplRoutes, withArgs("id"), "/templates/{id}"},
-		// /admin/ variant is dropped even though it is not the shortest.
+		// @constraint: /admin/ variant is dropped even though it is not the shortest.
 		{"node_invalidate skips admin", "node_invalidate", invalidateRoutes, withArgs("id"), "/nodes/{id}/invalidate"},
 	}
 	for _, tc := range cases {

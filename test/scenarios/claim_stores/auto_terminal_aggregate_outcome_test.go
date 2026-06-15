@@ -96,7 +96,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	require.True(t, h.WaitForNodeState(inheritor.ID, cascade.NodeStateFresh, 15*time.Second),
 		"inheritor did not reach fresh")
 
-	// Collect store verb counts. Auto-terminal must fire exactly
+	// @constraint: Collect store verb counts. Auto-terminal must fire exactly
 	// one Commit (aggregate-completed). Abandon must not fire.
 	deadline := time.Now().Add(2 * time.Second)
 	var commitCount, abandonCount int
@@ -120,7 +120,7 @@ func TestAutoTerminalAggregateCommitEndToEnd(t *testing.T) {
 	require.Equal(t, 0, abandonCount,
 		"aggregate-completed must NOT route to Abandon")
 
-	// Post-Stage-3 of the claim-handle state-column refactor: auto-
+	// @deliberate: Post-Stage-3 of the claim-handle state-column refactor: auto-
 	// terminal Promote-not-delete. Assert lock-holder rows are in a
 	// terminal state (state='committed') rather than deleted; the
 	// retention sweep will reap them at cutoff.

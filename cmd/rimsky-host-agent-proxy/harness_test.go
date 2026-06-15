@@ -78,18 +78,19 @@ func newProxyTestServer(t *testing.T, fetch instanceFetcher) *proxyTestServer {
 // (executor streams multiple events; claim-producer is unary, one frame).
 type dispatchHandler func(protocol string, payload []byte) [][]byte
 
-// fakeAgent drives the agent side of HostAgent.Connect in-process.
+// fakeAgent drives the agent side of HostAgent.Connect in-process. The
+// boolean script flags steer how the agent responds to relayed frames.
 type fakeAgent struct {
 	stream genv1.HostAgent_ConnectClient
 
 	mu          sync.Mutex
-	spawnFail   bool          // when true, answer Spawn with FAILED
-	spawnDelay  time.Duration // delay before answering Spawn (for timeout tests)
-	dropOnFirst bool          // when true, close the stream on the first DispatchFrame (mid-dispatch disconnect)
-	stallData   bool          // when true, never answer DATA frames (so a CANCEL can race in)
+	spawnFail   bool          // @constraint: when true, answer Spawn with FAILED
+	spawnDelay  time.Duration // @constraint: delay before answering Spawn (for timeout tests)
+	dropOnFirst bool          // @constraint: when true, close the stream on the first DispatchFrame (mid-dispatch disconnect)
+	stallData   bool          // @constraint: when true, never answer DATA frames so a CANCEL can race in
 	handler     dispatchHandler
-	reaped      chan string // spawn-ids reaped, for assertions
-	canceled    chan string // stream-ids the proxy sent a CANCEL frame for
+	reaped      chan string // @constraint: spawn-ids reaped, surfaced to assertions
+	canceled    chan string // @constraint: stream-ids canceled, surfaced to assertions
 }
 
 // connectFakeAgent registers a fakeAgent for apiKey and starts its
@@ -117,7 +118,7 @@ func connectFakeAgent(t *testing.T, ts *proxyTestServer, apiKey, localBase strin
 	fa := &fakeAgent{stream: stream, handler: handler, reaped: make(chan string, 8), canceled: make(chan string, 8)}
 	go fa.loop(t)
 
-	// Wait until the proxy has the agent registered.
+	// @deliberate: Wait until the proxy has the agent registered.
 	waitFor(t, func() bool { _, ok := ts.state.lookupAgent(apiKey); return ok })
 	return fa
 }
@@ -139,7 +140,7 @@ func (fa *fakeAgent) loop(t *testing.T) {
 			fa.handleSpawn(body.Spawn)
 		case *genv1.ServerFrame_DispatchFrame:
 			if fa.handleDispatch(body.DispatchFrame) {
-				return // dropped the stream
+				return
 			}
 		case *genv1.ServerFrame_Reap:
 			fa.mu.Lock()
@@ -176,8 +177,8 @@ func (fa *fakeAgent) handleSpawn(sp *genv1.Spawn) {
 // response back on the same stream-id. Returns true if it dropped the
 // stream (mid-dispatch disconnect script).
 func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
-	// An inbound CANCEL frame is the proxy relaying a supervisor-side
-	// cancellation; capture it for assertions and do not reply.
+	// @constraint: an inbound CANCEL frame is the proxy relaying a
+	// supervisor-side cancellation; capture it for assertions and do not reply.
 	if df.GetKind() == genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
 		select {
 		case fa.canceled <- df.GetStreamId():
@@ -195,8 +196,9 @@ func (fa *fakeAgent) handleDispatch(df *genv1.DispatchFrame) bool {
 		return true
 	}
 	if stall {
-		// Never answer the DATA frame: the dispatch hangs so the supervisor
-		// can cancel it and we can observe the resulting CANCEL frame.
+		// @deliberate: never answer the DATA frame; the dispatch hangs
+		// so the supervisor can cancel it and we can observe the
+		// resulting CANCEL frame.
 		return false
 	}
 	if handler == nil {

@@ -40,7 +40,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	t.Cleanup(teardown)
 	ctx := context.Background()
 
-	// Seed a deployed template + instance so the FK chain on the
+	// @constraint: seed a deployed template + instance so the FK chain on the
 	// lineage rows is satisfiable. The runtime path doesn't read
 	// `rimsky_lineage.instance_id` for the descendant walker, but the
 	// row's NOT NULL constraint requires a real instance row.
@@ -59,15 +59,15 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	instUUID, err := uuid.Parse(instID)
 	require.NoError(t, err)
 
-	// Re-use the instance's seeded frame so the lineage rows FK against
-	// a real frame_id.
+	// @constraint: re-use the instance's seeded frame so the lineage rows FK
+	// against a real frame_id.
 	var frameID uuid.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, shared.UUID(instUUID), tx)
 		if err != nil || len(nodes) == 0 {
 			return err
 		}
-		// Any seeded frame for this instance works.
+		// @constraint: any seeded frame for this instance works.
 		fid, err := h.persist.Frames().EnqueueSerialFrame(ctx, shared.UUID(instUUID), nodes[0].ID, 600000, tx)
 		if err != nil {
 			return err
@@ -77,7 +77,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	}))
 	require.NotEqual(t, uuid.Nil, frameID)
 
-	// Build the chain. Root has no parent; child1 → root; grandchild1 → child1.
+	// @constraint: build the chain. Root has no parent; child1 → root; grandchild1 → child1.
 	rootRunID := uuid.New()
 	child1RunID := uuid.New()
 	grandchild1RunID := uuid.New()
@@ -111,14 +111,14 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	insertLeafRun(t, child1RunID, rootRunID, base.Add(1*time.Second))
 	insertLeafRun(t, grandchild1RunID, child1RunID, base.Add(2*time.Second))
 
-	// Walk descendants depth=2 from root.
+	// @constraint: walk descendants depth=2 from root.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=2", rootRunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.EqualValues(t, 2, out["depth"])
 	descendants, _ := out["descendants"].([]any)
 	require.Len(t, descendants, 2, "expected child1 + grandchild1 in the descendant set")
 
-	// Verify child1 + grandchild1 are present (order is observed_at ASC
+	// @constraint: verify child1 + grandchild1 are present (order is observed_at ASC
 	// per the per-frontier query, but the handler does BFS so the
 	// guarantee is set-membership, not ordering).
 	gotIDs := make(map[string]bool, len(descendants))
@@ -134,7 +134,7 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 	require.True(t, gotIDs[grandchild1RunID.String()], "grandchild1 missing from descendants: %v", gotIDs)
 	require.False(t, gotIDs[rootRunID.String()], "root must not appear in its own descendants set")
 
-	// Bonus: depth=1 must surface only child1.
+	// @constraint: bonus: depth=1 must surface only child1.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/descendants?depth=1", rootRunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	descendants, _ = out["descendants"].([]any)
@@ -183,7 +183,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	}))
 	require.NotEqual(t, uuid.Nil, frameID)
 
-	// Build the chain. Root has no substitution_refs; child1 cites root;
+	// @constraint: build the chain. Root has no substitution_refs; child1 cites root;
 	// grandchild1 cites child1. (The walker queries from grandchild1
 	// toward root, so refs point upstream.)
 	rootRunID := uuid.New()
@@ -199,7 +199,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 			"settling_signal_type": "terminal/success",
 		}
 		if parentRunID != uuid.Nil {
-			// Cite the upstream run as a substitution_ref so the
+			// @constraint: cite the upstream run as a substitution_ref so the
 			// ancestor walker can follow the chain.
 			rec["substitution_refs"] = []map[string]any{
 				{
@@ -226,7 +226,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	insertLeafRun(t, child1RunID, rootRunID, base.Add(1*time.Second))
 	insertLeafRun(t, grandchild1RunID, child1RunID, base.Add(2*time.Second))
 
-	// Walk ancestors depth=2 from grandchild1.
+	// @constraint: walk ancestors depth=2 from grandchild1.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=2", grandchild1RunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.EqualValues(t, 2, out["depth"])
@@ -246,7 +246,7 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 	require.True(t, gotIDs[rootRunID.String()], "root missing from ancestors: %v", gotIDs)
 	require.False(t, gotIDs[grandchild1RunID.String()], "seed (grandchild1) must not appear in its own ancestors set")
 
-	// Bonus: depth=1 must surface only child1.
+	// @constraint: bonus: depth=1 must surface only child1.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/lineage/runs/%s/ancestors?depth=1", grandchild1RunID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	ancestors, _ = out["ancestors"].([]any)
@@ -267,7 +267,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	t.Cleanup(teardown)
 	ctx := context.Background()
 
-	// Seed a deployed template + instance so the lineage rows' instance_id
+	// @constraint: seed a deployed template + instance so the lineage rows' instance_id
 	// FK is satisfiable.
 	tplBody := validTemplateBody("lin-prune-" + uuid.NewString())
 	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
@@ -301,7 +301,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 
 	insertLeafRun := func(t *testing.T, observedAt time.Time) {
 		t.Helper()
-		// A random run_id with no matching rimsky_node_runs row, so the
+		// @constraint: A random run_id with no matching rimsky_node_runs row, so the
 		// prune predicate's NOT EXISTS(run) half is satisfied.
 		rec := map[string]any{
 			"run_id":               uuid.NewString(),
@@ -327,7 +327,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	cutoff := now.Add(-1 * time.Hour)
 	before := cutoff.Format(time.RFC3339)
 
-	// Three prunable rows (older than cutoff, no live run) + one too-recent
+	// @constraint: three prunable rows (older than cutoff, no live run) + one too-recent
 	// row (must be spared by both dry-run count and live delete).
 	insertLeafRun(t, now.Add(-4*time.Hour))
 	insertLeafRun(t, now.Add(-3*time.Hour))
@@ -342,7 +342,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	}
 	handler := handleLineagePrune(deps)
 
-	// Dry-run: mode set on the context (no gateByAction in this harness).
+	// @constraint: dry-run: mode set on the context (no gateByAction in this harness).
 	dryReq := httptest.NewRequest(http.MethodPost, "/v1/admin/lineage/prune",
 		strings.NewReader(`{"before":"`+before+`"}`))
 	dryReq = dryReq.WithContext(context.WithValue(dryReq.Context(), ctxKeyMode{}, auth.ModeDryRun))
@@ -362,7 +362,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	require.Equal(t, before, dryBody.WouldHavePruned.Before)
 	require.Equal(t, wantPrunable, dryBody.WouldHavePruned.Count, "dry-run count must equal the prunable rows")
 
-	// Live delete with the SAME cutoff (default mode = execute).
+	// @constraint: live delete with the SAME cutoff (default mode = execute).
 	liveReq := httptest.NewRequest(http.MethodPost, "/v1/admin/lineage/prune",
 		strings.NewReader(`{"before":"`+before+`"}`))
 	liveRec := httptest.NewRecorder()
@@ -376,7 +376,7 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 	require.NoError(t, json.Unmarshal(liveRec.Body.Bytes(), &liveBody))
 	require.Equal(t, before, liveBody.Before)
 
-	// The contract: dry-run count == live deleted for the same cutoff.
+	// @constraint: the contract: dry-run count == live deleted for the same cutoff.
 	require.Equal(t, dryBody.WouldHavePruned.Count, liveBody.Deleted,
 		"dry-run preview must equal the live delete count")
 }
@@ -465,11 +465,11 @@ func TestLineageEndpoints_RunReturnsMostRecent(t *testing.T) {
 	require.Equal(t, runID.String(), record["run_id"])
 	require.EqualValues(t, 2, record["attempt"], "GET /lineage/runs returns the most recent (observed_at ASC, last) record")
 
-	// Unknown run → 404.
+	// @constraint: unknown run → 404.
 	status, _ = h.httpJSON(t, "GET", "/v1/lineage/runs/"+uuid.NewString(), nil)
 	require.Equal(t, http.StatusNotFound, status)
 
-	// Malformed run id → 400.
+	// @constraint: malformed run id → 400.
 	status, _ = h.httpJSON(t, "GET", "/v1/lineage/runs/not-a-uuid", nil)
 	require.Equal(t, http.StatusBadRequest, status)
 }
@@ -515,7 +515,7 @@ func TestLineageEndpoints_ClaimAncestorsWalksSubClaimChain(t *testing.T) {
 	subB := uuid.New()
 	base := time.Now().UTC()
 
-	// Parent cites two sub-claims; each sub-claim has its own terminal row.
+	// @constraint: parent cites two sub-claims; each sub-claim has its own terminal row.
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
 		map[string]any{
 			"claim_handle_id":      parentClaim.String(),
@@ -530,7 +530,7 @@ func TestLineageEndpoints_ClaimAncestorsWalksSubClaimChain(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	ancestors, _ := out["ancestors"].([]any)
 
-	// The walk includes the parent (level 0) plus both sub-claims (level 1).
+	// @constraint: the walk includes the parent (level 0) plus both sub-claims (level 1).
 	gotClaims := map[string]bool{}
 	for _, a := range ancestors {
 		item := a.(map[string]any)
@@ -564,7 +564,7 @@ func TestLineageEndpoints_BySourceReverseLookup(t *testing.T) {
 	decoyRun := uuid.New()
 	srcID := uuid.NewString()
 
-	// Two rows cite (run, srcID); the decoy cites a different id under the
+	// @constraint: two rows cite (run, srcID); the decoy cites a different id under the
 	// same kind, and another decoy cites the same id under a different kind.
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
 		map[string]any{
@@ -581,7 +581,7 @@ func TestLineageEndpoints_BySourceReverseLookup(t *testing.T) {
 			"run_id":            decoyRun.String(),
 			"substitution_refs": []map[string]any{{"source_kind": "run", "source_version_or_id": uuid.NewString()}},
 		}, base.Add(2*time.Second), "")
-	// Same id, different kind — must NOT match (kind AND id).
+	// @constraint: same id, different kind — must NOT match (kind AND id).
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindLeafRun,
 		map[string]any{
 			"run_id":            uuid.NewString(),
@@ -605,7 +605,7 @@ func TestLineageEndpoints_BySourceReverseLookup(t *testing.T) {
 	require.True(t, gotRuns[wantRunB.String()])
 	require.False(t, gotRuns[decoyRun.String()], "decoy (different source id) must not match")
 
-	// A source with no citing rows → empty record set, not 404.
+	// @constraint: A source with no citing rows → empty record set, not 404.
 	status, out = h.httpJSON(t, "GET", "/v1/lineage/by-source/run/"+uuid.NewString(), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ = out["records"].([]any)
@@ -624,7 +624,7 @@ func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
 	instID, frameID := seedLineageInstance(t, h, "lin-ep-byprod")
 	base := time.Now().UTC()
 
-	// Two rows from producer "alpha-store" (versions v1, v2) + a decoy from
+	// @constraint: two rows from producer "alpha-store" (versions v1, v2) + a decoy from
 	// "beta-store".
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
 		map[string]any{"claim_handle_id": uuid.NewString(), "producer_name": "alpha-store", "version_id": "v1"}, base, persistence.LineageOutcomeCommitted)
@@ -633,7 +633,7 @@ func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
 	insertLineageRow(t, h, instID, frameID, persistence.LineageRecordKindClaimTerminal,
 		map[string]any{"claim_handle_id": uuid.NewString(), "producer_name": "beta-store", "version_id": "v1"}, base.Add(2*time.Second), persistence.LineageOutcomeCommitted)
 
-	// All alpha-store rows (no version filter).
+	// @constraint: all alpha-store rows (no version filter).
 	status, out := h.httpJSON(t, "GET", "/v1/lineage/by-producer/alpha-store", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ := out["records"].([]any)
@@ -644,7 +644,7 @@ func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
 		require.Equal(t, "alpha-store", rec["producer_name"])
 	}
 
-	// Narrowed by version=v2 → exactly one.
+	// @constraint: narrowed by version=v2 → exactly one.
 	status, out = h.httpJSON(t, "GET", "/v1/lineage/by-producer/alpha-store?version=v2", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ = out["records"].([]any)
@@ -653,7 +653,7 @@ func TestLineageEndpoints_ByProducerReverseLookup(t *testing.T) {
 	rec, _ := item["record"].(map[string]any)
 	require.Equal(t, "v2", rec["version_id"])
 
-	// Unknown producer → empty set, not error.
+	// @constraint: unknown producer → empty set, not error.
 	status, out = h.httpJSON(t, "GET", "/v1/lineage/by-producer/ghost-store", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	records, _ = out["records"].([]any)

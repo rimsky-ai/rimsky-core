@@ -54,7 +54,7 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	tables := d.Tables()
 	rawDB := sqlitedrv.DBFromDatabase(d)
 
-	// --- Seed template → instance → run_scope ----------------------------
+	// @deliberate: Seed template → instance → run_scope
 	templateID := "sha256-" + uuid.NewString()
 	instanceID := uuid.New().String()
 	scopeID := uuid.New().String()
@@ -121,7 +121,7 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	oldFrame, oldRun := seedTerminalFrame(oldTime)
 	recentFrame, recentRun := seedTerminalFrame(now.Add(-time.Minute))
 
-	// Audit + named events, old and recent.
+	// @deliberate: Audit + named events, old and recent.
 	insertEvent := func(when time.Time) int64 {
 		res, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_events (instance_id, kind, payload, occurred_at) VALUES (?, 'work_started', '{}', ?)`,
@@ -150,7 +150,7 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	oldNodeEventID := insertNodeEvent(oldTime)
 	recentNodeEventID := insertNodeEvent(now.Add(-time.Minute))
 
-	// An old named event whose payload spilled to a backend. The sweep must
+	// @deliberate: An old named event whose payload spilled to a backend. The sweep must
 	// queue its (handle, backend) into rimsky_blob_orphans when it reaps the
 	// row — otherwise the spilled bytes leak (a durable instance never hits
 	// the instance-delete cascade that would otherwise reclaim them).
@@ -164,7 +164,7 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 		t.Fatalf("seed spilled node_event: %v", err)
 	}
 
-	// --- Sweep with ONLY TraceTrailing set (RecentFramesKept unset) ------
+	// @deliberate: Sweep with ONLY TraceTrailing set (RecentFramesKept unset)
 	// A 1h window puts the cutoff between the old rows (-24h) and the
 	// recent rows (-1m). With RecentFramesKept defaulting to 0, only the
 	// time dimension drives the reap.

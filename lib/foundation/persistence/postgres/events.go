@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// EventTable — port of rimsky/src/storage/postgres/event-store.ts.
-//
-// The append-only event log. Tail/list use a (occurred_at, id) cursor
-// encoded as base64 JSON so clients can't naively trust the value but do
-// get stable pagination under concurrent writes.
 package postgres
 
 import (
@@ -85,10 +80,11 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 	if len(filter.KindIn) > 0 {
 		kindInArg = filter.KindIn
 	}
-	// Auth-payload filters. Each is a NULL-tolerant predicate ($N IS NULL
-	// → no-op) so a nil pointer never excludes a row. response_status is
-	// stored as a JSON number; payload->>'response_status' renders it as
-	// text, so we compare against the int cast to text.
+	// @constraint: auth-payload filters are NULL-tolerant predicates
+	// ($N IS NULL → no-op) so a nil pointer never excludes a row.
+	// response_status is stored as a JSON number;
+	// payload->>'response_status' renders it as text, so we compare
+	// against the int cast to text.
 	var respStatusArg any
 	if filter.ResponseStatus != nil {
 		respStatusArg = strconv.Itoa(*filter.ResponseStatus)
@@ -141,11 +137,10 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		if err := rows.Scan(&eventID, &instanceID, &nodeID, &kindRaw, &payload, &occurredAt); err != nil {
 			return persistence.EventListResult{}, err
 		}
-		// Defensive parse at the unmarshal boundary (per
-		// decision:event-log-kind-enum). An unknown string is a
-		// real error — surface it, don't synthesize a Kind. The
-		// raw value lands in the logger so an operator can find
-		// the offending row.
+		// @decision: event-log-kind-enum — defensive parse at the
+		// unmarshal boundary. An unknown string is a real error —
+		// surface it, don't synthesize a Kind. The raw value lands
+		// in the logger so an operator can find the offending row.
 		k, err := events.ParseKindString(kindRaw)
 		if err != nil {
 			slog.Error("events.unknown_kind_at_unmarshal", slog.String("raw", kindRaw))
@@ -261,8 +256,6 @@ func (s *eventsImpl) DeleteOlderThan(ctx context.Context, cutoff time.Time) (int
 	return int(tag.RowsAffected()), nil
 }
 
-// ---- cursor encoding ----
-
 type eventCursor struct {
 	O time.Time `json:"o"`
 	I int64     `json:"i"`
@@ -285,8 +278,6 @@ func decodeEventCursor(s string) (time.Time, int64, error) {
 	}
 	return c.O, c.I, nil
 }
-
-// ---- argument helpers ----
 
 func instanceIDArg(p *shared.UUID) any {
 	if p == nil {

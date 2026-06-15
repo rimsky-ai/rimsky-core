@@ -23,7 +23,8 @@ type LifecycleClient struct {
 	rpc  genv1.LifecycleSubscriberClient
 }
 
-// Compile-time interface check.
+// @deliberate: compile-time interface check — fails compilation when
+// *LifecycleClient no longer satisfies locks.LifecycleSubscriber.
 var _ locks.LifecycleSubscriber = (*LifecycleClient)(nil)
 
 // Name returns the operator-configured peer name.

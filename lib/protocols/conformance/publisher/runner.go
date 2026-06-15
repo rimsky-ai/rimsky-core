@@ -190,7 +190,7 @@ func checkMessagePush(c genv1.PublisherClient, opts RunOpts) CheckResult {
 				opts.MessageTimeout, opts.InstanceID),
 		}
 	}
-	_ = c // arrival is enough; client unused beyond lifetime tracking
+	_ = c // @constraint: arrival is enough; client unused beyond lifetime tracking
 	return CheckResult{Name: "MessagePush"}
 }
 

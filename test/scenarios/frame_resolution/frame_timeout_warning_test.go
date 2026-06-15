@@ -33,7 +33,7 @@ import (
 
 func TestFrameTimeoutWarning(t *testing.T) {
 	t.Parallel()
-	// NoSupervisor: true — this test pre-arranges the wedged frame
+	// @deliberate: NoSupervisor: true — this test pre-arranges the wedged frame
 	// state via direct DELETEs against rimsky_node_runs /
 	// rimsky_claim_handles / rimsky_frames and then drives
 	// frame.RunTick manually. A live supervisor poll-loop holds row
@@ -57,14 +57,14 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Drop any auto-created frame for this instance so we have full control.
+	// @deliberate: Drop any auto-created frame for this instance so we have full control.
 	// Post-stage-3 cutover: state lives on rimsky_node_runs; deleting
 	// the in-flight run rows + clearing the node-row frame_id resets.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
-	// Insert a wedged frame: last_progress_at 2 minutes ago (past the 60s
+	// @deliberate: Insert a wedged frame: last_progress_at 2 minutes ago (past the 60s
 	// timeout), state=running, no claimed dispatches, but the source node
 	// is stale with the frame_id.
 	//
@@ -77,7 +77,7 @@ func TestFrameTimeoutWarning(t *testing.T) {
 		RETURNING frame_id
 	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
 
-	// Mark the source node stale by binding rimsky_nodes.frame_id + an
+	// @deliberate: Mark the source node stale by binding rimsky_nodes.frame_id + an
 	// in-flight pending stale run row (post-stage-3: state lives on
 	// the run row).
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
@@ -89,28 +89,27 @@ func TestFrameTimeoutWarning(t *testing.T) {
 		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
 	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 
-	// Capture log output via a buffer-backed slog handler.
+	// @deliberate: Capture log output via a buffer-backed slog handler.
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Drive the frame engine.
+	// @deliberate: Drive the frame engine.
 	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), logger))
 
-	// Warning fires; references the frame_id.
 	logged := buf.String()
 	require.Contains(t, logged, "frame.stuck.observed",
 		"expected stuck-frame observation; got logger output: %q", logged)
 	require.True(t, strings.Contains(logged, frameID.String()),
 		"warning should mention frame_id %s; got %q", frameID.String(), logged)
 
-	// Frame stays running — observation is non-destructive.
+	// @deliberate: Frame stays running — observation is non-destructive.
 	var state string
 	h.QueryRowSQL(`SELECT state FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{frameID}, &state)
 	require.Equal(t, "running", state,
 		"stuck-frame warning must not transition the frame to terminal")
 
-	// Wedged node keeps its state (post-stage-3: read from the in-flight run row).
+	// @deliberate: Wedged node keeps its state (post-stage-3: read from the in-flight run row).
 	var nodeState string
 	h.QueryRowSQL(
 		`SELECT COALESCE(r.state, 'fresh')
@@ -123,7 +122,7 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	require.Equal(t, "stale", nodeState,
 		"warning must not mutate node state")
 
-	// Instance terminated_at must be NULL — warning never terminates.
+	// @deliberate: Instance terminated_at must be NULL — warning never terminates.
 	var terminatedAt *time.Time
 	h.QueryRowSQL(
 		`SELECT terminated_at FROM rimsky_instances WHERE id = $1`,

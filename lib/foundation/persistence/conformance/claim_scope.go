@@ -2,9 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// claim_scope.go — ClaimScopeByteEquality conformance area.
-//
-// Inv 14: claim-scope conflict is byte-equal.
+// @constraint: Inv 14 (ClaimScopeByteEquality) — claim-scope conflict is byte-equal.
 //
 // Per spec §7.7 the store canonicalises claim-scope bytes before handing
 // them to rimsky, so two claim-scopes that should conflict produce byte-equal
@@ -98,11 +96,10 @@ func testClaimScopeByteEquality(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// Two byte-equal scopes: both rows land successfully (the
-	// rimsky_claim_handles table doesn't unique-constrain scope; the
-	// supervisor's in-go conflict predicate is what catches the conflict).
-	// We verify that ListByProducerClaimScope returns both, and that the rows'
-	// scope_data bytes round-trip equal.
+	// @constraint: rimsky_claim_handles does not unique-constrain scope; the
+	// supervisor's in-go conflict predicate is what catches scope conflicts,
+	// so two byte-equal scope inserts must both land and ListByProducerClaimScope
+	// must return both with byte-equal scope_data.
 	insert(t, scopeA)
 	insert(t, scopeA)
 
@@ -117,8 +114,8 @@ func testClaimScopeByteEquality(t *testing.T, d persistence.Database) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 scope rows, got %d", len(rows))
 	}
-	// Both stored rows must be byte-equal to each other (the store
-	// canonicalisation guarantee), and semantically equal to scopeA.
+	// @constraint: store canonicalisation guarantees byte-equal scopes round-trip
+	// byte-equal across drivers, and the stored bytes stay semantically equal to the input.
 	if string(rows[0].ClaimScopeData) != string(rows[1].ClaimScopeData) {
 		t.Fatalf("byte-equal claim-scopes did not round-trip equal:\n  %q\n  %q",
 			string(rows[0].ClaimScopeData), string(rows[1].ClaimScopeData))
@@ -128,8 +125,6 @@ func testClaimScopeByteEquality(t *testing.T, d persistence.Database) {
 			string(rows[0].ClaimScopeData), string(scopeA))
 	}
 
-	// Insert a byte-different scope; rows for the store now: 3, with the
-	// new one not byte-equal to either of the others.
 	insert(t, scopeB)
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

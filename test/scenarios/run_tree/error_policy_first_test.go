@@ -53,7 +53,6 @@ func TestErrorPolicyFirst_AllFailedFails(t *testing.T) {
 
 func TestErrorPolicyFirst_OneRunningHoldsTerminalUnlessWinner(t *testing.T) {
 	t.Parallel()
-	// One failed, one running, none succeeded: parent stays non-terminal.
 	children := []runtime.ChildState{
 		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 		{State: cascade.NodeStateRunning},

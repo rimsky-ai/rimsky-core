@@ -38,7 +38,6 @@ func runCancel(parentCtx context.Context, env conformance.Env) error {
 		return fmt.Errorf("execute: %w", err)
 	}
 
-	// Schedule cancel after 200ms.
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		cancel()

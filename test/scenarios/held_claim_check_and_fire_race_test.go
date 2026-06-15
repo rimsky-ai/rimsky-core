@@ -53,13 +53,13 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	syncCaps := claimproducer.Capabilities{
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	}
-	// Scoped-direct stub store (no pick policies): Open echoes the
+	// @deliberate: Scoped-direct stub store (no pick policies): Open echoes the
 	// selector; Commit/Abandon record into the Calls ledger the test
 	// counts.
 	endpoint, store, teardown := stubfixture.Start(t, stubstore.Config{Capabilities: syncCaps})
 	t.Cleanup(teardown)
 
-	// No scheduler / no supervisor: the test drives the check-and-fire
+	// @constraint: No scheduler / no supervisor: the test drives the check-and-fire
 	// directly so it can thread the injection hook; background sweeps
 	// must not touch the seeded rows.
 	h := scenario.Start(t, scenario.HarnessOpts{
@@ -101,7 +101,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	mainScopeID := h.GetMainRunScopeID(iid)
 	const supervisorID = "race-supervisor"
 
-	// Seed the post-terminal shape directly: both members' run rows are
+	// @deliberate: Seed the post-terminal shape directly: both members' run rows are
 	// already terminal, both claim-holders rows are 'completed', the
 	// claim-handle row is still active and owned. This is exactly the
 	// state the LAST terminating member's release tx observes when it
@@ -147,7 +147,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		SupervisorID:  supervisorID,
 	}
 
-	// Contender B: same check-and-fire, no hook. Launched from inside
+	// @deliberate: Contender B: same check-and-fire, no hook. Launched from inside
 	// contender A's check→fire window.
 	var (
 		bErr      error
@@ -162,7 +162,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		})
 	}
 
-	// waitForBlockedContender polls pg_stat_activity until a backend in
+	// @deliberate: waitForBlockedContender polls pg_stat_activity until a backend in
 	// this database is lock-waiting on the claim-handle FOR UPDATE read.
 	// That observation is what makes the interleaving deterministic: B's
 	// check has STARTED (it reached LockForUpdate) while A holds the row
@@ -189,7 +189,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 		hookFired = true
 		startB.Do(func() {
 			go runB()
-			// Join B's goroutine even when an assertion below FailNows
+			// @deliberate: Join B's goroutine even when an assertion below FailNows
 			// before the inline <-bDone select — otherwise B outlives the
 			// test body and races teardown. The hook runs on the test
 			// goroutine (A's Transaction executes it synchronously), so
@@ -202,7 +202,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 			"contender B must be observably blocked on the claim-handle row lock inside A's check→fire window")
 	}
 
-	// Contender A: the first check-and-fire, paused between check and
+	// @deliberate: Contender A: the first check-and-fire, paused between check and
 	// fire by the hook.
 	require.NoError(t, h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.CheckAndFireResolution(ctx, argsA, tx, chID)
@@ -216,7 +216,6 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	}
 	require.NoError(t, bErr, "the losing contender must no-op cleanly, not error")
 
-	// The producer verb fired exactly once.
 	commits := 0
 	for _, c := range store.Calls() {
 		switch c.Verb {
@@ -229,7 +228,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	require.Equal(t, 1, commits,
 		"the aggregate check-and-fire must fire the producer verb exactly once under racing finals")
 
-	// The claim-handle row resolved exactly once: promoted to
+	// @deliberate: The claim-handle row resolved exactly once: promoted to
 	// 'committed' (the Promote nulls the holder per the CHECK pair), not
 	// deleted, not double-transitioned.
 	var rowCount int
@@ -242,7 +241,7 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 	require.Equal(t, "committed", state, "the row must be promoted to committed exactly once")
 	require.Nil(t, holder, "Promote must null the holder (absence guard for later sweeps)")
 
-	// Exactly one claim_resolution.commit forensics event — a second
+	// @deliberate: Exactly one claim_resolution.commit forensics event — a second
 	// fire would have emitted a duplicate.
 	var resolutionEvents int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

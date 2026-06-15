@@ -74,7 +74,7 @@ import (
 func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Stub mirrors `tag` (and any other operator-set attribute) back as a
+	// @deliberate: Stub mirrors `tag` (and any other operator-set attribute) back as a
 	// no-op — we only need the Observed entry to confirm the overlay
 	// reached the executor's ExecuteRequest.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "debugger-walkthrough")
@@ -97,15 +97,15 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 
 	iid := createInstanceWithPause(t, h, tid, "ck-debugger-lifecycle", map[string]any{})
 
-	// (1) Install a pause-mode breakpoint via the live POST route.
+	// @constraint: (1) Install a pause-mode breakpoint via the live POST route.
 	bpID := breakpointCreate(t, h, iid, map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "worker"},
-		// mode omitted → defaults to "pause" per spec §4.1; that's what
+		// @constraint: mode omitted → defaults to "pause" per spec §4.1; that's what
 		// the STORY's "resume" leg requires (notify_only would not park).
 	})
 
-	// (2) List active breakpoints via GET — the just-installed row shows.
+	// @constraint: (2) List active breakpoints via GET — the just-installed row shows.
 	listURL := h.ControlBase + fmt.Sprintf("/v1/instances/%s/breakpoints", iid.String())
 	listed := listBreakpoints(t, listURL)
 	require.Len(t, listed, 1,
@@ -117,18 +117,18 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	require.Equal(t, "pause", listed[0]["mode"],
 		"absent `mode` defaults to pause; the list surface must reflect that")
 
-	// Resume the instance — supervisor begins dispatching, hits the
+	// @deliberate: Resume the instance — supervisor begins dispatching, hits the
 	// checkpoint on the worker, parks the dispatch, and writes a hit row.
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
 
-	// Block until the supervisor records the hit (via the persistence
+	// @deliberate: Block until the supervisor records the hit (via the persistence
 	// helper that opens its own tx — proves the row is committed).
 	hit := waitForHitOnBreakpoint(t, h, bpID, 15*time.Second)
 	require.Equal(t, bpID, hit.BreakpointID)
 	require.Equal(t, "before_dispatch", string(hit.Checkpoint))
 
-	// (4) Co-transactional dual-surface read.
+	// @constraint: (4) Co-transactional dual-surface read.
 	//
 	// First: poll the unified `/v1/events?kind=breakpoint.hit` HTTP feed
 	// until the row appears. Without the co-transactional append, this
@@ -143,7 +143,7 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	require.Equal(t, bpID.String(), asString(payload["breakpoint_id"]),
 		"the unified-feed event must reference the installed breakpoint_id")
 
-	// Second: poll the dedicated `/v1/instances/{id}/breakpoint-hits`
+	// @deliberate: Second: poll the dedicated `/v1/instances/{id}/breakpoint-hits`
 	// HTTP feed for the same row. This is the operator's debugger
 	// ledger surface (the MCP `breakpoint-hits` resource also reads
 	// through this route).
@@ -156,7 +156,7 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	require.Equal(t, bpID.String(), hitRows[0]["breakpoint_id"],
 		"the breakpoint-hits ledger row must reference the same breakpoint_id")
 
-	// Third — the load-bearing co-transactional check.
+	// @deliberate: Third — the load-bearing co-transactional check.
 	//
 	// A non-co-transactional event-append (separate tx, async, or
 	// best-effort) could in principle let either surface lag the other.
@@ -194,7 +194,7 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 		"breakpoint.hit event-row count must equal the breakpoint_hits ledger row count "+
 			"— the event is co-transactional with the hit, never lagging or orphaned")
 
-	// (5) Resume with overlay — drives the supervisor's deep-merge into
+	// @deliberate: (5) Resume with overlay — drives the supervisor's deep-merge into
 	// the dispatched attribute bag. The overlay sets `tag`; the bag
 	// merge happens inside runtime/breakpoint_eval.go, and the resulting
 	// bag flows through to the executor's ExecuteRequest.
@@ -207,7 +207,7 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	require.Equal(t, true, resumeOut["first_resume"],
 		"the resume response must mark this as the first resume of the hit")
 
-	// The post-merge L6 overlay must land on the executor's
+	// @constraint: The post-merge L6 overlay must land on the executor's
 	// ExecuteRequest.attributes bag.
 	require.True(t, waitForStubObservedCount(h, "worker", 1, 15*time.Second),
 		"stub must observe the worker dispatch after the resume releases the parked frame")
@@ -223,7 +223,7 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 	require.Equal(t, "operator-overlay-value", seenTag,
 		"executor's ExecuteRequest.attributes must carry the overlay merged into the dispatched bag")
 
-	// (5b) The STORY's "observable via GET /v1/nodes/{id} latest-attribute
+	// @constraint: (5b) The STORY's "observable via GET /v1/nodes/{id} latest-attribute
 	// surface" leg. After the dispatch terminates, the post-run
 	// resolved attribute bag is persisted as the node's latest-attribute
 	// snapshot. The GET /v1/nodes/{id} read must mirror the overlaid
@@ -241,18 +241,18 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 		"GET /v1/nodes/{id} latest_attributes must reflect the overlay applied by the resume "+
 			"— this is the operator-visible proof that the next dispatch carried the overlay")
 
-	// (6) Delete the breakpoint. The FK ON DELETE CASCADE on
+	// @deliberate: (6) Delete the breakpoint. The FK ON DELETE CASCADE on
 	// rimsky_breakpoint_hits.breakpoint_id removes the hit row as well;
 	// the STORY's Falsifier ("deletion leaves orphaned hits") is the
 	// exact opposite of this assertion.
 	breakpointDelete(t, h, iid, bpID)
 
-	// The breakpoint must be gone from the LIST surface.
+	// @constraint: The breakpoint must be gone from the LIST surface.
 	listed = listBreakpoints(t, listURL)
 	require.Empty(t, listed,
 		"after DELETE the breakpoint must no longer surface on /v1/instances/{id}/breakpoints")
 
-	// The hit must be gone from the dedicated ledger surface (cascade).
+	// @constraint: The hit must be gone from the dedicated ledger surface (cascade).
 	// We poll briefly because the supervisor's resume path may still
 	// be retiring the hit row asynchronously; the cascade-delete itself
 	// is synchronous with the DELETE request, but the resume path's own
@@ -264,7 +264,7 @@ func TestBreakpointDebuggerLifecycleE2E(t *testing.T) {
 		"after DELETE the breakpoint-hits ledger surface must be empty — "+
 			"no orphan hit rows referencing the deleted breakpoint")
 
-	// And from persistence directly (the load-bearing cascade property).
+	// @constraint: And from persistence directly (the load-bearing cascade property).
 	require.Nil(t, getHitRow(t, h, hit.ID),
 		"the persisted hit row must be cascade-deleted along with its parent breakpoint")
 }
@@ -356,6 +356,6 @@ func waitForLatestAttributesTag(t *testing.T, url, wantTag string, timeout time.
 	return seen
 }
 
-// Compile-time guard: the shared.UUID alias referenced above is not
+// @deliberate: Compile-time guard: the shared.UUID alias referenced above is not
 // silently dropped by future renames.
 var _ shared.UUID

@@ -73,11 +73,9 @@ func TestEvaluate(t *testing.T) {
 				"limits":  map[string]any{"silence_timeout_ms": float64(60000)},
 			},
 		}}
-		// Single primitive at depth 2.
 		if !Evaluate(Matcher{"attrs": map[string]any{"cli.profile": "fast"}}, ctx, silent, 0) {
 			t.Fatal("attrs.cli.profile match should fire")
 		}
-		// Nested numeric at depth 3.
 		if !Evaluate(Matcher{"attrs": map[string]any{"cli.limits.silence_timeout_ms": float64(60000)}}, ctx, silent, 0) {
 			t.Fatal("attrs.cli.limits.silence_timeout_ms match should fire")
 		}
@@ -88,7 +86,6 @@ func TestEvaluate(t *testing.T) {
 		if Evaluate(Matcher{"attrs": map[string]any{"cli.missing": "x"}}, ctx, silent, 0) {
 			t.Fatal("missing-path matcher should not fire")
 		}
-		// Walk through a non-map intermediate.
 		if Evaluate(Matcher{"attrs": map[string]any{"cli.profile.unreachable": "x"}}, ctx, silent, 0) {
 			t.Fatal("walk through non-map intermediate should not fire")
 		}
@@ -96,11 +93,9 @@ func TestEvaluate(t *testing.T) {
 
 	t.Run("AND across multiple keys", func(t *testing.T) {
 		ctx := Context{NodeType: "n", Executor: "x", Graph: "main"}
-		// All present and matching.
 		if !Evaluate(Matcher{"node_type": "n", "executor": "x", "graph": "main"}, ctx, silent, 0) {
 			t.Fatal("all-keys-match should fire")
 		}
-		// One key mismatches — entire matcher fails.
 		if Evaluate(Matcher{"node_type": "n", "executor": "x", "graph": "sub"}, ctx, silent, 0) {
 			t.Fatal("one-key-mismatch should not fire")
 		}
@@ -129,7 +124,6 @@ func TestEvaluate(t *testing.T) {
 	})
 
 	t.Run("nil logger does not panic on unknown key skip", func(t *testing.T) {
-		// Bare assertion: no panic + return value is false.
 		if Evaluate(Matcher{"bogus_key": "x"}, Context{}, nil, 0) {
 			t.Fatal("matcher with unknown key must not fire")
 		}
@@ -137,7 +131,6 @@ func TestEvaluate(t *testing.T) {
 
 	t.Run("primitive equality coerces across number kinds", func(t *testing.T) {
 		ctx := Context{AttributeBag: map[string]any{"n": int(42)}}
-		// float64 want vs int got
 		if !Evaluate(Matcher{"attrs": map[string]any{"n": float64(42)}}, ctx, silent, 0) {
 			t.Fatal("int(42) should equal float64(42)")
 		}

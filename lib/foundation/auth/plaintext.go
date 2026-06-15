@@ -26,15 +26,16 @@ import (
 )
 
 const (
-	// Prefix on every plaintext API key. Stable; do not change.
+	// @constraint: prefix is the stable prefix on every plaintext API
+	// key; changing it would break already-issued keys.
 	Prefix = "rk_"
 
-	// EntropyBytes is the size of the random suffix in bytes before
-	// base64url encoding. 33 bytes → 44 base64url chars; total token
+	// @constraint: EntropyBytes is the random-suffix size in bytes before
+	// base64url encoding; 33 bytes → 44 base64url chars; total token
 	// length is len(Prefix) + 44 = 47.
 	EntropyBytes = 33
 
-	// HashSize is the SHA-256 digest size (32 bytes).
+	// @constraint: HashSize is the SHA-256 digest size (32 bytes).
 	HashSize = sha256.Size
 )
 

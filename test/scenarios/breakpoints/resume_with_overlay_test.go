@@ -34,7 +34,7 @@ import (
 func TestResumeWithOverlay(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Stub mirrors the input bag back as a no-op; we only need the
+	// @deliberate: Stub mirrors the input bag back as a no-op; we only need the
 	// Observed entry for the assertion. `ok` is the writeback slot the
 	// stub fills; `tag` is the operator-visible field the overlay sets.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "overlay-applied")
@@ -65,7 +65,7 @@ func TestResumeWithOverlay(t *testing.T) {
 
 	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
 
-	// Resume WITH overlay that injects `tag` into the bag. The bag is
+	// @deliberate: Resume WITH overlay that injects `tag` into the bag. The bag is
 	// schema-valid (additionalProperties is undefined → permissive),
 	// so the validate step inside ValidateAndPersistResume passes.
 	status, out := breakpointResume(t, h, iid, bpID, map[string]any{
@@ -75,13 +75,13 @@ func TestResumeWithOverlay(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, "resume should succeed: %v", out)
 	require.Equal(t, true, out["first_resume"])
 
-	// Hit row should now carry the overlay verbatim — surfaceable to a
+	// @deliberate: Hit row should now carry the overlay verbatim — surfaceable to a
 	// later operator inspecting the audit trail.
 	row := getHitRow(t, h, hit.ID)
 	require.NotNil(t, row.ResumeOverlay)
 	require.Equal(t, "overlay-value", row.ResumeOverlay["tag"])
 
-	// The dispatch should reach the executor with the overlay merged
+	// @deliberate: The dispatch should reach the executor with the overlay merged
 	// into the attribute bag. The stub records the request verbatim.
 	require.True(t, waitForStubObservedCount(h, "worker", 1, 10*time.Second),
 		"stub should observe the worker dispatch after resume")

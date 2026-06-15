@@ -83,10 +83,10 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable on the shared network before
-	// rimsky/all starts — the control-api fires a Capabilities handshake
-	// against declared executors at startup. Network first, then the
-	// executor peer, then rimsky on the baked SQLite default.
+	// @constraint: stub executor must be reachable on the shared network before
+	// rimsky/all starts — the control-api fires a Capabilities handshake against
+	// declared executors at startup. Network first, then the executor peer, then
+	// rimsky on the baked SQLite default.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -96,11 +96,11 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// A real registered+deployed template gives the foreign POST /tags a
-	// valid `template` to name. The reserved-prefix guard sits AHEAD of the
-	// template lookup, so the rejection does not depend on the template — but
-	// using a real hash keeps the request well-formed in every other respect,
-	// isolating the prefix guard as the sole cause of the 400.
+	// @deliberate: a real registered+deployed template gives the foreign POST
+	// /tags a valid `template` to name. The reserved-prefix guard sits AHEAD of
+	// the template lookup, so the rejection does not depend on the template —
+	// but using a real hash keeps the request well-formed in every other
+	// respect, isolating the prefix guard as the sole cause of the 400.
 	foreignTemplateHash := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "compose-prefix-guard-foreign",
@@ -112,7 +112,6 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 		},
 	})
 
-	// ---- (1) Foreign raw POST /tags with a compose: prefix → 400, nothing created.
 	const foreignTag = guardPrefix + "v1"
 	status, raw := ep.PostJSON(t, "/v1/tags", map[string]any{
 		"tag":      foreignTag,
@@ -125,12 +124,11 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("raw POST /tags 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
-	// The rejected create must have left no row: GET /tags omits it.
+	// @constraint: rejected create must have left no row — GET /tags omits it.
 	if tagListed(t, ep, foreignTag) {
 		t.Fatalf("after a rejected foreign POST /tags, GET /tags still lists %q — the rejected create must persist nothing", foreignTag)
 	}
 
-	// ---- (2) Foreign raw POST /instances with a compose: instance_key → 400, not created.
 	const foreignInstanceKey = guardPrefix + "i1"
 	status, raw = ep.PostJSON(t, "/v1/instances", map[string]any{
 		"template":     foreignTemplateHash,
@@ -144,17 +142,16 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("raw POST /instances 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
-	// The rejected create must have left no instance: GET /instances/{key} → 404.
+	// @constraint: rejected create must have left no instance — GET /instances/{key} returns 404.
 	if getStatus := instanceGetStatus(t, ep, foreignInstanceKey); getStatus != http.StatusNotFound {
 		t.Fatalf("after a rejected foreign POST /instances, GET /instances/%s returned %d, want 404 — the instance must not exist",
 			foreignInstanceKey, getStatus)
 	}
 
-	// ---- (3) The SAME writes through the real compose engine SUCCEED.
-	// compose.RunComposeUp stamps the trusted compose-origin marker
-	// (X-Rimsky-Compose-Origin: 1) on every write, which the server guard
-	// admits for the reserved prefix — proving the guard discriminates on
-	// origin, not on the bare prefix. The manifest declares one template
+	// @deliberate: compose.RunComposeUp stamps the trusted compose-origin
+	// marker (X-Rimsky-Compose-Origin: 1) on every write, which the server
+	// guard admits for the reserved prefix — proving the guard discriminates
+	// on origin, not on the bare prefix. The manifest declares one template
 	// (tagged so the engine produces `compose:project-alpha:gtpl@1`) and one
 	// instance (key `compose:project-alpha:ginst`).
 	manifestPath := writeGuardComposeManifest(t)
@@ -162,11 +159,12 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 		t.Fatalf("rimsky compose up exited %d (want 0) — the compose-origin write of a reserved-prefix tag/instance must be admitted by the server guard", code)
 	}
 
-	// A client identical to the engine's, for read-back assertions against
-	// the live control-api. Bare BaseURL — the control-api serves bare paths.
+	// @deliberate: client identical to the engine's, for read-back assertions
+	// against the live control-api. Bare BaseURL — the control-api serves bare
+	// paths.
 	c := cli.NewClient(ep.BaseURL)
 
-	// The compose-prefixed tag now resolves to a registered+deployed
+	// @constraint: compose-prefixed tag must resolve to a registered+deployed
 	// template — the server admitted the compose-origin reserved-prefix tag
 	// write that it rejected from the foreign client above.
 	const composeTag = guardPrefix + "gtpl@1"
@@ -178,8 +176,8 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 		t.Fatalf("compose template behind tag %q is in state %q, want deployed", composeTag, tpl.State)
 	}
 
-	// The compose-prefixed instance now exists — same discrimination, on the
-	// instance-create path.
+	// @constraint: compose-prefixed instance must exist — same discrimination,
+	// on the instance-create path.
 	const composeInstanceKey = guardPrefix + "ginst"
 	inst, err := c.GetInstance(ctx, composeInstanceKey)
 	if err != nil {
@@ -219,16 +217,16 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// Mint admin via anonymous mode (zero keys → anonymous identity is
-	// the only caller, and it holds `{"action": "*"}`). Future requests
-	// must carry a Bearer.
+	// @deliberate: mint admin via anonymous mode (zero keys → anonymous identity
+	// is the only caller, and it holds `{"action": "*"}`). Future requests must
+	// carry a Bearer.
 	adminKey := mintAPIKey(t, ep, "", "compose-guard-admin", []map[string]any{
 		{"action": "*"},
 	})
 
-	// Mint a non-admin api-key carrying ONLY the actions a `compose:`
-	// write requires — explicitly NOT `compose:origin`. This is the key
-	// whose header-stamped POST must be rejected.
+	// @constraint: non-admin api-key carries ONLY the actions a `compose:` write
+	// requires — explicitly NOT `compose:origin`. This is the key whose
+	// header-stamped POST must be rejected.
 	nonAdminKey := mintAPIKey(t, ep, adminKey, "compose-guard-nonadmin", []map[string]any{
 		{"action": "tag:create"},
 		{"action": "tag:read"},
@@ -239,7 +237,8 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 		{"action": "template:read"},
 	})
 
-	// Need a deployed template the foreign /tags POST can name.
+	// @deliberate: deployed template the foreign /tags POST can name, so the
+	// 400 is attributable to the prefix guard, not a missing template.
 	templateHash := deployScenarioTemplateAuth(t, ep, adminKey, map[string]any{
 		"spec": map[string]any{
 			"name":                  "compose-prefix-perm-guard",
@@ -251,7 +250,6 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 		},
 	})
 
-	// ---- (1) Non-admin key + compose-origin header → 400, no row created.
 	const foreignTag = "compose:project-alpha:perm-v1"
 	status, raw := ep.PostJSONWithHeaders(t, "/v1/tags", map[string]any{
 		"tag":      foreignTag,
@@ -267,12 +265,11 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("POST /tags 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
-	// And it must persist nothing: GET /tags omits it.
+	// @constraint: rejected create must persist nothing — GET /tags omits it.
 	if tagListedAuth(t, ep, adminKey, foreignTag) {
 		t.Fatalf("after a rejected non-admin POST /tags, GET /tags still lists %q — the rejected create must persist nothing", foreignTag)
 	}
 
-	// ---- (2) Non-admin key + compose-origin header on /instances → 400, not created.
 	const foreignInstanceKey = "compose:project-alpha:perm-inst"
 	status, raw = ep.PostJSONWithHeaders(t, "/v1/instances", map[string]any{
 		"template":     templateHash,
@@ -289,16 +286,16 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	if !strings.Contains(strings.ToLower(string(raw)), "reserved prefix") {
 		t.Fatalf("POST /instances 400 body did not carry a reserved-prefix diagnostic; got: %s", string(raw))
 	}
-	// And the instance must not exist.
+	// @constraint: instance must not exist after the rejected POST.
 	if got := instanceGetStatusAuth(t, ep, adminKey, foreignInstanceKey); got != http.StatusNotFound {
 		t.Fatalf("after a rejected non-admin POST /instances, GET /instances/%s returned %d, want 404",
 			foreignInstanceKey, got)
 	}
 
-	// ---- (3) Sanity: same key WITHOUT the header lands on the same rejection
-	// — proving the header-only branch matches the header-absent branch when
-	// the permission is missing. Belt-and-suspenders against a regression
-	// that decoupled the two branches.
+	// @deliberate: sanity — same key WITHOUT the header lands on the same
+	// rejection, proving the header-only branch matches the header-absent
+	// branch when the permission is missing. Belt-and-suspenders against a
+	// regression that decoupled the two branches.
 	status, raw = ep.PostJSONWithHeaders(t, "/v1/tags", map[string]any{
 		"tag":      foreignTag,
 		"template": templateHash,

@@ -56,10 +56,10 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable on the shared network before
-	// rimsky/all starts — the control-api fires a Capabilities handshake
-	// against declared executors at startup. Network first, then executor
-	// peer, then rimsky on the baked SQLite default.
+	// @constraint: stub executor must be reachable on the shared network
+	// before rimsky/all starts — the control-api fires a Capabilities
+	// handshake against declared executors at startup. Network first, then
+	// executor peer, then rimsky on the baked SQLite default.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -71,9 +71,9 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 
 	specPath := repoExampleSpecPath(t, "examples/compose/template-a.yml")
 
-	// First assertion: drive the SHIPPED file through the real `rimsky run`
-	// verb exactly as the plan's gate command specifies, capturing the
-	// human-format stdout to read back the printed instance_id.
+	// @story: operator-onboarding — drive the SHIPPED example file through
+	// the real `rimsky run` verb, capturing human-format stdout to read back
+	// the printed instance_id.
 	stdout, code := captureRunRun(t, ctx, []string{"--endpoint", ep.BaseURL, specPath})
 	if code != 0 {
 		t.Fatalf("rimsky run %s exited %d (want 0)\nstdout:\n%s", specPath, code, stdout)
@@ -84,26 +84,27 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 	}
 	instanceID := match[1]
 
-	// The instance is reachable via the real `rimsky instance get` verb —
-	// the operator-facing read path the story names.
+	// @story: operator-onboarding — the instance must be reachable via the
+	// real `rimsky instance get` verb, the operator-facing read path the
+	// story names.
 	if _, getCode := captureRun(t, func() int {
 		return cli.RunInstanceGet(ctx, []string{"--endpoint", ep.BaseURL, instanceID})
 	}); getCode != 0 {
 		t.Fatalf("rimsky instance get %s exited %d (want 0)", instanceID, getCode)
 	}
 
-	// Watch the instance reach a terminal state: the worker node must emit a
-	// `work_started` event (unambiguous proof of a real claim+dispatch) and
-	// settle to `fresh` (the stub executor returns Success for every
-	// dispatch, so a healthy loop lands the node in `fresh`).
+	// @constraint: terminal-state assertion requires BOTH a `work_started`
+	// event (unambiguous proof of a real claim+dispatch) AND settle to
+	// `fresh` — the stub executor returns Success for every dispatch, so a
+	// healthy loop lands the node in `fresh`; any other terminal is a
+	// dev-loop defect, not a fixture quirk.
 	waitForExampleDispatchToFresh(t, ep, instanceID, "worker", 90*time.Second)
 
-	// Second assertion: run the README's documented `rimsky run` invocation
-	// AS WRITTEN against the shipped file (examples/README.md documents
-	// `rimsky run -f examples/compose/template-a.yml`). It must also exit 0,
-	// proving the documented dev-loop command works verbatim — not just the
-	// flag spelling the first assertion happened to use. A distinct
-	// instance_key keeps it disjoint from the first run.
+	// @constraint: the README's documented `rimsky run` invocation must run
+	// AS WRITTEN against the shipped file and exit 0 — drift between what
+	// `examples/README.md` tells an operator to type and what actually works
+	// is a real defect this assertion catches. A distinct instance_key keeps
+	// it disjoint from the first run.
 	readmeArgs := documentedRunInvocation(t, ep.BaseURL, specPath)
 	_, readmeCode := captureRunRun(t, ctx, readmeArgs)
 	if readmeCode != 0 {
@@ -201,7 +202,9 @@ func repoExampleSpecPath(t *testing.T, rel string) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed to locate the test source file")
 	}
-	// thisFile = <repo>/lib/services/test/scenarios/cli_example_spec_e2e_test.go
+	// @constraint: thisFile sits at <repo>/lib/services/test/scenarios/...
+	// — four `..` walks back to the repo root; changing the test file's
+	// package path requires updating this count.
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", ".."))
 	path := filepath.Join(repoRoot, filepath.FromSlash(rel))
 	if _, err := os.Stat(path); err != nil {

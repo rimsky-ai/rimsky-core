@@ -57,7 +57,6 @@ func TestAggregatorSet_UnknownKindFallsBackToStrict(t *testing.T) {
 		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
 	}
-	// Unknown kind → strict semantics (any failure → failed).
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "bogus-unknown"})
 	if !res.IsSettled {
 		t.Fatalf("unknown kind should default-fall through to strict (which settles on failure)")

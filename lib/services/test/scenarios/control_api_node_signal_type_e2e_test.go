@@ -71,10 +71,10 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable on the shared network before
-	// rimsky/all starts — the control-api fires a Capabilities handshake
-	// against declared executors at startup. Network first, then the
-	// executor peer, then rimsky on the baked SQLite default.
+	// @constraint: the stub executor must be reachable on the shared network
+	// before rimsky/all starts — the control-api fires a Capabilities handshake
+	// against declared executors at startup. Network first, then the executor
+	// peer, then rimsky on the baked SQLite default.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -84,9 +84,6 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// A single worker node dispatched against the success-only stub: the
-	// healthy loop settles it into `fresh` with settling_signal_type =
-	// "terminal/success".
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "node-signal-type-e2e",
@@ -100,46 +97,42 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 	})
 	instanceID := createScenarioInstance(t, ep, templateID, "ck-node-signal-type-e2e")
 
-	// Resolve the worker node's UUID via the instance node-list surface. This
-	// is the same id `GET /nodes/{id}` keys on. We capture it BEFORE the node
-	// settles so we can prove the unsettled-node half of the contract against
-	// the node-detail read.
+	// @deliberate: capture nodeID BEFORE the node settles so the unsettled-node
+	// half of the contract can be asserted against the node-detail read; the
+	// instance node-list surface returns the same id `GET /nodes/{id}` keys on.
 	nodeID := resolveWorkerNodeID(t, ep, instanceID, "worker")
 
-	// (1) Unsettled-node half: a freshly-created node has not run, so its
-	// persisted settling_signal_type column is NULL and `GET /nodes/{id}` must
-	// OMIT the `settling_signal_type` key (omitempty). Read it via the
-	// node-detail surface under test, immediately after create and before the
-	// dispatch loop has had time to settle it.
-	//
-	// A `fresh` node that has never run has no settling_signal_type; the only
-	// way the key could appear here is a regression that surfaces a stale or
-	// default value, which this guard catches.
+	// @constraint: a freshly-created node has not run, so its persisted
+	// settling_signal_type column is NULL and `GET /nodes/{id}` must OMIT
+	// the `settling_signal_type` key (omitempty). Read via the node-detail
+	// surface under test, immediately after create and before the dispatch
+	// loop has had time to settle it; the only way the key could appear here
+	// is a regression that surfaces a stale or default value, which this
+	// guard catches.
 	if sig, present := getNodeSettlingSignalType(t, ep, nodeID); present {
 		t.Fatalf("before any settle, GET /nodes/%s returned settling_signal_type=%q, want the key ABSENT — an unsettled node must not carry a settling signal type",
 			nodeID, sig)
 	}
 
-	// Drive the real dispatch loop to a settle: scheduler enqueue → supervisor
-	// claim → stub dispatch (Success) → auto-terminal. We wait on the
-	// observability node read (which projects the same persisted NodeRow the
-	// node-detail handler reads) until the node has emitted `work_started`
-	// (proving a REAL dispatch, not a default `fresh`) AND carries a non-empty
-	// settling_signal_type. The returned value is the run-tree/lineage
-	// surface's report of the node's settling signal type — the cross-check
-	// reference for the node-detail read below.
+	// @deliberate: wait on the observability node read (which projects the same
+	// persisted NodeRow the node-detail handler reads) until the node has
+	// emitted `work_started` (proving a REAL dispatch through scheduler enqueue
+	// → supervisor claim → stub dispatch → auto-terminal, not a default `fresh`)
+	// AND carries a non-empty settling_signal_type. The returned value is the
+	// run-tree/lineage surface's report of the node's settling signal type — the
+	// cross-check reference for the node-detail read below.
 	lineageSig := waitForObservabilitySettlingSignalType(t, ep, instanceID, "worker", 90*time.Second)
 	if lineageSig != settlingSignalTypeTerminalSuccess {
 		t.Fatalf("observability node read reported settling_signal_type=%q after a stub Success settle, want %q — the stub returns Success, so a non-success settle is a real settle-path defect",
 			lineageSig, settlingSignalTypeTerminalSuccess)
 	}
 
-	// (2) Settled-node half + (3) cross-check: `GET /nodes/{id}` over real HTTP
-	// must now carry settling_signal_type, and its value must equal both the
-	// canonical "terminal/success" and the value the run-tree/lineage
-	// (observability) surface reports for the same node. The node-detail
-	// handler projects the persisted NodeRow.SettlingSignalType, so the two
-	// reads agree on one canonical value — the story's exact requirement.
+	// @constraint: `GET /nodes/{id}` over real HTTP must now carry
+	// settling_signal_type, and its value must equal both the canonical
+	// "terminal/success" and the value the run-tree/lineage (observability)
+	// surface reports for the same node. The node-detail handler projects
+	// the persisted NodeRow.SettlingSignalType, so the two reads agree on
+	// one canonical value.
 	sig, present := getNodeSettlingSignalType(t, ep, nodeID)
 	if !present {
 		t.Fatalf("after a real Success settle, GET /nodes/%s omits settling_signal_type — a settled node MUST carry its settling signal type on the node-detail read",
@@ -160,9 +153,9 @@ func TestControlAPINodeSettlingSignalType_E2E(t *testing.T) {
 func resolveWorkerNodeID(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) string {
 	t.Helper()
 	path := "/v1/instances/" + instanceID + "/nodes"
-	// Brief retry: the node rows are materialized synchronously at instance
-	// create, but the GET races the create's commit on SQLite, so guard the
-	// first read.
+	// @constraint: the GET races the instance-create commit on SQLite even
+	// though node rows are materialized synchronously, so the first read needs
+	// a brief retry guard.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		status, raw := ep.GetJSON(t, path, "")
@@ -201,9 +194,10 @@ func getNodeSettlingSignalType(t *testing.T, ep harness.RimskyEndpoint, nodeID s
 	if status != http.StatusOK {
 		t.Fatalf("GET %s returned %d, want 200\nbody: %s", path, status, string(raw))
 	}
-	// Decode into a generic map so an ABSENT key is distinguishable from an
-	// empty-string value — the unsettled-node contract is "key absent", which
-	// a typed struct with a string field would silently coerce to "".
+	// @deliberate: decode into a generic map so an ABSENT key is
+	// distinguishable from an empty-string value — the unsettled-node contract
+	// is "key absent", which a typed struct with a string field would silently
+	// coerce to "".
 	var body map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("decode GET %s: %v\nbody: %s", path, err, string(raw))
@@ -256,9 +250,9 @@ func waitForObservabilitySettlingSignalType(t *testing.T, ep harness.RimskyEndpo
 						break
 					}
 				}
-				// A non-success settle (e.g. `failed`) stops the loop promptly
-				// so the caller's equality assertion fails fast on a real
-				// defect rather than timing out.
+				// @deliberate: a non-success settle (e.g. `failed`) stops the
+				// loop promptly so the caller's equality assertion fails fast
+				// on a real defect rather than timing out.
 				if sawDispatch && lastSig != "" {
 					return lastSig
 				}

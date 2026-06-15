@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// retention_sweep.go — RetentionSweep conformance area.
-//
+// @constraint: RetentionSweep conformance area.
 // Pins the scheduler-tick retention sweeps' SELECTION predicates —
 // what gets deleted and, just as load-bearing, what must SURVIVE:
 //
@@ -88,8 +87,9 @@ func testRetentionClaimHandleSweep(t *testing.T, d persistence.Database) {
 	committedDurable := seedResolvedHandle(ctx, t, d, fix, spec.ClaimLifetimeDurable, spec.ClaimHandleStateCommitted)
 	activeHandle := seedResolvedHandle(ctx, t, d, fix, spec.ClaimLifetimeSubgraph, "")
 
-	// Cutoff in the past: every row resolved just now is younger than
-	// the cutoff — nothing goes (the cutoff predicate, isolated).
+	// @constraint: cutoff in the past — every row resolved just now is
+	// younger than the cutoff, so nothing goes (the cutoff predicate,
+	// isolated).
 	deleted, err := ch.DeleteResolvedOlderThan(ctx, time.Now().Add(-1*time.Hour))
 	if err != nil {
 		t.Fatalf("DeleteResolvedOlderThan(past): %v", err)
@@ -98,10 +98,10 @@ func testRetentionClaimHandleSweep(t *testing.T, d persistence.Database) {
 		t.Fatalf("past-cutoff sweep deleted %d rows, want 0", deleted)
 	}
 
-	// Cutoff in the future: exactly the three eligible rows go —
-	// committed-subgraph, abandoned-subgraph, abandoned-durable. The
-	// committed-durable asset row and the active row must survive (the
-	// no-data-loss property this sweep is allowed to violate exactly
+	// @constraint: cutoff in the future — exactly the three eligible
+	// rows go (committed-subgraph, abandoned-subgraph, abandoned-durable);
+	// the committed-durable asset row and the active row MUST survive
+	// (the no-data-loss property this sweep is allowed to violate exactly
 	// never).
 	deleted, err = ch.DeleteResolvedOlderThan(ctx, time.Now().Add(1*time.Hour))
 	if err != nil {
@@ -133,13 +133,13 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	frames := d.Tables().Frames()
 	q := d.Queue()
 
-	// The schema allows at most one RUNNING frame per instance, so the
-	// frames are driven sequentially: terminate the fixture frame, then
-	// mint + terminate f1..f3 with strictly-ordered ended_at stamps (the
-	// sleeps clear sqlite's stored text precision), then leave one fresh
-	// frame RUNNING — it must survive every sweep below (in-flight
-	// frames are exempt). f1 carries a node_run so the cascade is
-	// observable.
+	// @constraint: schema allows at most one RUNNING frame per instance,
+	// so the frames are driven sequentially — terminate the fixture
+	// frame, then mint + terminate f1..f3 with strictly-ordered ended_at
+	// stamps (the sleeps clear sqlite's stored text precision), then
+	// leave one fresh frame RUNNING; it must survive every sweep below
+	// (in-flight frames are exempt). f1 carries a node_run so the cascade
+	// is observable.
 	mintRunningFrame := func(label string) shared.UUID {
 		var fid shared.UUID
 		frameOp(ctx, t, d, "mint "+label, func(tx persistence.Tx) error {
@@ -187,7 +187,7 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 	terminate(f3, "f3")
 	runningF := mintRunningFrame("running survivor")
 
-	// Both bounds disabled: strict no-op.
+	// @constraint: both bounds disabled — strict no-op.
 	n, err := frames.PruneTraceForRetention(ctx, 0, time.Time{})
 	if err != nil {
 		t.Fatalf("PruneTraceForRetention(disabled): %v", err)
@@ -196,10 +196,10 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 		t.Fatalf("disabled prune deleted %d frames, want 0", n)
 	}
 
-	// Union semantics: the count bound keeps all 4 terminal frames, but
-	// the time bound (cutoff between f1 and f2) still reaps the fixture
-	// frame and f1 — EITHER predicate suffices. The cascade takes f1's
-	// node_run with it.
+	// @constraint: union semantics — the count bound keeps all 4 terminal
+	// frames, but the time bound (cutoff between f1 and f2) still reaps
+	// the fixture frame and f1 (EITHER predicate suffices). The cascade
+	// takes f1's node_run with it.
 	n, err = frames.PruneTraceForRetention(ctx, 4, betweenF1F2)
 	if err != nil {
 		t.Fatalf("PruneTraceForRetention(time bound): %v", err)
@@ -229,8 +229,8 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 		t.Fatalf("node_run %s survived its frame's prune — cascade did not fire", runOnF1)
 	}
 
-	// Count bound alone: keep the 1 most-recent terminal frame (f3);
-	// f2 is reaped, the running fixture frame is untouched.
+	// @constraint: count bound alone — keep the 1 most-recent terminal
+	// frame (f3); f2 is reaped, the running fixture frame is untouched.
 	n, err = frames.PruneTraceForRetention(ctx, 1, time.Time{})
 	if err != nil {
 		t.Fatalf("PruneTraceForRetention(count bound): %v", err)
@@ -248,8 +248,9 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 		return nil
 	})
 
-	// Time bound with a far-future cutoff reaps every remaining terminal
-	// frame — and STILL never touches the running frame.
+	// @constraint: time bound with a far-future cutoff reaps every
+	// remaining terminal frame — and STILL never touches the running
+	// frame.
 	n, err = frames.PruneTraceForRetention(ctx, 0, time.Now().Add(1*time.Hour))
 	if err != nil {
 		t.Fatalf("PruneTraceForRetention(far future): %v", err)

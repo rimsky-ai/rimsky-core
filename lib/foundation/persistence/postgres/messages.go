@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Postgres impl of persistence.MessagesTable — the unified message
-// queue per spec §Unified message layer.
-//
-// V1 implementation: the schema is in place (baseline migration) but the
-// rimsky-side runtime that delivers messages at frame boundaries (E5)
-// is deferred to a follow-up dispatch. The accessor methods below
-// implement the interface so the build is clean; tests exercise the
-// happy path (Insert + ListPending + MarkDelivered). The frame-
-// boundary delivery loop in runtime/message_delivery.go is the next
-// dispatch's task.
-
 package postgres
 
 import (
@@ -27,6 +16,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// messagesImpl is the Postgres-backed persistence.MessagesTable — the
+// unified message queue per spec §Unified message layer.
 type messagesImpl tablesImpl
 
 var _ persistence.MessagesTable = (*messagesImpl)(nil)
@@ -147,8 +138,6 @@ func (b *messagesImpl) Get(ctx context.Context, id shared.UUID) (*persistence.Me
 // instance_id + kind + sender_kind + target + backfill_operation_id +
 // frame_id filters; cursor pagination follows received_at DESC.
 func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
-	// V1 implementation: full-scan filter; cursor pagination is a
-	// follow-up. Returns at most pag.Limit rows.
 	args := []any{}
 	where := "WHERE TRUE"
 	if filter.InstanceID != nil {

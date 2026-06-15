@@ -63,11 +63,11 @@ export function buildCliEnv(config: CliAuthConfig): CliEnvResult {
     return {
       env: { HOME: tmpDir, PATH: basePath },
       cleanup: () => {
-        try { fs.unlinkSync(keyFilePath); } catch { /* ignore */ }
-        try { fs.unlinkSync(helperPath); } catch { /* ignore */ }
-        try { fs.unlinkSync(path.join(claudeDir, "settings.json")); } catch { /* ignore */ }
-        try { fs.rmdirSync(claudeDir); } catch { /* ignore */ }
-        try { fs.rmdirSync(tmpDir); } catch { /* ignore */ }
+        try { fs.unlinkSync(keyFilePath); } catch { /* @deliberate: ignore */ }
+        try { fs.unlinkSync(helperPath); } catch { /* @deliberate: ignore */ }
+        try { fs.unlinkSync(path.join(claudeDir, "settings.json")); } catch { /* @deliberate: ignore */ }
+        try { fs.rmdirSync(claudeDir); } catch { /* @deliberate: ignore */ }
+        try { fs.rmdirSync(tmpDir); } catch { /* @deliberate: ignore */ }
       },
     };
   }

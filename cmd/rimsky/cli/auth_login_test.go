@@ -50,7 +50,6 @@ func TestRunAuthLogin_WritesKeyToConfig(t *testing.T) {
 	t.Setenv("RIMSKY_CONTEXT", "")
 	t.Setenv("RIMSKY_API_KEY", "")
 
-	// Stdin: URL line (override default), then the api-key line.
 	withStdin(t, srv.URL+"\nsecret-key-123\n")
 
 	if got := RunAuthLogin(context.Background(), nil); got != 0 {
@@ -110,7 +109,6 @@ func TestRunAuthLogin_UsesDefaultEndpoint(t *testing.T) {
 	t.Setenv("RIMSKY_CONTEXT", "")
 	t.Setenv("RIMSKY_API_KEY", "")
 
-	// Pre-seed a context with an endpoint so the URL prompt defaults to it.
 	cfgPath := filepath.Join(home, ".rimsky", "config.yml")
 	if err := SaveConfig(cfgPath, &Config{
 		CurrentContext: "dev",
@@ -119,7 +117,6 @@ func TestRunAuthLogin_UsesDefaultEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Empty URL line accepts the default; then the api-key.
 	withStdin(t, "\nthe-key\n")
 	if got := RunAuthLogin(context.Background(), nil); got != 0 {
 		t.Fatalf("exit %d, want 0", got)

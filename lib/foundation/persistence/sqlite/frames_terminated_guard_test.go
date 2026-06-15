@@ -46,7 +46,6 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	defer func() { _ = stx.Rollback() }()
-	// Instance is already terminated: terminated_at non-NULL.
 	if _, err := stx.ExecContext(ctx,
 		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id, terminated_at)
 		 VALUES (?, ?, ?, datetime('now'))`,
@@ -63,8 +62,10 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// One queued frame, no running frame — eligible to start except for
-	// the terminated-instance guard.
+	// @deliberate: seed one queued frame and no running frame so the row is
+	// eligible-to-start in every dimension except the terminated-instance
+	// guard under test; otherwise a guard regression could hide behind a
+	// different eligibility miss.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms)

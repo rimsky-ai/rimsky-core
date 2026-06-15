@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// node_attributes_merge_delta.go — NodeAttributesMergeDelta conformance area.
-//
+// @constraint: NodeAttributesMergeDelta conformance area.
 // Covers NodeAttributeTable.MergeDelta:
 //
 //   - shallow merge with nested keys (top-level keys overwrite, but the
@@ -29,10 +28,10 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Per-run keying: every attribute row keys on a real node_run_id.
+	// @constraint: every NodeAttributes row keys on a real node_run_id; seed one for this run before exercising MergeDelta.
 	runID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
-	// ---- Missing row: MergeDelta returns wrapped ErrNotFound ----
+	// @constraint: MergeDelta against an absent row must surface a wrapped persistence.ErrNotFound (both drivers agree on the sentinel).
 	missingRunID := uuid.New()
 	err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().MergeDelta(ctx, missingRunID,
@@ -45,7 +44,6 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		t.Fatalf("MergeDelta on missing row: error does not wrap persistence.ErrNotFound: %v", err)
 	}
 
-	// Seed an attributes row for the run.
 	initial := map[string]any{
 		"top1": "v1",
 		"nested": map[string]any{
@@ -59,13 +57,12 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		t.Fatalf("Upsert seed: %v", err)
 	}
 
-	// ---- Shallow merge: top-level keys overwrite wholesale ----
+	// @constraint: shallow merge — top-level keys overwrite wholesale; existing untouched top-level keys are retained.
 	delta := map[string]any{
 		"top2": "v2",
 		"nested": map[string]any{
 			"a": float64(99),
-			// note: missing b — under shallow merge the new value
-			// replaces the prior wholesale, so b should be gone.
+			// @deliberate: b is omitted so the wholesale replacement of "nested" must drop the prior b entry.
 		},
 	}
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -84,7 +81,6 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 	if got == nil {
 		t.Fatalf("Get after shallow merge: row missing")
 	}
-	// top1 retained, top2 added, nested key replaced wholesale.
 	if v, _ := got.Data["top1"].(string); v != "v1" {
 		t.Fatalf("shallow merge: top1 = %v want v1 (existing top-level keys must be retained)", got.Data["top1"])
 	}
@@ -102,12 +98,10 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		t.Fatalf("shallow merge: nested.b still present after wholesale replace; got %v", nestedAny["b"])
 	}
 
-	// ---- nil-delta touch path: row exists -> updated_at bumps, data unchanged ----
+	// @constraint: nil-delta on an existing row bumps updated_at without mutating data.
 	priorUpdatedAt := got.UpdatedAt
 	priorData := got.Data
-	// Sleep a small amount so the time comparison can move forward
-	// regardless of underlying clock granularity (Postgres NOW() is
-	// microsecond-resolution; SQLite's nowUTC() is RFC3339Nano).
+	// @deliberate: sleep so updated_at can advance under both backends — Postgres NOW() is microsecond-resolution and SQLite's nowUTC() is RFC3339Nano.
 	time.Sleep(10 * time.Millisecond)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().MergeDelta(ctx, runID, nil, tx)
@@ -129,7 +123,6 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		t.Fatalf("nil-delta touch: updated_at did not advance (prior=%v current=%v)",
 			priorUpdatedAt, got2.UpdatedAt)
 	}
-	// Data unchanged.
 	if len(got2.Data) != len(priorData) {
 		t.Fatalf("nil-delta touch: data shape changed (prior=%d keys, current=%d keys)",
 			len(priorData), len(got2.Data))
@@ -140,7 +133,7 @@ func testNodeAttributesMergeDelta(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// ---- nil-delta on missing row: silent no-op (no error) ----
+	// @constraint: nil-delta against an absent row is a silent no-op (no error), distinct from the ErrNotFound path above.
 	missingRunID2 := uuid.New()
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.NodeAttributes().MergeDelta(ctx, missingRunID2, nil, tx)

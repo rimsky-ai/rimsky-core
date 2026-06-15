@@ -89,7 +89,6 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	require.NotNil(t, bN)
 	require.NotNil(t, cN)
 
-	// Initial frame: A, B, C all run.
 	require.True(t, h.WaitForNodeState(cN.ID, cascade.NodeStateFresh, 15*time.Second),
 		"c should reach fresh after hard-dep cascade")
 
@@ -103,15 +102,13 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	require.Equal(t, "from-a-1", cRow.Data["a_val"], "c should see a's first-fire value")
 	require.Equal(t, "from-b-1", cRow.Data["b_val"], "c should see b's first-fire value (hard-dep pulled)")
 
-	// Re-prime stubs for second fire.
 	h.Stub.WhenType("a").Success(map[string]any{"a_value": "from-a-2"}, true, "ok")
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-2"}, true, "ok")
 	h.Stub.WhenType("c").Success(map[string]any{}, true, "ok")
 
-	// Invalidate A. The cascade should pull B (hard-dep) and re-fire C.
 	adminInvalidate(t, h, iid, aN.ID)
 
-	// Wait until C's latest attribute row reflects both A's and B's second-fire values.
+	// @deliberate: Wait until C's latest attribute row reflects both A's and B's second-fire values.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = h.InTx(func(tx persistence.Tx) error {
@@ -130,7 +127,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 		"c should see b's second-fire value (hard-dep cascade re-fired b)")
 }
 
-// Direct coverage of the hard-dep parked-upstream wake lives in the
+// @deliberate: Direct coverage of the hard-dep parked-upstream wake lives in the
 // unit test `runtime.TestPullHardDepUpstreams_WakesParkedUpstream`
 // (file:runtime/hard_dep_cascade_test.go). It sets up a parked
 // upstream via direct SQL and invokes the cascade walk in isolation,

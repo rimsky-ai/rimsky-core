@@ -39,7 +39,7 @@ func (f *fakeMatchCounterPersist) Transaction(
 	ctx context.Context, fn func(ctx context.Context, tx persistence.Tx) error,
 ) error {
 	f.txCount++
-	// The IncrementAttributeOverrideMatchCounts implementation here is
+	// @deliberate: The IncrementAttributeOverrideMatchCounts implementation here is
 	// the fakeInstancesTable below — it does not dereference the tx
 	// handle, so passing nil is safe for this seam test.
 	return fn(ctx, nil)
@@ -60,14 +60,14 @@ type fakeInstancesTable struct {
 func (f *fakeInstancesTable) IncrementAttributeOverrideMatchCounts(
 	_ context.Context, instanceID shared.UUID, indices []int, _ persistence.Tx,
 ) error {
-	// Copy indices to detach from any caller-side slice reuse.
+	// @deliberate: Copy indices to detach from any caller-side slice reuse.
 	cp := append([]int(nil), indices...)
 	f.owner.incrementCalls = append(f.owner.incrementCalls,
 		fakeIncrementCall{InstanceID: instanceID, Indices: cp})
 	return f.owner.incrementErr
 }
 
-// Every other persistence.InstanceTable method panics. The helper
+// Create other persistence.InstanceTable method panics. The helper
 // must never call them; if it does, the panic surfaces the
 // regression immediately.
 func (f *fakeInstancesTable) Create(context.Context, persistence.InstanceCreateInput, persistence.Tx) (persistence.InstanceRow, error) {
@@ -169,7 +169,7 @@ func TestIncrementMatchCountersAfterMerge(t *testing.T) {
 		}
 		capLog := shared.NewCapturingLogger()
 		matched := []int{1}
-		// MUST NOT panic and MUST NOT propagate the error (helper
+		// @deliberate: MUST NOT panic and MUST NOT propagate the error (helper
 		// returns void by design — observability degradation, not
 		// dispatch failure per spec §"Error handling").
 		incrementMatchCountersAfterMerge(ctx, fake, capLog, instanceID, matched)
@@ -192,7 +192,7 @@ func TestIncrementMatchCountersAfterMerge(t *testing.T) {
 		fake := &fakeMatchCounterPersist{
 			incrementErr: errors.New("boom"),
 		}
-		// nil logger must not panic even when the increment errors —
+		// @deliberate: nil logger must not panic even when the increment errors —
 		// the helper degrades to silent swallow.
 		incrementMatchCountersAfterMerge(ctx, fake, nil, instanceID, []int{0})
 		if fake.txCount != 1 {

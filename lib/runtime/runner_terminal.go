@@ -82,7 +82,7 @@ func applyTerminal(
 	resolvedAttrs map[string]any, schema map[string]any,
 	t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
-	// Plan I2: record the terminal verdict by class + error_class.
+	// @deliberate: Plan I2: record the terminal verdict by class + error_class.
 	metricsOf(args).IncTerminal(string(terminalClassFor(t.Kind)), t.ErrorClass)
 	var pc postCommitFn
 	var err error
@@ -94,7 +94,7 @@ func applyTerminal(
 	case terminalKindInfra:
 		pc, err = applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
 	case terminalKindPark:
-		// Park does NOT end the dispatch — the parked run re-enters and
+		// @deliberate: Park does NOT end the dispatch — the parked run re-enters and
 		// its eventual terminal flows back through this switch, where the
 		// work_completed pairing below fires. Per
 		// concept:terminal-resolution's kind table, Park retains claims
@@ -107,7 +107,8 @@ func applyTerminal(
 	if err != nil {
 		return nil, err
 	}
-	// Pair the post-acquisition `work_started` append
+	// @story: work-completed-emitted
+	// @deliberate: pair the post-acquisition `work_started` append
 	// (runner_acquire.go::tryAcquire) with a `work_completed` append on
 	// every terminal kind that ends the dispatch (Complete / Errored /
 	// Infra — Errored covers all four policy dispositions: a retry ends
@@ -116,8 +117,6 @@ func applyTerminal(
 	// handler's postCommit so the append runs after the outer
 	// state-mutation tx commits, mirroring work_started's best-effort
 	// audit-tx placement.
-	//
-	//	@story: work-completed-emitted
 	inner := pc
 	kind := t.Kind
 	return func(ctx context.Context) {
@@ -178,7 +177,7 @@ func runApplyTerminal(
 	t terminalEvent,
 	setup func(ctx context.Context, tx persistence.Tx) (skip bool, err error),
 ) error {
-	// Persist any NamedEvent emissions captured during the dispatch's
+	// @deliberate: persist any NamedEvent emissions captured during the dispatch's
 	// gRPC stream BEFORE applying the terminal verdict, per plan H1.
 	// Each event opens its own short tx so per-row emitted_at
 	// timestamps land in source order — under postgres NOW() is
@@ -234,12 +233,6 @@ func terminalClassFor(k terminalKind) string {
 	return "unknown"
 }
 
-// applyTerminalError lives in runner_terminal_handlers.go (split out
-// for cold-read 500-line file guideline compliance). Post-2026-05-23
-// it is a thin shim into applyErrorPolicy — the per-handler `resolve:
-// pass` branch retired with concept:lifecycle-handler; per-class
-// `pass` in `error_types:` is the replacement.
-
 // @concept: signal
 //
 // Writes the cascade-firing gate enum on every terminal. The historical
@@ -287,7 +280,7 @@ func applyTerminalComplete(
 		}
 	}
 
-	// E6 sub-graph caller routing. The canonicalizer flagged this node
+	// @deliberate: E6 sub-graph caller routing. The canonicalizer flagged this node
 	// with `IsSubgraphEntryAbsorbed: true` so the supervisor knows that
 	// the executor that just terminated was the absorbed entry. On the
 	// success branch the parent run stays `running` and the sub-graph's
@@ -296,7 +289,7 @@ func applyTerminalComplete(
 		return applyTerminalCompleteSubgraphCaller(ctx, args, acq, merged, t, tx)
 	}
 
-	// Exit-node carry-rule: when this run is a sub-graph exit, copy its
+	// @deliberate: exit-node carry-rule: when this run is a sub-graph exit, copy its
 	// writeback bytes onto the parent run's writeback row in the same tx
 	// that records exit's terminal. Per spec §Sub-graphs / Writeback
 	// carry-rule for exit.
@@ -310,7 +303,7 @@ func applyTerminalComplete(
 		if err := applyTerminalCompleteSubgraphExit(ctx, args, acq, merged, tx); err != nil {
 			return nil, err
 		}
-		// Fall through to the standard release/cascade path below so
+		// @deliberate: fall through to the standard release/cascade path below so
 		// exit's own state transitions to `fresh` and the parent
 		// aggregator picks up the child's terminal via
 		// PropagateFromChildState — but skip the exit's own attribute
@@ -318,13 +311,13 @@ func applyTerminalComplete(
 		// upsertFinalAttributesTx).
 	}
 
-	// Per-node quality-rule evaluation retired by the 2026-05-15
+	// @deliberate: per-node quality-rule evaluation retired by the 2026-05-15
 	// data-platform-extensions plan P1. The verifier-shape-checks /
 	// verifier-http executors (Section I) replace inline quality rules;
 	// failures surface as `executor_errored` with
 	// `error_class: "verifier_failed"`.
 
-	// Compute the settling signal type-path. Post-2026-05-23 the
+	// @deliberate: compute the settling signal type-path. Post-2026-05-23 the
 	// on_executor_complete handler's always_propagate / never_propagate
 	// / by_changed resolves retired with concept:lifecycle-handler —
 	// cascade-fire is purely subscriber-driven (signal-type-path match
@@ -336,13 +329,13 @@ func applyTerminalComplete(
 	successType := string(signalpkg.TypePath("terminal/success"))
 	settlingSignalType := &successType
 
-	// Primary state-mutation work runs inline in the caller's outer tx.
-	// Per @blessed-invariant: callback-determinism — Callback determinism — phase-check read
-	// and these writes must share one tx.
+	// @blessed-invariant: callback-determinism — Callback determinism — phase-check read
+	// and these primary state-mutation writes must share one tx; this work runs
+	// inline in the caller's outer tx.
 	if err := releaseLocksInTx(ctx, args, tx, acq, true, false); err != nil {
 		return nil, err
 	}
-	// Per spec §Sub-graphs / Writeback carry-rule for exit: the
+	// @deliberate: per spec §Sub-graphs / Writeback carry-rule for exit: the
 	// exit's own attribute row stays empty because the exit is
 	// internal to the subgraph and not externally addressable. The
 	// parent run's row was already populated by
@@ -355,7 +348,7 @@ func applyTerminalComplete(
 	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: clear error state: %w", err)
 	}
-	// running → fresh under ReasonHandlerComplete (the pre-2026-05-23
+	// @deliberate: running → fresh under ReasonHandlerComplete (the pre-2026-05-23
 	// on_executor_complete lifecycle-handler slot retired; this
 	// transition is now driven directly by the terminal-handler).
 	// Thread acq.RunScopeID so fan-out children's state-machine
@@ -364,7 +357,9 @@ func applyTerminalComplete(
 		cascade.NodeStateFresh, cascade.ReasonHandlerComplete, settlingSignalType, tx); err != nil {
 		return nil, err
 	}
-	// Flip the just-completed run row to a terminal phase BEFORE the
+	// @concept: node-run
+	// @concept: cascade
+	// @deliberate: flip the just-completed run row to a terminal phase BEFORE the
 	// cascade walk fires. Without this the row stays in
 	// phase='active' until the outer supervisor.go / callback.go
 	// post-apply `Queue.Complete` call, which means
@@ -379,13 +374,13 @@ func applyTerminalComplete(
 	// `supervisor.go` and `callback.go` become idempotent no-ops on
 	// every known happy path (their WHERE clauses filter on active
 	// phase set); kept as belt-and-suspenders cleanup.
-	//
-	//	@concept: node-run
-	//	@concept: cascade
 	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: remove for node: %w", err)
 	}
-	// Cascade walk on settlement. Under the 2026-05-23 signal-taxonomy
+	// @concept: cascade
+	// @concept: signal
+	// @concept: wait-set
+	// @deliberate: cascade walk on settlement. Under the 2026-05-23 signal-taxonomy
 	// reshape, the cascade-fire gate is purely subscriber-driven: a
 	// subscription edge fires iff its TypePattern matches the emitted
 	// signal AND its CEL when: predicate evaluates true. The
@@ -401,9 +396,6 @@ func applyTerminalComplete(
 	// senders (multi-invalidator); the settlement-side walk gates the
 	// initial-instance case + the deeper-level pessimistic seed.
 	//
-	//	@concept: cascade
-	//	@concept: signal
-	//	@concept: wait-set
 	// Consolidate every signal this terminal emits — the success
 	// envelope, one attribute/<key>/changed per merged attribute, and
 	// one event/<name> per named event — into a single cascade walk.
@@ -414,7 +406,7 @@ func applyTerminalComplete(
 	// the per-signal loop ensures receivers seeded by an earlier
 	// signal don't get re-seeded by a later one.
 	visited := map[foundationshared.UUID]struct{}{}
-	// Run-disposition signal: terminal/success — cascade AND audit in the
+	// @deliberate: run-disposition signal: terminal/success — cascade AND audit in the
 	// same tx via the single emit chokepoint (signal_emit.go). This
 	// replaces the old split where the cascade fired here in-tx but the
 	// audit row was rebuilt and written in a post-commit closure: two
@@ -432,7 +424,7 @@ func applyTerminalComplete(
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, successSig, visited); err != nil {
 		return nil, err
 	}
-	// Data signals: attribute/<key>/changed (one per merged attribute)
+	// @deliberate: data signals: attribute/<key>/changed (one per merged attribute)
 	// and event/<name> (one per named event) cascade here at terminal so
 	// subscribers gate, sharing the once-per-frame guard above so a
 	// receiver already seeded by terminal/success is not re-seeded. They
@@ -468,16 +460,15 @@ func applyTerminalComplete(
 			return nil, err
 		}
 	}
-	// Settled-state drain: the sender just reached `fresh`. Any
+	// @concept: wait-set
+	// @deliberate: settled-state drain: the sender just reached `fresh`. Any
 	// wait-set rows the sender was gating get removed in bulk so
 	// downstream receivers can advance.
-	//
-	//	@concept: wait-set
 	if err := drainWaitSetOnSettled(ctx, args, tx, acq.FrameID, acq.DispatchID); err != nil {
 		return nil, err
 	}
 
-	// Post-commit work: signal-emit (canonical audit row), lineage emit,
+	// @deliberate: post-commit work: signal-emit (canonical audit row), lineage emit,
 	// fan-out recalculate, run-tree propagation. Each opens its own tx
 	// (or runs further out-of-tx work like PropagateIfChildAfterTerminal
 	// which walks the run-tree under its own transactions); they MUST
@@ -485,7 +476,7 @@ func applyTerminalComplete(
 	// the SQLite single-conn pool.
 	dispatchID := acq.DispatchID
 	post := func(ctx context.Context) {
-		// The terminal/success cascade AND its canonical audit row landed
+		// @deliberate: the terminal/success cascade AND its canonical audit row landed
 		// together in-tx above via emitSignalInTx — there is no separate
 		// post-commit audit write for it here (that duplicate retired with
 		// the single-emit-path refactor). This closure carries only the
@@ -518,14 +509,14 @@ func applyTerminalComplete(
 					"error", err.Error())
 			}
 		}
-		// Post-commit fan-out: route a RecalculateNode hint to every
+		// @deliberate: post-commit fan-out: route a RecalculateNode hint to every
 		// subscriber of this sender's node-type. Under the subscriber-
 		// driven cascade-fire model the sender-side `fresh_changed`
 		// gate retired; the receiver's own subscriptions (with their
 		// CEL when: predicates) determine whether the recalc actually
 		// produces a dispatch.
 		fanoutRecalculate(ctx, args, acq)
-		// E8: emit leaf-run lineage record. Spec §Content lineage.
+		// @deliberate: E8 emit leaf-run lineage record. Spec §Content lineage.
 		scope := resolveAcqScope(ctx, args, acq)
 		EmitLeafRunLineage(ctx, args, LeafRunEmitInput{
 			InstanceID:         acq.InstanceID,
@@ -546,7 +537,7 @@ func applyTerminalComplete(
 			ChildKey:           scope.PartitionKey,
 			SubstitutionRefs:   CollectSubstitutionRefsForEmit(ctx, args, acq),
 		})
-		// Run-tree state propagation (E2): if this run is a child
+		// @deliberate: run-tree state propagation (E2): if this run is a child
 		// (fan-out or sub-graph internal), aggregate up to the parent.
 		// No-op on root runs.
 		if _, err := PropagateIfChildAfterTerminal(ctx, args, dispatchID,
@@ -636,7 +627,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 	if edges == nil {
 		return nil
 	}
-	// Resolve receiver node-types → node-IDs within the instance once.
+	// @deliberate: resolve receiver node-types → node-IDs within the instance once.
 	instNodes, err := args.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
 	if err != nil {
 		return fmt.Errorf("cascadeSubscribersStaleInTx: list instance nodes: %w", err)
@@ -645,7 +636,8 @@ func cascadeSubscribersStaleInTxWithVisited(
 	for _, n := range instNodes {
 		byType[n.NodeType] = append(byType[n.NodeType], n)
 	}
-	// Resolve the sender's RunScope: same-scope cascade is the common
+	// @concept: run-scope
+	// @deliberate: resolve the sender's RunScope: same-scope cascade is the common
 	// case — the receiver inherits the sender's RunScope. Cross-scope
 	// propagation is bridged by the caller:
 	//
@@ -659,7 +651,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 	//     parent run's main-scope id when the propagation walker settles
 	//     a parent at a terminal state.
 	//
-	// Non-main scopes (fanout_partition, sub-graph) are CLOSED contexts:
+	// @deliberate: non-main scopes (fanout_partition, sub-graph) are CLOSED contexts:
 	// only nodes that have been explicitly dispatched into them belong.
 	// When the sender lives in a non-main scope and a receiver does NOT
 	// already have an in-flight row in that scope, the receiver is not
@@ -670,8 +662,6 @@ func cascadeSubscribersStaleInTxWithVisited(
 	// the scope closes during parent aggregation) and bypasses the
 	// cross-scope bridge. Per concept:run-scope §"Lifecycle / RunScope
 	// closure" + the F1/strict-cascade scenario invariants.
-	//
-	// @concept: run-scope
 	senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, senderRunID)
 	if err != nil {
 		return fmt.Errorf("cascadeSubscribersStaleInTx: load sender run: %w", err)
@@ -680,7 +670,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 		return nil
 	}
 	senderRunScopeID := senderRun.RunScopeID
-	// Detect non-main sender scope so the walker can refuse to
+	// @deliberate: detect non-main sender scope so the walker can refuse to
 	// lazy-allocate run rows for cross-scope receivers. Main RunScopes
 	// have ParentRunID == nil; non-main scopes (sub-graph,
 	// fanout_partition) carry a ParentRunID.
@@ -692,7 +682,8 @@ func cascadeSubscribersStaleInTxWithVisited(
 		return nil
 	}
 	senderScopeIsMain := senderRunScope.ParentRunID == nil
-	// Subscriber-driven gate (concept:signal): an edge fires iff its
+	// @concept: signal
+	// @deliberate: subscriber-driven gate: an edge fires iff its
 	// TypePattern matches the emitted signal AND its CEL when:
 	// predicate evaluates true. No deeper BFS — each receiver's own
 	// terminal eventually fires its own cascade walk with the
@@ -707,7 +698,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 		runID    foundationshared.UUID
 	}
 	cur := walkItem{nodeID: senderID, nodeType: senderNodeType, runID: senderRunID}
-	// `visited` is retained for the hard-dep walk's cycle guard. Under
+	// @deliberate: `visited` is retained for the hard-dep walk's cycle guard. Under
 	// the 2026-05-23 signal-taxonomy reshape the BFS-recursion over
 	// subscription edges is gone — each receiver's own terminal fires
 	// its own cascadeSubscribersStaleInTx — but the hard-dep walk
@@ -717,7 +708,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 	{
 		for _, edge := range candidateEdges {
 			if edge.WhenExpr != nil {
-				// Eval surfaces CEL runtime errors as `(false, nil)`
+				// @deliberate: Eval surfaces CEL runtime errors as `(false, nil)`
 				// with a slog warn — per the spec's safe-navigation
 				// default. The error return is reserved for future
 				// fatal-eval cases and stays unreachable today.
@@ -730,7 +721,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 			for _, r := range receivers {
 				switch edge.Frame {
 				case node.FrameNext:
-					// Open a new frame for the receiver's instance.
+					// @deliberate: open a new frame for the receiver's instance.
 					// Per spec Piece 1 "frame: next wait-set
 					// placement," frame:next subscriptions fire the
 					// receiver in the NEXT frame. EnqueueOrCoalesce
@@ -748,32 +739,32 @@ func cascadeSubscribersStaleInTxWithVisited(
 					if _, fErr := frame.EnqueueOrCoalesce(ctx, args.Persist, tx, instanceID, r.ID); fErr != nil {
 						return fmt.Errorf("cascadeSubscribersStaleInTx: enqueue next-frame for %s: %w", r.ID, fErr)
 					}
-					// If the receiver is parked, the next-frame open
+					// @concept: parked-state
+					// @concept: cascade
+					// @deliberate: if the receiver is parked, the next-frame open
 					// alone won't wake it (MarkSourceNodeStale skips
 					// parked rows because parked is settled-with-
 					// frame_id and the predicate gates fresh /
 					// stale-with-nil-frame). Drive the parked → stale
 					// wake here so the new frame can pick up the
 					// receiver as a source.
-					//
-					//	@concept: parked-state
-					//	@concept: cascade
 					if r.State == cascade.NodeStateParked {
 						if err := wakeParkedReceiverInTx(ctx, args, tx, r, senderFrameID); err != nil {
 							return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked next-frame %s: %w", r.ID, err)
 						}
 					}
 					continue
-				default: // FrameIn or empty (in-tx)
-					// Self-edges are permitted in both FrameIn and
-					// FrameNext branches as first-class drain-my-own-
-					// queue idioms. The two spellings differ in framing:
-					// FrameIn keeps iteration inside the current frame
-					// (one long-running frame, supervisor picks up each
-					// new pending run as it lands); FrameNext opens a
-					// fresh frame per iteration (one frame per queue
-					// item, cleaner frame.start/frame.end markers per
-					// operator's eye).
+				default:
+					// @deliberate: self-edges are permitted in both
+					// FrameIn and FrameNext branches as first-class
+					// drain-my-own-queue idioms. The two spellings
+					// differ in framing: FrameIn keeps iteration inside
+					// the current frame (one long-running frame,
+					// supervisor picks up each new pending run as it
+					// lands); FrameNext opens a fresh frame per
+					// iteration (one frame per queue item, cleaner
+					// frame.start/frame.end markers per operator's
+					// eye).
 					//
 					// Insert-then-drain-in-same-tx makes FrameIn safe:
 					// the wait-set row this branch inserts (gating the
@@ -823,13 +814,13 @@ func cascadeSubscribersStaleInTxWithVisited(
 							return fmt.Errorf("cascadeSubscribersStaleInTx: probe receiver run %s: %w", r.ID, err)
 						}
 						if !existingOK {
-							// Cross-scope receiver — skip; the bridge
+							// @deliberate: cross-scope receiver — skip; the bridge
 							// at the parent's terminal handles it.
 							continue
 						}
 						_ = existingID
 					}
-					// Once-per-frame affirm-guard. Two layers:
+					// @deliberate: once-per-frame affirm-guard. Two layers:
 					//
 					// (1) intra-terminal: `visitedReceivers` is shared
 					// across the per-signal loop within one terminal's
@@ -858,7 +849,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 						skipAffirm = true
 					} else {
 						visitedReceivers[r.ID] = struct{}{}
-						// Skip the cross-terminal guard for self-
+						// @deliberate: skip the cross-terminal guard for self-
 						// edges. A node subscribing to itself is the
 						// canonical "drain my own queue" idiom; the
 						// HasRunForNodeInFrame check would always
@@ -875,7 +866,10 @@ func cascadeSubscribersStaleInTxWithVisited(
 							}
 						}
 					}
-					// Affirm-then-read: under RunScope-first, the
+					// @concept: run-scope
+					// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow
+					// no-return-value-dependency.
+					// @deliberate: affirm-then-read: under RunScope-first, the
 					// cascade walker is the lazy-allocation primitive
 					// for the receiver's in-flight row. AffirmNodeRunRow
 					// INSERTs a pending stale row keyed on
@@ -890,10 +884,6 @@ func cascadeSubscribersStaleInTxWithVisited(
 					// the receiver accumulates a row per matching
 					// signal, populating BuildAttributeDeps for
 					// attribute-topic edges.
-					//
-					// @concept: run-scope
-					// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow
-					// no-return-value-dependency.
 					var receiverRunID foundationshared.UUID
 					if skipAffirm {
 						existingID, hasInFlight, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
@@ -901,7 +891,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 							return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run (skip-affirm) %s: %w", r.ID, err)
 						}
 						if !hasInFlight {
-							// Receiver settled this frame and no
+							// @deliberate: receiver settled this frame and no
 							// in-flight row to gate on. Skip the
 							// wait-set insert — there's no receiver
 							// to gate.
@@ -910,7 +900,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 						receiverRunID = existingID
 					} else {
 						if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverRunScopeID, senderFrameID, tx); err != nil {
-							// Defensive: a closed RunScope means the
+							// @deliberate: defensive — a closed RunScope means the
 							// receiver's scope rendezvous has fired
 							// and is no longer accepting new in-
 							// flight rows. The cascade walker MUST
@@ -927,9 +917,9 @@ func cascadeSubscribersStaleInTxWithVisited(
 							return fmt.Errorf("cascadeSubscribersStaleInTx: resolve receiver run %s: %w", r.ID, err)
 						}
 						if !ok {
-							// Race-with-terminal: the receiver's row
+							// @deliberate: race-with-terminal — the receiver's row
 							// just terminated between affirm and read.
-							// Safe to skip — its terminal handler
+							// Safe to skip; its terminal handler
 							// will drive its own cascade walk.
 							continue
 						}
@@ -953,7 +943,7 @@ func cascadeSubscribersStaleInTxWithVisited(
 					}, tx); err != nil {
 						return fmt.Errorf("cascadeSubscribersStaleInTx: wait-set insert: %w", err)
 					}
-					// Hard-dep pull: for each hard_dep attribute read the
+					// @deliberate: hard-dep pull — for each hard_dep attribute read the
 					// receiver declares, ensure the upstream has an
 					// in-flight run in this frame and a wait-set blocker
 					// on the receiver. The outer BFS's `visited` set is
@@ -963,16 +953,14 @@ func cascadeSubscribersStaleInTxWithVisited(
 					// The upstream lives in the same RunScope as the
 					// receiver (hard-dep is intra-scope; cross-scope
 					// hard-deps are not expressible).
+					// Note: no deeper-BFS recursion here — under the
+					// 2026-05-23 signal-taxonomy reshape, each receiver's
+					// own terminal fires its own cascadeSubscribersStaleInTx
+					// with its real signal, gating downstream subscribers
+					// one signal at a time.
 					if err := pullHardDepUpstreams(ctx, args, tx, r, byType, receiverRunID, receiverRunScopeID, senderFrameID, inst.TemplateHash, visited); err != nil {
 						return err
 					}
-					// Under the 2026-05-23 signal-taxonomy reshape the
-					// deeper-BFS recursion retired: cascade fires only
-					// for receivers matched by the emitted signal at
-					// this level. Each receiver's own terminal will
-					// fire its own cascadeSubscribersStaleInTx with
-					// its real signal, gating its downstream
-					// subscribers one signal at a time.
 				}
 			}
 		}
@@ -1018,12 +1006,18 @@ func pullHardDepUpstreams(
 	}
 	for _, upstreamType := range hardEdges[receiver.NodeType] {
 		upstreamNodes := byType[upstreamType]
+		// @constraint: the template validator rejects templates with
+		// hard-edge upstream types that have no instantiated node, so
+		// reaching this branch means a stale spec; skip defensively
+		// rather than fault.
 		if len(upstreamNodes) == 0 {
-			continue // defensive: template validator should have caught
+			continue
 		}
-		upstreamNode := upstreamNodes[0] // one node per type per instance
+		// @constraint: one node per type per instance is a template
+		// invariant; the [0] index is total under that invariant.
+		upstreamNode := upstreamNodes[0]
 
-		// Outer-BFS visited-set check: if the subscription BFS already
+		// @deliberate: outer-BFS visited-set check: if the subscription BFS already
 		// processed this upstream, skip the hard-dep pull. The wait-set
 		// row that the outer walk inserted (or skipped) is already the
 		// gate for this frame; redoing the wake / stale-mark would
@@ -1032,7 +1026,10 @@ func pullHardDepUpstreams(
 			continue
 		}
 
-		// Parked-upstream handling (BEFORE AffirmNodeRunRow).
+		// @concept: parked-state
+		// @concept: run-scope
+		// @concept: cascade
+		// @deliberate: parked-upstream handling (BEFORE AffirmNodeRunRow).
 		//
 		// Under RunScope-first GetInFlightRunForNode includes phase=
 		// 'parked' rows (the unique-per-RunScope in-flight predicate
@@ -1044,10 +1041,6 @@ func pullHardDepUpstreams(
 		// new frame so AffirmNodeRunRow's NOT EXISTS guard correctly
 		// no-ops and the subsequent GetInFlightRunForNode resolves the
 		// resumed row.
-		//
-		//	@concept: parked-state
-		//	@concept: run-scope
-		//	@concept: cascade
 		upstreamRunScopeID := targetRunScopeID
 		parked, err := args.Queue.GetParkedByNode(ctx, upstreamNode.ID, upstreamRunScopeID)
 		if err != nil {
@@ -1055,7 +1048,7 @@ func pullHardDepUpstreams(
 				upstreamType, err)
 		}
 		if parked != nil {
-			// `wakeParkedReceiverInTx` rebinds the run's frame_id
+			// @deliberate: `wakeParkedReceiverInTx` rebinds the run's frame_id
 			// internally — no separate RebindRunFrameInTx call here.
 			if err := wakeParkedReceiverInTx(ctx, args, tx, upstreamNode, senderFrameID); err != nil {
 				return fmt.Errorf("cascadeSubscribersStaleInTx: wake parked hard-dep upstream %s: %w",
@@ -1063,7 +1056,8 @@ func pullHardDepUpstreams(
 			}
 		}
 
-		// Settled-this-frame guard. With two or more hard-dep upstreams
+		// @concept: cascade
+		// @deliberate: settled-this-frame guard. With two or more hard-dep upstreams
 		// settling independently in one frame, the later settler's own
 		// cascade walk re-visits the receiver, and this pull would
 		// otherwise re-affirm the EARLIER upstream — which already
@@ -1081,8 +1075,6 @@ func pullHardDepUpstreams(
 		// still-running (or just-woken parked) upstream in this frame
 		// falls through to the normal gate-insert path — the guard
 		// protects frame termination without weakening the rendezvous.
-		//
-		//	@concept: cascade
 		_, hasInFlightRun, err := args.Queue.GetInFlightRunForNode(
 			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
 		)
@@ -1104,16 +1096,15 @@ func pullHardDepUpstreams(
 			}
 		}
 
-		// Affirm-then-read: the upstream lives in the same RunScope as
+		// @concept: run-scope
+		// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
+		// @deliberate: affirm-then-read — the upstream lives in the same RunScope as
 		// the receiver (hard-dep is intra-scope by construction —
 		// cross-scope hard-deps are not expressible). AffirmNodeRunRow
 		// INSERTs a pending row keyed on (upstream_node_id,
 		// target_run_scope_id) when none exists.
-		//
-		// @concept: run-scope
-		// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 		if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, upstreamNode.ID, upstreamRunScopeID, senderFrameID, tx); err != nil {
-			// Defensive: a closed RunScope means the upstream's scope
+			// @deliberate: defensive — a closed RunScope means the upstream's scope
 			// rendezvous has fired. Hard-dep upstreams in closed scopes
 			// cannot be reactivated — skip; the receiver's wait-set is
 			// not populated for this upstream, and the receiver
@@ -1132,7 +1123,7 @@ func pullHardDepUpstreams(
 		}
 
 		if !hasRun {
-			// Pass the just-affirmed upstreamRunScopeID through —
+			// @deliberate: pass the just-affirmed upstreamRunScopeID through —
 			// upstreamNode.RunScopeID on the NodeRow projection is stale
 			// (loaded before this AffirmNodeRunRow call); the affirm may
 			// have just attached a new in-flight row to upstreamRunScopeID.
@@ -1155,11 +1146,11 @@ func pullHardDepUpstreams(
 			}
 		}
 
-		// Mark this upstream visited so the outer BFS (and a subsequent
+		// @deliberate: mark this upstream visited so the outer BFS (and a subsequent
 		// hard-dep pull during the same walk) doesn't re-process it.
 		visited[upstreamNode.ID] = struct{}{}
 
-		// Insert wait-set blocker for the receiver on this upstream's run.
+		// @deliberate: insert wait-set blocker for the receiver on this upstream's run.
 		if err := args.Persist.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID:           senderFrameID,
 			ReceiverRunID:     receiverRunID,
@@ -1204,7 +1195,7 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 		if err != nil || edges == nil {
 			return err
 		}
-		// Fanout-recalc is a post-commit hint — it routes a
+		// @deliberate: fanout-recalc is a post-commit hint — it routes a
 		// RecalculateNode event to every receiver subscribed to this
 		// sender's node-type (without per-edge CEL filtering, since
 		// recalculation re-evaluates from drained wait-set state).
@@ -1244,16 +1235,6 @@ func fanoutRecalculate(ctx context.Context, args RunArgs, acq *acquisition) {
 		})
 	}
 }
-
-// Error-resolution branch functions (applyErrorPolicy,
-// applyResolvedAction, applyTerminalInfraError, lookupPolicyForNode,
-// requiredStoresForAcq, invalidateTargets) live in
-// runner_terminal_errors.go. Release-path functions
-// (releaseLocksInTx, releaseAcquiredLock, releaseClaim,
-// releaseInheritedClaimsInTx, releaseActionString,
-// emitLockReleased) live in runner_terminal_release.go. Both files
-// were split out of runner_terminal.go to keep that file under the
-// cold-read 500-line guideline.
 
 // upsertFinalAttributesTx writes the merged-and-validated attribute
 // object back inside the supplied tx. Per spec §5.7.2 the executor

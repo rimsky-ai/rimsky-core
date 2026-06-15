@@ -48,7 +48,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// No InitialItems — Open returns Unavailable.
+				// @deliberate: No InitialItems — Open returns Unavailable.
 			},
 		},
 	})
@@ -102,12 +102,12 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, inh)
 
-	// Acquirer should settle fresh with settling_signal_type carrying
+	// @deliberate: Acquirer should settle fresh with settling_signal_type carrying
 	// the canonical terminal/error/<class> envelope.
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, acq.ID, "terminal/error/", 30*time.Second),
 		"acquirer should record settling_signal_type=terminal/error/<class> under error_types: { acquire/unavailable: [pass] }")
 
-	// Inheritor must NOT run — it subscribes to terminal/success, which
+	// @constraint: Inheritor must NOT run — it subscribes to terminal/success, which
 	// does not match the acquirer's terminal/error/<class> pass
 	// settlement, so the cascade does not wake it. Give the system a beat.
 	time.Sleep(2 * time.Second)
@@ -128,11 +128,11 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFresh, inhRow.State,
 		"inheritor should remain fresh — pass should not cascade to it")
 
-	// Executor must not have been invoked for either node.
+	// @constraint: Executor must not have been invoked for either node.
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when the acquirer passes on Unavailable")
 
-	// No rimsky_claim_handles rows for this instance — the claim was
+	// @deliberate: No rimsky_claim_handles rows for this instance — the claim was
 	// never acquired so no holder rows should exist.
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
@@ -143,7 +143,7 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 	require.Equal(t, 0, lhCount,
 		"no claim_handle rows should exist when the producer returned Unavailable")
 
-	// No rimsky_claim_holders rows for the held subgraph either.
+	// @deliberate: No rimsky_claim_holders rows for the held subgraph either.
 	// Post-stage-5 the holder row keys on holder_run_id; join through
 	// rimsky_node_runs → rimsky_nodes to scope by instance.
 	var chCount int

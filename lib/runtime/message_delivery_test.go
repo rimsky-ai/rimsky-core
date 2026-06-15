@@ -138,12 +138,12 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 		t.Fatalf("EnqueueMessage(good): %v", err)
 	}
 
-	// Empty ID rejected.
+	// @deliberate: Empty ID rejected.
 	if err := EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{}); err == nil {
 		t.Fatal("EnqueueMessage(empty): expected error")
 	}
 
-	// Unknown sender_kind rejected.
+	// @deliberate: Unknown sender_kind rejected.
 	bad := good
 	bad.ID = shared.UUID(uuid.New())
 	bad.SenderKind = "bogus"
@@ -211,20 +211,11 @@ func TestDeliverPendingMessages_SerialQueue(t *testing.T) {
 	if len(res.Messages) != 1 || res.Messages[0].ID != first {
 		t.Fatalf("expected only %s delivered, got %+v", first, res.Messages)
 	}
-	// Second remains pending.
+	// @deliberate: Second remains pending.
 	if pending, _ := m.ListPendingForInstance(ctx, nil, inst); len(pending) != 1 || pending[0].ID != second {
 		t.Fatalf("expected second message pending, got %+v", pending)
 	}
 }
-
-// Under the 2026-05-23 signal-taxonomy reshape the per-envelope
-// structured filter (Kind / Sender / SenderKind / Target) retired in
-// favor of CEL when: predicates on the emitted
-// `message/<kind>/<sender_kind>/<target>` signal. The legacy
-// `messageEdgeMatches` helper retired; matching now happens inside
-// cascadeMessageSubscribersInTx via SubscriptionEdgeMap.Match + CEL
-// evaluation. Scenario coverage lives in
-// test/scenarios/messages/message_cascade_e2e_test.go.
 
 // TestDeliverPendingMessages_SkipsCancelled — pre-cancelled rows are
 // already delivered_at-stamped and never re-delivered.
@@ -315,7 +306,7 @@ func TestDeliverPendingMessages_CoalesceDifferentValuesSplit(t *testing.T) {
 		ReceivedAt: now.Add(time.Second),
 	})
 
-	// Frame 1: only the first (older, override A); B conflicts and stays pending.
+	// @deliberate: Frame 1: only the first (older, override A); B conflicts and stays pending.
 	res1, err := DeliverPendingMessages(ctx, nil, m, inst, frame1, FrameDeliveryCoalesce, now, sharedReceiverResolver)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages frame1: %v", err)
@@ -328,7 +319,7 @@ func TestDeliverPendingMessages_CoalesceDifferentValuesSplit(t *testing.T) {
 		t.Fatalf("frame1: expected the second (override B) still pending, got %+v", pending)
 	}
 
-	// Frame 2: the second (override B) delivers next, in order. Nothing lost.
+	// @deliberate: Frame 2: the second (override B) delivers next, in order. Nothing lost.
 	res2, err := DeliverPendingMessages(ctx, nil, m, inst, frame2, FrameDeliveryCoalesce, now, sharedReceiverResolver)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages frame2: %v", err)
@@ -351,7 +342,7 @@ func TestDeliverPendingMessages_CoalesceDistinctNodesCoalesce(t *testing.T) {
 	frame := shared.UUID(uuid.New())
 	now := time.Now().UTC()
 
-	// Resolver routes each message to a distinct receiver keyed off Target.
+	// @deliberate: Resolver routes each message to a distinct receiver keyed off Target.
 	resolve := func(msg persistence.MessageRow) []string { return []string{"recv_" + msg.Target} }
 
 	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{

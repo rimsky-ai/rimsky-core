@@ -31,6 +31,6 @@ Adjacent: `concept:publisher` (sensors implement it), `concept:publisher-subscri
 - Sensors are deployed as standalone services advertised in the publishers block of the unified config (see `concept:rimsky-yml`). Same deployment model as `concept:claim-producer` or `concept:executor`.
 - Templates declare sensors via the publishers block (the same block; sensors ARE publishers); at instance creation, rimsky resolves each publisher entry's config via `{{params.X}}` substitution and calls the publisher protocol's subscribe verb.
 - At instance termination, rimsky calls the publisher protocol's unsubscribe verb for each registered publisher-subscription.
-- Each emit constructs a message envelope `{kind, target, payload, sender, sender_kind: "publisher", publisher_subscription_id}` and POSTs it to the operator message-emit endpoint with an idempotency-key header. Inert payload per `@blessed-invariant: messages are inert in rimsky`.
+- Each emit constructs a message envelope `{kind, target, payload, sender, sender_kind: "publisher", publisher_subscription_id}` and POSTs it to the operator message-emit endpoint with an idempotency-key header. Inert payload per `@blessed-invariant: message-inertness`.
 - Sensors observe; they do not interpret. Payload bytes flow through rimsky unread until a consumer's substitution leaf walks into them.
 - Single-replica per `concept:replica` — operators run one pod per sensor binary; rimsky does not coordinate multi-replica fan-in.

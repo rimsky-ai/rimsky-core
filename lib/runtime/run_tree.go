@@ -118,13 +118,13 @@ func (c ChildState) IsSuccess() bool {
 	if c.State != cascade.NodeStateFresh {
 		return false
 	}
-	// terminal/success is the canonical fresh-success signal.
-	// terminal/error/* with state == fresh is a `pass`-colored settle
-	// (concept:error-policy `pass` action). pure_cascade is the
-	// scheduler's stale → fresh shortcut.
+	// @concept: error-policy — `terminal/success` is the canonical
+	// fresh-success signal; `terminal/error/*` with state==fresh is a
+	// `pass`-colored settle; `pure_cascade` is the scheduler's stale→fresh
+	// shortcut.
 	if c.SettlingSignalType == "" {
-		// Fresh without a signal-type recorded (pure_cascade /
-		// pre-Pass-5 legacy) counts as success.
+		// @deliberate: empty signal-type (pure_cascade / pre-Pass-5 legacy)
+		// counts as fresh-success.
 		return true
 	}
 	if c.SettlingSignalType.HasPrefix("terminal/success") ||
@@ -147,11 +147,12 @@ type AggregateAction int
 const (
 	// AggregateActionNone — no follow-up.
 	AggregateActionNone AggregateAction = iota
-	// AggregateActionCancelSiblings — cancel any still-running / stale
-	// siblings. The caller walks them in the same transaction.
+	// @agent-contract: AggregateActionCancelSiblings tells the caller to
+	// cancel any still-running / stale siblings in the same transaction.
 	AggregateActionCancelSiblings
-	// AggregateActionCancelNonWinners — for `first` policy: cancel any
-	// child that hasn't reached terminal yet.
+	// @agent-contract: AggregateActionCancelNonWinners (used by the `first`
+	// policy) tells the caller to cancel any child that has not yet
+	// reached terminal.
 	AggregateActionCancelNonWinners
 )
 
@@ -214,7 +215,6 @@ type AggregateResult struct {
 //	                  terminal/error/aggregate/first_failed
 func Aggregate(children []ChildState, policy spec.AggregationPolicy) AggregateResult {
 	if len(children) == 0 {
-		// No children yet → parent stays in its current state.
 		return AggregateResult{IsSettled: false}
 	}
 	kind := policy.Kind
@@ -231,7 +231,8 @@ func Aggregate(children []ChildState, policy spec.AggregationPolicy) AggregateRe
 	case "first":
 		return aggregateFirst(children)
 	}
-	// Unknown kind: fall back to strict for safety.
+	// @deliberate: unknown policy kind falls back to strict so an
+	// unconfigured / typo'd policy never silently passes a failed child.
 	return aggregateStrict(children, policy)
 }
 
@@ -258,7 +259,6 @@ func aggregateStrict(children []ChildState, policy spec.AggregationPolicy) Aggre
 	if anyActive {
 		return AggregateResult{IsSettled: false}
 	}
-	// All children settled successfully.
 	return AggregateResult{
 		IsSettled:                true,
 		ParentState:              cascade.NodeStateFresh,
@@ -283,7 +283,9 @@ func aggregateThreshold(children []ChildState, policy spec.AggregationPolicy) Ag
 	}
 	max := policy.MaxFailures
 	if max <= 0 {
-		// Defensive: threshold without a max is effectively strict.
+		// @deliberate: threshold without a max coerces to strict (any
+		// failure → failed) so a misconfigured policy never silently
+		// accepts failures.
 		max = 1
 	}
 	if failures >= max {
@@ -413,8 +415,9 @@ func CreateChildRun(
 	nodeID shared.UUID, frameID shared.UUID, runScopeID shared.UUID,
 	executor string, requiredStores []string, policy spec.AggregationPolicy,
 ) (shared.UUID, error) {
-	// Idempotent pre-check: if an in-flight run already exists for this
-	// (node, run_scope) pair return its id without inserting.
+	// @constraint: idempotency on (node_id, run_scope_id) — if an in-flight
+	// run already exists for this (node, run_scope) pair return its id
+	// without inserting a duplicate.
 	if queue != nil {
 		existing, ok, err := queue.GetInFlightRunForNode(ctx, tx, nodeID, runScopeID)
 		if err != nil {

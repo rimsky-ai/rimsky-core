@@ -97,7 +97,7 @@ func TestExecuteHappyPath(t *testing.T) {
 		t.Fatalf("expected terminal Success, got %v", events[len(events)-1].GetEvent())
 	}
 
-	// A spawn was recorded with the original callback URL.
+	// @constraint: a spawn was recorded with the original callback URL.
 	spawnID, ok := ts.state.lookupSpawnByRunScopeBinding("inst-1", "codegen")
 	if !ok {
 		t.Fatalf("expected a recorded spawn")
@@ -141,7 +141,7 @@ func TestExecuteMissingServiceName(t *testing.T) {
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // no header
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
 	if got := terminalErrorClass(events); got != errClassBindingNotFound {
@@ -150,7 +150,7 @@ func TestExecuteMissingServiceName(t *testing.T) {
 }
 
 func TestExecuteInstanceNotFound(t *testing.T) {
-	ts := newProxyTestServer(t, nil) // fetcher always misses
+	ts := newProxyTestServer(t, nil)
 	connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
 
 	client := genv1.NewExecutorClient(ts.supConn)
@@ -177,7 +177,7 @@ func TestExecuteOwnerEmpty(t *testing.T) {
 
 func TestExecuteAgentNotConnected(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
-	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}}) // no agent
+	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
@@ -205,7 +205,7 @@ func TestExecuteBindingNotFound(t *testing.T) {
 func TestExecuteSpawnTimeout(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	fa := connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
-	fa.setSpawnDelay(3 * time.Second) // exceeds the 2s spawnTimeout
+	fa.setSpawnDelay(3 * time.Second) // @constraint: exceeds the 2s spawnTimeout
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
@@ -254,7 +254,7 @@ func TestExecuteDisconnectMidStream(t *testing.T) {
 func TestExecuteSupervisorCancelSendsCancelFrame(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	fa := connectFakeAgent(t, ts, "owner-1", "", nil)
-	fa.setStallData(true) // agent never answers the DATA frame
+	fa.setStallData(true) // @deliberate: agent never answers the DATA frame
 	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
 
 	client := genv1.NewExecutorClient(ts.supConn)
@@ -264,16 +264,15 @@ func TestExecuteSupervisorCancelSendsCancelFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	// Recv in the background so the RPC is live; it will error when we cancel.
+	// @deliberate: Recv in the background so the RPC is live; it will error when we cancel.
 	go func() { _, _ = stream.Recv() }()
 
-	// Let the spawn + dispatch reach the stalling agent, then cancel.
+	// @deliberate: Let the spawn + dispatch reach the stalling agent, then cancel.
 	time.Sleep(300 * time.Millisecond)
 	cancel()
 
 	select {
 	case <-fa.canceled:
-		// Good: the proxy relayed a CANCEL frame to the agent.
 	case <-time.After(3 * time.Second):
 		t.Fatalf("proxy did not send a CANCEL frame to the agent on supervisor cancel")
 	}

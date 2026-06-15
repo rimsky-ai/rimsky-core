@@ -106,15 +106,16 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// Generate the signoff keypair fresh per test run so the public
-	// key in the template and the private key in the executor container
-	// are paired without any cross-test leakage.
+	// @deliberate: fresh keypair per test run so the template's public key
+	// and the executor container's private key are paired without
+	// cross-test leakage.
 	pubPEM, privPEM := mustGenerateEd25519PEMs(t)
 
-	// Catalog YAML the executor loads at startup. The `validator` entry's
-	// Authorization header carries a ${env:VALIDATOR_TOKEN} ref; the
-	// executor resolves it at spawn (env-refs.ts), so the stub CLI
-	// witnesses the resolved plaintext in its --mcp-config.
+	// @constraint: catalog YAML the executor loads at startup. The
+	// `validator` entry's Authorization header carries a
+	// ${env:VALIDATOR_TOKEN} ref; the executor resolves it at spawn
+	// (env-refs.ts), so the stub CLI witnesses the resolved plaintext in
+	// its --mcp-config.
 	catalogYAML := `validator:
   transport: http
   url: http://127.0.0.1:9999/mcp
@@ -127,7 +128,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		ctx, t, netName, "claude-agent-fake",
 		harness.ClaudeAgentFakeOptions{
 			McpCatalogYAML:       catalogYAML,
-			AllowInline:          "", // default false → inline rejected
+			AllowInline:          "", // @deliberate: empty → default false → inline rejected
 			SignoffPrivateKeyPEM: privPEM,
 			ExtraEnv: map[string]string{
 				"VALIDATOR_TOKEN": validatorPlaintextToken,
@@ -135,23 +136,20 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		},
 	)
 
-	// Postgres backend rather than the SQLite default: this scenario
-	// drives FIVE sequential deploy → instance → dispatch round-trips
-	// against the same rimsky stack, and the SQLite single-writer path
-	// has shown non-deterministic dispatch latency on multi-instance
-	// sequences (see verifier_severity_partition_e2e_test.go which made
-	// the same switch for the same reason). The contract under test —
-	// the four STORY-claude-agent Acceptance clauses — is persistence-
-	// backend-agnostic. The single-node SQLite loop is covered by
-	// sqlite_all_in_one_test.go.
+	// @deliberate: Postgres backend rather than the SQLite default. This
+	// scenario drives FIVE sequential deploy → instance → dispatch
+	// round-trips against the same rimsky stack, and the SQLite
+	// single-writer path has shown non-deterministic dispatch latency on
+	// multi-instance sequences (see verifier_severity_partition_e2e_test.go
+	// which made the same switch for the same reason). The contract under
+	// test — the four STORY-claude-agent Acceptance clauses — is
+	// persistence-backend-agnostic. The single-node SQLite loop is covered
+	// by sqlite_all_in_one_test.go.
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("claude-agent", executorEndpoint),
 	)
 
-	// ----------------------------------------------------------------
-	// Clause 1a: sign-off gate accepts the real bound output signature
-	// ----------------------------------------------------------------
 	t.Run("signoff gate accepts signed bound output", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-signoff-ok",
@@ -163,17 +161,14 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", "", 90*time.Second)
 	})
 
-	// ----------------------------------------------------------------
-	// Clause 1b: sign-off gate rejects unsigned bound output with the
-	// declared error class.
-	// ----------------------------------------------------------------
 	t.Run("signoff gate rejects unsigned bound output", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-signoff-missing",
 			"scenario:signoff_missing",
-			// max_signoff_attempts=1 keeps the retry budget short so the
-			// gate's rejection lands quickly. The stub's retry loop sees
-			// a non-rejected status only after the budget is exhausted.
+			// @deliberate: max_signoff_attempts=1 keeps the retry budget
+			// short so the gate's rejection lands quickly. The stub's retry
+			// loop sees a non-rejected status only after the budget is
+			// exhausted.
 			withSignoffGate(pubPEM, "endpoints", 1),
 		))
 		iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-signoff-missing")
@@ -181,15 +176,12 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/signoff_unobtained", 90*time.Second)
 	})
 
-	// ----------------------------------------------------------------
-	// Clause 2: allow_inline=false rejects an inline cli.mcp_servers
-	// ----------------------------------------------------------------
 	t.Run("inline mcp_servers refused when allow_inline=false", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-inline-refused",
-			// Any prompt — the dispatch never spawns the CLI because the
-			// inline rejection fires at parse/resolve time inside the
-			// executor, before the CLI runner is invoked.
+			// @deliberate: any prompt — the dispatch never spawns the CLI
+			// because the inline rejection fires at parse/resolve time
+			// inside the executor, before the CLI runner is invoked.
 			"scenario:signoff_ok",
 			withInlineMcpServer("inline-bad", "http://example.invalid/mcp"),
 		))
@@ -198,9 +190,6 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/attribute_invalid", 90*time.Second)
 	})
 
-	// ----------------------------------------------------------------
-	// Clause 3: declared rate-limited error class lands on the node row
-	// ----------------------------------------------------------------
 	t.Run("declared error class agent/rate_limited routes verbatim", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-rate-limited",
@@ -211,9 +200,6 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "failed", "agent/rate_limited", 90*time.Second)
 	})
 
-	// ----------------------------------------------------------------
-	// Clause 4: env-var-referenced credential never persists plaintext
-	// ----------------------------------------------------------------
 	t.Run("env-var-referenced credential resolved at spawn but not persisted plaintext", func(t *testing.T) {
 		tid := deployScenarioTemplate(t, ep, buildClaudeAgentTemplate(
 			"claude-agent-env-ref-witness",
@@ -225,12 +211,12 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", "", 120*time.Second)
 
-		// (4)(a) The persisted attribute bag carries the SHA-256 digest
-		// of the resolved Authorization header — proving the executor's
-		// spawn-time env-ref resolution did populate the CLI's
-		// --mcp-config (otherwise the stub CLI's witness write would
-		// have failed loud and the dispatch would have settled with an
-		// error).
+		// @story: claude-agent Acceptance clause (4)(a). The persisted
+		// attribute bag carries the SHA-256 digest of the resolved
+		// Authorization header — proving the executor's spawn-time env-ref
+		// resolution did populate the CLI's --mcp-config (otherwise the
+		// stub CLI's witness write would have failed loud and the dispatch
+		// would have settled with an error).
 		bag := getLatestAttributesClaudeAgent(t, ep, nodeID)
 		obs, ok := bag["cli_observation"].(map[string]any)
 		if !ok {
@@ -243,10 +229,11 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 				gotDigest, wantDigest)
 		}
 
-		// (4)(b) The plaintext token bytes must NOT appear anywhere in
-		// the persisted attribute bag — neither as a header value, a
-		// stringified ref, nor a leaked log line. Scan the serialized
-		// bag recursively; any hit fails the clause.
+		// @story: claude-agent Acceptance clause (4)(b). The
+		// plaintext token bytes must NOT appear anywhere in the persisted
+		// attribute bag — neither as a header value, a stringified ref,
+		// nor a leaked log line. Scan the serialized bag recursively; any
+		// hit fails the clause.
 		raw, err := json.Marshal(bag)
 		if err != nil {
 			t.Fatalf("re-marshal latest_attributes: %v", err)
@@ -256,9 +243,10 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 				validatorPlaintextToken, string(raw))
 		}
 
-		// (4)(c) The reference form in cli.mcp_servers persists as
-		// `{ref: "validator"}` — the dispatch's cli.mcp_servers entry
-		// kept its catalog reference, never resolved to inline.
+		// @story: claude-agent Acceptance clause (4)(c). The
+		// reference form in cli.mcp_servers persists as
+		// `{ref: "validator"}` — the dispatch's cli.mcp_servers entry kept
+		// its catalog reference, never resolved to inline.
 		cli, _ := bag["cli"].(map[string]any)
 		servers, _ := cli["mcp_servers"].([]any)
 		if len(servers) != 1 {
@@ -271,10 +259,6 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		}
 	})
 }
-
-// ----------------------------------------------------------------
-// Template builders + assertion helpers (claude-agent-local)
-// ----------------------------------------------------------------
 
 // claudeAgentTemplateOption is a tiny mutator over a template's worker-
 // node attribute schema. Each clause's template differs only in the cli
@@ -303,7 +287,6 @@ func buildClaudeAgentTemplate(name, userPrompt string, opts ...claudeAgentTempla
 					"type":    "string",
 					"default": userPrompt,
 				},
-				// cli starts empty; each option layers in its own keys.
 				"cli": map[string]any{
 					"type":       "object",
 					"properties": map[string]any{},
@@ -407,10 +390,10 @@ func waitNodeSettledClaudeAgent(
 			if err := json.Unmarshal(raw, &resp); err == nil {
 				lastState = resp.State
 				lastErrClass = resp.CurrentErrorClass
-				// `fresh` is also the freshly-created state, so a sole
-				// `fresh` doesn't prove a dispatch settled. Cross-check
-				// with the observability node-events feed to confirm a
-				// real work_started fired before claiming success.
+				// @constraint: `fresh` is also the freshly-created state,
+				// so a sole `fresh` doesn't prove a dispatch settled.
+				// Cross-check the observability node-events feed to confirm
+				// a real work_started fired before claiming success.
 				if wantState == "fresh" && resp.State == "fresh" {
 					if hasWorkStartedEvent(t, ep, nodeID) {
 						return
@@ -434,7 +417,6 @@ func waitNodeSettledClaudeAgent(
 // place. Returns true iff the event is present (any state).
 func hasWorkStartedEvent(t *testing.T, ep harness.RimskyEndpoint, nodeID string) bool {
 	t.Helper()
-	// Resolve instance_id + node_type for the observability lookup.
 	status, raw := ep.GetJSON(t, "/v1/nodes/"+nodeID, "")
 	if status != http.StatusOK {
 		return false

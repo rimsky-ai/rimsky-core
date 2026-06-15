@@ -2,9 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// orphan.go — OrphanCutoffTime conformance area.
-//
-// Inv 6: orphan-claim cutoff (5× heartbeat). Here we validate that
+// @constraint: Inv 6 (OrphanCutoffTime) — orphan-claim cutoff (5× heartbeat). Here we validate that
 // ClaimHandleTable.ListExpired returns rows with expires_at < now() and
 // not those with future expires_at.
 package conformance
@@ -31,7 +29,6 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Database) {
 	futureID := uuid.New()
 
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Past expires_at.
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 pastID,
 			LockKind:           persistence.LockKindNamed,
@@ -42,7 +39,6 @@ func testOrphanCutoffTime(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		// Future expires_at.
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 futureID,
 			LockKind:           persistence.LockKindNamed,

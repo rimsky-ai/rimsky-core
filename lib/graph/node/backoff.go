@@ -14,7 +14,9 @@ type BackoffConfig struct {
 	Kind        spec.BackoffKind
 	BaseDelayMs int
 	Jitter      spec.JitterKind
-	MaxDelayMs  int // 0 or negative = no max (treated as math.MaxInt32)
+	// MaxDelayMs of 0 or negative means no max (treated as
+	// math.MaxInt32).
+	MaxDelayMs int
 }
 
 // ComputeDelay returns the delay in ms for a given attempt index (0-based).
@@ -42,14 +44,14 @@ func ComputeDelay(cfg BackoffConfig, attemptIndex int, rng func() float64) int {
 		base = float64(cfg.BaseDelayMs)
 	}
 	if cfg.Jitter == spec.JitterPlusMinus && rng != nil {
-		base *= 0.5 + rng() // in [0.5, 1.5)
+		base *= 0.5 + rng()
 	}
 	if base < 0 {
 		base = 0
 	}
 	maxMs := cfg.MaxDelayMs
 	if maxMs <= 0 {
-		maxMs = math.MaxInt32 // effectively unbounded for our use case
+		maxMs = math.MaxInt32
 	}
 	if base > float64(maxMs) {
 		base = float64(maxMs)

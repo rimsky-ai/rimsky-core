@@ -21,7 +21,7 @@ func TestMergeParams_JSONOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// JSON numbers decode to float64.
+	// @constraint: encoding/json decodes JSON numbers to float64 by default; the assertion type-asserts float64 deliberately.
 	if got["a"].(float64) != 1 || got["b"] != "x" {
 		t.Fatalf("got %+v", got)
 	}
@@ -39,7 +39,7 @@ func TestMergeParams_KVOnly(t *testing.T) {
 }
 
 func TestMergeParams_KVOverridesJSON(t *testing.T) {
-	// --param applies after --params; later wins.
+	// @deliberate: precedence rule — --param entries apply after --params JSON; later wins on key collision.
 	got, err := mergeParams(`{"a":1,"b":2}`, RepeatedFlag{"b=99"})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestResolveServiceBindings_BareWithAlias(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeAliasFile(t, filepath.Join(home, ".rimsky", "aliases.yml"), "aliases:\n  codegen: /opt/codegen\n")
-	// Run from a directory with no project-local alias file.
+	// @deliberate: chdir to an empty temp dir so the resolver finds no project-local aliases.yml and falls through to the $HOME alias file under test.
 	chdir(t, t.TempDir())
 
 	got, err := resolveServiceBindings(RepeatedFlag{"codegen"})

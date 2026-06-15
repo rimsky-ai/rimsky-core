@@ -16,8 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// Constants moved here from graph/scheduler/scheduler.go and
-// foundation/persistence/migrations.go. Never reuse these int64s elsewhere.
+// @constraint: advisory lock keys live here exclusively — never reuse these int64s elsewhere.
 const (
 	// RimskySchedulerTickLockKey gates the scheduler tick under
 	// pg_try_advisory_lock. @blessed-invariant 7.
@@ -53,7 +52,7 @@ func (c *advisoryLockerImpl) TrySchedulerTick(ctx context.Context) (bool, func()
 		return false, nil, nil
 	}
 	release := func() {
-		// context.Background so a cancelled parent ctx doesn't strand the lock.
+		// @deliberate: context.Background so a cancelled parent ctx doesn't strand the lock.
 		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", RimskySchedulerTickLockKey)
 		conn.Release()
 	}
@@ -77,7 +76,7 @@ func (c *advisoryLockerImpl) AcquireMigrationLock(ctx context.Context) (func() e
 		return nil, fmt.Errorf("postgres.AcquireMigrationLock: lock: %w", err)
 	}
 	return func() error {
-		// context.Background so a cancelled parent ctx doesn't strand the lock.
+		// @deliberate: context.Background so a cancelled parent ctx doesn't strand the lock.
 		_, err := conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", advisoryMigrationLockKey)
 		conn.Release()
 		if err != nil {

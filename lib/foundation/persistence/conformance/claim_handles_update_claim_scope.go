@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// claim_handles_update_claim_scope.go — ClaimHandlesUpdateClaimScope
+// @constraint: conformance area conformance area.
 // conformance area.
 //
 // Covers ClaimHandleTable.UpdateClaimScope: writes the new claim_scope_data
@@ -33,7 +33,6 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 	scopeA := json.RawMessage(`{"path":"/data/initial"}`)
 	scopeB := json.RawMessage(`{"path":"/data/updated"}`)
 
-	// Insert the initial claim-scope row.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 lockHolderID,
@@ -49,7 +48,6 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 		t.Fatalf("insert claim-scope row: %v", err)
 	}
 
-	// ---- UpdateClaimScope: matching supervisor writes the new bytes ----
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().UpdateClaimScope(ctx, lockHolderID, supID, scopeB, tx)
 	}); err != nil {
@@ -71,7 +69,8 @@ func testClaimHandlesUpdateClaimScope(t *testing.T, d persistence.Database) {
 			string(got.ClaimScopeData), string(scopeB))
 	}
 
-	// ---- UpdateClaimScope: claimant-guard mismatch is a no-op ----
+	// @constraint: Inv 4 (claimant-guarded release) — UpdateClaimScope under a
+	// mismatched supervisor must be a no-op (bytes unchanged).
 	otherSup := "different-supervisor"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.ClaimHandles().UpdateClaimScope(ctx, lockHolderID, otherSup, scopeA, tx)

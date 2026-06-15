@@ -19,7 +19,7 @@ Operators see who did what against the rimsky stack and when — a forensic reco
 
 ## Acceptance
 
-Through the control-api's `GET /audit` route (gated by `audit:read`), after an admin mints / revokes / rotates keys and a non-admin caller triggers an access denied, the audit log returns each event in timestamp order carrying actor identity, action name, outcome, and resource target.
+Through the audit-read surface (gated by `audit:read`), after an admin mints / revokes / rotates keys and a non-admin caller triggers an access denied, the audit log returns each event in timestamp order carrying actor identity, action name, outcome, and resource target.
 
 ## Falsifier
 

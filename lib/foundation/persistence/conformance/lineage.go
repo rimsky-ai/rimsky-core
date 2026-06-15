@@ -2,7 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// lineage.go — LineageTable conformance fixture. Exercises the
+// @concept: lineage
+// @concept: lineage-record
+
+// @constraint: conformance area conformance area.
 // content-lineage projection against both drivers (postgres + sqlite)
 // so the per-driver JSON-path predicate (`record->>'parent_run_id'`
 // for postgres / `json_extract(record, '$.parent_run_id')` for sqlite)
@@ -73,11 +76,12 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 	}
 
 	base := time.Now().UTC()
-	// child of parentRunID — must be returned.
+	// @constraint: insert one child of parentRunID (MUST be returned
+	// by QueryByParentRunID), one child of a different parent (MUST
+	// NOT be returned), and a root with no parent (MUST NOT be
+	// returned — the predicate is `=`, not IS NULL).
 	insertLeaf(t, childRunID, parentRunID, base)
-	// child of a different parent — must NOT be returned for parentRunID.
 	insertLeaf(t, unrelatedChild, unrelatedParent, base.Add(1*time.Second))
-	// root (no parent) — must NOT be returned (predicate is `=`).
 	insertLeaf(t, shared.UUID(uuid.New()), shared.UUID{}, base.Add(2*time.Second))
 
 	rows, err := store.Lineage().QueryByParentRunID(ctx, parentRunID, 10)
@@ -101,9 +105,9 @@ func testLineageQueryByParentRunID(t *testing.T, d persistence.Database) {
 		t.Fatalf("returned row parent_run_id=%q want %q", decoded.ParentRunID, parentRunID.String())
 	}
 
-	// QueryByParentRunID on an unknown parent must return no rows
-	// (negative case — guards against a buggy predicate that always
-	// matches).
+	// @constraint: QueryByParentRunID on an unknown parent must return
+	// no rows (negative case — guards against a buggy predicate that
+	// always matches).
 	rows, err = store.Lineage().QueryByParentRunID(ctx, shared.UUID(uuid.New()), 10)
 	if err != nil {
 		t.Fatalf("QueryByParentRunID(unknown): %v", err)
@@ -159,27 +163,30 @@ func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database
 		}
 	}
 
-	// A live rimsky_node_runs row whose id the present-run lineage row
-	// will cite — the NOT EXISTS(run) half of the predicate must spare
-	// it even though it's old.
+	// @constraint: a live rimsky_node_runs row whose id the present-run
+	// lineage row will cite — the NOT EXISTS(run) half of the predicate
+	// must spare it even though it's old.
 	liveRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
 	now := time.Now().UTC()
 	cutoff := now.Add(-1 * time.Hour)
 
-	// Two prunable rows: old, and their run_id has no live node_run.
+	// @constraint: two prunable rows: old, and their run_id has no live
+	// node_run.
 	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-3*time.Hour))
 	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-2*time.Hour))
-	// Too-recent: observed_at is after cutoff, so the `observed_at <
-	// cutoff` half of the predicate excludes it.
+	// @constraint: too-recent: observed_at is after cutoff, so the
+	// `observed_at < cutoff` half of the predicate excludes it.
 	insertLeaf(t, shared.UUID(uuid.New()), now.Add(-1*time.Minute))
-	// Present-run: old enough, but the run_id references a live
-	// node_run, so the NOT EXISTS guard spares it.
+	// @constraint: a present-run leaf is old enough to prune, but the
+	// run_id references a live node_run — the NOT EXISTS guard MUST
+	// spare it.
 	insertLeaf(t, liveRunID, now.Add(-4*time.Hour))
 
 	wantPrunable := 2
 
-	// CountOlderThan (dry-run preview) must equal the eventual delete.
+	// @constraint: CountOlderThan is the dry-run preview and MUST
+	// equal the eventual delete count.
 	gotCount, err := store.Lineage().CountOlderThan(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("CountOlderThan: %v", err)
@@ -188,8 +195,8 @@ func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database
 		t.Fatalf("CountOlderThan: got %d want %d (2 old rows with no live run)", gotCount, wantPrunable)
 	}
 
-	// Live delete with the SAME cutoff must remove exactly what Count
-	// previewed.
+	// @constraint: live delete with the SAME cutoff must remove exactly
+	// what Count previewed.
 	gotDeleted, err := store.Lineage().DeleteOlderThan(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("DeleteOlderThan: %v", err)
@@ -198,8 +205,9 @@ func testLineageCountOlderThanMatchesDelete(t *testing.T, d persistence.Database
 		t.Fatalf("DeleteOlderThan deleted %d but CountOlderThan previewed %d — predicates diverged", gotDeleted, gotCount)
 	}
 
-	// Nothing left to prune: Count is now 0, proving it reflects the
-	// post-delete state (not an always-N or always-zero stub).
+	// @constraint: nothing left to prune: Count is now 0, proving it
+	// reflects the post-delete state (not an always-N or always-zero
+	// stub).
 	afterCount, err := store.Lineage().CountOlderThan(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("CountOlderThan (after delete): %v", err)

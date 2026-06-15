@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-Both the template register handler and the validate endpoint merge the static validator's warnings into the responses' `validation_warnings`; `warnings_as_errors=true` trips on them (see `story:validation-warnings-surfaced`).
+Both the template-register surface and the validate surface merge the static validator's warnings into their responses' warnings list; the warnings-as-errors mode trips on them (see `story:validation-warnings-surfaced`, `concept:validation`).
 
 ## Rationale
 
-The field, the warnings, and the flag all exist; the decision merely connects them.
+The response field, the warnings, and the warnings-as-errors mode all exist; the decision merely connects them.

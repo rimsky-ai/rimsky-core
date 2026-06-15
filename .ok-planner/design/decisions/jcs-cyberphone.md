@@ -3,7 +3,7 @@ decision: jcs-cyberphone
 status: as-is
 ---
 
-# JSON canonicalization (RFC 8785) for spec hashing
+# JSON canonicalization for spec hashing
 
 ## Choice
 

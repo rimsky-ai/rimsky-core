@@ -32,7 +32,6 @@ type FilesystemBackend struct {
 	seq  atomic.Uint64
 }
 
-// Compile-time interface check.
 var _ BlobBackend = (*FilesystemBackend)(nil)
 
 // NewFilesystemBackend constructs a FilesystemBackend rooted at the
@@ -56,19 +55,16 @@ func NewFilesystemBackend(root string) (*FilesystemBackend, error) {
 func (b *FilesystemBackend) Write(_ context.Context, key BlobKey, bytes []byte) (Handle, error) {
 	rel := b.derivePath(key)
 	abs := filepath.Join(b.root, rel)
-	// Match absFromHandle's check exactly: a bare strings.HasPrefix on the
-	// root would accept "/var/lib/rimsky-bad" against root "/var/lib/rimsky";
-	// require the trailing path separator so "rimsky-bad" cannot pass. The
-	// abs == b.root branch is impossible from derivePath (it always appends
-	// at least three path components) but kept symmetric with absFromHandle
-	// for defense in depth.
+	// @constraint: require the trailing path separator so a sibling root
+	// like "/var/lib/rimsky-bad" cannot match "/var/lib/rimsky" by prefix;
+	// the abs == b.root branch is unreachable from derivePath but kept
+	// symmetric with absFromHandle for defense in depth.
 	if !strings.HasPrefix(abs, b.root+string(filepath.Separator)) && abs != b.root {
 		return "", fmt.Errorf("blob filesystem: derived path escapes root: %q", abs)
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", fmt.Errorf("blob filesystem: mkdir parent: %w", err)
 	}
-	// Atomic write via temp + rename.
 	tmp, err := os.CreateTemp(filepath.Dir(abs), ".tmp-blob-")
 	if err != nil {
 		return "", fmt.Errorf("blob filesystem: create temp: %w", err)

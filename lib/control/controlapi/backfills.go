@@ -4,10 +4,6 @@
 
 // backfills.go — F4. Backfill operation control-api surface.
 //
-// Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Backfills / Control-api.
-//
 //   - POST /instances/{id}/backfills          — enqueue an invalidate-class
 //                                                message carrying the
 //                                                partition_request override.
@@ -150,7 +146,7 @@ func handleCreateBackfill(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
 			}
-			// Validate the target is a fan-out node wired for the
+			// @constraint: validate the target is a fan-out node wired for the
 			// override BEFORE the dry-run gate, so the live and dry-run
 			// paths reject an invalid target identically (a bad target
 			// fails the same way in preview). `@concept: backfill`.
@@ -164,7 +160,7 @@ func handleCreateBackfill(deps AppDeps) http.HandlerFunc {
 			if err := validateBackfillTarget(tpl.Spec, body.TargetNode); err != nil {
 				return err
 			}
-			// Dry-run gate: instance exists, is not terminated, and the
+			// @constraint: dry-run gate: instance exists, is not terminated, and the
 			// target validated. Signal the outer code to write the
 			// synthetic envelope; the tx rolls back without enqueuing the
 			// backfill message.
@@ -290,7 +286,7 @@ func handleListBackfills(deps AppDeps) http.HandlerFunc {
 		items := make([]backfillItem, 0, len(page.Rows))
 		for _, r := range page.Rows {
 			if r.BackfillOperationID == nil {
-				// Plain invalidate (not a backfill); skip.
+				// @constraint: plain invalidate (not a backfill); skip.
 				continue
 			}
 			items = append(items, toBackfillItem(r))
@@ -377,16 +373,14 @@ func handleBackfillPartitions(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, "backfill not found")
 			return
 		}
-		// Frame not yet delivered: nothing to drill into.
+		// @constraint: frame not yet delivered: nothing to drill into.
 		if status.FrameID == nil {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"partitions": []backfillPartitionRow{},
 			})
 			return
 		}
-		// Resolve target node — the target_node alias is a node_type
-		// within the instance. Look up the node row by (instance_id,
-		// node_type) and find the parent run.
+		// @constraint: target_node is a node_type alias within the instance, not a node ID — look up the node row by (instance_id, node_type), then find the parent run.
 		var partitions []backfillPartitionRow
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			node, err := findNodeByType(ctx, deps, tx, status.InstanceID, status.TargetNode)
@@ -394,7 +388,7 @@ func handleBackfillPartitions(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			if node == nil {
-				// Target node missing (template churn). Empty partitions.
+				// @constraint: target node missing (template churn). Empty partitions.
 				return nil
 			}
 			parentRun, err := findRootRunInFrame(ctx, deps, tx, node.ID, *status.FrameID)
@@ -409,7 +403,7 @@ func handleBackfillPartitions(deps AppDeps) http.HandlerFunc {
 				return err
 			}
 			for _, c := range children {
-				// Resolve partition_key from the child's RunScope —
+				// @constraint: resolve partition_key from the child's RunScope —
 				// RunTreeRow no longer projects child_key inline.
 				partitionKey := ""
 				if scope, _ := deps.Persist.RunScopes().GetByID(ctx, tx, c.RunScopeID); scope != nil {
@@ -509,17 +503,17 @@ func findRootRunInFrame(
 	if node == nil {
 		return nil, nil
 	}
-	// Frame mismatch on the node projection: the node's latest frame
+	// @constraint: frame mismatch on the node projection: the node's latest frame
 	// has moved on; the backfill's frame is no longer the one the
 	// node row projects. Empty partitions — the caller short-circuits.
 	if node.FrameID != nil && *node.FrameID != frameID {
 		return nil, nil
 	}
 	if node.RunScopeID == nil {
-		// No in-flight run for the node — nothing to drill into.
+		// @constraint: no in-flight run for the node — nothing to drill into.
 		return nil, nil
 	}
-	// Look up the projected scope. If it carries a parent_run_id, the
+	// @constraint: look up the projected scope. If it carries a parent_run_id, the
 	// projection points at a partition child's scope and the parent
 	// run-id is the scope's parent_run_id directly. Otherwise the
 	// scope IS the parent's (no partition keying); we resolve the
@@ -533,12 +527,12 @@ func findRootRunInFrame(
 	}
 	var parentRunID shared.UUID
 	if scope.ParentRunID != nil {
-		// Partition child's scope → parent run-id is the scope's
+		// @constraint: partition child's scope → parent run-id is the scope's
 		// parent_run_id pointer. This survives the parent's
 		// phase=completed transition.
 		parentRunID = *scope.ParentRunID
 	} else {
-		// Non-partition scope → the projection IS the parent run.
+		// @constraint: non-partition scope → the projection IS the parent run.
 		// Use GetInFlightRunForNode to resolve the run-id (only
 		// in-flight while the parent has not yet reached terminal;
 		// for a fan-out the parent terminates fast, so this branch
@@ -562,7 +556,7 @@ func handleCancelBackfill(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid op_id")
 			return
 		}
-		// Backfill-existence check must precede the dry-run gate so a
+		// @constraint: backfill-existence check must precede the dry-run gate so a
 		// dry-run against a missing op_id returns the same 404 a real
 		// call would. Per spec section "Dry-run mode": "Errors from
 		// validation surface as in normal flow."

@@ -11,7 +11,7 @@ As a new operator with no prior rimsky experience, I can copy a shipped example 
 
 ## Capability
 
-Onboarding dev-loop: copy a shipped example templatespec, run `rimsky run <file>` against an all-in-one stack, observe instance progress to terminal.
+Onboarding dev-loop: copy a shipped example templatespec, drive it through the run-template CLI verb against an all-in-one stack, observe instance progress to terminal.
 
 ## Business value
 
@@ -19,11 +19,11 @@ A new operator with no prior rimsky experience learns the dev loop end-to-end wi
 
 ## Acceptance
 
-An operator without prior template-writing experience copies a shipped example templatespec, runs `rimsky run <file>` against a running all-in-one stack, observes the command print an instance ID and exit cleanly, can look the instance up through the standard list/get surfaces, and watches it progress to a terminal state through the real supervisor. A second assertion confirms the documented `rimsky run` invocation succeeds as written.
+An operator without prior template-writing experience copies a shipped example templatespec, drives it through the run-template CLI verb against a running all-in-one stack, observes the command print an instance ID and exit cleanly, can look the instance up through the standard list/get surfaces, and watches it progress to a terminal state through the real supervisor. A second assertion confirms the documented run-template invocation succeeds as written.
 
 ## Falsifier
 
-The shipped example isn't a real runnable templatespec (would need modification to run), OR `rimsky run` is a stub that prints a fake ID without driving register + deploy + instantiate.
+The shipped example isn't a real runnable templatespec (would need modification to run), OR the run-template verb is a stub that prints a fake ID without driving register + deploy + instantiate.
 
 ## Proof
 

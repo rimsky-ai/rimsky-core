@@ -4,8 +4,6 @@
 
 // Tests for the `?tag=` filter on GET /instances/{idOrKey}/nodes and
 // the `tags` field on each row's JSON response. Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 4.
 
 package controlapi
 
@@ -22,7 +20,7 @@ func TestListNodes_TagFilter(t *testing.T) {
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 
-	// Template with one node carrying a static "setup" tag and another
+	// @constraint: template with one node carrying a static "setup" tag and another
 	// with a "recurring" tag. Two-node minimum reuses the existing
 	// validator-friendly shape.
 	body := map[string]any{
@@ -58,7 +56,7 @@ func TestListNodes_TagFilter(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, out)
 	instID := out["instance_id"].(string)
 
-	// No filter — both rows returned, each with its tags.
+	// @constraint: no filter — both rows returned, each with its tags.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ := out["nodes"].([]any)
@@ -75,7 +73,7 @@ func TestListNodes_TagFilter(t *testing.T) {
 	require.True(t, tagsSeen["setup"])
 	require.True(t, tagsSeen["recurring"])
 
-	// Filter to setup — only one row.
+	// @constraint: filter to setup — only one row.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes?tag=setup", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ = out["nodes"].([]any)
@@ -83,7 +81,7 @@ func TestListNodes_TagFilter(t *testing.T) {
 	row, _ := nodes[0].(map[string]any)
 	require.Equal(t, "root", row["node_type"])
 
-	// Filter to a non-existent tag — empty.
+	// @constraint: filter to a non-existent tag — empty.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID+"/nodes?tag=nonexistent", nil)
 	require.Equal(t, http.StatusOK, status, out)
 	nodes, _ = out["nodes"].([]any)

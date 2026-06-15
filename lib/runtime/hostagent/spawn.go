@@ -41,11 +41,10 @@ import (
 // rimsky-service binaries MUST read RIMSKY_AGENT_PORT and bind there.
 const agentPortEnvVar = "RIMSKY_AGENT_PORT"
 
-// Error classes the agent surfaces on a failed spawn (slot into the proxy's
-// existing host-agent error-class vocabulary).
-const (
-	errClassSpawnFailed = "spawn_failed"
-)
+// errClassSpawnFailed is the host-agent error class the agent emits on a
+// failed spawn; it slots into the proxy's existing host-agent error-class
+// vocabulary.
+const errClassSpawnFailed = "spawn_failed"
 
 // portDialInterval is the poll cadence while waiting for the child's gRPC
 // port to come up.
@@ -84,9 +83,7 @@ type SpawnedService struct {
 	// Cmd is the running child process. The caller drives lifecycle.
 	Cmd *exec.Cmd
 	// Port is the localhost port the child bound.
-	Port int
-	// Exited is closed when cmd.Wait returns; lets the caller select on
-	// child-exit alongside its own signals.
+	Port   int
 	Exited <-chan struct{}
 }
 
@@ -143,25 +140,27 @@ func SpawnService(ctx context.Context, params SpawnServiceParams) (*SpawnedServi
 		return nil, fmt.Errorf("allocate port: %w", err)
 	}
 
-	// Use exec.Command (NOT exec.CommandContext): the caller owns the child's
-	// lifecycle and must drive teardown explicitly via the returned handle.
-	// exec.CommandContext would race the agent's SIGTERM-based reap path by
-	// sending SIGKILL on ctx cancellation, which the host-agent's reap-grace
-	// contract forbids (the stubchild's signal handler would never observe
-	// the SIGTERM and the agent's reap-clean ack would be wrong).
+	// @constraint: use exec.Command (NOT exec.CommandContext) — the caller owns
+	// the child's lifecycle and must drive teardown explicitly via the returned
+	// handle. exec.CommandContext would race the agent's SIGTERM-based reap
+	// path by sending SIGKILL on ctx cancellation, which the host-agent's
+	// reap-grace contract forbids (the stubchild's signal handler would never
+	// observe the SIGTERM and the agent's reap-clean ack would be wrong).
 	cmd := exec.Command(params.BinaryPath, params.Args...) //nolint:gosec // path trust is the caller's posture (host-agent enforces allow-paths via pathAllowed; future callers MUST validate the binary path against their own trust model before invoking SpawnService)
 	if params.Cwd != "" {
 		cmd.Dir = params.Cwd
 	}
 
-	// RIMSKY_AGENT_PORT is appended LAST so it always wins on duplicate-key
-	// resolution: exec uses the last occurrence of a duplicated key, and
-	// the agent's contract is that the child MUST bind on the
-	// agent-allocated port — no caller-supplied env may shadow it.
+	// @constraint: RIMSKY_AGENT_PORT is appended LAST so it always wins on
+	// duplicate-key resolution — exec uses the last occurrence of a duplicated
+	// key, and the agent's contract is that the child MUST bind on the
+	// agent-allocated port. No caller-supplied env may shadow it.
 	env := append([]string(nil), params.Env...)
 	env = append(env, fmt.Sprintf("%s=%d", agentPortEnvVar, port))
 	cmd.Env = env
-	cmd.Stdout = os.Stderr // surface child logs without polluting the parent's stdout
+	// @deliberate: surface child logs on the parent's stderr (not stdout) so
+	// stdout stays clean for callers that capture structured output.
+	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
@@ -180,9 +179,9 @@ func SpawnService(ctx context.Context, params SpawnServiceParams) (*SpawnedServi
 	}
 
 	if !waitPortReady(ctx, port, exited, readyTimeout) {
-		// Reap the partial spawn before returning so callers never see a
-		// leaked child on readiness failure
-		// (@blessed-invariant: spawn-no-leak-on-readiness-timeout).
+		// @blessed-invariant: spawn-no-leak-on-readiness-timeout — reap the
+		// partial spawn before returning so callers never see a leaked child on
+		// readiness failure.
 		killProcess(cmd)
 		<-exited
 		return nil, fmt.Errorf("child did not bind port %d within %s", port, readyTimeout)
@@ -201,25 +200,24 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		return spawnFailed(sp.GetSpawnId(), fmt.Sprintf("path %q not permitted by --allow-paths", path))
 	}
 
-	// Per-binding exec() overrides (story S-hostagent-per-binding-exec-overrides):
-	// argv, working directory, and env are carried on the Binding wire message.
-	// A binding that declares none of them spawns exactly as before (no extra
-	// args, the instance-level cwd, inherited env), so this stays backward
-	// compatible.
+	// @story: host-agent-per-binding-overrides — argv, working directory,
+	// and env are carried on the Binding wire message. A binding that declares
+	// none of them spawns exactly as before (no extra args, the instance-level
+	// cwd, inherited env), so this stays backward compatible.
 	//
-	// Per-binding cwd overrides the instance-level cwd only when set;
-	// otherwise fall back to the Spawn frame's instance-level cwd
+	// @deliberate: per-binding cwd overrides the instance-level cwd only when
+	// set; otherwise fall back to the Spawn frame's instance-level cwd
 	// (today's behavior).
 	cwd := sp.GetBinding().GetCwd()
 	if cwd == "" {
 		cwd = sp.GetCwd()
 	}
 
-	// Env layering: inherited environment first, then each per-binding env
-	// entry (so a binding key overrides the inherited value on collision —
-	// exec uses the LAST occurrence of a duplicated key). SpawnService
-	// appends RIMSKY_AGENT_PORT itself, after this list, so the agent port
-	// always wins over any binding key.
+	// @constraint: env layering — inherited environment first, then each
+	// per-binding env entry (so a binding key overrides the inherited value on
+	// collision; exec uses the LAST occurrence of a duplicated key).
+	// SpawnService appends RIMSKY_AGENT_PORT itself, after this list, so the
+	// agent port always wins over any binding key.
 	env := os.Environ()
 	for k, v := range sp.GetBinding().GetEnv() {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
@@ -331,19 +329,19 @@ func capabilitiesForProtocol(ctx context.Context, conn *grpc.ClientConn, protoco
 		}
 		return proto.Marshal(resp)
 	case protocolValidation:
-		// The Validation service exposes ONLY Validate — it has no
-		// Capabilities RPC. A multi-protocol binary advertises that it fronts
-		// validation through its claim-producer/multi-protocol Capabilities
-		// surface (CapabilitiesResponse.protocols), which the handshake reads
-		// via that protocol's own case. A standalone validation-only binary
-		// has no capability surface to read, so validation is a no-capability
-		// forwarder: there is nothing to read back. But the spawn MUST still
-		// probe that the Validation server is actually registered on the
-		// spawned child — otherwise a binding that opens a TCP port but
-		// exposes no Validation server would pass the handshake and the
-		// first real Validate dispatch would surface as an opaque gRPC
-		// error (codes.Unimplemented). One sentinel Validate call here
-		// turns that "deferred opaque failure" into a clear "validation
+		// @deliberate: the Validation service exposes ONLY Validate — it has
+		// no Capabilities RPC. A multi-protocol binary advertises that it
+		// fronts validation through its claim-producer/multi-protocol
+		// Capabilities surface (CapabilitiesResponse.protocols), which the
+		// handshake reads via that protocol's own case. A standalone
+		// validation-only binary has no capability surface to read, so
+		// validation is a no-capability forwarder: there is nothing to read
+		// back. But the spawn MUST still probe that the Validation server is
+		// actually registered on the spawned child — otherwise a binding that
+		// opens a TCP port but exposes no Validation server would pass the
+		// handshake and the first real Validate dispatch would surface as an
+		// opaque gRPC error (codes.Unimplemented). One sentinel Validate call
+		// here turns that "deferred opaque failure" into a clear "validation
 		// service not registered on spawned binary" handshake error.
 		return probeValidationRegistered(callCtx, conn)
 	default:
@@ -371,16 +369,15 @@ const validationHandshakeProbeRole = ""
 func probeValidationRegistered(ctx context.Context, conn *grpc.ClientConn) ([]byte, error) {
 	_, err := genv1.NewValidationClient(conn).Validate(ctx, &genv1.ValidateRequest{Role: validationHandshakeProbeRole})
 	if err == nil {
-		// Server registered and answered cleanly.
 		return nil, nil
 	}
 	if status.Code(err) == codes.Unimplemented {
 		return nil, fmt.Errorf("validation service not registered on spawned binary: %w", err)
 	}
-	// Any other RPC failure means the child accepted the call (the
-	// server IS registered) and returned an error for this particular
-	// request shape. The probe's only contract is "server present";
-	// treat the call as successful for handshake purposes.
+	// @deliberate: any other RPC failure means the child accepted the call
+	// (the server IS registered) and returned an error for this particular
+	// request shape. The probe's only contract is "server present"; treat the
+	// call as successful for handshake purposes.
 	return nil, nil
 }
 
@@ -400,7 +397,8 @@ func (a *agent) handleReap(reap *genv1.Reap) *genv1.Reaped {
 	a.childMu.Unlock()
 
 	if !ok {
-		// Unknown spawn-id: nothing to reap. Report clean (idempotent reap).
+		// @deliberate: unknown spawn-id has nothing to reap; report clean so
+		// reap is idempotent across retries.
 		return &genv1.Reaped{SpawnId: reap.GetSpawnId(), Clean: true}
 	}
 

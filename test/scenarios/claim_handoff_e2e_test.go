@@ -99,7 +99,7 @@ func testClaimHandoffRegressionClose(t *testing.T) {
 	require.True(t, h.WaitForNodeState(coHolder.ID, cascade.NodeStateFresh, 30*time.Second),
 		"co-holder should settle fresh (substitution must resolve)")
 
-	// Co-holder's substituted attributes should carry the held address.
+	// @constraint: Co-holder's substituted attributes should carry the held address.
 	// The Falsifier names "the co-holder dispatches but receives
 	// substituted bytes that don't equal the acquirer's bytes" as a
 	// failure mode the proof must close — non-emptiness alone is not
@@ -115,7 +115,6 @@ func testClaimHandoffRegressionClose(t *testing.T) {
 	require.Equal(t, unwrapJSONString(handle.Address), got,
 		"co-holder's substituted held_addr must equal the acquirer's persisted claim_handle.Address bytes")
 
-	// And the claim handle row should be state=committed, is_held=true.
 	requireClaimHandleState(t, h, acquirer.ID, spec.ClaimHandleStateCommitted, true)
 }
 
@@ -124,7 +123,7 @@ func testClaimHandoffRegressionClose(t *testing.T) {
 // resolving to the corresponding persisted field on the held claim.
 func testClaimHandoffPerFieldSubstitution(t *testing.T) {
 
-	// Pick policy seeds a payload with `region` so that
+	// @deliberate: Pick policy seeds a payload with `region` so that
 	// {{claim.schema.payload.region}} resolves to "us-east-1".
 	itemPayload := json.RawMessage(`{"region":"us-east-1"}`)
 
@@ -138,7 +137,6 @@ func testClaimHandoffPerFieldSubstitution(t *testing.T) {
 				InitialItems: []json.RawMessage{itemPayload},
 			},
 		},
-		// Acquirer points at the pick policy selector.
 		acquirerSelector: "@queue",
 		coHolderAttrs: map[string]any{
 			"type": "object",
@@ -158,14 +156,14 @@ func testClaimHandoffPerFieldSubstitution(t *testing.T) {
 
 	coHolderRunID := latestRunIDForNode(t, h, coHolder.ID)
 
-	// Read the acquirer's claim_handle row so we can compare per-field.
+	// @deliberate: Read the acquirer's claim_handle row so we can compare per-field.
 	handle := readSingleClaimHandle(t, h, acquirer.ID)
 
 	gotAddr := readSubstitutedAttribute(t, h, coHolderRunID, "held_addr")
 	gotRegion := readSubstitutedAttribute(t, h, coHolderRunID, "held_region")
 	gotScope := readSubstitutedAttribute(t, h, coHolderRunID, "held_scope")
 
-	// `address` and `claim_scope` flow through stringifyRaw (the
+	// @deliberate: `address` and `claim_scope` flow through stringifyRaw (the
 	// sanctioned shape-flattener for top-level address/claim-scope
 	// directives) which unwraps a JSON-string into its plain string
 	// form. The acquirer's Address column carries the JSON-encoded
@@ -176,7 +174,7 @@ func testClaimHandoffPerFieldSubstitution(t *testing.T) {
 	require.Equal(t, unwrapJSONString(handle.ClaimScopeData), gotScope,
 		"co-holder's held_scope should equal the held claim's ClaimScope")
 
-	// `payload.<f>` is walked via walkPath, so a string leaf is
+	// @deliberate: `payload.<f>` is walked via walkPath, so a string leaf is
 	// returned verbatim (no JSON re-quoting).
 	require.Equal(t, "us-east-1", gotRegion,
 		"co-holder's held_region should equal the seeded payload's region field")
@@ -199,7 +197,7 @@ func testClaimHandoffAbandonPath(t *testing.T) {
 			},
 			"required": []any{"held_addr"},
 		},
-		// Co-holder's stub script is overridden to emit Error("forced",
+		// @deliberate: Co-holder's stub script is overridden to emit Error("forced",
 		// nil); error_types maps `stub/forced` (the canonical hier-
 		// archical class) to `give_up`.
 		coHolderError: "forced",
@@ -243,7 +241,7 @@ func testClaimHandoffMultiCoHolderCommit(t *testing.T) {
 	})
 	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "acquired")
 	h.Stub.WhenType("co-holder-fast").Success(map[string]any{}, true, "fast")
-	// The slow co-holder delays its terminal long enough that the fast
+	// @constraint: The slow co-holder delays its terminal long enough that the fast
 	// co-holder's settlement is observable while the slow one is still
 	// active. The held claim must NOT transition to committed during
 	// this gap.
@@ -298,19 +296,18 @@ func testClaimHandoffMultiCoHolderCommit(t *testing.T) {
 	require.NotNil(t, fast)
 	require.NotNil(t, slow)
 
-	// Drive the fast co-holder to fresh. The slow one is still in-flight
+	// @deliberate: Drive the fast co-holder to fresh. The slow one is still in-flight
 	// because of its 2s Delay.
 	require.True(t, h.WaitForNodeState(acquirer.ID, cascade.NodeStateFresh, 30*time.Second),
 		"acquirer should settle fresh")
 	require.True(t, h.WaitForNodeState(fast.ID, cascade.NodeStateFresh, 30*time.Second),
 		"fast co-holder should settle fresh first")
 
-	// While slow is still running, the held claim handle must remain
+	// @constraint: While slow is still running, the held claim handle must remain
 	// state=active. Auto-terminal atomicity: Commit only fires when
 	// EVERY holder is non-active.
 	requireClaimHandleState(t, h, acquirer.ID, spec.ClaimHandleStateActive, true)
 
-	// Now allow the slow co-holder to finish.
 	require.True(t, h.WaitForNodeState(slow.ID, cascade.NodeStateFresh, 30*time.Second),
 		"slow co-holder should eventually settle fresh")
 
@@ -345,7 +342,7 @@ func testClaimHandoffWirePayloadParity(t *testing.T) {
 
 	coHolderRunID := latestRunIDForNode(t, h, coHolder.ID)
 
-	// Read both the acquirer's claim_handle row and the co-holder's
+	// @deliberate: Read both the acquirer's claim_handle row and the co-holder's
 	// substituted attribute row inside one transaction so we compare
 	// the bytes as the persistence layer sees them.
 	var acquirerAddr json.RawMessage
@@ -372,7 +369,7 @@ func testClaimHandoffWirePayloadParity(t *testing.T) {
 		return nil
 	}))
 
-	// The substitution engine emits the address as a Go string after
+	// @deliberate: The substitution engine emits the address as a Go string after
 	// stringifyRaw unwraps the JSON-encoded RawMessage. Re-encode the
 	// substituted value as a JSON string and compare byte-for-byte
 	// with the claim_handle.Address column — wire-payload parity.
@@ -384,16 +381,14 @@ func testClaimHandoffWirePayloadParity(t *testing.T) {
 		"co-holder's substituted address bytes must equal the acquirer's claim_handle.Address bytes")
 }
 
-// ---------- helpers ----------
-
 type handoffOpts struct {
 	alias              string
 	coHolderType       string
 	coHolderAttrs      map[string]any
-	coHolderError      string // when set, co-holder script emits Error(<class>, nil) instead of Success
+	coHolderError      string // @deliberate: when set, co-holder script emits Error(<class>, nil) instead of Success
 	coHolderErrorTypes map[string]node.ErrorTypePolicy
 	pickPolicies       map[string]stubstore.PickPolicyConfig
-	acquirerSelector   string // defaults to "/region-handoff" when no pick policies are configured
+	acquirerSelector   string // @deliberate: defaults to "/region-handoff" when no pick policies are configured
 }
 
 // startHandoffHarness boots a two-node holding-subgraph template
@@ -533,7 +528,7 @@ func readSingleClaimHandle(t *testing.T, h *scenario.Harness, nodeID shared.UUID
 // that has an opinion about where the held claim ends up.
 func requireClaimHandleState(t *testing.T, h *scenario.Harness, acquirerNodeID shared.UUID, want spec.ClaimHandleState, wantHeld bool) {
 	t.Helper()
-	// Auto-terminal Promote fires asynchronously after the holding
+	// @deliberate: Auto-terminal Promote fires asynchronously after the holding
 	// subgraph completes (one supervisor tick after the last holder
 	// settles). Poll the row's state until it matches the expectation
 	// or we time out — this absorbs the in-tx Promote latency without

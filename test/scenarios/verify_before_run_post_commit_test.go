@@ -55,7 +55,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// Seed a single UNCLAIMED dispatch row (claimed_by left NULL, phase
+	// @constraint: Seed a single UNCLAIMED dispatch row (claimed_by left NULL, phase
 	// defaults to 'pending'). Unlike the candidate-guard sibling test we do
 	// NOT pre-seed an owner: this row must be admitted by the candidate
 	// SELECT so our runner wins the acquisition tx and commits ownership to
@@ -94,7 +94,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
 		HeartbeatInterval: 100 * time.Millisecond,
-		// Force the cross-transaction ownership flip in the window between
+		// @deliberate: Force the cross-transaction ownership flip in the window between
 		// the acquisition commit and the verify-before-run separate-read.
 		PostCommitHook: func(ctx context.Context) {
 			tag, uerr := h.Pool.Exec(ctx,
@@ -115,7 +115,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	require.False(t, out.Ran,
 		"verify-before-run must bail (Ran=false) when the claim was stolen between commit and the verify-read")
 
-	// The executor must NOT have been invoked: the node stays stale (the
+	// @deliberate: The executor must NOT have been invoked: the node stays stale (the
 	// runner never transitioned it to running) and no terminal event was
 	// emitted for it.
 	var got *persistence.NodeRow
@@ -135,7 +135,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 	require.Zero(t, terminalCount,
 		"no terminal/* event must be emitted — the stolen dispatch was never executed")
 
-	// The bail path must emit orphaned_claim_lost_race for the stolen
+	// @deliberate: The bail path must emit orphaned_claim_lost_race for the stolen
 	// dispatch, carrying the dispatch_id in its payload.
 	var orphanCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,

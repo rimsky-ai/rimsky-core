@@ -29,8 +29,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Error-class vocabulary surfaced by the proxy (slots into the existing
-// executor-Error / claim-producer-error class spaces).
+// @constraint: error-class vocabulary surfaced by the proxy (slots into
+// the existing executor-Error / claim-producer-error class spaces).
 const (
 	errClassBindingNotFound       = "binding_not_found"
 	errClassHostAgentNotConnected = "host_agent_not_connected"
@@ -139,11 +139,11 @@ func resolveAndSpawn(
 		entry = fetched
 	}
 
-	// An empty owner is an anonymous-mode instance: resolve the agent under the
-	// anonymous routing identity instead of short-circuiting. host_agent_not_
-	// connected is still returned, but only when no agent (owner-keyed OR
-	// anonymous) is connected — the guard now discriminates "no anonymous agent"
-	// from "owner empty".
+	// @constraint: an empty owner is an anonymous-mode instance — resolve
+	// the agent under the anonymous routing identity instead of
+	// short-circuiting. host_agent_not_connected is still returned, but
+	// only when no agent (owner-keyed OR anonymous) is connected — the
+	// guard discriminates "no anonymous agent" from "owner empty".
 	routingKey := resolveOwnerRoutingKey(entry.ownerAPIKeyID)
 	agent, ok := state.lookupAgent(routingKey)
 	if !ok {
@@ -163,7 +163,7 @@ func resolveAndSpawn(
 		return &resolved{agent: agent, spawnID: spawnID, scopeID: scopeID}, nil
 	}
 
-	// Lazy spawn.
+	// @deliberate: lazy spawn — no cached spawn matched the cache key.
 	spawnID, rerr := spawnChild(agent, binding, entry, name, scopeID, expectedProtocols, spawnTimeout)
 	if rerr != nil {
 		return nil, rerr
@@ -204,9 +204,9 @@ func resolveAndSpawnByService(
 	if !ok {
 		return nil, &resolveError{class: errClassBindingNotFound, msg: fmt.Sprintf("no cached instance binds service %q", name)}
 	}
-	// Anonymous-mode instance (empty owner) → resolve under the anonymous
-	// routing identity; host_agent_not_connected only when no agent is
-	// connected under the resolved key.
+	// @constraint: anonymous-mode instance (empty owner) resolves under
+	// the anonymous routing identity; host_agent_not_connected only when
+	// no agent is connected under the resolved key.
 	routingKey := resolveOwnerRoutingKey(entry.ownerAPIKeyID)
 	agent, ok := state.lookupAgent(routingKey)
 	if !ok {
@@ -245,16 +245,16 @@ func spawnChild(
 	ackCh := agent.registerSpawnPending(spawnID)
 	defer agent.clearSpawnPending(spawnID)
 
-	// Per-binding cwd overrides the instance-level params.cwd only when set;
-	// otherwise the agent falls back to the instance-level cwd carried on the
-	// Spawn frame (today's behavior).
+	// @constraint: per-binding cwd overrides the instance-level
+	// params.cwd only when set; otherwise the agent falls back to the
+	// instance-level cwd carried on the Spawn frame.
 	cwd, _ := entry.params["cwd"].(string)
 
-	// A per-binding timeout bounds BOTH the agent's readiness wait (carried in
-	// ReadyTimeoutSeconds) and the proxy's own SpawnAck wait below — so a
-	// no-bind child fails inside the binding-specified budget rather than the
-	// proxy's larger configured default. Absent (<=0) → the proxy's configured
-	// spawn timeout governs, unchanged.
+	// @constraint: a per-binding timeout bounds BOTH the agent's
+	// readiness wait (carried in ReadyTimeoutSeconds) and the proxy's
+	// own SpawnAck wait below — so a no-bind child fails inside the
+	// binding-specified budget rather than the proxy's larger configured
+	// default. Absent (<=0) → the proxy's configured spawn timeout governs.
 	effectiveTimeout := timeout
 	if binding.TimeoutSeconds > 0 {
 		effectiveTimeout = time.Duration(binding.TimeoutSeconds) * time.Second

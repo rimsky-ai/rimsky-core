@@ -110,8 +110,8 @@ func TestObservability_StreamTrace_NoDropUnderConcurrentAppend(t *testing.T) {
 	const eventsPer = 25
 	s := NewObservabilityServer()
 	s.RegisterDispatch(dispatchID)
-	// Seed some events so the snapshot is non-empty at subscription
-	// time — this keeps the buggy code path exercising the gap window.
+	// @deliberate: seed pre-registration events so the snapshot is non-empty at
+	// subscription time, keeping the buggy code path exercising the gap window.
 	for i := 0; i < 5; i++ {
 		s.AppendEvent(dispatchID, MakeEvent(fmt.Sprintf("seed-%d", i), "", "log", "", genv1.Severity_INFO, nil))
 	}
@@ -141,7 +141,8 @@ func TestObservability_StreamTrace_NoDropUnderConcurrentAppend(t *testing.T) {
 	}
 	wg.Wait()
 
-	// MarkTerminal closes the live channel so StreamTrace returns.
+	// @deliberate: MarkTerminal closes the live channel so StreamTrace returns;
+	// without it the stream goroutine would block past the test's deadline.
 	s.MarkTerminal(dispatchID)
 
 	select {
@@ -151,17 +152,13 @@ func TestObservability_StreamTrace_NoDropUnderConcurrentAppend(t *testing.T) {
 	}
 
 	got := stream.snapshot()
-	// The last event is the synthetic trace_complete.
 	if len(got) == 0 || got[len(got)-1].EventId != "trace_complete" {
 		t.Fatalf("expected trailing trace_complete; got %d events", len(got))
 	}
-	// Build the set of observed event IDs minus the trailing marker.
 	observed := make(map[string]struct{}, len(got)-1)
 	for _, ev := range got[:len(got)-1] {
 		observed[ev.GetEventId()] = struct{}{}
 	}
-	// Reference set: every AppendEvent ever fired against this
-	// dispatch (seed + concurrent).
 	expected := make(map[string]struct{})
 	for i := 0; i < 5; i++ {
 		expected[fmt.Sprintf("seed-%d", i)] = struct{}{}
@@ -183,7 +180,8 @@ func TestObservability_SweepEvicted(t *testing.T) {
 	s.RegisterDispatch("d1")
 	s.AppendEvent("d1", MakeEvent("e1", "", "log", "hello", genv1.Severity_INFO, nil))
 	s.MarkTerminal("d1")
-	// Force the terminal timestamp into the past beyond retention.
+	// @deliberate: backdate the terminal timestamp past retention so
+	// SweepEvicted has something to evict without sleeping the retention window.
 	s.mu.Lock()
 	s.traces["d1"].terminalAt = time.Now().Add(-2 * time.Hour)
 	s.mu.Unlock()

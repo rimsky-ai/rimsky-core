@@ -49,11 +49,11 @@ const agentVersion = "v1"
 // in lockstep. @concept: host-agent-proxy
 const AnonymousRoutingIdentity = "anonymous"
 
-// reconnect backoff bounds.
-const (
-	reconnectMinBackoff = 250 * time.Millisecond
-	reconnectMaxBackoff = 10 * time.Second
-)
+// reconnectMinBackoff is the floor for host-agent dial retries.
+const reconnectMinBackoff = 250 * time.Millisecond
+
+// reconnectMaxBackoff is the ceiling for host-agent dial retries.
+const reconnectMaxBackoff = 10 * time.Second
 
 // liveChild tracks one spawned binary for a spawn-id: the OS process, the
 // gRPC connection to its local server, and a channel closed when it exits.
@@ -71,37 +71,38 @@ type liveChild struct {
 // closes.
 type agent struct {
 	cfg          Config
-	localBaseURL string // http://<bound-listener-addr>
+	localBaseURL string
 
-	// sendMu serializes stream.Send across all goroutines (gRPC client
-	// streams require single-writer). sendClosed guards against sending on a
-	// torn-down stream.
+	// @constraint: gRPC client streams require single-writer; sendMu
+	// serializes stream.Send across all goroutines, and sendClosed guards
+	// against sending on a torn-down stream.
 	sendMu     sync.Mutex
 	stream     genv1.HostAgent_ConnectClient
 	sendClosed bool
 
-	// proxyConn is the gRPC client connection the stream rides; closed on
-	// teardown.
+	// @constraint: proxyConn is the gRPC client connection the stream rides;
+	// closed on teardown.
 	proxyConn *grpc.ClientConn
 
 	childMu  sync.Mutex
-	children map[string]*liveChild // spawn_id → live child
+	children map[string]*liveChild
 
-	// spawnWG tracks in-flight runSpawn goroutines. serve joins it before
-	// reapAllOrphans so a spawn that registers its child during the
-	// stream-close race is still drained (otherwise the child leaks for the
-	// connection's lifetime — the next reconnect is a fresh agent).
+	// @constraint: serve joins spawnWG before reapAllOrphans so a spawn that
+	// registers its child during the stream-close race is still drained;
+	// without the join the child leaks for the connection's lifetime (the
+	// next reconnect is a fresh agent).
 	spawnWG sync.WaitGroup
 
-	// pendingForwards maps a local-HTTP forward_id to the channel awaiting
-	// its LocalHttpResponse from the proxy.
+	// @constraint: pendingForwards maps a local-HTTP forward_id to the
+	// channel awaiting its LocalHttpResponse from the proxy.
 	forwardMu       sync.Mutex
 	pendingForwards map[string]chan *genv1.LocalHttpResponse
 
-	// dispatchCancels maps an in-flight executor dispatch's stream_id to the
-	// cancel func for the child's inner Execute stream, so an inbound CANCEL
-	// frame (the proxy relaying a supervisor-side cancellation) tears the
-	// child stream down rather than letting it run to child termination.
+	// @constraint: dispatchCancels maps an in-flight executor dispatch's
+	// stream_id to the cancel func for the child's inner Execute stream so
+	// an inbound CANCEL frame (the proxy relaying a supervisor-side
+	// cancellation) tears the child stream down rather than letting it run
+	// to child termination.
 	dispatchMu      sync.Mutex
 	dispatchCancels map[string]context.CancelFunc
 }
@@ -150,28 +151,28 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.RimskyURL == "" {
 		return errors.New("hostagent: RIMSKY_URL is required")
 	}
-	// Anonymous-mode deployment: an empty api-key is no longer a hard error.
-	// The agent substitutes the well-known anonymous routing identity so the
-	// existing non-empty-key invariant holds end to end — the proxy's Register
-	// handler still rejects a truly empty api_key, and the substituted sentinel
-	// is what the proxy resolves an anonymous-owner instance against. The
-	// authenticated path is unchanged: a non-empty api-key registers under
-	// itself exactly as before.
+	// @deliberate: an empty api-key is no longer a hard error in
+	// anonymous-mode deployments — the agent substitutes the well-known
+	// anonymous routing identity so the existing non-empty-key invariant
+	// holds end to end. The proxy's Register handler still rejects a truly
+	// empty api_key, and the substituted sentinel is what the proxy
+	// resolves an anonymous-owner instance against; a non-empty api-key
+	// registers under itself exactly as before.
 	if cfg.APIKey == "" {
 		cfg.APIKey = AnonymousRoutingIdentity
 	}
 
-	// 1. Bind the local HTTP listener (Task 48). The handler is set per
-	//    connection so each spawned child's callbacks tunnel through the
-	//    currently-live stream.
+	// @constraint: bind the local HTTP listener once; the handler is set
+	// per connection so each spawned child's callbacks tunnel through the
+	// currently-live stream.
 	lis, baseURL, err := bindLocalListener(cfg.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("hostagent: bind local listener: %w", err)
 	}
 	defer lis.Close()
 
-	// currentAgent is swapped on each (re)connect; the HTTP handler reads it
-	// to find the live stream to forward onto.
+	// @constraint: cur is swapped on each (re)connect; the HTTP handler
+	// reads it to find the live stream to forward onto.
 	var (
 		curMu sync.Mutex
 		cur   *agent
@@ -194,10 +195,10 @@ func Run(ctx context.Context, cfg Config) error {
 
 	slog.Info("hostagent starting", "rimsky_url", cfg.RimskyURL, "agent_label", cfg.AgentLabel, "local_base_url", baseURL)
 
-	// Ensure a stale status file from a crash is cleared before we start
-	// publishing fresh state, and is removed on shutdown so a `status`
-	// readers can't see a phantom `connected:true` after the daemon is
-	// gone. @story: host-agent-control-plane (status truthfulness).
+	// @story: host-agent-control-plane — clear any stale status file from
+	// a crash before publishing fresh state, and remove it on shutdown so
+	// a `status` reader can't see a phantom `connected:true` after the
+	// daemon is gone (status truthfulness).
 	clearStatusFile(cfg.StatusFile)
 	defer clearStatusFile(cfg.StatusFile)
 
@@ -218,15 +219,16 @@ func Run(ctx context.Context, cfg Config) error {
 			backoff = nextBackoff(backoff)
 			continue
 		}
-		backoff = reconnectMinBackoff // reset on a successful connect
+		// @deliberate: reset backoff on a successful connect.
+		backoff = reconnectMinBackoff
 
 		curMu.Lock()
 		cur = a
 		curMu.Unlock()
 
-		// Publish "connected" — only AFTER the RegisterAck handshake
-		// succeeded (connectOnce returned non-nil). A `status` call
-		// that wins this race sees the live state.
+		// @constraint: publish "connected" only AFTER the RegisterAck
+		// handshake succeeded (connectOnce returned non-nil) so a
+		// `status` call that wins this race sees the live state.
 		writeStatusFile(cfg.StatusFile, statusSnapshot{
 			Connected: true,
 			Proxy:     cfg.RimskyURL,
@@ -239,13 +241,13 @@ func Run(ctx context.Context, cfg Config) error {
 		cur = nil
 		curMu.Unlock()
 
-		// The stream just tore down — clear the connected sentinel
-		// BEFORE reaping so a `status` call mid-reap doesn't observe
-		// `connected:true` against a dead stream.
+		// @constraint: clear the connected sentinel BEFORE reaping so a
+		// `status` call mid-reap doesn't observe `connected:true`
+		// against a dead stream.
 		clearStatusFile(cfg.StatusFile)
 
-		// Stream closed: orphan all live children, give them ReapGracePeriod
-		// to exit, then SIGKILL the stragglers.
+		// @constraint: on stream close, orphan all live children, give
+		// them ReapGracePeriod to exit, then SIGKILL the stragglers.
 		a.reapAllOrphans(cfg.ReapGracePeriod)
 
 		if ctx.Err() != nil {
@@ -357,10 +359,8 @@ func (a *agent) serve(ctx context.Context) {
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Heartbeat goroutine.
 	go a.heartbeatLoop(connCtx)
 
-	// Reader loop: route inbound ServerFrames until the stream ends.
 	for {
 		frame, err := a.stream.Recv()
 		if err != nil {
@@ -371,12 +371,13 @@ func (a *agent) serve(ctx context.Context) {
 			if a.proxyConn != nil {
 				_ = a.proxyConn.Close()
 			}
-			// Cancel the connection context so in-flight runSpawn
-			// goroutines (which dial/handshake under connCtx) unwind, then
-			// join them before returning so Run's reapAllOrphans sees every
-			// child a racing spawn may have registered. Without this join a
-			// spawn that finishes registering after the drain leaks its
-			// child for the connection's lifetime.
+			// @constraint: cancel the connection context so in-flight
+			// runSpawn goroutines (which dial/handshake under connCtx)
+			// unwind, then join them before returning so Run's
+			// reapAllOrphans sees every child a racing spawn may have
+			// registered. Without this join a spawn that finishes
+			// registering after the drain leaks its child for the
+			// connection's lifetime.
 			cancel()
 			a.spawnWG.Wait()
 			return
@@ -391,7 +392,7 @@ func (a *agent) serve(ctx context.Context) {
 func (a *agent) routeServerFrame(ctx context.Context, frame *genv1.ServerFrame) {
 	switch body := frame.GetBody().(type) {
 	case *genv1.ServerFrame_HeartbeatAck:
-		// liveness only; nothing to do.
+		// @deliberate: liveness only; nothing to do.
 	case *genv1.ServerFrame_Spawn:
 		a.spawnWG.Add(1)
 		go func() {

@@ -42,7 +42,7 @@ import (
 func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	t.Parallel()
 
-	// Loopback stub for control-api template validation. The runner
+	// @deliberate: Loopback stub for control-api template validation. The runner
 	// below substitutes its own in-process Fake registry so we can
 	// observe TemplateID/InstanceID directly on the recorded call.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -106,7 +106,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should have dispatched the node")
 
-	// Find the Open call on the Fake. The supervisor must have
+	// @constraint: Find the Open call on the Fake. The supervisor must have
 	// populated the envelope from the dispatch row's instance →
 	// template lookup before issuing Open.
 	calls := fake.Calls()

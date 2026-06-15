@@ -38,9 +38,9 @@ func TestParentTerminalRendezvous_SemaphoreBoundsInFlightLeaves(t *testing.T) {
 	t.Parallel()
 	registry := runtime.NewFanOutSemaphoreRegistry()
 	parent := shared.UUID(uuid.New())
-	sem := registry.GetOrCreate(parent, 3) // cap=3 in-flight leaves
+	sem := registry.GetOrCreate(parent, 3) // @constraint: cap=3 in-flight leaves
 
-	// Hold 3 slots; the next Acquire must block.
+	// @constraint: Hold 3 slots; the next Acquire must block.
 	for i := 0; i < 3; i++ {
 		if err := sem.Acquire(context.Background()); err != nil {
 			t.Fatalf("acquire %d: %v", i, err)
@@ -49,7 +49,6 @@ func TestParentTerminalRendezvous_SemaphoreBoundsInFlightLeaves(t *testing.T) {
 	if sem.InFlight() != 3 {
 		t.Fatalf("in-flight: %d (want 3)", sem.InFlight())
 	}
-	// A 4th Acquire blocks until a slot frees.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	err := sem.Acquire(ctx)
@@ -63,7 +62,7 @@ func TestParentTerminalRendezvous_SemaphoreBoundsInFlightLeaves(t *testing.T) {
 	registry.Drop(parent)
 }
 
-// The semaphore registry is per-parent-run. Two different parents'
+// @deliberate: The semaphore registry is per-parent-run. Two different parents'
 // semaphores are independent — saturating one must not block the other.
 func TestParentTerminalRendezvous_PerParentIsolation(t *testing.T) {
 	t.Parallel()
@@ -76,13 +75,13 @@ func TestParentTerminalRendezvous_PerParentIsolation(t *testing.T) {
 	if err := s1.Acquire(context.Background()); err != nil {
 		t.Fatalf("s1.Acquire: %v", err)
 	}
-	// s2 is independent — must succeed even though s1 is saturated.
+	// @constraint: s2 is independent — must succeed even though s1 is saturated.
 	if err := s2.Acquire(context.Background()); err != nil {
 		t.Fatalf("s2.Acquire (independent parent): %v", err)
 	}
 }
 
-// Concurrent Acquires honor the cap exactly — bounded by a counter
+// @deliberate: Concurrent Acquires honor the cap exactly — bounded by a counter
 // confirms the channel-backed semaphore is correct under contention.
 func TestParentTerminalRendezvous_ConcurrentAcquireRespectsCap(t *testing.T) {
 	t.Parallel()
@@ -108,7 +107,7 @@ func TestParentTerminalRendezvous_ConcurrentAcquireRespectsCap(t *testing.T) {
 				maxConcurrent = current
 			}
 			mu.Unlock()
-			time.Sleep(5 * time.Millisecond) // simulate dispatch work
+			time.Sleep(5 * time.Millisecond)
 			mu.Lock()
 			current--
 			mu.Unlock()

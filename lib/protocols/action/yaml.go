@@ -20,15 +20,15 @@ import (
 func (a *Action) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
-		// Bare-null tag: yaml.v3 reports null scalars with !!null tag.
+		// @constraint: yaml.v3 surfaces null scalars with the !!null tag, so
+		// nil-shaped action values must be caught by tag rather than empty
+		// string.
 		if node.Tag == "!!null" {
 			return fmt.Errorf("line %d: action must be a string or one-key map (got null)", node.Line)
 		}
-		// Reject non-string scalars (numbers, booleans).
 		if node.Tag != "" && node.Tag != "!!str" {
 			return fmt.Errorf("line %d: action must be a string or one-key map (got %s)", node.Line, node.Tag)
 		}
-		// Bare string: must be a non-parameterized action name.
 		kind, err := ParseKind(node.Value)
 		if err != nil {
 			return fmt.Errorf("line %d: %w", node.Line, err)
@@ -40,7 +40,6 @@ func (a *Action) UnmarshalYAML(node *yaml.Node) error {
 		a.Kind = kind
 		return nil
 	case yaml.MappingNode:
-		// One-key map: must be { pop_and_move: <string> }.
 		if len(node.Content) == 0 {
 			return fmt.Errorf("line %d: empty action map", node.Line)
 		}

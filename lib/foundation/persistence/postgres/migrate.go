@@ -37,8 +37,10 @@ func newMigrator(pool *pgxpool.Pool) persistence.Migrator {
 			).Scan(&exists)
 			return exists, err
 		},
-		// ApplyOne runs the migration SQL and records it inside a single
-		// pgx tx, preserving the pre-refactor per-file atomicity.
+		// @deliberate: run the migration SQL and the rimsky_migrations
+		// insert inside one pgx tx so each file applies atomically — a
+		// crash mid-file rolls both back, matching the pre-refactor
+		// per-file atomicity guarantee.
 		ApplyOne: func(ctx context.Context, sql string, filename string) error {
 			tx, err := pool.Begin(ctx)
 			if err != nil {

@@ -62,7 +62,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	})
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": 1}, true, "ran")
 
-	// Post-2026-05-23: explicit retry opt-in via error_types: {
+	// @deliberate: Post-2026-05-23: explicit retry opt-in via error_types: {
 	// "acquire/unavailable": { policy: [retry × N] } }. Without this
 	// the default is fail-fast.
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -76,7 +76,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 					ErrorTypes: map[string]node.ErrorTypePolicy{
 						"acquire/unavailable": {
 							Policy: []node.PolicyAction{
-								// Allow many retries so the test has
+								// @deliberate: Allow many retries so the test has
 								// time to seed the queue before a chain
 								// exhaustion would land in failed.
 								{Action: "retry", Count: 1000, BaseDelayMs: 100},
@@ -94,7 +94,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Wait until the producer has observed at least one Open against
+	// @deliberate: Wait until the producer has observed at least one Open against
 	// the empty queue. This pins that the supervisor probed the producer
 	// and got Unavailable.
 	deadline := time.Now().Add(10 * time.Second)
@@ -113,7 +113,7 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	}
 	require.True(t, sawFirstOpen, "stub producer should have seen at least one Open against the empty queue")
 
-	// Confirm the node has NOT transitioned to fresh — the explicit
+	// @deliberate: Confirm the node has NOT transitioned to fresh — the explicit
 	// retry chain should keep it stale (no settling_signal_type should
 	// be set yet; the retry hasn't terminated).
 	var wRow *persistence.NodeRow
@@ -125,11 +125,10 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	require.NotEqual(t, cascade.NodeStateFresh, wRow.State,
 		"silent-retry must NOT transition the node on Unavailable")
 
-	// Seed an item — the next scheduler tick should pick it up.
+	// @deliberate: Seed an item — the next scheduler tick should pick it up.
 	_, err := sub.SeedPickPolicyItem("@queue", json.RawMessage(`{"v":1}`))
 	require.NoError(t, err, "seed item")
 
-	// The node should now reach fresh via the silent retry.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker did not reach fresh after seeding the queue (silent-retry default)")
 }

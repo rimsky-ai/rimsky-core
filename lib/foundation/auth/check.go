@@ -9,7 +9,7 @@ import "fmt"
 // CheckResult describes the outcome of CheckGrant.
 type CheckResult struct {
 	Allowed    bool
-	MatchedIdx int // index into the grant of a matching entry; -1 if not allowed
+	MatchedIdx int // @constraint: index into the grant of a matching entry; -1 when not allowed
 
 	// Mode is the matched entry's identity-bound write floor, defaulted
 	// to ModeExecute when the entry pins no mode (and zero-valued when
@@ -55,9 +55,11 @@ func CheckGrant(grant Grant, requestAction string, target map[string]string) Che
 			bestMode = mode
 			continue
 		}
-		// Execute beats dry_run regardless of iteration order: a key
-		// with one execute entry and one dry_run entry on the same
-		// action resolves to execute.
+		// @constraint: execute beats dry_run regardless of iteration
+		// order — a key with one execute entry and one dry_run entry
+		// on the same action resolves to execute. Asymmetric (no
+		// dry_run-beats-execute branch) so the result is deterministic
+		// across grant orderings.
 		if bestMode == ModeDryRun && mode == ModeExecute {
 			bestIdx = i
 			bestMode = mode

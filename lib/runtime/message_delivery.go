@@ -108,26 +108,21 @@ type DeliveredMessages struct {
 	Messages []persistence.MessageRow
 }
 
-// DeliverPendingMessages is invoked at frame-boundary creation.
-// Selects pending messages for the instance, picks the subset per
-// `mode`, marks them delivered with the new frame_id, and returns the
-// rows so the caller can drive subscription matching.
-//
-// Cancelled messages: pre-cancelled rows
-// (col:rimsky_messages.cancelled = TRUE) are skipped — they were
-// stamped delivered_at=now() + frame_id=NULL by `CancelBackfill` and
-// surface in the dead-letter slice for diagnostics. Spec
-// §Backfills / cancelled column.
-//
-// Dead-lettering of zero-subscriber matches is handled by the caller
-// (the subscription-walk return value tells the caller whether any
-// subscribers fired).
 // SweepDeliverMessagesForRunningFrames is the frame-boundary sweep that
 // the scheduler invokes after `graph/frame.RunTick` promotes queued
 // frames to running. For each running frame whose owning instance still
 // has pending messages, the sweep loads the per-instance
 // `frame_delivery_mode` (col:rimsky_instances.frame_delivery_mode) and
-// calls `DeliverPendingMessages` inside its own short tx.
+// drives the per-instance delivery inside its own short tx — selecting
+// pending messages, picking the subset per `mode`, marking them
+// delivered with the new frame_id, and returning the rows so the
+// caller can drive subscription matching. Cancelled rows
+// (col:rimsky_messages.cancelled = TRUE) are skipped — they were
+// stamped delivered_at=now() + frame_id=NULL by `CancelBackfill` and
+// surface in the dead-letter slice for diagnostics (spec
+// §Backfills / cancelled column). Dead-lettering of zero-subscriber
+// matches is handled by the caller (the subscription-walk return value
+// tells the caller whether any subscribers fired).
 //
 // Idempotent: a message that's already been marked delivered_at + frame_id
 // is filtered out by `MessagesTable.ListPendingForInstance`, so re-running
@@ -135,7 +130,7 @@ type DeliveredMessages struct {
 // pending messages — if no messages are pending for a given instance the
 // helper returns immediately.
 //
-// Implementation note: the sweep paginates `FramesTable.ListForObservability`
+// @constraint: the sweep paginates `FramesTable.ListForObservability`
 // rather than introducing a dedicated "running frames" index — running
 // frames are bounded by the per-instance "at most one running frame"
 // invariant + the number of active instances, so a single page batch is
@@ -204,12 +199,9 @@ func deliverForRunningFrame(
 		if inst.FrameDeliveryMode == string(FrameDeliveryCoalesce) {
 			mode = FrameDeliveryCoalesce
 		}
-		// Conflict resolver for coalesce: load the per-template
-		// subscription edges so DeliverPendingMessages can tell whether two
-		// candidate messages would bind the *same* payload-reading node to
-		// *different* values (a conflict that must break the frame). serial_
-		// queue ignores the resolver (it delivers one message regardless),
-		// so we only pay the load cost under coalesce.
+		// @deliberate: only build the conflict resolver under coalesce —
+		// serial_queue delivers one message regardless, so the per-template
+		// subscription-edge load is wasted work in that mode.
 		var resolver coalesceConflictResolver
 		if mode == FrameDeliveryCoalesce {
 			resolver, err = buildCoalesceConflictResolver(ctx, persist, tx, inst.TemplateHash)
@@ -225,12 +217,11 @@ func deliverForRunningFrame(
 		if len(delivered.Messages) == 0 {
 			return nil
 		}
-		// Canonical signal emission per concept:signal — one
-		// message/<kind>/<sender_kind>/<target> signal per delivered
-		// envelope. The receiver-side cascade walk continues to drive
-		// stale-marks via cascadeMessageSubscribersInTx below; the
-		// signal-emit is independent (Pass 2 reshapes the cascade
-		// walk to be signal-driven and the two paths converge).
+		// @concept: signal — emit one message/<kind>/<sender_kind>/<target>
+		// signal per delivered envelope. The receiver-side cascade walk in
+		// cascadeMessageSubscribersInTx below drives stale-marks
+		// independently; signal-emit and cascade-walk converge under the
+		// Pass 2 signal-driven reshape.
 		for _, msg := range delivered.Messages {
 			target := msg.Target
 			if target == "" {
@@ -329,9 +320,9 @@ func cascadeMessageSubscribersInTx(
 	for _, msg := range messages {
 		msgSigType := signalpkg.TypePath(fmt.Sprintf("message/%s/%s/%s",
 			msg.Kind, msg.SenderKind, msg.Target))
-		// Empty target case: the wire shape has `target == ""` for
-		// broadcast envelopes; rewrite to "_unspecified" so the
-		// type-path doesn't collapse into a trailing-slash form.
+		// @constraint: broadcast envelopes carry `target == ""` on the
+		// wire; rewrite to "_unspecified" so the signal type-path doesn't
+		// collapse into a trailing-slash form.
 		if msg.Target == "" {
 			msgSigType = signalpkg.TypePath(fmt.Sprintf("message/%s/%s/_unspecified",
 				msg.Kind, msg.SenderKind))
@@ -344,15 +335,16 @@ func cascadeMessageSubscribersInTx(
 			"message_payload": messagePayloadAsMap(msg.Payload),
 		}
 		msgSig := signalpkg.Signal{Type: msgSigType, Payload: msgPayload}
-		// Messages have no sender-node-type; they cross-cut. Match
-		// against the empty sender-key bucket.
+		// @constraint: messages cross-cut and have no sender-node-type;
+		// match against the empty sender-key bucket.
 		matched := edges.Match("", msgSigType)
 		for _, e := range matched {
 			if e.WhenExpr != nil {
-				// Eval surfaces CEL runtime errors as `(false, nil)`
-				// with a slog warn — per the spec's safe-navigation
-				// default. The error return is reserved for future
-				// fatal-eval cases and stays unreachable today.
+				// @deliberate: discard Eval's error return — the spec's
+				// safe-navigation default surfaces CEL runtime errors as
+				// `(false, nil)` with a slog warn; the error path is
+				// reserved for future fatal-eval cases and stays
+				// unreachable today.
 				ok, _ := e.WhenExpr.Eval(msgSig)
 				if !ok {
 					continue
@@ -360,18 +352,17 @@ func cascadeMessageSubscribersInTx(
 			}
 			receivers := byType[e.ReceiverNodeType]
 			for _, r := range receivers {
-				// Legacy `target: self` compatibility: a subscription
-				// pattern that ends with `/self` matches only envelopes
-				// whose target equals the receiver's own alias.
+				// @constraint: legacy `target: self` compatibility —
+				// a subscription pattern ending in `/self` matches only
+				// envelopes whose target equals the receiver's own alias.
 				if strings.HasSuffix(string(e.TypePattern), "/self") && msg.Target != r.NodeType {
 					continue
 				}
-				// Resolve receiver's RunScope. If the LATERAL didn't
-				// project one (no in-flight row), default to the
-				// instance's main RunScope — message cascade is intra-
-				// scope on the main RunScope. AffirmNodeRunRow inserts
-				// a pending row keyed on (receiver_node_id, scope) so
-				// MarkStaleForCascade has a row to UPDATE.
+				// @deliberate: default to the instance's main RunScope
+				// when the LATERAL didn't project one — message cascade is
+				// intra-scope on the main RunScope, and AffirmNodeRunRow
+				// must insert a pending row keyed on (receiver_node_id,
+				// scope) so MarkStaleForCascade has a row to UPDATE.
 				var receiverScopeID shared.UUID
 				if r.RunScopeID != nil {
 					receiverScopeID = *r.RunScopeID
@@ -386,14 +377,12 @@ func cascadeMessageSubscribersInTx(
 					receiverScopeID = inst.MainRunScopeID
 				}
 				if err := persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverScopeID, frameID, tx); err != nil {
-					// Defensive: a closed RunScope means the
-					// receiver's scope has terminated (parent
-					// rendezvous has fired). The walker MUST NOT
-					// cross into closed RunScopes — skip this
-					// receiver and continue the cascade walk per
-					// concept:run-scope. Without this, a benign race
-					// with scope closure surfaces as a cascade-walk
-					// abort that strands the rest of the receivers.
+					// @concept: run-scope — the walker MUST NOT cross
+					// into closed RunScopes; a closed scope means the
+					// receiver's parent rendezvous has fired. Skip this
+					// receiver and continue the cascade walk so a benign
+					// race with scope closure doesn't strand the rest of
+					// the receivers.
 					if errors.Is(err, persistence.ErrRunScopeClosed) {
 						continue
 					}
@@ -466,8 +455,9 @@ func buildCoalesceConflictResolver(
 				"message_payload": messagePayloadAsMap(msg.Payload),
 			},
 		}
-		// Messages cross-cut: match against the empty sender-key bucket
-		// (same call cascadeMessageSubscribersInTx makes).
+		// @constraint: messages cross-cut — match against the empty
+		// sender-key bucket (same call cascadeMessageSubscribersInTx
+		// makes, so conflict detection and stale-mark agree).
 		matched := edges.Match("", msgSigType)
 		var receivers []string
 		for _, e := range matched {
@@ -510,7 +500,6 @@ func DeliverPendingMessages(
 	if err != nil {
 		return DeliveredMessages{}, fmt.Errorf("DeliverPendingMessages: list pending: %w", err)
 	}
-	// Filter out cancelled rows; ordering is already by received_at asc.
 	live := make([]persistence.MessageRow, 0, len(pending))
 	for _, r := range pending {
 		if r.Cancelled {
@@ -525,7 +514,7 @@ func DeliverPendingMessages(
 	switch mode {
 	case FrameDeliverySerialQueue:
 		deliverSet = live[:1]
-	default: // coalesce
+	default:
 		deliverSet = coalesceDeliverSet(live, resolve)
 	}
 	delivered := make([]persistence.MessageRow, 0, len(deliverSet))
@@ -535,7 +524,6 @@ func DeliverPendingMessages(
 			return DeliveredMessages{}, fmt.Errorf("DeliverPendingMessages: mark delivered %s: %w", msg.ID, err)
 		}
 		if !ok {
-			// Concurrent delivery — skip.
 			continue
 		}
 		msg.DeliveredAt = &now
@@ -568,8 +556,8 @@ func coalesceDeliverSet(live []persistence.MessageRow, resolve coalesceConflictR
 	if resolve == nil || len(live) <= 1 {
 		return live
 	}
-	// boundPayload records, per receiver node type already accumulated,
-	// the message payload that bound it. A later message that matches the
+	// @constraint: boundPayload tracks per-receiver-type the payload of
+	// the accumulated message that bound it; a later message matching the
 	// same receiver type with a different payload is a conflict.
 	boundPayload := make(map[string][]byte)
 	accepted := 0
@@ -583,8 +571,11 @@ func coalesceDeliverSet(live []persistence.MessageRow, resolve coalesceConflictR
 				break
 			}
 		}
+		// @constraint: on a payload conflict the loop stops; this
+		// message and the rest must wait for the next frame so the
+		// receiver observes a single bound payload per frame.
 		if conflict {
-			break // stop; this message + the rest wait for the next frame.
+			break
 		}
 		for _, rt := range receivers {
 			if _, seen := boundPayload[rt]; !seen {
@@ -594,9 +585,10 @@ func coalesceDeliverSet(live []persistence.MessageRow, resolve coalesceConflictR
 		accepted++
 	}
 	if accepted == 0 {
-		// The first message conflicts with nothing (empty map on entry),
-		// so accepted is always ≥ 1; this guard is defensive — never
-		// deliver an empty set when there is live work.
+		// @deliberate: unreachable in practice — the first message
+		// enters with an empty boundPayload map so accepted is always
+		// ≥ 1; this guard ensures we never return an empty set when
+		// there is live work.
 		return live[:1]
 	}
 	return live[:accepted]

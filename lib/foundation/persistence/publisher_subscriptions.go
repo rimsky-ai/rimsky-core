@@ -2,15 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// publisher_subscriptions.go — per-row-type Table accessor for
-// table:rimsky_publisher_subscriptions.
-//
-// A publisher_subscription is one publisher peer's commitment to publish
-// messages for one instance. Lifecycle is managed by control-api's
-// instance-create / instance-terminate paths and reconciled at control-api
-// startup via runtime.ResyncPublisherSubscriptions.
-//
 // @concept: publisher-subscription
+
 package persistence
 
 import (
@@ -21,12 +14,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// PublisherSubscriptionState values for col:rimsky_publisher_subscriptions.state.
-// Rows are created in `mounting` (desired state, not yet confirmed by the
-// publisher); the reconciliation worker flips them to `active` once the
-// publisher Subscribe handshake succeeds. `failed` is reserved for
-// non-retryable errors (e.g. an unregistered publisher name) and carries
-// a FailureReason. `stopped` is the unsubscribe terminal.
+// @constraint: publisher-subscription state-machine — values for
+// col:rimsky_publisher_subscriptions.state. Rows are created in `mounting`
+// (desired state, not yet confirmed by the publisher); the reconciliation
+// worker flips them to `active` once the publisher Subscribe handshake
+// succeeds. `failed` is reserved for non-retryable errors (e.g. an
+// unregistered publisher name) and carries a FailureReason. `stopped` is
+// the unsubscribe terminal.
 const (
 	PublisherSubscriptionStateMounting = "mounting"
 	PublisherSubscriptionStateActive   = "active"
@@ -60,39 +54,38 @@ type PublisherSubscriptionRow struct {
 // blind partial-update method, so a settled row's state (and a failed
 // row's reason) can never be clobbered by a stale writer.
 type PublisherSubscriptionsTable interface {
-	// Insert creates a new publisher-subscription row. Called by
-	// control-api at instance create with state='mounting', inside the
-	// instance-create transaction — the publisher Subscribe handshake is
-	// driven asynchronously by the reconciliation worker, never inline
-	// with instance creation.
+	// @constraint: Insert runs inside the control-api instance-create
+	// transaction with state='mounting'; the publisher Subscribe
+	// handshake is driven asynchronously by the reconciliation worker,
+	// never inline with instance creation.
 	Insert(ctx context.Context, tx Tx, row PublisherSubscriptionRow) error
 
-	// Delete removes a publisher-subscription row. Called at instance
-	// termination after Unsubscribe returns OK.
+	// @constraint: Delete is called at instance termination only after
+	// Unsubscribe returns OK.
 	Delete(ctx context.Context, tx Tx, id shared.UUID) error
 
-	// ListByInstance returns all publisher-subscriptions for an instance.
 	ListByInstance(ctx context.Context, instanceID shared.UUID) ([]PublisherSubscriptionRow, error)
 
-	// ListByState returns publisher-subscriptions in a given state across
-	// all instances. Used by the reconciliation worker (mounting rows)
-	// and the startup resync sweep (mounting + active rows).
+	// @agent-contract: ListByState returns publisher-subscriptions in a
+	// given state across all instances. Used by the reconciliation
+	// worker (mounting rows) and the startup resync sweep
+	// (mounting + active rows).
 	ListByState(ctx context.Context, state string) ([]PublisherSubscriptionRow, error)
 
-	// CompareAndSetState flips a row from `from` to `to` (stamping
-	// failureReason — pass "" to clear) only when the row is still in
-	// `from`; it reports whether a row was updated. Single-statement
-	// guarded UPDATE: the guard protects the reconciler's
-	// mounting→active / mounting→failed flips against concurrent
-	// lifecycle transitions (e.g. instance terminate marking the row
-	// stopped while a Subscribe RPC is in flight) — a settled row is
-	// never overwritten by a late flip.
+	// @constraint: CompareAndSetState is a single-statement guarded
+	// UPDATE — flips a row from `from` to `to` (stamping failureReason —
+	// pass "" to clear) only when the row is still in `from`, and
+	// reports whether a row was updated. The guard protects the
+	// reconciler's mounting→active / mounting→failed flips against
+	// concurrent lifecycle transitions (e.g. instance terminate marking
+	// the row stopped while a Subscribe RPC is in flight) — a settled
+	// row is never overwritten by a late flip.
 	CompareAndSetState(ctx context.Context, id shared.UUID, from, to, failureReason string) (bool, error)
 
-	// Get returns one publisher-subscription by id, or nil when absent.
-	// tx is required (the no-nil-tx contract — wrap with
-	// Tables.Transaction); the message-create handler routes the read
-	// through its surrounding transaction so the capability check sees
-	// the same snapshot as the insert.
+	// @constraint: Get requires a non-nil tx (the no-nil-tx contract —
+	// wrap with Tables.Transaction); the message-create handler routes
+	// the read through its surrounding transaction so the capability
+	// check sees the same snapshot as the insert. Returns nil when
+	// absent.
 	Get(ctx context.Context, tx Tx, id shared.UUID) (*PublisherSubscriptionRow, error)
 }

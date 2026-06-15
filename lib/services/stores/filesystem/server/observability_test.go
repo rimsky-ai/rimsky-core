@@ -114,7 +114,6 @@ func TestObservability_StreamClaim_AfterTerminal(t *testing.T) {
 	if err := obs.StreamClaim(&genv1.StreamClaimRequest{ClaimId: "c1"}, f); err != nil {
 		t.Fatalf("StreamClaim: %v", err)
 	}
-	// open + commit + claim_terminal = 3 events
 	if len(f.events) != 3 {
 		t.Fatalf("events = %d, want 3", len(f.events))
 	}

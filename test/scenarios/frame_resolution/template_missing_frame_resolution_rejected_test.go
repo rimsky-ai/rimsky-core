@@ -46,7 +46,6 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 		},
 	}
 
-	// Missing frame_resolution.
 	status, body := post(map[string]any{
 		"name":    "missing-frame-res",
 		"version": "1",
@@ -56,7 +55,6 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 	require.Contains(t, strings.ToLower(body), "frame_resolution_mode",
 		"error body should mention frame_resolution; got %s", body)
 
-	// Invalid frame_resolution value.
 	status, body = post(map[string]any{
 		"name":                  "invalid-frame-res",
 		"version":               "1",
@@ -67,7 +65,6 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 	require.Contains(t, strings.ToLower(body), "frame_resolution_mode",
 		"error body should mention frame_resolution; got %s", body)
 
-	// frame_timeout_ms below the 60000 hard floor.
 	status, body = post(map[string]any{
 		"name":                  "below-floor",
 		"version":               "1",
@@ -79,7 +76,6 @@ func TestTemplateMissingFrameResolutionRejected(t *testing.T) {
 	require.Contains(t, strings.ToLower(body), "frame_timeout",
 		"error body should mention frame_timeout; got %s", body)
 
-	// Valid: serial_queue, no frame_timeout_ms (should default).
 	status, body = post(map[string]any{
 		"name":                  "valid-serial",
 		"version":               "1",

@@ -57,8 +57,7 @@ import { TokenRegistry } from "./token-registry.js";
  * MCP tool response is flushed back to the CLI before the subprocess
  * gets SIGTERM. Mirrors brain's `setTimeout(() => config.onTopicPublished(result), 0)`
  * pattern.
- */
-/**
+ *
  * MCP server name advertised to the Claude CLI via `--mcp-config`. The CLI
  * namespaces every tool from this server as
  * `mcp__${CALLBACK_MCP_SERVER_NAME}__<toolName>`, so the executor's
@@ -124,8 +123,8 @@ export async function startInternalMcpServer(opts: {
       { session_id: sessionId, reason, active_sessions: sessions.size },
       "mcp.session_closed",
     );
-    void entry.transport.close().catch(() => { /* ignore */ });
-    void entry.mcp.close().catch(() => { /* ignore */ });
+    void entry.transport.close().catch(() => { /* @deliberate: ignore */ });
+    void entry.mcp.close().catch(() => { /* @deliberate: ignore */ });
   };
 
   const createSession = async (): Promise<SessionEntry> => {
@@ -134,7 +133,7 @@ export async function startInternalMcpServer(opts: {
       version: "1.0.0",
     });
     registerTools(mcp, registry, log);
-    // `transport` is captured by the onsessioninitialized closure below
+    // @deliberate: `transport` is captured by the onsessioninitialized closure below
     // by reference; the binding is valid by the time the SDK fires that
     // callback from inside handleRequest (post-init handshake).
     const transport = new StreamableHTTPServerTransport({
@@ -167,7 +166,7 @@ export async function startInternalMcpServer(opts: {
       if (sid) {
         const entry = sessions.get(sid);
         if (!entry) {
-          // Orphaned client (executor restart, eviction, etc.). Surface
+          // @deliberate: orphaned client (executor restart, eviction, etc.). Surface
           // a 404 so the CLI can re-handshake instead of getting an
           // ambiguous "Server not initialized" 400 from a fresh transport.
           log.warn({ session_id: sid }, "mcp.unknown_session");
@@ -185,7 +184,7 @@ export async function startInternalMcpServer(opts: {
         await entry.transport.handleRequest(req, res);
         return;
       }
-      // No sid header — should be an initialize. Mint a fresh session.
+      // @deliberate: no sid header — should be an initialize. Mint a fresh session.
       const fresh = await createSession();
       await fresh.transport.handleRequest(req, res);
     } catch (err) {
@@ -197,34 +196,34 @@ export async function startInternalMcpServer(opts: {
     }
   });
 
-  // Test seam (see `socketTimeoutMs` doc above). Applied BEFORE the
+  // @deliberate: test seam (see `socketTimeoutMs` doc above). Applied BEFORE the
   // production timeout discipline so the GREEN `httpServer.timeout = 0`
   // line (below) deterministically overrides it.
   if (opts.socketTimeoutMs !== undefined) {
     httpServer.timeout = opts.socketTimeoutMs;
   }
 
-  // HTTP timeout discipline (#11). A per-dispatch claude-agent run drives
-  // an MCP SSE GET stream that the CLI holds open for the entire dispatch
-  // — which can be many minutes of agent work with the stream sitting
-  // idle (no server-initiated notifications in V1). Node's per-connection
-  // / per-request caps destroy such an idle stream with ECONNRESET, which
-  // the SDK client surfaces as a transport error and the executor then
+  // @constraint: HTTP timeout discipline (#11). A per-dispatch claude-agent run
+  // drives an MCP SSE GET stream that the CLI holds open for the entire
+  // dispatch — which can be many minutes of agent work with the stream sitting
+  // idle (no server-initiated notifications in V1). Node's per-connection /
+  // per-request caps destroy such an idle stream with ECONNRESET, which the
+  // SDK client surfaces as a transport error and the executor then
   // mis-classifies as `agent/subprocess_exit/before_complete` — failing a
   // dispatch the agent actually completed. Property protected: the
   // internal-MCP SSE stream is indefinitely long-lived for the dispatch's
   // duration. So we pin every cap that could reap a held stream to 0
-  // (disabled): `timeout` is the per-socket inactivity cap that actually
-  // RSTs an idle SSE response; `requestTimeout` is Node's per-request cap.
+  // (disabled): `timeout` is the per-socket inactivity cap that actually RSTs
+  // an idle SSE response; `requestTimeout` is Node's per-request cap.
   // `keepAliveTimeout` / `headersTimeout` only gate BETWEEN requests on a
   // kept-alive socket, but we still raise them well past any plausible
   // dispatch so a slow inter-request gap can never reap the connection.
   httpServer.timeout = 0;
   httpServer.requestTimeout = 0;
-  httpServer.keepAliveTimeout = 24 * 60 * 60 * 1000; // 24h
+  httpServer.keepAliveTimeout = 24 * 60 * 60 * 1000; // @deliberate: 24h
   httpServer.headersTimeout = 24 * 60 * 60 * 1000; // 24h
 
-  // Surface runtime HTTP faults that would otherwise vanish into an
+  // @deliberate: surface runtime HTTP faults that would otherwise vanish into an
   // unobservable error event. Without these, a malformed request line
   // or a peer-protocol violation can desocket without a log line.
   //
@@ -242,7 +241,7 @@ export async function startInternalMcpServer(opts: {
         socket.destroy();
       }
     } catch (endErr) {
-      // Already-destroyed socket (abrupt RST from a killed prior CLI).
+      // @deliberate: already-destroyed socket (abrupt RST from a killed prior CLI).
       // Swallow; the connection is gone and there is nothing to flush.
       log.debug({ error: String(endErr) }, "mcp.client_error_end_failed");
     }
@@ -265,7 +264,7 @@ export async function startInternalMcpServer(opts: {
   const address = httpServer.address() as AddressInfo;
   const actualPort = address.port;
 
-  // Idle-eviction sweep. Bounded interval (≥ 30s) prevents the sweep
+  // @deliberate: idle-eviction sweep. Bounded interval (≥ 30s) prevents the sweep
   // itself from becoming a hot loop in tests with a small idle window.
   const sweepIntervalMs = Math.max(30_000, Math.floor(sessionIdleMs / 4));
   const sweepTimer = setInterval(() => {
@@ -274,7 +273,7 @@ export async function startInternalMcpServer(opts: {
       if (entry.lastActivityAt < cutoff) evict(sid, "idle_timeout");
     }
   }, sweepIntervalMs);
-  // Don't keep the process alive solely for the sweep timer.
+  // @deliberate: don't keep the process alive solely for the sweep timer.
   sweepTimer.unref();
 
   return {
@@ -303,7 +302,7 @@ export async function startInternalMcpServer(opts: {
 export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logger): void {
   const tokenField = z.string();
 
-  // Defers a teardown to the next event-loop tick so the MCP tool
+  // @deliberate: defers a teardown to the next event-loop tick so the MCP tool
   // response is flushed back to the CLI before the subprocess gets
   // SIGTERM. Mirrors brain's `setTimeout(..., 0)` pattern.
   const deferTeardown = (td: () => Promise<void>): void => {
@@ -314,7 +313,7 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     }, 0);
   };
 
-  // Centralized invocation log. Fires once per tool call AFTER token
+  // @deliberate: centralized invocation log. Fires once per tool call AFTER token
   // lookup (so we can log the rimsky-side runId rather than the raw
   // token, which is the auth secret). Tool args themselves are not
   // logged: `attributes_set` deltas, `report_complete` change_summary,
@@ -342,8 +341,8 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
       attributes_delta: z.record(z.unknown()).optional(),
       changed: z.boolean(),
       change_summary: z.string().nullable().optional(),
-      // Base64 Ed25519 sign-off signatures, supplied when the node
-      // requires sign-offs (`cli.required_signoffs`). Forwarded to the
+      // @constraint: Base64 Ed25519 sign-off signatures, supplied when the
+      // node requires sign-offs (`cli.required_signoffs`). Forwarded to the
       // gate via `onComplete`; ignored when no gate is configured.
       signoffs: z.array(z.string()).optional(),
     },
@@ -500,7 +499,7 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     {
       token: tokenField,
       name: z.string(),
-      // Inert payload (concept:inertness / @blessed-invariant 21): the
+      // @deliberate: inert payload (concept:inertness / @blessed-invariant 21): the
       // handler serializes it to bytes opaquely and buffers it; it never
       // logs, formats, validates-beyond-serialization, or transforms it.
       payload: z.unknown().optional(),
@@ -509,7 +508,7 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
       const entry = registry.lookup(args.token);
       if (!entry) return unknownToken("emit_named_event");
       logCall("emit_named_event", entry.runId);
-      // Self-consistency guard (NOT rimsky access): reject any name the
+      // @deliberate: self-consistency guard (NOT rimsky access): reject any name the
       // executor does not declare. Rimsky would otherwise persist an
       // undeclared name as a downstream no-op, so this is early feedback
       // for the template author, not a correctness gate. (Args are not
@@ -529,7 +528,7 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
           isError: true,
         };
       }
-      // Serialize the payload to bytes opaquely. `undefined` (payload
+      // @deliberate: serialize the payload to bytes opaquely. `undefined` (payload
       // omitted) serializes to the JSON literal `null` so the wire carries
       // a well-formed value; the executor does not inspect it further.
       const payloadBytes = Buffer.from(

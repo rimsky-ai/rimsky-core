@@ -65,10 +65,14 @@ func (s *Sweeper) Tick(now time.Time) error {
 	}
 	for _, e := range entries {
 		if s.Live.Contains(e.ClaimID) {
-			continue // still in flight
+			continue
 		}
+		// @deliberate: a young leak gets a TTL grace period before
+		// sweep — recently-created entries may still be mid-Open in
+		// another process; sweeping them eagerly would race the
+		// in-flight producer.
 		if now.Sub(e.CreatedAt) < s.TTL {
-			continue // young leak; give it a chance to land
+			continue
 		}
 		if err := s.Store.AbandonByClaimID(e.ClaimID); err != nil {
 			s.Logger("atomic-staging.sweep: abandon %s: %v", e.ClaimID, err)

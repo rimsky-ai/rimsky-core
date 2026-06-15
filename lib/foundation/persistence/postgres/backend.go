@@ -128,15 +128,13 @@ func (s *tablesImpl) q(tx persistence.Tx) querier {
 	}
 	t, ok := tx.(*pgTx)
 	if !ok {
-		// Programmer error; a Tx that isn't a *pgTx came from another
-		// driver. Panic so the misuse surfaces immediately.
+		// @deliberate: cross-driver tx is programmer error; panic surfaces the misuse at the call site rather than degrading to a typed error a caller might swallow.
 		panic(fmt.Sprintf("postgres.q: persistence.Tx is not a postgres tx: %T", tx))
 	}
 	return t.tx
 }
 
-// Per-feature aspect types — empty wrappers so each *Table has a distinct
-// method set. Defined here so other files can attach methods.
+// @deliberate: per-feature aspect types are empty wrappers over tablesImpl so each Table interface gets a distinct method set; defined here so the per-feature files (nodes.go, instances.go, ...) can attach methods on the aspect type while sharing tablesImpl's layout for the q() downcast.
 type (
 	templatesImpl            tablesImpl
 	templateTagsImpl         tablesImpl
@@ -151,7 +149,6 @@ type (
 	framesImpl               tablesImpl
 )
 
-// Compile-time assertions that each aspect type satisfies its interface.
 var (
 	_ persistence.Tables                    = (*tablesImpl)(nil)
 	_ persistence.TemplateTable             = (*templatesImpl)(nil)
@@ -167,7 +164,7 @@ var (
 	_ persistence.FrameTable                = (*framesImpl)(nil)
 )
 
-// Per-feature accessor methods on *tablesImpl. Each downcasts to the
+// Templates accessor methods on *tablesImpl. Each downcasts to the
 // aspect type to expose the per-feature method set.
 func (s *tablesImpl) Templates() persistence.TemplateTable       { return (*templatesImpl)(s) }
 func (s *tablesImpl) TemplateTags() persistence.TemplateTagTable { return (*templateTagsImpl)(s) }
@@ -184,7 +181,7 @@ func (s *tablesImpl) Supervisors() persistence.SupervisorTable       { return (*
 
 func (s *tablesImpl) Frames() persistence.FrameTable { return (*framesImpl)(s) }
 
-// Per-feature aspect-type query helpers: each forwards to (*tablesImpl).q.
+// q aspect-type query helpers: each forwards to (*tablesImpl).q.
 func (b *templatesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }
 func (b *templateTagsImpl) q(tx persistence.Tx) querier         { return (*tablesImpl)(b).q(tx) }
 func (b *instancesImpl) q(tx persistence.Tx) querier            { return (*tablesImpl)(b).q(tx) }

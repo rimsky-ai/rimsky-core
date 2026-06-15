@@ -36,13 +36,9 @@ exempt:
 		path string
 		want classification
 	}{
-		// Apache override under AGPL parent — longer prefix wins.
 		{"runtime/peer/client.go", classApache},
-		// Plain AGPL parent.
 		{"runtime/runner.go", classAGPL},
-		// Exempt prefix beats both.
 		{"runtime/peer/internal/skip/dummy.go", classExempt},
-		// Default-deny when no prefix matches.
 		{"unrelated/path/file.go", classUnknown},
 	}
 	for _, tc := range cases {
@@ -54,10 +50,7 @@ exempt:
 }
 
 func TestClassifyAGPLOverrideUnderApacheParent(t *testing.T) {
-	// More-specific AGPL prefix overrides a parent Apache prefix. The
-	// concrete example used to be graph/qualityrule/{,eval/}; the
-	// quality-rule package retired in 2026-05-15 plan P1, so the test
-	// uses synthetic paths to exercise the classifier shape.
+	// @deliberate: synthetic paths exercise the more-specific-AGPL-overrides-Apache-parent shape; concrete graph/qualityrule example retired upstream.
 	cfg := writeLicensingYAML(t, t.TempDir(), `apache:
   - graph/example/
 agpl:
@@ -103,7 +96,6 @@ func TestClassifyTrailingSlashNormalized(t *testing.T) {
 agpl: []
 exempt: []
 `)
-	// `cmd/` should match both `cmd` and `cmd/file.go`.
 	if got := cfg.classify("cmd"); got != classApache {
 		t.Errorf("bare prefix path want apache, got %v", got)
 	}

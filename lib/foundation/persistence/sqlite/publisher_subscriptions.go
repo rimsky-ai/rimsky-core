@@ -2,8 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.PublisherSubscriptionsTable — mirror of the
-// postgres impl. SQLite is dev-only.
+// @source: lib/foundation/persistence/postgres/publisher_subscriptions.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
 
 package sqlite
 
@@ -18,6 +19,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// publisherSubscriptionsImpl is the SQLite-backed
+// persistence.PublisherSubscriptionsTable — publisher-subscription
+// lifecycle state per spec §Publisher protocol unification.
 type publisherSubscriptionsImpl tablesImpl
 
 var _ persistence.PublisherSubscriptionsTable = (*publisherSubscriptionsImpl)(nil)
@@ -43,7 +47,7 @@ func (b *publisherSubscriptionsImpl) Insert(ctx context.Context, tx persistence.
 	if row.MessageKind == "" {
 		row.MessageKind = "invalidate"
 	}
-	// started_at goes through formatTime (fixed-width UTC text) — a raw
+	// @constraint: started_at goes through formatTime (fixed-width UTC text) — a raw
 	// time.Time bind would store modernc's zone-embedded t.String() form,
 	// which breaks text comparisons on non-UTC hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertPublisherSubscriptionSQL,
@@ -121,7 +125,7 @@ func (b *publisherSubscriptionsImpl) Get(ctx context.Context, tx persistence.Tx,
 	return &out[0], nil
 }
 
-// CompareAndSetState flips state from→to only when the row is still in
+// sqliteCASPublisherSubscriptionStateSQL flips state from→to only when the row is still in
 // `from` (guarded single-statement UPDATE; see the interface contract in
 // persistence.PublisherSubscriptionsTable for the race it defends).
 const sqliteCASPublisherSubscriptionStateSQL = `
@@ -147,7 +151,7 @@ func scanPublisherSubscriptions(rows *sql.Rows) ([]persistence.PublisherSubscrip
 	for rows.Next() {
 		var w persistence.PublisherSubscriptionRow
 		var idStr, instanceStr string
-		// started_at is fixed-width UTC TEXT; scan as a string and run
+		// @constraint: started_at is fixed-width UTC TEXT; scan as a string and run
 		// through parseTime (per queue_park.go::LoadResumeMetadataInTx)
 		// instead of scanning into sql.NullTime.
 		var startedAtStr sql.NullString

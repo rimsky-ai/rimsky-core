@@ -82,42 +82,43 @@ func TestVerifierSeverityPartition(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// Bring up the bundled verifier-shape-checks executor on the shared
-	// network before rimsky/all so rimsky's startup Capabilities
-	// handshake against `verifier-shape-checks` resolves. Same pattern
-	// as onboarding_demo_e2e_test.go — the bundled image (not a stub)
-	// is the value-delivering component the story names.
+	// @constraint: bundled verifier-shape-checks executor must be on the
+	// shared network before rimsky boots so rimsky's startup Capabilities
+	// handshake against `verifier-shape-checks` resolves; same pattern as
+	// onboarding_demo_e2e_test.go — the bundled image (not a stub) is the
+	// value-delivering component the story names.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartVerifierShapeChecksOnNetwork(ctx, t, netName, "verifier-shape-checks")
 
-	// Postgres backend rather than the SQLite default: this scenario
-	// drives TWO sequential deploy → instance → dispatch round-trips
-	// against the same rimsky stack, and the SQLite single-writer
-	// path has shown non-deterministic dispatch latency on the second
-	// instance (the second template's verifier never reaches a
-	// terminal in the 120s window). Postgres has no such single-
-	// writer bottleneck. The severity-partition contract is backend-
-	// agnostic — sibling SQLite coverage lives in
+	// @deliberate: Postgres backend rather than the SQLite default —
+	// this scenario drives TWO sequential deploy → instance → dispatch
+	// round-trips against the same rimsky stack, and the SQLite
+	// single-writer path has shown non-deterministic dispatch latency
+	// on the second instance (the second template's verifier never
+	// reaches a terminal in the 120s window). Postgres has no such
+	// single-writer bottleneck. The severity-partition contract is
+	// backend-agnostic — sibling SQLite coverage lives in
 	// `sqlite_all_in_one_test.go` for the broader single-node loop.
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("verifier-shape-checks", "verifier-shape-checks:9095"),
 	)
 
-	// First leg: in-bounds dataset. Both `rows` (a list with one row
-	// missing the `id` field) and `checks` (a no_nulls warning on `id`
-	// plus a numeric_range error on `value`) are baked into the
-	// template via JSON-schema `default:` values so the dispatch needs
-	// no params. The numeric_range bound 0..100 is satisfied by every
-	// row's `value`, so the error-severity check passes. The no_nulls
-	// warning fails because the second row is missing `id`. The
-	// dispatch must SUCCEED end-to-end (state=fresh) and the warning
-	// must surface on `latest_attributes`.
+	// @deliberate: first leg drives the in-bounds dataset — both `rows`
+	// (a list with one row missing the `id` field) and `checks` (a
+	// no_nulls warning on `id` plus a numeric_range error on `value`)
+	// are baked into the template via JSON-schema `default:` values so
+	// the dispatch needs no params. The numeric_range bound 0..100 is
+	// satisfied by every row's `value`, so the error-severity check
+	// passes. The no_nulls warning fails because the second row is
+	// missing `id`. The dispatch must SUCCEED end-to-end (state=fresh)
+	// and the warning must surface on `latest_attributes`.
 	inBoundsTemplate := buildSeverityPartitionTemplate(
 		"severity-partition-in-bounds",
 		[]map[string]any{
 			{"id": "alpha", "value": float64(10)},
-			{"value": float64(20)}, // missing id — triggers no_nulls warning
+			// @deliberate: missing id — triggers no_nulls warning.
+			{"value": float64(20)},
 			{"id": "gamma", "value": float64(30)},
 		},
 	)
@@ -125,22 +126,25 @@ func TestVerifierSeverityPartition(t *testing.T) {
 	inBoundsIID := createSeverityPartitionInstance(t, ep, inBoundsTID, "ck-severity-in-bounds")
 	requireVerifierSucceededWithWarning(t, ep, inBoundsIID, "verifier", 120*time.Second)
 
-	// Second leg: out-of-bounds dataset against an identically-wired
-	// template (separate template-name to keep template-hash uniqueness
-	// honest — same wiring, different defaults). The third row's
-	// `value` (250) blows past the 0..100 bound, so the error-severity
-	// check FAILS. The no_nulls warning still fails too. The dispatch
-	// must reach the terminal FAILED state with a
-	// `verifier/check_failed/...` error_class on the event log —
-	// proving the commit was blocked by the error-severity failure,
-	// not by the warning (the warning fails identically in both legs;
-	// only the error-severity flip changes the terminal).
+	// @deliberate: second leg drives the out-of-bounds dataset against
+	// an identically-wired template (separate template-name to keep
+	// template-hash uniqueness honest — same wiring, different
+	// defaults). The third row's `value` (250) blows past the 0..100
+	// bound, so the error-severity check FAILS. The no_nulls warning
+	// still fails too. The dispatch must reach the terminal FAILED
+	// state with a `verifier/check_failed/...` error_class on the
+	// event log — proving the commit was blocked by the
+	// error-severity failure, not by the warning (the warning fails
+	// identically in both legs; only the error-severity flip changes
+	// the terminal).
 	outOfBoundsTemplate := buildSeverityPartitionTemplate(
 		"severity-partition-out-of-bounds",
 		[]map[string]any{
 			{"id": "alpha", "value": float64(10)},
-			{"value": float64(20)},                 // missing id — triggers no_nulls warning
-			{"id": "gamma", "value": float64(250)}, // out of bound — triggers numeric_range error
+			// @deliberate: missing id — triggers no_nulls warning.
+			{"value": float64(20)},
+			// @deliberate: out of bound — triggers numeric_range error.
+			{"id": "gamma", "value": float64(250)},
 		},
 	)
 	outOfBoundsTID := deploySeverityPartitionTemplate(t, ep, outOfBoundsTemplate)
@@ -161,9 +165,9 @@ func TestVerifierSeverityPartition(t *testing.T) {
 // on the checks' severity declaration, not on a structural template
 // difference.
 func buildSeverityPartitionTemplate(name string, rows []map[string]any) map[string]any {
-	// Convert []map[string]any → []any so the JSON encoder produces the
-	// `default: []` shape the schema validator expects (a heterogeneous
-	// list of object literals).
+	// @constraint: JSON encoder must produce the `default: []` shape the
+	// schema validator expects (a heterogeneous list of object literals),
+	// so the typed []map[string]any is widened to []any first.
 	rowsAny := make([]any, len(rows))
 	for i, r := range rows {
 		rowsAny[i] = r
@@ -320,10 +324,10 @@ func requireVerifierSucceededWithWarning(t *testing.T, ep harness.RimskyEndpoint
 					}
 				}
 				if sawDispatch && lastState == "fresh" {
-					// Success terminal landed — assert the warning is on the
-					// resolved attribute bag (the verifier's success-path
+					// @constraint: on success terminal the warning MUST be on
+					// the resolved attribute bag — the verifier's success-path
 					// `attributes_delta` lifts `verifier_warning_count` +
-					// `verifier_warnings` into the merged bag).
+					// `verifier_warnings` into the merged bag.
 					assertWarningRecorded(t, resp.LatestAttributes, lastBody)
 					return
 				}
@@ -373,7 +377,7 @@ func assertWarningRecorded(t *testing.T, latest map[string]any, debugBody string
 			"Falsifier hit: severity field declared but unused.\n"+
 			"latest_attributes:\n%s", debugBody)
 	}
-	// JSON-decoded numbers land as float64.
+	// @constraint: JSON-decoded numbers land as float64.
 	count, ok := rawCount.(float64)
 	if !ok {
 		t.Fatalf("warning leg: `verifier_warning_count` is not numeric: %T (%v); "+
@@ -457,8 +461,8 @@ func requireVerifierFailedWithCheckFailedClass(t *testing.T, ep harness.RimskyEn
 						nodeType, instanceID, nodeType, lastBody)
 				}
 				if sawDispatch && lastState == "failed" {
-					// Failed terminal landed — confirm the error_class on the
-					// event log names a verifier/check_failed/... leaf, the
+					// @constraint: on failed terminal the event log MUST
+					// carry a `verifier/check_failed/...` leaf — the
 					// canonical hierarchical class the bundled
 					// verifier-shape-checks executor emits when an
 					// error-severity failure blocks the commit.
@@ -491,16 +495,17 @@ func requireVerifierCheckFailedErrorClass(t *testing.T, events []struct {
 	t.Helper()
 	const want = "verifier/check_failed/"
 	for _, e := range events {
-		// Direct payload form: events that carry an `error_class` field
-		// (KindError, runner_error_policy terminal_signals on the work-
-		// rejected/error path) name the class verbatim.
+		// @constraint: direct payload form — events that carry an
+		// `error_class` field (KindError, runner_error_policy
+		// terminal_signals on the work-rejected/error path) name the
+		// class verbatim.
 		if cls, ok := e.Payload["error_class"].(string); ok {
 			if strings.HasPrefix(cls, want) {
 				return
 			}
 		}
-		// Signal-kind form: `signal/terminal/error/<class>` carries the
-		// class as the path suffix of the kind itself.
+		// @constraint: signal-kind form — `signal/terminal/error/<class>`
+		// carries the class as the path suffix of the kind itself.
 		if strings.Contains(e.Kind, "/terminal/error/") {
 			if strings.Contains(e.Kind, want) {
 				return

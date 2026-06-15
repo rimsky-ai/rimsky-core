@@ -71,8 +71,8 @@ func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 	if cross[0].Frame != "next" {
 		t.Errorf("want default Frame=next for cross-cutting, got %q", cross[0].Frame)
 	}
-	// Cross-cutting edge fires for any sender via the empty-key match
-	// path.
+	// @deliberate: Cross-cutting edge fires for any sender via the empty-key match
+	// empty-key match path.
 	matched := out.Match("any-sender", signal.TypePath("terminal/error/rate_limited"))
 	if len(matched) != 1 {
 		t.Fatalf("cross-cutting prefix match: want 1, got %d", len(matched))
@@ -125,7 +125,7 @@ func TestBuildSubscriptionEdges_UnionAndDedup(t *testing.T) {
 		{Type: "receiver", Executor: "stub",
 			Subscribes: []spec.SubscriptionEntry{
 				{Node: "sender", Type: "attribute/out/changed"},
-				// Duplicate of the implicit ref below.
+				// @deliberate: Duplicate of the implicit ref below.
 				{Node: "sender", Type: "attribute/out/changed"},
 			},
 			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
@@ -144,9 +144,9 @@ func TestBuildSubscriptionEdges_UnionAndDedup(t *testing.T) {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
 	matched := out.Match("sender", signal.TypePath("attribute/out/changed"))
-	// Dedup happens at insert time: the explicit-dup of the same
-	// (sender, type, when=nil, scope, frame) tuple collapses to one
-	// entry; the implicit ref produces the same tuple and is also
+	// @deliberate: Dedup happens at insert time: the explicit-dup of the same
+	// the same (sender, type, when=nil, scope, frame) tuple collapses to
+	// one entry; the implicit ref produces the same tuple and is also
 	// deduped. Result: a single matched edge.
 	if len(matched) != 1 {
 		t.Fatalf("expected dedup → 1 matched edge, got %d", len(matched))
@@ -156,10 +156,13 @@ func TestBuildSubscriptionEdges_UnionAndDedup(t *testing.T) {
 func TestBuildSubscriptionEdges_FrameDefaults(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "x", Executor: "stub",
+			// @deliberate: three entries cover the frame defaulting
+			// matrix — per-node defaults to "in", cross-cutting defaults
+			// to "next", and an explicit override stays as written.
 			Subscribes: []spec.SubscriptionEntry{
-				{Node: "y", Type: "terminal/success"},                // per-node default → "in"
-				{Instance: true, Type: "terminal/success"},           // cross-cutting default → "next"
-				{Node: "y", Type: "terminal/success", Frame: "next"}, // explicit override
+				{Node: "y", Type: "terminal/success"},
+				{Instance: true, Type: "terminal/success"},
+				{Node: "y", Type: "terminal/success", Frame: "next"},
 			},
 		},
 		{Type: "y", Executor: "stub"},
@@ -169,8 +172,8 @@ func TestBuildSubscriptionEdges_FrameDefaults(t *testing.T) {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
 	yMatches := out.Match("y", signal.TypePath("terminal/success"))
-	// Two y-keyed edges (in + next) + the cross-cutting one (next) =
-	// three matches total.
+	// @deliberate: Two y-keyed edges (in + next) + the cross-cutting one (next) =
+	// (next) = three matches total.
 	if len(yMatches) != 3 {
 		t.Fatalf("want 3 edges for sender y (including cross-cutting), got %d", len(yMatches))
 	}
@@ -217,8 +220,9 @@ func TestBuildSubscriptionEdges_BareAttributePull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
-	// Bare-attribute auto-subscribe expands to attribute/*/changed
-	// so the implicit subscription scopes to delta signals only.
+	// @deliberate: bare-attribute auto-subscribe expands to
+	// attribute/*/changed so the implicit subscription scopes to delta
+	// signals only.
 	matched := out.Match("stage", signal.TypePath("attribute/anykey/changed"))
 	if len(matched) != 1 {
 		t.Fatalf("bare-attr prefix match: want 1, got %d", len(matched))
@@ -272,7 +276,7 @@ func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
-	// Fires for any terminal/error/* leaf.
+	// @deliberate: Fires for any terminal/error/* leaf.
 	for _, leaf := range []string{
 		"terminal/error/foo",
 		"terminal/error/http/timeout",
@@ -283,7 +287,7 @@ func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
 			t.Errorf("Match(%q): want 1, got %d", leaf, len(matched))
 		}
 	}
-	// Does NOT fire for terminal/success.
+	// @deliberate: Does NOT fire for terminal/success.
 	if got := out.Match("sender", signal.TypePath("terminal/success")); len(got) != 0 {
 		t.Errorf("Match(terminal/success): want 0, got %d", len(got))
 	}

@@ -37,7 +37,7 @@ type fakeProxy struct {
 	stream        genv1.HostAgent_ConnectServer
 	register      *genv1.Register
 	connected     chan struct{}
-	connectedOnce sync.Once               // guards the single close of connected across reconnects
+	connectedOnce sync.Once               // @deliberate: guards the single close of connected across reconnects
 	clientFrame   chan *genv1.ClientFrame // every non-Register frame the agent sent
 }
 
@@ -77,7 +77,7 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 	fp.stream = stream
 	fp.register = reg
 	fp.mu.Unlock()
-	// Connect may run more than once (the host agent reconnects after a
+	// @deliberate: Connect may run more than once (the host agent reconnects after a
 	// backoff); close the signal channel exactly once.
 	fp.connectedOnce.Do(func() { close(fp.connected) })
 
@@ -92,7 +92,7 @@ func (fp *fakeProxy) Connect(stream genv1.HostAgent_ConnectServer) error {
 		if recvErr != nil {
 			return recvErr
 		}
-		// Skip heartbeats so assertions aren't drowned by liveness frames.
+		// @deliberate: Skip heartbeats so assertions aren't drowned by liveness frames.
 		if _, isHB := frame.GetBody().(*genv1.ClientFrame_Heartbeat); isHB {
 			continue
 		}

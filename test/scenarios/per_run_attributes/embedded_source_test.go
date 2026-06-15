@@ -50,7 +50,7 @@ func TestPerRunAttributes_EmbeddedSource_LiteralAndDirectives(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// Embedded source: literal head + params directive +
+						// @deliberate: Embedded source: literal head + params directive +
 						// literal middle + missing-with-fallback directive +
 						// literal tail.
 						"prompt": map[string]any{
@@ -66,7 +66,7 @@ func TestPerRunAttributes_EmbeddedSource_LiteralAndDirectives(t *testing.T) {
 
 	iid := h.CreateInstance(tid, "ck-embedded", map[string]any{
 		"domain": "alpha",
-		// `notes` deliberately omitted; the directive's fallback should fire.
+		// @deliberate: `notes` deliberately omitted; the directive's fallback should fire.
 	})
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)

@@ -2,11 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.RunTreeTable — mirror of the postgres
-// impl. Under RunScope-first (per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md),
-// the tree shape lives on `rimsky_run_scopes`; ListChildren joins
-// across run_scope_id.
+// @source: lib/foundation/persistence/postgres/run_tree.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
 
 package sqlite
 
@@ -25,6 +23,11 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
+// runTreeImpl is the SQLite-backed persistence.RunTreeTable — CRUD +
+// locking on the run-tree extension of rimsky_node_runs. Mirrors the
+// postgres-side shape; under RunScope-first the tree shape lives on
+// rimsky_run_scopes and this table projects per-run aggregation_policy
+// + state columns.
 type runTreeImpl tablesImpl
 
 var _ persistence.RunTreeTable = (*runTreeImpl)(nil)
@@ -92,7 +95,7 @@ func (b *runTreeImpl) CreateChildRun(ctx context.Context, tx persistence.Tx, in 
 	if len(policy) > 0 {
 		policyArg = string(policy)
 	}
-	// Idempotency: NOT EXISTS keyed on (node_id, run_scope_id).
+	// @deliberate: idempotent insert — NOT EXISTS keyed on (node_id, run_scope_id) so repeated CreateChildRun calls for the same scope don't double-insert.
 	_, err = b.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs (
 		   id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id,

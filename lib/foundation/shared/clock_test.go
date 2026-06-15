@@ -48,7 +48,6 @@ func TestClockControllableClockSleepBlocksUntilAdvance(t *testing.T) {
 		woke.Store(true)
 	}()
 
-	// Give goroutine time to register the pending sleep.
 	for i := 0; i < 100 && func() bool {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -88,7 +87,6 @@ func TestClockControllableClockMultipleSleepersResolveInDeadlineOrder(t *testing
 		}(i, d)
 	}
 
-	// Wait until all three sleeps have registered.
 	for i := 0; i < 200; i++ {
 		c.mu.Lock()
 		n := len(c.pending)
@@ -100,7 +98,6 @@ func TestClockControllableClockMultipleSleepersResolveInDeadlineOrder(t *testing
 	}
 
 	c.Advance(25 * time.Millisecond)
-	// Yield so the two resolved sleepers can append to `order`.
 	for i := 0; i < 200; i++ {
 		if wokeFlags[0].Load() && wokeFlags[1].Load() {
 			break
@@ -128,7 +125,6 @@ func TestClockControllableClockSleepRespectsCtx(t *testing.T) {
 		errCh <- c.Sleep(ctx, time.Hour)
 	}()
 
-	// Ensure sleep registered before cancelling.
 	for i := 0; i < 100; i++ {
 		c.mu.Lock()
 		n := len(c.pending)

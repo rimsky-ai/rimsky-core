@@ -54,7 +54,7 @@ func TestExecutorBlocked(t *testing.T) {
 	n := h.FindNode(iid, "gated")
 	require.NotNil(t, n)
 
-	// give_up on executor_blocked → node fails.
+	// @deliberate: give_up on executor_blocked → node fails.
 	//
 	// Notes (diagnostic — testcontainer-startup-bound, not a
 	// production-code bug):
@@ -97,7 +97,7 @@ func TestExecutorBlocked(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
 		"gated did not reach failed")
 
-	// Verify the canonical terminal/error/stub/executor_blocked signal
+	// @deliberate: Verify the canonical terminal/error/stub/executor_blocked signal
 	// row (per Pass 5 of spec 2026-05-23-signal-taxonomy-and-policy-
 	// decoupling-design the legacy `error` fixed-string row retired in
 	// favor of the signal type-path; per Pass 6 the stub executor

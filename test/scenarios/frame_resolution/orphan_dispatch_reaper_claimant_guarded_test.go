@@ -61,7 +61,7 @@ func TestOrphanDispatchReaper_ClaimantGuardedRelease(t *testing.T) {
 
 	dispatchID := seedTerminalFrameAndDispatch(t, h, "fresh-sup")
 
-	// Drive the same SQL shape the per-row reaper uses, but with a stale
+	// @constraint: Drive the same SQL shape the per-row reaper uses, but with a stale
 	// claimant id ("stale-sup"). The current claimed_by is "fresh-sup",
 	// so the WHERE clause must not match and the row must be untouched.
 	// Use the persistence Queue's claimant-guarded ReleaseClaim so we
@@ -96,7 +96,7 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	`, templateHash)
 	instanceID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
-	// rimsky_instances.main_run_scope_id ↔ rimsky_run_scopes.instance_id
+	// @constraint: rimsky_instances.main_run_scope_id ↔ rimsky_run_scopes.instance_id
 	// are mutually FK'd DEFERRABLE INITIALLY DEFERRED, so the pair must
 	// be inserted inside the same tx. Use the persistence layer so the
 	// canonical constructors land both rows correctly.
@@ -118,7 +118,6 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 		return err
 	}))
 	nodeID := uuid.New()
-	// Post-stage-3 cutover: state column dropped from rimsky_nodes.
 	h.ExecSQL(`
 		INSERT INTO rimsky_nodes (id, instance_id, node_type)
 		VALUES ($1, $2, 'n')

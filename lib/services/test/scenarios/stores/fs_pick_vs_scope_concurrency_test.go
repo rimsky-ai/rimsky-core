@@ -71,7 +71,6 @@ func TestFSPickVsScopeConcurrency(t *testing.T) {
 					"type":     "scope-worker",
 					"executor": "stub",
 					"stores": []map[string]any{
-						// Scope-byte selector: same folder, byte-equal scope.
 						{"name": "docs", "selector": "docs/alpha", "intent": "rw"},
 					},
 				},

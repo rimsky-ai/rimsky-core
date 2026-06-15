@@ -2,13 +2,14 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// select_candidates_paused.go — Queue.SelectCandidates must skip
+// @concept: breakpoint
+
+// @constraint: conformance area conformance area.
 // dispatch rows whose owning instance is paused. Cross-driver
 // conformance for the supervisor cooperation half of concept:breakpoint
 // (the candidate-selection filter; spec §5.2 soft-pause semantics).
 //
 // @concept: breakpoint
-
 package conformance
 
 import (
@@ -29,13 +30,11 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 	store := d.Tables()
 	q := d.Queue()
 
-	// Seed an active fixture (the standard helper produces an unpaused
-	// instance with one node + one frame).
 	activeFix := seedFixtureSet(ctx, t, d)
 
-	// Seed a second instance against the SAME template with paused=true,
-	// then add a node + frame + pending dispatch row for it. We reuse the
-	// existing template hash to avoid re-seeding the template row.
+	// @deliberate: reuse activeFix.TemplateHash so the paused instance shares
+	// the same template row — exercising the filter without re-seeding template
+	// state.
 	pausedInstanceID := shared.UUID(uuid.New())
 	pausedRunScopeID := shared.UUID(uuid.New())
 	pausedNodeID := shared.UUID(uuid.New())
@@ -84,8 +83,6 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		t.Fatalf("seed paused instance: %v", err)
 	}
 
-	// Enqueue a pending row for the active instance too so both have
-	// eligible work.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:         activeFix.NodeID,
@@ -99,8 +96,9 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		t.Fatalf("enqueue active row: %v", err)
 	}
 
-	// SelectCandidates must surface the active node's row but NOT the
-	// paused instance's row.
+	// @constraint: SelectCandidates surfaces the active node's row and filters
+	// out the paused instance's row — the supervisor-cooperation half of
+	// concept:breakpoint soft-pause semantics.
 	probeErr := errors.New("rollback probe")
 	var sawActive, sawPaused bool
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -132,7 +130,6 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		t.Errorf("paused instance's row leaked through SelectCandidates")
 	}
 
-	// Unpause via SetPaused; the row should now surface.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := store.Instances().SetPaused(ctx, pausedInstanceID, false, tx)
 		return err

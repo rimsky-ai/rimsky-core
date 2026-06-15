@@ -85,14 +85,14 @@ const constrainedSchema = `{"type":"object","properties":{"count":{"type":"integ
 func startRefModeHarness(t *testing.T, mode node.RefValidationMode) *scenario.Harness {
 	t.Helper()
 	return scenario.Start(t, scenario.HarnessOpts{
-		// No supervisor/scheduler needed — this gate observes only the
+		// @deliberate: No supervisor/scheduler needed — this gate observes only the
 		// registration HTTP response from the control-api, no run is
 		// driven. Skipping them keeps the gate fast and isolates the
 		// surface under test (the registration validator) from any
 		// dispatch behavior.
 		NoSupervisor: true,
 		NoScheduler:  true,
-		// "constrained" is a real, provisioned stub executor whose
+		// @deliberate: "constrained" is a real, provisioned stub executor whose
 		// observability Capabilities advertise the constraining schema.
 		// The control-api's real observability handshake probes it at
 		// startup so the registration validator reads its `minimum:0`
@@ -119,7 +119,7 @@ func postTemplate(t *testing.T, h *scenario.Harness, specBody map[string]any) (i
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	var out map[string]any
-	// A 400 carries {error, validation_errors}; a 201 carries
+	// @deliberate: A 400 carries {error, validation_errors}; a 201 carries
 	// {template_id}. Either decodes into the generic map.
 	if decErr := json.NewDecoder(resp.Body).Decode(&out); decErr != nil {
 		out = map[string]any{}
@@ -191,14 +191,14 @@ func TestAcceptance_RefValidationMode(t *testing.T) {
 		t.Parallel()
 		h := startRefModeHarness(t, node.RefValidateAvailable)
 
-		// The not-yet-provisioned ref registers clean under `available`.
+		// @constraint: The not-yet-provisioned ref registers clean under `available`.
 		okStatus, okOut := postTemplate(t, h, notProvisionedTemplate("refmode-avail-ok-"+uuid.NewString()))
 		require.Equal(t, http.StatusCreated, okStatus,
 			"mode available must accept a not-yet-provisioned executor reference; body: %v", okOut)
 		require.NotEmpty(t, okOut["template_id"],
 			"a successful registration must return a template_id; body: %v", okOut)
 
-		// A genuinely-invalid PROVISIONED ref (count: -1 vs the executor
+		// @deliberate: A genuinely-invalid PROVISIONED ref (count: -1 vs the executor
 		// schema's minimum: 0) is still rejected — `available` validates
 		// provisioned refs, it does not turn validation off.
 		badStatus, badOut := postTemplate(t, h, provisionedInvalidTemplate("refmode-avail-bad-"+uuid.NewString()))
@@ -209,7 +209,7 @@ func TestAcceptance_RefValidationMode(t *testing.T) {
 		require.NotEmpty(t, errs, "validation_errors must name the schema violation")
 	})
 
-	// STORY-validation-names-the-mode: the rejection is self-documenting.
+	// @deliberate: STORY-validation-names-the-mode: the rejection is self-documenting.
 	// Under the strict default mode the operator registering a template
 	// whose reference cannot be validated is told WHICH mode rejected it
 	// and WHICH config key changes the behavior — the register-before-
@@ -221,7 +221,7 @@ func TestAcceptance_RefValidationMode(t *testing.T) {
 		t.Parallel()
 		spec := notProvisionedTemplate("refmode-msg-" + uuid.NewString())
 
-		// Strict default mode: rejection must name the mode + config key.
+		// @constraint: Strict default mode: rejection must name the mode + config key.
 		strict := startRefModeHarness(t, node.RefValidateAll)
 		status, out := postTemplate(t, strict, spec)
 		require.Equal(t, http.StatusBadRequest, status,
@@ -229,7 +229,7 @@ func TestAcceptance_RefValidationMode(t *testing.T) {
 		errs, ok := out["validation_errors"].([]any)
 		require.True(t, ok, "rejection must carry validation_errors; body: %v", out)
 		require.NotEmpty(t, errs)
-		// Collect every rejection message; the missing-reference entry
+		// @deliberate: Collect every rejection message; the missing-reference entry
 		// must be self-documenting.
 		var msgs []string
 		for _, e := range errs {
@@ -251,7 +251,7 @@ func TestAcceptance_RefValidationMode(t *testing.T) {
 		require.Contains(t, joined, `"none"`,
 			"the rejection must name the relaxed settings for register-first workflows; messages: %s", joined)
 
-		// The advice is true: the SAME template registers clean under the
+		// @deliberate: The advice is true: the SAME template registers clean under the
 		// relaxed mode the message names.
 		relaxed := startRefModeHarness(t, node.RefValidateAvailable)
 		okStatus, okOut := postTemplate(t, relaxed, spec)
@@ -265,14 +265,14 @@ func TestAcceptance_RefValidationMode(t *testing.T) {
 		t.Parallel()
 		h := startRefModeHarness(t, node.RefValidateNone)
 
-		// The not-yet-provisioned ref registers clean.
+		// @constraint: The not-yet-provisioned ref registers clean.
 		ghostStatus, ghostOut := postTemplate(t, h, notProvisionedTemplate("refmode-none-ghost-"+uuid.NewString()))
 		require.Equal(t, http.StatusCreated, ghostStatus,
 			"mode none must accept a not-yet-provisioned executor reference; body: %v", ghostOut)
 		require.NotEmpty(t, ghostOut["template_id"],
 			"a successful registration must return a template_id; body: %v", ghostOut)
 
-		// Even the provisioned-invalid ref registers clean under `none`:
+		// @constraint: Even the provisioned-invalid ref registers clean under `none`:
 		// registration-time reference validation is off entirely.
 		invalidStatus, invalidOut := postTemplate(t, h, provisionedInvalidTemplate("refmode-none-invalid-"+uuid.NewString()))
 		require.Equal(t, http.StatusCreated, invalidStatus,

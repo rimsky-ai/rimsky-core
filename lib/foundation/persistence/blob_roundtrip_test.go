@@ -64,7 +64,6 @@ func TestBlobRoundtripBackends(t *testing.T) {
 			bb := tc.make(t)
 			ctx := context.Background()
 
-			// Small payload (1 KB).
 			small := bytes.Repeat([]byte("0123456789abcdef"), 64)
 			hSmall, err := bb.Write(ctx, persistence.BlobKey{NodeID: "n1", AttributeName: "small"}, small)
 			if err != nil {
@@ -78,7 +77,6 @@ func TestBlobRoundtripBackends(t *testing.T) {
 				t.Fatalf("Read small: bytes mismatch (got %d bytes, want %d)", len(gotSmall), len(small))
 			}
 
-			// Large payload (1 MB).
 			large := bytes.Repeat([]byte("abcdefghij"), 100*1024)
 			if len(large) != 1000*1024 {
 				t.Fatalf("test fixture wrong: got %d bytes", len(large))
@@ -95,8 +93,6 @@ func TestBlobRoundtripBackends(t *testing.T) {
 				t.Fatalf("Read large: bytes mismatch (got %d, want %d)", len(gotLarge), len(large))
 			}
 
-			// Range read against the large payload — verify a 100-byte
-			// slice at offset 12345 matches the source.
 			rangeBytes, err := bb.ReadRange(ctx, hLarge, 12345, 100)
 			if err != nil {
 				t.Fatalf("ReadRange large: %v", err)
@@ -105,8 +101,6 @@ func TestBlobRoundtripBackends(t *testing.T) {
 				t.Fatalf("ReadRange large: bytes mismatch")
 			}
 
-			// Delete + idempotent delete + post-delete Read returns
-			// ErrBlobNotFound.
 			if err := bb.Delete(ctx, hSmall); err != nil {
 				t.Fatalf("Delete small: %v", err)
 			}
@@ -117,13 +111,12 @@ func TestBlobRoundtripBackends(t *testing.T) {
 				t.Fatalf("Read after delete: want ErrBlobNotFound, got %v", err)
 			}
 
-			// Cleanup the large blob too.
 			if err := bb.Delete(ctx, hLarge); err != nil {
 				t.Fatalf("Delete large: %v", err)
 			}
 
-			// Each backend prefixes handles with a short backend
-			// identifier (per blob.go Handle godoc).
+			// @constraint: each backend prefixes handles with a short
+			// backend identifier (per blob.go Handle godoc).
 			if !strings.HasPrefix(string(hSmall), tc.handlePrefix) || !strings.HasPrefix(string(hLarge), tc.handlePrefix) {
 				t.Fatalf("handles missing %q prefix: small=%q large=%q", tc.handlePrefix, hSmall, hLarge)
 			}

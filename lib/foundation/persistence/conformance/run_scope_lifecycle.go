@@ -2,8 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run_scope_lifecycle.go — RunScopeLifecycle conformance area.
-//
+// @concept: run-scope
+
+// @constraint: RunScopeLifecycle conformance area.
 // Covers RunScopeTable.Create / Close / GetByID / GetFanoutPartition /
 // ListParentChain. Both drivers must implement the lifecycle identically
 // per spec
@@ -44,7 +45,6 @@ func testRunScopeCreate_MainAndChild(t *testing.T, d persistence.Database) {
 		t.Fatalf("Create main: %v", err)
 	}
 
-	// Read back and assert nil parents.
 	var got *persistence.RunScopeRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.RunScopes().GetByID(ctx, tx, mainScopeID)
@@ -66,7 +66,6 @@ func testRunScopeCreate_MainAndChild(t *testing.T, d persistence.Database) {
 		t.Fatalf("main scope: graph_name = %q, want %q", got.GraphName, spec.MainGraphName)
 	}
 
-	// Seed a parent run row that the child RunScope can reference.
 	parentRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
 	childScopeID := shared.UUID(uuid.New())
@@ -83,7 +82,6 @@ func testRunScopeCreate_MainAndChild(t *testing.T, d persistence.Database) {
 		t.Fatalf("Create child: %v", err)
 	}
 
-	// Read back child; assert parents set.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.RunScopes().GetByID(ctx, tx, childScopeID)
 		got = r
@@ -120,7 +118,6 @@ func testRunScopeClose_StampsClosedAt(t *testing.T, d persistence.Database) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Close.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Close(ctx, tx, scopeID)
 	}); err != nil {
@@ -140,7 +137,7 @@ func testRunScopeClose_StampsClosedAt(t *testing.T, d persistence.Database) {
 	}
 	firstClosedAt := *got.ClosedAt
 
-	// Idempotent: re-close is a no-op (closed_at must not change).
+	// @constraint: Close is idempotent — re-closing must not advance closed_at.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Close(ctx, tx, scopeID)
 	}); err != nil {
@@ -168,7 +165,6 @@ func testRunScopeAffirmAfterClose_ErrRunScopeClosed(t *testing.T, d persistence.
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Create and close a RunScope.
 	scopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -183,7 +179,6 @@ func testRunScopeAffirmAfterClose_ErrRunScopeClosed(t *testing.T, d persistence.
 		t.Fatalf("Create+Close: %v", err)
 	}
 
-	// Affirm against the closed scope must return ErrRunScopeClosed.
 	err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeID, fix.FrameID, tx)
 	})
@@ -213,7 +208,6 @@ func testRunScopeFanoutPartitionUniqueness(t *testing.T, d persistence.Database)
 
 	parentRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
-	// First fanout_partition: ok.
 	firstID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -228,8 +222,8 @@ func testRunScopeFanoutPartitionUniqueness(t *testing.T, d persistence.Database)
 		t.Fatalf("Create first fanout_partition: %v", err)
 	}
 
-	// Second fanout_partition with same (parent_run_id, partition_key)
-	// must fail the unique constraint.
+	// @constraint: uq_run_scopes_fanout_partition_open rejects a second open
+	// RunScope sharing (parent_run_id, partition_key) with the first.
 	secondID := shared.UUID(uuid.New())
 	err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -253,12 +247,10 @@ func testRunScopeListParentChain(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Build a chain main → mid → leaf via parent_run_scope_id.
-	// fanout_partition scopes need parent_run_id+partition_key; we use
-	// subgraph scopes for the chain (parent_run_id set, partition_key empty)
-	// which the CHECK constraint accepts as "both set" and bypasses the
-	// fanout_partition unique index (the partial index excludes empty
-	// partition_key).
+	// @deliberate: chain main → mid → leaf is built with subgraph scopes
+	// (parent_run_id set, partition_key empty) rather than fanout_partition
+	// scopes so the partial unique index uq_run_scopes_fanout_partition_open
+	// (which excludes empty partition_key) does not collide across chain links.
 	mainID := shared.UUID(uuid.New())
 	parent1 := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -270,7 +262,6 @@ func testRunScopeListParentChain(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("Create main: %v", err)
 	}
-	// mid run lives in main scope.
 	midID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -315,7 +306,6 @@ func testRunScopeListParentChain(t *testing.T, d persistence.Database) {
 		}
 		t.Fatalf("ListParentChain: got %d entries (%v), want 3", len(chain), ids)
 	}
-	// Order: leaf first, then mid, then main.
 	if chain[0].ID != leafID {
 		t.Fatalf("ListParentChain[0] = %s, want leaf %s", chain[0].ID, leafID)
 	}

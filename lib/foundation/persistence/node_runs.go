@@ -32,7 +32,7 @@ type DispatchRequest struct {
 	NodeID         shared.UUID
 	ExecutorName   string
 	RequiredStores []string
-	EnqueuedAt     time.Time // may be future-dated for backoff
+	EnqueuedAt     time.Time // @deliberate: may be future-dated for backoff
 	// FrameID is the frame this dispatch belongs to (per
 	// docs/history/2026-04-26-frame-resolution-design.md §10.2). Required:
 	// rimsky_node_runs.frame_id is NOT NULL. Sourced from
@@ -172,29 +172,29 @@ type DispatchListFilter struct {
 // transaction. The runner owns the persistence.Tx; the queue helpers
 // participate in it.
 type Queue interface {
-	// Enqueue inserts or refreshes a dispatch row for the given node.
-	// On UNIQUE(node_id) conflict the row is updated only when still
-	// unclaimed and already eligible (claimed or future-dated rows are
-	// left alone). RequiredStores overwrites the prior value.
+	// @agent-contract: Enqueue inserts or refreshes a dispatch row for the
+	// given node. On UNIQUE(node_id) conflict the row is updated only when
+	// still unclaimed and already eligible (claimed or future-dated rows
+	// are left alone). RequiredStores overwrites the prior value.
 	Enqueue(ctx context.Context, req DispatchRequest) error
 
-	// EnqueueInTx is the tx-taking variant used inside the frame-tick tx.
-	// Auto-commit Enqueue calls EnqueueInTx(ctx, req, nil) internally.
+	// @agent-contract: EnqueueInTx is the tx-taking variant used inside
+	// the frame-tick tx. Auto-commit Enqueue calls
+	// EnqueueInTx(ctx, req, nil) internally.
 	EnqueueInTx(ctx context.Context, req DispatchRequest, tx Tx) error
 
-	// SelectCandidates returns up to req.Limit dispatch rows the
-	// supervisor pool is allowed to consider, filtered by accept-lists
-	// and ordered by enqueued_at ascending. Rows are FOR UPDATE
-	// SKIP LOCKED inside the caller's tx; rows the caller does not
-	// claim release their locks at tx end. The caller MUST hold an
-	// open transaction; implementations return an error when passed
-	// a nil tx.
+	// @agent-contract: SelectCandidates returns up to req.Limit dispatch
+	// rows the supervisor pool is allowed to consider, filtered by
+	// accept-lists and ordered by enqueued_at ascending. Rows are FOR
+	// UPDATE SKIP LOCKED inside the caller's tx; rows the caller does not
+	// claim release their locks at tx end. The caller MUST hold an open
+	// transaction; implementations return an error when passed a nil tx.
 	SelectCandidates(ctx context.Context, tx Tx, req SelectCandidatesRequest) ([]Candidate, error)
 
-	// ListInFlightRunPhases returns, for each node in nodeIDs that has
-	// at least one in-flight rimsky_node_runs row (phase pending /
-	// active / held / parked) in the given (frame, run scope), the set
-	// of distinct phases present. Nodes with no in-flight row are
+	// @agent-contract: ListInFlightRunPhases returns, for each node in
+	// nodeIDs that has at least one in-flight rimsky_node_runs row (phase
+	// pending / active / held / parked) in the given (frame, run scope),
+	// the set of distinct phases present. Nodes with no in-flight row are
 	// absent from the map. The persistence half of the supervisor's
 	// upstream-gating eligibility condition: a stale receiver is not
 	// dispatch-eligible while any subscribed upstream has an in-flight
@@ -209,82 +209,87 @@ type Queue interface {
 	// @concept: cascade
 	ListInFlightRunPhases(ctx context.Context, tx Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error)
 
-	// ClaimDispatchRow performs the claimant-guarded UPDATE of
-	// rimsky_node_runs.claimed_by from NULL to supervisorID for the
-	// given dispatch row, inside the caller's tx. Sets claimed_at and
+	// @agent-contract: ClaimDispatchRow performs the claimant-guarded
+	// UPDATE of rimsky_node_runs.claimed_by from NULL to supervisorID for
+	// the given dispatch row, inside the caller's tx. Sets claimed_at and
 	// last_heartbeat_at to now(). Returns claimed=true when exactly one
 	// row was updated; false when the row was already claimed by someone
 	// else.
 	ClaimDispatchRow(ctx context.Context, tx Tx, dispatchID shared.UUID, supervisorID string) (claimed bool, err error)
 
-	// Complete deletes a dispatch row. If expectedClaimedBy is non-empty,
-	// the delete is guarded (no-op on mismatch).
+	// @agent-contract: Complete deletes a dispatch row. If
+	// expectedClaimedBy is non-empty, the delete is guarded (no-op on
+	// mismatch).
 	Complete(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error
 
-	// RemoveForNode retires the in-flight dispatch row for a given
-	// (node, run scope). Used when a node is invalidated while queued
-	// (claim becomes moot). The (node_id, run_scope_id) keying is
-	// unambiguous under the new unique index — no separate
+	// @agent-contract: RemoveForNode retires the in-flight dispatch row
+	// for a given (node, run scope). Used when a node is invalidated
+	// while queued (claim becomes moot). The (node_id, run_scope_id)
+	// keying is unambiguous under the new unique index — no separate
 	// disambiguator needed.
 	//
 	// @concept: run-scope
 	RemoveForNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string) error
 
-	// RemoveForNodeInTx is the tx-taking variant. The auto-commit
-	// RemoveForNode calls this internally with tx=nil.
+	// @agent-contract: RemoveForNodeInTx is the tx-taking variant. The
+	// auto-commit RemoveForNode calls this internally with tx=nil.
 	RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx Tx) error
 
-	// ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is
-	// older than cutoff.
+	// @agent-contract: ListOrphanedClaims returns dispatch rows whose
+	// last_heartbeat_at is older than cutoff.
 	ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]DispatchRow, error)
 
-	// ReleaseClaim sets claimed_by=NULL, claimed_at=NULL, last_heartbeat_at=NULL on a dispatch row.
-	// If expectedClaimedBy is non-empty, the release is claimant-guarded
-	// (no-op on mismatch — protects a fresh supervisor's live claim from a
-	// stale sweep).
+	// @agent-contract: ReleaseClaim sets claimed_by=NULL, claimed_at=NULL,
+	// last_heartbeat_at=NULL on a dispatch row. If expectedClaimedBy is
+	// non-empty, the release is claimant-guarded (no-op on mismatch —
+	// protects a fresh supervisor's live claim from a stale sweep).
 	ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error
 
-	// GetClaimedBy returns current ownership of a dispatch row. Used by the
-	// supervisor's verify-before-run invariant (§7.3 step 4 / §17).
+	// @agent-contract: GetClaimedBy returns current ownership of a
+	// dispatch row. Used by the supervisor's verify-before-run invariant
+	// (§7.3 step 4 / §17).
 	GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (ClaimOwnership, error)
 
-	// GetDispatchNode returns the node_id of a dispatch row plus its
-	// current claim ownership. Used by the supervisor's §12.5
-	// attributes-callback auth path. Returns ClaimOwnership{Kind:
+	// @agent-contract: GetDispatchNode returns the node_id of a dispatch
+	// row plus its current claim ownership. Used by the supervisor's
+	// §12.5 attributes-callback auth path. Returns ClaimOwnership{Kind:
 	// "not_found"} when the dispatch row does not exist.
 	GetDispatchNode(ctx context.Context, dispatchID shared.UUID) (shared.UUID, ClaimOwnership, error)
 
-	// RefreshHeartbeat extends rimsky_node_runs.last_heartbeat_at to now()
-	// for every row claimed by supervisorID.
+	// @agent-contract: RefreshHeartbeat extends
+	// rimsky_node_runs.last_heartbeat_at to now() for every row claimed
+	// by supervisorID.
 	RefreshHeartbeat(ctx context.Context, supervisorID string) error
 
-	// ListLive returns currently-live dispatch rows (the table holds only
-	// rows with no terminal yet — terminals delete the row). Used by the
-	// observability dispatches endpoint. Cursor pagination follows the
-	// (enqueued_at DESC, id DESC) ordering documented in the spec §1.2.3.
+	// @agent-contract: ListLive returns currently-live dispatch rows (the
+	// table holds only rows with no terminal yet — terminals delete the
+	// row). Used by the observability dispatches endpoint. Cursor
+	// pagination follows the (enqueued_at DESC, id DESC) ordering
+	// documented in the spec §1.2.3.
 	ListLive(ctx context.Context, filter DispatchListFilter, pag ListPagination) (PaginatedListResult[DispatchRow], error)
 
-	// CountLive counts currently-live dispatch rows matching filter.
+	// @agent-contract: CountLive counts currently-live dispatch rows
+	// matching filter.
 	CountLive(ctx context.Context, filter DispatchListFilter) (int, error)
 
-	// CountParkedByReason returns counts of currently-parked
-	// rimsky_node_runs rows grouped by parked_reason. Empty
-	// reason buckets under the literal string "" so callers can
+	// @agent-contract: CountParkedByReason returns counts of
+	// currently-parked rimsky_node_runs rows grouped by parked_reason.
+	// Empty reason buckets under the literal string "" so callers can
 	// disambiguate "not parked" (absent from map) from "parked with
 	// no reason" (key=""). Used by the metrics gauge refresher
 	// (`rimsky_parked_by_reason`).
 	CountParkedByReason(ctx context.Context) (map[string]int, error)
 
-	// GetByID returns the live dispatch row for id, or nil when no such
-	// row exists (e.g. terminal-deleted). Used by the observability
-	// /v1/observability/node-runs/{id} endpoint to avoid a full O(N)
-	// ListLive scan.
+	// @agent-contract: GetByID returns the live dispatch row for id, or
+	// nil when no such row exists (e.g. terminal-deleted). Used by the
+	// observability /v1/observability/node-runs/{id} endpoint to avoid a
+	// full O(N) ListLive scan.
 	GetByID(ctx context.Context, id shared.UUID) (*DispatchRow, error)
 
-	// GetInFlightRunForNode resolves the in-flight `rimsky_node_runs.id`
-	// for the (node, run scope) pair. A row is "in-flight" when its
-	// phase is one of pending / active / held / parked. Returns
-	// (zero, false, nil) when no in-flight row exists.
+	// @agent-contract: GetInFlightRunForNode resolves the in-flight
+	// `rimsky_node_runs.id` for the (node, run scope) pair. A row is
+	// "in-flight" when its phase is one of pending / active / held /
+	// parked. Returns (zero, false, nil) when no in-flight row exists.
 	//
 	// The (node_id, run_scope_id) keying is unambiguous per the
 	// uq_node_runs_in_flight_per_run_scope partial-unique index —
@@ -293,48 +298,50 @@ type Queue interface {
 	// @concept: run-scope
 	GetInFlightRunForNode(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error)
 
-	// ParkActive transitions a node-run row from phase='active' to
-	// phase='parked' under the claimant's id. Persists the park metadata
-	// (parked_at, resume_at, parked_reason, session_token) and the
-	// payload via inline-or-handle (exactly one is non-empty). Clears
-	// claimed_by / claimed_at / last_heartbeat_at so the orphan-claim
-	// reaper's `claimed_by IS NOT NULL` predicate excludes the row. Used
-	// by E1's applyTerminalPark.
+	// @agent-contract: ParkActiveInTx transitions a node-run row from
+	// phase='active' to phase='parked' under the claimant's id. Persists
+	// the park metadata (parked_at, resume_at, parked_reason,
+	// session_token) and the payload via inline-or-handle (exactly one is
+	// non-empty). Clears claimed_by / claimed_at / last_heartbeat_at so
+	// the orphan-claim reaper's `claimed_by IS NOT NULL` predicate
+	// excludes the row. Used by E1's applyTerminalPark.
 	ParkActiveInTx(ctx context.Context, tx Tx, in ParkActiveInput) error
 
-	// ListParkedReadyForResume returns parked rows whose resume_at has
-	// elapsed (resume_at <= cutoff), ordered by resume_at ascending.
-	// Limit caps the per-tick batch. Used by E3's SweepParkedNodes.
+	// @agent-contract: ListParkedReadyForResume returns parked rows whose
+	// resume_at has elapsed (resume_at <= cutoff), ordered by resume_at
+	// ascending. Limit caps the per-tick batch. Used by E3's
+	// SweepParkedNodes.
 	ListParkedReadyForResume(ctx context.Context, cutoff time.Time, limit int) ([]ParkedRow, error)
 
-	// ListParkedDiagnostic returns currently-parked rows for the admin
-	// diagnostics endpoints (G1 / G2). When reasonFilter is non-empty,
-	// only rows whose parked_reason equals the filter are returned.
-	// Includes the joined instance_id (via rimsky_nodes) so the
+	// @agent-contract: ListParkedDiagnostic returns currently-parked rows
+	// for the admin diagnostics endpoints (G1 / G2). When reasonFilter is
+	// non-empty, only rows whose parked_reason equals the filter are
+	// returned. Includes the joined instance_id (via rimsky_nodes) so the
 	// diagnostics endpoint can group by instance/frame without a second
 	// query. Ordered by parked_at ascending.
 	ListParkedDiagnostic(ctx context.Context, tx Tx, reasonFilter string) ([]ParkedDiagnosticRow, error)
 
-	// ListParkedOverdue returns parked rows whose
+	// @agent-contract: ListParkedOverdue returns parked rows whose
 	// parked_at + max_park_duration_seconds has elapsed. The watchdog
 	// path (SweepParkedNodes) uses this to force a park_timeout failure.
 	// Limit caps the per-tick batch.
 	ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]ParkedRow, error)
 
-	// GetParkedByNode returns the parked node-run row for (node, run scope),
-	// or nil when no such parked row exists. Used by the
-	// admin-invalidate-against-parked path (G3) and by E4 resume dispatch
-	// to load the persisted park metadata.
+	// @agent-contract: GetParkedByNode returns the parked node-run row
+	// for (node, run scope), or nil when no such parked row exists. Used
+	// by the admin-invalidate-against-parked path (G3) and by E4 resume
+	// dispatch to load the persisted park metadata.
 	//
 	// @concept: run-scope
 	GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*ParkedRow, error)
 
-	// ResumeParkedInTx transitions a parked row back to phase='pending'
-	// (so any eligible supervisor can pick it up — the row's claimed_by is
-	// reset to NULL). Park metadata (parked_payload_*, parked_reason,
-	// session_token) is preserved so the resume-dispatch path can build
-	// ResumeContext from it; the runner clears it via
-	// ClearResumeMetadataInTx after a successful dispatch.
+	// @agent-contract: ResumeParkedInTx transitions a parked row back to
+	// phase='pending' (so any eligible supervisor can pick it up — the
+	// row's claimed_by is reset to NULL). Park metadata
+	// (parked_payload_*, parked_reason, session_token) is preserved so
+	// the resume-dispatch path can build ResumeContext from it; the
+	// runner clears it via ClearResumeMetadataInTx after a successful
+	// dispatch.
 	//
 	// Used by E3's sweep-driven wake and by the unified invalidate
 	// handler (G3) for handler-emitted wakes. Returns resumed=true when
@@ -348,12 +355,13 @@ type Queue interface {
 	// event directly — this method does not touch claimed_by.
 	ResumeParkedInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, wakeReason string) (resumed bool, err error)
 
-	// RebindRunFrameInTx updates rimsky_node_runs.frame_id for the given
-	// dispatch row to `newFrameID`. Used after a cross-frame parked-run
-	// wake so the woken run rejoins the active frame; without the
-	// rebind, `GetInFlightRunForNode(node, newFrameID)` won't resolve
-	// the woken row and the receiver's wait-set blocker can't bind to
-	// its run id. Idempotent: re-binding to the same frame is a no-op.
+	// @agent-contract: RebindRunFrameInTx updates
+	// rimsky_node_runs.frame_id for the given dispatch row to
+	// `newFrameID`. Used after a cross-frame parked-run wake so the woken
+	// run rejoins the active frame; without the rebind,
+	// `GetInFlightRunForNode(node, newFrameID)` won't resolve the woken
+	// row and the receiver's wait-set blocker can't bind to its run id.
+	// Idempotent: re-binding to the same frame is a no-op.
 	//
 	// A missing row (no `rimsky_node_runs` row exists for `dispatchID`)
 	// is an error: callers reach this primitive after they've already
@@ -366,16 +374,17 @@ type Queue interface {
 	// and the standard cascade-subscription path's parked-receiver wake.
 	RebindRunFrameInTx(ctx context.Context, tx Tx, dispatchID, newFrameID shared.UUID) error
 
-	// GetRetryNoProgress returns the current counter value plus the
-	// per-row max_retries_without_progress override (NULL → use deployment
-	// default). Used by E5 to test the cap.
+	// @agent-contract: GetRetryNoProgress returns the current counter
+	// value plus the per-row max_retries_without_progress override (NULL
+	// → use deployment default). Used by E5 to test the cap.
 	GetRetryNoProgress(ctx context.Context, dispatchID shared.UUID) (count int, override *int, err error)
 
-	// SetRetryNoProgressForNodeInTx writes the carry-forward counter
-	// onto the node-run row identified by (node_id, run_scope_id).
-	// Used by the retry path: after the original dispatch row is
-	// removed and a new one is inserted, the supervisor re-stamps the
-	// carried-forward counter so the cap can accumulate across retries.
+	// @agent-contract: SetRetryNoProgressForNodeInTx writes the
+	// carry-forward counter onto the node-run row identified by
+	// (node_id, run_scope_id). Used by the retry path: after the
+	// original dispatch row is removed and a new one is inserted, the
+	// supervisor re-stamps the carried-forward counter so the cap can
+	// accumulate across retries.
 	//
 	// The UPDATE is scoped to `phase = 'pending'` so only the
 	// freshly-inserted pending row is touched within the given RunScope.
@@ -383,23 +392,24 @@ type Queue interface {
 	// @concept: run-scope
 	SetRetryNoProgressForNodeInTx(ctx context.Context, tx Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error
 
-	// UpdateDispatchTuning sets the per-row max_park_duration_seconds and
-	// max_retries_without_progress denormalized columns at dispatch time
-	// from the resolved template DSL. Used by F2/F3 dispatch wiring.
+	// @agent-contract: UpdateDispatchTuningInTx sets the per-row
+	// max_park_duration_seconds and max_retries_without_progress
+	// denormalized columns at dispatch time from the resolved template
+	// DSL. Used by F2/F3 dispatch wiring.
 	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error
 
-	// LoadResumeMetadataInTx returns the parked metadata that survived
-	// the parked → pending transition (parked_payload_inline /
-	// parked_payload_handle / parked_payload_handle_backend /
-	// parked_reason / session_token). Returns (nil, nil) when the row
-	// has no parked metadata (fresh dispatch). Used by E4's resume
-	// dispatch.
+	// @agent-contract: LoadResumeMetadataInTx returns the parked metadata
+	// that survived the parked → pending transition
+	// (parked_payload_inline / parked_payload_handle /
+	// parked_payload_handle_backend / parked_reason / session_token).
+	// Returns (nil, nil) when the row has no parked metadata (fresh
+	// dispatch). Used by E4's resume dispatch.
 	LoadResumeMetadataInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) (*ResumeMetadataRow, error)
 
-	// ClearResumeMetadataInTx clears the parked_payload_* /
-	// parked_reason / session_token columns. Called by the runner
-	// after a successful resume dispatch so a re-park cycle starts
-	// clean.
+	// @agent-contract: ClearResumeMetadataInTx clears the
+	// parked_payload_* / parked_reason / session_token columns. Called by
+	// the runner after a successful resume dispatch so a re-park cycle
+	// starts clean.
 	ClearResumeMetadataInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) error
 }
 
@@ -449,7 +459,7 @@ type ParkActiveInput struct {
 	DispatchID           shared.UUID
 	ExpectedClaimedBy    string
 	ParkedAt             time.Time
-	ResumeAt             time.Time // zero ⇒ NULL (no deadline-based resume)
+	ResumeAt             time.Time // @deliberate: zero ⇒ NULL (no deadline-based resume)
 	Reason               string
 	ReasonNote           string
 	ReasonLabel          string

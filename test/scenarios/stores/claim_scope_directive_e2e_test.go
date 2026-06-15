@@ -65,7 +65,7 @@ const selectorScopeA = "/scope-A"
 func TestAcceptance_ClaimScopeEndToEnd(t *testing.T) {
 	t.Parallel()
 
-	// A real claim-producer over loopback gRPC advertising sync write-
+	// @deliberate: A real claim-producer over loopback gRPC advertising sync write-
 	// semantics. In scoped-direct mode (no pick policy) Open returns
 	// ClaimScope = json.Marshal(selector) for selector "/scope-A".
 	syncCaps := claimproducer.Capabilities{
@@ -86,7 +86,7 @@ func TestAcceptance_ClaimScopeEndToEnd(t *testing.T) {
 	})
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "scenario")
 
-	// --- (1) registration of the canonical {{claim.a.claim_scope}}
+	// @deliberate: (1) registration of the canonical {{claim.a.claim_scope}}
 	// spelling succeeds (DeployTemplate fatals on any non-2xx, so a
 	// successful return IS the not-400 assertion).
 	tid := h.DeployTemplate(claimScopeTemplate("claim-scope-e2e", "{{claim.a.claim_scope}}"))
@@ -98,7 +98,7 @@ func TestAcceptance_ClaimScopeEndToEnd(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker did not reach fresh (acquisition + dispatch + terminal must succeed end to end)")
 
-	// --- (2) the executor received the directive resolved to the live
+	// @deliberate: (2) the executor received the directive resolved to the live
 	// claim's claim-scope bytes (stringified). The stub producer echoes
 	// the selector as the ClaimScope, so the live value is the selector
 	// string itself — read off the real dispatch, not hard-coded into
@@ -125,7 +125,7 @@ func TestAcceptance_ClaimScopeEndToEnd(t *testing.T) {
 	require.Equal(t, selectorScopeA, region,
 		"executor must receive region resolved to the live claim's claim_scope (the producer's returned ClaimScope, stringified)")
 
-	// --- (3) a sibling deploy of the SAME template using the legacy
+	// @deliberate: (3) a sibling deploy of the SAME template using the legacy
 	// spelling {{claim.a.scope}} is rejected at registration with HTTP
 	// 400 and a validation error naming the canonical claim_scope
 	// segment. Raw POST so the rejection status is observable (the

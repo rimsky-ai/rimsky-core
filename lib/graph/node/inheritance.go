@@ -27,7 +27,8 @@ import "sort"
 type HoldingSubgraph struct {
 	AcquirerType string
 	Alias        string
-	Members      []string // sorted; includes acquirer
+	// @constraint: members is sorted and includes the acquirer.
+	Members []string
 }
 
 // IsHeld reports whether this claim is held — i.e., the subgraph has
@@ -59,9 +60,11 @@ func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 		return nil
 	}
 
-	subgraphs := make(map[string]map[string]struct{}) // key: acquirer|alias → members set
+	// @constraint: subgraphs is keyed `acquirer|alias` → members
+	// set; each node joins every (acquirer, alias) subgraph it
+	// acquires a store under.
+	subgraphs := make(map[string]map[string]struct{})
 	for _, n := range spec.Nodes {
-		// Each node is a member of every (n, alias) subgraph it acquires.
 		for _, s := range n.Stores {
 			alias := s.AliasOf()
 			acquirer := n.Type
@@ -71,19 +74,19 @@ func HoldingSubgraphsForTemplate(spec *TemplateSpec) []HoldingSubgraph {
 			}
 			subgraphs[key][acquirer] = struct{}{}
 		}
-		// For each `holds:` co-holdership, the acquirer is named directly
-		// by `from:` and the outer key is the acquirer's claim alias —
-		// add this node to the (acquirer, alias) subgraph. A single
-		// co-holder makes the alias held (subgraph size > 1).
+		// @deliberate: For each `holds:` co-holdership, the acquirer is named directly
+		// named directly by `from:` and the outer key is the acquirer's
+		// claim alias — add this node to the (acquirer, alias) subgraph.
+		// A single co-holder makes the alias held (subgraph size > 1).
 		for alias, hb := range n.Holds {
 			acquirer := hb.From
 			if acquirer == "" || alias == "" {
 				continue
 			}
 			if acquirer == n.Type {
-				// A node co-holding its own claim adds no member beyond
-				// the acquirer it already seeded above; skip to avoid a
-				// spurious self-edge.
+				// @deliberate: A node co-holding its own claim adds no member beyond
+				// member beyond the acquirer it already seeded above; skip
+				// to avoid a spurious self-edge.
 				continue
 			}
 			key := acquirer + "|" + alias

@@ -28,30 +28,32 @@ import (
 // schema gates, transforms, normalizes, hashes, indexes, pattern-matches,
 // attaches to traces, or includes blob bytes in error messages.
 type BlobBackend interface {
-	// Write persists bytes and returns an opaque handle. Implementations
-	// SHOULD use the BlobKey hint to namespace storage (filesystem
-	// derives a path component; pg-largeobject ignores) but the handle
-	// itself remains backend-opaque from the caller's perspective.
+	// @agent-contract Write persists bytes and returns an opaque handle.
+	// Implementations SHOULD use the BlobKey hint to namespace storage
+	// (filesystem derives a path component; pg-largeobject ignores) but
+	// the handle itself remains backend-opaque from the caller's
+	// perspective. Does NOT validate, transform, or hash the bytes.
 	Write(ctx context.Context, key BlobKey, bytes []byte) (Handle, error)
 
-	// Read returns the bytes referenced by handle. Returns
-	// ErrBlobNotFound when the handle is unknown.
+	// @agent-contract Read returns the bytes referenced by handle.
+	// Returns ErrBlobNotFound when the handle is unknown. Does NOT
+	// validate or transform the returned bytes.
 	Read(ctx context.Context, handle Handle) ([]byte, error)
 
-	// ReadRange returns a byte range. Backends that do not support
-	// native range reads MAY fall back to full Read + slice.
-	// Returns ErrBlobNotFound when the handle is unknown.
-	// Returns io.ErrUnexpectedEOF if offset+length exceeds blob size.
+	// @agent-contract ReadRange returns a byte range. Backends that do
+	// not support native range reads MAY fall back to full Read + slice.
+	// Returns ErrBlobNotFound when the handle is unknown. Returns
+	// io.ErrUnexpectedEOF if offset+length exceeds blob size.
 	ReadRange(ctx context.Context, handle Handle, offset, length int64) ([]byte, error)
 
-	// Delete removes the blob. Idempotent: deleting an absent handle
-	// returns nil.
+	// @agent-contract Delete removes the blob. Idempotent: deleting an
+	// absent handle returns nil. Does NOT return ErrBlobNotFound.
 	Delete(ctx context.Context, handle Handle) error
 
-	// Name returns the backend's identifier as documented in BlobConfig
-	// ("inline" | "pg-largeobject" | "filesystem" | "memory"). Used by
-	// the attribute write path to record value_handle_backend so the
-	// read path can route the fetch.
+	// @agent-contract Name returns the backend's identifier as documented
+	// in BlobConfig ("inline" | "pg-largeobject" | "filesystem" |
+	// "memory"). Used by the attribute write path to record
+	// value_handle_backend so the read path can route the fetch.
 	Name() string
 }
 

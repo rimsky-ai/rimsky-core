@@ -276,7 +276,6 @@ func TestAtomicStaging_VerifierSuccess_DrivesCommit(t *testing.T) {
 		t.Fatalf("Open did not reserve staging schema %q", staging)
 	}
 
-	// The executor writes its produced rows into the staging schema.
 	h.writeStagedRows(t, staging, table, []map[string]any{
 		{"id": "a", "payload": "x"},
 		{"id": "b", "payload": "y"},
@@ -302,11 +301,9 @@ func TestAtomicStaging_VerifierSuccess_DrivesCommit(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	// Atomic swap landed the staged rows into the canonical view...
 	if got := h.schemaRowCount(t, canonicalSchema, table); got != 3 {
 		t.Errorf("canonical rows post-Commit: got %d want 3 (atomic swap did not land staged rows)", got)
 	}
-	// ...and consumed the staging schema (no orphaned staging).
 	if h.stagingSchemaExists(t, staging) {
 		t.Errorf("staging schema %q still exists after Commit; the swap must consume it", staging)
 	}
@@ -321,7 +318,9 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 	h := bootFusedStore(t)
 	const canonicalSchema, table = "production_e2e_fail", "items"
 	h.createCanonicalSchema(t, canonicalSchema)
-	// Pre-seed a canonical row the Abandon must NOT touch.
+	// @deliberate: pre-seed a canonical row so the post-Abandon assertion
+	// can pin that Abandon leaves the canonical untouched (vs. an empty
+	// canonical, where "no change" and "wiped" are indistinguishable).
 	if _, err := h.pool.Exec(context.Background(),
 		"CREATE TABLE "+canonicalSchema+"."+table+" (id TEXT, payload TEXT)"); err != nil {
 		t.Fatalf("CREATE TABLE canonical: %v", err)
@@ -360,12 +359,11 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 	if errOutcome == nil {
 		t.Fatalf("expected Error outcome, got %+v", sc.GetOutcome())
 	}
-	// Post-2026-05-23 signal-taxonomy reshape (Pass 6): the verifier
-	// emits hierarchical `pg/verifier_check_failed/<kind>` classes,
-	// not the flat `verifier_failed` of the original test. The
-	// semantic the supervisor's terminal routing rides on is
-	// "Error outcome with a non-empty error_class"; the prefix
-	// pins the executor identity per `concept:signal`.
+	// @constraint: the verifier emits hierarchical
+	// `pg/verifier_check_failed/<kind>` classes per `concept:signal`, not
+	// a flat `verifier_failed`. The supervisor's terminal routing rides on
+	// "Error outcome with a non-empty error_class"; this prefix assertion
+	// pins the executor-identity segment of that class.
 	const wantPrefix = "pg/verifier_check_failed/"
 	if got := errOutcome.GetErrorClass(); got == "" || got[:len(wantPrefix)] != wantPrefix {
 		t.Errorf("error_class: got %q want prefix %q", got, wantPrefix)
@@ -381,7 +379,6 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 		t.Fatalf("Abandon: %v", err)
 	}
 
-	// Staging discarded; canonical untouched (still the one pre-seeded row).
 	if h.stagingSchemaExists(t, staging) {
 		t.Errorf("staging schema %q still exists after Abandon; it must be dropped", staging)
 	}
@@ -390,5 +387,4 @@ func TestAtomicStaging_VerifierFailure_DrivesAbandon(t *testing.T) {
 	}
 }
 
-// _ guards unused-import.
 var _ = fmt.Sprintf

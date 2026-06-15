@@ -73,7 +73,7 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 	if tags == nil {
 		tags = []string{}
 	}
-	// Deref the *string settling signal type, leaving "" when nil so
+	// @constraint: deref the *string settling signal type, leaving "" when nil so
 	// omitempty drops the key for an unsettled node. Mirrors the
 	// projection in backfills.go::backfillPartitionRow.
 	settlingSig := ""
@@ -108,7 +108,8 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 // spec §5.
 type invalidateNodeRequest struct {
 	Reason string `json:"reason,omitempty"`
-	Frame  string `json:"frame,omitempty"` // "" | "in" | "next"; default "next"
+	// @constraint: frame is "" | "in" | "next"; default "next".
+	Frame string `json:"frame,omitempty"`
 }
 
 // registerNodesRoutes wires the /nodes and /instances/:id_or_key/nodes groups.
@@ -142,7 +143,7 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 			if row == nil {
 				return nil
 			}
-			// Resolve the node's instance to its main run scope, then read
+			// @constraint: resolve the node's instance to its main run scope, then read
 			// the latest per-run attribute bag for (node, main run scope).
 			inst, err := deps.Persist.Instances().Get(ctx, row.InstanceID, tx)
 			if err != nil {
@@ -181,9 +182,9 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		var body invalidateNodeRequest
-		// Body is optional; ignore decode error when body is empty.
+		// @constraint: body is optional; ignore decode error when body is empty.
 		_ = json.NewDecoder(req.Body).Decode(&body)
-		// Validate Frame; reject anything other than "" | "in" | "next".
+		// @constraint: validate Frame; reject anything other than "" | "in" | "next".
 		switch body.Frame {
 		case "", "in", "next":
 		default:
@@ -211,7 +212,7 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 		}) {
 			return
 		}
-		// Record the operator action in the audit log. The event row
+		// @constraint: record the operator action in the audit log. The event row
 		// carries the owning instance_id (resolved from the loaded node
 		// row above) so the operator's instance-scoped /v1/events query
 		// surfaces this audit row on the unified feed — without
@@ -235,16 +236,17 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 				"reason", body.Reason,
 				"error", err.Error())
 		}
-		// Operator-sourced `frame: in` (concept:cascade / concept:invalidate):
-		// resolve the target instance's currently-running cascade frame and
-		// thread it as SourceFrameID so invalidateInFrame joins THAT frame
-		// (the open drain) rather than falling back to next-frame. The
-		// operator invalidate has no source node, so SourceFrameID is the
-		// authoritative input — invalidateInFrame's resolution order prefers
-		// it and skips the source-node re-read when the caller supplies the
-		// frame. When no frame is currently running, sourceFrameID stays nil
-		// and invalidateInFrame takes its documented deterministic next-frame
-		// fallback (the story's required behavior for an idle instance).
+		// @deliberate: operator-sourced `frame: in` resolves the target
+		// instance's currently-running cascade frame and threads it as
+		// SourceFrameID so invalidateInFrame joins THAT frame (the open
+		// drain) rather than falling back to next-frame. The operator
+		// invalidate has no source node, so SourceFrameID is the
+		// authoritative input — invalidateInFrame's resolution order
+		// prefers it and skips the source-node re-read when the caller
+		// supplies the frame. When no frame is currently running,
+		// sourceFrameID stays nil and invalidateInFrame takes its
+		// deterministic next-frame fallback (the required behavior for an
+		// idle instance). @concept: cascade, invalidate.
 		var sourceFrameID *shared.UUID
 		if body.Frame == "in" {
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
@@ -317,7 +319,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 		}) {
 			return
 		}
-		// Clear error bookkeeping + defensively clear stale frame_id +
+		// @constraint: clear error bookkeeping + defensively clear stale frame_id +
 		// reset the failed-terminal row's settling_signal_type in one tx.
 		// Resetting settling_signal_type on the failed-terminal row
 		// means the dashboard's `nodeSelect` projection (which surfaces
@@ -331,7 +333,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			if err := deps.Persist.Nodes().UpdateError(ctx, id, node.EvaluatorState{}, tx); err != nil {
 				return err
 			}
-			// Resolve the failed-terminal row's RunScope so the reset
+			// @constraint: resolve the failed-terminal row's RunScope so the reset
 			// keys on the correct row. NodeRow.RunScopeID is the
 			// in-flight scope (nil for a failed node), so look up the
 			// scope of the most-recent failed-terminal run directly.
@@ -349,7 +351,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// Drive the reset through the frame engine. EnqueueOrCoalesce in
+		// @constraint: drive the reset through the frame engine. EnqueueOrCoalesce in
 		// 'serial_queue' mode creates a new queued frame; in 'coalesce'
 		// mode it appends this node to the pending coalesce row (or
 		// creates a new one). The source-eligibility predicate at
@@ -361,7 +363,7 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// The reset audit event carries the owning instance_id so it
+		// @constraint: the reset audit event carries the owning instance_id so it
 		// surfaces on the instance-scoped /v1/events feed (parity with
 		// handleInvalidateNode above); without it, the row is dropped
 		// by the events read filter and the operator's instance-scoped
@@ -398,7 +400,7 @@ func handleListInstanceNodes(deps AppDeps) http.HandlerFunc {
 		}
 		cursor := req.URL.Query().Get("cursor")
 		limit := parseLimit(req, 100)
-		// Per spec 2026-05-19 Item 4: single-value `?tag=` exact-match
+		// @constraint: per spec 2026-05-19 Item 4: single-value `?tag=` exact-match
 		// filter. Multi-tag combinations are not in v1.
 		tagFilter := req.URL.Query().Get("tag")
 		var page persistence.PaginatedListResult[persistence.NodeRow]
@@ -437,7 +439,7 @@ func resolveInstance(ctx context.Context, deps AppDeps, idOrKey string) (*persis
 		}
 		return out, nil
 	}
-	// instance_key resolution: dedicated dispatch — there's no
+	// @constraint: instance_key resolution: dedicated dispatch — there's no
 	// (template_hash, instance_key) on this URL, so use the
 	// instance-key-only lookup.
 	if err := deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

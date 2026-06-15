@@ -11,6 +11,8 @@ import "context"
 // foundation/persistence/<driver>/ return this from Database.Tables(). Most
 // callers depend only on a subset of the methods; the umbrella keeps
 // wiring code (cmd/* startup) compact.
+//
+// @constraint: every accessor method must return a non-nil table — a nil return is a driver-wiring bug, and callers do not nil-check.
 type Tables interface {
 	Templates() TemplateTable
 	TemplateTags() TemplateTagTable
@@ -27,29 +29,19 @@ type Tables interface {
 	NodeEvents() NodeEventTable
 	WaitSet() WaitSetTable
 
-	// Per-row-type tables introduced by the 2026-05-15 data-platform
-	// extensions. Each driver must return a concrete implementation;
-	// a nil return is a wiring bug.
 	Messages() MessagesTable
 	MessageIdempotencies() MessageIdempotencyTable
 	Lineage() LineageTable
 	PublisherSubscriptions() PublisherSubscriptionsTable
-	// RunTree is the parent/child/state accessor on `rimsky_node_runs`.
-	// Spec §Run-tree and aggregation.
 	RunTree() RunTreeTable
 
-	// RunScopes is the rimsky_run_scopes accessor — first-class
-	// execution-context rows per concept:run-scope. Spec
-	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
+	// @concept: run-scope — first-class execution-context rows on rimsky_run_scopes.
 	RunScopes() RunScopeTable
 
-	// APIKeys is the rimsky_api_keys accessor — Bearer-token auth keys
-	// for control-api. Introduced by the 2026-05-15 control-plane MCP
-	// and auth spec.
+	// @concept: api-key — Bearer-token auth keys for control-api on rimsky_api_keys.
 	APIKeys() APIKeyTable
 
-	// Breakpoints accessors introduced by spec
-	// .ok-planner/specs/2026-05-24-instance-debugger-design.md (concept:breakpoint).
+	// @concept: breakpoint — accessors on rimsky_breakpoints / rimsky_breakpoint_hits.
 	Breakpoints() BreakpointTable
 	BreakpointHits() BreakpointHitTable
 

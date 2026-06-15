@@ -58,7 +58,7 @@ func NewObservabilityServerWithSchema(schema []byte) *ObservabilityServer {
 // not constrain emissions; this list mirrors the event names used
 // across test/scenarios/.
 func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
-	// Advertise the configured schema when set, falling back to the
+	// @deliberate: Advertise the configured schema when set, falling back to the
 	// permissive open shape. The fallback keeps NewObservabilityServer()
 	// (and every existing caller) back-compatible: an unconfigured stub
 	// still declares `{"type":"object"}`.
@@ -70,7 +70,7 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 		SupportsTraceGet:              false,
 		SupportsTraceStream:           false,
 		RetentionAfterTerminalSeconds: 0,
-		// The stub executor accepts any attribute shape by default —
+		// @deliberate: The stub executor accepts any attribute shape by default —
 		// declare an open schema so the dispatch-time gate knows this is
 		// intentional rather than a discovery cache miss. A test may
 		// override this with a constraining schema via
@@ -83,7 +83,7 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 			"progress",
 			"completed",
 		},
-		// 2026-05-23 signal-taxonomy Pass 6: the stub executor emits
+		// @deliberate: 2026-05-23 signal-taxonomy Pass 6: the stub executor emits
 		// scripted error classes for tests. Since the scripted vocabulary
 		// is open-ended, advertise the `stub/*` prefix as a single
 		// wildcard so operator templates' `error_types:` keys under the

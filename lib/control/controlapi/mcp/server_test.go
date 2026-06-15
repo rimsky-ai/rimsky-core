@@ -102,13 +102,13 @@ func TestMCPStreamableHTTPHandshake(t *testing.T) {
 	}}
 	server := &mcp.Server{Tools: catalog}
 
-	// Real HTTP server so the GET SSE stream exercises the actual
+	// @constraint: real HTTP server so the GET SSE stream exercises the actual
 	// flush/keep-alive path and request-context cancellation, not just a
 	// recorder.
 	hs := httptest.NewServer(http.HandlerFunc(server.ServeHTTP))
 	defer hs.Close()
 
-	// 1. initialize — must return a session id header.
+	// @constraint: initialize must return a session id header.
 	status, hdr, _ := postRPC(t, hs.URL, "", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	if status != http.StatusOK {
 		t.Fatalf("initialize status: got %d want 200", status)
@@ -118,9 +118,9 @@ func TestMCPStreamableHTTPHandshake(t *testing.T) {
 		t.Fatalf("initialize did not issue an Mcp-Session-Id header; headers=%v", hdr)
 	}
 
-	// 2. notifications/initialized — a JSON-RPC notification (no id). It
-	// MUST be consumed with a 202/empty body and NEVER a JSON-RPC error
-	// reply (a notification gets no response).
+	// @constraint: notifications/initialized is a JSON-RPC notification (no
+	// id). It MUST be consumed with a 202/empty body and NEVER a JSON-RPC
+	// error reply (a notification gets no response).
 	nStatus, _, nBody := postRPC(t, hs.URL, sessionID,
 		`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	if nStatus != http.StatusAccepted {
@@ -129,12 +129,11 @@ func TestMCPStreamableHTTPHandshake(t *testing.T) {
 	if strings.TrimSpace(nBody) != "" {
 		t.Fatalf("notifications/initialized must return an empty body; got %q", nBody)
 	}
-	// Guard explicitly against the JSON-RPC violation: no error envelope.
+	// @constraint: guard explicitly against the JSON-RPC violation: no error envelope.
 	if strings.Contains(nBody, "method not found") || strings.Contains(nBody, `"error"`) {
 		t.Fatalf("notifications/initialized returned a JSON-RPC error reply (violation): %q", nBody)
 	}
 
-	// 3. tools/list — succeeds, carrying the session header.
 	lStatus, _, lBody := postRPC(t, hs.URL, sessionID,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	if lStatus != http.StatusOK {
@@ -148,7 +147,6 @@ func TestMCPStreamableHTTPHandshake(t *testing.T) {
 		t.Fatalf("tools/list error: %v", lResp.Error)
 	}
 
-	// 4. tools/call — succeeds.
 	cStatus, _, cBody := postRPC(t, hs.URL, sessionID,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"x","arguments":{"k":1}}}`)
 	if cStatus != http.StatusOK {
@@ -165,9 +163,9 @@ func TestMCPStreamableHTTPHandshake(t *testing.T) {
 		t.Fatalf("tools/call did not invoke tool x; got %q", catalog.called)
 	}
 
-	// 5. GET /mcp — the client's server-to-client stream probe. Must open
-	// a valid text/event-stream (200), not 405. The stream may stay idle;
-	// we read only the response headers, then cancel.
+	// @constraint: GET /mcp is the client's server-to-client stream probe.
+	// Must open a valid text/event-stream (200), not 405. The stream may
+	// stay idle; we read only the response headers, then cancel.
 	getMCPStream(t, hs.URL, sessionID)
 }
 
@@ -213,8 +211,6 @@ func getMCPStream(t *testing.T, baseURL, sessionID string) {
 	if sessionID != "" {
 		req.Header.Set("Mcp-Session-Id", sessionID)
 	}
-	// A small client timeout is a safety net: the handler must answer
-	// headers immediately even though the stream body stays open.
 	type result struct {
 		status int
 		ctype  string
@@ -229,7 +225,7 @@ func getMCPStream(t *testing.T, baseURL, sessionID string) {
 		}
 		defer resp.Body.Close()
 		done <- result{status: resp.StatusCode, ctype: resp.Header.Get("Content-Type")}
-		// Cancel so the idle stream unblocks the server-side handler.
+		// @constraint: cancel so the idle stream unblocks the server-side handler.
 		cancel()
 	}()
 	select {
@@ -253,7 +249,7 @@ func getMCPStream(t *testing.T, baseURL, sessionID string) {
 
 func TestMCPUnsupportedMethod(t *testing.T) {
 	server := &mcp.Server{Tools: &fakeCatalog{}}
-	// `prompts/list` is not implemented in v1; both tools/* and
+	// @constraint: `prompts/list` is not implemented in v1; both tools/* and
 	// resources/* are.
 	resp := serveRPC(t, server, `{"jsonrpc":"2.0","id":4,"method":"prompts/list"}`)
 	if resp.Error == nil || resp.Error.Code != mcp.CodeMethodNotFound {

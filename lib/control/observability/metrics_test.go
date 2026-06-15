@@ -22,7 +22,7 @@ func TestMetricsHandler_Smoke(t *testing.T) {
 	t.Parallel()
 	m := NewMetricsRegistry()
 
-	// Touch each metric so the scrape returns at least one sample per
+	// @constraint: touch each metric so the scrape returns at least one sample per
 	// series. Counters and histograms emit metadata even at zero,
 	// but populating ensures the per-label series shows up.
 	m.Dispatches.WithLabelValues("worker", "complete").Inc()

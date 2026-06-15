@@ -7,8 +7,8 @@ status: adopted
 
 ## Choice
 
-`0` for all-instances-success; `1` for at-least-one-failure (including `park_timeout`); `2` for `--timeout` exceeded; `130` for SIGINT during shutdown.
+Zero for all-instances-success; one for at-least-one-failure (including park-timeout as a failure); two for the run-timeout exceeded; the conventional interrupt-signal exit code (signal number 2 plus 128) for interrupt during shutdown. See `concept:auto-terminal` for the run-timeout and park-timeout semantics.
 
 ## Rationale
 
-Three distinguishable classes for script-friendly branching. `130` is the conventional shell-signaled-exit code for SIGINT (signal number 2 + 128).
+Three distinguishable classes for script-friendly branching, plus the conventional shell-signaled-exit code for interrupt.

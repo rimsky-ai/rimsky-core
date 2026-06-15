@@ -55,7 +55,7 @@ const (
 	termSuccess terminalKind = iota
 	termError
 	termAsync
-	// termPark scripts a Park terminal event (parking the node until
+	// @deliberate: termPark scripts a Park terminal event (parking the node until
 	// resume_at). Used by L2 conformance and by E6 / H3 scenario tests.
 	termPark
 )
@@ -80,16 +80,15 @@ type script struct {
 	asyncCompletionMs int64
 	heartbeats        int
 	delay             time.Duration
-	// Park-terminal scripted fields.
-	parkReason       genv1.ParkReason
-	parkReasonNote   string
-	parkPayload      []byte
-	parkResumeAt     time.Time // zero ⇒ indefinite park (no resume_at)
-	parkSessionToken string
-	// Named-event emissions scripted before the terminal. Emitted in
+	parkReason        genv1.ParkReason
+	parkReasonNote    string
+	parkPayload       []byte
+	parkResumeAt      time.Time // @deliberate: zero ⇒ indefinite park (no resume_at)
+	parkSessionToken  string
+	// @deliberate: Named-event emissions scripted before the terminal. Emitted in
 	// order, between heartbeats and the terminal event.
 	namedEvents []namedEventEmit
-	// holdUntil, when non-nil, blocks the run after its first
+	// @deliberate: holdUntil, when non-nil, blocks the run after its first
 	// heartbeat until the channel closes (or the stream context
 	// cancels). Lets eligibility tests hold a sender in-flight at a
 	// deterministic midpoint instead of racing wall-clock delays.
@@ -129,8 +128,8 @@ type ObservedRequest struct {
 	CallbackURL              string
 	CancelToken              string
 	DispatchID               string
-	PriorDispatchID          string                         // empty when unset on the wire
-	PriorDispatchDisposition genv1.PriorDispatchDisposition // PRIOR_NONE when unset on the wire
+	PriorDispatchID          string                         // @deliberate: empty when unset on the wire
+	PriorDispatchDisposition genv1.PriorDispatchDisposition // @deliberate: PRIOR_NONE when unset on the wire
 	// CandidateHandles records the per-store-alias candidate_handle bytes
 	// carried on each ExecuteRequest.StoreHandle. Empty for non-fan-out /
 	// non-DataProcessing dispatches; populated for fan-out leaf dispatches
@@ -313,7 +312,7 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 	s.mu.Unlock()
 
 	if stubMode {
-		// Park-emission probe path: rimsky-executor-conformance --check-park
+		// @constraint: Park-emission probe path: rimsky-executor-conformance --check-park
 		// drives stub mode with attributes `{probe_park: true,
 		// park_reason: "<storage-form>", park_reason_label: "..."}`. The
 		// probe asserts the executor's Park.reason taxonomy + reason_label
@@ -352,7 +351,9 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 		return fmt.Errorf("stub: no script for node_type %q", req.NodeType)
 	}
 
-	// heartbeats (at least one before terminal)
+	// @constraint: emit at least one heartbeat before terminal — the
+	// stub guarantees the heartbeats+1 lower bound so callers can
+	// assert on the heartbeat-before-terminal invariant.
 	for i := 0; i < sc.heartbeats+1; i++ {
 		if sc.delay > 0 {
 			select {
@@ -369,7 +370,6 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 		}
 	}
 
-	// Deterministic in-flight hold (see TypeBuilder.HoldUntil).
 	if sc.holdUntil != nil {
 		select {
 		case <-sc.holdUntil:
@@ -378,7 +378,7 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 		}
 	}
 
-	// Scripted NamedEvent emissions before the terminal (plan L2 / H1).
+	// @deliberate: Scripted NamedEvent emissions before the terminal (plan L2 / H1).
 	for _, ne := range sc.namedEvents {
 		if err := stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_NamedEvent{NamedEvent: &genv1.NamedEvent{
 			Name:    ne.Name,
@@ -388,10 +388,9 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 		}
 	}
 
-	// terminal
 	switch sc.terminal {
 	case termSuccess:
-		// Success carries `attributes_delta` (a Struct). The stub's
+		// @deliberate: Success carries `attributes_delta` (a Struct). The stub's
 		// `result` API is preserved for test convenience and mapped
 		// to an AttributesDelta map when the value is a map[string]any
 		// (the only realistic shape — the supervisor merges it into
@@ -413,7 +412,7 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 		}
 		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				// 2026-05-23 signal-taxonomy Pass 6: prefix unscoped
+				// @deliberate: 2026-05-23 signal-taxonomy Pass 6: prefix unscoped
 				// classes with `stub/` so the stub executor follows the
 				// hierarchical-class convention. Classes already
 				// containing a `/` (operator-supplied hierarchical
@@ -501,7 +500,7 @@ func toStruct(v any) (*structpb.Struct, error) {
 	}
 	m, ok := v.(map[string]any)
 	if !ok {
-		// Wrap non-map scalars under a single "value" field so the test
+		// @deliberate: Wrap non-map scalars under a single "value" field so the test
 		// fixture can still observe them when needed; preserves the
 		// pre-redesign convenience without adding a field to the proto.
 		return structpb.NewStruct(map[string]any{"value": fmt.Sprintf("%v", v)})

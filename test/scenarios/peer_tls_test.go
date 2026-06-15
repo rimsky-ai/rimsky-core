@@ -142,7 +142,7 @@ func TestPeerTLS_Required_VerifiedTLSEndToEnd(t *testing.T) {
 	}
 	defer client.Close()
 
-	// Exchange a request over the established channel and assert real
+	// @deliberate: Exchange a request over the established channel and assert real
 	// data crossed the wire: the stub's advertised envelope.
 	caps, err := client.Capabilities(ctx)
 	if err != nil {

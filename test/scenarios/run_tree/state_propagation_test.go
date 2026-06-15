@@ -51,7 +51,7 @@ func TestStatePropagation_AllStaleStillNonTerminal(t *testing.T) {
 	}
 }
 
-// TestStatePropagation_ParkedDoesNotPropagate pins the
+// @deliberate: TestStatePropagation_ParkedDoesNotPropagate pins the
 // parked-cascade behavior: a parked child is non-terminal from the
 // aggregation engine's perspective (cascade does not propagate from
 // parked, but the run-tree aggregation engine specifically TREATS

@@ -38,7 +38,6 @@ type ComposeState struct {
 func QueryState(ctx context.Context, c *cli.Client, project string) (*ComposeState, error) {
 	prefix := cli.ReservedTagPrefix + project + ":"
 
-	// Tags.
 	tags, err := pagedListTags(ctx, c)
 	if err != nil {
 		return nil, err
@@ -53,7 +52,6 @@ func QueryState(ctx context.Context, c *cli.Client, project string) (*ComposeSta
 		hashSet[t.TemplateID] = true
 	}
 
-	// Templates referenced by owned tags.
 	templates := map[string]cli.Template{}
 	for h := range hashSet {
 		tpl, err := c.GetTemplate(ctx, h)
@@ -66,7 +64,6 @@ func QueryState(ctx context.Context, c *cli.Client, project string) (*ComposeSta
 		templates[h] = *tpl
 	}
 
-	// Instances.
 	insts, err := pagedListInstances(ctx, c)
 	if err != nil {
 		return nil, err

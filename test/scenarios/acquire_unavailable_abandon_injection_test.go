@@ -67,7 +67,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 		WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync},
 	}
 
-	// Producer #1: one seeded item, so Open succeeds. The recycle-on-
+	// @deliberate: Producer #1: one seeded item, so Open succeeds. The recycle-on-
 	// give-up action is irrelevant to the assertion; the Calls recorder
 	// is what counts the Abandon.
 	endpointA, storeA, teardownA := stubfixture.Start(t, stubstore.Config{
@@ -82,7 +82,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 	})
 	t.Cleanup(teardownA)
 
-	// Producer #2: empty queue — Open returns Unavailable. Real store
+	// @deliberate: Producer #2: empty queue — Open returns Unavailable. Real store
 	// service over the wire: the defense under test (the partial-open
 	// Abandon) is NOT stubbed out; the Unavailable comes from the
 	// producer's genuine empty-queue branch.
@@ -92,13 +92,13 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// No InitialItems — Open returns Unavailable.
+				// @deliberate: No InitialItems — Open returns Unavailable.
 			},
 		},
 	})
 	t.Cleanup(teardownB)
 
-	// NoSupervisor: the test drives runtime.RunNode directly so it can
+	// @deliberate: NoSupervisor: the test drives runtime.RunNode directly so it can
 	// thread the injection hook. The scheduler still runs and enqueues
 	// the root dispatch row.
 	h := scenario.Start(t, scenario.HarnessOpts{
@@ -126,7 +126,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 						},
 					},
 				},
-				// Sorted acquisition order (@blessed-invariant 3) is
+				// @deliberate: Sorted acquisition order (@blessed-invariant 3) is
 				// (lock_kind, producer:selector): "store-a:@items" <
 				// "store-b:@queue", so store-a Opens first and store-b's
 				// Unavailable leaves store-a partially open.
@@ -144,7 +144,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 	require.True(t, h.WaitForDispatch(worker.ID, 10*time.Second),
 		"scheduler should enqueue the worker's dispatch row")
 
-	// Dial real gRPC producer clients — the same client type the
+	// @deliberate: Dial real gRPC producer clients — the same client type the
 	// production supervisor registers.
 	clientA, err := peer.Dial(h.Ctx, "store-a", "grpc://"+endpointA, peer.TLSModeOff)
 	require.NoError(t, err)
@@ -180,7 +180,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
 		HeartbeatInterval: 100 * time.Millisecond,
-		// The post-rollback / pre-Abandon window: the acquisition tx is
+		// @deliberate: The post-rollback / pre-Abandon window: the acquisition tx is
 		// rolled back (no claim-handle rows survive) but producer #1 has
 		// not yet received its Abandon.
 		PreAcquireUnavailableHook: func(ctx context.Context) {
@@ -205,7 +205,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 	require.True(t, hooked.Load(),
 		"the PreAcquireUnavailableHook seam must have fired")
 
-	// Producer #1 received exactly one Open and exactly one Abandon,
+	// @constraint: Producer #1 received exactly one Open and exactly one Abandon,
 	// and the Abandon targets the claim the Open minted.
 	callsA := storeA.Calls()
 	require.Equal(t, 1, countCalls(callsA, "open"),
@@ -226,14 +226,14 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 	require.Zero(t, countCalls(callsA, "commit"),
 		"store-a must never see a Commit for an abandoned partial open")
 
-	// Producer #2 saw the Open that returned Unavailable and nothing else.
+	// @constraint: Producer #2 saw the Open that returned Unavailable and nothing else.
 	callsB := storeB.Calls()
 	require.Equal(t, 1, countCalls(callsB, "open"),
 		"store-b must have been Open'd exactly once")
 	require.Zero(t, countCalls(callsB, "abandon"),
 		"store-b never acquired — no Abandon may fire against it")
 
-	// No claim-handle rows survive.
+	// @deliberate: No claim-handle rows survive.
 	var lhCount int
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles lh
@@ -242,7 +242,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 	).Scan(&lhCount))
 	require.Zero(t, lhCount, "no claim-handle rows may survive the abandoned acquisition")
 
-	// The run resolved through the error path with the synthetic class:
+	// @deliberate: The run resolved through the error path with the synthetic class:
 	// give_up lands the node in failed with a
 	// terminal/error/acquire/unavailable signal row on the event log.
 	var failedRow *persistence.NodeRow
@@ -263,7 +263,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 	require.Equal(t, 1, sigCount,
 		"the error path must emit exactly one terminal/error/acquire/unavailable signal")
 
-	// Executor never invoked.
+	// @constraint: Executor never invoked.
 	require.Empty(t, h.Stub.Observed(),
 		"the executor must not be invoked when acquisition fails on Unavailable")
 }

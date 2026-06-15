@@ -54,11 +54,9 @@ visibility_timeout_seconds: 60
 	if err := yaml.Unmarshal([]byte(oldYAML), &pp); err != nil {
 		t.Fatalf("yaml.Unmarshal: %v", err)
 	}
-	// Old field names dropped silently by yaml.v3 — actions stay zero.
 	if pp.OnCommit.Kind != "" {
 		t.Errorf("expected OnCommit.Kind empty (old field name ignored); got %q", pp.OnCommit.Kind)
 	}
-	// Validator catches the zero-Kind.
 	internalPP := &PickPolicy{
 		ItemsTable: pp.ItemsTable,
 		OnCommit:   pp.OnCommit,
@@ -146,7 +144,6 @@ func TestPGAction_Pop_RowDeleted(t *testing.T) {
 	const tbl = "items_pop_test"
 	createTestItemsTable(t, pool, tbl)
 
-	// Seed exactly one row.
 	if _, err := pool.Exec(context.Background(),
 		fmt.Sprintf(`INSERT INTO %s (item_id, payload, state) VALUES ($1, $2::jsonb, 'available')`, tbl),
 		"row-1", `{"v":1}`,
@@ -171,7 +168,6 @@ func TestPGAction_Pop_RowDeleted(t *testing.T) {
 	}
 	t.Cleanup(st.Close)
 
-	// Open #1: claims row-1.
 	o, err := st.Open(context.Background(), "claim-1", "@q")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -180,12 +176,10 @@ func TestPGAction_Pop_RowDeleted(t *testing.T) {
 		t.Fatal("Open: expected Available")
 	}
 
-	// Commit fires Pop → DELETE FROM items_pop_test WHERE claim_token = 'claim-1'.
 	if err := st.Commit(context.Background(), "claim-1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	// Assert: row deleted.
 	var count int
 	if err := pool.QueryRow(context.Background(),
 		fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tbl)).Scan(&count); err != nil {
@@ -195,7 +189,6 @@ func TestPGAction_Pop_RowDeleted(t *testing.T) {
 		t.Errorf("expected 0 rows after Pop; got %d", count)
 	}
 
-	// Second Open returns Unavailable (table empty).
 	o2, err := st.Open(context.Background(), "claim-2", "@q")
 	if err != nil {
 		t.Fatalf("Open #2: %v", err)
@@ -216,7 +209,6 @@ func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 	const tbl = "items_recycle_test"
 	createTestItemsTable(t, pool, tbl)
 
-	// Seed one row.
 	if _, err := pool.Exec(context.Background(),
 		fmt.Sprintf(`INSERT INTO %s (item_id, payload, state) VALUES ($1, $2::jsonb, 'available')`, tbl),
 		"row-1", `{"v":1}`,
@@ -241,14 +233,12 @@ func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 	}
 	t.Cleanup(st.Close)
 
-	// Capture the original sequence so we can verify it changes.
 	var seqBefore int64
 	if err := pool.QueryRow(context.Background(),
 		fmt.Sprintf(`SELECT sequence FROM %s WHERE item_id='row-1'`, tbl)).Scan(&seqBefore); err != nil {
 		t.Fatalf("capture seqBefore: %v", err)
 	}
 
-	// Open #1: claims row-1.
 	o, err := st.Open(context.Background(), "claim-1", "@q")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -257,12 +247,10 @@ func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 		t.Fatal("Open: expected Available")
 	}
 
-	// Commit fires Recycle.
 	if err := st.Commit(context.Background(), "claim-1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	// Assert: row back to 'available', claim_token cleared, sequence bumped.
 	var (
 		state      string
 		claimToken *string
@@ -287,7 +275,6 @@ func TestPGAction_Recycle_RowReturnsToQueue(t *testing.T) {
 		t.Errorf("sequence after Recycle = %d, expected > %d (nextval bumps it)", seqAfter, seqBefore)
 	}
 
-	// Second Open re-claims the same row (still the only one).
 	o2, err := st.Open(context.Background(), "claim-2", "@q")
 	if err != nil {
 		t.Fatalf("Open #2: %v", err)

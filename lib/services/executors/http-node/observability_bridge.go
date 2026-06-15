@@ -36,7 +36,7 @@ func mountObservabilityBridge(mux *http.ServeMux, obs *ObservabilityServer, http
 			SupportsTraceStream:           true,
 			RetentionAfterTerminalSeconds: retentionSeconds,
 			HttpBridgeUrl:                 httpBridgeURL,
-			// Mirror ObservabilityServer.Capabilities: advertise a
+			// @deliberate: mirror ObservabilityServer.Capabilities — advertise a
 			// permissive open schema so the dispatch-time gate knows the
 			// http-node executor accepts any attribute shape (it reads a
 			// fixed set of transport-config keys and serialises the rest
@@ -87,8 +87,6 @@ func handleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, obs *Observab
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
-	// errClientGone surfaces from send() when the client has
-	// disconnected; the caller breaks out of the pump loop.
 	errClientGone := errors.New("sse: client gone")
 	send := func(ev *genv1.TraceEvent) error {
 		b, _ := protojson.Marshal(ev)
@@ -142,7 +140,6 @@ func handleTraceStreamHTTP(w http.ResponseWriter, r *http.Request, obs *Observab
 			_ = send(traceCompleteEvent())
 			return
 		case <-sub.wake:
-			// Loop back and drain.
 		}
 	}
 }

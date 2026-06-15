@@ -27,8 +27,8 @@ func TestSplitTopology_DriveNodeToTerminal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable when the roles start (startup
-	// Capabilities handshake), so bring the network + peer up first.
+	// @constraint: stub executor must be reachable when the roles start
+	// (startup Capabilities handshake), so bring the network + peer up first.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -37,12 +37,12 @@ func TestSplitTopology_DriveNodeToTerminal(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// Same scenario as the single-process proof: a single stub-executor
-	// node with an attribute bag, driven to the terminal `fresh` state
-	// through a REAL dispatch (work_started + fresh settle) — proving
-	// the scheduler container enqueued, the supervisor container claimed
-	// and dispatched, the executor ran, and the control-api container
-	// served every observation, all against the shared Postgres.
+	// @deliberate: same scenario as the single-process proof — a single
+	// stub-executor node with an attribute bag, driven to the terminal
+	// `fresh` state through a REAL dispatch (work_started + fresh settle).
+	// Proves the scheduler container enqueued, the supervisor container
+	// claimed and dispatched, the executor ran, and the control-api
+	// container served every observation, all against the shared Postgres.
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "split-topology",

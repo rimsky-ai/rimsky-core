@@ -47,7 +47,7 @@ func TestChildRunsPerPartitionKey_OneChildPerKey(t *testing.T) {
 	}
 }
 
-// PartitionKey ordering matches the producer's SubScope ordering — the
+// @deliberate: PartitionKey ordering matches the producer's SubScope ordering — the
 // caller may sort to make assertions reproducible.
 func TestChildRunsPerPartitionKey_PreservesProducerOrdering(t *testing.T) {
 	t.Parallel()

@@ -29,13 +29,15 @@ import (
 )
 
 // InMemoryState backs the fake control-api. Methods are concurrency-safe.
+// templates is keyed by hash; tags is keyed tag → hash; instances is
+// keyed by id; nodes is keyed instance_id → node_id → node.
 type InMemoryState struct {
 	mu        sync.Mutex
-	templates map[string]*storedTemplate // by hash
-	tags      map[string]string          // tag → hash
-	instances map[string]*storedInstance // by id
+	templates map[string]*storedTemplate
+	tags      map[string]string
+	instances map[string]*storedInstance
 	events    []cli.Event
-	nodes     map[string]map[string]*cli.Node // instance_id → node_id → node
+	nodes     map[string]map[string]*cli.Node
 	nextEvent int64
 
 	// breakpointHits holds pending breakpoint-hit rows keyed by instance
@@ -518,7 +520,7 @@ func (s *InMemoryState) EventsPage(instanceID string, cursorOccurred time.Time, 
 		}
 		filtered = append(filtered, e)
 	}
-	// Newest-first: (occurred_at, id) DESC, matching the live ORDER BY.
+	// @constraint: newest-first (occurred_at, id) DESC matches the live ORDER BY.
 	sort.Slice(filtered, func(i, j int) bool {
 		oi := eventOccurredAt(filtered[i])
 		oj := eventOccurredAt(filtered[j])
@@ -530,7 +532,7 @@ func (s *InMemoryState) EventsPage(instanceID string, cursorOccurred time.Time, 
 	out := []cli.Event{}
 	for _, e := range filtered {
 		if hasCursor {
-			// Keyset predicate: strictly older than the cursor position.
+			// @constraint: keyset predicate — strictly older than the cursor position.
 			oe := eventOccurredAt(e)
 			if !(oe.Before(cursorOccurred) || (oe.Equal(cursorOccurred) && e.ID < cursorID)) {
 				continue

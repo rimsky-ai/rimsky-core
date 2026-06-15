@@ -2,8 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// list_in_flight_run_phases.go — ListInFlightRunPhases conformance area.
-//
+// @concept: wait-set
+// @concept: cascade
+
+// @constraint: ListInFlightRunPhases conformance area.
 // Covers Queue.ListInFlightRunPhases, the persistence half of the
 // supervisor's upstream-gating eligibility condition: a stale receiver
 // is not dispatch-eligible while any subscribed upstream has an
@@ -57,14 +59,13 @@ func testListInFlightRunPhases_PerNodePhases(t *testing.T, d persistence.Databas
 		return got
 	}
 
-	// Matching tuple: the fixture node reports its pending row.
 	m := list("match", []shared.UUID{fix.NodeID}, fix.FrameID, fix.MainRunScopeID)
 	phases, ok := m[fix.NodeID]
 	if !ok || len(phases) != 1 || phases[0] != "pending" {
 		t.Errorf("match: phases for node = %v (present=%v), want [pending]", phases, ok)
 	}
 
-	// Perturbed keys: wrong frame / wrong scope / unrelated node → absent.
+	// @deliberate: perturb each key dimension (frame / scope / node) in isolation; each must yield an empty map, proving the lookup keys on the full tuple.
 	otherNode := shared.UUID(uuid.New())
 	otherFrame := shared.UUID(uuid.New())
 	otherScope := shared.UUID(uuid.New())
@@ -78,13 +79,11 @@ func testListInFlightRunPhases_PerNodePhases(t *testing.T, d persistence.Databas
 		t.Errorf("other-node: got %v, want empty", m)
 	}
 
-	// Empty node set: empty map, no error.
 	if m := list("empty-set", nil, fix.FrameID, fix.MainRunScopeID); len(m) != 0 {
 		t.Errorf("empty-set: got %v, want empty", m)
 	}
 
-	// Settlement: terminals delete the dispatch row; the in-flight
-	// report must release immediately.
+	// @constraint: a settled row (terminal phase deletes the dispatch row) must drop out of the in-flight report immediately so the upstream gate releases.
 	if err := q.Complete(ctx, runID, ""); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}

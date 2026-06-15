@@ -26,7 +26,6 @@ func repoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	// thisFile = <root>/cmd/rimsky/cli/compose/example_manifest_test.go
 	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", ".."))
 }
 
@@ -44,8 +43,6 @@ func TestComposeManifestExampleLoads(t *testing.T) {
 		t.Fatal("manifest declares no templates")
 	}
 
-	// resolveTemplatePaths rewrites each Path to be absolute relative to
-	// the manifest directory, matching the compose engine's own prelude.
 	resolveTemplatePaths(m, manifestPath)
 
 	for i, tref := range m.Templates {

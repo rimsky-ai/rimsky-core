@@ -101,7 +101,7 @@ func WaitForEvent(ctx context.Context, t testing.TB, db persistence.Tables, m Ma
 	t.Helper()
 	end := time.Now().Add(deadline)
 	for {
-		// Fail fast on a canceled caller context — without this, a
+		// @deliberate: Fail fast on a canceled caller context — without this, a
 		// canceled ctx makes every read below error and the loop burns
 		// the full deadline in 50ms sleeps before reporting.
 		if ctxErr := ctx.Err(); ctxErr != nil {

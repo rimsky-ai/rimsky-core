@@ -119,7 +119,6 @@ func TestHandler_HappyPath(t *testing.T) {
 	store := newFakeAttributesStore()
 	runID := uuid.New()
 	nodeID := uuid.New()
-	// Row must exist (the supervisor Upserts at dispatch).
 	if err := store.Upsert(context.Background(), runID, nodeID, map[string]any{"area": "northwest"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -152,7 +151,7 @@ func TestHandler_HappyPath(t *testing.T) {
 	if row.Data["area"] != "northwest" {
 		t.Fatalf("area not preserved: %v", row.Data["area"])
 	}
-	// json decode lifts numbers to float64; compare as float64.
+	// @deliberate: json decode lifts numbers to float64; compare as float64.
 	if got, ok := row.Data["x"].(float64); !ok || got != 1 {
 		t.Fatalf("x not merged: %v (%T)", row.Data["x"], row.Data["x"])
 	}
@@ -249,7 +248,6 @@ func TestHandler_InvalidJSON(t *testing.T) {
 func TestHandler_MergeFailureReturns500(t *testing.T) {
 	t.Parallel()
 
-	// Fake store with no row → MergeDelta errors → handler returns 500.
 	store := newFakeAttributesStore()
 	auth := func(string, shared.UUID) error { return nil }
 	srv := mountHandler(t, HandlerDeps{Store: store, Auth: auth})

@@ -29,7 +29,7 @@ import (
 )
 
 func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
-	// Not parallel: execs real child processes and binds free ports.
+	// @deliberate: Not parallel: execs real child processes and binds free ports.
 	termLog := t.TempDir() + "/stub-term.log"
 	t.Setenv("STUBCHILD_TERM_LOG", termLog)
 
@@ -41,12 +41,12 @@ func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node should exist")
 
-	// Drive the run so the proxy lazily spawns the stub child for this
+	// @deliberate: Drive the run so the proxy lazily spawns the stub child for this
 	// instance's binding.
 	require.True(t, fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 45*time.Second),
 		"late-bound worker did not reach fresh via proxy+agent dispatch")
 
-	// Mark the instance terminal so DELETE is sanctioned (spec §2.4 only
+	// @deliberate: Mark the instance terminal so DELETE is sanctioned (spec §2.4 only
 	// permits deleting a terminal instance). The DELETE then synchronously
 	// closes the main run-scope and fires OnRunScopeTerminal — the reap path
 	// under test.
@@ -54,7 +54,7 @@ func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
 		return fx.h.Persist.Instances().MarkTerminated(fx.h.Ctx, iid, tx)
 	}))
 
-	// Delete the instance: control-api closes the main run-scope and fires
+	// @deliberate: Delete the instance: control-api closes the main run-scope and fires
 	// OnRunScopeTerminal{run_scope_id (≠ instance id), instance_id} to the
 	// proxy, which reaps the spawn keyed to the instance.
 	req, err := http.NewRequest(http.MethodDelete, fx.h.ControlBase+"/v1/instances/"+iid.String(), nil)
@@ -65,7 +65,7 @@ func TestHostAgentReapOnRunScopeTerminal(t *testing.T) {
 	_ = resp.Body.Close()
 	require.Less(t, resp.StatusCode, 300, "DELETE /instances should succeed, got %d", resp.StatusCode)
 
-	// The reap must reach the agent, which SIGTERMs the child; the child
+	// @constraint: The reap must reach the agent, which SIGTERMs the child; the child
 	// touches STUBCHILD_TERM_LOG on the signal.
 	require.Eventually(t, func() bool {
 		_, statErr := os.Stat(termLog)

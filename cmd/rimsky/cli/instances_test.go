@@ -92,7 +92,7 @@ func TestRunInstanceKill_RefusedWithoutForce(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	// No --force / --yes → refused with exit 2; instance stays non-terminal.
+	// @constraint: no --force / --yes → refused with exit 2; instance stays non-terminal.
 	if got := cli.RunInstanceKill(context.Background(), []string{inst.ID}); got != 2 {
 		t.Errorf("exit %d, want 2", got)
 	}
@@ -111,7 +111,7 @@ func TestRunInstanceKill_Force(t *testing.T) {
 	if !srv.State.IsTerminated(inst.ID) {
 		t.Error("instance not terminal after kill --force")
 	}
-	// --yes is the alternative confirmation; idempotent on already-terminal.
+	// @constraint: --yes is the alternative confirmation; idempotent on already-terminal.
 	if got := cli.RunInstanceKill(context.Background(), []string{"--yes", inst.ID}); got != 0 {
 		t.Errorf("exit %d (--yes), want 0", got)
 	}
@@ -143,7 +143,6 @@ func TestRunInstanceStatus_JSONHasAllSections(t *testing.T) {
 		}
 	}
 
-	// Sanity-check the populated sections decode to the expected shapes.
 	var nodes []cli.Node
 	if err := json.Unmarshal(got["nodes"], &nodes); err != nil || len(nodes) != 1 {
 		t.Errorf("nodes section: err=%v len=%d", err, len(nodes))
@@ -178,7 +177,7 @@ func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "work_started", Payload: map[string]any{}})
-	// breakpoint.hit is on the unified /events stream now, not a separate
+	// @constraint: breakpoint.hit is on the unified /events stream now, not a separate
 	// pending-hits read; seed it as an event row.
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "breakpoint.hit", OccurredAt: "2026-06-07T00:00:01Z", Payload: map[string]any{"checkpoint": "pre_dispatch", "mode": "stop"}})
 	now := time.Now()
@@ -187,7 +186,7 @@ func TestRunWatch_ExitsOnTerminal(t *testing.T) {
 	done := make(chan int, 1)
 	exit := -1
 	out := captureStdout(t, func() {
-		// A long poll-interval would only matter if the loop slept; a
+		// @deliberate: a long poll-interval would only matter if the loop slept; a
 		// terminal instance must exit on the first iteration, so this is
 		// deterministic regardless of the interval.
 		go func() {
@@ -222,7 +221,7 @@ func TestRunWatch_DrainsAllEventsBeforeTerminal(t *testing.T) {
 	srv := setupClitest(t)
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
-	// Seed the tail marker FIRST so it is the OLDEST row: /events pages are
+	// @deliberate: seed the tail marker FIRST so it is the OLDEST row: /events pages are
 	// drained newest-first, so the oldest row lands on the last page and is
 	// only printed if the loop drains past the first 100-row page.
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "breakpoint.hit", OccurredAt: "2026-06-07T00:00:01Z", Payload: map[string]any{"checkpoint": "tail_marker", "mode": "stop"}})
@@ -247,7 +246,7 @@ func TestRunWatch_DrainsAllEventsBeforeTerminal(t *testing.T) {
 	if exit != 0 {
 		t.Errorf("exit %d, want 0", exit)
 	}
-	// The tail marker lives on the last page; its presence proves the loop
+	// @constraint: the tail marker lives on the last page; its presence proves the loop
 	// drained past the first 100-row page before exiting on terminal.
 	if !strings.Contains(out, "checkpoint=tail_marker") {
 		t.Errorf("watch dropped the event-backlog tail (no checkpoint=tail_marker); output:\n%s", out)
@@ -297,11 +296,9 @@ func TestRunInstanceEvents_Follow_NoDuplicates(t *testing.T) {
 	hash := deployedTemplate(t, srv, "v1")
 	inst, _, _ := srv.State.CreateInstance(hash, nil, nil)
 
-	// Seed two events before the follow loop starts.
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "k1", Payload: map[string]any{}})
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "k2", Payload: map[string]any{}})
 
-	// Pipe stdout to capture printed lines without forking a process.
 	rOut, wOut, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -313,15 +310,10 @@ func TestRunInstanceEvents_Follow_NoDuplicates(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	go func() {
-		// Tight poll-interval so the loop iterates several times in
-		// the test's lifespan.
 		done <- cli.RunInstanceEvents(ctx, []string{"--follow", "--poll-interval", "20ms", inst.ID})
 	}()
 
-	// Let the loop drain seeded events and poll a few times.
 	time.Sleep(150 * time.Millisecond)
-	// Append a third event mid-flight; the next poll should pick it
-	// up exactly once.
 	srv.State.AddEvent(cli.Event{InstanceID: inst.ID, Kind: "k3", Payload: map[string]any{}})
 	time.Sleep(150 * time.Millisecond)
 
@@ -335,7 +327,7 @@ func TestRunInstanceEvents_Follow_NoDuplicates(t *testing.T) {
 	n, _ := rOut.Read(buf)
 	out := string(buf[:n])
 
-	// Each event ID must appear exactly once. Lines are tab-separated
+	// @constraint: each event ID must appear exactly once. Lines are tab-separated
 	// "occurred_at\tID\tkind".
 	wantIDs := []string{"\t1\tk1", "\t2\tk2", "\t3\tk3"}
 	for _, want := range wantIDs {

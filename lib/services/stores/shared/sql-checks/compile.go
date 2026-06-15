@@ -253,17 +253,15 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 	return Compiled{
 		Kind: "pk_unique",
 		SQL:  sql,
-		// Interpret receives ok=true → row was scanned (at least one
-		// duplicate exists, fail). ok=false → no rows, pass.
+		// @agent-contract: Interpret receives a single bool slot fed by the
+		// runner from query.Next() — true → at least one duplicate row was
+		// scanned (fail); false or empty → no rows (pass).
 		Interpret: func(scanned ...any) Result {
-			// The scanned slot here is a single bool: did a row return?
-			// (The runner converts query.Next() into this signal.)
 			res := Result{
 				Kind:   "pk_unique",
 				Counts: map[string]any{"fields": fieldsLocal},
 			}
 			if len(scanned) == 0 {
-				// No row returned → no duplicates → pass.
 				res.Pass = true
 				return res
 			}

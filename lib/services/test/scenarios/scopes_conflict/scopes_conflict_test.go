@@ -52,10 +52,11 @@ func TestScopesConflict_OverlapHeldOff(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// One overlap producer + one rimsky stack back BOTH sub-cases. The
-	// producer and executor stub come up on the shared network BEFORE
-	// rimsky: rimsky eager-dials its declared producers for a Capabilities
-	// handshake at startup and exits non-zero if any is unreachable.
+	// @constraint: producer and executor stub must come up on the shared
+	// network BEFORE rimsky — rimsky eager-dials its declared producers for
+	// a Capabilities handshake at startup and exits non-zero if any is
+	// unreachable. One overlap producer + one rimsky stack back BOTH
+	// sub-cases.
 	netName := harness.NewNetwork(ctx, t)
 	producerEndpoint := harness.StartOverlapClaimProducerOnNetwork(ctx, t, netName, "overlap-producer")
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
@@ -98,7 +99,7 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 			"frame_resolution_mode": "serial_queue",
 			"frame_timeout_ms":      600000,
 			"nodes": []map[string]any{
-				// acquirer: durably holds the PARENT-prefix scope `tenant/a`.
+				// @deliberate: acquirer durably holds the PARENT-prefix scope `tenant/a`.
 				{
 					"type":     "acquirer",
 					"executor": "stub",
@@ -112,9 +113,9 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 						},
 					},
 				},
-				// verifier: co-holds `held`, succeeds → auto-terminal Commit
-				// promotes the acquirer's durable row to committed+durable,
-				// which lingers in the conflict set.
+				// @deliberate: verifier co-holds `held`, succeeds → auto-terminal
+				// Commit promotes the acquirer's durable row to
+				// committed+durable, which lingers in the conflict set.
 				{
 					"type":     "verifier",
 					"executor": "stub",
@@ -125,10 +126,10 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 						{"node": "acquirer", "type": "terminal/*"},
 					},
 				},
-				// contender: acquires the CHILD scope `tenant/a/x` AFTER the
-				// held subgraph commits (subscribes to the verifier's
-				// terminal). `tenant/a` ⊏ `tenant/a/x` overlap by the
-				// producer's prefix predicate, NOT byte-equal.
+				// @deliberate: contender acquires the CHILD scope `tenant/a/x`
+				// AFTER the held subgraph commits (subscribes to the
+				// verifier's terminal). `tenant/a` ⊏ `tenant/a/x` overlap by
+				// the producer's prefix predicate, NOT byte-equal.
 				{
 					"type":     "contender",
 					"executor": "stub",
@@ -149,27 +150,23 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 
 	instanceID := createInstance(t, ep, templateID, "ck-scopes-conflict-top-level")
 
-	// The held subgraph must settle first (acquirer + verifier fresh) so
-	// the durable claim row is committed and occupying `tenant/a` in the
-	// conflict set before the contender attempts.
+	// @constraint: the held subgraph must settle first (acquirer + verifier
+	// fresh) so the durable claim row is committed and occupying `tenant/a`
+	// in the conflict set before the contender attempts.
 	waitForNodeTerminal(t, ep, instanceID, "acquirer", 120*time.Second)
 	waitForNodeTerminal(t, ep, instanceID, "verifier", 120*time.Second)
 
-	// Give the contender time to be scheduled and ATTEMPT its overlapping
-	// acquire, then assert only ONE writer ever holds the overlapping
-	// scope. Today (RED) the contender's `tenant/a/x` is not byte-equal to
-	// the durable `tenant/a`, so it acquires its OWN claim row alongside —
-	// TWO acquired rows. The wired behavior (later pass) consults the
-	// producer's ScopesConflict (`tenant/a` ⊏ `tenant/a/x`), bails the
-	// contender BEFORE its row is INSERTed, and leaves only the durable
-	// acquirer's row.
-	//
-	// Poll for the two-writer violation across a window (the contender's
-	// own committed claim is subgraph-lifetime and could be reaped, so a
-	// single late read could miss it): the moment two acquired rows
-	// coexist is the violation. If the window elapses without ever seeing
-	// two, the steady state is the single durable holder — assert exactly
-	// one.
+	// @deliberate: poll for the two-writer violation across a window rather
+	// than reading once — the contender's own committed claim is
+	// subgraph-lifetime and could be reaped, so a single late read could
+	// miss it. The moment two acquired rows coexist is the violation. If
+	// the window elapses without ever seeing two, the steady state is the
+	// single durable holder — assert exactly one. Today (RED) the
+	// contender's `tenant/a/x` is not byte-equal to the durable `tenant/a`,
+	// so it acquires its OWN claim row alongside — TWO acquired rows. The
+	// wired behavior (later pass) consults the producer's ScopesConflict
+	// (`tenant/a` ⊏ `tenant/a/x`), bails the contender BEFORE its row is
+	// INSERTed, and leaves only the durable acquirer's row.
 	deadline := time.Now().Add(30 * time.Second)
 	got := 1
 	for time.Now().Before(deadline) {
@@ -215,8 +212,9 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 							"alias":    "data",
 						},
 					},
-					// SplitScope keys `a` and `a/x` → sub-scopes `tenant/a`
-					// and `tenant/a/x`, which overlap by the prefix predicate.
+					// @deliberate: SplitScope keys `a` and `a/x` → sub-scopes
+					// `tenant/a` and `tenant/a/x`, which overlap by the prefix
+					// predicate.
 					"fan_out": map[string]any{
 						"claim":             "data",
 						"partition_request": `{"partition_keys":["a","a/x"]}`,
@@ -229,23 +227,19 @@ func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEn
 
 	instanceID := createInstance(t, ep, templateID, "ck-scopes-conflict-fanout")
 
-	// Drive the fan-out parent's acquisition. The observable is the
-	// COMMITTED sub-claim rows the acquisition tx leaves. Today (RED)
-	// AcquireSubClaims conflict-checks NOTHING, so it INSERTs BOTH
-	// overlapping sub-scopes and the tx commits both — observable promptly.
-	// The wired behavior (later pass) aborts the acquisition tx when the
-	// second overlapping sub-scope conflicts, so NEITHER sibling sub-claim
-	// row commits (invariant 10 atomicity) — the conflicting wave never
-	// lands.
-	//
-	// The assertion is the spec's literal contract: the acquisition tx must
-	// NOT commit BOTH overlapping sub-claim rows. So we fail when both are
-	// present. We poll until the fan-out has been driven (either committed
+	// @deliberate: poll until the fan-out has been driven (either committed
 	// sub-claims appear — the RED path — or a bounded settle window elapses
 	// during which the wired path would have aborted), then assert fewer
-	// than both committed. In RED the two rows appear within a few ticks
-	// and fail this gate; in the wired path the window elapses with zero
-	// rows and the gate passes.
+	// than both committed. The observable is the COMMITTED sub-claim rows
+	// the acquisition tx leaves; the spec's literal contract is that the
+	// acquisition tx must NOT commit BOTH overlapping sub-claim rows, so we
+	// fail when both are present. In RED the two rows appear within a few
+	// ticks and fail this gate (AcquireSubClaims conflict-checks NOTHING,
+	// so it INSERTs BOTH overlapping sub-scopes and the tx commits both);
+	// in the wired path the window elapses with zero rows and the gate
+	// passes (the acquisition tx aborts when the second overlapping
+	// sub-scope conflicts, so NEITHER sibling sub-claim row commits per
+	// invariant 10 atomicity).
 	deadline := time.Now().Add(45 * time.Second)
 	got := 0
 	for time.Now().Before(deadline) {

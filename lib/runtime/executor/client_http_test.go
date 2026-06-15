@@ -34,9 +34,10 @@ func stubBridgeHandler() http.Handler {
 	})
 }
 
-// `tls: required` + https endpoint: the REAL NewHTTPClient path performs
-// a verified TLS handshake (test-injected root pool, production default
-// system roots) and exchanges a request.
+// TestHTTPClientTLSRequiredVerifiedExchange — `tls: required` + https
+// endpoint: the REAL NewHTTPClient path performs a verified TLS
+// handshake (test-injected root pool, production default system roots)
+// and exchanges a request.
 func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()
@@ -61,9 +62,9 @@ func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
 	}
 }
 
-// `tls: required` + plaintext http:// URL: rejected at client
-// construction — the mode is never accepted-and-ignored. The error
-// names the peer and the mode.
+// TestHTTPClientTLSRequiredRejectsPlaintextScheme — `tls: required` +
+// plaintext http:// URL: rejected at client construction — the mode is
+// never accepted-and-ignored. The error names the peer and the mode.
 func TestHTTPClientTLSRequiredRejectsPlaintextScheme(t *testing.T) {
 	_, err := NewHTTPClient(Endpoint{Transport: "http", URL: "http://plaintext-bridge:8080", TLS: peer.TLSModeRequired})
 	if err == nil {
@@ -77,9 +78,10 @@ func TestHTTPClientTLSRequiredRejectsPlaintextScheme(t *testing.T) {
 	}
 }
 
-// `tls: required` + https URL whose peer presents an unverifiable cert
-// (no injected pool → system roots, which don't trust the httptest CA):
-// the handshake fails loudly, and the failure names the peer + mode.
+// TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly — `tls: required` +
+// https URL whose peer presents an unverifiable cert (no injected pool
+// → system roots, which don't trust the httptest CA): the handshake
+// fails loudly, and the failure names the peer + mode.
 func TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()
@@ -98,8 +100,9 @@ func TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly(t *testing.T) {
 	}
 }
 
-// `tls: off` stays plaintext: the bridge dials an http:// stub with no
-// TLS machinery in the way (the control arm of the story).
+// TestHTTPClientTLSOffPlaintext — `tls: off` stays plaintext: the bridge
+// dials an http:// stub with no TLS machinery in the way (the control
+// arm of the story).
 func TestHTTPClientTLSOffPlaintext(t *testing.T) {
 	srv := httptest.NewServer(stubBridgeHandler())
 	defer srv.Close()
@@ -119,9 +122,9 @@ func TestHTTPClientTLSOffPlaintext(t *testing.T) {
 	}
 }
 
-// Two entries sharing a URL with different `tls:` modes must not share
-// one pooled client — a required entry must never ride a connection
-// created for an off twin.
+// TestClientPoolKeyIncludesTLSMode — entries sharing a URL with
+// different `tls:` modes must not share one pooled client; a required
+// entry must never ride a connection created for an off twin.
 func TestClientPoolKeyIncludesTLSMode(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()

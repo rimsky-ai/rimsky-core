@@ -43,7 +43,7 @@ type PostgresConfig struct {
 }
 
 type SQLiteConfig struct {
-	Path string // absolute; relative paths rejected at the loader
+	Path string // @constraint: absolute; relative paths rejected at the loader
 }
 
 // Tx is the transaction handle threaded through Queue and per-feature

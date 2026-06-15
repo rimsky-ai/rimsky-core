@@ -25,7 +25,8 @@ type Client struct {
 	caps claimproducer.Capabilities
 }
 
-// Compile-time interface check.
+// @deliberate: compile-time interface check — fails compilation when
+// *Client no longer satisfies locks.ClaimProducer.
 var _ locks.ClaimProducer = (*Client)(nil)
 
 // Name returns the operator-configured producer name supplied at Dial.
@@ -58,10 +59,10 @@ func (c *Client) Open(ctx context.Context, claimID claimproducer.ClaimID, spec c
 		return claimproducer.OpenOutcome{}, NewProducerCallError(c.name, "Open", err)
 	}
 	if u := resp.GetUnavailable(); u != nil {
-		// Carry the producer-declared acquisition-failure class (when the
-		// producer named one) so the rimsky-side routing keys the operator's
-		// `error_types:` chain on it rather than only the synthetic
-		// "acquire/unavailable". Empty when the producer named no class.
+		// @constraint: carry the producer-declared acquisition-failure class
+		// (empty when the producer named none) so rimsky-side routing keys the
+		// operator's `error_types:` chain on it rather than only the synthetic
+		// "acquire/unavailable".
 		return claimproducer.OpenOutcome{Available: false, UnavailableClass: u.GetErrorClass()}, nil
 	}
 	acq := resp.GetAcquired()

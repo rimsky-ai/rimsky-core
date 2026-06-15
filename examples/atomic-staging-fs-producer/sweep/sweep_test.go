@@ -28,8 +28,9 @@ func TestTick_PreservesAliveAndOldLeakedReaped(t *testing.T) {
 		t.Fatalf("store.New: %v", err)
 	}
 
-	// Three claims: alive (in live set), young-leak (not in live set
-	// but < TTL old), old-leak (not in live set and > TTL old).
+	// @deliberate: three claims by category — alive (in live set),
+	// young-leak (not in live set but < TTL old), old-leak (not in live
+	// set and > TTL old) — exercise the keep / preserve / reap branches.
 	if _, err := st.Open("alive-1", "scope-a"); err != nil {
 		t.Fatalf("Open alive-1: %v", err)
 	}
@@ -40,10 +41,10 @@ func TestTick_PreservesAliveAndOldLeakedReaped(t *testing.T) {
 		t.Fatalf("Open old-leak: %v", err)
 	}
 
-	// Drive Tick at a fake "now" 25h after the old-leak's creation; the
-	// young-leak's CreatedAt is in the past too but we set TTL to 24h so
-	// it must survive. Strategy: rewrite the side-table's old-leak entry
-	// with a back-dated CreatedAt.
+	// @deliberate: simulate time-travel by back-dating the side-table's
+	// old-leak entry rather than sleeping — TTL is 24h, so old-leak's
+	// CreatedAt is rewritten to 25h-ago to trigger reaping while
+	// young-leak stays within TTL.
 	backdateOldLeak(t, tmp)
 
 	sw := &Sweeper{
@@ -60,7 +61,6 @@ func TestTick_PreservesAliveAndOldLeakedReaped(t *testing.T) {
 		t.Fatalf("Entries: %v", err)
 	}
 
-	// alive-1 must remain; young-leak must remain; old-leak must be gone.
 	var alive, young, old bool
 	for _, e := range entries {
 		switch e.ClaimID {
@@ -82,7 +82,6 @@ func TestTick_PreservesAliveAndOldLeakedReaped(t *testing.T) {
 		t.Errorf("old-leak must be reaped after sweep (older than TTL)")
 	}
 
-	// Staging dir on disk: old-leak's dir gone; others present.
 	for _, c := range []struct {
 		id    string
 		scope string
@@ -111,10 +110,9 @@ func backdateOldLeak(t *testing.T, tmp string) {
 	if err != nil {
 		t.Fatalf("read state: %v", err)
 	}
-	// Naive substring rewrite: find the `old-leak` line and replace its
-	// CreatedAt with a 25h-old timestamp. We can use the encoder by
-	// loading via store.Entries-equivalent, but the test owns the file
-	// shape so a string replace keeps the test simple.
+	// @deliberate: substring rewrite over going through store.Entries —
+	// the test owns the JSONL file shape and a string replace keeps the
+	// scaffolding minimal.
 	old := time.Now().Add(-25 * time.Hour).UTC().Format(time.RFC3339Nano)
 	out := []byte(replaceAfterClaim(string(data), "old-leak", old))
 	if err := os.WriteFile(statePath, out, 0o644); err != nil {
@@ -122,13 +120,9 @@ func backdateOldLeak(t *testing.T, tmp string) {
 	}
 }
 
+// replaceAfterClaim rewrites the JSONL line whose `claim_id` field
+// matches claimID, swapping its `created_at` value for newCreatedAt.
 func replaceAfterClaim(s, claimID, newCreatedAt string) string {
-	// Lines look like: {"claim_id":"old-leak",...,"created_at":"<old>"}
-	// We do the cheapest possible rewrite: find the claim_id and
-	// substitute the created_at value to newCreatedAt by reconstructing.
-	// Simpler: re-emit the line preserving fields.
-	// For test brevity, we just zero out created_at to newCreatedAt
-	// in-place via a regex-like split.
 	return naiveReplaceCreatedAt(s, claimID, newCreatedAt)
 }
 

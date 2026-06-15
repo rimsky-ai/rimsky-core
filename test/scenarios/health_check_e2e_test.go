@@ -80,7 +80,7 @@ import (
 func TestHealthCheck(t *testing.T) {
 	t.Parallel()
 
-	// Disable supervisor + scheduler. The proof exercises the control-api
+	// @deliberate: Disable supervisor + scheduler. The proof exercises the control-api
 	// alone; the supervisor / scheduler are not load-bearing for the
 	// health route and their background sweeps would log noise once the
 	// pool is closed in step 3 (they target the same closed pool). Per
@@ -93,20 +93,17 @@ func TestHealthCheck(t *testing.T) {
 
 	healthURL := h.ControlBase + "/v1/health"
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 1: healthy baseline — anonymous GET returns 2xx + body.
-	// ────────────────────────────────────────────────────────────────
 	{
 		req, err := http.NewRequest(http.MethodGet, healthURL, nil)
 		require.NoError(t, err)
-		// Explicitly: NO Authorization header — probes don't carry one.
+		// @deliberate: Explicitly: NO Authorization header — probes don't carry one.
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err, "GET /v1/health: healthy baseline")
 		defer resp.Body.Close()
 		require.GreaterOrEqual(t, resp.StatusCode, 200, "healthy baseline: status %d not 2xx", resp.StatusCode)
 		require.Less(t, resp.StatusCode, 300, "healthy baseline: status %d not 2xx", resp.StatusCode)
 
-		// Body shape: the handler returns the documented healthResponse
+		// @deliberate: Body shape: the handler returns the documented healthResponse
 		// (status / supervisors / node_counts). Decode liberally — we
 		// don't pin every key, just that the body is a JSON object with
 		// the load-bearing `status` field set.
@@ -117,22 +114,10 @@ func TestHealthCheck(t *testing.T) {
 		require.Equal(t, "ok", body["status"], "healthy baseline: status field must be 'ok'")
 	}
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 2: anonymous mode closes — health stays anonymous.
-	//
-	// Mint the first admin api-key through the anonymous-mode bootstrap.
-	// Once the keys table is non-empty, anonymous mode CLOSES for every
-	// other auth-gated route (see STORY-anonymous-mode-bootstrap). The
-	// health route is registered OUTSIDE the auth middleware group, so
-	// the same unauthenticated GET must still succeed. This pins the
-	// "requires auth" leg of the falsifier — a cheaper-shape that wired
-	// /v1/health inside the auth group would 401 here.
-	// ────────────────────────────────────────────────────────────────
 	_, _ = h.MintAdminKey("health-probe-anon-test")
 	{
 		req, err := http.NewRequest(http.MethodGet, healthURL, nil)
 		require.NoError(t, err)
-		// Still NO Authorization header.
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err, "GET /v1/health: anonymous-after-mint")
 		defer resp.Body.Close()
@@ -144,25 +129,6 @@ func TestHealthCheck(t *testing.T) {
 			resp.StatusCode)
 	}
 
-	// ────────────────────────────────────────────────────────────────
-	// Step 3: sever persistence — health returns non-success.
-	//
-	// Close the underlying *pgxpool.Pool. The harness's
-	// scenario.Start passes `Driver` to `config.StartControlAPI` so the
-	// in-process control-api shares this exact pool; closing it makes
-	// every subsequent persistence call fail (pgx returns the
-	// "pool closed" error). The health handler queries
-	// `Supervisors().List` + `Nodes().CountByState` inside a real
-	// transaction — those queries error, `writeError` maps to HTTP 500,
-	// and the probe sees a non-2xx response. A cheaper-shape handler
-	// that returned a canned 200 without touching persistence would
-	// stay 2xx here and red-flag the false-positive leg of the
-	// falsifier.
-	//
-	// This is the in-process equivalent of the spec's "stop the
-	// Postgres container" — both sever the connection the same way
-	// from the handler's point of view.
-	// ────────────────────────────────────────────────────────────────
 	require.NoError(t, h.Driver.Close(), "close persistence driver to sever the connection")
 
 	{
@@ -171,7 +137,7 @@ func TestHealthCheck(t *testing.T) {
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err, "GET /v1/health: severed-persistence (HTTP transport must still respond)")
 		defer resp.Body.Close()
-		// Non-success = NOT 2xx. The exact code is implementation
+		// @deliberate: Non-success = NOT 2xx. The exact code is implementation
 		// detail; the load-bearing property is that the probe sees a
 		// failure when persistence is unreachable.
 		isSuccess := resp.StatusCode >= 200 && resp.StatusCode < 300

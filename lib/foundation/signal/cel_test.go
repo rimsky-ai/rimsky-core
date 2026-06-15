@@ -17,7 +17,7 @@ func TestCompileWhen_NilOnEmpty(t *testing.T) {
 	if got != nil {
 		t.Fatalf("CompileWhen empty: expected nil predicate, got %+v", got)
 	}
-	// nil receiver evaluates true unconditionally.
+	// @deliberate: nil receiver evaluates true unconditionally (always-match sentinel).
 	ok, err := got.Eval(Signal{Type: "terminal/success"})
 	if err != nil {
 		t.Fatalf("Eval nil: %v", err)
@@ -46,7 +46,6 @@ func TestCompileWhen_AcceptsValidExact(t *testing.T) {
 	if !ok {
 		t.Fatalf("Eval: expected true")
 	}
-	// And false when the class differs.
 	ok, _ = p.Eval(Signal{
 		Type:    "terminal/error/http/timeout",
 		Payload: map[string]any{"error_class": "other"},
@@ -86,7 +85,7 @@ func TestCompileWhen_RejectsInvalidSyntax(t *testing.T) {
 }
 
 func TestCompileWhen_RejectsUnknownFieldExact(t *testing.T) {
-	// terminal/success has no `error_class` field; expect reject.
+	// @constraint: exact-subscription compile enforces payload-field whitelist; terminal/success has no error_class.
 	_, err := CompileWhen("terminal/success", "payload.error_class == 'x'")
 	if err == nil {
 		t.Fatalf("CompileWhen: expected unknown-field error")
@@ -97,9 +96,7 @@ func TestCompileWhen_RejectsUnknownFieldExact(t *testing.T) {
 }
 
 func TestCompileWhen_PrefixBindsDyn(t *testing.T) {
-	// Prefix subscription with an unknown field name on payload —
-	// compile succeeds (no field check); runtime missing key
-	// evaluates to false (Eval's safe-navigation rule).
+	// @deliberate: prefix subscriptions bind payload as dyn — compile skips field check, runtime missing-key returns false via safe-navigation.
 	p, err := CompileWhen("terminal/*", "payload.error_class == 'x'")
 	if err != nil {
 		t.Fatalf("CompileWhen prefix dyn: %v", err)
@@ -114,7 +111,6 @@ func TestCompileWhen_PrefixBindsDyn(t *testing.T) {
 	if ok {
 		t.Fatalf("Eval missing key: expected false")
 	}
-	// And when the key is present + matching, true.
 	ok, _ = p.Eval(Signal{
 		Type:    "terminal/error/x",
 		Payload: map[string]any{"error_class": "x"},

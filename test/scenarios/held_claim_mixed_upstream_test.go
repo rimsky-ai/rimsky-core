@@ -43,7 +43,7 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// Empty queue — A's Open returns Unavailable.
+				// @deliberate: Empty queue — A's Open returns Unavailable.
 			},
 		},
 	})
@@ -100,7 +100,7 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// Source-driven attribute that requires A to have
+						// @constraint: Source-driven attribute that requires A to have
 						// acquired the held claim. When A passes, this
 						// substitution fails → template_resolution_failed.
 						"held_addr": map[string]any{
@@ -122,14 +122,13 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 	require.NotNil(t, bNode)
 	require.NotNil(t, c)
 
-	// A passes (settling_signal_type=terminal/error/<class>); C commits
+	// @deliberate: A passes (settling_signal_type=terminal/error/<class>); C commits
 	// (settling_signal_type=terminal/success).
 	require.True(t, waitForSettlingSignalTypePrefix(t, h, a.ID, "terminal/error/", 30*time.Second),
 		"a should record settling_signal_type=terminal/error/<class>")
 	require.True(t, waitForSettlingSignalType(t, h, c.ID, "terminal/success", 30*time.Second),
 		"c should record settling_signal_type=terminal/success")
 
-	// B should land in failed via template_resolution_failed → give_up.
 	require.True(t, h.WaitForNodeState(bNode.ID, cascade.NodeStateFailed, 30*time.Second),
 		"b should land in failed via template_resolution_failed → give_up")
 

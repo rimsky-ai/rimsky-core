@@ -50,11 +50,10 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 	n := h.FindNode(iid, "agent")
 	require.NotNil(t, n)
 
-	// Wait for the agent to reach running (async handoff in progress).
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateRunning, 15*time.Second),
 		"agent did not reach running")
 
-	// Snapshot the frame_id from the live dispatch row (while it still
+	// @deliberate: Snapshot the frame_id from the live dispatch row (while it still
 	// exists — supervisor may clean up dispatches at terminal commit).
 	var dispatchFrameID uuid.UUID
 	err := h.Pool.QueryRow(context.Background(),
@@ -62,14 +61,14 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 		uuid.UUID(n.ID)).Scan(&dispatchFrameID)
 	require.NoError(t, err, "expected live dispatch row while node is in async-handoff")
 
-	// While agent is running, the frame must remain running too — frame-end
+	// @constraint: While agent is running, the frame must remain running too — frame-end
 	// cannot fire when a node is still in_motion.
 	require.Equal(t, 1, countFramesByState(t, h, iid, "running"),
 		"frame should be running while async-handoff dispatch is open")
 	require.Equal(t, 0, countFramesByState(t, h, iid, "completed"),
 		"frame must not complete before callback resolves")
 
-	// Hold the running invariant for a beat to give frame-end a chance to
+	// @deliberate: Hold the running invariant for a beat to give frame-end a chance to
 	// (incorrectly) fire.
 	for i := 0; i < 5; i++ {
 		time.Sleep(200 * time.Millisecond)
@@ -77,7 +76,7 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 			"frame completed prematurely while async dispatch was open")
 	}
 
-	// Resolve the async callback. The callback body uses the
+	// @deliberate: Resolve the async callback. The callback body uses the
 	// AsyncCallbackBody outcome-oneof shape (success / error / park)
 	// rather than the legacy {type: ...} discriminator.
 	cbURL := "http://" + h.Supervisor.CallbackAddr() + "/v1/callback/ack-frame-async"
@@ -105,11 +104,10 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"agent did not reach fresh after callback")
 
-	// Frame should now end.
 	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 10*time.Second),
 		"frame did not complete after callback resolved")
 
-	// Frame_id correlates: the snapshotted dispatch frame_id matches the frame row's frame_id.
+	// @constraint: Frame_id correlates: the snapshotted dispatch frame_id matches the frame row's frame_id.
 	frames := listFrames(t, h, iid)
 	require.Len(t, frames, 1)
 	require.Equal(t, frames[0].FrameID, dispatchFrameID,

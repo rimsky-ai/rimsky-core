@@ -26,9 +26,10 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// Synthetic IDs used by every check. The 64-char-`a` template hash is
-// shape-valid (sha256-<64-hex>) but not registered anywhere — peers
-// that ignore lifecycle events accept it as opaque text.
+// @deliberate: synthetic IDs used by every check — the 64-char-`a`
+// template hash is shape-valid (sha256-<64-hex>) but not registered
+// anywhere, so peers that ignore lifecycle events accept it as opaque
+// text.
 const (
 	syntheticTemplateID = "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	syntheticInstanceID = "00000000-0000-0000-0000-000000000001"

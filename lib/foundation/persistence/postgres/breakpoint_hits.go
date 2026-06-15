@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Postgres impl of persistence.BreakpointHitTable — append-only ledger of
-// breakpoint matches per concept:breakpoint. See spec
-// .ok-planner/specs/2026-05-24-instance-debugger-design.md.
-//
 // @concept: breakpoint
 
 package postgres
@@ -23,9 +19,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// breakpointHitsImpl is the per-row-type aspect of *tablesImpl, exposing
-// the BreakpointHitTable method set. Same aspect-type pattern as
-// breakpointsImpl above.
+// breakpointHitsImpl is the Postgres-backed persistence.BreakpointHitTable
+// — append-only ledger of breakpoint matches per concept:breakpoint.
+// Aspect-type pattern: per-row-type slice of *tablesImpl exposing the
+// BreakpointHitTable method set, same shape as breakpointsImpl above.
 type breakpointHitsImpl tablesImpl
 
 var _ persistence.BreakpointHitTable = (*breakpointHitsImpl)(nil)
@@ -196,8 +193,8 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 	if tag.RowsAffected() == 1 {
 		return nil
 	}
-	// Zero rows: either the row is already resumed (replay → nil) or
-	// it doesn't exist (→ ErrBreakpointHitNotFound).
+	// @deliberate: zero rows means either the row is already resumed (replay → nil)
+	// or it doesn't exist (→ ErrBreakpointHitNotFound); probe to distinguish.
 	var resumedAt *time.Time
 	err = ex.QueryRow(ctx,
 		`SELECT resumed_at FROM rimsky_breakpoint_hits WHERE id = $1`, id).Scan(&resumedAt)
@@ -207,9 +204,9 @@ func (b *breakpointHitsImpl) Resume(ctx context.Context, id shared.UUID, byKey s
 		}
 		return fmt.Errorf("breakpointHits.resume.probe: %w", err)
 	}
-	// Row exists; resumed_at IS NOT NULL implies replay. (If somehow
-	// NULL we'd have caught the UPDATE above — surface as a non-error
-	// idempotent no-op.)
+	// @deliberate: row exists and resumed_at IS NOT NULL implies replay; a NULL
+	// resumed_at here would have been caught by the UPDATE above, so surface as
+	// an idempotent no-op rather than an error.
 	_ = resumedAt
 	return nil
 }

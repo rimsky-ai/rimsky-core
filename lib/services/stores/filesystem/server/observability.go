@@ -35,10 +35,8 @@ type ObservabilityServer struct {
 	store *fsstore.Store
 	// pickPolicies is indexed at construction time so the observability
 	// surface can iterate them without taking the store's mu.
-	pickPolicies map[string]*fsstore.PickPolicy
-	root         string
-	// httpBridgeURL is set once at startup; sync.Once-style write makes
-	// later reads lock-free.
+	pickPolicies      map[string]*fsstore.PickPolicy
+	root              string
 	httpBridgeURLOnce sync.Once
 	httpBridgeURL     string
 	idleTimeout       time.Duration

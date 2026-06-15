@@ -23,8 +23,8 @@ import (
 func TestMixedOutcomes_StrictAnyFailFails(t *testing.T) {
 	t.Parallel()
 	children := []runtime.ChildState{
-		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true}, // verifier #1 passed
-		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},    // verifier #2 failed
+		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true}, // @deliberate: verifier #1 passed
+		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},    // @deliberate: verifier #2 failed
 	}
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "strict"})
 	if !res.IsSettled || res.ParentState != cascade.NodeStateFailed {
@@ -53,12 +53,10 @@ func TestMixedOutcomes_ThresholdGuardsCount(t *testing.T) {
 		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
 	}
-	// threshold max_failures=2: at-max → failed.
 	res := runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "threshold", MaxFailures: 2})
 	if !res.IsSettled || res.ParentState != cascade.NodeStateFailed {
 		t.Errorf("threshold at-max: expected failed, got %s", res.ParentState)
 	}
-	// threshold max_failures=5: below-max → success.
 	res = runtime.Aggregate(children, tmplspec.AggregationPolicy{Kind: "threshold", MaxFailures: 5})
 	if !res.IsSettled || res.ParentState != cascade.NodeStateFresh {
 		t.Errorf("threshold below-max: expected fresh, got %s", res.ParentState)

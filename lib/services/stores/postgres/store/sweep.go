@@ -49,12 +49,11 @@ func (s *Store) sweepOnce(ctx context.Context) error {
 		if pp.VisibilityTimeout <= 0 {
 			continue
 		}
-		// The "NOT EXISTS rimsky_claim_handles" predicate is dropped
-		// because the store's pool may be separate from rimsky's
-		// control-plane DB — and even when colocated, the store
-		// owns its own state. Per spec §7.5, the orphan reaper runs
-		// in rimsky and deletes lock-holder rows; the store's
-		// sweep is independent.
+		// @deliberate: no NOT EXISTS rimsky_claim_handles predicate — the store's
+		// pool may be on a separate database from rimsky's control plane, and
+		// even when colocated the store owns its own state. Per v3 spec §7.5
+		// the orphan reaper runs in rimsky and deletes lock-holder rows; the
+		// store's sweep is independent.
 		q := fmt.Sprintf(
 			`UPDATE %s
 			    SET state = 'available', claim_token = NULL, claimed_at = NULL

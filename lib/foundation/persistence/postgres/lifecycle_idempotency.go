@@ -2,10 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// LifecycleIdempotencyTable — Postgres-backed persistence.LifecycleIdempotencyTable.
-// Per docs/history/2026-05-01-control-plane-and-store-lifecycle-design.md
-// §5.3: rimsky_lifecycle_idempotencies is the per-(store, scope) bookkeeping
-// table that drives idempotent fan-out of lifecycle events.
 package postgres
 
 import (

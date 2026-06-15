@@ -12,16 +12,16 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// Field-naming convention: the signal envelope's outer field is
-// Payload. To avoid the bare-`payload` collision when a signal's
-// payload itself wraps an opaque sub-object originally named `payload`
-// on the wire (executor Error.payload, NamedEvent.payload,
-// Park.payload, message envelope payload), the inner field is renamed
-// with a domain prefix: error_payload, event_payload, park_payload,
-// message_payload. This is a rimsky-side rename only; the wire
-// protos keep their original field names.
-
 // TerminalSuccessPayload is the payload schema for terminal/success.
+//
+// @deliberate: the signal envelope's outer field is Payload. To avoid
+// the bare-`payload` collision when a signal's payload itself wraps an
+// opaque sub-object originally named `payload` on the wire (executor
+// Error.payload, NamedEvent.payload, Park.payload, message envelope
+// payload), the inner field is renamed with a domain prefix:
+// error_payload, event_payload, park_payload, message_payload. This is
+// a rimsky-side rename only; the wire protos keep their original field
+// names.
 type TerminalSuccessPayload struct {
 	Changed         bool           `json:"changed"`
 	AttributesDelta map[string]any `json:"attributes_delta"`

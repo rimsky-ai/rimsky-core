@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SupervisorTable — port of rimsky/src/storage/postgres/supervisor-store.ts.
-// Adapted for rename: `accepts` TEXT[] → `accepted_executors` TEXT[];
-// `active_cell_count` → `active_node_count`.
 package postgres
 
 import (
@@ -105,8 +102,6 @@ func (s *supervisorsImpl) Unregister(ctx context.Context, id string, tx persiste
 	_, err := ex.Exec(ctx, `DELETE FROM rimsky_supervisors WHERE id = $1`, id)
 	return err
 }
-
-// ---- helpers ----
 
 func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 	var (

@@ -36,14 +36,13 @@ type terminalEventView struct {
 // rimsky_events filtered by node_id and kind in the dispatch-terminal
 // set, fetched in a single batch lookup to avoid the per-node N+1.
 func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceRow, nodes []persistence.NodeRow, template *persistence.TemplateRow) []CascadeNode {
-	// Index live nodes by node_type for O(1) projection.
+	// @constraint: index live nodes by node_type for O(1) projection.
 	byType := make(map[string]persistence.NodeRow, len(nodes))
 	nodeIDs := make([]shared.UUID, 0, len(nodes))
 	for _, n := range nodes {
 		byType[n.NodeType] = n
 		nodeIDs = append(nodeIDs, n.ID)
 	}
-	// Single batch query for terminal events across every live node.
 	var terminals map[shared.UUID]persistence.EventRow
 	_ = deps.Tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		t, err := deps.Tables.Events().LastTerminalByNodes(ctx, nodeIDs, tx)
@@ -60,7 +59,7 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 			OccurredAt: ev.OccurredAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 	}
-	// Build edges_out per type from the template's subscription graph.
+	// @constraint: build edges_out per type from the template's subscription graph.
 	// Post-2026-05-14, the dependency edges are derived from the
 	// per-node Subscribes block: each entry naming a sender contributes
 	// edges_in[receiver] += sender and edges_out[sender] += receiver.
@@ -81,7 +80,7 @@ func computeCascadeGraph(ctx context.Context, deps Deps, _ persistence.InstanceR
 	}
 	out := make([]CascadeNode, 0, len(nodes))
 	if template == nil {
-		// No template available; project the live rows verbatim with
+		// @constraint: no template available; project the live rows verbatim with
 		// empty edge lists.
 		for _, n := range nodes {
 			cn := CascadeNode{

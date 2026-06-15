@@ -31,9 +31,9 @@ import (
 // Action is the verb a plan step performs against the control-api.
 type Action string
 
-// String-typed Action constants. Spec §3.2 names: register, tag, deploy,
-// create. Other strings extend the vocabulary for steps the example
-// JSON doesn't enumerate.
+// @constraint: Action values are string-typed and spec-defined. Spec
+// §3.2 names: register, tag, deploy, create. Other strings extend the
+// vocabulary for steps the example JSON doesn't enumerate.
 const (
 	ActionRegister       Action = "register"
 	ActionTagCreate      Action = "tag"
@@ -49,7 +49,7 @@ const (
 // Kind is the resource a plan step targets.
 type Kind string
 
-// Resource kinds.
+// @constraint: enumerated resource kinds a plan step may target.
 const (
 	KindTemplate Kind = "template"
 	KindTag      Kind = "tag"
@@ -134,7 +134,8 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		Context: m.Context,
 	}
 
-	// Index manifest templates by prefixed-tag for fast lookup.
+	// @deliberate: Index manifest templates by prefixed-tag for fast
+	// lookup.
 	manifestTags := map[string]TemplateRef{}
 	for _, t := range m.Templates {
 		manifestTags[m.PrefixedTag(t.Tag)] = t
@@ -144,7 +145,6 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		manifestNames[m.PrefixedInstanceKey(inst.Name)] = inst
 	}
 
-	// Index state by tag name.
 	stateTagsByName := map[string]TagWithTemplate{}
 	for _, t := range state.Tags {
 		stateTagsByName[t.Tag] = t
@@ -157,8 +157,7 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		stateInstancesByKey[*inst.InstanceKey] = inst
 	}
 
-	// Resolve template paths → hashes upfront.
-	resolved := map[string]string{} // prefixedTag → newHash
+	resolved := map[string]string{}
 	specBodies := map[string]node.TemplateSpec{}
 	for _, t := range m.Templates {
 		hash, spec, err := ResolveTemplate(t.Path)
@@ -169,7 +168,6 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		specBodies[hash] = spec
 	}
 
-	// Step 1: registers (one per unique new hash).
 	registers := []Step{}
 	registered := map[string]bool{}
 	for _, t := range m.Templates {
@@ -178,7 +176,6 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		if registered[hash] {
 			continue
 		}
-		// Skip register if the target hash is already present in state.
 		if _, exists := state.TemplatesByH[hash]; exists {
 			registered[hash] = true
 			continue
@@ -195,10 +192,9 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		})
 	}
 
-	// Step 2: tag creates and moves.
 	tagSteps := []Step{}
-	// Track which tags have a hash mismatch so we can sequence the old
-	// hash's undeploy / delete in the later steps.
+	// @constraint: track which tags have a hash mismatch so we can
+	// sequence the old hash's undeploy / delete in the later steps.
 	oldHashesNeedingUndeploy := map[string]bool{}
 	oldHashesNeedingDelete := map[string]bool{}
 	for _, t := range m.Templates {
@@ -222,8 +218,8 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 				TemplateHash: newHash,
 				Note:         "from " + cli.TruncHash(current.TemplateHash),
 			})
-			// Old hash needs cleanup: undeploy if currently deployed,
-			// then delete.
+			// @constraint: old hash needs cleanup — undeploy if
+			// currently deployed, then delete.
 			if old, ok := state.TemplatesByH[current.TemplateHash]; ok && old.State == "deployed" {
 				oldHashesNeedingUndeploy[current.TemplateHash] = true
 			}
@@ -231,11 +227,11 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		}
 	}
 
-	// Step 3: deploys (manifest state == deployed AND control-api !=
-	// deployed). Look up via ListTemplates view in state — but we only
-	// have hashes referenced by owned tags. After register, the new
-	// hash isn't in state.TemplatesByH; we treat the new hash as needing
-	// deploy if manifest declares so.
+	// @constraint: step 3 — deploys when manifest state == deployed AND
+	// control-api != deployed. Look up via ListTemplates view in state
+	// — but we only have hashes referenced by owned tags. After
+	// register, the new hash isn't in state.TemplatesByH; we treat the
+	// new hash as needing deploy if manifest declares so.
 	deploys := []Step{}
 	for _, t := range m.Templates {
 		ptag := m.PrefixedTag(t.Tag)
@@ -243,7 +239,6 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		if t.EffectiveState() != "deployed" {
 			continue
 		}
-		// If the hash already exists in state and is deployed, skip.
 		if cur, ok := state.TemplatesByH[newHash]; ok && cur.State == "deployed" {
 			continue
 		}
@@ -254,8 +249,8 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 			Tag:          ptag,
 		})
 	}
-	// If manifest says "registered" and control-api state is deployed:
-	// schedule an undeploy.
+	// @constraint: if manifest says "registered" and control-api state
+	// is deployed, schedule an undeploy.
 	for _, t := range m.Templates {
 		ptag := m.PrefixedTag(t.Tag)
 		newHash := resolved[ptag]
@@ -267,8 +262,8 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		}
 	}
 
-	// Manifest tags removed: undeploy + tag delete + best-effort template
-	// delete.
+	// @constraint: manifest tags removed → undeploy + tag delete +
+	// best-effort template delete.
 	removedTags := []TagWithTemplate{}
 	for _, t := range state.Tags {
 		if _, kept := manifestTags[t.Tag]; !kept {
@@ -280,10 +275,9 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		}
 	}
 
-	// Step 4: instance deletes.
 	instanceDeletes := []Step{}
-	// For each manifest instance: if a terminal row already exists for
-	// the same key, schedule delete (so step 7 can recreate).
+	// @constraint: for each manifest instance, if a terminal row already
+	// exists for the same key, schedule delete (so step 7 can recreate).
 	// For each compose-owned instance not in the manifest:
 	//   non-terminal → error;
 	//   terminal → schedule delete.
@@ -296,8 +290,8 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 				nonTerminalOrphans = append(nonTerminalOrphans, key)
 				continue
 			}
-			// Failure-outcome orphan deletes destroy data the
-			// operator may want to inspect; mark destructive.
+			// @constraint: failure-outcome orphan deletes destroy data
+			// the operator may want to inspect; mark destructive.
 			outcome, err := aggregateOutcome(ctx, c, inst.UUID())
 			if err != nil {
 				return nil, err
@@ -313,20 +307,18 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 			continue
 		}
 		if inst.TerminatedAt == nil {
-			// Non-terminal manifest entry: leave alone.
 			continue
 		}
-		// Terminal row + manifest entry: apply restart policy.
 		policy := mInst.EffectiveRestart()
 		recreate, deleteOnly, outcome, err := classifyRestart(ctx, c, inst, policy)
 		if err != nil {
 			return nil, err
 		}
 		if deleteOnly || recreate {
-			// Failure-outcome terminal deletes destroy data the
-			// operator may want to inspect; require --yes / a TTY
-			// confirmation. Success-outcome terminal cleanup is
-			// non-destructive.
+			// @constraint: failure-outcome terminal deletes destroy
+			// data the operator may want to inspect; require --yes
+			// or a TTY confirmation. Success-outcome terminal cleanup
+			// is non-destructive.
 			instanceDeletes = append(instanceDeletes, Step{
 				Action:      ActionInstanceDelete,
 				Kind:        KindInstance,
@@ -350,7 +342,6 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		}
 	}
 
-	// Step 5: undeploys (sorted for determinism).
 	undeploys := []Step{}
 	for hash := range oldHashesNeedingUndeploy {
 		undeploys = append(undeploys, Step{
@@ -361,7 +352,6 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 	}
 	sort.Slice(undeploys, func(i, j int) bool { return undeploys[i].TemplateHash < undeploys[j].TemplateHash })
 
-	// Step 6: tag deletes (manifest-removed tags).
 	tagDeletes := []Step{}
 	for _, t := range removedTags {
 		tagDeletes = append(tagDeletes, Step{
@@ -373,7 +363,6 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 	}
 	sort.Slice(tagDeletes, func(i, j int) bool { return tagDeletes[i].Tag < tagDeletes[j].Tag })
 
-	// Step 7: instance creates (new + recreated).
 	instanceCreates := []Step{}
 	manifestKeys := make([]string, 0, len(m.Instances))
 	for _, inst := range m.Instances {
@@ -384,12 +373,13 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		inst := manifestNames[key]
 		stateInst, ok := stateInstancesByKey[key]
 		if ok && stateInst.TerminatedAt == nil {
-			// Spec §3.1: params drift on a running instance is a
-			// warning (control-api has no in-flight update). Print
-			// it to stderr at plan time and continue — there is no
-			// step to schedule. Setting HasDriftWarnings causes
-			// `compose plan` to exit 3 even though Steps is empty,
-			// matching terraform plan -detailed-exitcode semantics.
+			// @constraint: spec §3.1 — params drift on a running
+			// instance is a warning (control-api has no in-flight
+			// update). Print it to stderr at plan time and continue —
+			// there is no step to schedule. Setting HasDriftWarnings
+			// causes `compose plan` to exit 3 even though Steps is
+			// empty, matching terraform plan -detailed-exitcode
+			// semantics.
 			if !paramsEqual(stateInst.Params, inst.Params) {
 				fmt.Fprintf(os.Stderr,
 					"warning: params drift on running instance %s; no-op (control-api has no in-flight update)\n",
@@ -398,8 +388,9 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 			}
 			continue
 		}
-		// Terminal row will be deleted in step 4 (delete-only or recreate).
-		// Recreate when willRecreate covers it OR no row at all.
+		// @constraint: terminal row will be deleted in step 4
+		// (delete-only or recreate). Recreate when willRecreate covers
+		// it OR there's no row at all.
 		if ok && stateInst.TerminatedAt != nil {
 			if _, recreate := willRecreate[key]; !recreate {
 				continue
@@ -414,7 +405,6 @@ func ComputePlan(ctx context.Context, c *cli.Client, m *Manifest, state *Compose
 		})
 	}
 
-	// Step 8: best-effort template deletes.
 	templateDeletes := []Step{}
 	for hash := range oldHashesNeedingDelete {
 		templateDeletes = append(templateDeletes, Step{
@@ -459,7 +449,7 @@ func classifyRestart(ctx context.Context, c *cli.Client, inst cli.Instance, poli
 	}
 	switch policy {
 	case "always":
-		// Recreate on every terminal regardless of outcome.
+		// @constraint: recreate on every terminal regardless of outcome.
 		return true, false, outcome, nil
 	case "on_failure":
 		if outcome == "failure" {
@@ -469,9 +459,10 @@ func classifyRestart(ctx context.Context, c *cli.Client, inst cli.Instance, poli
 	case "never":
 		return false, true, outcome, nil
 	}
-	// Unreachable in the current call graph: ComputePlan always passes
-	// InstanceRef.EffectiveRestart(), which manifest validation has
-	// already normalized to {never|on_failure|always}. Kept as the
+	// @deliberate: unreachable in the current call graph — ComputePlan
+	// always passes InstanceRef.EffectiveRestart(), which manifest
+	// validation has already normalized to {never|on_failure|always}.
+	// Kept as the
 	// default for any future restart string that lands in the spec
 	// without updating this switch.
 	return false, true, outcome, nil
@@ -522,10 +513,10 @@ func paramsEqual(a, b map[string]any) bool {
 	if err != nil {
 		return false
 	}
-	// Re-decode to strip Go-side type differences (int vs float64) by
-	// landing both sides in identical map[string]any shapes; then
-	// re-marshal so map key ordering is canonical (Go's json.Marshal
-	// sorts map keys).
+	// @deliberate: Re-decode to strip Go-side type differences (int vs
+	// float64) by landing both sides in identical map[string]any shapes;
+	// then re-marshal so map key ordering is canonical (Go's
+	// json.Marshal sorts map keys).
 	var aa, bb any
 	if err := json.Unmarshal(ja, &aa); err != nil {
 		return false

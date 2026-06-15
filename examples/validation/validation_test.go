@@ -49,8 +49,9 @@ func TestValidate_AcceptsWellFormedAndRejectsBadContext(t *testing.T) {
 	defer cancel()
 	client := genv1.NewValidationClient(conn)
 
-	// Accept case: a well-formed executor context. A real JSON-schema object in
-	// attributes_schema is the canonical good shape; the service must accept it.
+	// @deliberate: accept case — a well-formed executor context. A real
+	// JSON-schema object in attributes_schema is the canonical good
+	// shape; the service must accept it.
 	accept, err := client.Validate(ctx, &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{
@@ -72,8 +73,9 @@ func TestValidate_AcceptsWellFormedAndRejectsBadContext(t *testing.T) {
 		t.Fatalf("well-formed executor context: want no errors, got %+v", accept.GetErrors())
 	}
 
-	// Reject case: a deliberately-bad executor context — attributes_schema is not
-	// valid JSON, so the service must reject the registration.
+	// @deliberate: reject case — a deliberately-bad executor context
+	// where attributes_schema is not valid JSON; the service must reject
+	// the registration.
 	reject, err := client.Validate(ctx, &genv1.ValidateRequest{
 		Role: "executor",
 		Context: &genv1.ValidateRequest_Executor{

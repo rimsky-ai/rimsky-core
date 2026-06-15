@@ -59,14 +59,14 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should complete")
 
-	// Wait for the named-event signal-shaped audit row on A. Per Pass 5
+	// @deliberate: Wait for the named-event signal-shaped audit row on A. Per Pass 5
 	// of spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design
 	// the legacy `named_event_emitted` fixed-string row retired in
 	// favor of the `event/<name>` signal type-path.
 	require.True(t, h.WaitForEventKind(a.ID, "event/ready", 10*time.Second),
 		"event/ready signal row should exist for A")
 
-	// Verify the rimsky_node_events ledger row exists and carries the
+	// @deliberate: Verify the rimsky_node_events ledger row exists and carries the
 	// payload bytes.
 	require.Eventually(t, func() bool {
 		evt, err := getLatestNodeEvent(t, h, iid, a.ID, "ready")
@@ -79,7 +79,6 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 	require.NotNil(t, evt)
 	require.Contains(t, string(evt.PayloadInline), `"go":true`)
 
-	// B should have re-fired (the on_event handler invalidated it).
 	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 30*time.Second),
 		"b should re-run after on_event handler invalidate")
 }
@@ -119,7 +118,7 @@ func TestOnEventMultipleEmissionsLatestWins(t *testing.T) {
 	evt, err := getLatestNodeEvent(t, h, iid, a.ID, "progress")
 	require.NoError(t, err)
 	require.NotNil(t, evt)
-	// LatestByName must return the most-recent emission.
+	// @constraint: LatestByName must return the most-recent emission.
 	require.Contains(t, string(evt.PayloadInline), `"step":3`)
 }
 
@@ -157,7 +156,7 @@ func TestOnEventUndeclaredEventNameRejectedAtRegistration(t *testing.T) {
 		"application/json", bytes.NewReader(raw))
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	// Validator MUST reject; either 400 (validation) or 422 (semantic) is
+	// @constraint: Validator MUST reject; either 400 (validation) or 422 (semantic) is
 	// acceptable. 200 means the validator silently accepted — bug.
 	require.NotEqual(t, http.StatusOK, resp.StatusCode,
 		"controlapi must reject template referencing undeclared event %q",

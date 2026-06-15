@@ -2,26 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// schema_consolidation_test.go — pins the spec §10.5 consolidation
-// contract: the embedded 001-schema.sql produces an end-state schema
-// matching the prior multi-migration series, AND tolerates a stale
-// rimsky_migrations table left over from an aborted prior series
-// (001-baseline.sql through 014-drop-last-outcome.sql).
-//
 // @concept: breakpoint
-//
-// The first test (TestSchemaConsolidation_FreshDBSchemaShape) introspects
-// pg_catalog to confirm that every table the codebase references is
-// present after a clean migrate. The list is the union of every
-// rimsky_* table referenced by the persistence layer.
-//
-// The second test (TestSchemaConsolidation_StaleMigrationsRowsAreInert)
-// pre-seeds rimsky_migrations with the legacy filenames before running
-// Migrate. The migrator's name-set is determined by the embed.FS
-// contents (which only carries 001-schema.sql), so the stale rows are
-// ignored. 001-schema.sql still applies cleanly because the bootstrap
-// CREATE TABLE IF NOT EXISTS does NOT error on an existing
-// rimsky_migrations row set.
 
 package postgres_test
 
@@ -141,13 +122,11 @@ func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 		t.Fatalf("PoolFromDatabaseForTest: not a postgres driver")
 	}
 
-	// Pre-seed rimsky_migrations with the legacy filenames. We have to
-	// bootstrap the table ourselves first because Migrate's Bootstrap
-	// runs the same CREATE TABLE IF NOT EXISTS — the test's seed
-	// creates the table, the migrator no-ops the create, then the
-	// migrator's QueryHas check sees the seeded rows for the LEGACY
-	// names (none of which are on disk) and the actual on-disk
-	// 001-schema.sql is unseeded so it runs.
+	// @constraint: pre-seed rimsky_migrations with legacy filenames so
+	// the migrator's QueryHas check sees the seeded LEGACY names as
+	// already-applied while the on-disk 001-schema.sql (unseeded) still
+	// runs. Bootstrapping the table here is safe because Migrate's
+	// Bootstrap runs the same CREATE TABLE IF NOT EXISTS and no-ops.
 	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS rimsky_migrations (
 		filename    TEXT PRIMARY KEY,
 		applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -178,19 +157,17 @@ func TestSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 		}
 	}
 
-	// Now run migrations. 001-schema.sql is the only file in the embed
-	// FS; its filename is NOT in the pre-seed set, so it must apply.
+	// @deliberate: 001-schema.sql is the only file in the embed FS and
+	// its filename is NOT in the pre-seed set, so Migrate must apply it.
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("migrate with stale rows: %v", err)
 	}
 
-	// Verify the consolidated schema is in place — same as the fresh-DB
-	// test.
 	assertTablesPresent(t, ctx, pool, expectedTables)
 	assertColumnsPresent(t, ctx, pool, "rimsky_instance_breakpoints", expectedBreakpointColumns)
 	assertColumnsPresent(t, ctx, pool, "rimsky_breakpoint_hits", expectedHitColumns)
 
-	// Confirm rimsky_migrations carries BOTH the stale rows AND the
+	// count rimsky_migrations carries BOTH the stale rows AND the
 	// new 001-schema.sql row.
 	var count int
 	if err := pool.QueryRow(ctx,

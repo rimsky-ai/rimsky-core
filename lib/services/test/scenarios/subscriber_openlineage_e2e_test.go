@@ -101,16 +101,13 @@ func TestSubscriberOpenlineage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// ----------------------------------------------------------------
-	// 1. Fake OpenLineage receiver.
-	//
-	// Records every inbound body and the path it landed on, and
-	// validates the OpenLineage 1.x envelope shape ON THE HOT PATH —
-	// any decode failure or missing-required-field is captured into a
-	// per-arrival `validateErr` so the test fails with the receiver's
-	// own diagnosis (rather than a generic "schema didn't match" after
-	// the fact). The receiver returns 201 Created on a structural pass
-	// and 400 Bad Request on a structural fail; the subscriber's
+	// @deliberate: the fake OpenLineage receiver validates the
+	// OpenLineage 1.x envelope shape ON THE HOT PATH — any decode
+	// failure or missing-required-field is captured into a per-arrival
+	// `validateErr` so the test fails with the receiver's own
+	// diagnosis (rather than a generic "schema didn't match" after the
+	// fact). The receiver returns 201 Created on a structural pass and
+	// 400 Bad Request on a structural fail; the subscriber's
 	// `emitter.Send` treats anything ≥ 300 as a halting error, so a
 	// malformed body would visibly stall the subscriber's cursor —
 	// surfaced through the rimsky-side cursor check below.
@@ -142,18 +139,14 @@ func TestSubscriberOpenlineage(t *testing.T) {
 
 	receiverHostPort := hostPortOf(t, marquez.URL)
 
-	// ----------------------------------------------------------------
-	// 2. Bring up rimsky + a claim-producer (fs-store) + an executor stub
-	//    on a shared docker network.
-	//
-	//    The cascade produces:
-	//      - one `leaf_run` lineage row per leaf-run terminal (via
-	//        runtime/lineage_writer.go::AppendLeafRunRecord).
-	//      - one `claim_terminal` lineage row per claim Commit (via
-	//        runtime/lineage_writer.go::AppendClaimTerminalRecord).
-	//
-	//    Both are exactly the writes the openlineage subscriber polls
-	//    and translates into OL events.
+	// @deliberate: bring up rimsky + a claim-producer (fs-store) + an
+	// executor stub on a shared docker network. The cascade produces
+	// one `leaf_run` lineage row per leaf-run terminal (via
+	// runtime/lineage_writer.go::AppendLeafRunRecord) and one
+	// `claim_terminal` lineage row per claim Commit (via
+	// runtime/lineage_writer.go::AppendClaimTerminalRecord). Both are
+	// exactly the writes the openlineage subscriber polls and
+	// translates into OL events.
 	netName := harness.NewNetwork(ctx, t)
 	fs := harness.StartFilesystemStore(ctx, t, netName, "store-filesystem",
 		harness.FilesystemStoreSpec{
@@ -175,22 +168,20 @@ func TestSubscriberOpenlineage(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// ----------------------------------------------------------------
-	// 3. Deploy a one-node template that opens (and commits) a claim on
-	//    @docs-ring per dispatch. Each instance produces one leaf_run +
-	//    one claim_terminal lineage row.
+	// @deliberate: deploy a one-node template that opens (and commits)
+	// a claim on @docs-ring per dispatch. Each instance produces one
+	// leaf_run + one claim_terminal lineage row.
 	templateID := deployOLTemplate(t, ep, "openlineage-e2e")
 	instanceID := createOLInstance(t, ep, templateID, "ck-openlineage-e2e")
 
-	// Wait for the cascade to reach a node terminal so the lineage
-	// writer has flushed at least one leaf_run row.
 	waitOLNodeTerminal(t, ep, instanceID, "acquire-and-execute", 90*time.Second)
 
-	// Connect to rimsky's host-mapped DSN so we can BOTH (a) wait for
-	// the writer's rows to land and (b) snapshot the rimsky-side IDs
-	// the subscriber will translate. Reading the same table the
-	// subscriber polls is the only way to cross-check that the OL
-	// runId / dataset name actually correspond to rimsky-side records.
+	// @deliberate: connect to rimsky's host-mapped DSN so we can BOTH
+	// (a) wait for the writer's rows to land and (b) snapshot the
+	// rimsky-side IDs the subscriber will translate. Reading the same
+	// table the subscriber polls is the only way to cross-check that
+	// the OL runId / dataset name actually correspond to rimsky-side
+	// records.
 	pool, err := pgxpool.New(ctx, ep.HostDSN)
 	if err != nil {
 		t.Fatalf("connect rimsky host DSN: %v", err)
@@ -198,15 +189,16 @@ func TestSubscriberOpenlineage(t *testing.T) {
 	defer pool.Close()
 
 	waitOLLineageRows(t, ctx, pool, "leaf_run", 1, 60*time.Second)
-	// claim_terminal lands when the producer's Commit acks; the
-	// recycle-on-commit policy is synchronous, so the row should be
-	// present shortly after the leaf-run terminal.
+	// @constraint: claim_terminal lands when the producer's Commit
+	// acks; the recycle-on-commit policy is synchronous, so the row
+	// should be present shortly after the leaf-run terminal.
 	waitOLLineageRows(t, ctx, pool, "claim_terminal", 1, 60*time.Second)
 
-	// Snapshot the rimsky-side IDs we expect to see surface in OL
-	// events. `runId` for a leaf_run is `instance_id` (no child_key on
-	// a single-node template), and the dataset-output `name` for a
-	// claim_terminal is the producer's `scope_data_hash`.
+	// @constraint: `runId` for a leaf_run is `instance_id` (no
+	// child_key on a single-node template), and the dataset-output
+	// `name` for a claim_terminal is the producer's
+	// `scope_data_hash`. These projections are what the subscriber
+	// translates to OL.
 	rimskyLeafRunIDs := selectOLLeafRunIDs(t, ctx, pool, instanceID)
 	rimskyClaimScopeHashes := selectOLClaimScopeHashes(t, ctx, pool, instanceID)
 	if len(rimskyLeafRunIDs) < 1 {
@@ -218,17 +210,17 @@ func TestSubscriberOpenlineage(t *testing.T) {
 			"the producer's Commit never appended a claim_terminal row", instanceID)
 	}
 
-	// The OL `runId` projection in `MakeLeafRunEvent` is
+	// @constraint: the OL `runId` projection in `MakeLeafRunEvent` is
 	// `instance_id + "/" + child_key`; the single-node template has no
 	// fan-out child key, so the runId is the bare `instance_id` string.
 	expectedRunID := instanceID
 	t.Logf("rimsky-side IDs: instance_id=%s leaf_runs=%d claim_scope_hashes=%d (expected_ol_runid=%s)",
 		instanceID, len(rimskyLeafRunIDs), len(rimskyClaimScopeHashes), expectedRunID)
 
-	// ----------------------------------------------------------------
-	// 4. Boot the openlineage subscriber container against (a) rimsky's
-	//    in-network Postgres DSN (so it can poll rimsky_lineage), and
-	//    (b) the host-side fake receiver via host.testcontainers.internal.
+	// @deliberate: boot the openlineage subscriber container against
+	// (a) rimsky's in-network Postgres DSN (so it can poll
+	// rimsky_lineage), and (b) the host-side fake receiver via
+	// host.testcontainers.internal.
 	startOpenLineageSubscriber(ctx, t,
 		netName,
 		ep.InternalDSN,
@@ -237,18 +229,15 @@ func TestSubscriberOpenlineage(t *testing.T) {
 		receiverHostPort,
 	)
 
-	// ----------------------------------------------------------------
-	// 5. Wait until the receiver has observed at least one event of
-	//    each OL kind that maps from the two rimsky lineage record
-	//    kinds:
-	//      - leaf_run    → OL COMPLETE event with the instance-keyed runId.
-	//      - claim_terminal → OL event with a dataset output whose
-	//        `name` matches one of the rimsky-side scope_data_hash
-	//        values.
-	//
-	//    Bounded by an explicit deadline so a subscriber that never
-	//    posts (or that posts only one of the two kinds) surfaces as a
-	//    deadline failure with the receiver's actual arrivals attached.
+	// @deliberate: wait until the receiver has observed at least one
+	// event of each OL kind that maps from the two rimsky lineage
+	// record kinds — leaf_run → OL COMPLETE event with the
+	// instance-keyed runId, and claim_terminal → OL event with a
+	// dataset output whose `name` matches one of the rimsky-side
+	// scope_data_hash values. Bounded by an explicit deadline so a
+	// subscriber that never posts (or that posts only one of the two
+	// kinds) surfaces as a deadline failure with the receiver's actual
+	// arrivals attached.
 	waitForOLArrivalMatching(t, &mu, &received, 60*time.Second,
 		"leaf_run → COMPLETE event with instance-keyed runId",
 		func(a olArrival) bool {
@@ -257,11 +246,10 @@ func TestSubscriberOpenlineage(t *testing.T) {
 			}
 			run, _ := a.Decoded["run"].(map[string]any)
 			runID, _ := run["runId"].(string)
-			// We pin both:
-			//   - the runId corresponds to the rimsky-side instance_id
-			//     (the falsifier "IDs don't correspond" case).
-			//   - the event was stamped with our namespace (rules out
-			//     stray traffic).
+			// @deliberate: pin both axes — runId corresponds to the
+			// rimsky-side instance_id (the falsifier "IDs don't
+			// correspond" case), and the event was stamped with our
+			// namespace (rules out stray traffic).
 			job, _ := a.Decoded["job"].(map[string]any)
 			ns, _ := job["namespace"].(string)
 			return strings.HasPrefix(runID, expectedRunID) &&
@@ -294,14 +282,12 @@ func TestSubscriberOpenlineage(t *testing.T) {
 			return false
 		})
 
-	// ----------------------------------------------------------------
-	// 6. Final assertions:
-	//      a) No malformed arrivals — the validator's check is the
-	//         per-receiver contract that catches a structurally bad
-	//         emit (the spec's "subscriber posts to receiver but with
-	//         malformed OpenLineage JSON" falsifier).
-	//      b) All POSTs landed on `/api/v1/lineage` (the documented
-	//         transport, per spec §OpenLineage emitter / Transport).
+	// @deliberate: final assertions confirm (a) no malformed arrivals
+	// — the validator's check is the per-receiver contract that
+	// catches a structurally bad emit (the story's "subscriber posts
+	// to receiver but with malformed OpenLineage JSON" falsifier); and
+	// (b) all POSTs landed on `/api/v1/lineage` (the documented OL
+	// transport).
 	mu.Lock()
 	defer mu.Unlock()
 	var validationErrs []string
@@ -363,7 +349,6 @@ func validateOpenLineageEnvelope(body map[string]any) string {
 		return "eventTime missing or empty"
 	}
 	if _, err := time.Parse(time.RFC3339Nano, eventTime); err != nil {
-		// Try plain RFC3339 (subseconds optional).
 		if _, err2 := time.Parse(time.RFC3339, eventTime); err2 != nil {
 			return fmt.Sprintf("eventTime %q not RFC3339-parseable: %v", eventTime, err)
 		}
@@ -433,9 +418,9 @@ func startOpenLineageSubscriber(
 		tcnet.WithNetworkName([]string{"subscriber-openlineage"}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithHostPortAccess(hostAccessPort),
-		// The subscriber binary logs `openlineage.starting` once the
-		// startup handshake (cursor table create + load) is done; that
-		// is the wait-strategy gate.
+		// @constraint: the subscriber binary logs `openlineage.starting`
+		// once the startup handshake (cursor table create + load) is
+		// done; that is the wait-strategy gate.
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("openlineage.starting").WithStartupTimeout(60 * time.Second),
 		),

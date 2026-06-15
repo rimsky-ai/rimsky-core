@@ -93,7 +93,8 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 	if err := os.MkdirAll(hostDir, 0o755); err != nil {
 		t.Fatalf("harness: mkdir hostDir: %v", err)
 	}
-	// Seed folders before the store starts so pick-policy roots resolve.
+	// @constraint: seed folders before the store starts so pick-policy
+	// `root:` stat checks at startup find the directories that exist.
 	for _, parts := range spec.SeedFolders {
 		all := append([]string{hostDir}, parts...)
 		dir := filepath.Join(all...)
@@ -102,11 +103,12 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 		}
 	}
 
-	// When AdvertiseHTTPBridge is set, the store advertises its
-	// in-network HTTP bridge URL through ClaimProducerObservabilityCapabilities
-	// so rimsky's dashboard surface (`GET /v1/observability/stores/{name}`)
-	// can expose it to operators. The test process reaches the same bridge
-	// via the host-mapped port returned in HostHTTPBridge.
+	// @deliberate: when AdvertiseHTTPBridge is set, the store advertises
+	// its in-network HTTP bridge URL through
+	// ClaimProducerObservabilityCapabilities so rimsky's dashboard surface
+	// (`GET /v1/observability/stores/{name}`) can expose it to operators.
+	// The test process reaches the same bridge via the host-mapped port
+	// returned in HostHTTPBridge.
 	httpBridgeURL := ""
 	if spec.AdvertiseHTTPBridge {
 		httpBridgeURL = fmt.Sprintf("http://%s:9110", alias)
@@ -129,8 +131,8 @@ func StartFilesystemStore(ctx context.Context, t testing.TB, networkName, alias 
 			ContainerFilePath: "/etc/store/config.yml",
 			FileMode:          0o644,
 		}),
-		// Bind-mount the host directory at /workspace; the spec's
-		// pick-policy roots resolve relative to the container's
+		// @constraint: bind-mount the host directory at /workspace; the
+		// spec's pick-policy roots resolve relative to the container's
 		// configured `root: /workspace`.
 		testcontainers.WithHostConfigModifier(func(hc *container.HostConfig) {
 			hc.Binds = append(hc.Binds, hostDir+":/workspace:rw,delegated")

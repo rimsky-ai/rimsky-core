@@ -18,8 +18,8 @@ import (
 func init() {
 	conformance.Register(conformance.Scenario{
 		Name: "malformed_attributes",
-		// Stub-mode-only: a non-stub claude-agent run would actually
-		// spawn the LLM CLI before any heuristic could detect the
+		// @constraint: stub-mode-only — a non-stub claude-agent run would
+		// actually spawn the LLM CLI before any heuristic could detect the
 		// malformed-attributes markers. Same gate applied to
 		// `attributes_serialization` and `heartbeats`.
 		RequiresStub: true,

@@ -35,11 +35,14 @@ import (
 // signal type-pattern, when-predicate) coupling that the cascade walk
 // matches against an emitted signal.
 type SubscriptionEdge struct {
-	ReceiverNodeType  string
-	TypePattern       signal.TypePath           // exact or trailing-`*` prefix
-	WhenExpr          *signal.CompiledPredicate // nil if no when:
-	SubscriptionScope string                    // "direct" | "instance"
-	Frame             string                    // "in" | "next"
+	ReceiverNodeType string
+	// @constraint: TypePattern is either an exact path or a trailing-`*`
+	// prefix; WhenExpr is nil when no `when:` predicate is declared;
+	// SubscriptionScope is "direct" | "instance"; Frame is "in" | "next".
+	TypePattern       signal.TypePath
+	WhenExpr          *signal.CompiledPredicate
+	SubscriptionScope string
+	Frame             string
 }
 
 // SubscriptionEdgeMap is the inverse-edge structure: per-sender prefix
@@ -308,17 +311,17 @@ func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath
 	if root == nil {
 		return out
 	}
-	// A prefix-bucket at the root matches any signal under any
-	// top-level kind — that's `type: *` semantics. We still surface
-	// it for completeness; in practice templates don't write `type:
-	// *` but the trie supports it.
+	// @deliberate: A prefix-bucket at the root matches any signal under
+	// any top-level kind — that's `type: *` semantics. Surface it for
+	// completeness; in practice templates don't write `type: *` but the
+	// trie supports it.
 	out = append(out, root.wildcard...)
 	segs := splitSegments(string(typ))
-	// frontier holds the set of trie nodes the walker is currently
-	// at. After consuming each segment we step every frontier node
-	// along (a) its literal-segment child and (b) its `*` child
-	// (positional wildcard). Bounded by trie depth × fan-out, so the
-	// growth stays small for the canonical taxonomy.
+	// @deliberate: frontier holds the set of trie nodes the walker is
+	// currently at. After consuming each segment, step every frontier
+	// node along (a) its literal-segment child and (b) its `*` child
+	// (positional wildcard). Bounded by trie depth × fan-out, so growth
+	// stays small for the canonical taxonomy.
 	frontier := []*prefixNode{root}
 	for _, seg := range segs {
 		var next []*prefixNode
@@ -394,7 +397,6 @@ func BuildSubscriptionEdges(
 	out := NewSubscriptionEdgeMap()
 	for _, n := range tmpl.Nodes {
 		receiverType := n.Type
-		// Explicit subscriptions.
 		for i, s := range n.Subscribes {
 			edge, err := edgeFromSubscription(s, receiverType)
 			if err != nil {
@@ -403,7 +405,6 @@ func BuildSubscriptionEdges(
 			}
 			out.Insert(s.Node, edge)
 		}
-		// Implicit subscriptions from substitution refs.
 		for _, ref := range substitutionRefs[receiverType] {
 			edge := edgeFromSubstitutionRef(ref, receiverType)
 			out.Insert(ref.SenderNodeType, edge)
@@ -416,8 +417,10 @@ func BuildSubscriptionEdges(
 // `{{nodes.X.event.Z.<path>}}` directive in a node's attribute schema.
 type substitutionRef struct {
 	SenderNodeType string
-	TopicKind      string // "attribute" | "event"
-	Name           string // attribute key or event name
+	// @constraint: TopicKind is "attribute" | "event"; Name is the
+	// attribute key or event name.
+	TopicKind string
+	Name      string
 }
 
 // substitutionDirectiveRe is the same shape as
@@ -454,9 +457,12 @@ func ExtractSubstitutionRefsFromTemplate(tmpl spec.TemplateSpec) map[string][]su
 //
 //	@concept: node-subscription
 type SubstitutionRefSpec struct {
-	SenderNodeType string // upstream node-type the directive named
-	TopicKind      string // "attribute" | "event"
-	Name           string // attribute key or event name
+	// @constraint: SenderNodeType is the upstream node-type the directive
+	// named; TopicKind is "attribute" | "event"; Name is the attribute
+	// key or event name.
+	SenderNodeType string
+	TopicKind      string
+	Name           string
 }
 
 // SubstitutionRefsFromAttributes returns the per-directive substitution
@@ -512,22 +518,22 @@ func UpstreamNodeTypesFromAttributes(n TemplateNodeDef) []string {
 // the substitution context is exactly "what fired this frame for this
 // receiver" — so any read of an upstream attribute MUST be reflected
 // as an attribute-topic subscription. Per spec
-// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md.
 func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 	var out []substitutionRef
 	seen := map[substitutionRef]struct{}{}
-	// scanSrc accepts any directive shape parseSubstitutionDirective
-	// admits (attribute or event). The attribute-schema `source:` scan
-	// has used this surface since auto-subscribe shipped, so event
-	// references in schemas continue to produce edges as before.
+	// @deliberate: scanSrc accepts any directive shape
+	// parseSubstitutionDirective admits (attribute or event). The
+	// attribute-schema `source:` scan has used this surface since
+	// auto-subscribe shipped, so event references in schemas continue to
+	// produce edges as before.
 	scanSrc := func(src string) {
 		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
 			body := strings.TrimSpace(m[1])
 			if body == "" {
 				continue
 			}
-			// Strip an optional fallback `| <literal>` suffix so the
-			// upstream-ref parser sees only the directive proper.
+			// @deliberate: Strip an optional fallback `| <literal>` suffix so the
+			// so the upstream-ref parser sees only the directive proper.
 			if idx := strings.Index(body, "|"); idx >= 0 {
 				body = strings.TrimSpace(body[:idx])
 			}
@@ -545,12 +551,12 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 			out = append(out, ref)
 		}
 	}
-	// scanSrcAttributeOnly is the same as scanSrc, but it discards any
+	// @deliberate: scanSrcAttributeOnly mirrors scanSrc but discards any
 	// directive whose TopicKind is not "attribute". The 2026-05-20
-	// attribute-pull-resolution spec confines the new store-selector
-	// and lock-name auto-subscribe scan to attribute reads; event reads
-	// at those sites keep whatever subscription shape pre-existed the
-	// 2026-05-20 plan (i.e. NONE introduced by this scan).
+	// attribute-pull-resolution work confines the store-selector and
+	// lock-name auto-subscribe scan to attribute reads; event reads at
+	// those sites keep whatever subscription shape pre-existed (i.e.
+	// none introduced by this scan).
 	scanSrcAttributeOnly := func(src string) {
 		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
 			body := strings.TrimSpace(m[1])
@@ -580,12 +586,12 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 		walkSchemaForSources(n.Attributes.Schema, scanSrc)
 	}
-	// Stores selectors and lock names are also acquisition-time
-	// substitution sites; reads there must auto-subscribe so the
-	// dispatch-time substitution context contains the referenced
-	// upstream attribute rows. Event reads at these sites do NOT
-	// auto-subscribe — the 2026-05-20 minimalist substitution model
-	// does not extend to events.
+	// @deliberate: Stores selectors and lock names are also acquisition-time
+	// acquisition-time substitution sites; reads there must
+	// auto-subscribe so the dispatch-time substitution context contains
+	// the referenced upstream attribute rows. Event reads at these sites
+	// do NOT auto-subscribe — the minimalist substitution model does not
+	// extend to events.
 	for _, s := range n.Stores {
 		scanSrcAttributeOnly(s.Selector)
 	}
@@ -613,10 +619,10 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 // `graph/node/template_validator.go::checkAttributeSource` so every
 // directive accepted at registration also produces an inverse-edge entry.
 func parseSubstitutionDirective(body string) (substitutionRef, bool) {
-	// Strip the optional fallback `| <literal>` and the optional `?`
-	// lenient marker so the source-kind dispatch below sees a clean
-	// directive body. Per the 2026-05-21 userdata-collapse grammar
-	// relaxation; the validator already rejected `?` + `|` combined.
+	// @deliberate: Strip the optional fallback `| <literal>` and the optional `?`
+	// optional `?` lenient marker so the source-kind dispatch below sees
+	// a clean directive body. The validator already rejected `?` + `|`
+	// combined.
 	body = strings.TrimSpace(body)
 	if idx := strings.Index(body, "|"); idx >= 0 {
 		body = strings.TrimSpace(body[:idx])
@@ -632,8 +638,9 @@ func parseSubstitutionDirective(body string) (substitutionRef, bool) {
 	}
 	switch parts[2] {
 	case "attribute":
-		// Bare form: nodes.<X>.attribute → Name="" (whole-attribute pull).
-		// Field-path form: nodes.<X>.attribute.<field>... → Name=<field>.
+		// @deliberate: bare form nodes.<X>.attribute → Name=""
+		// (whole-attribute pull); field-path form
+		// nodes.<X>.attribute.<field>... → Name=<field>.
 		name := ""
 		if len(parts) >= 4 {
 			name = parts[3]
@@ -642,7 +649,8 @@ func parseSubstitutionDirective(body string) (substitutionRef, bool) {
 			SenderNodeType: sender, TopicKind: "attribute", Name: name,
 		}, true
 	case "event":
-		// Event name is required (nodes.<X>.event.<name>[.<path>…]).
+		// @deliberate: event name is required
+		// (nodes.<X>.event.<name>[.<path>…]).
 		if len(parts) < 4 || parts[3] == "" {
 			return substitutionRef{}, false
 		}
@@ -716,10 +724,10 @@ func edgeFromSubstitutionRef(ref substitutionRef, receiverType string) Subscript
 	switch ref.TopicKind {
 	case "attribute":
 		if ref.Name == "" {
-			// Whole-attribute pull (`{{nodes.X.attribute}}`) — scope
-			// to attribute/*/changed so the implicit subscription
-			// only fires on attribute-delta signals, not on the broad
-			// `attribute/*` umbrella.
+			// @deliberate: Whole-attribute pull (`{{nodes.X.attribute}}`) — scope
+			// (`{{nodes.X.attribute}}`) scopes to attribute/*/changed so
+			// the implicit subscription only fires on attribute-delta
+			// signals, not on the broad `attribute/*` umbrella.
 			pattern = signal.TypePath("attribute/*/changed")
 		} else {
 			pattern = signal.TypePath("attribute/" + ref.Name + "/changed")
@@ -727,7 +735,8 @@ func edgeFromSubstitutionRef(ref substitutionRef, receiverType string) Subscript
 	case "event":
 		pattern = signal.TypePath("event/" + ref.Name)
 	default:
-		// Defensive: parseSubstitutionDirective only emits attribute/event.
+		// @deliberate: defensive — parseSubstitutionDirective only emits
+		// attribute or event.
 		pattern = signal.TypePath("")
 	}
 	return SubscriptionEdge{

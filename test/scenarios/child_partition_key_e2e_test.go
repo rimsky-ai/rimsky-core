@@ -45,7 +45,7 @@ import (
 func TestChildPartitionKeyBinds(t *testing.T) {
 	t.Parallel()
 
-	// Remote stub store. The fixture's ClaimProducer surface advertises
+	// @deliberate: Remote stub store. The fixture's ClaimProducer surface advertises
 	// SupportsSplitScope=true and decodes {"partition_keys":[...]} into
 	// one SubScopeDescriptor per key — the same wiring the F1 fan-out
 	// success-cascade scenario uses.
@@ -65,13 +65,13 @@ func TestChildPartitionKeyBinds(t *testing.T) {
 		},
 	})
 
-	// Per-child stub script: Success with a no-op attributes_delta so the
+	// @deliberate: Per-child stub script: Success with a no-op attributes_delta so the
 	// commit gate accepts the bag. best_effort tolerates any per-child
 	// outcome — this scenario asserts the dispatch-time resolved
 	// `partition` field, not aggregation policy semantics.
 	h.Stub.WhenType("fan-child").Success(map[string]any{"ok": true}, true, "ok")
 
-	// Attribute schema: `partition` is source-bound to
+	// @deliberate: Attribute schema: `partition` is source-bound to
 	// `{{child.partition_key}}`. `ok` is the executor-write-back slot the
 	// stub fills. The schema is open enough that the resolved partition
 	// value doesn't violate the post-dispatch validator.
@@ -107,7 +107,7 @@ func TestChildPartitionKeyBinds(t *testing.T) {
 
 	iid := h.CreateInstance(tid, "ck-child-partition-key", map[string]any{})
 
-	// Each of the three children dispatches under the parent's node row
+	// @deliberate: Each of the three children dispatches under the parent's node row
 	// with NodeType="fan-child"; the stub's Observed log records each
 	// dispatch's resolved `partition` attribute. The binding claim is:
 	// each partition key in {a,b,c} appears as the resolved `partition`

@@ -46,7 +46,7 @@ func TestAttributeOverridesMatchOverlayUnused_CounterZeroForNonFiringEntries(t *
 		},
 	})
 
-	// Five entries; only #0 (node_type=worker) and #2 (empty matcher)
+	// @constraint: Five entries; only #0 (node_type=worker) and #2 (empty matcher)
 	// match the worker dispatch. The other three target a child_key
 	// the harness never produces (no fan-out), so they never fire.
 	overrides := map[string]any{

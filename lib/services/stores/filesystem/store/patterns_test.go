@@ -40,20 +40,18 @@ func TestPattern_RingMode_LiveDiscovery(t *testing.T) {
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	// Two cycles before adding gamma.
 	for i := 0; i < 4; i++ {
 		o, err := st.Open(context.Background(), fmt.Sprintf("c-%d", i), "@r")
 		must(t, err)
 		if !o.Available {
 			t.Fatalf("iter %d: expected Available", i)
 		}
-		// Sleep so mtime ordering is observable.
+		// @constraint: mtime resolution requires a real delay between commits so ring-mode ordering is observable.
 		time.Sleep(2 * time.Millisecond)
 		must(t, st.Commit(context.Background(), fmt.Sprintf("c-%d", i), o.Result.ClaimScope, o.Result.Address))
 	}
-	// Add gamma externally.
 	must(t, os.MkdirAll(filepath.Join(root, sub, "gamma"), 0o755))
-	// Open should discover gamma at some point in the next 3 cycles.
+	// @deliberate: on_open sync must discover the externally-added folder within a bounded number of cycles.
 	seen := map[string]bool{}
 	for i := 0; i < 6; i++ {
 		o, err := st.Open(context.Background(), fmt.Sprintf("c2-%d", i), "@r")
@@ -90,7 +88,6 @@ func TestPattern_QueueMode_AutoRefresh(t *testing.T) {
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	// Pass 1: 3 picks, 1 Unavailable.
 	for i := 0; i < 3; i++ {
 		o, err := st.Open(context.Background(), fmt.Sprintf("p1-%d", i), "@r")
 		must(t, err)
@@ -105,7 +102,7 @@ func TestPattern_QueueMode_AutoRefresh(t *testing.T) {
 		t.Fatal("p1: expected Unavailable to consume drained")
 	}
 
-	// Pass 2: corpus unchanged (folders still on disk under pop) → 3 picks again.
+	// @deliberate: under pop the folders remain on disk, so a second pass re-syncs the same corpus and yields 3 picks again.
 	picks := 0
 	for {
 		o, err := st.Open(context.Background(), fmt.Sprintf("p2-%d", picks), "@r")
@@ -219,17 +216,15 @@ func TestPattern_StaticQueue_ExplicitRefresh(t *testing.T) {
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	// Initial Open with explicit + zero-state available has no folders.
+	// @deliberate: explicit sync strategy starts with zero available state until an operator triggers runSync.
 	o, err := st.Open(context.Background(), "c-0", "@r")
 	must(t, err)
 	if o.Available {
 		t.Fatal("expected Unavailable until explicit sync")
 	}
 
-	// Operator-triggered sync.
 	must(t, st.runSync("@r", pp))
 
-	// 2 picks then sticky Unavailable.
 	for i := 0; i < 2; i++ {
 		o, err := st.Open(context.Background(), fmt.Sprintf("c-%d", i+1), "@r")
 		must(t, err)
@@ -245,7 +240,6 @@ func TestPattern_StaticQueue_ExplicitRefresh(t *testing.T) {
 			t.Fatalf("iter %d post-drain: expected sticky Unavailable", i)
 		}
 	}
-	// Operator triggers another sync; folders re-discovered.
 	must(t, st.runSync("@r", pp))
 	o, err = st.Open(context.Background(), "c-after-sync", "@r")
 	must(t, err)

@@ -35,11 +35,10 @@ const verifierShapeChecksImage = "rimsky-executor-verifier-shape-checks:latest"
 func StartVerifierShapeChecksOnNetwork(ctx context.Context, t testing.TB, networkName, alias string) (endpoint string) {
 	t.Helper()
 
-	// The verifier-shape-checks binary's `main.go` defaults to binding
-	// gRPC on port 9095 (RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT). We
-	// pin that default rather than override it so the in-network
-	// `<alias>:9095` endpoint we return matches the binary's own log line
-	// when an operator debugs by reading container stdout.
+	// @deliberate: pin the binary's default 9095 (RIMSKY_EXECUTOR_VERIFIER_SHAPE_CHECKS_PORT)
+	// rather than override it, so the in-network `<alias>:9095` endpoint we return
+	// matches the binary's own startup log line when an operator debugs by reading
+	// container stdout.
 	c, err := testcontainers.Run(ctx, verifierShapeChecksImage,
 		tcnet.WithNetworkName([]string{alias}, networkName),
 		testcontainers.WithEnv(map[string]string{

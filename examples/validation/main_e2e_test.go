@@ -93,70 +93,63 @@ import (
 // harness never t.Skip's), so a developer who hasn't run `make
 // core-images` sees the missing-image error directly.
 func TestE2E_ExampleValidationAgainstRunningRimsky(t *testing.T) {
-	// Not parallel: this scenario stands up a docker network + a
-	// rimsky-all-in-one container + a Postgres testcontainer + an
-	// executor stub + an in-process validation peer on a host port.
-	// The cost is real, so other test methods in this package
-	// (`validation_test.go`) keep their fast in-process shape and
-	// only this gate pays the cross-stack price.
+	// @deliberate: not parallel — this scenario stands up a docker
+	// network + a rimsky-all-in-one container + a Postgres
+	// testcontainer + an executor stub + an in-process validation peer
+	// on a host port. The cost is real, so other test methods in this
+	// package (`validation_test.go`) keep their fast in-process shape
+	// and only this gate pays the cross-stack price.
 	ctx := context.Background()
 
-	// 1. Shared docker network so both peers (the example validator
-	//    and the stub executor) can come up on stable in-network
-	//    aliases BEFORE rimsky boots. The peers MUST be up before
-	//    rimsky comes up because the control-api eager-dials every
-	//    declared claim-producer at startup and EXITS NON-ZERO on any
-	//    unreachable peer; the host-port-tunnel path races that
-	//    eager dial (see Dockerfile.example for the rationale), so
-	//    both peers are containers on the same network as rimsky.
+	// @deliberate: bring-up order is load-bearing. Peers MUST be up
+	// before rimsky comes up because the control-api eager-dials every
+	// declared claim-producer at startup and EXITS NON-ZERO on any
+	// unreachable peer; the host-port-tunnel path races that eager dial
+	// (see Dockerfile.example for the rationale), so both peers are
+	// containers on the same network as rimsky.
+	//   1. Shared docker network so both peers can come up on stable
+	//      in-network aliases BEFORE rimsky boots.
+	//   2. Stub executor at alias `exec-stub` — templates the proof
+	//      posts reference this executor by name; rimsky's startup
+	//      eager-dial runs the Capabilities handshake against it. The
+	//      stub returns Success on every dispatch, but the proof never
+	//      actually creates instances; it only POSTs templates, so the
+	//      stub's only job is to satisfy the registry's "executor
+	//      declared" gate.
+	//   3. Example validation peer at alias `validator`, built on
+	//      demand from Dockerfile.example via testcontainers
+	//      FromDockerfile with the repo root as the build context. The
+	//      peer's Capabilities handshake advertises the `validation`
+	//      mix-in alongside its primary claim-producer protocol — see
+	//      producer.go's Capabilities response.
+	//   4. Bring up rimsky-all-in-one. The peer is registered as a
+	//      claim-producer (its primary protocol) with the `validation`
+	//      mix-in advertised — see WithClaimProducerProtocols below.
+	//      Reference-validation mode `none` keeps the gate on the
+	//      validation wiring under test, not the schema-cache
+	//      freshness race.
 	netName := harness.NewNetwork(ctx, t)
-
-	// 2. Stub executor on the network at alias `exec-stub`.
-	//    Templates the proof posts reference this executor by name;
-	//    rimsky's startup eager-dial runs the Capabilities handshake
-	//    against it (a missing stub would exit the all-in-one
-	//    container non-zero before /health). The stub returns Success
-	//    on every dispatch, but the proof never actually creates
-	//    instances — it only POSTs templates, so the stub's only job
-	//    is to satisfy the registry's "executor declared" gate.
 	stubEndpoint := harness.StartExecutorStubOnNetwork(ctx, t, netName, "exec-stub")
-
-	// 3. Example validation peer on the network at alias `validator`,
-	//    built on demand from Dockerfile.example via testcontainers
-	//    FromDockerfile with the repo root as the build context. The
-	//    peer's Capabilities handshake advertises the `validation`
-	//    mix-in alongside its primary claim-producer protocol — see
-	//    producer.go's Capabilities response.
 	valEndpoint := startExampleValidatorOnNetwork(ctx, t, netName, "validator")
 
-	// 4. Bring up rimsky-all-in-one. The peer is registered as a
-	//    claim-producer (its primary protocol) with the `validation`
-	//    mix-in advertised — see WithClaimProducerProtocols below.
-	//    Strict-`all` (the all-in-one image's baked default) would
-	//    require the executor's expected_attributes_schema to be in
-	//    the discovery cache before POST /v1/templates accepts the
-	//    template; the stub advertises a permissive open schema so
-	//    `all` would work too, but `none` keeps the gate on the
-	//    validation wiring under test, not the schema-cache freshness
-	//    race.
 	ep := harness.BringUpRimsky(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("exec-stub", stubEndpoint),
 		harness.WithClaimProducer("validator", valEndpoint, "read_only"),
-		// The validation mix-in arrives via the producer's
-		// Capabilities — see producer.go's Capabilities response.
-		// The harness writes `protocols: [claim_producer, validation]`
-		// into the rendered rimsky.yml; rimsky's
+		// @deliberate: the validation mix-in arrives via the producer's
+		// Capabilities — see producer.go's Capabilities response. The
+		// harness writes `protocols: [claim_producer, validation]` into
+		// the rendered rimsky.yml; rimsky's
 		// DialPublisherAndValidationRegistries dials the matching
 		// Validation client per advertised protocol.
 		harness.WithClaimProducerProtocols("validator", "validation"),
 		harness.WithRefValidationMode("none"),
 	)
 
-	// Run each acceptance leg as a sub-test against the SAME running
-	// stack — the three legs are independent registration observations,
-	// so a single bring-up is sufficient and a per-leg bring-up would
-	// only multiply the bring-up cost.
+	// @deliberate: each leg runs against the SAME running stack — the
+	// three legs are independent registration observations, so a single
+	// bring-up is sufficient and a per-leg bring-up would only multiply
+	// the bring-up cost.
 	t.Run("Error_severity_finding_blocks_registration", func(t *testing.T) {
 		exerciseErrorBlocksRegistrationLeg(t, ep)
 	})
@@ -185,16 +178,17 @@ func exerciseErrorBlocksRegistrationLeg(t *testing.T, ep harness.RimskyEndpoint)
 			status, string(raw))
 	}
 
-	// The rejection body must cite the validator's finding class so an
-	// operator can route the failure back to the validating service.
+	// @constraint: the rejection body must cite the validator's finding
+	// class so an operator can route the failure back to the
+	// validating service.
 	bodyLower := strings.ToLower(string(raw))
 	if !strings.Contains(bodyLower, "selector_rejected_by_example_validator") {
 		t.Fatalf("rejection body must cite the validator's error-finding class (`selector_rejected_by_example_validator`); the absence proves either the Validator wasn't called or its finding was dropped at the rimsky↔response boundary; body: %s", string(raw))
 	}
 
-	// And the body's `validation_errors` array must be non-empty —
-	// the finding must round-trip from the validator through rimsky's
-	// pipeline to the operator-facing response.
+	// @constraint: the body's `validation_errors` array must be non-
+	// empty — the finding must round-trip from the validator through
+	// rimsky's pipeline to the operator-facing response.
 	var resp struct {
 		Error            string           `json:"error"`
 		ValidationErrors []map[string]any `json:"validation_errors"`
@@ -229,8 +223,9 @@ func exerciseErrorBlocksRegistrationLeg(t *testing.T, ep harness.RimskyEndpoint)
 func exerciseWarningPassesWithSurfaceLeg(t *testing.T, ep harness.RimskyEndpoint) {
 	spec := validatedTemplate("validation-example-warning", SelectorTriggerWarning)
 
-	// Leg (b.i): warnings ARE surfaced. The validate-only surface
-	// runs the same pipeline and echoes warnings in the response.
+	// @deliberate: leg (b.i) — warnings ARE surfaced. The validate-only
+	// surface runs the same pipeline and echoes warnings in the
+	// response.
 	status, raw := ep.PostJSON(t, "/v1/templates/validate", map[string]any{"spec": spec})
 	if status != http.StatusOK {
 		t.Fatalf("POST /v1/templates/validate with the warning-trigger selector: got status %d, want 200 (validate-only never 4xx's on a valid spec; warnings are echoed in the response body); body: %s",
@@ -253,16 +248,16 @@ func exerciseWarningPassesWithSurfaceLeg(t *testing.T, ep harness.RimskyEndpoint
 	if len(validateResp.ValidationWarns) == 0 {
 		t.Fatalf("validate-only response: `validation_warnings` is empty — the validator's warning did NOT survive the round-trip to the operator response (falsifier guard: warnings must be surfaced); body: %s", string(raw))
 	}
-	// Confirm the warning carries the per-binding JSON-pointer path the
-	// example validator stamps on every finding. The control-api's
-	// `findingToProjection` flattens the proto ValidationFinding into a
-	// `{path, msg}` projection (class is dropped from the projection
-	// today; only path + msg survive to the operator response), so
-	// asserting on the path's slug confirms the finding the example
-	// validator emitted is the one rimsky surfaced — not a finding
-	// fabricated elsewhere in the pipeline. Use a case-insensitive
-	// match on the serialized projection so a body capitalisation
-	// change does not flap the assertion.
+	// @constraint: confirm the warning carries the per-binding JSON-
+	// pointer path the example validator stamps on every finding. The
+	// control-api's `findingToProjection` flattens the proto
+	// ValidationFinding into a `{path, msg}` projection (class is
+	// dropped from the projection today; only path + msg survive to
+	// the operator response), so asserting on the path's slug confirms
+	// the finding the example validator emitted is the one rimsky
+	// surfaced — not a finding fabricated elsewhere in the pipeline.
+	// Case-insensitive match on the serialized projection so a body
+	// capitalisation change does not flap the assertion.
 	warningBlob := strings.ToLower(string(raw))
 	if !strings.Contains(warningBlob, "/claim_producer/claims/0/selector") {
 		t.Fatalf("validation_warnings body does not cite the per-binding selector path the example validator stamps on its findings; body: %s", string(raw))
@@ -271,8 +266,8 @@ func exerciseWarningPassesWithSurfaceLeg(t *testing.T, ep harness.RimskyEndpoint
 		t.Fatalf("validation_warnings body does not cite the example validator's warning message wording; body: %s", string(raw))
 	}
 
-	// Leg (b.ii): warnings do NOT block. The full register surface
-	// accepts the same spec.
+	// @deliberate: leg (b.ii) — warnings do NOT block. The full
+	// register surface accepts the same spec.
 	regStatus, regRaw := ep.PostJSON(t, "/v1/templates", map[string]any{"spec": spec})
 	if regStatus != http.StatusCreated {
 		t.Fatalf("POST /v1/templates with the warning-trigger selector: got status %d, want 201 (the falsifier fires when a warning-severity finding blocks registration); body: %s",
@@ -311,8 +306,6 @@ func exerciseAcceptCaseLeg(t *testing.T, ep harness.RimskyEndpoint) {
 	}
 }
 
-// --- helpers ---------------------------------------------------------------
-
 // validatedTemplate builds a single-node template spec whose worker
 // references the stub executor (so the registry's executor-declared
 // gate passes) AND carries a `stores:` binding to the example
@@ -329,11 +322,12 @@ func validatedTemplate(name, selector string) map[string]any {
 			{
 				"type":     "worker",
 				"executor": "exec-stub",
-				// Declaring the acquire/unavailable policy explicitly (give_up
-				// is the default fail-fast behavior anyway) keeps the
-				// acquisition-policy advisory out of the response, so the
-				// accept-case leg's zero-warnings assertion isolates the
-				// example validator's findings.
+				// @deliberate: declare the acquire/unavailable policy
+				// explicitly (give_up is the default fail-fast behavior
+				// anyway) — this keeps the acquisition-policy advisory
+				// out of the response, so the accept-case leg's
+				// zero-warnings assertion isolates the example
+				// validator's findings.
 				"error_types": map[string]any{
 					"acquire/unavailable": map[string]any{
 						"policy": []map[string]any{{"action": "give_up"}},

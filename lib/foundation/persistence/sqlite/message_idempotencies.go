@@ -2,8 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.MessageIdempotencyTable — mirror of the
-// postgres impl. SQLite is dev-only.
+// @source: lib/foundation/persistence/postgres/message_idempotencies.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
 
 package sqlite
 
@@ -19,6 +20,9 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
+// messageIdempotenciesImpl is the SQLite-backed
+// persistence.MessageIdempotencyTable — universal dedup-tuple table
+// for POST /instances/{id}/messages.
 type messageIdempotenciesImpl tablesImpl
 
 var _ persistence.MessageIdempotencyTable = (*messageIdempotenciesImpl)(nil)
@@ -29,7 +33,7 @@ func (s *tablesImpl) MessageIdempotencies() persistence.MessageIdempotencyTable 
 
 func (b *messageIdempotenciesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(tx) }
 
-// SQLite doesn't have postgres's xmax trick. We use two queries inside
+// sqliteInsertMessageIdempotencySQL doesn't have postgres's xmax trick. We use two queries inside
 // the caller's tx: first try INSERT … ON CONFLICT DO NOTHING; if no row
 // was inserted, SELECT the existing row. The dedup tuple includes BOTH
 // sender_kind (structural source-of-claim: operator/publisher/anonymous)
@@ -64,7 +68,6 @@ func (b *messageIdempotenciesImpl) InsertOrLookup(ctx context.Context, tx persis
 	if n == 1 {
 		return row, true, nil
 	}
-	// Conflict — fetch the previously-recorded row.
 	var msgIDStr, createdAtStr string
 	err = b.q(tx).QueryRowContext(ctx, sqliteSelectMessageIdempotencySQL,
 		row.InstanceID.String(), row.SenderKind, row.Sender, row.SenderSubject, row.IdempotencyKey,

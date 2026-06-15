@@ -40,7 +40,7 @@ func seedRunForNode(
 ) shared.UUID {
 	t.Helper()
 	var out shared.UUID
-	// Resolve the node's instance + main RunScope so the dispatch row
+	// @deliberate: Resolve the node's instance + main RunScope so the dispatch row
 	// satisfies the run_scope_id NOT NULL constraint.
 	var mainScopeID shared.UUID
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -206,7 +206,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 	stubStore := storetest.NewFake("workspace", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
 	reg.Add("workspace", stubStore)
 
-	// Seed a frame + run row per holder so the post-stage-5 FK chain on
+	// @deliberate: Seed a frame + run row per holder so the post-stage-5 FK chain on
 	// rimsky_claim_holders.holder_run_id resolves.
 	frameID := seedFrame(ctx, t, backend, inst.ID, acqNode.ID)
 	acqRunID := seedRunForNode(ctx, t, backend, d.Queue(), acqNode.ID, frameID)
@@ -263,7 +263,7 @@ func TestCheckAndFireResolution_AllCompletedFiresCommit(t *testing.T) {
 		row = r
 		return err
 	}))
-	// Post-Stage-3 of the claim-handle state-column refactor: the row
+	// @deliberate: Post-Stage-3 of the claim-handle state-column refactor: the row
 	// is promoted (not deleted) at auto-terminal; assert state=committed
 	// + holder_supervisor_id nulled + resolved_at set instead of nil row.
 	require.NotNil(t, row, "auto-terminal must preserve lock-holder past terminal (Promote-not-delete)")
@@ -365,7 +365,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
 	}))
 
-	// First entry: row must survive + state=committed + exactly one Commit.
+	// @deliberate: First entry: row must survive + state=committed + exactly one Commit.
 	// Durable-Commit flips state to 'committed' (Promote-not-delete) and
 	// preserves the row past auto-terminal (held-durable Promote contract
 	// per @blessed-invariant 22).
@@ -389,7 +389,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 	}
 	require.Equal(t, 1, commitCount)
 
-	// Fix 6 guard: re-entry on the durable row is a no-op.
+	// @deliberate: Fix 6 guard: re-entry on the durable row is a no-op.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.CheckAndFireResolution(ctx, args, tx, claimHandleID)
 	}))
@@ -403,7 +403,7 @@ func TestCheckAndFireResolution_DurableLifetimeIdempotency(t *testing.T) {
 		"re-entering CheckAndFireResolution on a held-durable row must NOT re-fire Commit")
 }
 
-// --- cycle 4 fan-out parent aggregation scenarios -----------------------
+// @deliberate: cycle 4 fan-out parent aggregation scenarios
 //
 // Drive `ResolveClaimHandleTerminal` on multiple sub-claims and assert
 // the parent's aggregate Commit/Abandon decision is computed per the
@@ -574,7 +574,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-BE",
 		"be-store", policy, 2,
 	)
-	// Resolve: sub[0] Abandon, sub[1] Commit → parent Commits under best_effort.
+	// @deliberate: Resolve: sub[0] Abandon, sub[1] Commit → parent Commits under best_effort.
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateAbandon)
 	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateCommit)
 
@@ -584,7 +584,7 @@ func TestResolveParentClaimChain_BestEffort_PartialAbandonStillCommits(t *testin
 		"best_effort must NOT Abandon the parent when at least one child committed")
 }
 
-// TestResolveParentClaimChain_Threshold_AbandonExceedsMax pins
+// TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax pins
 // issue-C: threshold(max_failures=N) Abandons when abandoned > N,
 // Commits otherwise.
 func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
@@ -633,7 +633,7 @@ func TestResolveParentClaimChain_Threshold_AbandonWhenBelowMax(t *testing.T) {
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-TH",
 		"th-store", policy, 3,
 	)
-	// Resolve: 2 Commits + 1 Abandon → abandoned=1 ≤ MaxFailures=2 → parent Commits.
+	// @deliberate: Resolve: 2 Commits + 1 Abandon → abandoned=1 ≤ MaxFailures=2 → parent Commits.
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit)
 	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateCommit)
 	resolveSubclaim(ctx, t, backend, args, subIDs[2], parentID, store, runtime.AggregateAbandon)
@@ -693,7 +693,7 @@ func TestResolveParentClaimChain_Strict_AbandonsOnAnyFail(t *testing.T) {
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-ST",
 		"st-store", policy, 2,
 	)
-	// Resolve: 1 Commit + 1 Abandon → strict → parent Abandons.
+	// @deliberate: Resolve: 1 Commit + 1 Abandon → strict → parent Abandons.
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit)
 	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateAbandon)
 
@@ -755,21 +755,21 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 		SupervisorID:  "sup-HP",
 	}
 
-	// Seed a parent claim handle with 2 sub-claims AND 1 active
+	// @deliberate: Seed a parent claim handle with 2 sub-claims AND 1 active
 	// co-holder row on the parent.
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-HP",
 		"hp-store", policy, 2,
 	)
-	// Add a co-holder row on the parent (active state).
+	// @deliberate: Add a co-holder row on the parent (active state).
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID: shared.UUID(uuid.New()), ClaimHandleID: parentID, HolderRunID: coRunID,
 		}, tx)
 	}))
 
-	// Resolve both sub-claims (one commit, one commit so strict aggregate
+	// @deliberate: Resolve both sub-claims (one commit, one commit so strict aggregate
 	// would otherwise fire Commit). Parent MUST NOT resolve yet because
 	// the co-holder row is still active.
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit)
@@ -780,7 +780,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"parent must NOT Abandon either while a co-holder is still active")
 
-	// Parent row must still be present.
+	// @deliberate: Parent row must still be present.
 	var parentRow *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, parentID, tx)
@@ -790,7 +790,7 @@ func TestResolveParentClaimChain_ParentHeldWithActiveCoHolders_Defers(t *testing
 	require.NotNil(t, parentRow,
 		"parent claim_handle must survive while co-holder is still active")
 
-	// Now complete the co-holder. Drive CheckAndFireResolution on the
+	// @deliberate: Now complete the co-holder. Drive CheckAndFireResolution on the
 	// parent (the normal path that fires when the last holder
 	// transitions). This time aggregation should fire Commit on the
 	// parent.
@@ -862,7 +862,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 		SupervisorID:  "sup-CQ",
 	}
 
-	// Seed a fan-out parent with 2 sub-claims. Strict policy so the
+	// @deliberate: Seed a fan-out parent with 2 sub-claims. Strict policy so the
 	// final verdict on all-commits is Commit.
 	policy := spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	parentID, subIDs := seedFanOutParentAndSubclaims(
@@ -870,7 +870,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 		"cq-store", policy, 2,
 	)
 
-	// Resolve ONE sub-claim (commit). committed_children_count=1,
+	// @deliberate: Resolve ONE sub-claim (commit). committed_children_count=1,
 	// expected_children_count=2 — quorum NOT met. The standard
 	// `SettleChildren` walker invoked by this resolution will
 	// see sub[1] still present (non-durable) and return nil without
@@ -878,7 +878,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	// direct `CheckAndFireResolution` call below.
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit)
 
-	// Insert the parent's own holder row and immediately complete it so
+	// @deliberate: Insert the parent's own holder row and immediately complete it so
 	// the `CheckAndFireResolution` holder-loop sees no active holders
 	// (otherwise the function would defer at the holder check, not the
 	// cycle-6 children-quorum guard we want to exercise).
@@ -894,7 +894,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 		)
 	}))
 
-	// Drive `CheckAndFireResolution` directly on the parent. The
+	// @deliberate: Drive `CheckAndFireResolution` directly on the parent. The
 	// cycle-6 children-quorum guard MUST defer because
 	// committed(1) + abandoned(0) < expected(2).
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -906,7 +906,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"cycle-6 guard must defer parent Abandon while children quorum is not met")
 
-	// Parent row must still be present after the deferred call.
+	// @deliberate: Parent row must still be present after the deferred call.
 	var parentRow *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, parentID, tx)
@@ -916,7 +916,7 @@ func TestCheckAndFireResolution_ChildrenIncomplete_DefersUntilAllResolve(t *test
 	require.NotNil(t, parentRow,
 		"parent claim_handle must survive the deferred cycle-6 quorum check")
 
-	// Resolve the second sub-claim. This bumps committed_children_count
+	// @deliberate: Resolve the second sub-claim. This bumps committed_children_count
 	// to 2 inside `ResolveClaimHandleTerminal` and then recurses into
 	// `SettleChildren` — which now sees no remaining children
 	// + no active holders and fires Commit on the parent via the same
@@ -1023,7 +1023,7 @@ func TestCheckAndFireResolution_AnyFailedFiresGiveUp(t *testing.T) {
 		row = r
 		return err
 	}))
-	// Post-Stage-3: the row is promoted (not deleted) at auto-terminal;
+	// @deliberate: Post-Stage-3: the row is promoted (not deleted) at auto-terminal;
 	// assert state=abandoned + holder_supervisor_id nulled + resolved_at
 	// set instead of nil row.
 	require.NotNil(t, row, "auto-terminal must preserve lock-holder past terminal (Promote-not-delete)")
@@ -1102,7 +1102,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-BD",
 		"be-dur-store", policy, 2,
 	)
-	// Resolve both sub-claims as durable-Commit. The durable branch
+	// @deliberate: Resolve both sub-claims as durable-Commit. The durable branch
 	// promotes the child rows to state='committed' (they survive) but
 	// MUST still bump the parent's committed_children_count + recurse.
 	// Under best_effort, committed > 0 → parent Commits.
@@ -1114,7 +1114,7 @@ func TestResolveParentClaimChain_BestEffort_AllDurableCommits(t *testing.T) {
 	require.Equal(t, 0, countCallsOnID(store.Calls(), parentID.String(), "abandon"),
 		"best_effort with all-durable-Commit children must NOT Abandon the parent")
 
-	// Sanity: the children must have been promoted to committed (not
+	// @deliberate: Sanity: the children must have been promoted to committed (not
 	// deleted). Every Commit (durable or subgraph) flips state to
 	// 'committed' (Promote-not-delete). The retention sweep reaps
 	// subgraph rows at cutoff; durable rows are reaped only via Release.
@@ -1194,14 +1194,14 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 		"cs-store", policy, 3,
 	)
 
-	// Resolve sub[0] → Abandon. The cancel_siblings walker must force-
+	// @deliberate: Resolve sub[0] → Abandon. The cancel_siblings walker must force-
 	// Abandon sub[1] and sub[2] inside the same tx, then the parent
 	// aggregator (strict → any failed → Abandon) fires the parent's
 	// Abandon. Net producer-side: three child Abandon verbs + one
 	// parent Abandon = 4 abandon calls total.
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateAbandon)
 
-	// Each sub-claim's row must be promoted to abandoned (post-Stage-3
+	// @deliberate: Each sub-claim's row must be promoted to abandoned (post-Stage-3
 	// Promote-not-delete; the row is preserved past terminal for
 	// forensics / retention).
 	for i, sid := range subIDs {
@@ -1216,7 +1216,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 		require.Equal(t, spec.ClaimHandleStateAbandoned, row.State,
 			"sub-claim %d must be promoted to state=abandoned after force-Abandon", i)
 	}
-	// Parent row must also be promoted to abandoned (strict aggregator
+	// @deliberate: Parent row must also be promoted to abandoned (strict aggregator
 	// fired Abandon).
 	var parentRow *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -1229,7 +1229,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_AbandonForcesOtherChildren
 	require.Equal(t, spec.ClaimHandleStateAbandoned, parentRow.State,
 		"parent claim_handle must be promoted to state=abandoned after strict aggregator fires Abandon")
 
-	// Producer-side: each sub-claim got Abandon (3) + parent got Abandon (1).
+	// @deliberate: Producer-side: each sub-claim got Abandon (3) + parent got Abandon (1).
 	for i, sid := range subIDs {
 		require.Equal(t, 1, countCallsOnID(store.Calls(), sid.String(), "abandon"),
 			"sub-claim %d must receive exactly one Abandon verb on the producer", i)
@@ -1299,14 +1299,14 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 		"cs-dur-store", policy, 3,
 	)
 
-	// Resolve sub[0] as a durable-Commit first. Post-Stage-3 the row
+	// @deliberate: Resolve sub[0] as a durable-Commit first. Post-Stage-3 the row
 	// is promoted (state=committed, lifetime=durable preserved) but
 	// bumps the parent's committed_children_count and recurses through
 	// SettleChildren. Strict aggregator sees 1 commit + 0
 	// abandons + 2 outstanding children → parent NOT yet resolved.
 	resolveSubclaimWithLifetime(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateCommit, spec.ClaimLifetimeDurable)
 
-	// Sanity: sub[0] is now state=committed; parent row still present.
+	// @deliberate: Sanity: sub[0] is now state=committed; parent row still present.
 	// (Lifetime column reflects the seed default — `seedFanOutParentAnd
 	// Subclaims` doesn't override it. The state-promotion path is
 	// uniform post-refactor; durable-vs-subgraph signal flows through
@@ -1322,7 +1322,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	require.Equal(t, spec.ClaimHandleStateCommitted, s0.State,
 		"sub[0] must be promoted to state=committed on Commit")
 
-	// Now resolve sub[1] as Abandon. The cancel_siblings walker should:
+	// @deliberate: Now resolve sub[1] as Abandon. The cancel_siblings walker should:
 	//   - SKIP sub[0] because state != 'active' (durable-Commit
 	//     promoted it to state=committed),
 	//   - force-Abandon sub[2] (the only remaining in-flight sibling).
@@ -1330,7 +1330,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	// fires Abandon on the parent.
 	resolveSubclaim(ctx, t, backend, args, subIDs[1], parentID, store, runtime.AggregateAbandon)
 
-	// sub[0] (durable) must still be present + state=committed.
+	// @deliberate: sub[0] (durable) must still be present + state=committed.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, subIDs[0], tx)
 		s0 = r
@@ -1340,7 +1340,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 		"durable-Commit sibling must survive cancel_siblings walk (state=committed filter)")
 	require.Equal(t, spec.ClaimHandleStateCommitted, s0.State,
 		"sub[0] must remain state=committed (durable-Commit contract)")
-	// sub[1] (triggering) and sub[2] (force-Abandoned) must be promoted
+	// @deliberate: sub[1] (triggering) and sub[2] (force-Abandoned) must be promoted
 	// to state=abandoned (Promote-not-delete; rows preserved for
 	// forensics / retention).
 	for i, idx := range []int{1, 2} {
@@ -1355,7 +1355,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 		require.Equal(t, spec.ClaimHandleStateAbandoned, row.State,
 			"non-durable sub-claim slot %d (subID idx %d) must be promoted to state=abandoned after cancel_siblings", i, idx)
 	}
-	// Parent row must be promoted to state=abandoned (strict aggregator
+	// @deliberate: Parent row must be promoted to state=abandoned (strict aggregator
 	// fired Abandon — 1 commit + 2 abandons + 0 outstanding → any
 	// failed → Abandon).
 	var parentRow *persistence.ClaimHandleRow
@@ -1369,7 +1369,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_SkipsDurableSibling(t *tes
 	require.Equal(t, spec.ClaimHandleStateAbandoned, parentRow.State,
 		"parent must be promoted to state=abandoned under strict aggregation once cancel_siblings settles non-durable siblings")
 
-	// Producer-side: sub[0] received Commit (no Abandon!), sub[1] +
+	// @deliberate: Producer-side: sub[0] received Commit (no Abandon!), sub[1] +
 	// sub[2] received Abandon, parent received Abandon. sub[0] MUST NOT
 	// have been Abandoned even though cancel_siblings fired.
 	require.Equal(t, 1, countCallsOnID(store.Calls(), subIDs[0].String(), "commit"),
@@ -1449,13 +1449,13 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 		Kind:           spec.AggregationKindStrict,
 		CancelSiblings: true,
 	}
-	// Seed PARENT → [sub[0], sub[1]] using the existing helper.
+	// @deliberate: Seed PARENT → [sub[0], sub[1]] using the existing helper.
 	parentID, subIDs := seedFanOutParentAndSubclaims(
 		ctx, t, backend, parentRunID, parentNode.ID, "sup-CR",
 		"cs-rec-store", policy, 2,
 	)
 
-	// Seed sub[1] → [g1, g2] manually so sub[1] becomes itself a fan-out
+	// @deliberate: Seed sub[1] → [g1, g2] manually so sub[1] becomes itself a fan-out
 	// parent. The grandchildren live under sub[1]'s parent_claim_handle_id.
 	g1 := shared.UUID(uuid.New())
 	g2 := shared.UUID(uuid.New())
@@ -1486,7 +1486,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 		return nil
 	}))
 
-	// Resolve sub[0] → Abandon. The cancel_siblings walker:
+	// @deliberate: Resolve sub[0] → Abandon. The cancel_siblings walker:
 	//   1. Force-Abandons sub[1] (the in-flight sibling), which itself
 	//      triggers cancelDescendantClaims to force-Abandon g1 + g2.
 	//   2. The descendant walk MUST fire BEFORE sub[1]'s own Delete so
@@ -1496,7 +1496,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 	// Net producer-side: 5 Abandon verbs total (sub[0], sub[1], g1, g2, PARENT).
 	resolveSubclaim(ctx, t, backend, args, subIDs[0], parentID, store, runtime.AggregateAbandon)
 
-	// All five claim_handle rows must be promoted to state=abandoned
+	// @deliberate: All five claim_handle rows must be promoted to state=abandoned
 	// (Promote-not-delete; rows preserved past terminal for forensics
 	// / retention).
 	allIDs := []shared.UUID{subIDs[0], subIDs[1], g1, g2, parentID}
@@ -1514,7 +1514,7 @@ func TestResolveParentClaimChain_StrictCancelSiblings_RecursivelyCancelsGrandchi
 			"%s claim_handle row must be promoted to state=abandoned after recursive cancel_siblings", allNames[i])
 	}
 
-	// Producer-side: each row got exactly one Abandon, no Commits.
+	// @deliberate: Producer-side: each row got exactly one Abandon, no Commits.
 	for i, id := range allIDs {
 		require.Equalf(t, 1, countCallsOnID(store.Calls(), id.String(), "abandon"),
 			"%s must receive exactly one Abandon verb on the producer", allNames[i])

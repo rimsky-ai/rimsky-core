@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`rimsky` (all binaries), `rimsky-all-in-one` (SQLite-defaulted dev), `rimsky-host-agent-proxy`, `rimsky-conformance`.
+Four core images: a base image carrying every role binary plus the shared entrypoint, a dev-friendly all-in-one variant baked with SQLite defaults so it runs zero-config, the host-agent proxy image, and the conformance-runner image.
 
 ## Rationale
 

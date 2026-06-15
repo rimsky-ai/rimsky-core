@@ -77,7 +77,7 @@ func TestParseAsyncCallback_EventsRideErrorAndParkVerdicts(t *testing.T) {
 }
 
 func TestParseAsyncCallback_RejectsLegacyTypeDiscriminator(t *testing.T) {
-	// The legacy `{type: ...}` shape sets no outcome-oneof variant, so the
+	// @deliberate: The legacy `{type: ...}` shape sets no outcome-oneof variant, so the
 	// parser sees zero outcomes and rejects the body.
 	raw := []byte(`{"type":"complete","attributes_delta":{"k":"v"},"changed":true}`)
 	_, _, err := parseAsyncCallback(raw)

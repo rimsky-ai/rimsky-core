@@ -54,7 +54,6 @@ func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 	producer := "p-x"
 	intent := "rw"
 
-	// 1. Acquire a durable claim A on scopeBytes.
 	idA := shared.UUID(uuid.New())
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
@@ -71,12 +70,12 @@ func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 		}, tx)
 	}))
 
-	// 2. Promote A to committed (simulating durable-Commit at terminal).
+	// @deliberate: promote A to committed simulates durable-Commit at terminal.
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return backend.ClaimHandles().Promote(ctx, idA, "sup-A", spec.ClaimHandleStateCommitted, tx)
 	}))
 
-	// Verify the row is state='committed', holder_supervisor_id NULL.
+	// @deliberate: Verify the row is state='committed', holder_supervisor_id NULL.
 	var rowA *persistence.ClaimHandleRow
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.ClaimHandles().Get(ctx, idA, tx)
@@ -88,7 +87,7 @@ func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 	require.Equal(t, spec.ClaimLifetimeDurable, rowA.Lifetime)
 	require.Empty(t, rowA.HolderSupervisorID, "committed row must have holder_supervisor_id NULL")
 
-	// 3. ListByProducerClaimScope MUST surface the committed-durable row so
+	// @deliberate: ListByProducerClaimScope MUST surface the committed-durable row so
 	//    a new acquire's in-Go scope-conflict check sees the
 	//    byte-equal scope as taken. This is the load-bearing property:
 	//    a committed-durable row remains in conflict-detection scope
@@ -111,7 +110,7 @@ func TestClaimScopeConflict_CommittedDurableStillConflicts(t *testing.T) {
 }
 
 func TestClaimScopeConflict_CommittedSubgraphDoesNotConflict(t *testing.T) {
-	// Counterpoint to the durable case: a committed-subgraph row does
+	// @deliberate: Counterpoint to the durable case: a committed-subgraph row does
 	// NOT participate in conflict detection. The producer Released the
 	// scope on subgraph-Commit; only the rimsky-side ledger row
 	// lingers for forensics until retention sweep reaps it.

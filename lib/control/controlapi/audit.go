@@ -50,7 +50,7 @@ func (s *AuthState) emitAttempted(
 	isWrite bool,
 ) {
 	elapsed := s.Clock.Now().Sub(start).Milliseconds()
-	// `executed` semantics: a read genuinely runs even under dry_run
+	// @constraint: `executed` semantics: a read genuinely runs even under dry_run
 	// (no mutation to skip), so reads record executed:true whenever they
 	// returned cleanly. A write under dry_run skips its mutation, so it
 	// records executed:false. isWrite comes from the action registry.
@@ -174,7 +174,7 @@ func (s *AuthState) insertEvent(_ context.Context, kind string, payload any) {
 		s.Logger.Error("audit.unmarshal-to-map", "kind", kind, "err", err.Error())
 		return
 	}
-	// The kind string is one of the auth.Event* canonical wire-form
+	// @constraint: the kind string is one of the auth.Event* canonical wire-form
 	// constants (e.g. auth.EventAccessAttempted). Parse it back to
 	// the typed events.Kind at the persistence boundary so the
 	// emit-site discipline (decision:event-log-kind-enum) holds even

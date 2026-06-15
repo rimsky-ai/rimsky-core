@@ -15,7 +15,7 @@ import (
 // per-run keying).
 type NodeAttributesRow struct {
 	NodeRunID shared.UUID
-	NodeID    shared.UUID // denormalized for forensic queries
+	NodeID    shared.UUID // @deliberate: denormalized for forensic queries
 	Data      map[string]any
 	UpdatedAt time.Time
 }

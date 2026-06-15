@@ -27,8 +27,9 @@ import (
 // the handshake: it confirms the advertised schema is actually consulted at
 // the validation gates, not merely parsed.
 func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
-	// The executor advertises a closed schema: `model` must be a string,
-	// and no other top-level properties are admitted.
+	// @constraint: the executor advertises a closed schema — `model` must be a string,
+	// and no other top-level properties are admitted. The closed-schema and
+	// type-authority assertions below depend on this shape.
 	const executorName = "agent"
 	advertisedSchema := []byte(`{
 		"type": "object",
@@ -38,7 +39,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		"additionalProperties": false
 	}`)
 
-	// Populate the real discovery cache as the startup handshake would,
+	// @constraint: populate the real discovery cache as the startup handshake would,
 	// then build the real resolver over it.
 	disc := NewDiscovery(nil)
 	disc.SetExecutor(PeerEntry{
@@ -53,7 +54,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		t.Fatal("NewExpectedAttributesSchemaResolver returned nil for a non-nil discovery")
 	}
 
-	// Sanity: the resolver surfaces the advertised bytes for the known
+	// @constraint: sanity: the resolver surfaces the advertised bytes for the known
 	// executor and reports ok=false for an unknown one. The validators
 	// below depend on this lookup behaving as the dispatch path expects.
 	gotSchema, ok := resolver(executorName)
@@ -67,7 +68,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		t.Fatal("resolver returned ok=true for an executor absent from the cache")
 	}
 
-	// ---- Registration-time enforcement -------------------------------
+	// @deliberate: registration-time enforcement —
 	// The registration validator consults the advertised schema via the
 	// ExecutorExpectedAttributesSchema hook (the same shape the control
 	// API wires from the discovery cache). The executor is authoritative
@@ -108,7 +109,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 	})
 
 	t.Run("registration: type-conflicting template rejected", func(t *testing.T) {
-		// L2 redeclares `model` as integer; the advertised schema says
+		// @constraint: L2 redeclares `model` as integer; the advertised schema says
 		// string. The executor is authoritative — registration rejects.
 		res := node.ValidateTemplate(validSpec("integer"), hooks)
 		if res.Ok() {
@@ -120,7 +121,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 	})
 
 	t.Run("registration: undeclared property rejected under closed schema", func(t *testing.T) {
-		// The advertised schema is closed (additionalProperties: false);
+		// @constraint: the advertised schema is closed (additionalProperties: false);
 		// an L2 property the executor does not enumerate is rejected.
 		spec := validSpec("string")
 		props := spec.Nodes[0].Attributes.Schema["properties"].(map[string]any)
@@ -134,7 +135,7 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 		}
 	})
 
-	// ---- Dispatch-time enforcement -----------------------------------
+	// @deliberate: dispatch-time enforcement —
 	// At dispatch the merged effective schema is validated against the
 	// resolved attribute bag (post-merge/post-substitution). The resolved
 	// bytes are the same advertised schema; a bag whose `model` is the

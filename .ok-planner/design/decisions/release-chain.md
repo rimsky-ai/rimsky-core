@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`lint → license-lint → core-images → service-images → test-all → scan → push-images`.
+Lint → license lint → build the core images → build the bundled-service images → run the full test suite → scan the built images → push the images.
 
 ## Rationale
 

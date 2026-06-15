@@ -49,11 +49,6 @@ func TestDispatch_RoutesRunToRunComposeRun(t *testing.T) {
 }
 
 func TestDispatch_RunHelpFlag(t *testing.T) {
-	// `compose run --help` lets flag.ContinueOnError print the usage and
-	// returns exit 2 — distinct from the "unknown subcommand" route
-	// which also returns 2 but writes a different stderr line. The
-	// acceptance handle is: route reached RunComposeRun (no "unknown
-	// subcommand" diagnostic).
 	if got := compose.Dispatch(context.Background(), []string{"run", "--help"}); got != 2 {
 		t.Errorf("Dispatch(run, --help) = %d, want 2", got)
 	}

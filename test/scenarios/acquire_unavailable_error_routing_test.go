@@ -37,7 +37,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 			"@queue": {
 				OnCommit: action.Action{Kind: action.Pop},
 				OnGiveUp: action.Action{Kind: action.Recycle},
-				// No InitialItems — Open returns Unavailable.
+				// @deliberate: No InitialItems — Open returns Unavailable.
 			},
 		},
 	})
@@ -63,7 +63,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "worker",
 					Executor: "stub",
-					// Post-2026-05-23: on_acquire_unavailable retires;
+					// @constraint: post-2026-05-23: on_acquire_unavailable retires;
 					// acquisition failure routes via synthetic class
 					// "acquire/unavailable" in error_types:. give_up
 					// drives the node into failed (matching the prior
@@ -83,7 +83,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// give_up should drive the node to failed.
+	// @deliberate: give_up should drive the node to failed.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
 		"worker should land in failed via error_types: { acquire/unavailable: [give_up] }")
 
@@ -97,7 +97,7 @@ func TestAcquireUnavailableErrorRouting(t *testing.T) {
 	require.Contains(t, *wRow.SettlingSignalType, "terminal/error/",
 		"give_up should record settling_signal_type=terminal/error/<class>")
 
-	// Executor must not have been invoked.
+	// @constraint: Executor must not have been invoked.
 	require.Empty(t, h.Stub.Observed(),
 		"executor must not be invoked when error_types: { acquire/unavailable: [give_up] } fires")
 }

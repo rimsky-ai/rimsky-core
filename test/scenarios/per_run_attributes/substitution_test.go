@@ -69,7 +69,6 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	require.NotNil(t, upN)
 	require.NotNil(t, downN)
 
-	// Wait for the first frame's cascade to settle both nodes.
 	require.True(t, h.WaitForNodeState(upN.ID, cascade.NodeStateFresh, 15*time.Second))
 	require.True(t, h.WaitForNodeState(downN.ID, cascade.NodeStateFresh, 15*time.Second))
 
@@ -83,14 +82,11 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	require.Equal(t, "fire-1", downRow.Data["upstream_value"],
 		"downstream should see fire-1 upstream value")
 
-	// Re-prime stub for second fire.
 	h.Stub.WhenType("upstream").Success(map[string]any{"value": "fire-2"}, true, "ok")
 	h.Stub.WhenType("downstream").Success(map[string]any{}, true, "ok")
 
-	// Invalidate upstream → cascade refires downstream.
 	adminInvalidate(t, h, iid, upN.ID)
 
-	// Wait until downstream's latest attribute row is from the second fire.
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		_ = h.InTx(func(tx persistence.Tx) error {

@@ -81,13 +81,13 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// term_sender settles fresh once → emits terminal/success, gating
+	// @deliberate: term_sender settles fresh once → emits terminal/success, gating
 	// term_receiver under topic_kind="terminal" before draining it
 	// (settled-state drain) so term_receiver completes end to end.
 	h.Stub.WhenType("term_sender").Success(map[string]any{"t": 1}, true, "term")
 	h.Stub.WhenType("term_receiver").Success(map[string]any{"r": 1}, true, "rcv")
 
-	// transient_sender errors with class `flaky`; the stub prefixes a
+	// @deliberate: transient_sender errors with class `flaky`; the stub prefixes a
 	// single-segment class with `stub/`, so the wire error_class is
 	// `stub/flaky`. transient_receiver's gating subscription is on the
 	// transient/retry/* class, so each retry of transient_sender emits a
@@ -101,7 +101,7 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 	// change that drain behavior.)
 	h.Stub.WhenType("transient_sender").Error("flaky", map[string]any{"hint": "transient"})
 
-	// Two receivers, each gated on a distinct signal class:
+	// @deliberate: Two receivers, each gated on a distinct signal class:
 	//   - term_receiver  ← term_sender via terminal/* → topic_kind="terminal";
 	//     drains normally and reaches fresh end to end.
 	//   - transient_receiver ← transient_sender via transient/retry/* →
@@ -116,7 +116,7 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "transient_sender",
 				Executor: "stub",
-				// A long retry chain with a real per-attempt delay keeps
+				// @deliberate: A long retry chain with a real per-attempt delay keeps
 				// transient_sender retrying (and re-emitting transient/retry
 				// signals) for the test's duration, so transient_receiver
 				// stays gated on an undrained transient row throughout.
@@ -147,7 +147,7 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 	require.NotNil(t, termReceiver)
 	require.NotNil(t, transientReceiver)
 
-	// ---- transient class: transient_receiver GATED on an undrained
+	// @deliberate: transient class: transient_receiver GATED on an undrained
 	// transient row. Poll until a topic_kind="transient" wait-set row for
 	// it exists and is still undrained (mid-gate on the retrying
 	// transient_sender). Reading it here satisfies the story's "while the
@@ -159,7 +159,7 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 		"transient_receiver must be gated on an undrained topic_kind=transient wait-set row "+
 			"(transient/retry/* edge must record topic_kind=transient, not the lossy `state` bucket)")
 
-	// ---- terminal class: term_sender's settlement gated term_receiver
+	// @deliberate: terminal class: term_sender's settlement gated term_receiver
 	// under topic_kind="terminal". Drained rows remain queryable (drain
 	// marks drained_at rather than deleting), so this row is observable
 	// regardless of frame timing. Poll for it.
@@ -167,7 +167,7 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 		"term_receiver must carry a topic_kind=terminal wait-set row from the terminal/* edge "+
 			"(terminal/success must record topic_kind=terminal, not `state`)")
 
-	// ---- message class: messages cross-cut and carry NO sender node-run,
+	// @deliberate: message class: messages cross-cut and carry NO sender node-run,
 	// so the runtime stale-marks message receivers rather than gating them
 	// on a wait-set blocker (sender_run_id is NOT NULL and FKs to
 	// rimsky_node_runs — a message has no such run). The message topic_kind
@@ -192,7 +192,7 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 		"the inserted topic_kind=message row must read back as `message`, "+
 			"proving the message signal class maps to its own bucket (not `state`)")
 
-	// ---- no two distinct signal classes collapse onto the same bucket.
+	// @constraint: no two distinct signal classes collapse onto the same bucket.
 	// transient_receiver's runs now carry BOTH a transient-gated row and
 	// the message-kind row; they must occupy DISTINCT topic_kind values,
 	// and term_receiver's terminal-gated row must read "terminal" — three
@@ -210,7 +210,7 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 	require.NotContains(t, termKinds, "state",
 		"terminal class must not collapse onto the legacy `state` bucket")
 
-	// The three classes land on three distinct, kind-named values (no
+	// @deliberate: The three classes land on three distinct, kind-named values (no
 	// collapse): transient, message, and terminal are each observed across
 	// the gated receivers, none folded onto a shared bucket.
 	allKinds := map[string]struct{}{}
@@ -225,7 +225,7 @@ func TestAcceptance_WaitSetTopicKindTaxonomy(t *testing.T) {
 		require.True(t, ok, "topic_kind %q must be observed across the gated receivers", want)
 	}
 
-	// ---- a gated run completes correctly end to end: term_receiver was
+	// @deliberate: a gated run completes correctly end to end: term_receiver was
 	// gated on term_sender's terminal row, the settled-state drain released
 	// the gate, and it dispatches to fresh. This proves the broadened
 	// discriminator leaves drain/dedupe behavior unchanged for a normally-

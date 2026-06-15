@@ -56,7 +56,7 @@ func TestAttributeOverridesEndToEndDispatch(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// `cli` carries no L2 declaration so L1's
+						// @deliberate: `cli` carries no L2 declaration so L1's
 						// template-default ({silence_timeout_ms, trace_to})
 						// folds into the effective schema as the
 						// `default:` for the property at registration.
@@ -95,7 +95,7 @@ func TestAttributeOverridesEndToEndDispatch(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// Find the stub's record of the worker dispatch and assert the
+	// @deliberate: Find the stub's record of the worker dispatch and assert the
 	// attribute bag reaching the executor was the merged map: by_node
 	// wins the trace_to key (most specific), by_executor contributes
 	// synthetic_scenario, the template L1 default's silence_timeout_ms
@@ -119,13 +119,11 @@ func TestAttributeOverridesEndToEndDispatch(t *testing.T) {
 	cli, ok := got["cli"].(map[string]any)
 	require.True(t, ok, "attributes.cli missing or wrong shape: %#v", got)
 
-	// by_node wins for keys present in both by_executor and by_node.
 	require.Equal(t, "/by-node", cli["trace_to"],
 		"by_node should win the trace_to key (most specific layer)")
-	// by_executor contributes a key absent from base + by_node.
 	require.Equal(t, "exit-clean-no-callback", cli["synthetic_scenario"],
 		"by_executor should contribute synthetic_scenario")
-	// L1 template default's silence_timeout_ms key not touched by either override.
+	// @deliberate: L1 template default's silence_timeout_ms key not touched by either override.
 	require.Equal(t, float64(60000), cli["silence_timeout_ms"],
 		"template L1 default's silence_timeout_ms should be preserved")
 }

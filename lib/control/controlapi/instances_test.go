@@ -4,8 +4,6 @@
 
 // instances_test.go — HTTP-level integration tests for the
 // instance force-terminate surface (POST /instances/{idOrKey}/terminate)
-// per spec
-// .ok-planner/specs/2026-05-28-quality-of-life-features-design.md
 // Feature 2. Exercised against the pgtest harness (real Postgres via
 // testcontainers).
 //
@@ -33,7 +31,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
 
-// The await-async-stuck terminate proof (a running node-run force-failed
+// @constraint: the await-async-stuck terminate proof (a running node-run force-failed
 // to instance_killed, then DELETE'd) is no longer exercised at this
 // handler altitude. Per spec S-lifecycle-fullstack-terminate-backfill —
 // "FULL-STACK scenario tests, NOT handler-altitude unit tests with
@@ -86,7 +84,7 @@ func TestTerminateInstance_Idempotent(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	require.NotEmpty(t, out["terminated_at"])
 
-	// Second call is idempotent: still 200, terminated_at unchanged.
+	// @constraint: second call is idempotent: still 200, terminated_at unchanged.
 	status, out2 := h.httpJSON(t, "POST", "/v1/instances/"+inst.ID.String()+"/terminate", map[string]any{
 		"reason": "second",
 	})
@@ -94,7 +92,7 @@ func TestTerminateInstance_Idempotent(t *testing.T) {
 	require.Equal(t, out["terminated_at"], out2["terminated_at"],
 		"idempotent terminate must not move terminated_at")
 
-	// Only the first call recorded an event.
+	// @constraint: only the first call recorded an event.
 	status, out3 := h.httpJSON(t, "GET",
 		fmt.Sprintf("/v1/events?instance_id=%s&kind=instance_terminated", inst.ID.String()), nil)
 	require.Equal(t, http.StatusOK, status, out3)
@@ -214,11 +212,11 @@ func TestCreateInstance_StaticConfigValidationGate(t *testing.T) {
 		h, teardown := newRefModeHarness(t, node.RefValidateNone)
 		t.Cleanup(teardown)
 
-		// Registration succeeds under mode `none` (it skips the executor-
+		// @constraint: registration succeeds under mode `none` (it skips the executor-
 		// schema cross-check) even though count:-1 violates minimum:0.
 		tplID := registerAndDeployBody(t, h, refModeTemplateProvisionedInvalid("static-gate-bad-"+uuid.NewString()))
 
-		// Instantiation is the mandatory gate: it MUST reject the create
+		// @constraint: instantiation is the mandatory gate: it MUST reject the create
 		// with a 400 that names the offending attribute (`count`) AND cites
 		// the `minimum` value-constraint violation — a genuine value check,
 		// not a missing/extra-attribute surface error.
@@ -234,7 +232,7 @@ func TestCreateInstance_StaticConfigValidationGate(t *testing.T) {
 		require.Contains(t, errText, "minimum",
 			"rejection must cite the `minimum` value-constraint violation (a genuine value check, not a missing/extra-attribute surface error); body: %v", out)
 
-		// No instance row was persisted for the rejected template.
+		// @constraint: no instance row was persisted for the rejected template.
 		require.Equal(t, 0, instanceCountForTemplate(t, h, tplID),
 			"a rejected static-config create must persist no instance row")
 	})
@@ -285,13 +283,13 @@ func TestGetInstance_SurfacesSubscriptionStates(t *testing.T) {
 	instID, _ := out["instance_id"].(string)
 	require.NotEmpty(t, instID)
 
-	// No publishers declared → no subscriptions key (omitempty).
+	// @constraint: no publishers declared → no subscriptions key (omitempty).
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+instID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	_, present := out["subscriptions"]
 	require.False(t, present, "instance without subscriptions must omit the array")
 
-	// Seed one mounting row and one failed row with a reason — the two
+	// @constraint: seed one mounting row and one failed row with a reason — the two
 	// states the operator most needs to distinguish.
 	instUUID, err := uuid.Parse(instID)
 	require.NoError(t, err)

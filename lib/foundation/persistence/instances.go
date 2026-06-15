@@ -30,8 +30,8 @@ import (
 // driver INSERT literal, not the column DEFAULT).
 type InstanceRow struct {
 	ID                 shared.UUID    `json:"id"`
-	TemplateHash       string         `json:"template_hash"` // FK to rimsky_templates.id
-	InstanceKey        *string        `json:"instance_key"`  // nullable
+	TemplateHash       string         `json:"template_hash"` // @constraint: FK to rimsky_templates.id
+	InstanceKey        *string        `json:"instance_key"`  // @constraint: nullable
 	Params             map[string]any `json:"params"`
 	AttributeOverrides map[string]any `json:"attribute_overrides"`
 	// AttributeOverridesMatchCounts is the per-entry match counter for
@@ -54,7 +54,7 @@ type InstanceRow struct {
 	// @concept: run-scope
 	MainRunScopeID shared.UUID `json:"main_run_scope_id"`
 	CreatedAt      time.Time   `json:"created_at"`
-	TerminatedAt   *time.Time  `json:"terminated_at"` // nullable; set at terminal-state detection
+	TerminatedAt   *time.Time  `json:"terminated_at"` // @constraint: nullable; set at terminal-state detection
 	// Paused projects rimsky_instances.paused — the soft-pause flag
 	// toggled by the debugger control-API surface (POST /instances/{id}/pause
 	// and /resume), or set at create-time via the `paused: true` request
@@ -85,25 +85,25 @@ type InstanceTable interface {
 	Create(ctx context.Context, args InstanceCreateInput, tx Tx) (InstanceRow, error)
 	Get(ctx context.Context, id shared.UUID, tx Tx) (*InstanceRow, error)
 	GetByInstanceKey(ctx context.Context, templateHash string, instanceKey string, tx Tx) (*InstanceRow, error)
-	// FindAnyByInstanceKey looks up an instance by instance_key alone
-	// (no template hash). Used by the control-api's `idOrKey` URL
-	// resolver. Returns (nil, nil) when no row matches.
+	// @agent-contract FindAnyByInstanceKey looks up an instance by
+	// instance_key alone (no template hash). Used by the control-api's
+	// `idOrKey` URL resolver. Returns (nil, nil) when no row matches.
 	FindAnyByInstanceKey(ctx context.Context, instanceKey string, tx Tx) (*InstanceRow, error)
 	List(ctx context.Context, filter InstanceListFilter, pag ListPagination, tx Tx) (PaginatedListResult[InstanceRow], error)
 	Delete(ctx context.Context, id shared.UUID, tx Tx) error
 	MarkTerminated(ctx context.Context, id shared.UUID, tx Tx) error
 	CountActiveByTemplate(ctx context.Context, templateHash string, tx Tx) (int, error)
 	ListTerminatedWithLifecycleRows(ctx context.Context, limit int, tx Tx) ([]InstanceRow, error)
-	// CountByActive returns (active, terminated) instance counts for the
-	// system summary endpoint. Active = TerminatedAt IS NULL.
+	// @agent-contract CountByActive returns (active, terminated) instance
+	// counts for the system summary endpoint. Active = TerminatedAt IS NULL.
 	CountByActive(ctx context.Context, tx Tx) (active int, terminated int, err error)
-	// IncrementAttributeOverrideMatchCounts atomically increments the
-	// counter at each of the given by_match entry positions on the
-	// instance's attribute_overrides_match_counts column. Out-of-range
-	// indices are silently no-op'd at the persistence layer;
-	// observability surface is the application-layer caller. The
-	// runtime's `incrementMatchCountersAfterMerge` Warn-logs failures
-	// of the entire call but does not enumerate per-index drops.
+	// @agent-contract IncrementAttributeOverrideMatchCounts atomically
+	// increments the counter at each of the given by_match entry positions
+	// on the instance's attribute_overrides_match_counts column. Out-of-range
+	// indices are silently no-op'd at the persistence layer; observability
+	// surface is the application-layer caller. The runtime's
+	// `incrementMatchCountersAfterMerge` Warn-logs failures of the entire
+	// call but does not enumerate per-index drops.
 	//
 	// tx is required (non-nil); the backend's q(tx) accessor panics on
 	// nil tx per the package's universal convention. Dispatch-path
@@ -112,13 +112,10 @@ type InstanceTable interface {
 	// transitionToRunning before this is invoked, so the increment
 	// runs in its own separate tx, not nested with anything).
 	//
-	// Per spec
-	// .ok-planner/specs/2026-05-21-attribute-overrides-matcher-overlay-design.md
-	// §"Persistence API".
 	IncrementAttributeOverrideMatchCounts(ctx context.Context, instanceID shared.UUID, indices []int, tx Tx) error
-	// SetPaused toggles rimsky_instances.paused on the given instance.
-	// Returns the prior value of the column (read in the same tx as the
-	// UPDATE) so the control-API handler can distinguish "no-op, already
+	// @agent-contract SetPaused toggles rimsky_instances.paused on the given
+	// instance. Returns the prior value of the column (read in the same tx as
+	// the UPDATE) so the control-API handler can distinguish "no-op, already
 	// at requested state" (return 409 with ErrInstanceAlreadyPaused or
 	// ErrInstanceNotPaused) from "toggled" (return 200). Returns
 	// shared.ErrInstanceNotFound when no row matches.
@@ -140,7 +137,7 @@ type InstanceTable interface {
 type InstanceCreateInput struct {
 	ID                 shared.UUID
 	TemplateHash       string
-	InstanceKey        *string // nullable
+	InstanceKey        *string // @constraint: nullable
 	Params             map[string]any
 	AttributeOverrides map[string]any
 	// AttributeOverridesMatchCounts is the initial counter array,

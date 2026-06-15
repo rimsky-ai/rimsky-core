@@ -65,14 +65,14 @@ func TestSweepOrphanedBlobs(t *testing.T) {
 	ctx := context.Background()
 
 	be := persistence.NewMemoryBackend()
-	// Pre-write three blobs.
+	// @deliberate: Pre-write three blobs.
 	h1, _ := be.Write(ctx, persistence.BlobKey{}, []byte("one"))
 	h2, _ := be.Write(ctx, persistence.BlobKey{}, []byte("two"))
 	h3, _ := be.Write(ctx, persistence.BlobKey{}, []byte("three"))
 
 	store := &fakeBlobOrphanTable{}
 	now := time.Now()
-	// h1 due, h2 due, h3 not yet due.
+	// @deliberate: h1 due, h2 due, h3 not yet due.
 	if err := store.Insert(ctx, persistence.BlobOrphanRow{
 		Handle: string(h1), Backend: "memory",
 		OrphanedAt: now.Add(-time.Hour), ReapAfter: now.Add(-time.Minute),
@@ -99,14 +99,14 @@ func TestSweepOrphanedBlobs(t *testing.T) {
 		t.Fatalf("SweepOrphanedBlobs: %v", err)
 	}
 
-	// h1 + h2 should be gone from both the backend and the store.
+	// @deliberate: h1 + h2 should be gone from both the backend and the store.
 	if _, err := be.Read(ctx, h1); !errors.Is(err, persistence.ErrBlobNotFound) {
 		t.Fatalf("h1 should be deleted; got %v", err)
 	}
 	if _, err := be.Read(ctx, h2); !errors.Is(err, persistence.ErrBlobNotFound) {
 		t.Fatalf("h2 should be deleted; got %v", err)
 	}
-	// h3 still present.
+	// @deliberate: h3 still present.
 	if _, err := be.Read(ctx, h3); err != nil {
 		t.Fatalf("h3 should still exist; got %v", err)
 	}
@@ -149,7 +149,7 @@ func TestSweepOrphanedBlobsHandlesNotFound(t *testing.T) {
 	ctx := context.Background()
 	be := persistence.NewMemoryBackend()
 	store := &fakeBlobOrphanTable{}
-	// Ghost handle: never written to the backend, but tracked.
+	// @deliberate: Ghost handle: never written to the backend, but tracked.
 	if err := store.Insert(ctx, persistence.BlobOrphanRow{
 		Handle:     "mem:9999",
 		Backend:    "memory",

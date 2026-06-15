@@ -54,8 +54,9 @@ func main() {
 	genv1.RegisterExecutorServer(srv, exec)
 	genv1.RegisterExecutorObservabilityServer(srv, exec)
 
-	// Serve until SIGINT/SIGTERM, then drain in-flight RPCs gracefully.
-	// RunGRPC blocks until ctx is cancelled.
+	// @deliberate: serve until SIGINT/SIGTERM, then drain in-flight RPCs
+	// gracefully via the ctx-cancelled signal — abrupt shutdown would
+	// tear down RPCs mid-flight. RunGRPC blocks until ctx is cancelled.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	serverkit.RunGRPC(ctx, srv, lis, "example-executor")

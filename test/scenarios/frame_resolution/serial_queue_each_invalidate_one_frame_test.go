@@ -34,14 +34,13 @@ func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// CreateInstance enqueued the first frame for the root. Fire 9 more,
+	// @deliberate: CreateInstance enqueued the first frame for the root. Fire 9 more,
 	// for 10 total invalidates → 10 frames.
 	const totalFrames = 10
 	for i := 0; i < totalFrames-1; i++ {
 		fireInvalidate(t, h, iid, worker.ID)
 	}
 
-	// Wait for all 10 frames to terminate.
 	require.Eventually(t, func() bool {
 		return countFramesByState(t, h, iid, "completed") == totalFrames
 	}, 60*time.Second, 100*time.Millisecond,

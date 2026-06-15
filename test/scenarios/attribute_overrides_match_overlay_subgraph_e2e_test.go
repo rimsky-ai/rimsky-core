@@ -41,19 +41,9 @@ import (
 func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGraph(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Three distinct node types so cross-graph type uniqueness holds and
-	// each dispatch is unambiguous in the stub's Observed log.
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("inner-exit").Success(map[string]any{"ok": true}, true, "ok")
 
-	// Template shape:
-	//   main:    caller (delegate: worker) → outer plumbing only.
-	//   worker:  inner-entry (absorbed into caller; runs stub via the
-	//            caller dispatch) → inner-exit (executor: stub).
-	//
-	// The matcher overlay attribute schema is open enough for the L5
-	// `cli` overlay to land; `ok` is the executor-write-back slot the
-	// scenario stub fills.
 	openAttrs := scenario.WithAttributes(map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -67,7 +57,7 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 			{
 				Name: tmplspec.MainGraphName,
 				Nodes: []node.TemplateNodeDef{
-					// caller's executor is absorbed from inner-entry (the
+					// @deliberate: caller's executor is absorbed from inner-entry (the
 					// worker sub-graph's entry). Declaring no executor
 					// here exercises the absorption merge.
 					{Type: "caller", Delegate: "worker"},
@@ -96,14 +86,6 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 		},
 	})
 
-	// Two `by_match` entries keyed only on `graph:`.
-	//   [0] graph:main   → overlay {cli: {where: "outer"}} — fires on
-	//                       caller (it lives in main).
-	//   [1] graph:worker → overlay {cli: {where: "inner"}} — fires on
-	//                       inner-exit (the only sub-graph internal that
-	//                       runs as a separate dispatch; inner-entry is
-	//                       absorbed into the caller's dispatch and
-	//                       reports graph=main, NOT graph=worker).
 	overrides := map[string]any{
 		"by_match": []any{
 			map[string]any{
@@ -118,7 +100,7 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 	}
 	iid := h.CreateInstanceWithOverrides(tid, "ck-bm-subgraph", map[string]any{}, overrides)
 
-	// Wait for both dispatches to reach fresh — the inner-exit can
+	// @deliberate: Wait for both dispatches to reach fresh — the inner-exit can
 	// only fire after the caller's parent run terminates successfully
 	// (per the sub-graph internal-cascade rule).
 	callerNode := h.FindNode(iid, "caller")
@@ -126,7 +108,7 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 	innerExitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, innerExitNode, "inner-exit node missing from instance")
 
-	// The caller's dispatch runs the absorbed inner-entry executor.
+	// @deliberate: The caller's dispatch runs the absorbed inner-entry executor.
 	// Stub records it under NodeType="caller" (the row's own type).
 	require.True(t,
 		waitForObservedAttrs(h, "caller", 15*time.Second) != nil,
@@ -138,7 +120,7 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 	require.Equal(t, "outer", callerCLI["where"],
 		"caller lives in graph=main per concept:delegation; matcher graph=main MUST fire and NOT graph=worker")
 
-	// inner-exit lives in the worker sub-graph; matcher graph=worker
+	// @constraint: inner-exit lives in the worker sub-graph; matcher graph=worker
 	// fires. The graph=main matcher must NOT fire on this dispatch.
 	require.True(t,
 		waitForObservedAttrs(h, "inner-exit", 15*time.Second) != nil,
@@ -150,7 +132,7 @@ func TestAttributeOverridesMatchOverlaySubgraph_GraphMatcherRoutesByDispatchGrap
 	require.Equal(t, "inner", innerCLI["where"],
 		"inner-exit lives in graph=worker; matcher graph=worker MUST fire")
 
-	// Counter assertion: two by_match entries, both fire exactly once
+	// @constraint: Counter assertion: two by_match entries, both fire exactly once
 	// (matcher[0] fires on caller; matcher[1] fires on inner-exit).
 	// inner-entry is absorbed into caller and never dispatches as a
 	// standalone child, so it contributes no additional counter

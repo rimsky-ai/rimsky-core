@@ -72,9 +72,6 @@ type SupervisorConfig struct {
 	// cap map. Threaded into the SweepParkedNodes path so the watchdog
 	// can fail parked runs that overrun their per-reason cap even when
 	// the per-row col:rimsky_node_runs.max_park_duration_seconds is NULL.
-	// Per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Parked-state taxonomy. Empty / nil → only per-row caps fire.
 	MaxParkDuration map[string]time.Duration
 
 	// LifecyclePeersForSpec returns the lifecycle peer names that should
@@ -112,13 +109,14 @@ type SupervisorConfig struct {
 type SupervisorHandle interface {
 	Shutdown(ctx context.Context) error
 	CallbackAddr() string
-	// CallbackRegistry exposes the supervisor's callback registry for
-	// test-only callers (the F4 callback-determinism scenario; see
-	// runtime.Handle.CallbackRegistry doc). Production callers should
-	// NOT reach into the registry directly.
+	// @agent-contract: CallbackRegistry exposes the supervisor's
+	// callback registry for test-only callers (the F4
+	// callback-determinism scenario; see runtime.Handle.CallbackRegistry
+	// doc). Production callers should NOT reach into the registry
+	// directly.
 	CallbackRegistry() *runtime.CallbackRegistry
-	// CallbackServeErr surfaces a fatal post-start death of the
-	// supervisor's async-callback HTTP serve loop (see
+	// @agent-contract: CallbackServeErr surfaces a fatal post-start
+	// death of the supervisor's async-callback HTTP serve loop (see
 	// runtime.Handle.CallbackServeErr). At most one error is ever sent;
 	// the channel closes when the serve loop exits. Supervising callers
 	// forward it onto the role fail channel.
@@ -145,21 +143,22 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 	if err != nil {
 		return nil, fmt.Errorf("StartSupervisor: %w", err)
 	}
-	// Dial the supervisor's outbound LifecycleSubscriber peers (the same
-	// helper control-api uses). The supervisor fires OnRunScopeTerminal
-	// to these peers at sub-graph and fanout-partition scope closes.
+	// @deliberate: dial the supervisor's outbound LifecycleSubscriber
+	// peers (the same helper control-api uses). The supervisor fires
+	// OnRunScopeTerminal to these peers at sub-graph and
+	// fanout-partition scope closes.
 	lifecycleSubs, err := DialLifecycleSubscribers(context.Background(), cfg.Stores, cfg.Executors)
 	if err != nil {
 		registry.Close()
 		return nil, fmt.Errorf("StartSupervisor: dial lifecycle subscribers: %w", err)
 	}
-	// Dial the supervisor's DataProcessing mix-in clients for any
-	// claim-producer / executor peer whose `protocols:` list declares
-	// `data_processing`. The supervisor needs these at fan-out acquisition
-	// (BeginCandidate per sub-claim) and at leaf terminal
+	// @constraint: dial the supervisor's DataProcessing mix-in clients
+	// for any claim-producer / executor peer whose `protocols:` list
+	// declares `data_processing`. The supervisor needs these at fan-out
+	// acquisition (BeginCandidate per sub-claim) and at leaf terminal
 	// (CommitCandidate / AbandonCandidate). Without this the candidate
-	// handle is never minted and the fan-out leaf dispatches with an empty
-	// `StoreHandle.candidate_handle` (E4). Publishers don't live in the
+	// handle is never minted and the fan-out leaf dispatches with an
+	// empty `StoreHandle.candidate_handle`. Publishers don't live in the
 	// supervisor config, so the publishers arg is empty; only the
 	// DataProcessing registry is consumed here.
 	_, _, dataProcessors, dpClosers, err := DialPublisherAndValidationRegistries(

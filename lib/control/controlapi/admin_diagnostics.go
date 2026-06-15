@@ -130,7 +130,7 @@ func handleAdminHeldFrames(deps AppDeps) http.HandlerFunc {
 			if err != nil {
 				return err
 			}
-			// Group by frame_id. Rows without a frame_id can't be
+			// @constraint: group by frame_id. Rows without a frame_id can't be
 			// represented as a held frame (the endpoint is documented
 			// as "frames currently in held state") — report them in
 			// a separate FramesWithoutFrameID list so the by-frame
@@ -273,11 +273,10 @@ func handleAdminInvalidateNode(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// Validate node existence + state BEFORE the dry-run gate so a
-		// dry-run against a non-existent node or a running node surfaces
-		// the same 404 / 409 a real call would. Per spec section
-		// "Dry-run mode": "Errors from validation surface as in normal
-		// flow."
+		// @deliberate: validate node existence + state BEFORE the dry-run gate so a
+		// dry-run against a non-existent node or a running node surfaces the same
+		// 404 / 409 a real call would.
+		// @reason: spec section "Dry-run mode" — "Errors from validation surface as in normal flow."
 		var (
 			nodeFound bool
 			nodeState string

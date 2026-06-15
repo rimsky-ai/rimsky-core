@@ -26,9 +26,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// TLS modes accepted on a peer entry's `tls:` key. Validated at
-// config-parse time (lib/control/config); dial sites may assume the
-// mode is one of these two values or empty (treated as off).
+// @constraint: TLS modes accepted on a peer entry's `tls:` key.
+// Validated at config-parse time (lib/control/config); dial sites may
+// assume the mode is one of these two values or empty (treated as off).
 const (
 	TLSModeOff      = "off"
 	TLSModeRequired = "required"
@@ -65,7 +65,7 @@ func TransportCredentials(mode string) credentials.TransportCredentials {
 	tlsRootCAsMu.RLock()
 	defer tlsRootCAsMu.RUnlock()
 	return credentials.NewTLS(&tls.Config{
-		RootCAs:    tlsRootCAs, // nil → system roots
+		RootCAs:    tlsRootCAs,
 		MinVersion: tls.VersionTLS12,
 	})
 }
@@ -79,7 +79,7 @@ func TLSClientConfig() *tls.Config {
 	tlsRootCAsMu.RLock()
 	defer tlsRootCAsMu.RUnlock()
 	return &tls.Config{
-		RootCAs:    tlsRootCAs, // nil → system roots
+		RootCAs:    tlsRootCAs,
 		MinVersion: tls.VersionTLS12,
 	}
 }

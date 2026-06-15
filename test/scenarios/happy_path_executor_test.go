@@ -27,7 +27,7 @@ import (
 func TestHappyPathExecutor(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Stub returns an attributes_delta containing {"ok": true}; the
+	// @deliberate: Stub returns an attributes_delta containing {"ok": true}; the
 	// supervisor merges it into the node's resolved attributes.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "initial")
 
@@ -52,7 +52,7 @@ func TestHappyPathExecutor(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// Verify a terminal/success signal event was appended. Per Pass 5
+	// @deliberate: Verify a terminal/success signal event was appended. Per Pass 5
 	// the canonical audit row for a settled-fresh terminal is the
 	// signal type-path. (The operational `work_completed` event also
 	// lands at terminal, pairing `work_started`; its dedicated
@@ -74,7 +74,7 @@ func TestHappyPathExecutor(t *testing.T) {
 	}
 	require.True(t, sawCompleted, "expected terminal/success signal event")
 
-	// Verify the executor's attributes_delta landed in
+	// @deliberate: Verify the executor's attributes_delta landed in
 	// rimsky_node_attributes.data — the redesign's replacement for
 	// "resource has version N" assertions.
 	var row *persistence.NodeAttributesRow

@@ -7,7 +7,7 @@ status: adopted
 
 ## Choice
 
-Per-run directory at `<root>/.rimsky/runs/<timestamp>-<name>/` containing `state.db` and `blobs/`. `<root>/.rimsky/latest` is a symlink to the most-recent run directory.
+A per-run directory under a stable per-root parent, named by timestamp plus run name, holding the run's state database and its blob store side by side. A pointer entry at the parent level resolves to the most-recent run directory.
 
 ## Rationale
 

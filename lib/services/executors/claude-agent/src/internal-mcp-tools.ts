@@ -60,9 +60,11 @@ export const ReportErrorInput = z.object({
   payload: z.unknown().optional(),
 });
 
-// Allowed snake_case ParkReason values: the closed two-value set
-// per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §ParkReason collapse. Mirrors proto:executor.proto::ParkReason.
+/**
+ * Allowed snake_case ParkReason values: the closed two-value set
+ * per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
+ * §ParkReason collapse. Mirrors proto:executor.proto::ParkReason.
+ */
 export const PARK_REASONS = [
   "await_callback",
   "snooze",
@@ -78,7 +80,7 @@ export const ReportParkInput = z.object({
 export const EmitNamedEventInput = z.object({
   token: z.string(),
   name: z.string(),
-  // Opaque per concept:inertness (@blessed-invariant 21): the tool
+  // @deliberate: opaque per concept:inertness (@blessed-invariant 21): the tool
   // serializes the payload to bytes and rides it through verbatim — it
   // never inspects, validates-beyond-serialization, or transforms it.
   payload: z.unknown(),

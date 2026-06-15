@@ -66,7 +66,7 @@ const perRunScopeStoreName = "fanout-store"
 // executor_schema_unavailable gate — the spawned binary's Capabilities are
 // the authority for late-bound nodes (mirrors lateBindTemplateSpec).
 func fanOutLateBindTemplateSpec(name string, partitionKeys []string) map[string]any {
-	// partition_request is the producer-interpreted bytes the stub store
+	// @deliberate: partition_request is the producer-interpreted bytes the stub store
 	// decodes into one SubScopeDescriptor (→ one partition run-scope) per
 	// key. Two keys ⇒ two concurrent run-scopes.
 	partitionRequest := `{"partition_keys":[`
@@ -101,16 +101,16 @@ func fanOutLateBindTemplateSpec(name string, partitionKeys []string) map[string]
 }
 
 func TestHostAgentPerRunScopeIsolation(t *testing.T) {
-	// Not parallel: execs real child processes and binds free ports; keep it
+	// @deliberate: Not parallel: execs real child processes and binds free ports; keep it
 	// serial so the port reservations and process reaping stay predictable.
 
-	// Set the PID-log env BEFORE the fixture starts so every spawned child
+	// @deliberate: Set the PID-log env BEFORE the fixture starts so every spawned child
 	// inherits it (env is inherited per spawn.go). Each Execute the stub
 	// serves appends "<run_scope_id> <pid>" here.
 	pidLog := t.TempDir() + "/stub-pid.log"
 	t.Setenv("STUBCHILD_PID_LOG", pidLog)
 
-	// Real remote claim producer advertising supports_split_scope. The
+	// @deliberate: Real remote claim producer advertising supports_split_scope. The
 	// fixture's ClaimProducer surface decodes {"partition_keys":[...]} into
 	// one SubScopeDescriptor per key — the same wiring the fan-out scenarios
 	// use to drive concurrent partition run-scopes.
@@ -142,7 +142,7 @@ func TestHostAgentPerRunScopeIsolation(t *testing.T) {
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker (fan-out) node should exist")
 
-	// The observable, bound to the REAL run-scope topology: each fan-out
+	// @constraint: The observable, bound to the REAL run-scope topology: each fan-out
 	// partition key must be served by its OWN isolated late-bound child.
 	// We key on the partition_key (stable: "alpha"/"beta") rather than the
 	// run_scope_id directly, because a failed leaf can be retried under a
@@ -222,11 +222,11 @@ func readPIDLog(t *testing.T, path string) map[string]map[string]bool {
 		var scope, pid string
 		switch len(fields) {
 		case 2:
-			// "<run_scope_id> <pid>" — the GREEN shape once the supervisor
+			// @deliberate: "<run_scope_id> <pid>" — the GREEN shape once the supervisor
 			// threads run_scope_id onto ExecuteRequest.
 			scope, pid = fields[0], fields[1]
 		case 1:
-			// "<pid>" — today's shape: run_scope_id is empty, so the stub's
+			// @deliberate: "<pid>" — today's shape: run_scope_id is empty, so the stub's
 			// "%s %d" formats to a leading space and Fields drops it. Record
 			// it under the empty-scope sentinel so the collapse is visible in
 			// the diagnostic (it maps to NO partition, hence the gap).
@@ -268,15 +268,15 @@ func pidsByPartition(t *testing.T, pidLog string, scopeToPartition map[string]st
 // partition key was served (present in the log) AND no pid is shared across
 // two partition keys — i.e. each partition got its own isolated child.
 func partitionsServedByDistinctChildren(byPartition map[string]map[string]bool, partitionKeys []string) bool {
-	pidOwner := map[string]string{} // pid → partition key that first claimed it
+	pidOwner := map[string]string{} // @constraint: pid → partition key that first claimed it
 	for _, key := range partitionKeys {
 		pids := byPartition[key]
 		if len(pids) == 0 {
-			return false // this partition has not dispatched into any child yet
+			return false // @deliberate: this partition has not dispatched into any child yet
 		}
 		for pid := range pids {
 			if owner, seen := pidOwner[pid]; seen && owner != key {
-				return false // a single child served two partitions (shared spawn)
+				return false // @deliberate: a single child served two partitions (shared spawn)
 			}
 			pidOwner[pid] = key
 		}

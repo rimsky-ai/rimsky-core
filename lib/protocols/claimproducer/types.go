@@ -19,7 +19,6 @@ import "encoding/json"
 // @concept: write-semantics
 type WriteSemantics string
 
-// WriteSemantics values.
 const (
 	// WriteSemanticsUnknown is the proto-default zero value; producers
 	// that return Unknown are malformed and the supervisor must reject
@@ -75,7 +74,6 @@ type ClaimID string
 // by the supervisor's mode-coexistence check.
 type Intent string
 
-// Intent values.
 const (
 	IntentRead      Intent = "r"
 	IntentReadWrite Intent = "rw"
@@ -85,12 +83,12 @@ const (
 // per acquisition; producers parse Selector and decide what it means
 // (scoped access vs. configured pick policy).
 type ClaimSpec struct {
-	ProducerName string // operator-configured producer name
-	Selector     string // opaque text (post-substitution); producer parses
-	Intent       Intent // "r" | "rw"
-	Alias        string // per-claim name within node; defaults to ProducerName
-	TemplateID   string // content hash (template-scope envelope)
-	InstanceID   string // instance UUID (instance-scope envelope)
+	ProducerName string // @constraint: operator-configured producer name
+	Selector     string // @constraint: opaque text (post-substitution); producer parses
+	Intent       Intent // @constraint: "r" | "rw"
+	Alias        string // @constraint: per-claim name within node; defaults to ProducerName
+	TemplateID   string // @constraint: content hash (template-scope envelope)
+	InstanceID   string // @constraint: instance UUID (instance-scope envelope)
 	// RunScopeID is the RunScope this Open lives in (string form of the
 	// run-scope UUID, empty for the degenerate non-fanned-out path). It is
 	// sent on OpenRequest.run_scope_id so the host-agent-proxy can key
@@ -122,9 +120,9 @@ type ClaimSpec struct {
 // must be uniform across byte-equal-claim-scope claims (uniformity invariant
 // per spec §2.5).
 type ClaimResult struct {
-	Address                json.RawMessage // producer-supplied pointer the executor uses
-	Payload                json.RawMessage // producer-supplied data captured at acquisition
-	ClaimScope             json.RawMessage // canonicalized claim-scope bytes
+	Address                json.RawMessage // @constraint: producer-supplied pointer the executor uses
+	Payload                json.RawMessage // @constraint: producer-supplied data captured at acquisition
+	ClaimScope             json.RawMessage // @constraint: canonicalized claim-scope bytes
 	RealizedWriteSemantics WriteSemantics
 }
 
@@ -245,9 +243,6 @@ type SplitClaimScopeResponse struct {
 	SubClaimScopes []SubClaimScopeDescriptor
 }
 
-// Mix-in protocol names producers may advertise in
-// Capabilities.Protocols. Constants live here so callers compare
-// against a single source of truth.
 const (
 	ProtocolDataProcessing      = "data_processing"
 	ProtocolValidation          = "validation"

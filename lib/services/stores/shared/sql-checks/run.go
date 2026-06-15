@@ -37,8 +37,8 @@ func Run(ctx context.Context, conn Conn, schema, table string, specs []CheckSpec
 	if len(specs) == 0 {
 		return nil, fmt.Errorf("sqlchecks.Run: at least one CheckSpec required")
 	}
-	// Pre-compile so a malformed spec fails fast before any substrate
-	// roundtrip.
+	// @deliberate: compile every spec before issuing any substrate query,
+	// so a malformed spec fails fast without a partial run.
 	compiled := make([]Compiled, 0, len(specs))
 	for i, s := range specs {
 		c, err := Compile(s, schema, table)
@@ -64,14 +64,16 @@ func runOne(ctx context.Context, conn Conn, c Compiled) Result {
 
 	switch c.Kind {
 	case "pk_unique":
-		// pk_unique surfaces a row-existence signal. Any row → fail.
+		// @constraint: pk_unique returns rows only for duplicate keys; any
+		// row seen on the cursor is a failing signal.
 		hasRow := rows.Next()
 		if err := rows.Err(); err != nil {
 			return Result{Kind: c.Kind, Message: fmt.Sprintf("scan failed: %v", err)}
 		}
 		return c.Interpret(hasRow)
 	default:
-		// Single-row aggregate kinds (no_nulls, row_count_absolute).
+		// @constraint: no_nulls and row_count_absolute compile to single-row
+		// aggregate queries; one row is expected.
 		if !rows.Next() {
 			if err := rows.Err(); err != nil {
 				return Result{Kind: c.Kind, Message: fmt.Sprintf("scan failed: %v", err)}

@@ -4,14 +4,11 @@
 
 package persistence
 
-// Pagination inputs/outputs shared by every cursor-paginated *Store
-// method. ListPagination is request-side; PaginatedListResult is the
-// response-side wrapper.
-
-// ListPagination is the cursor + page-size envelope.
+// ListPagination is the cursor + page-size envelope shared by every
+// cursor-paginated *Store method.
 type ListPagination struct {
-	Limit  int    // 0 → default (implementation-defined)
-	Cursor string // opaque; empty for first page
+	Limit  int    // @constraint: 0 means use the implementation-defined default page size
+	Cursor string // @constraint: opaque token; empty selects the first page
 }
 
 // PaginatedListResult wraps a row slice with the next-cursor.

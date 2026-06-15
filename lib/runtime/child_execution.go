@@ -190,7 +190,7 @@ func DispatchChildren(
 	if len(in.Partitions) == 0 || len(in.Children) == 0 {
 		return nil, nil
 	}
-	// Validate the parent scope exists before allocating under it —
+	// @deliberate: validate the parent scope exists before allocating under it —
 	// both pre-unification sites surfaced a precise error here rather
 	// than letting the FK violation name the failure.
 	parentScope, err := args.Persist.RunScopes().GetByID(ctx, tx, in.ParentRunScopeID)
@@ -202,7 +202,7 @@ func DispatchChildren(
 	}
 	out := make([]DispatchedChild, 0, len(in.Partitions)*len(in.Children))
 	for _, p := range in.Partitions {
-		// A sub-claim handle binds to exactly one run. The cross-product
+		// @constraint: a sub-claim handle binds to exactly one run. The cross-product
 		// shape makes >1 child per sub-claim-bearing partition
 		// unrepresentable on the wire today (fan-out always passes one
 		// child spec); guard it so a future caller can't silently bind a
@@ -212,10 +212,11 @@ func DispatchChildren(
 				"DispatchChildren: partition %q carries a sub-claim handle but %d child specs; a sub-claim binds to exactly one run",
 				p.PartitionKey, len(in.Children))
 		}
-		// Allocate (or reuse) the partition's RunScope keyed on
-		// (parent_run_id, partition_key). The lookup keeps the re-fire
-		// path idempotent for both shapes — fan-out partitions and the
-		// delegation sub-graph scope (empty key) alike.
+		// @constraint: allocate (or reuse) the partition's RunScope
+		// keyed on (parent_run_id, partition_key). The lookup keeps
+		// the re-fire path idempotent for both shapes — fan-out
+		// partitions and the delegation sub-graph scope (empty key)
+		// alike.
 		var childScopeID shared.UUID
 		existing, err := args.Persist.RunScopes().GetFanoutPartition(ctx, tx, in.ParentRunID, p.PartitionKey)
 		if err != nil {
@@ -247,7 +248,7 @@ func DispatchChildren(
 				return nil, fmt.Errorf("DispatchChildren: child run (partition %q, node %s): %w",
 					p.PartitionKey, c.NodeID, err)
 			}
-			// Repoint the sub-claim's node_run_id from the parent run (set
+			// @constraint: repoint the sub-claim's node_run_id from the parent run (set
 			// at acquire time in AcquireSubClaims) to its OWN child leaf
 			// run. This makes the sub-claim resolvable from the leaf by
 			// `node_run_id = its own dispatch id`, so the leaf-dispatch
@@ -267,7 +268,7 @@ func DispatchChildren(
 						p.SubClaimHandleID, p.PartitionKey, err)
 				}
 			}
-			// Delegation shape: the absorbed entry already succeeded, so
+			// @constraint: delegation shape — the absorbed entry already succeeded, so
 			// the children dispatch via the cascade — stale-mark each run
 			// for the scheduler's sweep.
 			if in.EntryAbsorbed {
@@ -307,8 +308,6 @@ type ChildSettlementInput struct {
 	// zero value.
 	Policy spec.AggregationPolicy
 
-	// --- carry-verbatim (delegation) shape ---
-
 	// ExitRunID is the settlement child's run (the sub-graph exit's
 	// leaf run that just reached its success terminal).
 	ExitRunID shared.UUID
@@ -324,8 +323,6 @@ type ChildSettlementInput struct {
 	// logged; the round-trip through json.Unmarshal only enforces
 	// the schema contract.
 	Writeback json.RawMessage
-
-	// --- claim-chain (fan-out) shape ---
 
 	// ParentClaimHandleID is the parent claim handle whose children's
 	// outcomes aggregate.
@@ -408,7 +405,7 @@ func SettleChildren(
 func settleCarryVerbatim(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildSettlementInput,
 ) error {
-	// NOTE: an empty writeback (exit terminated with no attribute map)
+	// @deliberate: an empty writeback (exit terminated with no attribute map)
 	// skips ONLY the attribute carry below. The rest of the settlement
 	// — sub-graph RunScope close, OnRunScopeTerminal fan-out, the
 	// parent-settlement cascade bridge, and the `subgraph.exit_carry`
@@ -437,7 +434,7 @@ func settleCarryVerbatim(
 		return fmt.Errorf("SettleChildren: load exit run scope %s: %w", exit.RunScopeID, err)
 	}
 	if exitScope == nil || exitScope.ParentRunID == nil {
-		// Exit has no parent — not a sub-graph internal. Caller error;
+		// @constraint: exit has no parent — not a sub-graph internal. Caller error;
 		// the primitive must not be invoked on non-sub-graph terminals.
 		// Surface a precise error so callers don't silently miscarry.
 		return fmt.Errorf("SettleChildren: run %s has no parent; not a sub-graph exit", in.ExitRunID)
@@ -445,7 +442,7 @@ func settleCarryVerbatim(
 	var asMap map[string]any
 	if len(in.Writeback) > 0 {
 		if err := json.Unmarshal(in.Writeback, &asMap); err != nil {
-			// Writeback bytes are not JSON-decodable. Per
+			// @constraint: writeback bytes are not JSON-decodable. Per
 			// @blessed-invariant 20 we MUST NOT mangle or log the bytes;
 			// surface a typed error so the caller can fail the terminal at
 			// the standard writeback validation gate.
@@ -467,7 +464,7 @@ func settleCarryVerbatim(
 			"parent_node_id", parent.NodeID.String(),
 			"writeback_field_count", len(asMap))
 	}
-	// The carry: the parent run's attribute row inherits exit's final
+	// @constraint: the carry — the parent run's attribute row inherits exit's final
 	// attribute map verbatim — opaque to rimsky per
 	// @blessed-invariant 20. The parent run's node id maps to a
 	// rimsky_nodes row whose attribute schema is the calling node's;
@@ -488,7 +485,7 @@ func settleCarryVerbatim(
 			return fmt.Errorf("SettleChildren: upsert parent attributes: %w", err)
 		}
 	}
-	// Close the child execution context atomically with the writeback
+	// @constraint: close the child execution context atomically with the writeback
 	// carry. Per concept:run-scope §"Lifecycle / RunScope closure": a
 	// sub-graph RunScope is closed when the exit node terminates and
 	// the carry-rule fires. closed_at marks the parent-run rendezvous
@@ -500,7 +497,7 @@ func settleCarryVerbatim(
 	if err := scopes.Close(ctx, tx, exit.RunScopeID); err != nil {
 		return fmt.Errorf("SettleChildren: close sub-graph run scope %s: %w", exit.RunScopeID, err)
 	}
-	// Fire OnRunScopeTerminal to lifecycle subscribers for this
+	// @deliberate: fire OnRunScopeTerminal to lifecycle subscribers for this
 	// sub-graph RunScope, atomically with the close above. Resolve the
 	// template spec via the two-step instance → template lookup. No-op
 	// when the supervisor wasn't wired with lifecycle outbound (nil
@@ -517,7 +514,7 @@ func settleCarryVerbatim(
 			}
 		}
 	}
-	// Parent-settlement cascade bridge: fire cascadeSubscribersStaleInTx
+	// @constraint: parent-settlement cascade bridge — fire cascadeSubscribersStaleInTx
 	// for the calling node so main-graph subscribers receive the
 	// cascade when the sub-graph terminates. Without this, downstream
 	// nodes that subscribe to the calling node never get marked stale
@@ -528,7 +525,7 @@ func settleCarryVerbatim(
 	//
 	// @concept: cascade
 	if args.Persist.Nodes() == nil {
-		// The cascade bridge is load-bearing (TD-cascade-inside-settlement:
+		// @constraint: the cascade bridge is load-bearing (TD-cascade-inside-settlement:
 		// no caller may settle without cascading); a missing Nodes table
 		// is a wiring bug, surfaced as an error rather than a panic.
 		return fmt.Errorf("SettleChildren: Nodes table is required for the parent-settlement cascade bridge")
@@ -538,7 +535,7 @@ func settleCarryVerbatim(
 		return fmt.Errorf("SettleChildren: load calling node: %w", err)
 	}
 	if callingNodeRow != nil && callingNodeRow.FrameID != nil {
-		// Synthesize the calling-node's settlement signal so the
+		// @constraint: synthesize the calling-node's settlement signal so the
 		// subscriber-driven cascade walker can apply CEL predicates.
 		// The exit's writeback has just propagated to the parent, so
 		// the calling node is effectively terminal-success-changed
@@ -556,7 +553,7 @@ func settleCarryVerbatim(
 			in.InstanceID, *callingNodeRow.FrameID, exitBridgeSig); err != nil {
 			return fmt.Errorf("SettleChildren: cascade subscribers of calling node: %w", err)
 		}
-		// The wait-set rows the cascade walker just inserted are
+		// @constraint: the wait-set rows the cascade walker just inserted are
 		// gated on parent.RunID (the calling node's run). The
 		// calling node is effectively settled at this point — the
 		// carry-rule's writeback has landed and the run-tree's
@@ -567,7 +564,7 @@ func settleCarryVerbatim(
 			return fmt.Errorf("SettleChildren: drain wait-set for calling node: %w", err)
 		}
 	}
-	// Forensics: emit `subgraph.exit_carry` for the carry-rule.
+	// @deliberate: forensics — emit `subgraph.exit_carry` for the carry-rule.
 	if args.Persist.Events() == nil {
 		return fmt.Errorf("SettleChildren: Events table is required for the exit-carry forensics record")
 	}
@@ -622,7 +619,7 @@ func settleCarryVerbatim(
 func settleClaimChainAggregate(
 	ctx context.Context, args RunArgs, tx persistence.Tx, in ChildSettlementInput,
 ) error {
-	// Lock the parent row FIRST: every parent-row mutation below (the
+	// @constraint: lock the parent row FIRST — every parent-row mutation below (the
 	// producer_metadata merge, the per-outcome counter bump) and the
 	// settlement decision all run under the same SELECT … FOR UPDATE,
 	// serializing concurrently-settling siblings across supervisors.
@@ -631,10 +628,10 @@ func settleClaimChainAggregate(
 		return err
 	}
 	if parent == nil {
-		// Already resolved (and reaped).
+		// @deliberate: already resolved (and reaped).
 		return nil
 	}
-	// Surface the just-resolved child's base-Commit producer_metadata in
+	// @constraint: surface the just-resolved child's base-Commit producer_metadata in
 	// the parent run's writeback. Runs BEFORE every guard below —
 	// including the claimant and state guards: this call is the only
 	// one carrying the child's response body, and every re-drive path
@@ -650,14 +647,14 @@ func settleClaimChainAggregate(
 		return fmt.Errorf("SettleChildren: record child producer_metadata: %w", err)
 	}
 	if parent.HolderSupervisorID == nil || parent.State != spec.ClaimHandleStateActive {
-		// Already resolved — auto-terminal already fired on this row
+		// @deliberate: already resolved — auto-terminal already fired on this row
 		// (committed via durable promotion, or abandoned). Mirrors the
 		// CheckAndFireResolution guard. (The migration-009 CHECK pair
 		// makes the two conditions equivalent; both are checked for
 		// defense in depth.)
 		return nil
 	}
-	// Record the child's outcome on the parent's per-outcome counters.
+	// @constraint: record the child's outcome on the parent's per-outcome counters.
 	// Guarded on the parent row's ACTUAL holder, read under the FOR
 	// UPDATE lock above (a CAS-equivalent claimant guard,
 	// @blessed-invariant 4): under a ≥2-supervisor deployment the child's
@@ -672,7 +669,7 @@ func settleClaimChainAggregate(
 	if err := args.ClaimHandles.BumpChildOutcomeCount(ctx, in.ParentClaimHandleID, *parent.HolderSupervisorID, outcomeKey, 1, tx); err != nil {
 		return fmt.Errorf("SettleChildren: BumpChildOutcomeCount: %w", err)
 	}
-	// Sibling cancellation per policy (`strict.cancel_siblings`); the
+	// @constraint: sibling cancellation per policy (`strict.cancel_siblings`); the
 	// helper itself no-ops for every other policy shape.
 	//
 	// @concept: cancel-siblings
@@ -681,8 +678,8 @@ func settleClaimChainAggregate(
 			return fmt.Errorf("SettleChildren: cancelInFlightSiblings: %w", err)
 		}
 	}
-	// Re-read the parent row (the FOR UPDATE lock above is still held in
-	// this tx): the local copy predates this child's counter bump, and
+	// @constraint: re-read the parent row (the FOR UPDATE lock above is still held in
+	// this tx) — the local copy predates this child's counter bump, and
 	// the sibling-cancel walk may have bumped further outcomes through
 	// its recursive settlements. The aggregate decision below must see
 	// the post-bump counter view.
@@ -692,12 +689,12 @@ func settleClaimChainAggregate(
 			return fmt.Errorf("SettleChildren: re-read parent: %w", err)
 		}
 		if refreshed == nil || refreshed.HolderSupervisorID == nil || refreshed.State != spec.ClaimHandleStateActive {
-			// The recursive cancel walk resolved the parent already.
+			// @deliberate: the recursive cancel walk resolved the parent already.
 			return nil
 		}
 		parent = refreshed
 	}
-	// Holding-subgraph guard: if the parent is itself a held claim with
+	// @constraint: holding-subgraph guard — if the parent is itself a held claim with
 	// active co-holders, defer parent resolution. The parent's normal
 	// `CheckAndFireResolution` path will re-enter this walk after the
 	// last holder transitions to non-active.
@@ -707,7 +704,7 @@ func settleClaimChainAggregate(
 	}
 	for _, h := range holders {
 		if h.State == persistence.ClaimHolderStateActive {
-			// Parent's holding subgraph not yet complete; the
+			// @deliberate: parent's holding subgraph not yet complete; the
 			// CheckAndFireResolution path will re-drive when the last
 			// holder transitions. Skip parent resolution this round.
 			return nil
@@ -717,7 +714,7 @@ func settleClaimChainAggregate(
 	if err != nil {
 		return fmt.Errorf("SettleChildren: ListChildClaimHandles: %w", err)
 	}
-	// If any sub-claim is still active, the parent isn't ready to
+	// @constraint: if any sub-claim is still active, the parent isn't ready to
 	// resolve yet. Non-active children (committed / abandoned) are
 	// treated as resolved and don't block the parent.
 	//
@@ -737,7 +734,7 @@ func settleClaimChainAggregate(
 			return nil
 		}
 	}
-	// The policy settles the parent — close the child execution
+	// @constraint: the policy settles the parent — close the child execution
 	// contexts. Fan-out partition RunScope closure (concept:run-scope
 	// §"Lifecycle / RunScope closure"): when the aggregation walker
 	// confirms every child sub-claim has resolved, the fanout_partition
@@ -771,7 +768,7 @@ func settleClaimChainAggregate(
 			if err != nil {
 				return fmt.Errorf("SettleChildren: load child run scope %s: %w", childRun.RunScopeID, err)
 			}
-			// Only close fanout_partition scopes — those with a
+			// @constraint: only close fanout_partition scopes — those with a
 			// non-empty partition_key. Non-fan-out children (e.g.
 			// legacy callers that set ParentClaimHandleID on a
 			// non-fan-out leaf) live in the same RunScope as the
@@ -782,7 +779,7 @@ func settleClaimChainAggregate(
 			if err := scopes.Close(ctx, tx, childRun.RunScopeID); err != nil {
 				return fmt.Errorf("SettleChildren: close partition scope %s: %w", childRun.RunScopeID, err)
 			}
-			// Fire OnRunScopeTerminal to lifecycle subscribers for this
+			// @deliberate: fire OnRunScopeTerminal to lifecycle subscribers for this
 			// fanout-partition RunScope, atomically with the close.
 			// Resolve the template spec via the two-step instance →
 			// template lookup. No-op when the supervisor wasn't wired
@@ -799,7 +796,7 @@ func settleClaimChainAggregate(
 			}
 		}
 	}
-	// Aggregate across ALL children using the snapshotted policy +
+	// @constraint: aggregate across ALL children using the snapshotted policy +
 	// per-outcome counters. `expected_children_count` reflects the
 	// total fan-out width set at AcquireSubClaims time; committed +
 	// abandoned reflect resolved children (each child's terminal
@@ -812,14 +809,14 @@ func settleClaimChainAggregate(
 	if parent.ProducerName != nil {
 		producerName = *parent.ProducerName
 	}
-	// Terminal-resolution path (not dispatch-time acquisition): bare Get
+	// @deliberate: terminal-resolution path (not dispatch-time acquisition) — bare Get
 	// — the parent claim was already bound at acquire time; no instance
 	// context is threaded into the recursive resolution walk.
 	producer, ok := args.StoreRegistry.Get(producerName)
 	if !ok {
 		return fmt.Errorf("SettleChildren: unknown producer %q", producerName)
 	}
-	// Lineage hint for the parent claim resolution. Same shape as the
+	// @deliberate: lineage hint for the parent claim resolution. Same shape as the
 	// held-claim path in CheckAndFireResolution.
 	parentHint := ClaimLineageHint{
 		ProducerName: producerName,
@@ -835,7 +832,7 @@ func settleClaimChainAggregate(
 	if acquirer, aErr := args.Persist.Nodes().Get(ctx, parent.HolderNodeID, tx); aErr == nil && acquirer != nil {
 		parentHint.InstanceID = acquirer.InstanceID
 	}
-	// Settlement takeover (cross-supervisor fan-out): the supervisor
+	// @constraint: settlement takeover (cross-supervisor fan-out) — the supervisor
 	// resolving the LAST child drives the parent's settlement, but the
 	// parent handle may still carry the original acquirer's supervisor
 	// id. Deferring to that holder would stall the chain — nothing
@@ -853,7 +850,7 @@ func settleClaimChainAggregate(
 				in.ParentClaimHandleID, *parent.HolderSupervisorID, args.SupervisorID, err)
 		}
 	}
-	// Write the parent settlement: the producer verb + the
+	// @constraint: write the parent settlement — the producer verb + the
 	// claimant-guarded row promotion run through the unified
 	// claim-handle resolution engine. Recursion upward happens by
 	// forwarding ParentClaimHandleID through ResolveClaimHandleTerminal:
@@ -911,7 +908,7 @@ func recordChildCommitMetadata(
 		return nil
 	}
 	if parent.NodeRunID == nil {
-		// No parent run row — nothing to surface the metadata on. A
+		// @deliberate: no parent run row — nothing to surface the metadata on. A
 		// fan-out parent always carries its acquiring run's id; this
 		// guard covers legacy non-fan-out rows only.
 		return nil
@@ -996,13 +993,13 @@ func aggregateParentOutcome(parent *persistence.ClaimHandleRow, seedOutcome Aggr
 		return seedOutcome
 	}
 	if parent.ExpectedChildrenCount == 0 {
-		// Non-fan-out parent on this row — no aggregation needed; carry
+		// @deliberate: non-fan-out parent on this row — no aggregation needed; carry
 		// the seed.
 		return seedOutcome
 	}
 	policy, err := persistence.UnmarshalAggregationPolicy(parent.AggregationPolicy)
 	if err != nil || policy.Kind == "" {
-		// Missing / malformed policy → default to strict.
+		// @deliberate: missing / malformed policy → default to strict.
 		policy = spec.AggregationPolicy{Kind: spec.AggregationKindStrict}
 	}
 	committed := parent.CommittedChildrenCount
@@ -1024,7 +1021,7 @@ func aggregateParentOutcome(parent *persistence.ClaimHandleRow, seedOutcome Aggr
 		}
 		return AggregateAbandon
 	default:
-		// Unknown kind: safest is strict semantics.
+		// @deliberate: unknown kind — safest is strict semantics.
 		if abandoned > 0 {
 			return AggregateAbandon
 		}

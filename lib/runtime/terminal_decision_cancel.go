@@ -58,27 +58,22 @@ func cancelInFlightSiblings(
 		return fmt.Errorf("cancelInFlightSiblings: Get parent: %w", err)
 	}
 	if parent == nil {
-		// Parent already resolved (and deleted). Nothing to cancel.
 		return nil
 	}
 	if parent.State != spec.ClaimHandleStateActive {
-		// Parent already resolved (committed via durable promotion, or
-		// abandoned). Other auto-terminal paths (`CheckAndFireResolution`,
-		// `SettleChildren`) both guard on `State != active`
-		// and return nil; mirror the symmetry here so cancel_siblings
-		// doesn't retroactively force-Abandon children whose parent
-		// already resolved.
+		// @deliberate: Mirror the `State != active` guard used by
+		// `CheckAndFireResolution` and `SettleChildren` so cancel_siblings
+		// does not retroactively force-Abandon children whose parent has
+		// already resolved (committed-durable or abandoned).
 		return nil
 	}
 	policy, err := persistence.UnmarshalAggregationPolicy(parent.AggregationPolicy)
 	if err != nil {
-		// Malformed `aggregation_policy` JSONB. Surface the misconfiguration
-		// via a Warn line citing the parent's id so the operator can repair
-		// the row, then return nil so the surrounding terminal-decision tx
-		// still commits — the parent's `aggregateParentOutcome` walker
-		// applies the safe default at the post-resolution aggregator and
-		// the runtime stays consistent. Without the log line the operator
-		// would never learn that the policy is unparseable.
+		// @deliberate: Warn-and-return on malformed `aggregation_policy`
+		// JSONB so the surrounding terminal-decision tx still commits —
+		// the parent's `aggregateParentOutcome` walker applies the safe
+		// default at the post-resolution aggregator. The log line is
+		// the operator's only signal that the policy is unparseable.
 		if args.Logger != nil {
 			args.Logger.Warn("cancelInFlightSiblings: malformed aggregation_policy on parent claim_handle; treating as no cancel_siblings",
 				"parent_claim_handle_id", parentID.String(),
@@ -95,72 +90,63 @@ func cancelInFlightSiblings(
 	}
 	for _, sib := range siblings {
 		if sib.ID == triggerID {
-			// Skip the just-resolving child itself.
 			continue
 		}
 		if sib.State != spec.ClaimHandleStateActive {
-			// Non-active siblings (committed-durable promotions,
-			// abandoned, or committed-subgraph rows the retention sweep
-			// hasn't reaped yet) are skipped. Abandoning a durable-
-			// Commit would violate the contract that durable claims
-			// persist past auto-terminal until explicit release;
+			// @constraint: Skip non-active siblings (committed-durable,
+			// abandoned, or committed-subgraph rows). Abandoning a
+			// durable-Commit would violate the contract that durable
+			// claims persist past auto-terminal until explicit release;
 			// double-abandoning an already-abandoned row would race the
 			// producer's claim_id idempotency.
 			continue
 		}
 		if sib.HolderSupervisorID == nil || *sib.HolderSupervisorID != args.SupervisorID {
-			// Claimant-guard: we cannot force-resolve someone else's
-			// claim, and a non-active row (NULL holder) is not eligible
-			// for force-Abandon either. The original supervisor's
-			// terminal path will handle live siblings through its own
-			// resolution.
+			// @constraint: Claimant-guard (`@blessed-invariant 4`). The
+			// original supervisor's terminal path handles live siblings
+			// through its own resolution; a NULL holder is not eligible
+			// for force-Abandon either.
 			continue
 		}
-		// LockForUpdate the sibling row before the recursive force-Abandon.
-		// `ResolveClaimHandleTerminal`'s documented locking precondition
-		// (the contract on this function's signature) requires callers to
-		// serialize concurrent terminations via `SELECT … FOR UPDATE` for
-		// held-phase resolutions. Without this lock, a parallel worker on
-		// the same supervisor could be terminating the sibling natively
-		// (Commit/Abandon via the executor path) while our cancel walker
-		// fires a force-Abandon for the same `claim_id` — the producer
-		// would see two distinct verbs (Commit and Abandon) for the same
-		// claim and claim_id idempotency cannot reconcile them. The lock
-		// is held for the duration of the recursive `ResolveClaimHandleTerminal`
-		// call below; concurrent terminators block on the row until our
-		// recursive Delete commits the tx.
+		// @constraint: LockForUpdate satisfies `ResolveClaimHandleTerminal`'s
+		// locking precondition for held-phase resolutions. Without the
+		// row lock, a parallel worker on the same supervisor could be
+		// terminating the sibling natively (Commit/Abandon via the
+		// executor path) concurrently with our force-Abandon for the
+		// same `claim_id` — the producer would see two distinct verbs
+		// for one claim and claim_id idempotency cannot reconcile them.
+		// The lock is held through the recursive
+		// `ResolveClaimHandleTerminal` call below.
 		current, err := args.ClaimHandles.LockForUpdate(ctx, sib.ID, tx)
 		if err != nil {
 			return fmt.Errorf("cancelInFlightSiblings: LockForUpdate sibling %s: %w",
 				sib.ID, err)
 		}
 		if current == nil || current.State != spec.ClaimHandleStateActive {
-			// Re-check the locked row. The recursive walker (via the
-			// sibling's own descendant-cancellation walk) may have
-			// already deleted later siblings in the original
-			// `ListChildClaimHandles` snapshot; durable promotion on
-			// the same row could also have raced ahead. Skip so the
-			// producer doesn't see a duplicate Abandon for the same
-			// claim_id.
+			// @deliberate: Re-check after locking. The recursive walker
+			// may have already deleted later siblings in the original
+			// `ListChildClaimHandles` snapshot, or durable promotion on
+			// the same row could have raced ahead. Skipping avoids a
+			// duplicate Abandon for the same claim_id.
 			continue
 		}
 		producerName := ""
 		if sib.ProducerName != nil {
 			producerName = *sib.ProducerName
 		}
-		// Terminal-resolution path (force-Abandon, not dispatch-time
-		// acquisition): bare Get — the sibling claim was bound at acquire
-		// time; no instance context is in scope here.
+		// @deliberate: Bare `Get` on the producer registry — terminal-
+		// resolution path (force-Abandon, not dispatch-time acquisition).
+		// The sibling claim was bound at acquire time; no instance
+		// context is in scope here.
 		producer, ok := args.StoreRegistry.Get(producerName)
 		if !ok {
 			return fmt.Errorf("cancelInFlightSiblings: unknown producer %q for sibling %s",
 				producerName, sib.ID)
 		}
-		// Build the lineage hint for the sibling's force-Abandon. The
-		// resolution emits a `claim_terminal` row with
-		// `outcome: force_cancelled` (the Cause field below promotes it
-		// from natural Abandon) and a matching `claim_resolution.abandon`
-		// event. The hint shape matches the regular resolution.
+		// @deliberate: Lineage hint shape matches a regular resolution;
+		// the `Cause` field below promotes the emitted `claim_terminal`
+		// row from natural Abandon to `outcome: force_cancelled` and the
+		// matching `claim_resolution.abandon` event.
 		hint := ClaimLineageHint{
 			ProducerName: producerName,
 			VersionID:    sib.VersionID,
@@ -175,13 +161,13 @@ func cancelInFlightSiblings(
 		if acquirer, aErr := args.Persist.Nodes().Get(ctx, sib.HolderNodeID, tx); aErr == nil && acquirer != nil {
 			hint.InstanceID = acquirer.InstanceID
 		}
-		// Recurse: the sibling's own children (if any) cascade-cancel
-		// through the same path inside this recursive call. Forwarding
-		// `ParentClaimHandleID` keeps the parent counter bumping +
-		// `SettleChildren` walking under the sibling's own
-		// resolution. `Cause` propagates `sibling_cancel` to the lineage
-		// + events projections so post-mortem queries can distinguish a
-		// sibling-driven force-Abandon from a natural exhaustion.
+		// @deliberate: Forward `ParentClaimHandleID` to keep the parent
+		// counter bumping + `SettleChildren` walking under the sibling's
+		// own resolution. `Cause: sibling_cancel` propagates to the
+		// lineage + events projections so post-mortem queries can
+		// distinguish a sibling-driven force-Abandon from a natural
+		// exhaustion. The sibling's own children cascade-cancel through
+		// the same path inside this recursive call.
 		if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 			ClaimHandleID:       sib.ID,
 			SupervisorID:        args.SupervisorID,
@@ -260,12 +246,10 @@ func cancelDescendantClaims(
 		if d.HolderSupervisorID == nil || *d.HolderSupervisorID != args.SupervisorID {
 			continue
 		}
-		// LockForUpdate the descendant row before the recursive force-
-		// Abandon. Same locking precondition as `cancelInFlightSiblings`:
-		// the contract on `ResolveClaimHandleTerminal` requires the
-		// caller to serialize concurrent terminations via
-		// `SELECT … FOR UPDATE` for held-phase resolutions, so we hold
-		// the row lock for the duration of the recursive call below.
+		// @constraint: LockForUpdate satisfies `ResolveClaimHandleTerminal`'s
+		// locking precondition for held-phase resolutions (same as
+		// `cancelInFlightSiblings`). The lock is held through the
+		// recursive call below.
 		current, err := args.ClaimHandles.LockForUpdate(ctx, d.ID, tx)
 		if err != nil {
 			return fmt.Errorf("cancelDescendantClaims: LockForUpdate descendant %s: %w",
@@ -278,9 +262,10 @@ func cancelDescendantClaims(
 		if d.ProducerName != nil {
 			producerName = *d.ProducerName
 		}
-		// Terminal-resolution path (force-Abandon, not dispatch-time
-		// acquisition): bare Get — the descendant claim was bound at
-		// acquire time; no instance context is in scope here.
+		// @deliberate: Bare `Get` on the producer registry — terminal-
+		// resolution path (force-Abandon, not dispatch-time acquisition).
+		// The descendant claim was bound at acquire time; no instance
+		// context is in scope here.
 		producer, ok := args.StoreRegistry.Get(producerName)
 		if !ok {
 			return fmt.Errorf("cancelDescendantClaims: unknown producer %q for descendant %s",
@@ -300,18 +285,18 @@ func cancelDescendantClaims(
 		if acquirer, aErr := args.Persist.Nodes().Get(ctx, d.HolderNodeID, tx); aErr == nil && acquirer != nil {
 			hint.InstanceID = acquirer.InstanceID
 		}
-		// Recurse. The descendant's own descendants are walked inside
+		// @deliberate: `ParentClaimHandleID: nil` here. The descendant's
+		// parent is the row being resolved by the OUTER
+		// `ResolveClaimHandleTerminal` frame above us, which will Delete
+		// it after this descendant walk returns. Forwarding
+		// `d.ParentClaimHandleID` would re-enter the parent's
+		// counter-bump + `SettleChildren` walk on a row mid-resolution,
+		// risking a re-entrant Delete / duplicate `Producer.Abandon`.
+		// Skipping is safe because the parent's own resolution drives
+		// its grandparent counter after this descendant cancellation
+		// completes. The descendant's own descendants are walked inside
 		// `ResolveClaimHandleTerminal`'s pre-Delete cancellation step
-		// (depth-first). `ParentClaimHandleID` is intentionally `nil`
-		// here: the descendant's parent is the row being resolved by
-		// the OUTER `ResolveClaimHandleTerminal` frame above us, which
-		// will Delete that row after this descendant walk returns.
-		// Forwarding `d.ParentClaimHandleID` would re-enter the parent's
-		// counter-bump + `SettleChildren` walk on a row that
-		// is mid-resolution, risking a re-entrant Delete / duplicate
-		// `Producer.Abandon` on the parent. Skipping is safe because
-		// the parent's own resolution drives its grandparent counter
-		// after this descendant cancellation completes.
+		// (depth-first).
 		if err := ResolveClaimHandleTerminal(ctx, args, tx, TerminalDecision{
 			ClaimHandleID:       d.ID,
 			SupervisorID:        args.SupervisorID,

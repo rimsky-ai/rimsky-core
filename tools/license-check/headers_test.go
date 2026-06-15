@@ -24,9 +24,10 @@ func TestSpliceGoBeforePackage(t *testing.T) {
 func TestSpliceGoPackageDocImmediatelyBeforePackage(t *testing.T) {
 	body := []byte("// Package foo does X.\npackage foo\n")
 	out := splice(body, apacheHeaderGo, kindGo)
-	// Header must come before the package-doc comment so go/parser still
-	// associates the doc with `package foo`. Because the splice puts header
-	// first then a blank line, the package doc remains contiguous with `package`.
+	// @constraint: header must come before the package-doc comment so
+	// go/parser still associates the doc with `package foo`. Because the
+	// splice puts header first then a blank line, the package doc remains
+	// contiguous with `package`.
 	lines := strings.Split(string(out), "\n")
 	pkgIdx := -1
 	for i, ln := range lines {
@@ -66,8 +67,9 @@ func TestSpliceTSPreservesShebang(t *testing.T) {
 }
 
 func TestSpliceProtoOnTop(t *testing.T) {
-	// Issue #1's motivating case: stamper must put the header above `syntax`,
-	// not after it. detectHeader's 10-line window should still find the marker.
+	// @constraint: stamper must put the header above `syntax`, not
+	// after it. detectHeader's 10-line window should still find the
+	// marker.
 	body := []byte(`syntax = "proto3";
 
 package x;
@@ -83,7 +85,6 @@ package x;
 }
 
 func TestSpliceProtoWithLeadingDocsStillTop(t *testing.T) {
-	// A proto with leading documentation already on top — header still goes above.
 	body := []byte("// SomeDoc\nsyntax = \"proto3\";\n")
 	out := splice(body, apacheHeaderProto, kindProto)
 	if !strings.HasPrefix(string(out), apacheHeaderProto) {
@@ -127,10 +128,11 @@ func TestSpliceShellWithoutShebang(t *testing.T) {
 }
 
 func TestSpliceIdempotency(t *testing.T) {
-	// Running stamp twice produces the same output: stampHeaders leaves files
-	// that already carry the correct header untouched (detectHeader returns
-	// true if the marker is present). We verify by checking that detectHeader
-	// reports hasHeader=true after one splice.
+	// @deliberate: running stamp twice produces the same output —
+	// stampHeaders leaves files that already carry the correct header
+	// untouched (detectHeader returns true if the marker is present).
+	// Verified by checking that detectHeader reports hasHeader=true after
+	// one splice.
 	dir := t.TempDir()
 	cases := []struct {
 		name   string
@@ -195,7 +197,6 @@ func TestDetectHeaderApacheVsAGPL(t *testing.T) {
 func TestStampReplacesWrongKindHeader(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/x.go"
-	// An Apache-headed file that has been reclassified AGPL (a relicense).
 	orig := apacheHeaderGo + "\n// Package x does things.\npackage x\n\nfunc F() {}\n"
 	if err := writeTestFile(path, []byte(orig)); err != nil {
 		t.Fatal(err)
@@ -216,7 +217,6 @@ func TestStampReplacesWrongKindHeader(t *testing.T) {
 			t.Errorf("body must be preserved; missing %q:\n%s", want, s)
 		}
 	}
-	// No double-stacked header.
 	if strings.Count(s, "Copyright © 2026") != 1 {
 		t.Errorf("exactly one copyright line expected:\n%s", s)
 	}
@@ -293,17 +293,14 @@ func TestStampOneStripsMixedMarkersAndEmitsSingleHeader(t *testing.T) {
 	if !strings.HasPrefix(s, agplHeaderGo) {
 		t.Errorf("expected AGPL header at top, got:\n%s", s[:min(200, len(s))])
 	}
-	// The stale Apache SPDX line must be gone.
 	if strings.Contains(s, "SPDX-License-Identifier: Apache-2.0") {
 		t.Errorf("stale Apache SPDX line should be stripped:\n%s", s)
 	}
-	// Body must survive.
 	for _, want := range []string{"package x", "func F() {}"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("body must be preserved; missing %q:\n%s", want, s)
 		}
 	}
-	// Exactly one copyright line.
 	if got := strings.Count(s, "Copyright © 2026"); got != 1 {
 		t.Errorf("exactly one copyright line expected, got %d:\n%s", got, s)
 	}

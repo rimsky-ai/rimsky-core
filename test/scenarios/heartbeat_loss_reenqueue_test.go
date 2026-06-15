@@ -32,11 +32,10 @@ import (
 
 func TestHeartbeatLossReenqueue(t *testing.T) {
 	t.Parallel()
-	// Disable the supervisor so it doesn't race us claiming the row we
+	// @deliberate: Disable the supervisor so it doesn't race us claiming the row we
 	// manufacture.
 	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true})
 
-	// Minimal template + instance + manually-inserted running node.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "hb-loss", Version: "1",
 		Nodes: []node.TemplateNodeDef{
@@ -48,19 +47,19 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
 
-	// Force the node to running with a stale heartbeat (>>HeartbeatTimeout=5s).
+	// @deliberate: Force the node to running with a stale heartbeat (>>HeartbeatTimeout=5s).
 	// Post-stage-3 cutover: state / last_heartbeat_at / claimed_by live
 	// on rimsky_node_runs; rimsky_nodes carries only identity + frame_id.
 	// The active zombie run row is seeded below.
 	_, err := h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET updated_at = NOW() WHERE id = $1`, n.ID)
 	require.NoError(t, err)
 
-	// Replace any auto-enqueued dispatch row with an explicitly-seeded
+	// @deliberate: Replace any auto-enqueued dispatch row with an explicitly-seeded
 	// active zombie row tied to the same supervisor + stale heartbeat
 	// the rimsky_nodes mirror carries.
 	_, err = h.Pool.Exec(h.Ctx, `DELETE FROM rimsky_node_runs WHERE node_id = $1`, n.ID)
 	require.NoError(t, err)
-	// Reuse the instance's already-running frame (the harness creates one
+	// @deliberate: Reuse the instance's already-running frame (the harness creates one
 	// at instance-create time; uq_rimsky_frames_running enforces one
 	// running frame per instance, so we read it rather than INSERT).
 	var frameID uuid.UUID
@@ -80,7 +79,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Seed an expired `rimsky_claim_handles` row tied to the zombie node +
+	// @deliberate: Seed an expired `rimsky_claim_handles` row tied to the zombie node +
 	// supervisor so the §7.5 step-2 sweep has something to reap. We pick
 	// kind='named' to avoid pulling a real claim_store into the harness;
 	// the sweep's per-row reap path is identical for all three kinds modulo
@@ -98,7 +97,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 		}, tx)
 	}))
 
-	// Scheduler's stale-heartbeat sweep fires on each tick. Wait on the
+	// @constraint: Scheduler's stale-heartbeat sweep fires on each tick. Wait on the
 	// event log for the sweep's transient/heartbeat_missed audit row
 	// (the canonical record per concept:signal post-Pass-5) — the
 	// append-only ledger cannot miss the transition, so this is the
@@ -116,7 +115,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 		NodeID: &nid, Kind: "transient/heartbeat_missed",
 	}, 25*time.Second)
 
-	// Anchor tx2: wait for the node row to land in stale. stale is a
+	// @deliberate: Anchor tx2: wait for the node row to land in stale. stale is a
 	// stable observation point here — the harness runs with
 	// NoSupervisor, so nothing reclaims the re-enqueued row and flips
 	// the state onward; this is a genuine outcome-wait, not a sampled
@@ -128,18 +127,18 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateStale, 25*time.Second),
 		"node did not transition running→stale")
 
-	// A fresh dispatch row should exist (re-enqueued).
+	// @deliberate: A fresh dispatch row should exist (re-enqueued).
 	var dispatchID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `SELECT id FROM rimsky_node_runs WHERE node_id = $1`, n.ID).Scan(&dispatchID),
 		"expected re-enqueued dispatch row")
-	// And no claim is held against it (the dispatch row is a fresh
+	// @deliberate: And no claim is held against it (the dispatch row is a fresh
 	// re-enqueue from the scheduler, not a survival of the zombie's claim).
 	var claimedBy *string
 	require.NoError(t, h.Pool.QueryRow(h.Ctx,
 		`SELECT claimed_by FROM rimsky_node_runs WHERE id = $1`, dispatchID).Scan(&claimedBy))
 	require.Nil(t, claimedBy, "re-enqueued dispatch row should not be claimed")
 
-	// The §7.5 step-2 lock-holder sweep should reap the expired row we
+	// @deliberate: The §7.5 step-2 lock-holder sweep should reap the expired row we
 	// seeded above. Poll rimsky_claim_handles directly until the row is gone.
 	deadline := time.Now().Add(25 * time.Second)
 	var reaped bool
@@ -158,7 +157,7 @@ func TestHeartbeatLossReenqueue(t *testing.T) {
 	}
 	require.True(t, reaped, "expired lock-holder row was not reaped by §7.5 step-2 sweep")
 
-	// And a `lock_orphan_reaped` event was emitted for the reaped row.
+	// @deliberate: And a `lock_orphan_reaped` event was emitted for the reaped row.
 	var reapEvs persistence.EventListResult
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
 		r, err := h.Persist.Events().List(h.Ctx,

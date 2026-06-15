@@ -46,7 +46,7 @@ import (
 	peer "github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// Documented retention defaults (mirroring the doc on
+// @constraint: documented retention defaults (mirroring the doc on
 // runtime.RetentionConfig). Applied by LoadRimskyConfigYAML when the
 // `retention:` block (or an individual key) is absent, so retention is on
 // by default — the scheduler tick reaps stale lineage / run-tree /
@@ -76,17 +76,15 @@ type yamlRetention struct {
 // but never replies blocks the rimsky process forever.
 const capabilitiesHandshakeTimeout = 30 * time.Second
 
-// Protocol enumerates the wire protocols a peer may speak. Validated at
-// parse time; any unknown value fails startup.
-//
-// The mix-in protocols (lifecycle_subscriber, validation, data_processing)
-// live in protocols/claimproducer — the wire-vocabulary owner — and are
-// referenced from there. Only the three role-anchor protocols specific to
-// rimsky.yml's three top-level blocks (claim_producers, executors,
+// @concept: service — the protocol-role vocabulary a service may
+// claim. ProtocolClaimProducer / ProtocolExecutor / ProtocolPublisher
+// enumerate the wire protocols a peer may speak. Validated at parse
+// time; any unknown value fails startup. The mix-in protocols
+// (lifecycle_subscriber, validation, data_processing) live in
+// protocols/claimproducer — the wire-vocabulary owner — and are
+// referenced from there. Only the three role-anchor protocols specific
+// to rimsky.yml's three top-level blocks (claim_producers, executors,
 // publishers) are declared here.
-//
-// @concept: service (a service is an orchestrated out-of-process binary that
-// declares its protocol membership; this is the protocol-role vocabulary)
 const (
 	ProtocolClaimProducer = "claim_producer"
 	ProtocolExecutor      = "executor"
@@ -133,8 +131,10 @@ type RemoteStoresConfig struct {
 // ExecutorEntry is the per-executor config from rimsky.yml's
 // `executors:` block.
 type ExecutorEntry struct {
-	Transport string // "grpc" | "http"
-	Endpoint  string // e.g. "claude-agent:9090"
+	// @constraint: transport is "grpc" or "http"; Endpoint is the dial
+	// target (e.g. "claude-agent:9090").
+	Transport string
+	Endpoint  string
 	// TLS is the dial mode for this peer: "off" (plaintext) or
 	// "required" (verified TLS). Validated at parse time; empty in the
 	// YAML normalizes to "off". Matches executor.Endpoint.TLS.
@@ -421,7 +421,8 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		if err := validateProtocols(name, protocols); err != nil {
 			return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 		}
-		// claim_producers entries must declare claim_producer.
+		// @constraint: claim_producers entries must declare
+		// claim_producer.
 		hasClaimProducer := false
 		for _, p := range protocols {
 			if p == ProtocolClaimProducer {
@@ -545,9 +546,10 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: persistence.blob: %w", path, err)
 	}
 
-	// Validate per-reason max_park_duration keys against the known
-	// ParkReason storage forms. Unknown keys reject at startup so
-	// operators get a precise error rather than silently-ignored config.
+	// @constraint: validate per-reason max_park_duration keys against
+	// the known ParkReason storage forms. Unknown keys reject at startup
+	// so operators get a precise error rather than silently-ignored
+	// config.
 	if err := validateMaxParkDurationKeys(wrapper.MaxParkDuration); err != nil {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
@@ -557,12 +559,13 @@ func LoadRimskyConfigYAML(path string) (RimskyConfig, error) {
 		return RimskyConfig{}, fmt.Errorf("rimsky config %q: %w", path, err)
 	}
 
-	// Registration-time reference-validation mode: env:RIMSKY_REF_VALIDATION_MODE
-	// overrides cfg:templates.ref_validation_mode; both empty → strict `all`
+	// @constraint: registration-time reference-validation mode —
+	// env:RIMSKY_REF_VALIDATION_MODE overrides
+	// cfg:templates.ref_validation_mode; both empty → strict `all`
 	// default. Unknown values reject at startup (precise error, never a
-	// silently-ignored mode). The env-expansion at the top of this loader
-	// (os.ExpandEnv) does not cover a fresh env-only override, so read it
-	// explicitly here.
+	// silently-ignored mode). The env-expansion at the top of this
+	// loader (os.ExpandEnv) does not cover a fresh env-only override, so
+	// read it explicitly here.
 	refModeRaw := wrapper.Templates.RefValidationMode
 	if envMode := os.Getenv("RIMSKY_REF_VALIDATION_MODE"); envMode != "" {
 		refModeRaw = envMode
@@ -674,7 +677,7 @@ func parseAllowed(name string, allowed []string) ([]claimproducer.WriteSemantics
 	if len(values) == 0 {
 		return nil, fmt.Errorf("claim_producers[%q]: write_semantics_allowed is required", name)
 	}
-	// Sort + dedup for stable comparisons downstream.
+	// @constraint: sort + dedup for stable comparisons downstream.
 	sort.Slice(values, func(i, j int) bool { return string(values[i]) < string(values[j]) })
 	deduped := values[:0]
 	for i, v := range values {
@@ -759,7 +762,8 @@ func dialRemoteStores(
 	persist persistence.Tables,
 	lateBindServiceProxies map[string]string,
 ) (*locks.Registry, error) {
-	// Bindings-lookup hook backed by the live persistence layer.
+	// @deliberate: bindings-lookup hook backed by the live persistence
+	// layer.
 	lookupBindings := func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error) {
 		return lookupInstanceBindings(ctx, persist, instanceID)
 	}

@@ -42,11 +42,13 @@ func LoadServiceAliases() map[string]string {
 func loadAliasFile(path string, into map[string]string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return // missing is fine
+		// @deliberate: missing alias file is fine — caller treats unconfigured as empty.
+		return
 	}
 	var f aliasFile
 	if err := yaml.Unmarshal(data, &f); err != nil {
-		return // malformed alias file: skip rather than fail the run
+		// @deliberate: malformed alias file: skip rather than fail the run.
+		return
 	}
 	for k, v := range f.Aliases {
 		into[k] = v

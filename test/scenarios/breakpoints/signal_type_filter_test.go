@@ -56,7 +56,7 @@ func TestSignalTypeFilter(t *testing.T) {
 					Type:     "err_worker",
 					Executor: "stub",
 					ErrorTypes: map[string]node.ErrorTypePolicy{
-						// give_up immediately so the terminal signal is a
+						// @deliberate: give_up immediately so the terminal signal is a
 						// single terminal/error/stub/boom (no retry/transient
 						// noise to dilute the match assertion).
 						"stub/boom": {Policy: []node.PolicyAction{{Action: "give_up"}}},
@@ -67,7 +67,7 @@ func TestSignalTypeFilter(t *testing.T) {
 	})
 
 	iid := createInstanceWithPause(t, h, tid, "ck-signal-type-filter", map[string]any{})
-	// Filter: after_terminal + signal_type=terminal/error/* + notify_only +
+	// @deliberate: Filter: after_terminal + signal_type=terminal/error/* + notify_only +
 	// empty matcher (fires on every dispatch's terminal regardless of node).
 	signalType := "terminal/error/*"
 	bpID := breakpointCreate(t, h, iid, map[string]any{
@@ -88,7 +88,7 @@ func TestSignalTypeFilter(t *testing.T) {
 	require.True(t, h.WaitForNodeState(errN.ID, cascade.NodeStateFailed, 15*time.Second),
 		"err_worker should reach Failed after give_up")
 
-	// The after_terminal checkpoint fires after the terminal-handler tx
+	// @deliberate: The after_terminal checkpoint fires after the terminal-handler tx
 	// commits — give the eval+write a brief window.
 	time.Sleep(500 * time.Millisecond)
 

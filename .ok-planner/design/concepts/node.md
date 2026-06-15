@@ -21,7 +21,7 @@ The node owns: its dispatch / terminal lifecycle, its claim spec list, its `erro
 
 ## Invariants
 
-- The set of legal `state` values is exactly `{fresh, stale, running, failed, parked}`; transitions follow the foundation state-machine's next-state function. Same-state transitions are rejected under `dispatch_claimed` (`@blessed-invariant 1`, also numbered §17).
+- The set of legal `state` values is exactly `{fresh, stale, running, failed, parked}`; transitions follow the foundation state-machine's next-state function. Same-state transitions are rejected under `dispatch_claimed` (`@blessed-invariant 1`).
 - Eligibility for dispatch reads only `state`. Cascade propagation is subscriber-driven via `concept:signal`: a subscription edge fires iff its signal type-path pattern matches the emitted signal AND its compiled CEL `when:` predicate evaluates true against the signal payload.
 - A non-fresh node row always carries a `frame_id`.
 - Tag values admit `{{params.<key>}}` substitution at materialization time (instance creation); no other substitution source kinds are available at that phase. Tag substitution failures are fatal at instance creation, matching the dispatch-time discipline for required-attribute substitution. Tags do not gate dispatch, cascade, or validation — they are operator-facing metadata.

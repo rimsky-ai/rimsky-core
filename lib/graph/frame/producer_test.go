@@ -56,9 +56,9 @@ func seedTemplateAndInstance(t *testing.T, ctx context.Context, d persistence.Da
 
 	instanceID = uuid.New()
 	mainScopeID := uuid.New()
-	// rimsky_instances.main_run_scope_id ↔ rimsky_run_scopes.instance_id
-	// are mutually FK'd DEFERRABLE INITIALLY DEFERRED; both inserts
-	// must land in one tx.
+	// @deliberate: rimsky_instances.main_run_scope_id ↔
+	// rimsky_run_scopes.instance_id are mutually FK'd DEFERRABLE
+	// INITIALLY DEFERRED; both inserts must land in one tx.
 	tables := d.Tables()
 	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -90,7 +90,6 @@ func TestEnqueueOrCoalesce_SerialQueue(t *testing.T) {
 
 	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
 
-	// Three calls produce three frames.
 	for i := 0; i < 3; i++ {
 		fid, err := enqueueAgainstDriver(ctx, d, instanceID, uuid.New())
 		require.NoError(t, err)
@@ -202,7 +201,7 @@ func TestEnqueueOrCoalesce_InvalidMode(t *testing.T) {
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	// Empty string mode — template has no frame_resolution set.
+	// @deliberate: Empty string mode — template has no frame_resolution set.
 	_, instanceID := seedTemplateAndInstance(t, ctx, d, "")
 
 	_, err := enqueueAgainstDriver(ctx, d, instanceID, uuid.New())

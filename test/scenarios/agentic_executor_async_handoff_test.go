@@ -54,14 +54,14 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	n := h.FindNode(iid, "agent")
 	require.NotNil(t, n)
 
-	// Wait for node to enter running (supervisor holds pending claim).
+	// @deliberate: Wait for node to enter running (supervisor holds pending claim).
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateRunning, 15*time.Second),
 		"agent did not reach running")
 
-	// POST callback with matching ackID. Retry briefly so we don't race the
+	// @deliberate: POST callback with matching ackID. Retry briefly so we don't race the
 	// supervisor's registerAsync that runs after state→running.
 	cbURL := "http://" + h.Supervisor.CallbackAddr() + "/v1/callback/ack-1"
-	// Callback body uses the AsyncCallbackBody outcome-oneof shape
+	// @deliberate: Callback body uses the AsyncCallbackBody outcome-oneof shape
 	// (success / error / park) rather than the legacy {type: ...}
 	// discriminator.
 	body, _ := json.Marshal(map[string]any{
@@ -85,11 +85,10 @@ func TestAgenticExecutorAsyncHandoff(t *testing.T) {
 	}
 	require.Equal(t, http.StatusOK, status, "callback did not become available")
 
-	// Node reaches fresh via the callback path.
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"agent did not reach fresh after async callback")
 
-	// Verify the callback's attributes_delta landed in
+	// @deliberate: Verify the callback's attributes_delta landed in
 	// rimsky_node_attributes.data — the redesign's replacement for
 	// "resource has version N" assertions.
 	var row *persistence.NodeAttributesRow

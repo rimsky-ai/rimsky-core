@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// breakpoints_test.go — exercises the sqlite impls of
-// persistence.BreakpointTable and persistence.BreakpointHitTable.
-// Mirror of foundation/persistence/postgres/breakpoints_test.go; the
-// sqlite-specific bits are the test-DB bootstrap and the raw-SQL escape
-// hatch for forcing expires_at backwards.
-//
 // @concept: breakpoint
 
 package sqlite_test
@@ -324,8 +318,6 @@ func TestSQLiteBreakpoints_SweepExpired(t *testing.T) {
 	}
 }
 
-// ---------------- BreakpointHits ----------------
-
 func TestSQLiteBreakpointHits_CreateReturnsIDAndMonotonicSeq(t *testing.T) {
 	ctx := context.Background()
 	d := openSQLiteDriver(t)
@@ -552,7 +544,7 @@ func TestSQLiteBreakpointHits_AutoResumeStale(t *testing.T) {
 		b.OverflowPolicy = persistence.OverflowDropOldest
 		b.HitTTLSeconds = 1
 	}))
-	// Regression guard: a long-TTL hit must NOT be auto-resumed before its
+	// @constraint: a long-TTL hit must NOT be auto-resumed before its
 	// TTL elapses. The SQL once compared datetime()'s space-separated
 	// output (`"YYYY-MM-DD HH:MM:SS"`) lexicographically against the
 	// 'T'-separated fixed-width `now` parameter; since ' ' < 'T', every

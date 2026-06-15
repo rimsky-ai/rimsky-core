@@ -39,10 +39,10 @@ var itemsTableIdentRe = pgsstore.ItemsTableIdentRegex
 type ObservabilityServer struct {
 	genv1.UnimplementedClaimProducerObservabilityServer
 	store *pgsstore.Store
-	// httpBridgeURL is set once at startup before the gRPC server
+	// @deliberate: httpBridgeURL is set once at startup before the gRPC server
 	// accepts traffic; sync.Once-style write means later reads can be
-	// lock-free. We use sync.Once explicitly to make the contract
-	// loud at the call site.
+	// lock-free. sync.Once is used explicitly to make the contract loud
+	// at the call site.
 	httpBridgeURLOnce sync.Once
 	httpBridgeURL     string
 	idleTimeout       time.Duration
@@ -137,8 +137,8 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 		case <-stream.Context().Done():
 			return nil
 		case <-idleC:
-			// Spec §2.5/§3.5: close idle streams with a final marker,
-			// not an error.
+			// @constraint: spec §2.5/§3.5 — close idle streams with a final
+			// marker, not an error.
 			return stream.Send(&genv1.ClaimEvent{
 				EventId:   "idle_timeout",
 				Timestamp: timestamppb.Now(),
@@ -147,7 +147,6 @@ func (s *ObservabilityServer) StreamClaim(req *genv1.StreamClaimRequest, stream 
 			})
 		case ev, ok := <-ch:
 			if !ok {
-				// Channel closed → terminal arrived.
 				return stream.Send(&genv1.ClaimEvent{
 					EventId:   "terminal",
 					Timestamp: timestamppb.New(time.Now().UTC()),
@@ -336,11 +335,11 @@ func (s *ObservabilityServer) itemsQueueView(ctx context.Context) (*genv1.AdminV
 	rows := make([]any, 0, len(selectors))
 	for _, sel := range selectors {
 		pp := pps[sel]
-		// Defense-in-depth: reject any items_table name that isn't a
-		// strict SQL identifier before interpolating it into the
-		// COUNT(*) query. Store.New already enforces this at config
-		// load; if it ever fails to, we'd rather return -1/-1 than
-		// open a SQL injection.
+		// @constraint: defense-in-depth — reject any items_table name that
+		// isn't a strict SQL identifier before interpolating it into the
+		// COUNT(*) query. Store.New already enforces this at config load;
+		// if it ever fails to, returning an error beats opening a SQL
+		// injection.
 		if !itemsTableIdentRe.MatchString(pp.ItemsTable) {
 			return nil, status.Errorf(codes.FailedPrecondition,
 				"postgres store: pick_policies[%q]: items_table %q is not a valid SQL identifier",

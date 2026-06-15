@@ -52,7 +52,7 @@ func TestPerRunAttributes_FallbackOperator_LiteralFires(t *testing.T) {
 			),
 		},
 	})
-	// No params supplied — the directive misses, fallback fires.
+	// @deliberate: No params supplied — the directive misses, fallback fires.
 	iid := h.CreateInstance(tid, "ck-fallback", map[string]any{})
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)

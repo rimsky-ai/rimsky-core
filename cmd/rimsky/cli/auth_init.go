@@ -29,9 +29,10 @@ func RunAuthInit(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	// CLI-side nicety: refuse if the deployment is already
-	// authenticated. The authoritative gate is the server's
-	// anonymous-mode predicate; this is a friendly pre-check.
+	// @deliberate: CLI-side pre-check refuses if the deployment is already
+	// authenticated; the authoritative gate is the server's anonymous-mode
+	// predicate, this is a friendly nicety so the operator gets a clear
+	// message instead of an opaque server 403.
 	if status, ok := fetchAuthStatus(ctx, endpoint, key); ok && status.Mode == "authenticated" {
 		fmt.Fprintln(os.Stderr, "rimsky auth init: deployment is already authenticated (use 'rimsky auth create-key' instead)")
 		return 1

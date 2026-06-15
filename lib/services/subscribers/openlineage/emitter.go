@@ -22,15 +22,19 @@ import (
 //
 //	@concept: lineage
 type Event struct {
-	EventType   string         `json:"eventType"` // START | COMPLETE | FAIL | ABORT | OTHER
-	EventTime   string         `json:"eventTime"` // RFC3339
-	ProducerURI string         `json:"producer"`  // canonical rimsky URI
-	SchemaURL   string         `json:"schemaURL"` // OpenLineage spec URL
-	Run         RunRef         `json:"run"`
-	Job         JobRef         `json:"job"`
-	Inputs      []DatasetRef   `json:"inputs,omitempty"`
-	Outputs     []DatasetRef   `json:"outputs,omitempty"`
-	Facets      map[string]any `json:"facets,omitempty"`
+	// @constraint: EventType is one of START | COMPLETE | FAIL | ABORT | OTHER (OpenLineage 1.x spec).
+	EventType string `json:"eventType"`
+	// @constraint: EventTime is RFC3339.
+	EventTime string `json:"eventTime"`
+	// @constraint: ProducerURI is the canonical rimsky URI.
+	ProducerURI string `json:"producer"`
+	// @constraint: SchemaURL is the OpenLineage spec URL.
+	SchemaURL string         `json:"schemaURL"`
+	Run       RunRef         `json:"run"`
+	Job       JobRef         `json:"job"`
+	Inputs    []DatasetRef   `json:"inputs,omitempty"`
+	Outputs   []DatasetRef   `json:"outputs,omitempty"`
+	Facets    map[string]any `json:"facets,omitempty"`
 }
 
 // RunRef is the OpenLineage run identifier. `runId` is namespaced per
@@ -138,10 +142,9 @@ func MakeLeafRunEvent(rec LeafRunRecord, observedAt time.Time, instanceID string
 			},
 		})
 	}
-	// Project the writer's full LeafRunRecord shape into the rimsky
-	// facet block so downstream OL consumers can audit-trace the leaf
-	// run back to its node-run row (`node_id`, `frame_id`, `state`,
-	// `scope_data_hash`, `error_class`).
+	// @deliberate: project the writer's full LeafRunRecord shape into the rimsky
+	// facet block so downstream OL consumers can audit-trace the leaf run back
+	// to its node-run row (node_id, frame_id, state, scope_data_hash, error_class).
 	facets := map[string]any{
 		"rimsky": map[string]any{
 			"node_id":              rec.NodeID,

@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// wait_set_topic_kind_test.go — proves the rimsky_wait_set.topic_kind
-// CHECK constraint admits the full 5-value signal taxonomy
-// ('state','attribute','event','transient','message','terminal') on a
-// freshly-migrated Postgres. The legacy schema (001-schema.sql) only
-// permits ('state','attribute','event'); a broadening migration
-// (006-waitset-topic-kind-taxonomy.sql) widens it. RED until that
-// migration exists — the 'transient'/'message'/'terminal' inserts are
-// rejected by the legacy CHECK today.
-//
-// Backs S-cascade-waitset-topic-taxonomy: the wait-set ledger must record
-// the actual signal class an edge gates on, not collapse three classes
-// onto a lossy 'state' bucket.
-
 package postgres_test
 
 import (
@@ -114,9 +101,9 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	d := pgtest.OpenDriver(ctx, t)
 	frameID, receiverRunID, senderRunID := seedWaitSetParentsPG(t, ctx, d)
 
-	// One row per broadened topic_kind value. The wait-set PK is
-	// (frame_id, receiver_run_id, sender_run_id, topic_kind,
-	// subscription_scope); topic_kind varies, so all three coexist.
+	// @constraint: wait-set PK is (frame_id, receiver_run_id, sender_run_id,
+	// topic_kind, subscription_scope) — topic_kind varies across the loop, so
+	// all three rows coexist under one (frame, receiver, sender) triple.
 	for _, topicKind := range []string{"transient", "message", "terminal"} {
 		pgtest.ExecForTest(ctx, t, d,
 			`INSERT INTO rimsky_wait_set
@@ -126,10 +113,9 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 		)
 	}
 
-	// Confirm all three rows landed: the CHECK admitted the broadened
-	// taxonomy rather than silently rejecting (ExecForTest fatals on a
-	// CHECK violation, so reaching here already proves admission; the
-	// count makes the assertion explicit).
+	// @deliberate: explicit count assertion is redundant with ExecForTest
+	// fataling on CHECK violation (reaching here already proves admission),
+	// but the count makes the success criterion visible at the test site.
 	var count int
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT count(*) FROM rimsky_wait_set

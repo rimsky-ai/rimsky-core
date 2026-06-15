@@ -70,7 +70,7 @@ func SweepOrphanedBlobs(ctx context.Context, args OrphanBlobsArgs) error {
 	}
 	for _, r := range rows {
 		if r.Backend != args.Backend.Name() {
-			// Mismatched-backend orphan: leave for that backend's sweep.
+			// @constraint: cross-backend orphan rows belong to the backend that wrote them; this sweep only reaps rows whose recorded backend matches the active Backend.Name().
 			continue
 		}
 		if err := reapOneBlobOrphan(ctx, args, r, log); err != nil {
@@ -91,7 +91,6 @@ func reapOneBlobOrphan(ctx context.Context, args OrphanBlobsArgs, row persistenc
 		if !errors.Is(err, persistence.ErrBlobNotFound) {
 			return fmt.Errorf("backend.Delete: %w", err)
 		}
-		// Treat NotFound as success-and-forget below.
 	}
 	if err := args.BlobOrphans.Delete(ctx, row.Handle); err != nil {
 		return fmt.Errorf("blob_orphans.Delete: %w", err)

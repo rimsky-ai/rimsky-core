@@ -3,9 +3,9 @@
 // See LICENSE.apache at the repo root.
 
 /**
- * error-classify.ts — map a failed agent subprocess's stderr/exit to the
- * precise hierarchical error_class leaf the claude-agent executor advertises
- * in its `declared_error_classes` list.
+ * Maps a failed agent subprocess's stderr/exit to the precise hierarchical
+ * error_class leaf the claude-agent executor advertises in its
+ * `declared_error_classes` list (`error-classify.ts`).
  *
  * The classifier is the emit side of the four declared agent failure classes
  * (S-executors-claude-agent-error-classes /
@@ -57,11 +57,11 @@ export function classifyAgentError(
   stderr: string,
   exitCode: number | null,
 ): ClassifiedAgentError {
-  void exitCode; // currently stderr-driven; see docstring
+  void exitCode; // @deliberate: currently stderr-driven; see docstring
   if (!stderr) return null;
   const lower = stderr.toLowerCase();
 
-  // 1. Context-window exceeded. The CLI surfaces this as a "prompt is too
+  // @deliberate: 1. Context-window exceeded. The CLI surfaces this as a "prompt is too
   //    long" / "maximum context window" / "context_length_exceeded" /
   //    "context window exceeded" stderr line.
   if (
@@ -74,7 +74,7 @@ export function classifyAgentError(
     return { errorClass: "agent/context_exceeded" };
   }
 
-  // 2. Tool-invocation failure. The offending tool name rides the
+  // @deliberate: 2. Tool-invocation failure. The offending tool name rides the
   //    hierarchical leaf so a subscriber wildcard-keyed on
   //    `agent/tool_use_failed/*` matches and a policy can pivot on the tool.
   if (lower.includes("tool_use_failed") || lower.includes("tool execution failed")) {
@@ -82,7 +82,7 @@ export function classifyAgentError(
     return { errorClass: `agent/tool_use_failed/${tool}` };
   }
 
-  // 3. Model refusal. A `(refusal)` marker, or the model "declined" / "refused"
+  // @deliberate: 3. Model refusal. A `(refusal)` marker, or the model "declined" / "refused"
   //    to respond.
   if (
     lower.includes("(refusal)") ||

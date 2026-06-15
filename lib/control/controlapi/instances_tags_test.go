@@ -4,8 +4,6 @@
 
 // Tests for materialization-time tag substitution on the instance-
 // factory path. Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 4.
 
 package controlapi
 

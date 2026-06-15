@@ -9,9 +9,6 @@
 // dials the appropriate gRPC client per advertised protocol and exposes
 // the registries the control-api / supervisor wires into runtime.AppDeps.
 //
-// Per spec
-// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher protocol unification. The registry types are tiny
 // adapters around `map[string]<Client>` so the control-api can pass
 // them as runtime.PublisherRegistry / runtime.ValidationRegistry
 // without coupling to control/config.
@@ -100,9 +97,9 @@ func DialPublisherAndValidationRegistries(
 	publisherClients := map[string]runtime.PublisherClient{}
 	validationClients := map[string]runtime.ValidationClient{}
 	dpClients := map[string]runtime.DataProcessingClient{}
-	// closeAll captures the three client maps by reference. They start
-	// empty and are populated during the dial loop below; at every
-	// invocation (mid-loop dial-error rollback OR end-of-function
+	// @constraint: closeAll captures the three client maps by reference
+	// — they start empty and accumulate during the dial loop below; at
+	// every invocation (mid-loop dial-error rollback OR end-of-function
 	// closer registration) closeAll walks whatever entries have
 	// accumulated by that point.
 	closeAll := func() {
@@ -123,33 +120,34 @@ func DialPublisherAndValidationRegistries(
 		}
 	}
 
-	// Walk producers + executors + publishers uniformly. The endpoint
-	// shape is peer-agnostic — the gRPC dial only cares about the
-	// transport target.
-	//
-	// `roles` is the LIVE `validation_supported_roles` list the peer
-	// advertised on its own capability surface — the Validation service
-	// has no Capabilities verb, so each peer kind carries the list on
-	// its host capability handshake: ClaimProducer.Capabilities for
-	// claim producers, ExecutorObservability.Capabilities for executors,
+	// @deliberate: walk producers + executors + publishers uniformly —
+	// the endpoint shape is peer-agnostic; the gRPC dial only cares about
+	// the transport target. `roles` is the LIVE
+	// `validation_supported_roles` list the peer advertised on its own
+	// capability surface — the Validation service has no Capabilities
+	// verb, so each peer kind carries the list on its host capability
+	// handshake: ClaimProducer.Capabilities for claim producers,
+	// ExecutorObservability.Capabilities for executors,
 	// Publisher.Capabilities for publishers. We cannot read it from the
 	// operator-declared `e.Capabilities` — `cfg.Stores` is built at
 	// YAML-load time and `Capabilities` there carries only the
 	// operator-declared write-semantics envelope; the
 	// `ValidationSupportedRoles` field is always empty there. So when a
-	// peer advertises the `validation` mix-in, we run a fresh
-	// capability handshake here to learn the live supported roles. The
-	// cost is one extra RPC per validation-mix-in peer at startup.
+	// peer advertises the `validation` mix-in, we run a fresh capability
+	// handshake here to learn the live supported roles. The cost is one
+	// extra RPC per validation-mix-in peer at startup.
 	// @story: validation-author
 	// @story: validation-mixin-uniform
 	type peerSpec struct {
-		name      string
-		endpoint  string
-		tls       string // validated `tls:` mode from the peer's config entry
+		name     string
+		endpoint string
+		// @constraint: tls is the validated `tls:` mode from the peer's
+		// config entry.
+		tls       string
 		protocols []string
-		// fetchRoles is called lazily the first time the validation
-		// mix-in arm is processed for this peer. Every peer kind sets
-		// it — all three kinds resolve live roles identically.
+		// @deliberate: fetchRoles is called lazily the first time the
+		// validation mix-in arm is processed for this peer. Every peer
+		// kind sets it — all three kinds resolve live roles identically.
 		fetchRoles func(context.Context) ([]string, error)
 	}
 	peers := make([]peerSpec, 0, len(stores.Stores)+len(execs.Executors)+len(publishers.Publishers))
@@ -175,9 +173,9 @@ func DialPublisherAndValidationRegistries(
 		})
 	}
 	for n, e := range execs.Executors {
-		// The executor's validation_supported_roles ride on the
-		// ExecutorObservability capability surface, which the operator
-		// may split onto a dedicated observability endpoint.
+		// @constraint: the executor's validation_supported_roles ride on
+		// the ExecutorObservability capability surface, which the
+		// operator may split onto a dedicated observability endpoint.
 		nameCopy, tlsCopy := n, e.TLS
 		obsEndpoint := e.ObservabilityEndpoint
 		if obsEndpoint == "" {
@@ -224,15 +222,14 @@ func DialPublisherAndValidationRegistries(
 				if _, already := validationClients[p.name]; already {
 					continue
 				}
-				// Resolve the LIVE supported_roles list right before
-				// dialing the validation client. Every peer kind runs
-				// its own capability handshake (ClaimProducer /
-				// ExecutorObservability / Publisher Capabilities), so
-				// all three kinds resolve live roles identically. A
-				// failed handshake fails startup — a validation peer
-				// whose roles cannot be learned would be dialed but
-				// never used, which is exactly the silent gap this
-				// guards against.
+				// @constraint: resolve the LIVE supported_roles list
+				// right before dialing the validation client. Every peer
+				// kind runs its own capability handshake (ClaimProducer /
+				// ExecutorObservability / Publisher Capabilities), so all
+				// three kinds resolve live roles identically. A failed
+				// handshake fails startup — a validation peer whose roles
+				// cannot be learned would be dialed but never used, which
+				// is exactly the silent gap this guards against.
 				rCtx, rCancel := context.WithTimeout(ctx, capabilitiesHandshakeTimeout)
 				roles, fErr := p.fetchRoles(rCtx)
 				rCancel()

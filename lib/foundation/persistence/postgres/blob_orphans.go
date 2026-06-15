@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// blob_orphans.go is the postgres accessor for the rimsky_blob_orphans
-// table. The table tracks blob handles whose referencing rows have been
-// overwritten or deleted; the SweepOrphanedBlobs sweep deletes rows
-// where reap_after <= now() and calls BlobBackend.Delete(handle).
-//
-// Insert is idempotent on Handle (PK conflict → no-op).
 package postgres
 
 import (

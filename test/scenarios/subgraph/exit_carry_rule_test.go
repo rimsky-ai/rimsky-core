@@ -139,14 +139,13 @@ func makeFixture(t *testing.T) carryFixture {
 		if _, err := tables.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx); err != nil {
 			return err
 		}
-		// Parent (calling-node) run in the main scope.
+		// @constraint: parent (calling-node) run in the main scope.
 		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
 			RunID: parentRunID, NodeID: callerNodeID, FrameID: frameID,
 			RunScopeID: mainScopeID,
 		}); err != nil {
 			return err
 		}
-		// Sub-graph RunScope rooted under the parent run.
 		parentRunIDCopy := parentRunID
 		mainScopeIDCopy := mainScopeID
 		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -158,7 +157,6 @@ func makeFixture(t *testing.T) carryFixture {
 		}); err != nil {
 			return err
 		}
-		// Exit leaf run inside the sub-graph scope.
 		return tables.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
 			RunID: exitRunID, NodeID: exitNodeID, FrameID: frameID,
 			RunScopeID: exitScopeID, ExecutorName: "test-executor",
@@ -218,7 +216,7 @@ func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 		t.Fatalf("SettleChildren (carry-verbatim): %v", err)
 	}
 
-	// The carry landed verbatim on the PARENT run's attribute row
+	// @deliberate: The carry landed verbatim on the PARENT run's attribute row
 	// (@blessed-invariant: exit-node-writeback-to-parent — exit-node-writeback flows to parent run
 	// writeback).
 	attrs := readParentAttrs(t, fx)
@@ -232,7 +230,7 @@ func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 		t.Errorf("carried row_count = %v, want 1024", got)
 	}
 
-	// The child execution context closed atomically with the carry
+	// @deliberate: The child execution context closed atomically with the carry
 	// (carry-rule atomicity: same transaction as the writeback).
 	var scope *persistence.RunScopeRow
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -246,7 +244,6 @@ func TestSettleChildren_CarryVerbatim_AcceptsValidJSON(t *testing.T) {
 		t.Errorf("sub-graph RunScope not closed after carry settlement")
 	}
 
-	// Forensics: the `subgraph.exit_carry` event was appended.
 	instanceID := fx.instanceID
 	var res persistence.EventListResult
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -283,7 +280,7 @@ func TestSettleChildren_CarryVerbatim_RejectsRunWithoutParent(t *testing.T) {
 	t.Parallel()
 	fx := makeFixture(t)
 
-	// The PARENT run lives in the main RunScope (no parent_run_id) —
+	// @constraint: The PARENT run lives in the main RunScope (no parent_run_id) —
 	// settling it as if it were a sub-graph exit must error.
 	wb := json.RawMessage(`{"a":1}`)
 	if err := settleCarry(fx, fx.parentRunID, wb); err == nil {
@@ -296,7 +293,7 @@ func TestSettleChildren_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(t *t
 	ctx := context.Background()
 	fx := makeFixture(t)
 
-	// An empty writeback skips ONLY the attribute upsert: per spec
+	// @constraint: An empty writeback skips ONLY the attribute upsert: per spec
 	// §Writeback carry-rule for exit, "if exit never runs ... the
 	// parent's writeback row remains empty." Zero-byte writeback is
 	// equivalent — but the REST of the settlement (RunScope close,
@@ -310,7 +307,7 @@ func TestSettleChildren_CarryVerbatim_EmptyWritebackSkipsOnlyAttributeCarry(t *t
 	if attrs != nil && len(attrs.Data) > 0 {
 		t.Errorf("parent writeback row should remain empty on empty carry, got %v", attrs.Data)
 	}
-	// The sub-graph RunScope still closes on the empty carry.
+	// @deliberate: The sub-graph RunScope still closes on the empty carry.
 	var scope *persistence.RunScopeRow
 	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error

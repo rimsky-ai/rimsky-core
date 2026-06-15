@@ -6,10 +6,10 @@
 // caller-supplied payload to a configured URL; verifies the response
 // status matches the operator's expected set.
 //
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Verifier executors / verifier-http.
-//
-//	@concept: verifier-pattern
+// @deliberate: implements the verifier-executor pattern (a regular
+// executor that co-holds the upstream claim, runs checks, and returns
+// success or error) — documentation-only pattern, no successor concept
+// per the concepts catalog.
 //
 // Attribute schema:
 //
@@ -114,16 +114,14 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
 	if !statusInSet(resp.StatusCode, expected) {
-		// Surface the upstream's typed class on the error class so
-		// `concept:signal` policy/subscriber matching keys on the
-		// upstream's taxonomy rather than collapsing to the generic
-		// `verifier/check_failed` leaf. The class is read from a
-		// configurable JSON field on the upstream body (default
-		// `class`, per `attributes.class_field`). Mirrors http-node's
-		// `configured-error-class-field` discipline so the spec's
-		// "error with the upstream's class" Acceptance is satisfied
-		// structurally (not by relying on a body_preview text scrape,
-		// which would let "class field dropped" pass silently).
+		// @constraint: surface the upstream's typed class on the error class so
+		// concept:signal policy/subscriber matching keys on the upstream's
+		// taxonomy rather than collapsing to the generic verifier/check_failed
+		// leaf. The class is read from a configurable JSON field on the upstream
+		// body (default `class`, per attributes.class_field). Mirrors http-node's
+		// configured-error-class-field discipline so the spec's "error with the
+		// upstream's class" Acceptance is satisfied structurally — relying on a
+		// body_preview text scrape would let "class field dropped" pass silently.
 		classField := defaultClassField
 		if cf, ok := ud["class_field"].(string); ok && cf != "" {
 			classField = cf
@@ -139,7 +137,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 			"body_preview":    truncate(string(respBody), 512),
 		}
 		if upstreamClass != "" {
-			// Echo the typed class on the payload too so downstream
+			// @deliberate: echo the typed class on the payload too so downstream
 			// readers can inspect it without parsing body_preview.
 			payloadMap["upstream_class"] = upstreamClass
 		}
@@ -152,8 +150,9 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		}})
 	}
 
-	// Successful verify: no state change, but surface a small
-	// attributes delta with the response status for downstream reads.
+	// @deliberate: successful verify reports Changed:false (no state change) but
+	// still emits a small attributes delta carrying the response status so
+	// downstream reads can inspect it.
 	delta, _ := structpb.NewStruct(map[string]any{
 		"verifier_pass":   true,
 		"verifier_status": float64(resp.StatusCode),

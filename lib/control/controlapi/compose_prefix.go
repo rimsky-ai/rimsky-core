@@ -74,7 +74,7 @@ func isComposeOrigin(r *http.Request) bool {
 	}
 	ident, ok := IdentityFromContextOK(r.Context())
 	if !ok {
-		// No auth middleware ran (in-process route-only test harness).
+		// @constraint: no auth middleware ran (in-process route-only test harness).
 		// Fall back to header-only for test compatibility; production
 		// wires AuthState in NewApp so this branch never executes there.
 		return true

@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// frame_lifecycle.go — FrameLifecycle conformance area.
-//
+// @constraint: FrameLifecycle conformance area.
 // Pins the rimsky_frames state machine the frame engine
 // (graph/frame) drives through the FrameTable surface:
 //
@@ -50,9 +49,9 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	frames := d.Tables().Frames()
 
-	// The fixture instance starts with one RUNNING frame (fix.FrameID).
-	// Enqueue two further serial frames; the sleep guarantees a
-	// strictly-older queued_at for f1 at sqlite's stored precision.
+	// @constraint: sqlite's stored queued_at precision is millisecond-grained;
+	// the sleep guarantees f1 has a strictly-older queued_at than f2 so the
+	// oldest-queued tie-break is observable across both drivers.
 	var f1, f2 shared.UUID
 	frameOp(ctx, t, d, "EnqueueSerialFrame f1", func(tx persistence.Tx) error {
 		var err error
@@ -69,8 +68,9 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		t.Fatalf("serial enqueues coalesced: f1 == f2 == %s", f1)
 	}
 
-	// Serial-queue gate: while a running frame exists, the instance has
-	// no ready-to-start queued frame.
+	// @constraint: serial-queue gate — while a running frame exists,
+	// ListQueuedFramesReadyToStart MUST NOT surface any queued frame for
+	// the instance.
 	frameOp(ctx, t, d, "ListQueuedFramesReadyToStart (running gate)", func(tx persistence.Tx) error {
 		ready, err := frames.ListQueuedFramesReadyToStart(ctx, tx)
 		if err != nil {
@@ -84,7 +84,9 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		return nil
 	})
 
-	// Terminal transition fires exactly once.
+	// @constraint: MarkRunningFrameTerminal returns transitioned=true exactly
+	// once per frame; a second call on a terminal frame returns
+	// transitioned=false (race-safe at-most-once semantics).
 	frameOp(ctx, t, d, "MarkRunningFrameTerminal", func(tx persistence.Tx) error {
 		transitioned, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateCompleted, tx)
 		if err != nil {
@@ -123,8 +125,9 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		return nil
 	})
 
-	// With no running frame, exactly the OLDEST queued frame (f1)
-	// surfaces, carrying its source node.
+	// @constraint: with no running frame for the instance,
+	// ListQueuedFramesReadyToStart surfaces exactly one queued frame — the
+	// oldest by queued_at (f1) — carrying its source node.
 	frameOp(ctx, t, d, "ListQueuedFramesReadyToStart (oldest)", func(tx persistence.Tx) error {
 		ready, err := frames.ListQueuedFramesReadyToStart(ctx, tx)
 		if err != nil {
@@ -145,8 +148,9 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		return nil
 	})
 
-	// Promotion fires exactly once, stamps started_at, and re-closes the
-	// ready-to-start gate (f2 stays queued behind the new running f1).
+	// @constraint: PromoteQueuedFrameToRunning returns transitioned=true
+	// exactly once, stamps started_at, and re-closes the ready-to-start gate
+	// (f2 stays queued behind the new running f1).
 	frameOp(ctx, t, d, "PromoteQueuedFrameToRunning", func(tx persistence.Tx) error {
 		transitioned, err := frames.PromoteQueuedFrameToRunning(ctx, f1, tx)
 		if err != nil {
@@ -191,7 +195,9 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		return nil
 	})
 
-	// The failed terminal state lands identically.
+	// @constraint: the failed terminal state lands via the same
+	// MarkRunningFrameTerminal path as completed, stamping ended_at
+	// identically.
 	frameOp(ctx, t, d, "MarkRunningFrameTerminal failed", func(tx persistence.Tx) error {
 		transitioned, err := frames.MarkRunningFrameTerminal(ctx, f1, persistence.FrameStateFailed, tx)
 		if err != nil {
@@ -210,7 +216,9 @@ func testFrameLifecycleSerialQueue(t *testing.T, d persistence.Database) {
 		return nil
 	})
 
-	// Template metadata read used by the producer path.
+	// @constraint: LookupFrameResolutionMode surfaces the template's
+	// (frame_resolution, frame_timeout_ms) pair exactly as configured —
+	// the producer path depends on this read.
 	frameOp(ctx, t, d, "LookupFrameResolutionMode", func(tx persistence.Tx) error {
 		mode, timeoutMs, err := frames.LookupFrameResolutionMode(ctx, fix.InstanceID, tx)
 		if err != nil {
@@ -235,8 +243,8 @@ func testFrameLifecycleCoalesce(t *testing.T, d persistence.Database) {
 	nodeB := seedExtraNode(ctx, t, d, fix, "coalesce-node-b")
 	nodeC := seedExtraNode(ctx, t, d, fix, "coalesce-node-c")
 
-	// A queued serial frame exists first — the coalesce enqueue must NOT
-	// fold into it.
+	// @constraint: EnqueueCoalesceFrame MUST NOT fold into a queued SERIAL
+	// frame — coalesce-append targets only the pending coalesce row.
 	var serialF shared.UUID
 	frameOp(ctx, t, d, "EnqueueSerialFrame", func(tx persistence.Tx) error {
 		var err error
@@ -262,9 +270,10 @@ func testFrameLifecycleCoalesce(t *testing.T, d persistence.Database) {
 		t.Fatalf("second coalesce enqueue minted a new frame %s, want append to %s", fc2, fc1)
 	}
 
-	// Drain the running fixture frame and the older serial frame so the
-	// coalesce frame surfaces ready — its SourceNodeIDs must carry BOTH
-	// appended sources.
+	// @constraint: once the coalesce frame surfaces ready, its SourceNodeIDs
+	// MUST carry BOTH appended sources (nodeB and nodeC) — the second
+	// EnqueueCoalesceFrame appended to the same row rather than minting a
+	// new frame.
 	frameOp(ctx, t, d, "drain to coalesce frame", func(tx persistence.Tx) error {
 		if _, err := frames.MarkRunningFrameTerminal(ctx, fix.FrameID, persistence.FrameStateCompleted, tx); err != nil {
 			return err

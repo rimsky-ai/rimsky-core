@@ -2,19 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// queue_park.go is the postgres impl of the parked-row helpers added to
-// persistence.Queue by the 2026-05-08 platform-extensions plan (sections
-// E1, E3, E4, E5).
-//
-// All transitions involving phase='parked' rows go through this file.
-// The ParkActiveInTx helper transitions active→parked under a claimant
-// guard (mirrors ReleaseClaim's claimant-guarded UPDATE pattern), the
-// ResumeParkedInTx helper transitions parked→pending with claimed_by
-// reset to NULL (so any eligible supervisor can claim the resumed row),
-// and the per-row counter helpers (GetRetryNoProgress /
-// SetRetryNoProgressForNodeInTx) track progress against E5's
-// max-retries-without-progress cap.
-
 package postgres
 
 import (
@@ -429,7 +416,6 @@ func (q *queueImpl) LoadResumeMetadataInTx(ctx context.Context, tx persistence.T
 		return nil, fmt.Errorf("postgres.LoadResumeMetadataInTx: %w", err)
 	}
 	if len(inline) == 0 && !handle.Valid && !backend.Valid && !reason.Valid && !reasonNote.Valid && !session.Valid && !wakeReason.Valid && !parkedAt.Valid {
-		// No parked metadata → fresh dispatch.
 		return nil, nil
 	}
 	out := &persistence.ResumeMetadataRow{

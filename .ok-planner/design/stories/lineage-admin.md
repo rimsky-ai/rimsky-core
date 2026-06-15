@@ -19,7 +19,7 @@ Operators keep the lineage table bounded in a long-lived deployment without bulk
 
 ## Acceptance
 
-With lineage records of varied ages persisted, an operator submits a prune request through the control-api or `rimsky lineage prune` carrying a cutoff; only records strictly older than the cutoff are removed, records at or after the cutoff are untouched (verifiable through a follow-up lineage query).
+With lineage records of varied ages persisted, an operator submits a prune request through the control-api or the lineage-prune CLI verb carrying a cutoff; only records strictly older than the cutoff are removed, records at or after the cutoff are untouched (verifiable through a follow-up lineage query).
 
 ## Falsifier
 

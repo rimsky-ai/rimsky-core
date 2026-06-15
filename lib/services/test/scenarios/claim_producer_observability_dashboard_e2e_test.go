@@ -111,14 +111,13 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 
 	netName := harness.NewNetwork(ctx, t)
 
-	// One pick policy with three seeded folders. on_commit: recycle
-	// returns the folder to the queue post-commit so three sequential
-	// Open cycles each pick a different folder (the pick policy hands
-	// out the oldest-available, then alphabetically-first folder per
-	// Open). AdvertiseHTTPBridge: true makes the store render its
-	// `http_bridge_url:` YAML field (rimsky's observability handshake
-	// surfaces it through the dashboard route) and maps the HTTP port
-	// to the host so this test process can dial the bridge directly.
+	// @deliberate: One pick policy with three seeded folders; on_commit=recycle
+	// returns the folder to the queue post-commit so three sequential Open
+	// cycles each pick a different folder (oldest-available, then
+	// alphabetically-first). AdvertiseHTTPBridge=true makes the store render
+	// its `http_bridge_url:` YAML field (rimsky's observability handshake
+	// surfaces it through the dashboard route) and maps the HTTP port to the
+	// host so this test process can dial the bridge directly.
 	fs := harness.StartFilesystemStore(ctx, t, netName, "store-fs",
 		harness.FilesystemStoreSpec{
 			PickPolicies: map[string]harness.FilesystemPickPolicy{
@@ -149,20 +148,19 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// One-node template: each dispatch opens a claim on @docs and
-	// commits it. The recycle on_commit puts the folder back into the
-	// queue so the next instance picks the next folder.
+	// @deliberate: one-node template — each dispatch opens a claim on @docs and
+	// commits it; on_commit=recycle puts the folder back into the queue so the
+	// next instance picks the next folder.
 	templateID := deployObsTemplate(t, ep, "claim-observability-demo")
 
-	// Drive three sequential instances. Each instance produces one real
-	// Open + Commit on the producer (so the ledger ends up with three
-	// distinct claim records). The "node reached fresh" signal is the
-	// node-state surface's INITIAL value (a node row with no run yet
-	// already shows fresh), so it does not reliably mean work happened.
-	// We use a stronger proof: wait until the producer's ledger reports
-	// the cumulative committed-claim count we expect — that observation
-	// only goes up via real Open + Commit calls from rimsky's
-	// supervisor through the gRPC ClaimProducer surface.
+	// @deliberate: drive three sequential instances, each producing one real
+	// Open + Commit on the producer (so the ledger ends up with three distinct
+	// claim records). The "node reached fresh" signal is the node-state
+	// surface's INITIAL value (a node row with no run yet already shows fresh),
+	// so it does not reliably mean work happened. We use a stronger proof:
+	// wait until the producer's ledger reports the cumulative committed-claim
+	// count we expect — that observation only goes up via real Open + Commit
+	// calls from rimsky's supervisor through the gRPC ClaimProducer surface.
 	for i := 0; i < 3; i++ {
 		t.Logf("creating instance %d...", i)
 		instanceID := createObsInstance(t, ep, templateID, fmt.Sprintf("ck-obs-%d", i))
@@ -171,8 +169,6 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		t.Logf("instance %d=%s reached commit in producer ledger", i, instanceID)
 	}
 
-	// --- 1) Discover the per-store observability surface via the
-	//        rimsky dashboard route.
 	peerEntry := pollGetStorePeer(t, ep, "docs", 30*time.Second)
 
 	if peerEntry.HTTPBridgeURL == "" {
@@ -192,8 +188,8 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 	if !caps.SupportsClaimGet || !caps.SupportsClaimStream || !caps.SupportsListClaims {
 		t.Fatalf("dashboard caps want SupportsClaimGet/Stream/ListClaims = true; got %+v", caps)
 	}
-	// The producer declares two admin views; both must appear on the
-	// dashboard's view of the cached caps.
+	// @constraint: the producer declares two admin views; both must appear
+	// on the dashboard's view of the cached caps.
 	wantViews := map[string]bool{"pick_policies": false, "policy_items": false}
 	for _, v := range caps.AdminViews {
 		if _, ok := wantViews[v.Name]; ok {
@@ -207,12 +203,10 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		}
 	}
 
-	// --- 2) Paginate the producer's claim inventory.
-	//
-	// Three claims live in the ledger; request limit=2 so the first
-	// page returns two, the next_cursor brings the third on the second
-	// page. Paginated results must match what GetClaim returns for
-	// each claim_id (no synthesis).
+	// @constraint: paginated inventory results must match what GetClaim
+	// returns for each claim_id (no synthesis). Three claims live in the
+	// ledger; request limit=2 so the first page returns two and next_cursor
+	// brings the third on the second page.
 	page1 := getClaimsPage(t, fs.HostHTTPBridge, "", 2)
 	if len(page1.Claims) != 2 {
 		t.Fatalf("inventory page1: claims=%d, want 2; cursor=%q; raw=%+v",
@@ -243,9 +237,9 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		seenIDs[c.ClaimID] = true
 	}
 
-	// --- 3) Fetch one claim's full detail and cross-check it against
-	//        the inventory row. A synthesized inventory would diverge
-	//        from what GetClaim returns for the same claim_id.
+	// @constraint: fetch one claim's full detail and cross-check against
+	// the inventory row — a synthesized inventory would diverge from what
+	// GetClaim returns for the same claim_id.
 	pickClaim := allInventory[0]
 	detail := getClaimDetail(t, fs.HostHTTPBridge, pickClaim.ClaimID)
 	if detail.ClaimID != pickClaim.ClaimID {
@@ -256,8 +250,8 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		t.Fatalf("claim %q detail state=%q, want COMMITTED (the test commits every dispatched claim)",
 			pickClaim.ClaimID, detail.State)
 	}
-	// The inventory row's state must match GetClaim's state (no
-	// synthesis): the producer is the single source of truth.
+	// @constraint: the inventory row's state must match GetClaim's state
+	// (no synthesis); the producer is the single source of truth.
 	if pickClaim.State != detail.State {
 		t.Fatalf("inventory claim state %q != detail state %q for claim_id=%q (inventory must source from producer, not synthesize)",
 			pickClaim.State, detail.State, pickClaim.ClaimID)
@@ -267,12 +261,12 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 			pickClaim.ClaimID, len(detail.History), detail)
 	}
 
-	// --- 4) Subscribe to the live stream. The producer's StreamClaim
-	//        atomically replays history then streams new events. Since
-	//        the test drove this claim to COMMITTED before connecting,
-	//        we expect to receive the recorded events (open + commit)
-	//        followed by a terminal marker — proving the stream
-	//        delivers the producer's state transitions without dropping.
+	// @constraint: subscribe to the live stream. The producer's StreamClaim
+	// atomically replays history then streams new events. Since the test
+	// drove this claim to COMMITTED before connecting, we expect to receive
+	// the recorded events (open + commit) followed by a terminal marker,
+	// proving the stream delivers the producer's state transitions without
+	// dropping.
 	streamCtx, streamCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer streamCancel()
 	streamEvents := streamClaim(t, streamCtx, fs.HostHTTPBridge, pickClaim.ClaimID)
@@ -280,8 +274,8 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		t.Fatalf("stream for claim %q produced %d events, want >= 2 (the falsifier 'streamed state lags or drops' would manifest as missing events); events=%+v",
 			pickClaim.ClaimID, len(streamEvents), streamEvents)
 	}
-	// The stream must include a terminal marker (proves it reached
-	// closure without the consumer having to time out).
+	// @constraint: the stream must include a terminal marker (proves it
+	// reached closure without the consumer having to time out).
 	hasTerminal := false
 	for _, ev := range streamEvents {
 		if ev["category"] == "claim_terminal" {
@@ -294,7 +288,7 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 			"a dropped terminal marker is the 'streamed claim state ... drops' falsifier. Events: %+v",
 			pickClaim.ClaimID, streamEvents)
 	}
-	// The stream's pre-terminal events must equal the detail's
+	// @constraint: the stream's pre-terminal events must equal the detail's
 	// recorded history in order — no drops, no reorderings.
 	historyCategories := make([]string, 0, len(detail.History))
 	for _, h := range detail.History {
@@ -314,9 +308,9 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 			streamCategories, historyCategories, pickClaim.ClaimID)
 	}
 
-	// --- 5) Render the producer-declared `pick_policies` admin view.
-	//        The view must return data sourced from the producer
-	//        (selector, root, queue counts), not a placeholder.
+	// @constraint: the producer-declared `pick_policies` admin view must
+	// return data sourced from the producer (selector, root, queue counts),
+	// not a placeholder.
 	view := getAdminView(t, fs.HostHTTPBridge, "pick_policies", nil)
 	rows := view.dataRows()
 	if len(rows) == 0 {
@@ -327,9 +321,9 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 	for _, row := range rows {
 		if sel, _ := row["selector"].(string); sel == "@docs" {
 			foundDocsRow = true
-			// Sanity: the producer's data, not a stub. The view's row
-			// must carry fields the producer fills from its actual
-			// pick-policy + on-disk state.
+			// @constraint: producer-sourced data, not a stub — the row must
+			// carry fields the producer fills from its actual pick-policy +
+			// on-disk state.
 			if root, _ := row["root"].(string); root != "docs" {
 				t.Errorf("admin view pick_policies @docs row root=%q, want %q (producer's actual policy)", root, "docs")
 			}
@@ -343,20 +337,19 @@ func TestClaimProducerObservabilityDashboard(t *testing.T) {
 		t.Fatalf("admin view pick_policies missing the @docs row the producer was configured with; rows=%+v", rows)
 	}
 
-	// --- 6) Render the parametrised `policy_items` admin view. The
-	//        view's declaration carries a required `selector` param;
-	//        the dashboard passes it through. The result must source
-	//        from the producer (it lists real folders on the on-disk
-	//        bind-mount).
+	// @constraint: the parametrised `policy_items` admin view's declaration
+	// carries a required `selector` param; the dashboard passes it through.
+	// The result must source from the producer (it lists real folders on
+	// the on-disk bind-mount).
 	itemsView := getAdminView(t, fs.HostHTTPBridge, "policy_items", map[string]string{"selector": "@docs"})
 	itemRows := itemsView.dataRows()
 	if len(itemRows) < 1 {
 		t.Fatalf("admin view policy_items?selector=@docs returned 0 rows; the producer was seeded with three folders. View: %+v", itemsView)
 	}
-	// Look for at least one folder the test seeded. Three folders
-	// (alpha, beta, gamma) all participated as the recycle pick
-	// policy cycled through them; at least one must appear (either
-	// in available or in_progress, depending on the ledger state).
+	// @deliberate: look for at least one seeded folder — three folders
+	// (alpha, beta, gamma) all participated as the recycle pick policy
+	// cycled through them; at least one must appear (either in available
+	// or in_progress, depending on the ledger state).
 	seedFolders := map[string]bool{"alpha": false, "beta": false, "gamma": false}
 	for _, row := range itemRows {
 		folder, _ := row["folder"].(string)
@@ -434,7 +427,7 @@ func pollGetStorePeer(t *testing.T, ep harness.RimskyEndpoint, name string, dead
 	}
 	t.Fatalf("dashboard /v1/observability/stores/%s never converged to reachable+http_bridge_url within %v; last=%+v",
 		name, deadline, last)
-	return last // unreachable
+	return last
 }
 
 // claimSummary mirrors the inventory row shape served by the
@@ -463,7 +456,7 @@ func getClaimsPage(t *testing.T, bridge, cursor string, limit int) claimsPage {
 	if cursor != "" {
 		url += "&cursor=" + cursor
 	}
-	resp, err := http.Get(url) // #nosec G107 — test-only HTTP to the bridge
+	resp, err := http.Get(url) //nolint:gosec // #nosec G107
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -506,7 +499,7 @@ type claimDetail struct {
 func getClaimDetail(t *testing.T, bridge, claimID string) claimDetail {
 	t.Helper()
 	url := fmt.Sprintf("%s/observability/v1/claims/%s", strings.TrimRight(bridge, "/"), claimID)
-	resp, err := http.Get(url) // #nosec G107 — test-only HTTP to the bridge
+	resp, err := http.Get(url) //nolint:gosec // #nosec G107
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -545,9 +538,9 @@ func streamClaim(t *testing.T, ctx context.Context, bridge, claimID string) []ma
 	}
 	events := []map[string]any{}
 	scanner := bufio.NewScanner(resp.Body)
-	// Default buffer for an SSE-claim event is small (a few hundred
-	// bytes); but per-claim events can carry an attribute struct, so
-	// bump the cap so we never silently truncate.
+	// @constraint: default buffer for an SSE-claim event is small (a few
+	// hundred bytes), but per-claim events can carry an attribute struct,
+	// so bump the cap to avoid silent truncation.
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -560,21 +553,18 @@ func streamClaim(t *testing.T, ctx context.Context, bridge, claimID string) []ma
 			t.Fatalf("decode SSE event payload %q: %v", payload, err)
 		}
 		events = append(events, ev)
-		// Stop after seeing the terminal marker; further events would
-		// only be from the bridge's idle close anyway. Reading the
+		// @deliberate: stop after seeing the terminal marker — further events
+		// would only be from the bridge's idle close anyway, and reading the
 		// stream to its natural close avoids relying on the connection
 		// shutdown behaviour of the test's HTTP client.
 		if cat, _ := ev["category"].(string); cat == "claim_terminal" {
 			break
 		}
 	}
-	// scanner.Err() with context.DeadlineExceeded is acceptable — the
-	// terminal-marker exit above is the happy path. A real I/O error
+	// @deliberate: Scanner.Err() with context.DeadlineExceeded is acceptable
+	// — the terminal-marker exit above is the happy path. A real I/O error
 	// (the bridge crashed mid-stream) is the failure mode.
 	if err := scanner.Err(); err != nil && err != context.DeadlineExceeded {
-		// Only fail on errors other than a context cancel; the
-		// terminal-marker exit above should pre-empt this in the
-		// happy path.
 		if ctx.Err() == nil {
 			t.Fatalf("scanner: %v", err)
 		}
@@ -634,7 +624,7 @@ func getAdminView(t *testing.T, bridge, name string, params map[string]string) a
 			url += k + "=" + v
 		}
 	}
-	resp, err := http.Get(url) // #nosec G107 — test-only HTTP to the bridge
+	resp, err := http.Get(url) //nolint:gosec // #nosec G107
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}

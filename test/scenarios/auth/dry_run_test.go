@@ -39,7 +39,7 @@ func TestDryRun_AuthCreateMintsNoKey(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// Mint admin so we leave anonymous mode and can authoritatively
+	// @deliberate: Mint admin so we leave anonymous mode and can authoritatively
 	// list keys afterward.
 	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
@@ -47,7 +47,7 @@ func TestDryRun_AuthCreateMintsNoKey(t *testing.T) {
 	})
 	adminKey := body["plaintext"].(string)
 
-	// Dry-run create: server validates the grant, returns the envelope,
+	// @deliberate: Dry-run create: server validates the grant, returns the envelope,
 	// and persists nothing.
 	code, resp := f.request(t, "POST", "/v1/auth/keys?dry_run=true", adminKey, map[string]any{
 		"name":        "previewed-key",
@@ -73,7 +73,7 @@ func TestDryRun_AuthCreateMintsNoKey(t *testing.T) {
 		t.Fatalf("dry-run create must NOT surface a plaintext credential: %+v", would)
 	}
 
-	// The key must not exist — a real GET 404s.
+	// @constraint: The key must not exist — a real GET 404s.
 	code, _ = f.request(t, "GET", "/v1/auth/keys/previewed-key", adminKey, nil)
 	if code != 404 {
 		t.Fatalf("dry-run-previewed key must not be persisted; GET got %d (want 404)", code)
@@ -88,7 +88,7 @@ func TestDryRun_AuthCreateAnonymousModeNote(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// Deployment is anonymous (no keys). Dry-run the first key with no
+	// @deliberate: Deployment is anonymous (no keys). Dry-run the first key with no
 	// Bearer (anonymous-mode probe path).
 	code, resp := f.request(t, "POST", "/v1/auth/keys?dry_run=true", "", map[string]any{
 		"name":        "first-key",
@@ -106,7 +106,7 @@ func TestDryRun_AuthCreateAnonymousModeNote(t *testing.T) {
 		t.Fatalf("anon dry-run create must carry the lockdown note: %+v", would)
 	}
 
-	// Still anonymous afterward — nothing was committed.
+	// @deliberate: Still anonymous afterward — nothing was committed.
 	code, statusResp := f.request(t, "GET", "/v1/auth/status", "", nil)
 	if code != 200 || statusResp["mode"] != "anonymous" {
 		t.Fatalf("after anon dry-run create, status should still be anonymous: %d %+v", code, statusResp)
@@ -126,14 +126,12 @@ func TestDryRun_AuthRevokeMutatesNothing(t *testing.T) {
 	})
 	adminKey := body["plaintext"].(string)
 
-	// Mint a target key.
 	_, tgtBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "victim",
 		"permissions": []map[string]any{{"action": "*:read"}},
 	})
 	victimKey := tgtBody["plaintext"].(string)
 
-	// Dry-run revoke: returns the envelope, mutates nothing.
 	code, resp := f.request(t, "DELETE", "/v1/auth/keys/victim?dry_run=true", adminKey, nil)
 	if code != 200 {
 		t.Fatalf("dry-run revoke: %d %+v", code, resp)
@@ -145,7 +143,7 @@ func TestDryRun_AuthRevokeMutatesNothing(t *testing.T) {
 		t.Fatalf("dry-run revoke missing would_have_revoked_key: %+v", resp)
 	}
 
-	// The victim key must still work — the revoke did not execute.
+	// @constraint: The victim key must still work — the revoke did not execute.
 	code, _ = f.request(t, "GET", "/v1/auth/keys", victimKey, nil)
 	if code != 200 {
 		t.Fatalf("victim key after dry-run revoke: %d (want 200 — revoke must NOT have executed)", code)
@@ -165,14 +163,12 @@ func TestDryRun_AuthRotateMutatesNothing(t *testing.T) {
 	})
 	adminKey := body["plaintext"].(string)
 
-	// Mint a rotation target.
 	_, tgtBody := f.request(t, "POST", "/v1/auth/keys", adminKey, map[string]any{
 		"name":        "rotates-me",
 		"permissions": []map[string]any{{"action": "*:read"}},
 	})
 	oldKey := tgtBody["plaintext"].(string)
 
-	// Dry-run rotate.
 	code, resp := f.request(t, "POST", "/v1/auth/keys/rotates-me/rotate?dry_run=true", adminKey,
 		map[string]any{"grace": "1m"})
 	if code != 200 {
@@ -188,7 +184,7 @@ func TestDryRun_AuthRotateMutatesNothing(t *testing.T) {
 		t.Fatalf("dry-run rotate must NOT mint a new plaintext: %+v", resp)
 	}
 
-	// The old key still works (it was never revoke_at-stamped).
+	// @constraint: The old key still works (it was never revoke_at-stamped).
 	code, _ = f.request(t, "GET", "/v1/auth/keys", oldKey, nil)
 	if code != 200 {
 		t.Fatalf("old key after dry-run rotate: %d (want 200 — rotate must NOT have executed)", code)
@@ -198,16 +194,15 @@ func TestDryRun_AuthRotateMutatesNothing(t *testing.T) {
 func TestDryRun_NodeInvalidateReturnsSynthetic(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
-	// Mint admin.
 	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
 		"permissions": []map[string]any{{"action": "*"}},
 	})
 	adminKey := body["plaintext"].(string)
-	// Seed a real node so the handler reaches the dry-run gate (which
+	// @constraint: Seed a real node so the handler reaches the dry-run gate (which
 	// fires AFTER validation per spec section "Dry-run mode").
 	nodeID := seedDryRunNode(t, f, adminKey)
-	// Dry-run is a per-request flag now: pass ?dry_run=true with an
+	// @deliberate: Dry-run is a per-request flag now: pass ?dry_run=true with an
 	// ordinary execute-capable key.
 	code, resp := f.request(t, "POST", "/v1/nodes/"+nodeID+"/invalidate?dry_run=true", adminKey, map[string]any{
 		"reason": "test",
@@ -219,7 +214,7 @@ func TestDryRun_NodeInvalidateReturnsSynthetic(t *testing.T) {
 		t.Fatalf("dry-run envelope missing: %+v", resp)
 	}
 
-	// Audit row for the attempt should exist with mode=dry_run +
+	// @deliberate: Audit row for the attempt should exist with mode=dry_run +
 	// executed=false. List events of kind=auth.access_attempted.
 	f.flushAudit()
 	ctx := context.Background()
@@ -268,7 +263,7 @@ func TestDryRun_ValidationActuallyRuns(t *testing.T) {
 	f := newAuthFixture(t)
 	defer f.Close()
 
-	// Mint admin (anonymous-mode probe), then drive every subsequent
+	// @deliberate: Mint admin (anonymous-mode probe), then drive every subsequent
 	// validation case with the admin key.
 	_, body := f.request(t, "POST", "/v1/auth/keys", "", map[string]any{
 		"name":        "admin",
@@ -276,7 +271,7 @@ func TestDryRun_ValidationActuallyRuns(t *testing.T) {
 	})
 	adminKey := body["plaintext"].(string)
 
-	// Case A: empty name on auth:create. The handler rejects with
+	// @deliberate: Case A: empty name on auth:create. The handler rejects with
 	// "name is required" before the dry-run gate.
 	code, resp := f.request(t, "POST", "/v1/auth/keys?dry_run=true", adminKey, map[string]any{
 		"name":        "",
@@ -294,7 +289,7 @@ func TestDryRun_ValidationActuallyRuns(t *testing.T) {
 		t.Fatalf("dry-run error must reflect the empty-name input (got %q) — generic / canned errors fail the falsifier", errMsg)
 	}
 
-	// Case B: unknown exact action on auth:create. The handler rejects
+	// @deliberate: Case B: unknown exact action on auth:create. The handler rejects
 	// with "unknown action: <name>" before the dry-run gate. Choosing a
 	// noun-verb shape that passes ValidateGrant's grammar check (so we
 	// hit the registry-lookup branch, not the grammar branch).
@@ -312,7 +307,7 @@ func TestDryRun_ValidationActuallyRuns(t *testing.T) {
 	if !strings.Contains(errMsg, "node:bogus-verb") {
 		t.Fatalf("dry-run validation error must name the offending action (got %q) — the handler must have inspected our inputs, not returned a canned response", errMsg)
 	}
-	// And no key with that name should exist — the validation failure
+	// @deliberate: And no key with that name should exist — the validation failure
 	// happened BEFORE any insert. (Also guards against a leak where the
 	// handler persisted then reported the error.)
 	code, _ = f.request(t, "GET", "/v1/auth/keys/would-have-failed-validation", adminKey, nil)
@@ -320,7 +315,7 @@ func TestDryRun_ValidationActuallyRuns(t *testing.T) {
 		t.Fatalf("dry-run validation failure must not persist a row; GET got %d (want 404)", code)
 	}
 
-	// Case C: unparseable grace duration on auth:rotate. Seed a real
+	// @deliberate: Case C: unparseable grace duration on auth:rotate. Seed a real
 	// target so the rotate handler reaches the grace-parse check, then
 	// send a `grace` that time.ParseDuration rejects ("not-a-duration").
 	// The handler rejects with "invalid grace duration: ..." before the
@@ -361,7 +356,7 @@ func TestDryRun_ReadIsNoOpExecutedTrue(t *testing.T) {
 	})
 	adminKey := body["plaintext"].(string)
 
-	// A read under ?dry_run=true returns the normal read body (a key
+	// @deliberate: A read under ?dry_run=true returns the normal read body (a key
 	// listing), NOT a would_have_* envelope.
 	code, resp := f.request(t, "GET", "/v1/auth/keys?dry_run=true", adminKey, nil)
 	if code != 200 {
@@ -374,7 +369,6 @@ func TestDryRun_ReadIsNoOpExecutedTrue(t *testing.T) {
 		t.Fatalf("dry-run read must return the normal read body (keys): %+v", resp)
 	}
 
-	// The audit row for this read records mode:dry_run, executed:true.
 	f.flushAudit()
 	ctx := context.Background()
 	var foundReadDryRun bool
@@ -413,7 +407,7 @@ func TestDryRun_ReadIsNoOpExecutedTrue(t *testing.T) {
 // requests; the caller's test already minted that key.
 func seedDryRunNode(t *testing.T, f *authFixture, adminKey string) string {
 	t.Helper()
-	// Register a minimal template. `name`, `version`, and
+	// @deliberate: Register a minimal template. `name`, `version`, and
 	// `frame_resolution_mode` are required by the template
 	// validator; the node executor is left empty so the validator's
 	// `ExecutorDeclared` hook (nil in this fixture) doesn't reject
@@ -446,7 +440,7 @@ func seedDryRunNode(t *testing.T, f *authFixture, adminKey string) string {
 	if instID == "" {
 		t.Fatalf("seed instance missing id: %+v", instResp)
 	}
-	// List the instance's nodes; the first node is the one we just
+	// @deliberate: List the instance's nodes; the first node is the one we just
 	// created.
 	code, nodesResp := f.request(t, "GET", "/v1/instances/"+instID+"/nodes", adminKey, nil)
 	if code != 200 {

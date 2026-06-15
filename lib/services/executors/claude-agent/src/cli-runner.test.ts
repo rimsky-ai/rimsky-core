@@ -18,8 +18,10 @@ const PATHS = {
   mcpConfigPath: "/tmp/mcp.json",
 } as const;
 
-// The always-allowlisted callback tool surface, joined as the CLI receives
-// it. Derived the same way the source does so the assertion can't drift.
+/**
+ * The always-allowlisted callback tool surface, joined as the CLI receives
+ * it. Derived the same way the source does so the assertion can't drift.
+ */
 const CALLBACK_TOOLS_JOINED = REQUIRED_CALLBACK_TOOLS.join(" ");
 
 function baseReq(overrides: Partial<CliSpawnRequest> = {}): CliSpawnRequest {
@@ -54,7 +56,7 @@ describe("buildClaudeCliArgs", () => {
       "claude-sonnet-4-6",
       "--permission-mode",
       "bypassPermissions",
-      // Always present, even with no per-template allowed_tools — the
+      // @deliberate: always present, even with no per-template allowed_tools — the
       // rimsky-callback surface must clear Claude Code's deferred-MCP
       // permission gate.
       "--allowedTools",
@@ -71,7 +73,7 @@ describe("buildClaudeCliArgs", () => {
   it("splices --bare when bare=true", () => {
     const args = buildClaudeCliArgs(baseReq({ bare: true }), PATHS);
     expect(args).toContain("--bare");
-    // Position: between --permission-mode block and --allowedTools block.
+    // @deliberate: position: between --permission-mode block and --allowedTools block.
     const i = args.indexOf("--bare");
     expect(args[i - 1]).toBe("bypassPermissions");
   });
@@ -90,7 +92,7 @@ describe("buildClaudeCliArgs", () => {
   it("merges per-template allowedTools onto the callback surface (union, de-duped) and joins disallowedTools with spaces", () => {
     const args = buildClaudeCliArgs(
       baseReq({
-        // "mcp__rimsky-callback__report_complete" is already in the always-on
+        // @deliberate: "mcp__rimsky-callback__report_complete" is already in the always-on
         // callback surface, so the union must de-dupe it (appear once).
         allowedTools: ["Read", "Edit", "mcp__rimsky-callback__report_complete"],
         disallowedTools: ["Bash"],
@@ -100,13 +102,13 @@ describe("buildClaudeCliArgs", () => {
     const aIdx = args.indexOf("--allowedTools");
     expect(aIdx).toBeGreaterThan(-1);
     const allowed = (args[aIdx + 1] as string).split(" ");
-    // Callback tools come first, then the template extras.
+    // @deliberate: callback tools come first, then the template extras.
     expect(allowed.slice(0, REQUIRED_CALLBACK_TOOLS.length)).toEqual(
       REQUIRED_CALLBACK_TOOLS,
     );
     expect(allowed).toContain("Read");
     expect(allowed).toContain("Edit");
-    // De-duped: report_complete appears exactly once even though the template
+    // @deliberate: de-duped: report_complete appears exactly once even though the template
     // also listed it.
     expect(
       allowed.filter((t) => t === "mcp__rimsky-callback__report_complete"),
@@ -117,7 +119,7 @@ describe("buildClaudeCliArgs", () => {
   });
 
   it("always emits --allowedTools with the callback surface even when the template specifies none", () => {
-    // Empty arrays (no per-template allowed_tools) must NOT drop the
+    // @deliberate: empty arrays (no per-template allowed_tools) must NOT drop the
     // rimsky-callback allowlist — bug 3 was bypassPermissions no longer
     // covering the deferred-MCP tool surface in Claude Code 2.1.x.
     const args = buildClaudeCliArgs(
@@ -127,7 +129,7 @@ describe("buildClaudeCliArgs", () => {
     const aIdx = args.indexOf("--allowedTools");
     expect(aIdx).toBeGreaterThan(-1);
     expect(args[aIdx + 1]).toBe(CALLBACK_TOOLS_JOINED);
-    // disallowedTools genuinely empty → flag absent.
+    // @deliberate: disallowedTools genuinely empty → flag absent.
     expect(args).not.toContain("--disallowedTools");
   });
 
@@ -136,11 +138,11 @@ describe("buildClaudeCliArgs", () => {
       (t) => `mcp__${CALLBACK_MCP_SERVER_NAME}__${t.name}`,
     );
     expect(REQUIRED_CALLBACK_TOOLS).toEqual(expected);
-    // Sanity: the terminal-outcome tool the bug report names is present.
+    // @deliberate: sanity: the terminal-outcome tool the bug report names is present.
     expect(REQUIRED_CALLBACK_TOOLS).toContain(
       "mcp__rimsky-callback__report_complete",
     );
-    // emit_named_event is auto-included because the allowlist derives from
+    // @deliberate: emit_named_event is auto-included because the allowlist derives from
     // TOOL_DEFINITIONS — adding the tool needs no manual allowlist edit.
     expect(REQUIRED_CALLBACK_TOOLS).toContain(
       "mcp__rimsky-callback__emit_named_event",
@@ -148,7 +150,7 @@ describe("buildClaudeCliArgs", () => {
   });
 
   it("forwards each addDirs entry as a separate token after --add-dir", () => {
-    // The CLI's `--add-dir <directories...>` is variadic; passing each path as a
+    // @deliberate: the CLI's `--add-dir <directories...>` is variadic; passing each path as a
     // separate argv element matches the documented shape and avoids whitespace-
     // in-paths bugs that a joined-string approach would silently introduce.
     const args = buildClaudeCliArgs(
@@ -198,7 +200,7 @@ describe("buildClaudeCliArgs", () => {
   });
 
   it("emits --mcp-config on resume (regression: bug 2 — resume() dropping mcp-config wedged sessions with 'MCP server not connected')", () => {
-    // The bug: prior versions of resume() omitted --mcp-config on the
+    // @deliberate: the bug: prior versions of resume() omitted --mcp-config on the
     // assumption that --resume would restore it from session state.
     // It does not; --mcp-config is process-local runtime config. The
     // resumed subprocess had no rimsky-callback MCP server to dial,
@@ -242,7 +244,7 @@ describe("buildClaudeCliArgs", () => {
   });
 
   it("always emits --allowedTools with the callback surface on resume (bug 3: deferred-MCP gate blocks the recovery report_complete)", () => {
-    // --allowedTools is process-local invocation config, NOT restored from
+    // @deliberate: --allowedTools is process-local invocation config, NOT restored from
     // session state, so the resume argv must re-emit the callback surface or
     // the very report_complete we resumed to make gets gated.
     const args = buildClaudeCliResumeArgs(
@@ -255,7 +257,7 @@ describe("buildClaudeCliArgs", () => {
   });
 
   it("preserves arg ordering (-p prompt is always last) when all knobs set", () => {
-    process.env.RIMSKY_DISPATCH_MAX_USD = "5.00"; // overridden by req
+    process.env.RIMSKY_DISPATCH_MAX_USD = "5.00"; // @deliberate: overridden by req
     const args = buildClaudeCliArgs(
       baseReq({
         bare: true,
@@ -269,7 +271,7 @@ describe("buildClaudeCliArgs", () => {
     );
     expect(args[args.length - 2]).toBe("-p");
     expect(args[args.length - 1]).toBe("U");
-    // --print remains the first arg regardless of knobs.
+    // @deliberate: --print remains the first arg regardless of knobs.
     expect(args[0]).toBe("--print");
   });
 });

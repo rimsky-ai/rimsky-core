@@ -2,9 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// migrations.go — MigrationIdempotency conformance area.
-//
-// Inv 8: session advisory lock on migrations.
+// @constraint: Inv 8 (MigrationIdempotency) — session advisory lock on migrations.
 package conformance
 
 import (
@@ -18,14 +16,14 @@ import (
 
 func testMigrationIdempotency(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
-	// Driver was already migrated in factory; second Migrate is a no-op.
+	// @deliberate: factory already migrated the driver; this second Migrate must be a no-op.
 	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
 		t.Fatalf("re-migrate: %v", err)
 	}
 
-	// Two concurrent Migrate calls in separate goroutines; both succeed,
-	// rows applied at most once. The migration runner serialises through
-	// the coordinator's migration lock.
+	// @constraint: Inv 8 (MigrationIdempotency) — two concurrent Migrate calls both succeed
+	// and rows apply at most once; the migration runner serialises through the coordinator's
+	// migration lock.
 	var (
 		wg   sync.WaitGroup
 		errs [2]error
@@ -44,7 +42,6 @@ func testMigrationIdempotency(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// Sanity-check the driver still works post-double-migrate.
 	if d.Queue() == nil {
 		t.Fatalf("Queue() nil after re-migrate")
 	}

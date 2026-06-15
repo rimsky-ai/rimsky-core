@@ -65,7 +65,7 @@ import (
 func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	t.Parallel()
 
-	// Loopback stub for control-api and scheduler startup. The Fake
+	// @deliberate: Loopback stub for control-api and scheduler startup. The Fake
 	// shadows it inside the runner-local registry built below.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
 		Capabilities: claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}},
@@ -103,7 +103,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	// Build a runner-local registry with the error-injecting Fake. This
+	// @deliberate: Build a runner-local registry with the error-injecting Fake. This
 	// registry shadows the harness control-api's registry — the runner
 	// uses what we hand it via RunArgs.
 	fake := storetest.NewFake("content", claimproducer.Capabilities{WriteSemanticsAllowed: []claimproducer.WriteSemantics{claimproducer.WriteSemanticsSync}})
@@ -135,14 +135,14 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 		HeartbeatInterval: 100 * time.Millisecond,
 	}
 	out, err := runtime.RunNode(h.Ctx, args, nil)
-	// Open errors surface as the RunNode error (the per-candidate tx
+	// @constraint: Open errors surface as the RunNode error (the per-candidate tx
 	// rolls back deferred-style). The load-bearing assertion is that
 	// the rollback actually happened — see the row-count checks below.
 	require.Error(t, err, "Open error must surface")
 	require.False(t, out.Ran,
 		"acquisition tx must roll back when Open errors; runner advertises Ran=false")
 
-	// Invariant 10 (rimsky-side): zero lock-holder rows for the node.
+	// @deliberate: Invariant 10 (rimsky-side): zero lock-holder rows for the node.
 	var lhCount int
 	err = h.Pool.QueryRow(h.Ctx,
 		`SELECT count(*) FROM rimsky_claim_handles WHERE holder_node_id = $1`, n.ID,
@@ -150,7 +150,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, lhCount, "rollback must leave no rimsky_claim_handles rows")
 
-	// Invariant 10 (rimsky-side): dispatch row's claimed_by is NULL again.
+	// @deliberate: Invariant 10 (rimsky-side): dispatch row's claimed_by is NULL again.
 	var claimedBy *string
 	err = h.Pool.QueryRow(h.Ctx,
 		`SELECT claimed_by FROM rimsky_node_runs WHERE node_id = $1`, n.ID,
@@ -158,7 +158,7 @@ func TestAtomicAcquisitionRollsBackOnOpenError(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, claimedBy, "rollback must release the dispatch claim")
 
-	// The Fake observed exactly one open attempt (the supervisor tried,
+	// @deliberate: The Fake observed exactly one open attempt (the supervisor tried,
 	// got the injected error, and rolled back).
 	calls := fake.Calls()
 	openCount := 0
@@ -219,7 +219,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh")
 
-	// Invariant 4 / 10 post-Stage-3 of the claim-handle state-column
+	// @deliberate: Invariant 4 / 10 post-Stage-3 of the claim-handle state-column
 	// refactor: terminal flips the row's state column rather than
 	// deleting it. The row persists until the retention sweep reaps it.
 	// Assert: zero ACTIVE rows remain (the supervisor's claimant-
@@ -240,7 +240,7 @@ func TestClaimHandleRowDeletedAfterTerminal(t *testing.T) {
 	require.Equal(t, 0, activeCount,
 		"after worker reaches fresh, zero ACTIVE lock-holder rows must remain (invariant 4 post-Stage-3)")
 
-	// And the row that was promoted has holder_supervisor_id nulled
+	// @deliberate: And the row that was promoted has holder_supervisor_id nulled
 	// (invariant 4 post-refactor: non-active rows have no holder).
 	var nullHolderCount int
 	err := h.Pool.QueryRow(h.Ctx,

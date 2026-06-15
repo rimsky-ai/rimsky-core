@@ -37,11 +37,12 @@ func Dial(ctx context.Context, name, endpoint, tlsMode string) (*Client, error) 
 	}
 	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
-		// Stamp x-rimsky-service-name from the per-call context so a
-		// host-agent-proxy fronting the claim-producer protocol can route
-		// by service name. No-op when the dispatch site set no name.
-		// The TLSMode interceptors annotate RPC errors with the peer
-		// name + mode under tls: required (no-op otherwise).
+		// @constraint: ServiceNameUnaryInterceptor stamps x-rimsky-service-name
+		// from the per-call context so a host-agent-proxy fronting the
+		// claim-producer protocol can route by service name (no-op when the
+		// dispatch site set no name). The TLSMode interceptors annotate RPC
+		// errors with the peer name + mode under tls: required (no-op
+		// otherwise).
 		grpc.WithChainUnaryInterceptor(ServiceNameUnaryInterceptor, TLSModeUnaryInterceptor(name, tlsMode)),
 		grpc.WithChainStreamInterceptor(ServiceNameStreamInterceptor, TLSModeStreamInterceptor(name, tlsMode)),
 	)
@@ -93,7 +94,6 @@ func DialLifecycle(_ context.Context, name, endpoint, tlsMode string) (*Lifecycl
 	if err != nil {
 		return nil, err
 	}
-	// TODO(host-agent-proxy v2): install ServiceName interceptor here when this protocol gains late-bind support
 	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(TransportCredentials(tlsMode)),
 		grpc.WithUnaryInterceptor(TLSModeUnaryInterceptor(name, tlsMode)),

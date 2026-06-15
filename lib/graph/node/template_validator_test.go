@@ -234,7 +234,7 @@ func TestValidateTemplate_ExecutorDeclared_Missing(t *testing.T) {
 	res := ValidateTemplate(spec, hooks)
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "nodes[0].executor")
-	// Verify the error message names the executor.
+	// @deliberate: Verify the error message names the executor.
 	var msg string
 	for _, e := range res.Errors {
 		if strings.HasPrefix(e.Path, "nodes[0].executor") {
@@ -260,10 +260,11 @@ func TestValidateTemplate_ExecutorDeclared_Missing(t *testing.T) {
 // so the canonical-spelling sub-assertion fails. A later GREEN pass
 // flips the switch to `claim_scope`.
 func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
-	// makeSpec builds a single-node template that acquires a claim under
-	// alias `a` (stores: content, rw, selector /scope-A) and binds the
-	// `region` attribute to the given claim directive. Reused across both
-	// spellings so the ONLY difference under test is the second segment.
+	// @deliberate: makeSpec builds a single-node template that acquires
+	// a claim under alias `a` (stores: content, rw, selector /scope-A)
+	// and binds the `region` attribute to the given claim directive.
+	// Reused across both spellings so the ONLY difference under test is
+	// the second segment.
 	makeSpec := func(directive string) *TemplateSpec {
 		return &TemplateSpec{
 			Name:                "demo",
@@ -290,7 +291,7 @@ func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
 		}
 	}
 
-	// Canonical spelling validates.
+	// @deliberate: Canonical spelling validates.
 	resCanonical := ValidateTemplate(
 		makeSpec("{{claim.a.claim_scope}}"),
 		RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)},
@@ -298,8 +299,9 @@ func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
 	assert.True(t, resCanonical.Ok(),
 		"canonical {{claim.a.claim_scope}} must validate; errors: %+v", resCanonical.Errors)
 
-	// Legacy spelling is rejected, and the error names the canonical
-	// `claim_scope` segment (steering the author to the right spelling).
+	// @deliberate: legacy spelling is rejected, and the error names the
+	// canonical `claim_scope` segment (steering the author to the right
+	// spelling).
 	resLegacy := ValidateTemplate(
 		makeSpec("{{claim.a.scope}}"),
 		RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)},
@@ -319,13 +321,10 @@ func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
 		"the legacy-spelling rejection must name the canonical claim_scope segment; got %q", legacyMsg)
 }
 
-// --- Lifecycle-handler validator tests retired 2026-05-23 ---
-//
-// The three lifecycle-handler slots (`on_acquire_unavailable`,
+// @deliberate: lifecycle-handler validator tests are retired. The
+// three lifecycle-handler slots (`on_acquire_unavailable`,
 // `on_executor_complete`, `on_executor_errored`) retired alongside
-// `concept:lifecycle-handler` per spec
-// `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-decoupling-
-// design.md`. The replacements:
+// `concept:lifecycle-handler`. The replacements:
 //   - acquisition failure → `error_types: { "acquire/unavailable":
 //     ... }` (TestValidator_WarnsOnMissingAcquireUnavailablePolicy
 //     below covers the validator advisory).
@@ -413,7 +412,7 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 // path with the new error message; arbitrary unknowns reject the same
 // way.
 func TestValidateErrorTypes_RejectsUnknown(t *testing.T) {
-	// The retired pre-2026-05-23 action names — `invalidate`,
+	// @deliberate: The retired pre-2026-05-23 action names — `invalidate`,
 	// `resume_then_retry`, `discard_then_retry` — are reconstructed
 	// from fragments so the file does not retain the literal old
 	// vocabulary as standalone tokens (per the Pass 3 sweep
@@ -464,9 +463,9 @@ func TestValidateErrorTypes_AcceptsCanonical(t *testing.T) {
 				},
 			}
 			res := ValidateTemplate(spec, RegistryHooks{})
-			// The action range-check should not flag any error on this
-			// path; any other validation errors are unrelated to the
-			// 4-value vocabulary check.
+			// @deliberate: The action range-check should not flag any error on this
+			// error on this path; any other validation errors are
+			// unrelated to the 4-value vocabulary check.
 			for _, e := range res.Errors {
 				if e.Path == "nodes[1].error_types[some_error].policy[0].action" {
 					t.Fatalf("unexpected action-vocabulary error for %q: %s", action, e.Msg)
@@ -648,8 +647,9 @@ func TestValidateErrorTypes_ProducerClassUnreachableFromNode(t *testing.T) {
 	hooks := RegistryHooks{
 		ExecutorDeclared:             func(string) bool { return true },
 		ExecutorDeclaredErrorClasses: func(string) ([]string, bool) { return []string{"http/timeout"}, true },
-		// Producer declares the class, but node b references no stores —
-		// the producer is not reachable from b's claims block.
+		// @deliberate: producer declares the class, but node b
+		// references no stores — the producer is not reachable from b's
+		// claims block.
 		StoreDeclaredErrorClasses: func(string) ([]string, bool) {
 			return []string{"pg/claim_unavailable"}, true
 		},
@@ -734,7 +734,8 @@ func TestValidateSubscribes_SelfWithFrameInOK(t *testing.T) {
 		Nodes: []TemplateNodeDef{
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "loopy", Type: "terminal/success"}, // frame defaults to "in"
+					// @deliberate: frame defaults to "in".
+					{Node: "loopy", Type: "terminal/success"},
 				},
 			},
 		},
@@ -843,11 +844,6 @@ func TestValidateMaxParkDuration_Malformed(t *testing.T) {
 // TestTemplateValidator_DefaultsByExecutor covers the per-spec routing-
 // key cross-check on `defaults.attributes.by_executor.<name>` (template-
 // level attribute defaults — L1 in the four-layer override merge). Per
-// spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 1 and
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Override layering".
 func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 	t.Run("unknown executor name is rejected", func(t *testing.T) {
 		spec := &TemplateSpec{
@@ -887,9 +883,9 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 	})
 
 	t.Run("fragment values are not inspected (only routing keys)", func(t *testing.T) {
-		// Arbitrary garbage in the fragment must still validate — the
-		// structural-inertness discipline (concept:inertness) says we
-		// never read fragment values.
+		// @deliberate: Arbitrary garbage in the fragment must still validate — the
+		// validate — the structural-inertness discipline
+		// (concept:inertness) says we never read fragment values.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -898,8 +894,9 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 				Attributes: &TemplateAttributeDefaults{
 					ByExecutor: map[string]map[string]any{
 						"claude-agent": {
-							// arbitrary nested shape, deeply non-conforming
-							// to anything — validator must not look at it.
+							// @deliberate: arbitrary nested shape, deeply
+							// non-conforming to anything — validator must
+							// not look at it.
 							"garbage_key": []any{"a", 1, true, nil, map[string]any{"k": "v"}},
 						},
 					},
@@ -914,8 +911,6 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 
 // TestTemplateValidator_Tags covers the registration-time validation of
 // node-level tags (operator-facing metadata per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 4).
 func TestTemplateValidator_Tags(t *testing.T) {
 	t.Run("valid params reference accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
@@ -999,9 +994,10 @@ func TestTemplateValidator_Tags(t *testing.T) {
 // the runtime supports the form but registration rejects it.
 func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 	t.Run("bare nodes attribute pull accepted", func(t *testing.T) {
-		// Stage declares `row` as executor-written (readOnly+default
-		// allows the property to live under the unified-surface rules);
-		// verify pulls the bare nodes.stage.attribute form.
+		// @deliberate: stage declares `row` as executor-written
+		// (readOnly+default allows the property to live under the
+		// unified-surface rules); verify pulls the bare
+		// nodes.stage.attribute form.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1089,10 +1085,10 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 	})
 
 	t.Run("bare nodes event pull accepted", func(t *testing.T) {
-		// Note: event-name field IS required for bare-event form; only
-		// the path-after-name is optional. The cross-check against the
-		// sender's executor's declared_events is silently skipped here
-		// (no ExecutorDeclaredEvents hook wired).
+		// @deliberate: event-name field IS required for bare-event
+		// form; only the path-after-name is optional. The cross-check
+		// against the sender's executor's declared_events is silently
+		// skipped here (no ExecutorDeclaredEvents hook wired).
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1119,9 +1115,9 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 	})
 
 	t.Run("empty trailing dot still rejected", func(t *testing.T) {
-		// `nodes.<X>.attribute.` (explicit empty trailing segment) is
-		// not the bare form; it's a malformed directive and must be
-		// rejected.
+		// @deliberate: `nodes.<X>.attribute.` (explicit empty trailing
+		// segment) is not the bare form — it's a malformed directive
+		// and must be rejected.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1488,9 +1484,9 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 				}},
 			}},
 		}
-		// Executor's schema declares the property but does NOT mark
-		// it readOnly. Template claiming readOnly contradicts the
-		// executor — the executor is authoritative.
+		// @deliberate: Executor's schema declares the property but does NOT mark
+		// does NOT mark it readOnly. Template claiming readOnly
+		// contradicts the executor — the executor is authoritative.
 		hooks := RegistryHooks{
 			StoreDeclared: storeDeclaredLookup(knownStores),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
@@ -1523,8 +1519,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		hooks := RegistryHooks{
 			StoreDeclared: storeDeclaredLookup(knownStores),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
-				// Executor declares no readOnly properties; orphan is
-				// unknown to the executor's schema either.
+				// @deliberate: Executor declares no readOnly properties; orphan is
+				// and orphan is unknown to the executor's schema.
 				return []byte(`{"type":"object","properties":{}}`), true
 			},
 		}
@@ -1534,12 +1530,13 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 	})
 
 	t.Run("extension property without source/default/readOnly accepted when executor declares additionalProperties:true", func(t *testing.T) {
-		// The claude-agent case: the executor enumerates its known inputs
-		// AND declares `additionalProperties: true`, explicitly delegating
-		// naming authority for extension attributes used for inter-node
-		// dataflow. An author-declared output the executor doesn't enumerate
-		// (e.g. a write-back the agent populates) must be admitted without a
-		// synthetic `default:` or `readOnly:` fabrication.
+		// @deliberate: the claude-agent case — the executor enumerates
+		// its known inputs AND declares `additionalProperties: true`,
+		// explicitly delegating naming authority for extension
+		// attributes used for inter-node dataflow. An author-declared
+		// output the executor doesn't enumerate (e.g. a write-back the
+		// agent populates) must be admitted without a synthetic
+		// `default:` or `readOnly:` fabrication.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1560,9 +1557,9 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		hooks := RegistryHooks{
 			StoreDeclared: storeDeclaredLookup(knownStores),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
-				// `model` carries a default (a realistic enumerated input), so
-				// it passes the leg; `zone_codes` is the unenumerated extension
-				// under test.
+				// @deliberate: `model` carries a default (a realistic
+				// enumerated input), so it passes the leg; `zone_codes`
+				// is the unenumerated extension under test.
 				return []byte(`{"type":"object","properties":{"model":{"type":"string","default":"claude-sonnet-4-5"}},"additionalProperties":true}`), true
 			},
 		}
@@ -1571,10 +1568,11 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 	})
 
 	t.Run("extension property marked readOnly accepted when executor declares additionalProperties:true", func(t *testing.T) {
-		// Under an explicitly-open executor schema, the author may mark an
-		// unenumerated extension property `readOnly: true` (the natural way
-		// to say "the agent writes this back") — the executor has delegated
-		// authority over names it does not enumerate.
+		// @deliberate: under an explicitly-open executor schema, the
+		// author may mark an unenumerated extension property `readOnly:
+		// true` (the natural way to say "the agent writes this back")
+		// — the executor has delegated authority over names it does
+		// not enumerate.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1604,9 +1602,10 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 	})
 
 	t.Run("ENUMERATED property still requires source/default/readOnly under additionalProperties:true", func(t *testing.T) {
-		// The open-schema exemption is per-property, keyed on enumeration:
-		// a property the executor DOES enumerate is still subject to the full
-		// unified-surface check even when the schema also admits extensions.
+		// @deliberate: the open-schema exemption is per-property, keyed
+		// on enumeration — a property the executor DOES enumerate is
+		// still subject to the full unified-surface check even when the
+		// schema also admits extensions.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1627,9 +1626,10 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		hooks := RegistryHooks{
 			StoreDeclared: storeDeclaredLookup(knownStores),
 			ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
-				// `model` is enumerated (not readOnly) and the schema admits
-				// extensions. Declaring `model` with no source/default/readOnly
-				// is still an unpopulated-input error.
+				// @deliberate: `model` is enumerated (not readOnly) and
+				// the schema admits extensions. Declaring `model` with
+				// no source/default/readOnly is still an
+				// unpopulated-input error.
 				return []byte(`{"type":"object","properties":{"model":{"type":"string"}},"additionalProperties":true}`), true
 			},
 		}
@@ -1639,13 +1639,14 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 	})
 
 	t.Run("L1 default plus L2 source on same property: L2 source wins (no both-set error)", func(t *testing.T) {
-		// L1 (template defaults.attributes.by_executor.<exec>.<attr>)
-		// contributes a `default:` value for property `cli`. L2 (the
-		// per-node attribute schema) declares a `source:` directive for
-		// the same property. The merge must drop the L1 `default:` so the
-		// effective schema is a clean source-bound property. Without the
-		// fix in MergeAttributeDefaults, checkAttributesSchema would
-		// reject the template for declaring both source: and default:.
+		// @constraint: when L1 (template
+		// defaults.attributes.by_executor.<exec>.<attr>) contributes a
+		// `default:` for property `cli` and L2 (the per-node attribute
+		// schema) declares a `source:` for the same property, the
+		// merge MUST drop the L1 `default:` so the effective schema is
+		// a clean source-bound property. Without that drop in
+		// MergeAttributeDefaults, checkAttributesSchema would reject
+		// the template for declaring both source: and default:.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1690,12 +1691,13 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 	})
 
 	t.Run("L1 source plus L2 default on same property: L2 default wins (no both-set error)", func(t *testing.T) {
-		// Symmetric to the previous case. L1 contributes a value
-		// (intent: serve as a default), L2 declares its own default.
-		// The L2 default must override. Note: L1 only ever contributes
-		// via `default:` per MergeAttributeDefaults's contract, but the
-		// reverse case (L1 default + L2 default) confirms the drop-then-
-		// overwrite shape leaves a single `default:` set.
+		// @deliberate: symmetric to the previous case. L1 contributes
+		// a value (intent: serve as a default), L2 declares its own
+		// default. The L2 default must override. L1 only ever
+		// contributes via `default:` per MergeAttributeDefaults's
+		// contract, but the reverse case (L1 default + L2 default)
+		// confirms the drop-then-overwrite shape leaves a single
+		// `default:` set.
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1734,13 +1736,14 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 	})
 
 	t.Run("permissive executor schema skips readOnly leg", func(t *testing.T) {
-		// L2 declares one property with no `source:`, no `default:`, and no
-		// `readOnly: true`. The executor advertises a permissive schema
-		// (`{"type":"object"}` with no `properties` block) — `IsPermissive
-		// ExecutorSchema` returns true ⇒ the readOnly-fallback leg is
-		// skipped ⇒ the property is allowed through. This mirrors the
-		// in-tree stub / http-node executors which advertise the
-		// permissive shape to signal "open contract; accept any keys."
+		// @deliberate: L2 declares one property with no `source:`, no
+		// `default:`, and no `readOnly: true`. The executor advertises
+		// a permissive schema (`{"type":"object"}` with no
+		// `properties` block) — `IsPermissiveExecutorSchema` returns
+		// true ⇒ the readOnly-fallback leg is skipped ⇒ the property
+		// is allowed through. Mirrors the in-tree stub / http-node
+		// executors which advertise the permissive shape to signal
+		// "open contract; accept any keys."
 		spec := &TemplateSpec{
 			Name:                "demo",
 			Version:             "1.0.0",
@@ -1780,33 +1783,35 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 // going through json.Unmarshal.
 func TestIsPermissiveExecutorSchema(t *testing.T) {
 	t.Run("nil schema is not permissive", func(t *testing.T) {
-		// nil means "executor didn't advertise a schema at all" — the
-		// dispatch gate handles that case at a higher level (returning
-		// `executor_schema_unavailable`). IsPermissiveExecutorSchema
-		// reports false for nil so the readOnly leg doesn't get
-		// short-circuited; the visibility flag carries the "schema not
-		// reachable" semantics separately.
+		// @deliberate: nil means "executor didn't advertise a schema
+		// at all" — the dispatch gate handles that case at a higher
+		// level (returning `executor_schema_unavailable`).
+		// IsPermissiveExecutorSchema reports false for nil so the
+		// readOnly leg doesn't get short-circuited; the visibility
+		// flag carries the "schema not reachable" semantics
+		// separately.
 		assert.False(t, IsPermissiveExecutorSchema(nil))
 	})
 
 	t.Run("empty object is permissive", func(t *testing.T) {
-		// `{}` is "no properties block, no constraints declared" — open
-		// shape. The readOnly-fallback leg is skipped because the
-		// executor declined to enumerate.
+		// @deliberate: `{}` is "no properties block, no constraints
+		// declared" — open shape. The readOnly-fallback leg is skipped
+		// because the executor declined to enumerate.
 		assert.True(t, IsPermissiveExecutorSchema(map[string]any{}))
 	})
 
 	t.Run("type-only object is permissive", func(t *testing.T) {
-		// `{"type":"object"}` still has no `properties` block — open
-		// shape. This is the canonical permissive form the stub and
-		// http-node executors advertise.
+		// @deliberate: `{"type":"object"}` still has no `properties`
+		// block — open shape. The canonical permissive form the stub
+		// and http-node executors advertise.
 		assert.True(t, IsPermissiveExecutorSchema(map[string]any{"type": "object"}))
 	})
 
 	t.Run("empty properties block is closed (not permissive)", func(t *testing.T) {
-		// `{"properties": {}}` declares "I have zero properties." That's
-		// a closed contract distinct from "I don't enumerate" — the
-		// readOnly-fallback leg should still fire on it.
+		// @deliberate: `{"properties": {}}` declares "I have zero
+		// properties." That's a closed contract distinct from "I don't
+		// enumerate" — the readOnly-fallback leg should still fire on
+		// it.
 		assert.False(t, IsPermissiveExecutorSchema(map[string]any{
 			"properties": map[string]any{},
 		}))
@@ -1958,10 +1963,10 @@ func TestValidateAttributesSchema_NestedDefaultTypeConflict(t *testing.T) {
 					"cli": map[string]any{
 						"type": "object",
 						"default": map[string]any{
-							// silence_timeout_ms is declared `integer` by
-							// the executor, but here we set it to a string
-							// ("60s"). The composed-defaults-bag validation
-							// catches this.
+							// @deliberate: silence_timeout_ms is declared
+							// `integer` by the executor, but here we set
+							// it to a string ("60s") — the composed-
+							// defaults-bag validation catches this.
 							"silence_timeout_ms": "60s",
 						},
 					},
@@ -2065,9 +2070,10 @@ func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
 	hooks := RegistryHooks{
 		StoreDeclared: storeDeclaredLookup(knownStores),
 		ExecutorExpectedAttributesSchema: func(name string) ([]byte, bool) {
-			// additionalProperties default is true (open). `known` is
-			// executor-written (readOnly: true) so its absence in L2 is
-			// admissible under the unified-surface check.
+			// @deliberate: additionalProperties default is true
+			// (open). `known` is executor-written (readOnly: true) so
+			// its absence in L2 is admissible under the unified-surface
+			// check.
 			return []byte(`{"type":"object","properties":{"known":{"type":"string","readOnly":true}}}`), true
 		},
 	}
@@ -2107,22 +2113,23 @@ func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
 // inverts that build failure to a pass. A later GREEN pass adds the
 // field + constants and threads them through the reference legs.
 func TestValidateTemplate_RefMode(t *testing.T) {
-	// notProvisioned models a not-yet-provisioned executor: declared
-	// false (not in the operator's executors: block) and its
-	// expected_attributes_schema is not visible (discovery-cache miss).
+	// @deliberate: notProvisioned models a not-yet-provisioned
+	// executor — declared false (not in the operator's executors:
+	// block) and its expected_attributes_schema is not visible
+	// (discovery-cache miss).
 	const notProvisioned = "ghost-executor"
-	// provisionedConstrained models a provisioned executor whose
-	// advertised schema constrains an attribute: `count` must be
-	// `minimum: 0`. A node defaulting `count: -1` is a genuinely-invalid
-	// reference to a provisioned service.
+	// @deliberate: provisionedConstrained models a provisioned
+	// executor whose advertised schema constrains an attribute —
+	// `count` must be `minimum: 0`. A node defaulting `count: -1` is a
+	// genuinely-invalid reference to a provisioned service.
 	const provisionedConstrained = "constrained-executor"
 	const constrainedSchema = `{"type":"object","properties":{"count":{"type":"integer","minimum":0}}}`
 
-	// hooksFor builds the registry hooks for the given mode. The
-	// ExecutorDeclared / ExecutorExpectedAttributesSchema hooks honor the
-	// two executors above: the ghost is undeclared + schema-invisible;
-	// the constrained one is declared + advertises the constraining
-	// schema.
+	// @deliberate: hooksFor builds the registry hooks for the given
+	// mode. The ExecutorDeclared / ExecutorExpectedAttributesSchema
+	// hooks honor the two executors above — the ghost is undeclared +
+	// schema-invisible; the constrained one is declared + advertises
+	// the constraining schema.
 	hooksFor := func(mode RefValidationMode) RegistryHooks {
 		return RegistryHooks{
 			StoreDeclared:     storeDeclaredLookup(knownStores),
@@ -2134,24 +2141,25 @@ func TestValidateTemplate_RefMode(t *testing.T) {
 				if name == provisionedConstrained {
 					return []byte(constrainedSchema), true
 				}
-				// Ghost executor: schema not visible.
+				// @deliberate: Ghost executor: schema not visible.
 				return nil, false
 			},
 		}
 	}
 
-	// notProvisionedNode references the ghost executor. It carries no
-	// attribute defaults, so the only thing the validator can flag is the
-	// reference itself (undeclared executor / schema not visible).
+	// @deliberate: notProvisionedNode references the ghost executor —
+	// it carries no attribute defaults, so the only thing the validator
+	// can flag is the reference itself (undeclared executor / schema
+	// not visible).
 	notProvisionedNode := func() TemplateNodeDef {
 		return TemplateNodeDef{Type: "ghost", Executor: notProvisioned}
 	}
 
-	// invalidProvisionedNode references the provisioned constrained
-	// executor with a default that violates its schema (`count: -1`
-	// against `minimum: 0`). The reference is provisioned, so a
-	// genuinely-invalid value must be caught whenever provisioned refs
-	// are validated (modes all + available).
+	// @deliberate: invalidProvisionedNode references the provisioned
+	// constrained executor with a default that violates its schema
+	// (`count: -1` against `minimum: 0`). The reference is
+	// provisioned, so a genuinely-invalid value must be caught
+	// whenever provisioned refs are validated (modes all + available).
 	invalidProvisionedNode := func() TemplateNodeDef {
 		return TemplateNodeDef{
 			Type:     "constrained",
@@ -2186,29 +2194,32 @@ func TestValidateTemplate_RefMode(t *testing.T) {
 	})
 
 	t.Run("available: not-provisioned ref skipped, provisioned-invalid ref still errors", func(t *testing.T) {
-		// Node 0 is the not-provisioned ref (must be skipped, no error);
-		// node 1 is the genuinely-invalid provisioned ref (must error on
-		// the value-constraint violation).
+		// @deliberate: node 0 is the not-provisioned ref (must be
+		// skipped, no error); node 1 is the genuinely-invalid
+		// provisioned ref (must error on the value-constraint
+		// violation).
 		spec := specWith(notProvisionedNode(), invalidProvisionedNode())
 		res := ValidateTemplate(spec, hooksFor(RefValidateAvailable))
 
-		// The not-provisioned ref produces NO error under `available`.
+		// @deliberate: the not-provisioned ref produces NO error
+		// under `available`.
 		for _, e := range res.Errors {
 			require.False(t, strings.HasPrefix(e.Path, "nodes[0]"),
 				"mode available must skip the not-yet-provisioned ref at node 0, got error: %+v", e)
 		}
-		// The provisioned-but-invalid ref (count: -1 vs minimum: 0) still
-		// errors — the value-constraint violation surfaces on the
-		// composed-defaults leg.
+		// @deliberate: The provisioned-but-invalid ref (count: -1 vs minimum: 0) still
+		// minimum: 0) still errors — the value-constraint violation
+		// surfaces on the composed-defaults leg.
 		require.False(t, res.Ok(),
 			"mode available must still reject a genuinely-invalid provisioned ref; errors: %+v", res.Errors)
 		hasErrorAt(t, res, "nodes[1].attributes")
 	})
 
 	t.Run("none: no reference errors at all", func(t *testing.T) {
-		// Both the not-provisioned ref AND the provisioned-invalid ref are
-		// present; mode none drops every registration-time reference check,
-		// so the template validates clean.
+		// @deliberate: both the not-provisioned ref AND the
+		// provisioned-invalid ref are present; mode none drops every
+		// registration-time reference check, so the template validates
+		// clean.
 		spec := specWith(notProvisionedNode(), invalidProvisionedNode())
 		res := ValidateTemplate(spec, hooksFor(RefValidateNone))
 		require.True(t, res.Ok(),
@@ -2216,8 +2227,9 @@ func TestValidateTemplate_RefMode(t *testing.T) {
 	})
 
 	t.Run("default zero-value mode is all (strict)", func(t *testing.T) {
-		// A RegistryHooks left at its zero value (RefValidationMode unset)
-		// behaves as RefValidateAll: the not-provisioned ref hard-fails.
+		// @deliberate: a RegistryHooks left at its zero value
+		// (RefValidationMode unset) behaves as RefValidateAll — the
+		// not-provisioned ref hard-fails.
 		spec := specWith(notProvisionedNode())
 		hooks := RegistryHooks{
 			StoreDeclared: storeDeclaredLookup(knownStores),

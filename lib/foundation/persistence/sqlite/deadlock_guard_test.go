@@ -2,23 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// deadlock_guard_test.go is the structural enforcement of the
-// no-nil-tx contract on the persistence Store interface (option C
-// from the nil-tx-deadlock audit, docs/future-work/2026-05-05-nil-tx
-// -deadlock-audit.md).
-//
-// Two checks:
-//
-//  1. TestStoreMethodsRejectNilTx — every public Store method must
-//     refuse a nil tx (panic). Codifies "tx is required". When a new
-//     Store method is added, extend the table below.
-//  2. TestNilTxFromInsideTransactionDoesNotDeadlock — documents the
-//     historical SQLite hang. With MaxOpenConns=1, a nil-tx call from
-//     inside an open Persist.Transaction used to deadlock (the inner
-//     auto-commit path would block waiting for the only pool conn,
-//     which was held by the outer tx). After option C the nil-tx code
-//     path is gone, so the inner call panics and the test completes
-//     in milliseconds — never timing out.
 package sqlite_test
 
 import (
@@ -92,7 +75,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		name string
 		call func()
 	}{
-		// Templates
 		{"Templates.Insert", func() {
 			_ = store.Templates().Insert(ctx, persistence.TemplateInsertInput{}, nil)
 		}},
@@ -111,7 +93,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Templates.LockForUpdate", func() {
 			_, _ = store.Templates().LockForUpdate(ctx, someHash, nil)
 		}},
-		// TemplateTags
 		{"TemplateTags.Upsert", func() {
 			_ = store.TemplateTags().Upsert(ctx, "t", someHash, nil)
 		}},
@@ -130,7 +111,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"TemplateTags.CountByTemplate", func() {
 			_, _ = store.TemplateTags().CountByTemplate(ctx, someHash, nil)
 		}},
-		// Instances
 		{"Instances.Create", func() {
 			_, _ = store.Instances().Create(ctx, persistence.InstanceCreateInput{ID: someID}, nil)
 		}},
@@ -164,7 +144,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Instances.IncrementAttributeOverrideMatchCounts", func() {
 			_ = store.Instances().IncrementAttributeOverrideMatchCounts(ctx, someID, []int{0}, nil)
 		}},
-		// LifecycleIdempotency
 		{"LifecycleIdempotency.Get", func() {
 			_, _ = store.LifecycleIdempotency().Get(ctx, "s", persistence.LifecycleIdempotencyScopeTemplate, "x", nil)
 		}},
@@ -183,7 +162,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"LifecycleIdempotency.ListByStore", func() {
 			_, _ = store.LifecycleIdempotency().ListByStore(ctx, "s", nil)
 		}},
-		// Nodes
 		{"Nodes.Create", func() {
 			_, _ = store.Nodes().Create(ctx, persistence.NodeCreateInput{}, nil)
 		}},
@@ -232,7 +210,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Nodes.MarkStaleForCascade", func() {
 			_ = store.Nodes().MarkStaleForCascade(ctx, someID, someID, nil)
 		}},
-		// ClaimHandles
 		{"ClaimHandles.Insert", func() {
 			_ = store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{}, nil)
 		}},
@@ -297,8 +274,8 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHandles.DeleteResolved", func() {
 			_ = store.ClaimHandles().DeleteResolved(ctx, someID, nil)
 		}},
-		// DeleteResolvedOlderThan is intentionally a no-tx method (it
-		// runs as a single DELETE outside any caller-provided tx so the
+		// @deliberate: DeleteResolvedOlderThan is intentionally a no-tx
+		// method (single DELETE outside any caller-provided tx so the
 		// retention sweep's scheduler-tick advisory lock serializes
 		// across replicas at the tick boundary, not via tx per row).
 		// Not in the nil-tx-guard set; the option-C invariant covers
@@ -312,7 +289,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHandles.BumpChildOutcomeCount", func() {
 			_ = store.ClaimHandles().BumpChildOutcomeCount(ctx, someID, "sup", "commit", 1, nil)
 		}},
-		// NodeAttributes
 		{"NodeAttributes.GetByRun", func() {
 			_, _ = store.NodeAttributes().GetByRun(ctx, someID, nil)
 		}},
@@ -325,7 +301,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"NodeAttributes.MergeDelta", func() {
 			_ = store.NodeAttributes().MergeDelta(ctx, someID, nil, nil)
 		}},
-		// ClaimHolders
 		{"ClaimHolders.Insert", func() {
 			_ = store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{}, nil)
 		}},
@@ -347,7 +322,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"ClaimHolders.CompleteByClaimHandleAndRun", func() {
 			_ = store.ClaimHolders().CompleteByClaimHandleAndRun(ctx, someID, someID, persistence.ClaimHolderStateCompleted, nil)
 		}},
-		// Events
 		{"Events.Append", func() {
 			_ = store.Events().Append(ctx, persistence.EventAppendInput{}, nil)
 		}},
@@ -357,9 +331,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Events.LastTerminalByNodes", func() {
 			_, _ = store.Events().LastTerminalByNodes(ctx, []shared.UUID{someID}, nil)
 		}},
-		// (Schedules retired by the 2026-05-15 data-platform-extensions
-		// plan B10 / D7 / E16; cron firing is owned by sensors/sensor-cron/.)
-		// Supervisors
 		{"Supervisors.Register", func() {
 			_ = store.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{}, nil)
 		}},
@@ -378,7 +349,6 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Supervisors.Unregister", func() {
 			_ = store.Supervisors().Unregister(ctx, "sup", nil)
 		}},
-		// Frames
 		{"Frames.ListRunningFramesNoPendingNodes", func() {
 			_, _ = store.Frames().ListRunningFramesNoPendingNodes(ctx, nil)
 		}},
@@ -452,27 +422,26 @@ func TestNilTxFromInsideTransactionDoesNotDeadlock(t *testing.T) {
 	d := openMigratedSQLite(t)
 	store := d.Tables()
 
-	// 2 s is generous: the panic-recovery path returns in milliseconds.
-	// A real deadlock (pre-option-C) would block forever and only
-	// surface as DeadlineExceeded once the deadline elapses.
+	// @deliberate: 2 s is generous: the panic-recovery path returns in
+	// milliseconds. A real deadlock (pre-option-C) would block forever
+	// and only surface as DeadlineExceeded once the deadline elapses.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	start := time.Now()
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Historical bug pattern: inner call passes nil even though
-		// the outer tx is right there in scope.
-		defer func() { _ = recover() }() // swallow the expected panic
+		// @deliberate: historical bug pattern — inner call passes nil
+		// even though the outer tx is right there in scope.
+		defer func() { _ = recover() }() // @deliberate: swallow the expected panic
 		_, _ = store.Nodes().Get(ctx, uuid.New(), nil)
 		return nil
 	})
 	elapsed := time.Since(start)
 
-	// Acceptable outcomes:
-	//   - err == nil and elapsed < 1s (panic recovered, tx committed empty)
-	//   - err is the panic propagated (still no deadlock)
-	// Unacceptable:
-	//   - elapsed ≈ deadline (deadlock surfaced as DeadlineExceeded)
+	// @deliberate: acceptable outcomes are err == nil with elapsed < 1s
+	// (panic recovered, tx committed empty) or err is the panic
+	// propagated (still no deadlock). Unacceptable is elapsed ≈
+	// deadline (deadlock surfaced as DeadlineExceeded).
 	if elapsed >= 1500*time.Millisecond {
 		t.Fatalf("nil-tx-from-inside-tx took %v (≈ deadline) — deadlock not eliminated; err=%v", elapsed, err)
 	}

@@ -2,8 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// instances_delete_cascade.go — InstancesDeleteCascade conformance area.
-//
+// @concept: instance
+// @concept: run-scope
+
+// @constraint: InstancesDeleteCascade conformance area.
 // Pins that Instances.Delete walks the entire run-scope tree atomically:
 // child RunScopes (subgraph + fanout_partition), their node-run rows,
 // and the parent's own main-scope rows all disappear with the instance.
@@ -53,13 +55,13 @@ func testInstancesDeleteCascadeRunScopeTree(
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Seed a run row in the main scope — it's the parent_run_id of the
-	// fanout partition scope created below. Returns the run id.
+	// @constraint: this run row is the parent_run_id of the fanout partition
+	// scope created below, anchoring the cascade-tree fixture.
 	mainScopeRunID := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 
-	// Create a fanout_partition RunScope under the main scope, rooted on
-	// mainScopeRunID. The CHECK constraint requires both parent_*
-	// columns set together.
+	// @constraint: the rimsky_run_scopes CHECK constraint requires both
+	// parent_run_scope_id and parent_run_id to be set together for non-main
+	// scopes.
 	fanoutScopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -74,10 +76,9 @@ func testInstancesDeleteCascadeRunScopeTree(
 		t.Fatalf("Create fanout RunScope: %v", err)
 	}
 
-	// Allocate a run row inside the fanout partition scope. This becomes
-	// the parent_run_id of the subgraph scope below — pinning the
-	// nested-tree cascade case (parent_run_id points at a run row that
-	// itself lives in a child scope).
+	// @constraint: this fanout run row becomes the parent_run_id of the
+	// subgraph scope below, pinning the nested-tree cascade case where
+	// parent_run_id points at a run row that itself lives in a child scope.
 	fanoutRunID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
@@ -91,8 +92,9 @@ func testInstancesDeleteCascadeRunScopeTree(
 		t.Fatalf("CreateChildRun fanout: %v", err)
 	}
 
-	// Subgraph RunScope under the fanout partition, parent_run_id =
-	// fanoutRunID (a row that lives in the fanout scope itself).
+	// @constraint: subgraph scope's parent_run_id points at fanoutRunID,
+	// a row that lives in the fanout scope itself — the cascade must
+	// traverse a child-scope run row to reach the subgraph.
 	subgraphScopeID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -107,8 +109,8 @@ func testInstancesDeleteCascadeRunScopeTree(
 		t.Fatalf("Create subgraph RunScope: %v", err)
 	}
 
-	// One more run row inside the subgraph scope so the cascade has to
-	// reach all the way down.
+	// @constraint: a run row inside the subgraph scope forces the cascade
+	// to walk to the deepest layer of the tree.
 	subgraphRunID := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
@@ -122,15 +124,14 @@ func testInstancesDeleteCascadeRunScopeTree(
 		t.Fatalf("CreateChildRun subgraph: %v", err)
 	}
 
-	// Seed claim handles + claim holders so the cascade chain through
-	// rimsky_claim_handles.node_run_id → rimsky_node_runs.id ON DELETE
-	// SET NULL and rimsky_claim_holders.holder_run_id →
-	// rimsky_node_runs.id ON DELETE CASCADE is also exercised. Fan-out
-	// parents in production carry a parent_claim_handle_id with child
-	// claim handles + holders; pin that the parent claim handle's
-	// node_run_id → rimsky_node_runs FK chain unwinds via
-	// rimsky_instances → rimsky_nodes ON DELETE CASCADE, and the
-	// rimsky_claim_holders cascade removes the holder rows.
+	// @constraint: claim handles + holders are seeded to exercise the FK
+	// cascade chain — rimsky_claim_handles.node_run_id → rimsky_node_runs.id
+	// ON DELETE SET NULL and rimsky_claim_holders.holder_run_id →
+	// rimsky_node_runs.id ON DELETE CASCADE. Fan-out parents in production
+	// carry a parent_claim_handle_id with child claim handles + holders; this
+	// pins that the parent claim handle's node_run_id → rimsky_node_runs FK
+	// chain unwinds via rimsky_instances → rimsky_nodes ON DELETE CASCADE,
+	// and the rimsky_claim_holders cascade removes the holder rows.
 	parentClaimHandleID := shared.UUID(uuid.New())
 	childClaimHandleID := shared.UUID(uuid.New())
 	holderID := shared.UUID(uuid.New())
@@ -141,7 +142,8 @@ func testInstancesDeleteCascadeRunScopeTree(
 	expires := time.Now().Add(1 * time.Hour)
 	address := json.RawMessage(`{"k":"delete-cascade"}`)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		// Parent claim handle, node_run_id binds to the fanout run row.
+		// @constraint: parent claim handle's node_run_id binds to the fanout
+		// run row so the FK cascade chain through that run row is exercised.
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                 parentClaimHandleID,
 			NodeRunID:          &fanoutRunID,
@@ -154,9 +156,9 @@ func testInstancesDeleteCascadeRunScopeTree(
 		}, tx); err != nil {
 			return err
 		}
-		// Child claim handle parented to the parent, holding on the
-		// subgraph run row. Exercises both FKs (node_run_id +
-		// parent_claim_handle_id).
+		// @constraint: child claim handle holds on the subgraph run row with
+		// parent_claim_handle_id set, exercising both the node_run_id and
+		// parent_claim_handle_id FKs simultaneously.
 		if err := store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{
 			ID:                  childClaimHandleID,
 			NodeRunID:           &subgraphRunID,
@@ -170,7 +172,8 @@ func testInstancesDeleteCascadeRunScopeTree(
 		}, tx); err != nil {
 			return err
 		}
-		// Claim holder row keyed on the subgraph run.
+		// @constraint: claim holder row is keyed on the subgraph run so the
+		// rimsky_claim_holders.holder_run_id ON DELETE CASCADE FK fires.
 		return store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{
 			ID:            holderID,
 			ClaimHandleID: childClaimHandleID,
@@ -180,8 +183,8 @@ func testInstancesDeleteCascadeRunScopeTree(
 		t.Fatalf("seed claim handles + holder: %v", err)
 	}
 
-	// Sanity: count rows pre-delete so post-delete=0 isn't a vacuous
-	// assertion against an empty starting state.
+	// @constraint: pre-delete counts guard against the post-delete=0
+	// assertion succeeding vacuously against an empty starting state.
 	if preScopes := countScopesByInstance(t, d, rawQuery, fix.InstanceID); preScopes < 3 {
 		t.Fatalf("pre-delete: expected ≥3 RunScopes (main+fanout+subgraph), got %d", preScopes)
 	}
@@ -195,15 +198,16 @@ func testInstancesDeleteCascadeRunScopeTree(
 		t.Fatalf("pre-delete: expected ≥1 claim_holder, got %d", preHolders)
 	}
 
-	// Drop the instance — schema CASCADE walks everything.
+	// @constraint: a single Instances.Delete must walk the entire tree via
+	// the schema's ON DELETE CASCADE chain — no explicit topological walk.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.Instances().Delete(ctx, fix.InstanceID, tx)
 	}); err != nil {
 		t.Fatalf("Instances.Delete: %v", err)
 	}
 
-	// Post-delete: instance row + every RunScope + every node_run for
-	// the instance must be gone.
+	// @constraint: every RunScope and node_run row for the deleted instance
+	// must be gone post-delete — the cascade owns the full run-scope tree.
 	if n := countScopesByInstance(t, d, rawQuery, fix.InstanceID); n != 0 {
 		t.Fatalf("post-delete: %d RunScope rows remain for instance %s, want 0",
 			n, fix.InstanceID)
@@ -212,9 +216,9 @@ func testInstancesDeleteCascadeRunScopeTree(
 		t.Fatalf("post-delete: %d node_run rows remain for instance %s, want 0",
 			n, fix.InstanceID)
 	}
-	// Claim handle rows: holder_node_id FK is ON DELETE CASCADE on
+	// @constraint: claim_handles.holder_node_id is ON DELETE CASCADE on
 	// rimsky_nodes, so when the instance cascade removes the nodes the
-	// handles disappear with them. Both parent + child handles must be
+	// handles disappear with them — both parent + child handles must be
 	// gone.
 	if n := countClaimHandlesByID(t, d, rawQuery, parentClaimHandleID); n != 0 {
 		t.Fatalf("post-delete: parent claim_handle remains, want 0 got %d", n)
@@ -222,12 +226,12 @@ func testInstancesDeleteCascadeRunScopeTree(
 	if n := countClaimHandlesByID(t, d, rawQuery, childClaimHandleID); n != 0 {
 		t.Fatalf("post-delete: child claim_handle remains, want 0 got %d", n)
 	}
-	// Claim holder rows: claim_handle_id FK is ON DELETE CASCADE on
-	// rimsky_claim_handles, so handler removal walks the holder row.
+	// @constraint: claim_holders.claim_handle_id is ON DELETE CASCADE on
+	// rimsky_claim_handles, so handle removal walks the holder row.
 	if n := countClaimHoldersByID(t, d, rawQuery, holderID); n != 0 {
 		t.Fatalf("post-delete: claim_holder remains, want 0 got %d", n)
 	}
-	// Instance row itself.
+	// @constraint: the instance row itself must be gone post-delete.
 	var inst *persistence.InstanceRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		r, err := store.Instances().Get(ctx, fix.InstanceID, tx)

@@ -43,7 +43,7 @@ import (
 func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// resumeAt is the wall-clock deadline at which SweepParkedNodes wakes
+	// @constraint: resumeAt is the wall-clock deadline at which SweepParkedNodes wakes
 	// the parked node. It must outlast deploy → create → reach-parked plus
 	// the two parked-window probes (phase/resume_at and the leaf-run
 	// lineage), since those read the row while it is still parked. The race
@@ -72,11 +72,11 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Wait for the park transition.
+	// @constraint: Wait for the park transition.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
-	// Two things must happen immediately after the parked transition,
+	// @constraint: Two things must happen immediately after the parked transition,
 	// before any further wait can let the resume_at deadline elapse:
 	//  (a) swap the worker to its resume Success script, so the deadline
 	//      wake dispatches cleanly instead of re-running the Park script
@@ -101,7 +101,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	t.Logf("parked row: phase=%s resume_at=%v (now=%v, resume_at-now=%v)",
 		phase, *resumeAtStored, time.Now(), time.Until(*resumeAtStored))
 
-	// Verify the canonical terminal/park/* signal event was emitted
+	// @deliberate: Verify the canonical terminal/park/* signal event was emitted
 	// (Pass 5 retired the legacy `park_requested` fixed-string row in
 	// favor of the signal type-path). The test uses the snooze flavor
 	// per its `resumeAt` deadline; the executor stub maps a Park with
@@ -110,7 +110,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.True(t, h.WaitForEventKind(worker.ID, "terminal/park/snooze", 5*time.Second),
 		"terminal/park/snooze signal event should be recorded")
 
-	// Lineage assertion: the leaf-run lineage row for the parked terminal
+	// @deliberate: Lineage assertion: the leaf-run lineage row for the parked terminal
 	// MUST carry settling_signal_type=terminal/park/snooze. EmitLeafRunLineage
 	// in `runner_terminal_park.go::applyTerminalPark` threads `parkSigType`
 	// through; an empty field would mean the writer dropped the value. This
@@ -130,7 +130,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked node when resume_at elapses")
-	// Verify the persisted resume_reason is "deadline_elapsed" — the
+	// @deliberate: Verify the persisted resume_reason is "deadline_elapsed" — the
 	// runner reads this from rimsky_node_runs.wake_reason and
 	// attaches it to the ExecuteRequest.resume_context so executors can
 	// distinguish deadline-elapsed wakes from external invalidates.
@@ -138,7 +138,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	require.Equal(t, "deadline_elapsed", row["resume_reason"],
 		"deadline-elapsed wake must persist resume_reason=deadline_elapsed; "+
 			"got %v", row["resume_reason"])
-	// And the worker should ultimately reach fresh after the resume
+	// @deliberate: And the worker should ultimately reach fresh after the resume
 	// dispatch completes.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should reach fresh after deadline-elapsed resume")
@@ -149,7 +149,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Indefinite park — no resume_at.
+	// @deliberate: Indefinite park — no resume_at.
 	h.Stub.WhenType("worker").
 		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "human_review", []byte(`{"ticket":"R-1"}`), time.Time{}, "")
 
@@ -167,10 +167,9 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked (indefinite)")
 
-	// Reschedule the script so the resume completes.
+	// @deliberate: Reschedule the script so the resume completes.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "after-review")
 
-	// External admin invalidate.
 	body, _ := json.Marshal(map[string]any{})
 	resp, err := http.Post(
 		h.ControlBase+"/v1/admin/instances/"+worker.InstanceID.String()+"/nodes/"+worker.ID.String()+"/invalidate",
@@ -181,7 +180,6 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 10*time.Second),
 		"admin invalidate should wake the parked node")
-	// Verify resume_reason payload uses external_invalidate.
 	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")
 	require.Equal(t, "external_invalidate", row["resume_reason"])
 
@@ -196,7 +194,7 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// Park indefinitely so SweepParkedNodes' watchdog branch fires; the
+	// @deliberate: Park indefinitely so SweepParkedNodes' watchdog branch fires; the
 	// runtime measures overrun against parked_at + max_park_duration.
 	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "waiting", nil, time.Time{}, "")
 
@@ -218,7 +216,7 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
 		"worker should reach parked")
 
-	// Wait past the cap. SweepParkedNodes runs every tick (250ms), so
+	// @deliberate: Wait past the cap. SweepParkedNodes runs every tick (250ms), so
 	// within 5s the watchdog should force failure.
 	require.True(t, h.WaitForEventKind(worker.ID, "park_timeout", 15*time.Second),
 		"watchdog should fire park_timeout after max_park_duration")
@@ -226,35 +224,12 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 		"worker should land in failed after park_timeout")
 }
 
-// TestParkedLifecycleUnspecifiedReasonRejected retired per spec
+// @constraint: TestParkedLifecycleUnspecifiedReasonRejected retired per spec
 // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md:
 // PARK_REASON_UNSPECIFIED was removed entirely in the 7→2 collapse —
 // the only legal ParkReason values are now AWAIT_CALLBACK and SNOOZE,
 // and proto3 dropped the unspecified zero value at the wire layer.
 // The "reject unspecified" runtime test is no longer expressible.
-
-// TestParkedLifecycleIntraGraphInvalidateAgainstParked (E6 case (g))
-// retired per spec
-// .ok-planner/specs/2026-06-03-instance-lifecycle-durable-by-default-design.md.
-//
-// The case exercised the intra-graph cascade wake of a parked receiver
-// (wakeParkedReceiverInTx, resume_reason=cascade_wake) end to end by
-// re-invalidating an already-settled upstream B so the new frame's
-// settlement cascade would wake parked A. That only ever passed because
-// of the frame-end defect this spec fixes: pre-fix, a parked node_run did
-// NOT hold its frame open, so A's initial frame drained to `completed`
-// while A sat parked, freeing the serial queue to start the re-
-// invalidate's new frame. With the fix (a parked node_run holds its frame
-// open), A's frame stays running, so under serial-queue resolution the
-// re-invalidate's new frame cannot start ahead of it — and there is no
-// supported user operation that wakes a parked node by re-invalidating an
-// upstream: a user invalidate only ever creates (or coalesces into) a
-// frame, never re-fires a node inside an already-open frame. The
-// supported parked-wake paths remain covered — deadline (case (a)),
-// external admin invalidate (case (b)), and the durable-by-default gate
-// in parked_holds_frame_e2e_test.go — and the wakeParkedReceiverInTx
-// primitive stays covered by the runtime unit test
-// runtime/hard_dep_cascade_test.go::TestPullHardDepUpstreams_WakesParkedUpstream.
 
 // TestParkedLifecycleHeldClaimRetentionAcrossPark covers E6 case (e).
 // A node holds a claim, parks, then resumes. The claim handle row in
@@ -309,7 +284,7 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 //	non-scenario test).
 func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	t.Parallel()
-	// Two-node scenario: `acquirer` holds a scope-claim with alias
+	// @deliberate: Two-node scenario: `acquirer` holds a scope-claim with alias
 	// "held"; the held subgraph contains both itself and the
 	// downstream `inheritor`. The acquirer parks while the inheritor
 	// is still pending, exercising rimsky_claim_handles retention
@@ -335,7 +310,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 			},
 		},
 	})
-	// resumeAt must be far enough in the future that, under heavy
+	// @constraint: resumeAt must be far enough in the future that, under heavy
 	// parallel testcontainer load, the entire setup-through-parked-
 	// state-probe sequence completes BEFORE SweepParkedNodes can pick
 	// the row up — otherwise the sweep dispatches under the still-Park
@@ -349,7 +324,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	resumeAt := time.Now().Add(10 * time.Second)
 	h.Stub.WhenType("acquirer").
 		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "checkpoint", []byte(`{"step":1}`), resumeAt, "tok-1")
-	// Inheritor is pre-scripted but won't be reached until the
+	// @deliberate: Inheritor is pre-scripted but won't be reached until the
 	// acquirer resumes and completes.
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inheritor-done")
 
@@ -382,7 +357,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
 		"acquirer should reach parked")
 
-	// Re-script the acquirer for the resume dispatch BEFORE the parked-
+	// @deliberate: Re-script the acquirer for the resume dispatch BEFORE the parked-
 	// state SQL probes run, and BEFORE the wall-clock approaches the
 	// scripted resume_at. WhenType replaces the entire script in the
 	// stub's per-type map, so this swap turns the next Execute call on
@@ -392,7 +367,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	// long before SweepParkedNodes can pick the parked row up.
 	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "resumed")
 
-	// While parked, verify the node-run row is in phase='parked'
+	// @deliberate: While parked, verify the node-run row is in phase='parked'
 	// AND the rimsky_claim_handles row for the held claim survives
 	// (the auto-terminal Abandon must not fire while the inheritor
 	// hasn't run yet).
@@ -408,7 +383,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.Equal(t, "snooze", *parkedReason,
 		"parked_reason should store the enum form (snake_case); TIME_WAIT collapsed to SNOOZE per the 2026-05-22 ParkReason collapse")
 
-	// Held claim_handle row exists during park: the held subgraph
+	// @deliberate: Held claim_handle row exists during park: the held subgraph
 	// (acquirer + inheritor) is still active, so auto-terminal cannot
 	// fire yet.
 	var lhCount int
@@ -432,7 +407,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	require.True(t, h.WaitForWorkerRequestDeleted(inh.ID, 30*time.Second),
 		"inheritor node-run should be deleted after completion")
 
-	// Auto-terminal fires Commit (both held subgraph members completed
+	// @deliberate: Auto-terminal fires Commit (both held subgraph members completed
 	// successfully); claim_handle rows are then removed. Allow a
 	// generous polling window — the auto-terminal sweep runs at the
 	// scheduler tick cadence, and the resume path may briefly hold a
@@ -526,7 +501,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
 		"acquirer should reach parked")
 
-	// The watchdog branch in SweepParkedNodes runs failOverdueParkedRow,
+	// @deliberate: The watchdog branch in SweepParkedNodes runs failOverdueParkedRow,
 	// which marks the held claim-holder rows 'failed' and fires
 	// CheckAndFireResolution. With any failed holder, auto-terminal
 	// resolves the claim by firing Abandon on the producer (blessed
@@ -542,7 +517,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 	require.True(t, h.WaitForWorkerRequestDeleted(acq.ID, 30*time.Second),
 		"node-run should be deleted after timeout abandon")
 
-	// Auto-terminal Abandon: post-Stage-3 of the claim-handle state-
+	// @deliberate: Auto-terminal Abandon: post-Stage-3 of the claim-handle state-
 	// column refactor, the rimsky_claim_handles row is PROMOTED (not
 	// deleted); the producer's Abandon verb fired (visible on
 	// store.Calls()). Assert the row is in state=abandoned.

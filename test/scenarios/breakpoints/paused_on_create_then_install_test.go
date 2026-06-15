@@ -58,27 +58,26 @@ func TestPausedOnCreateThenInstall(t *testing.T) {
 		},
 	})
 
-	// Step 1: create paused. No dispatch should fire — the candidate-
+	// @deliberate: Step 1: create paused. No dispatch should fire — the candidate-
 	// selection filter holds the instance.
 	iid := createInstanceWithPause(t, h, tid, "ck-paused-on-create", map[string]any{})
 
-	// Give the supervisor a tick to (not) pick up the instance, then
+	// @constraint: Give the supervisor a tick to (not) pick up the instance, then
 	// assert nothing was dispatched.
 	time.Sleep(500 * time.Millisecond)
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"paused-on-create instance must not be dispatched before resume")
 
-	// Step 2: install the breakpoint while the instance is still held.
 	bpID := breakpointCreate(t, h, iid, map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "worker"},
 	})
-	// Sanity: no hit yet — there has been no dispatch.
+	// @deliberate: Sanity: no hit yet — there has been no dispatch.
 	time.Sleep(300 * time.Millisecond)
 	row := getBreakpointRow(t, h, bpID)
 	require.NotNil(t, row)
 
-	// Step 3: release the soft-pause. The supervisor picks up the
+	// @deliberate: Step 3: release the soft-pause. The supervisor picks up the
 	// instance, dispatches the worker, and the breakpoint catches it.
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status, "instance resume should succeed")
@@ -87,7 +86,6 @@ func TestPausedOnCreateThenInstall(t *testing.T) {
 	require.Equal(t, 0, stubObservedCount(h, "worker"),
 		"executor must not be called between instance-resume and breakpoint-resume")
 
-	// Step 4: resume the breakpoint hit; dispatch proceeds.
 	status, _ = breakpointResume(t, h, iid, bpID, map[string]any{
 		"hit_id": hit.ID.String(),
 	})

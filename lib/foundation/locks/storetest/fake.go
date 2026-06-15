@@ -82,7 +82,7 @@ type FakeCall struct {
 	Intent     claimproducer.Intent
 	Scope      []byte
 	Address    []byte
-	TemplateID string // populated for lifecycle calls and Open
+	TemplateID string // @constraint: populated for lifecycle calls and Open
 	InstanceID string // populated for instance-scope lifecycle and Open
 	RunScopeID string // populated for on_run_scope_terminal
 	// ServiceBindings and OwnerAPIKeyID are populated for
@@ -106,7 +106,7 @@ func NewFake(name string, caps claimproducer.Capabilities) *Fake {
 	}
 }
 
-// Compile-time interface checks.
+// @constraint: compile-time assertion that *Fake satisfies both producer and lifecycle interfaces.
 var (
 	_ locks.ClaimProducer       = (*Fake)(nil)
 	_ locks.LifecycleSubscriber = (*Fake)(nil)
@@ -261,9 +261,10 @@ func (f *Fake) Reset() {
 	f.state = make(map[claimproducer.ClaimID]fakeState)
 }
 
-// Lifecycle event methods. Each records a FakeCall and returns nil
-// unless ErrorFunc is set for the matching verb.
-
+// OnTemplateRegistered records a FakeCall and returns nil unless
+// ErrorFunc is set for the matching verb. The OnTemplate* family
+// (Registered, Deployed, Undeployed, Deregistered) follow the same
+// shape.
 func (f *Fake) OnTemplateRegistered(_ context.Context, req locks.OnTemplateRegisteredRequest) error {
 	return f.recordLifecycle("on_template_registered", req.TemplateHash, "")
 }

@@ -95,7 +95,7 @@ func TestAttributeOverridesMatchOverlayOrder_LaterWins(t *testing.T) {
 	require.Equal(t, "yes", cli["first-only"], "non-conflicting path from first entry must apply")
 	require.Equal(t, "yes", cli["second-only"], "non-conflicting path from second entry must apply")
 
-	// Both entries fired.
+	// @deliberate: Both entries fired.
 	var inst *persistence.InstanceRow
 	require.Eventually(t, func() bool {
 		err := h.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {

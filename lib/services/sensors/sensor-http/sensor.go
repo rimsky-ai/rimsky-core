@@ -53,14 +53,14 @@ type Watch struct {
 	InstanceID     string
 	URL            string
 	PollInterval   time.Duration
-	MatchStatus    []int  // empty → any 2xx is a match
-	MatchJSONKey   string // dotted path within response JSON; empty → no JSON match
-	MatchJSONVal   string // expected value at that path (substring match); empty → presence-only
+	MatchStatus    []int  // @constraint: empty → any 2xx is a match
+	MatchJSONKey   string // @constraint: dotted path within response JSON; empty → no JSON match
+	MatchJSONVal   string // @constraint: expected value at that path (substring match); empty → presence-only
 	TargetNode     string
 	MessageKind    string
 
 	LastPollAt time.Time
-	LastHash   string // sha256 hex of last response body that matched
+	LastHash   string // @constraint: sha256 hex of last response body that matched
 }
 
 // SensorService implements genv1.PublisherServer for HTTP polling.
@@ -223,7 +223,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		TargetNode:     req.GetTargetNode(),
 		MessageKind:    messageKind,
 	}
-	// Restart-replay: look up persisted state and pre-populate the
+	// @constraint: restart-replay — look up persisted state and pre-populate the
 	// body-hash watermark before publishing the Watch into the in-memory
 	// map. Without this, the first poll after a restart re-emits even
 	// when the body hasn't changed.
@@ -241,7 +241,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.watches[w.SubscriptionID]; exists {
-		// Idempotent Subscribe: the state-DB row is already present from
+		// @deliberate: idempotent Subscribe — the state-DB row is already present from
 		// the prior call, so we skip the UpsertSubscription below.
 		return &genv1.SubscribeResponse{}, nil
 	}
@@ -374,7 +374,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 		"status":      resp.StatusCode,
 		"body_hash":   hash,
 	}
-	// Best-effort include a decoded JSON body so substitution can read
+	// @deliberate: Best-effort include a decoded JSON body so substitution can read
 	// `{{trigger.message.payload.body.<path>}}`. Non-JSON bodies surface
 	// as a string.
 	var decoded any
@@ -383,7 +383,7 @@ func (s *SensorService) pollOne(ctx context.Context, w *Watch, now time.Time) {
 	} else {
 		obs["body"] = string(body)
 	}
-	// Idempotency key: subscription_id + body hash. Re-emitting the
+	// @constraint: idempotency key = subscription_id + body hash. Re-emitting the
 	// same body is a no-op at the server.
 	idemKey := fmt.Sprintf("%s+%s", w.SubscriptionID, hash)
 	if err := s.postMessage(ctx, w, obs, idemKey); err != nil {
@@ -426,7 +426,7 @@ func jsonMatch(body []byte, path, value string) bool {
 	}
 	s, ok := got.(string)
 	if !ok {
-		// Best-effort: stringify primitives.
+		// @deliberate: best-effort stringify of non-string primitives.
 		s = fmt.Sprintf("%v", got)
 	}
 	return strings.Contains(s, value)

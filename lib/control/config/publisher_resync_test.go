@@ -114,17 +114,19 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 
 	const publisherName = "pub-a"
 
-	// Rimsky-expected, publisher-missing → resync must re-Subscribe.
+	// @deliberate: droppedSubID models the rimsky-expected /
+	// publisher-missing case — resync must re-Subscribe.
 	droppedSubID := shared.UUID(uuid.New())
 	instanceID := uuid.New()
-	// Publisher-reported, rimsky-unknown → resync must Unsubscribe.
+	// @deliberate: orphanSubID models the publisher-reported /
+	// rimsky-unknown case — resync must Unsubscribe.
 	orphanSubID := shared.UUID(uuid.New())
 	orphanInstanceID := shared.UUID(uuid.New())
 
-	// Seed a live instance (template + run scope + instance) so the
-	// publisher-subscription FK resolves, then the active subscription
-	// rimsky believes is live but the publisher has lost (e.g. publisher
-	// restarted with empty state).
+	// @constraint: seed a live instance (template + run scope +
+	// instance) so the publisher-subscription FK resolves; then insert
+	// the active subscription rimsky believes is live but the publisher
+	// has lost (e.g. publisher restarted with empty state).
 	templateHash := "sha256-" + uuid.NewString()
 	mainRunScopeID := uuid.New()
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -167,7 +169,8 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 
 	fake := &fakePublisherClient{
 		name: publisherName,
-		// The publisher reports ONLY the orphan — not the dropped sub.
+		// @deliberate: the publisher reports ONLY the orphan — not the
+		// dropped sub.
 		live: []runtime.ListedPublisherSubscription{
 			{
 				PublisherSubscriptionID: orphanSubID,
@@ -179,9 +182,10 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 		},
 	}
 
-	// Inject the fake registry via the startup-resync seam and record that
-	// StartControlAPI fired it. The override runs the REAL reconciliation
-	// against the real seeded store, swapping only the publisher registry.
+	// @deliberate: inject the fake registry via the startup-resync seam and
+	// record that StartControlAPI fired it; the override runs the REAL
+	// reconciliation against the real seeded store, swapping only the
+	// publisher registry so the test exercises the production code path.
 	var resyncCalled bool
 	var mu sync.Mutex
 	done := make(chan struct{})
@@ -213,11 +217,11 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 		_ = h.Shutdown(shutCtx)
 	})
 
-	// Resync may run in a goroutine; wait for it (bounded) before asserting.
+	// @constraint: resync may run in a goroutine; wait for it (bounded)
+	// before asserting.
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		// Fall through to the assertions below, which fail clearly.
 	}
 
 	mu.Lock()

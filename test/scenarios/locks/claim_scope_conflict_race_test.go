@@ -77,7 +77,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 		},
 	})
 
-	// One template (single root node holding the contended claim), two
+	// @deliberate: One template (single root node holding the contended claim), two
 	// instances. Each instance gets its own root frame, dispatch row,
 	// and node row — so two independent supervisors can race against
 	// the same scope without frame-engine starvation issues that arise
@@ -104,7 +104,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	// Build one shared registry holding a peer.Client to the loopback
+	// @deliberate: Build one shared registry holding a peer.Client to the loopback
 	// fixture. The Client and the underlying gRPC connection are
 	// concurrency-safe so two RunNode goroutines can share both.
 	dialCtx, dialCancel := context.WithTimeout(h.Ctx, 5*time.Second)
@@ -141,7 +141,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 		err   error
 	}
 
-	// Barrier so both goroutines call RunNode at the same instant.
+	// @deliberate: Barrier so both goroutines call RunNode at the same instant.
 	start := make(chan struct{})
 	results := make(chan result, 2)
 	var wg sync.WaitGroup
@@ -169,14 +169,14 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 		}
 	}
 
-	// Allowed shapes per supervisor: (Ran=true, err=nil) — won the race;
+	// @constraint: allowed shapes per supervisor: (Ran=true, err=nil) — won the race;
 	// (Ran=false, err=nil) — lost the race (scope conflict; soft skip).
 	// Open-error / RPC-error shapes are not expected in this scenario;
 	// surface them clearly if they happen.
 	require.NoError(t, rA.err, "sup-A unexpected error")
 	require.NoError(t, rB.err, "sup-B unexpected error")
 
-	// Possible outcomes:
+	// @deliberate: Possible outcomes:
 	//   - One Ran=true, one Ran=false  → race serialized correctly.
 	//   - Both Ran=true                → BOTH supervisors won; this is
 	//     allowed iff their work didn't overlap in wall-clock time
@@ -197,7 +197,7 @@ func TestClaimScopeClaimRace_OneAcquirerWins(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, wins, 1, "at least one supervisor must successfully acquire")
 
-	// Invariant 4b: single-writer-per-scope. After both goroutines
+	// @constraint: Invariant 4b: single-writer-per-scope. After both goroutines
 	// returned, the count of ACTIVE scope-kind rimsky_claim_handles rows
 	// for the contended (store, scope) must be ≤ 1. The state filter is
 	// load-bearing: post-Stage-3 of the claim-handle state-column

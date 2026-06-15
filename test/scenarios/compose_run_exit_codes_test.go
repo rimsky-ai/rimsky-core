@@ -70,7 +70,7 @@ func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 	buildRimskyCLIBinary(t, rimskyBin)
 	buildComposeStubExecutorBinary(t, stubBin)
 
-	// Sub-test isolation: each subtest gets its own working directory
+	// @deliberate: Sub-test isolation: each subtest gets its own working directory
 	// so the per-run artifact root is fresh.
 
 	t.Run("success_exit_0", func(t *testing.T) {
@@ -88,7 +88,7 @@ func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 	t.Run("failure_exit_1", func(t *testing.T) {
 		work := t.TempDir()
 		copyComposeSampleManifest(t, work)
-		// The mixed-outcome manifest (the active rimsky-compose.yml)
+		// @deliberate: The mixed-outcome manifest (the active rimsky-compose.yml)
 		// exercises a real dispatch-time failure: one instance
 		// terminal-success and one terminal-failure (the stub
 		// executor's outcome="fail" terminal, settled under the
@@ -107,7 +107,7 @@ func TestComposeRunExitCodes_ThreeClasses(t *testing.T) {
 	t.Run("timeout_exit_2", func(t *testing.T) {
 		work := t.TempDir()
 		copyComposeSampleManifest(t, work)
-		// The live manifest's slow instance has a delay_ms=3000
+		// @deliberate: The live manifest's slow instance has a delay_ms=3000
 		// attribute. Setting --timeout 1s puts the verb's wait
 		// deadline well below the dispatch's settle time, so the
 		// timer fires while the slow instance is still mid-flight.

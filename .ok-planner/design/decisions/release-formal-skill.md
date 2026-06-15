@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The `/release` skill drives SemVer judgment + notes draft + outward push behind a single user gate.
+The formal-release skill drives SemVer judgment + notes draft + outward push behind a single user gate.
 
 ## Rationale
 

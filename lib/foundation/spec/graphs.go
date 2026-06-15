@@ -6,15 +6,6 @@ package spec
 
 import "encoding/json"
 
-// Top-level template DSL additions per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md.
-//
-// The canonical TemplateSpec is being extended to carry `graphs:` (one
-// `main` graph plus zero or more named sub-graphs) and `sensors:`
-// (per-instance sensor watch declarations). Pre-v1 the existing
-// `Nodes []TemplateNodeDef` field is retained as the legacy shape; the
-// template canonicalizer accepts either form and rejects mixing them.
-
 // GraphSpec is one graph in a template. Per spec §Sub-graphs, the
 // reserved name `main` is the top-level graph; all other graphs are
 // sub-graphs that MUST declare `entry:` and `exit:` aliases.

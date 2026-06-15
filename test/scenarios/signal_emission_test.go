@@ -54,7 +54,6 @@ func TestSignalEmission_TerminalSuccess(t *testing.T) {
 	rows := readEventsForNode(t, h, n.ID)
 	require.True(t, hasEventKind(rows, "terminal/success"),
 		"expected one rimsky_events row with kind=terminal/success; got kinds=%v", kindsOf(rows))
-	// Payload shape check on the terminal/success row.
 	for _, e := range rows {
 		if e.KindRaw == "terminal/success" {
 			require.Equal(t, true, e.Payload["changed"],
@@ -105,7 +104,7 @@ func TestSignalEmission_TerminalErrorWithRetryThenGiveUp(t *testing.T) {
 		"expected one transient/retry/1/stub/foo row; got kinds=%v", kinds)
 	require.GreaterOrEqual(t, terminalIdx, 0,
 		"expected one terminal/error/stub/foo row; got kinds=%v", kinds)
-	// List returns events ordered by occurred_at DESC, id DESC — so
+	// @deliberate: List returns events ordered by occurred_at DESC, id DESC — so
 	// the LATER event has the smaller index. The retry happened
 	// before the give_up; therefore retryIdx > terminalIdx.
 	require.Greater(t, retryIdx, terminalIdx,
@@ -145,7 +144,7 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 		if e.KindRaw != "terminal/park/snooze" {
 			continue
 		}
-		// resume_at is round-tripped through JSON; the payload value
+		// @deliberate: resume_at is round-tripped through JSON; the payload value
 		// may be a time.Time, a string, or — when JSON-loaded — a
 		// time-shaped string. Just assert presence + non-empty.
 		require.NotNil(t, e.Payload["resume_at"], "park payload should carry resume_at")

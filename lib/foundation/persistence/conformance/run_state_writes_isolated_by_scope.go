@@ -2,7 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// run_state_writes_isolated_by_scope.go — RunStateWritesIsolatedByScope
+// @concept: run-scope
+
+// @constraint: conformance area conformance area.
 // conformance area.
 //
 // Replacement coverage for the cycle-2/3 fan-out disambiguator
@@ -57,8 +59,8 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 
 	scopeA := fix.MainRunScopeID
 
-	// Seed a parent run (needed because scope B is a fanout_partition
-	// — it requires non-nil parent_run_id).
+	// @constraint: scope B is a fanout_partition, which requires non-nil
+	// parent_run_id; seed a parent run so the Create call below satisfies that.
 	parentRun := seedConformanceRunForNode(ctx, t, d, fix.NodeID, fix.FrameID)
 	scopeB := shared.UUID(uuid.New())
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -74,8 +76,6 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 		t.Fatalf("Create scope B: %v", err)
 	}
 
-	// Affirm one in-flight row in each scope for fix.NodeID. After the
-	// affirm, GetInFlightRunForNode returns the run id in each scope.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.Nodes().AffirmNodeRunRow(ctx, fix.NodeID, scopeA, fix.FrameID, tx); err != nil {
 			return err
@@ -114,7 +114,7 @@ func seedTwoScopeRuns(ctx context.Context, t *testing.T, d persistence.Database)
 	return twoScopeFixture{fix: fix, scopeA: scopeA, scopeB: scopeB, runA: runA, runB: runB}
 }
 
-// readRunState reads the (state, settling_signal_type, phase, claimed_by)
+// runRowSnapshot reads the (state, settling_signal_type, phase, claimed_by)
 // tuple for a given run id via the RunTreeTable + Queue.GetByID. Used
 // by the per-method isolation assertions.
 type runRowSnapshot struct {
@@ -200,8 +200,6 @@ func testRunStateWritesIsolated_ClearSettlingSignalType(t *testing.T, d persiste
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
 
-	// Seed both runs with a known settling_signal_type via
-	// RunTree.UpdateStateAndOutcome.
 	successSig := "terminal/success"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFresh, &successSig); err != nil {
@@ -230,7 +228,6 @@ func testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t *testing
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
 
-	// Seed both runs with a failed settling signal type-path.
 	failedSig := "terminal/error/aggregate/strict_failed"
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.RunTree().UpdateStateAndOutcome(ctx, tx, f.runA, cascade.NodeStateFailed, &failedSig); err != nil {
@@ -277,7 +274,6 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 		t.Fatalf("RemoveForNodeInTx(A): %v", err)
 	}
 
-	// Scope B's in-flight lookup must still resolve runB.
 	var idB shared.UUID
 	var foundB bool
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -302,8 +298,8 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 	store := d.Tables()
 	q := d.Queue()
 
-	// Park scope B's row. ParkActiveInTx requires the row to be
-	// phase='active' with claimed_by=expected; seed it via ClaimDispatchRow.
+	// @constraint: ParkActiveInTx requires the row to be phase='active' with
+	// claimed_by=expected; seed scope B's row via ClaimDispatchRow before parking.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		ok, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
 		if err != nil {
@@ -354,8 +350,8 @@ func testRunStateWritesIsolated_SetRetryNoProgressForNodeInTx(t *testing.T, d pe
 		t.Fatalf("SetRetryNoProgress(A): %v", err)
 	}
 
-	// Read B's retry counter via GetRetryNoProgress (keyed by dispatch
-	// id). It must still be 0.
+	// @constraint: GetRetryNoProgress is keyed by dispatch id (f.runB), so
+	// scope-A's SetRetryNoProgress above must leave B's counter at 0.
 	countB, _, err := q.GetRetryNoProgress(ctx, f.runB)
 	if err != nil {
 		t.Fatalf("GetRetryNoProgress(B): %v", err)

@@ -37,9 +37,9 @@ import (
 //
 // @source: lib/runtime/executor/resolver.go::Endpoint
 type Endpoint struct {
-	Transport string // "grpc" | "http"
+	Transport string // @constraint: "grpc" | "http"
 	URL       string
-	// TLS is the dial mode: "off" (plaintext, the default) or
+	// @constraint: TLS is the dial mode — "off" (plaintext, the default) or
 	// "required" (verified TLS against system roots).
 	TLS string
 }
@@ -57,7 +57,10 @@ type Client interface {
 //
 // @source: lib/runtime/executor/client.go::EventStream
 type EventStream interface {
-	Recv() (*genv1.ExecuteEvent, error) // returns io.EOF when stream ends
+	// @agent-contract: Recv returns the next event, or io.EOF when the
+	// stream ends; any other error is a transport-level failure the caller
+	// must surface.
+	Recv() (*genv1.ExecuteEvent, error)
 	Close() error
 }
 
@@ -143,9 +146,10 @@ func NewClientPool() *ClientPool { return &ClientPool{clients: map[string]Client
 // for the HTTP+JSON wire and external service authors who need it can
 // dial via their own helper.
 func (p *ClientPool) GetOrCreate(ep Endpoint) (Client, error) {
-	// Normalize the empty mode to "off" — the two dial identically
-	// (plaintext; see transportCredsFor), so keying them separately
-	// would mint a redundant second connection to the same endpoint.
+	// @deliberate: normalize the empty mode to "off" — the two dial
+	// identically (plaintext; see transportCredsFor), so keying them
+	// separately would mint a redundant second connection to the same
+	// endpoint.
 	tlsMode := ep.TLS
 	if tlsMode == "" {
 		tlsMode = "off"

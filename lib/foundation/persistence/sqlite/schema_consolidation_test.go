@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// schema_consolidation_test.go — sqlite analog of the postgres
-// schema-consolidation test per spec §10.5. The sqlite_master / pragma
-// table_info introspection replaces pg_catalog; everything else is
-// the same shape (fresh-DB schema match + stale-rimsky_migrations-row
-// inert behavior).
-//
 // @concept: breakpoint
 
 package sqlite_test
@@ -110,7 +104,6 @@ func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 
 	db := sqlitepersist.DBFromDatabase(d)
 
-	// Pre-seed rimsky_migrations with the legacy filenames.
 	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS rimsky_migrations (
 		filename    TEXT PRIMARY KEY,
 		applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
@@ -149,7 +142,7 @@ func TestSqliteSchemaConsolidation_StaleMigrationsRowsAreInert(t *testing.T) {
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_instance_breakpoints", expectedSqliteBreakpointColumns)
 	assertSqliteColumnsPresent(t, ctx, db, "rimsky_breakpoint_hits", expectedSqliteHitColumns)
 
-	// rimsky_migrations should carry BOTH the legacy row AND the new
+	// n should carry BOTH the legacy row AND the new
 	// 001-schema.sql row.
 	var n int
 	if err := db.QueryRowContext(ctx,
@@ -196,7 +189,7 @@ func assertSqliteTablesPresent(t *testing.T, ctx context.Context, db *sql.DB, wa
 func assertSqliteColumnsPresent(t *testing.T, ctx context.Context, db *sql.DB, table string, want []string) {
 	t.Helper()
 	have := map[string]bool{}
-	// PRAGMA can't be parameterized — concatenate the table name. The
+	// @deliberate: PRAGMA can't be parameterized — concatenate the table name. The
 	// `table` value comes from the test's static lists, not user input.
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {

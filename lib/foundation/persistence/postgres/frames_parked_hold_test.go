@@ -2,12 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// frames_parked_hold_test.go — postgres mirror of the SQLite
-// frames_parked_hold + instance_terminate_parked tests. Proves the
-// frame-end and instance-terminated predicates both treat a parked
-// node_run as unresolved work (it holds the frame open and blocks
-// instance termination). Runs against a fresh testcontainers Postgres.
-
 package postgres_test
 
 import (
@@ -72,10 +66,10 @@ func seedFrameParkedFixture(
 		t.Fatalf("seedFrameParkedFixture: %v", err)
 	}
 
-	// Raw-insert frame/node/parked-run through the test escape hatch:
-	// the persistence interface does not surface a "force a parked run"
-	// seed path. source_node_ids has a CHECK (length >= 1); a terminal
-	// frame requires ended_at, a running frame requires started_at.
+	// @constraint: raw-insert frame/node/parked-run through the test escape hatch
+	// because the persistence interface does not surface a "force a parked run"
+	// seed path; source_node_ids has a CHECK (length >= 1); a terminal frame
+	// requires ended_at, a running frame requires started_at.
 	endedClause := "NULL"
 	startedClause := "now()"
 	if frameState == "completed" || frameState == "failed" {
@@ -207,7 +201,7 @@ func seedResolvedFrameInstancePG(
 		t.Fatalf("seedResolvedFrameInstancePG: %v", err)
 	}
 
-	// Terminal frame + fresh node (no run row) → all work resolved.
+	// @deliberate: terminal frame + fresh node (no run row) means all work resolved.
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,

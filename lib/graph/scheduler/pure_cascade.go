@@ -85,9 +85,10 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 		def := lookupTemplateNodeDef(ctx, sb, n)
 		if hasClaimStore(def) {
 			if err := enqueueNativeClaimOnly(ctx, args, n, def); err != nil {
-				// Defensive: a closed RunScope means the rendezvous
-				// fired before the sweep could enqueue. Walker
-				// discipline per concept:run-scope: skip silently.
+				// @deliberate: defensive — a closed RunScope means the
+				// rendezvous fired before the sweep could enqueue.
+				// Walker discipline per concept:run-scope is to skip
+				// silently.
 				if errors.Is(err, persistence.ErrRunScopeClosed) {
 					log.Debug("ProcessPureCascade: skip native claim-only enqueue: run scope closed",
 						"node_id", n.ID.String())
@@ -101,7 +102,8 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 			continue
 		}
 		if err := transitionPureCascade(ctx, args, n, log); err != nil {
-			// transitionPureCascade already logged; treat as not-counted.
+			// @deliberate: transitionPureCascade already logged; treat
+			// as not-counted.
 			continue
 		}
 		count++
@@ -117,36 +119,38 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 // transition has already succeeded.
 func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persistence.NodeRow, log shared.Logger) error {
 	sb := args.Persist
-	// UpdateState atomically clears frame_id when target state is 'fresh'
-	// (per the defensive guard in enforceAndUpdate; spec §4.4 + §10.3,
-	// fresh nodes carry no frame_id). No separate SetFrameID call needed.
+	// @deliberate: UpdateState atomically clears frame_id when target
+	// state is 'fresh' (per the defensive guard in enforceAndUpdate;
+	// fresh nodes carry no frame_id). No separate SetFrameID call is
+	// needed.
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Thread the projected RunScope id; pure-cascade nodes are
-		// non-executor and don't fan out today, but threading keeps
-		// the disambiguation consistent across paths. A node without
-		// a projected RunScope has nothing to transition.
+		// @deliberate: Thread the projected RunScope id; pure-cascade
+		// nodes are non-executor and don't fan out today, but threading
+		// keeps the disambiguation consistent across paths. A node
+		// without a projected RunScope has nothing to transition.
 		if n.RunScopeID == nil {
 			return nil
 		}
-		// Pure-cascade settles fresh; settling_signal_type carries the
-		// terminal/success envelope (per concept:signal). Subscribers
-		// that need to distinguish a pure-cascade settle from an
-		// executor-Success terminal can match on the audit-event
-		// payload (no separate signal-type leaf for pure-cascade pre-v1).
+		// @deliberate: pure-cascade settles fresh; settling_signal_type
+		// carries the terminal/success envelope (per concept:signal).
+		// Subscribers that need to distinguish a pure-cascade settle
+		// from an executor-Success terminal can match on the
+		// audit-event payload (no separate signal-type leaf for
+		// pure-cascade pre-v1).
 		pureCascadeSig := "terminal/success"
 		if err := sb.Nodes().UpdateState(ctx, n.ID, *n.RunScopeID, cascade.NodeStateFresh, cascade.ReasonPureCascade, &pureCascadeSig, tx); err != nil {
 			return err
 		}
-		// Retire the node's in-flight run row in the SAME tx as the
-		// settle (run-row-lifecycle atomicity: a settled run never
-		// leaves a live rimsky_node_runs row behind). The frame seed /
-		// AffirmNodeRunRow path enqueues a pending row for pure-cascade
-		// nodes too; nothing on the scheduler path claims it, so the
-		// claimant guard is empty (the row is pending+unclaimed — no
-		// supervisor owns it). Without this retire, the leaked pending
-		// row reads as a forever-in-flight sender to the upstream gate
-		// (runtime/runner_acquire_upstream_gate.go) and every
-		// subscribed receiver is gated off dispatch permanently.
+		// @deliberate: Retire the node's in-flight run row in the SAME
+		// tx as the settle — run-row-lifecycle atomicity says a settled
+		// run never leaves a live rimsky_node_runs row behind. The
+		// frame seed / AffirmNodeRunRow path enqueues a pending row for
+		// pure-cascade nodes too; nothing on the scheduler path claims
+		// it, so the claimant guard is empty (the row is
+		// pending+unclaimed — no supervisor owns it). Without this
+		// retire, the leaked pending row reads as a forever-in-flight
+		// sender to the upstream gate and every subscribed receiver is
+		// gated off dispatch permanently.
 		return args.Queue.RemoveForNodeInTx(ctx, n.ID, *n.RunScopeID, "", tx)
 	}); err != nil {
 		log.Warn("ProcessPureCascade: state transition failed",
@@ -155,11 +159,9 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	}
 	nodeID := n.ID
 	instanceID := n.InstanceID
-	// Canonical terminal/success signal per concept:signal. Pure-
-	// cascade transitions are signal-bearing (settled-fresh state);
-	// the pre-Pass-5 fixed-string "pure_cascade_commit" audit row
-	// retired alongside spec 2026-05-23-signal-taxonomy-and-policy-
-	// decoupling-design. Subscribers that need to distinguish
+	// @deliberate: emit the canonical terminal/success signal per
+	// concept:signal. Pure-cascade transitions are signal-bearing
+	// (settled-fresh state); subscribers that need to distinguish
 	// pure-cascade from executor-Success can match on the signal
 	// payload's `change_summary` ("pure_cascade").
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -175,9 +177,10 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 	}); err != nil {
 		log.Warn("ProcessPureCascade: emit terminal/success signal failed",
 			"node_id", n.ID.String(), "error", err.Error())
-		// Not fatal — the state transition already succeeded.
+		// @deliberate: not fatal — the state transition already
+		// succeeded.
 	}
-	// Post-2026-05-14: receivers resolved from the per-template
+	// @deliberate: post-2026-05-14: receivers resolved from the per-template
 	// subscription-edge inverse map; the retired nodes.dependencies
 	// column is no longer consulted.
 	var receivers []persistence.NodeRow
@@ -224,12 +227,11 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 			"node_id", n.ID.String(), "error", err.Error())
 		return nil
 	}
-	// Cascade message-pass: mark each receiver stale + parent's frame_id
-	// (per spec §4.4). The pure-cascade source's frame_id was set at
-	// frame-start; receivers inherit it so the frame-end predicate (§4.2)
-	// sees them as in-flight and the next sweep enqueues their dispatch.
-	//
-	// Per spec §"RunScope-first cascade", same-scope cascade affirms a
+	// @deliberate: cascade message-pass marks each receiver stale +
+	// parent's frame_id. The pure-cascade source's frame_id was set at
+	// frame-start; receivers inherit it so the frame-end predicate sees
+	// them as in-flight and the next sweep enqueues their dispatch.
+	// Under RunScope-first cascade, same-scope cascade affirms a
 	// pending row for the receiver in the source's RunScope so the
 	// receiver's RunScopeID projection lands before the recalculate
 	// enqueue. Without this, a stale-no-in-flight receiver loses the
@@ -244,11 +246,10 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 			affirmErr := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 				return sb.Nodes().AffirmNodeRunRow(ctx, dep.ID, sourceRunScopeID, *n.FrameID, tx)
 			})
-			// Defensive: a closed RunScope means the receiver's scope
-			// has terminated (parent rendezvous has fired). The walker
-			// MUST NOT cross into closed RunScopes — skip this receiver
-			// and continue per concept:run-scope. Mirror of the pattern
-			// at runtime/message_delivery.go::cascadeMessageSubscribersInTx.
+			// @deliberate: defensive — a closed RunScope means the
+			// receiver's scope has terminated (parent rendezvous has
+			// fired). The walker MUST NOT cross into closed RunScopes —
+			// skip this receiver and continue per concept:run-scope.
 			// Without this skip a downstream cascadePropagateFrameID +
 			// RecalculateNode would enqueue a new in-flight row into a
 			// closed RunScope.
@@ -278,7 +279,8 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 				"source_node_id", n.ID.String(),
 				"target_node_id", dep.ID.String(),
 				"error", rerr.Error())
-			// Keep going — one failed propagation shouldn't block others.
+			// @deliberate: keep going — one failed propagation should
+			// not block others.
 		}
 	}
 	return nil
@@ -298,12 +300,13 @@ func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persist
 		required = []string{}
 	}
 	if n.FrameID == nil {
-		// Defer: frame engine hasn't advanced the originating frame yet.
+		// @deliberate: defer — frame engine hasn't advanced the
+		// originating frame yet.
 		return nil
 	}
 	if n.RunScopeID == nil {
-		// Defer: Phase B cascade allocator hasn't materialized a
-		// RunScope for this node yet.
+		// @deliberate: defer — Phase B cascade allocator hasn't
+		// materialized a RunScope for this node yet.
 		return nil
 	}
 	return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
@@ -367,9 +370,9 @@ func cascadePropagateFrameID(ctx context.Context, sb persistence.Tables, queue p
 			return err
 		}
 		if child.RunScopeID == nil {
-			// No in-flight RunScope projected on the child; the
-			// Phase B cascade allocator is responsible for affirming
-			// a row before MarkStaleForCascade can apply.
+			// @deliberate: No in-flight RunScope projected on the child; the
+			// child — the Phase B cascade allocator is responsible for
+			// affirming a row before MarkStaleForCascade can apply.
 			return nil
 		}
 		runID, ok, err := queue.GetInFlightRunForNode(ctx, tx, child.ID, *child.RunScopeID)

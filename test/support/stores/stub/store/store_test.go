@@ -53,7 +53,6 @@ func TestPickPolicyOpenDrainsQueueFIFO(t *testing.T) {
 	if string(o1.Result.ClaimScope) == string(o2.Result.ClaimScope) {
 		t.Fatalf("different items should have different regions; got %s twice", o1.Result.ClaimScope)
 	}
-	// Third Open should signal Unavailable (queue drained).
 	o3, err := st.Open(ctx, "c3", "@queue")
 	if err != nil {
 		t.Fatalf("Open c3: %v", err)
@@ -124,14 +123,12 @@ func TestApplyPickActionRecycleAbandonReturnsItemToTail(t *testing.T) {
 	if err := st.Abandon(ctx, "c1", o.Result.ClaimScope, o.Result.Address); err != nil {
 		t.Fatalf("Abandon: %v", err)
 	}
-	// Recycle puts a back at the tail → next pick is b.
 	o2, _ := st.Open(ctx, "c2", "@queue")
 	var nextID string
 	_ = json.Unmarshal(o2.Result.ClaimScope, &nextID)
 	if pickedID == "" || pickedID == nextID {
 		t.Fatalf("recycle should send to tail, not head; got picked=%q, next=%q", pickedID, nextID)
 	}
-	// Third pick gets the recycled a.
 	o3, _ := st.Open(ctx, "c3", "@queue")
 	var lastID string
 	_ = json.Unmarshal(o3.Result.ClaimScope, &lastID)
@@ -142,7 +139,6 @@ func TestApplyPickActionRecycleAbandonReturnsItemToTail(t *testing.T) {
 
 func TestApplyPickActionUnknownConfiguredActionReturnsError(t *testing.T) {
 	items := []json.RawMessage{json.RawMessage(`{"v":"a"}`)}
-	// Configure an invalid default action; the store should reject at terminal.
 	st := newStubWithPolicy(t, "@queue", items, action.Action{Kind: action.Kind("what-is-this")}, action.Action{Kind: action.Kind("what-is-this")})
 	ctx := context.Background()
 	o, _ := st.Open(ctx, "c1", "@queue")

@@ -99,21 +99,18 @@ func positionalWildcard(s string) bool {
 // "terminal/*" matches because canonicalEmitPatterns has paths
 // starting with "terminal/"; "event/*" matches verbatim).
 func matchesCanonical(s string, allowTrailingWildcard bool) bool {
-	// Subscription-side trailing-* matching first (only when permitted).
 	if allowTrailingWildcard && strings.HasSuffix(s, "*") {
 		prefix := strings.TrimSuffix(s, "*")
 		if prefix == "" {
 			return false
 		}
 		for _, p := range canonicalEmitPatterns {
-			// Strip trailing "*" off canonical prefix patterns so we
-			// compare apples to apples.
 			canon := strings.TrimSuffix(p, "*")
-			// Either the subscription prefix is a prefix of the
-			// canonical exact path (e.g. "terminal/" prefixes
-			// "terminal/success"); or the canonical prefix is a prefix
-			// of the subscription prefix (e.g. "terminal/error/" is a
-			// prefix of "terminal/error/http/").
+			// @deliberate: match when either the subscription prefix is
+			// a prefix of the canonical exact path (e.g. "terminal/"
+			// prefixes "terminal/success") or the canonical prefix is a
+			// prefix of the subscription prefix (e.g. "terminal/error/"
+			// is a prefix of "terminal/error/http/").
 			if strings.HasPrefix(canon, prefix) || strings.HasPrefix(prefix, canon) {
 				return true
 			}
@@ -121,10 +118,7 @@ func matchesCanonical(s string, allowTrailingWildcard bool) bool {
 		return false
 	}
 
-	// Exact-match emit-shape paths.
 	for _, p := range canonicalEmitPatterns {
-		// Special-case attribute/<key>/changed — the middle is a
-		// single non-empty segment and the suffix must be /changed.
 		if p == "attribute/*/changed" {
 			const prefix = "attribute/"
 			const suffix = "/changed"
@@ -146,21 +140,14 @@ func matchesCanonical(s string, allowTrailingWildcard bool) bool {
 			}
 			continue
 		}
-		// Prefix pattern — the candidate must start with the literal
-		// prefix AND have at least one trailing segment.
 		canonPrefix := strings.TrimSuffix(p, "*")
 		if !strings.HasPrefix(s, canonPrefix) {
 			continue
 		}
 		tail := s[len(canonPrefix):]
 		if tail == "" {
-			// "terminal/error" without a leaf class is not a valid
-			// emit shape; require at least one tail segment.
 			continue
 		}
-		// Catch-all: any non-empty tail is fine (terminal/error/<class>,
-		// terminal/infra/<reason>, transient/retry/<n>/<class>,
-		// event/<name>, message/<kind>/<sender_kind>/<target>).
 		return true
 	}
 	return false

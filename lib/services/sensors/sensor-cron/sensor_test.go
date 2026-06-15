@@ -41,7 +41,7 @@ func TestCapabilities_AdvertiseCron(t *testing.T) {
 
 func TestSubscribe_ParsesAndComputesNextFire(t *testing.T) {
 	s := NewSensorService("", noopLogger{})
-	// Pin clock so the next fire is deterministic.
+	// @deliberate: pin clock so the next fire is deterministic.
 	s.clock = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	cfg := map[string]any{"cron": "*/5 * * * *"}
 	raw, _ := json.Marshal(cfg)
@@ -170,7 +170,7 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Advance clock past next_fire_at.
+	// @deliberate: advance clock past next_fire_at.
 	s.clock = func() time.Time { return pin.Add(6 * time.Minute) }
 	s.Tick(context.Background())
 	mu.Lock()
@@ -179,7 +179,7 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// Next fire should be 00:10 (advanced from 00:05, not now).
+	// @deliberate: next fire should be 00:10 (advanced from 00:05, not now).
 	s.mu.Lock()
 	w := s.watches["w1"]
 	s.mu.Unlock()

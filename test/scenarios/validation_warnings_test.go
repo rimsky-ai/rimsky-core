@@ -49,7 +49,7 @@ import (
 func TestValidationWarnings_StaticAdvisorySurfacedAndPromotable(t *testing.T) {
 	t.Parallel()
 
-	// Real remote claim-producer peer so the template's `stores:` block
+	// @deliberate: Real remote claim-producer peer so the template's `stores:` block
 	// passes the StoreDeclared registry check and the advisory is the
 	// ONLY finding in play.
 	endpoint, _, teardown := stubfixture.Start(t, stubstore.Config{
@@ -74,7 +74,7 @@ func TestValidationWarnings_StaticAdvisorySurfacedAndPromotable(t *testing.T) {
 		},
 	})
 
-	// (1) Register a template whose node acquires a claim from
+	// @deliberate: (1) Register a template whose node acquires a claim from
 	// queue-store but declares NO `error_types: {"acquire/unavailable":
 	// ...}` policy → the static validator emits the acquisition-policy
 	// advisory; registration still succeeds (warnings are advisory) and
@@ -91,7 +91,7 @@ func TestValidationWarnings_StaticAdvisorySurfacedAndPromotable(t *testing.T) {
 			"register response's validation_warnings (falsifier: computed but absent): %s",
 		registerResp.bodyStr())
 
-	// (2) The validate endpoint carries the same advisory: ok stays
+	// @deliberate: (2) The validate endpoint carries the same advisory: ok stays
 	// true (no flag), validation_warnings lists the advisory.
 	validateResp := postJSON(t, h.ControlBase+"/v1/templates/validate",
 		map[string]any{"spec": advisoryTrippingSpec("project-alpha-warnings-lint", "1")})
@@ -104,7 +104,7 @@ func TestValidationWarnings_StaticAdvisorySurfacedAndPromotable(t *testing.T) {
 		"the advisory must appear in the validate response's validation_warnings: %s",
 		validateResp.bodyStr())
 
-	// (3) warnings_as_errors=true promotes the same advisory to a
+	// @deliberate: (3) warnings_as_errors=true promotes the same advisory to a
 	// rejection: 400, the advisory named in the rejection set, nothing
 	// persisted.
 	preCount := listTemplateCount(t, h.ControlBase)
@@ -121,7 +121,6 @@ func TestValidationWarnings_StaticAdvisorySurfacedAndPromotable(t *testing.T) {
 	require.Equal(t, preCount, listTemplateCount(t, h.ControlBase),
 		"a warnings_as_errors rejection must not persist a template row")
 
-	// Same flag on the validate endpoint: verdict flips to ok:false.
 	strictValidateResp := postJSON(t, h.ControlBase+"/v1/templates/validate?warnings_as_errors=true",
 		map[string]any{"spec": advisoryTrippingSpec("project-alpha-warnings-lint", "1")})
 	require.Equal(t, http.StatusOK, strictValidateResp.status, strictValidateResp.bodyStr())

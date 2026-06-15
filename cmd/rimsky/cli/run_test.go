@@ -24,7 +24,6 @@ func TestRunRun_NoKeep(t *testing.T) {
 	srv := setupClitest(t)
 	specPath := writeSpec(t)
 
-	// Spawn a goroutine that marks the new instance terminal once it appears.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

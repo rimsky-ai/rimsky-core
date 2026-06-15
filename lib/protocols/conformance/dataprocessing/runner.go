@@ -99,7 +99,7 @@ func runBeginCommitPerMaterialization(ctx context.Context, c genv1.DataProcessin
 			out = append(out, CheckResult{Name: name, Err: fmt.Errorf("CommitCandidate: %w", err)})
 			continue
 		}
-		_ = commit // candidate_metadata is opaque to rimsky; presence not asserted.
+		_ = commit // @constraint: candidate_metadata is opaque to rimsky; presence not asserted.
 		out = append(out, CheckResult{Name: name})
 	}
 	return out
@@ -128,7 +128,7 @@ func checkBeginCandidateIdempotent(ctx context.Context, c genv1.DataProcessingCl
 				string(first.GetCandidateHandle()), string(second.GetCandidateHandle())),
 		}
 	}
-	// Tidy up — abandon so the candidate doesn't strand state.
+	// @constraint: abandon so the candidate doesn't strand state.
 	_, _ = c.AbandonCandidate(ctx, &genv1.AbandonCandidateRequest{CandidateHandle: first.GetCandidateHandle()})
 	return CheckResult{Name: "BeginCandidateIdempotent"}
 }
@@ -275,7 +275,7 @@ func checkConcurrentWrites(ctx context.Context, c genv1.DataProcessingClient) Ch
 			Err:  fmt.Errorf("expected %d versions after concurrent commits, got %d", n, len(resp.GetVersions())),
 		}
 	}
-	// Pin distinct version_ids.
+	// @constraint: concurrent commits MUST yield distinct version_ids.
 	seen := make(map[string]bool, n)
 	for _, v := range resp.GetVersions() {
 		if seen[v.GetVersionId()] {

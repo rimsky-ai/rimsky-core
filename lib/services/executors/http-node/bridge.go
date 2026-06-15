@@ -57,9 +57,9 @@ func mountBridge(mux *http.ServeMux, s *Server) {
 		}
 
 		if err := s.executeCore(r.Context(), &req, send); err != nil {
-			// Best-effort final errored event; the response may already be
-			// partially written, so errors here are logged by callers and
-			// otherwise ignored.
+			// @deliberate: best-effort final errored event; the response may
+			// already be partially written, so write/flush errors here are
+			// intentionally ignored.
 			b, _ := protojson.Marshal(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 				StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
 					ErrorClass: "http/internal_error",

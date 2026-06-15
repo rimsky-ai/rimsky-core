@@ -32,7 +32,6 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 		t.Fatalf("openStateDB: %v", err)
 	}
 	defer s1.Close()
-	// Seed: prior process recorded a body-hash watermark for sub-2.
 	w := &Watch{
 		SubscriptionID: "sub-2",
 		InstanceID:     "inst-2",
@@ -49,8 +48,8 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 		t.Fatalf("UpdateLastHash: %v", err)
 	}
 
-	// Per-subscription read — issue #2 required adding this method so
-	// Subscribe can pre-populate the in-memory Watch on restart.
+	// @deliberate: Subscribe pre-populates the in-memory Watch on restart
+	// via this per-subscription read.
 	got, err := s1.GetSubscription(ctx, "sub-2")
 	if err != nil {
 		t.Fatalf("GetSubscription: %v", err)
@@ -62,8 +61,8 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 		t.Fatalf("expected LastHash=sha256-restart, got %q", got.LastHash)
 	}
 
-	// Unknown id returns (nil, nil) — needed so Subscribe can tell
-	// "first-ever Subscribe" apart from "DB error".
+	// @constraint: GetSubscription returns (nil, nil) for unknown id so
+	// Subscribe can distinguish "first-ever Subscribe" from "DB error".
 	got, err = s1.GetSubscription(ctx, "sub-nonexistent")
 	if err != nil {
 		t.Fatalf("GetSubscription nonexistent: %v", err)
@@ -111,7 +110,6 @@ func TestStateDB_PersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Simulated restart.
 	s2, err := openStateDB(ctx)
 	if err != nil {
 		t.Fatalf("openStateDB after restart: %v", err)

@@ -35,8 +35,8 @@ type Env struct {
 // capability probing indicates the executor cannot satisfy the precondition.
 type Scenario struct {
 	Name          string
-	RequiresAsync bool // skip if executor doesn't advertise async handoff
-	RequiresStub  bool // skip if probe indicates executor not in stub mode
+	RequiresAsync bool // @constraint: skip if executor doesn't advertise async handoff
+	RequiresStub  bool // @constraint: skip if probe indicates executor not in stub mode
 	Run           func(ctx context.Context, env Env) error
 }
 

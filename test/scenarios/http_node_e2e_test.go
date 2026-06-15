@@ -121,13 +121,13 @@ const httpNodeErrorClassField = "upstream_class"
 // it across legs; parallelism here would also force more testcontainer
 // Postgres bring-ups, which dominates runtime under loaded hosts.
 func TestHttpNodeCrossStack(t *testing.T) {
-	// 1. Build the bundled http-node executor binary out of lib/services/
+	// @deliberate: 1. Build the bundled http-node executor binary out of lib/services/
 	//    (a separate Go module that go.work pulls in). The build is invoked
 	//    from the workspace root because go.work resolves the
 	//    `./lib/services/executors/http-node` package path there.
 	httpNodeBin := buildHttpNodeBinary(t)
 
-	// 2. Launch the http-node binary on an OS-assigned port. The non-default
+	// @constraint: 2. Launch the http-node binary on an OS-assigned port. The non-default
 	//    `error_class_field` env override is set HERE — the per-node
 	//    `attributes.error_class_field` win-path is the discriminator the
 	//    spec calls out, but proving the env-configured default is also
@@ -136,7 +136,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 	//    default is the floor for any node that doesn't override.
 	httpNodeGRPCAddr := startHttpNodeBinary(t, httpNodeBin, httpNodeErrorClassField)
 
-	// 3. Stand up the in-process harness with the http-node binary wired as
+	// @deliberate: 3. Stand up the in-process harness with the http-node binary wired as
 	//    an ExtraExecutors entry. The supervisor's dispatch path now
 	//    resolves the `http-node` executor name to the launched gRPC
 	//    endpoint.
@@ -146,7 +146,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		},
 	})
 
-	// 4. Stand up the fake upstream. Each path returns a different shape
+	// @deliberate: 4. Stand up the fake upstream. Each path returns a different shape
 	//    to exhibit one Acceptance leg.
 	//
 	//    - /ok        → 200 JSON object → leg 1 (attributes_delta lands).
@@ -174,7 +174,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"echo":"hello","status":"ok"}`))
 		case "/throttle":
-			// First hit → 429 + Retry-After: 1 (one second; the parsed
+			// @deliberate: First hit → 429 + Retry-After: 1 (one second; the parsed
 			// resume_at lands one second in the future from the
 			// executor's process clock); subsequent hits → 200.
 			if atomic.AddInt64(&throttleHits, 1) == 1 {
@@ -186,7 +186,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"retried":true}`))
 		case "/class":
-			// 4xx with the CONFIGURED error-class JSON field present —
+			// @deliberate: 4xx with the CONFIGURED error-class JSON field present —
 			// proves the executor reads `upstream_class` (the configured
 			// non-default field), not the executor's built-in default
 			// `error_class`. If the executor ignored the configured field
@@ -196,7 +196,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"upstream_class":"rate_limited","reason":"test"}`))
 		case "/noclass":
-			// 4xx with the configured field ABSENT (the body is a
+			// @deliberate: 4xx with the configured field ABSENT (the body is a
 			// parseable JSON object but carries no `upstream_class` key).
 			// The executor emits the stable `_unspecified` leaf so the
 			// `http/request_invalid/*` subscriber surface still matches.
@@ -209,10 +209,10 @@ func TestHttpNodeCrossStack(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	// 5. Drive each leg through a fresh template + instance.
+	// @deliberate: 5. Drive each leg through a fresh template + instance.
 
 	t.Run("leg1_200_attributes_delta", func(t *testing.T) {
-		// Deploy a template whose single node references `http-node` with
+		// @deliberate: Deploy a template whose single node references `http-node` with
 		// an attribute schema that pulls the upstream URL out of the
 		// instance's params at dispatch. The schema's `properties` are
 		// minimal — http-node advertises a permissive `{"type":"object"}`
@@ -246,7 +246,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.True(t, h.WaitForNodeState(okNode.ID, cascade.NodeStateFresh, 30*time.Second),
 			"200-leg: node must reach fresh terminal")
 
-		// The upstream's response body is a JSON object; the executor
+		// @deliberate: The upstream's response body is a JSON object; the executor
 		// merges it into the StreamClose-Success.attributes_delta and the
 		// supervisor lands the delta on rimsky_node_attributes.data. Any
 		// cheaper shape (success with an empty delta) would falsify the
@@ -266,7 +266,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 	})
 
 	t.Run("leg2_429_park_then_wake", func(t *testing.T) {
-		// The 429 leg requires a fresh throttleHits counter (the /throttle
+		// @constraint: The 429 leg requires a fresh throttleHits counter (the /throttle
 		// path returns 429 on its FIRST hit then 200). Reset the counter
 		// before this leg runs so the executor's first dispatch into the
 		// upstream still sees 429.
@@ -294,7 +294,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		thr := h.FindNode(iid, "throttled")
 		require.NotNil(t, thr)
 
-		// The first dispatch hits the upstream → 429 + Retry-After: 1 →
+		// @deliberate: The first dispatch hits the upstream → 429 + Retry-After: 1 →
 		// the executor emits a Park outcome (PARK_REASON_SNOOZE) with a
 		// `resume_at` computed from Retry-After. The supervisor records
 		// the row in `phase='parked'` with a non-NULL `resume_at`. We
@@ -303,7 +303,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.True(t, h.WaitForNodeState(thr.ID, cascade.NodeStateParked, 30*time.Second),
 			"429-leg: node must reach parked (NOT errored) when the upstream returns 429")
 
-		// Probe the parked row's phase + persisted resume_at: this is the
+		// @deliberate: Probe the parked row's phase + persisted resume_at: this is the
 		// load-bearing discriminator against the "429 errors a node-run
 		// instead of parking" Falsifier — a row in `phase='parked'` with a
 		// non-NULL `resume_at` is exclusively the Park-outcome path; an
@@ -319,7 +319,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.Equal(t, "parked", phase, "429-leg: node-run must be in parked phase")
 		require.NotNil(t, resumeAtStored, "429-leg: resume_at must be persisted (executor parsed Retry-After)")
 
-		// The Retry-After header was `1` (one second delta-seconds). The
+		// @deliberate: The Retry-After header was `1` (one second delta-seconds). The
 		// executor's parseRetryAfter adds that delta to its own
 		// time.Now(); the supervisor persists the wire-format
 		// `resume_at`. Bound the persisted value to a window around the
@@ -337,7 +337,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.True(t, resumeAtStored.Before(now.Add(30*time.Second)),
 			"429-leg: resume_at %v must reflect Retry-After: 1 (must be ≪ 30s default fallback)", *resumeAtStored)
 
-		// Wait for the supervisor's parked-resume sweep to wake the row.
+		// @deliberate: Wait for the supervisor's parked-resume sweep to wake the row.
 		// The event `parked_resume_started` is emitted by
 		// SweepParkedNodes when it transitions the row from parked to
 		// the re-dispatch path. Its presence is the direct discriminator
@@ -346,7 +346,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.True(t, h.WaitForEventKind(thr.ID, "parked_resume_started", 30*time.Second),
 			"429-leg: supervisor's SweepParkedNodes must wake the parked node at resume_at")
 
-		// And the row's resume reason should be the deadline-elapsed
+		// @deliberate: And the row's resume reason should be the deadline-elapsed
 		// flavor: the row's `wake_reason` propagates into the event
 		// payload's `resume_reason`. An external invalidate would record
 		// `external_invalidate` — that would surface on the wrong wake
@@ -355,21 +355,21 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.Equal(t, "deadline_elapsed", row["resume_reason"],
 			"429-leg: resume_reason must be deadline_elapsed (executor's resume_at fired, not external)")
 
-		// The re-dispatch hits the upstream's /throttle path again; the
+		// @deliberate: The re-dispatch hits the upstream's /throttle path again; the
 		// path returns 200 on its second hit. The node reaches fresh
 		// (terminal/success) via the supervisor-driven re-dispatch — the
 		// full park → wake → success cycle exhibited end-to-end.
 		require.True(t, h.WaitForNodeState(thr.ID, cascade.NodeStateFresh, 30*time.Second),
 			"429-leg: node must reach fresh after the supervisor wakes and re-dispatches")
 
-		// The supervisor's terminal/success event is the canonical
+		// @constraint: The supervisor's terminal/success event is the canonical
 		// signal-shape marker; assert it landed for the woken dispatch.
 		require.True(t, h.WaitForEventKind(thr.ID, "terminal/success", 10*time.Second),
 			"429-leg: terminal/success must land after the resumed re-dispatch")
 	})
 
 	t.Run("leg3_4xx_with_configured_field", func(t *testing.T) {
-		// The discriminating leg: the upstream body carries
+		// @constraint: The discriminating leg: the upstream body carries
 		// `{"upstream_class":"rate_limited"}`. The executor must read the
 		// configured field (`upstream_class`, set as a per-node attribute)
 		// rather than its built-in default (`error_class`). The settling
@@ -384,7 +384,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 						"properties": map[string]any{
 							"url":    map[string]any{"type": "string", "source": "{{params.url}}"},
 							"method": map[string]any{"type": "string", "default": "GET"},
-							// The configured non-default JSON field name
+							// @deliberate: The configured non-default JSON field name
 							// the executor reads from a 4xx body. The
 							// per-node value wins over the env default;
 							// using a non-default value here is what
@@ -403,12 +403,12 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		wc := h.FindNode(iid, "with-class")
 		require.NotNil(t, wc)
 
-		// give_up is the default policy for an undeclared error class,
+		// @constraint: give_up is the default policy for an undeclared error class,
 		// so the node lands in failed.
 		require.True(t, h.WaitForNodeState(wc.ID, cascade.NodeStateFailed, 30*time.Second),
 			"4xx-with-field-leg: node must fail when upstream returns 4xx")
 
-		// The settling signal is the typed http/request_invalid/<class>
+		// @deliberate: The settling signal is the typed http/request_invalid/<class>
 		// path: this is the property the falsifier names — if the
 		// executor ignored the configured field, the body's
 		// `upstream_class` would not be read and the signal would
@@ -420,7 +420,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 	})
 
 	t.Run("leg4_4xx_without_field", func(t *testing.T) {
-		// The complement: the upstream body is a parseable JSON object
+		// @deliberate: The complement: the upstream body is a parseable JSON object
 		// that does NOT carry the configured field. The executor emits
 		// the stable `_unspecified` leaf so the `http/request_invalid/*`
 		// subscriber surface still matches taxonomy-less upstreams. The

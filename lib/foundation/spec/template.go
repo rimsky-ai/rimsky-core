@@ -2,15 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Template DSL row-types — the persistable shape of a template. The
-// graph-author's view of a node: stores it interacts with, named locks
-// it holds, attributes it declares, and `holds:` edges for held claims
-// it co-holds downstream.
-//
-// Graph algorithms that consume these types (the template validator,
-// the holding-subgraph computation) live in graph/node — this package
-// defines only the data.
-
 package spec
 
 import "encoding/json"
@@ -41,9 +32,10 @@ type TemplateSpec struct {
 	// Publishers declares per-instance publisher-subscriptions. Each
 	// entry seeds one row in table:rimsky_publisher_subscriptions at
 	// instance creation.
-	Publishers   []PublisherSpec `yaml:"publishers,omitempty" json:"publishers,omitempty"`
-	ParamsSchema map[string]any  `yaml:"params_schema,omitempty" json:"params_schema,omitempty"` // JSON Schema
-	ParamsRedact []string        `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
+	Publishers []PublisherSpec `yaml:"publishers,omitempty" json:"publishers,omitempty"`
+	// ParamsSchema is a JSON Schema describing the params bag.
+	ParamsSchema map[string]any `yaml:"params_schema,omitempty" json:"params_schema,omitempty"`
+	ParamsRedact []string       `yaml:"params_redact,omitempty" json:"params_redact,omitempty"`
 
 	// LateBindServices declares service names whose registration-time
 	// existence and schema checks are deferred to dispatch. Names in
@@ -98,12 +90,15 @@ type TemplateAttributeDefaults struct {
 	ByExecutor map[string]map[string]any `yaml:"by_executor,omitempty" json:"by_executor,omitempty"`
 }
 
-// Frame-resolution constants (per docs/history/2026-04-26-frame-resolution-design.md).
+// @concept: frame
+// @constraint: frame-resolution policy (coalesce vs. serial_queue) is part of the template surface; the timeout floor and default come from the design.
 const (
 	FrameResolutionCoalesce    = "coalesce"
 	FrameResolutionSerialQueue = "serial_queue"
-	FrameTimeoutDefaultMs      = int64(600000) // 10 minutes
-	FrameTimeoutMinMs          = int64(60000)  // 60 seconds (hard floor)
+	// @constraint: FrameTimeoutDefaultMs is the default per-frame timeout (10 minutes).
+	FrameTimeoutDefaultMs = int64(600000)
+	// @constraint: FrameTimeoutMinMs is the hard floor for per-frame timeout (60 seconds).
+	FrameTimeoutMinMs = int64(60000)
 )
 
 // TemplateNodeDef is one node in a template. An empty Executor means
@@ -113,7 +108,8 @@ const (
 type TemplateNodeDef struct {
 	Type        string `yaml:"type" json:"type"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Executor    string `yaml:"executor,omitempty" json:"executor,omitempty"` // optional; empty = no executor
+	// Executor names the executor for this node; empty means no executor.
+	Executor string `yaml:"executor,omitempty" json:"executor,omitempty"`
 
 	// Tags is operator-facing metadata: free-form strings used for
 	// filtering at the dashboard / events surface. Tag values admit
@@ -144,18 +140,14 @@ type TemplateNodeDef struct {
 	//	@concept: node-subscription
 	Subscribes []SubscriptionEntry `yaml:"subscribes,omitempty" json:"subscribes,omitempty"`
 
-	// Lifecycle-handler slots (`on_acquire_unavailable`,
-	// `on_executor_complete`, `on_executor_errored`) retired 2026-05-23
-	// per `.ok-planner/specs/2026-05-23-signal-taxonomy-and-policy-
-	// decoupling-design.md`. The three uses collapsed into:
-	//   - Acquisition failure → `error_types: { "acquire/unavailable":
-	//     ... }` via synthetic error class (routed through
-	//     `runtime/runner_lifecycle.go::handleAcquireUnavailable`).
-	//   - Complete cascade-gating → subscriber-side CEL `when:
-	//     payload.changed` (cascade-fire is purely subscriber-driven).
-	//   - Error pass/override → `error_types: { <class>: { policy:
-	//     [{action: pass}] } }`.
-	// See concept:lifecycle-handler (retired) for the migration.
+	// @deliberate: no lifecycle-handler slots
+	// (on_acquire_unavailable / on_executor_complete /
+	// on_executor_errored). The three uses are expressed as:
+	//   - Acquisition failure → error_types[acquire/unavailable].
+	//   - Complete cascade-gating → subscriber-side CEL `when:`
+	//     predicate (cascade-fire is purely subscriber-driven).
+	//   - Error pass/override → error_types[<class>].policy with
+	//     {action: pass}.
 
 	// MaxParkDuration caps how long a parked node may stay parked before
 	// the SweepParkedNodes watchdog forces it to fail with
@@ -229,13 +221,7 @@ type TemplateNodeDef struct {
 	IsSubgraphExit bool `yaml:"is_subgraph_exit,omitempty" json:"is_subgraph_exit,omitempty"`
 }
 
-// Lifecycle-handler types (`OnAcquireUnavailableHandler`,
-// `OnExecutorCompleteHandler`, `OnExecutorTerminalHandler`) retired
-// 2026-05-23 per `.ok-planner/specs/2026-05-23-signal-taxonomy-and-
-// policy-decoupling-design.md`. See `TemplateNodeDef`'s lifecycle-
-// handler comment block for the migration shapes.
-
-// Frame + target constants for SubscriptionEntry. The lifecycle-handler
+// @deliberate: frame + target constants for SubscriptionEntry. The lifecycle-handler
 // resolve vocabulary (`pass | retry | error | by_changed |
 // always_propagate | never_propagate`) retired with the handler types
 // 2026-05-23; ErrorPolicy's 4-value action vocabulary (`pass | give_up |
@@ -267,11 +253,13 @@ const (
 //
 // @concept: claim
 type NodeStoreRef struct {
-	Name     string          `yaml:"name" json:"name"`
-	Selector string          `yaml:"selector" json:"selector"`
-	Intent   string          `yaml:"intent" json:"intent"` // "r" | "rw"
-	Alias    string          `yaml:"alias,omitempty" json:"alias,omitempty"`
-	Lifetime string          `yaml:"lifetime,omitempty" json:"lifetime,omitempty"` // "subgraph" (default) | "durable"
+	Name     string `yaml:"name" json:"name"`
+	Selector string `yaml:"selector" json:"selector"`
+	// Intent is the access mode requested: "r" or "rw".
+	Intent string `yaml:"intent" json:"intent"`
+	Alias  string `yaml:"alias,omitempty" json:"alias,omitempty"`
+	// Lifetime is the claim lifetime: "subgraph" (default) or "durable".
+	Lifetime string          `yaml:"lifetime,omitempty" json:"lifetime,omitempty"`
 	Data     json.RawMessage `yaml:"data,omitempty" json:"data,omitempty"`
 }
 

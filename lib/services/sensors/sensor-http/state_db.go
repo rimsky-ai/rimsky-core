@@ -34,7 +34,6 @@ import (
 	"strings"
 	"time"
 
-	// jackc/pgx/v5 stdlib driver; registers the "pgx" driver name.
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 

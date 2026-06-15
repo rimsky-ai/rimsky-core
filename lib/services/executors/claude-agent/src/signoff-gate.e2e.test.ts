@@ -2,9 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// Pass 5 acceptance test for the claude-agent sign-off gate.
-//
-// This drives the REAL HTTP-bridge `/execute` entry point (not `runAgent`
+// @constraint: drives the REAL HTTP-bridge `/execute` entry point (not `runAgent`
 // in isolation) so the `dispatch_id → binding_id` plumbing is exercised
 // end-to-end: the bridge threads the raw `dispatch_id` into `runAgent`, the
 // gate binds to it, and the product-faithful observable — the real
@@ -51,9 +49,11 @@ import { makeTestSigner } from "./signoff-test-signer.js";
 const logger = pino({ level: "silent" });
 
 const DISPATCH_ID = "acc-disp-1";
-// The bound output value. The gate is configured on `path: endpoints`, so the
-// signature must be over the value AT that path (the array), not the whole
-// delta.
+/**
+ * The bound output value. The gate is configured on `path: endpoints`, so the
+ * signature must be over the value AT that path (the array), not the whole
+ * delta.
+ */
 const ENDPOINTS = [{ url: "x" }];
 const ATTRIBUTES_DELTA = { endpoints: ENDPOINTS };
 
@@ -66,11 +66,13 @@ function parseToolStatus(content: unknown): ToolStatus {
   return JSON.parse(arr[0]!.text ?? "null") as ToolStatus;
 }
 
-// Build a fake CliHandle (mirrors lifecycle.e2e.test.ts::makeFakeHandle) whose
-// `beforeExit` connects a real MCP client to the per-dispatch rimsky-callback
-// server and drives `report_complete`. The arguments supplied to
-// report_complete are produced by `buildArgs` per attempt (so the unsigned
-// case can re-submit the same un-signed delta until the budget is exhausted).
+/**
+ * Build a fake CliHandle (mirrors lifecycle.e2e.test.ts::makeFakeHandle) whose
+ * `beforeExit` connects a real MCP client to the per-dispatch rimsky-callback
+ * server and drives `report_complete`. The arguments supplied to
+ * report_complete are produced by `buildArgs` per attempt (so the unsigned
+ * case can re-submit the same un-signed delta until the budget is exhausted).
+ */
 function makeReportingHandle(
   req: CliSpawnRequest,
   buildArgs: () => Record<string, unknown>,
@@ -95,7 +97,7 @@ function makeReportingHandle(
     });
     try {
       await client.connect(transport);
-      // Re-call report_complete until the gate stops rejecting (either it
+      // @deliberate: re-call report_complete until the gate stops rejecting (either it
       // accepts a valid signoff, or the correction budget is exhausted and the
       // run commits — both surface as a non-"rejected" status). A hard cap
       // prevents an infinite loop if the gate misbehaves.
@@ -112,7 +114,7 @@ function makeReportingHandle(
     }
   };
 
-  // Drive the report flow on the next tick (after runAgent registers
+  // @deliberate: drive the report flow on the next tick (after runAgent registers
   // .onStdout/.onStderr and the handle is wired), then exit.
   setTimeout(() => {
     void (async () => {
@@ -137,14 +139,16 @@ function makeReportingHandle(
   };
 }
 
-// Like makeReportingHandle, but the fake CLI first performs an INCREMENTAL
-// writeback via the `attributes_set` MCP tool (the path `report_complete`'s own
-// tool description tells the agent to prefer) and THEN calls `report_complete`
-// with `attributes_delta` OMITTED. This reproduces the real incremental-writeback
-// dispatch shape the sign-off gate must bind to: the bound output lives only in
-// the accumulated `attributes_set` writebacks, never on the terminal-final
-// delta. `setDelta` is the value the agent writes incrementally; `buildArgs`
-// produces the (delta-less) report_complete arguments per attempt.
+/**
+ * Like makeReportingHandle, but the fake CLI first performs an INCREMENTAL
+ * writeback via the `attributes_set` MCP tool (the path `report_complete`'s own
+ * tool description tells the agent to prefer) and THEN calls `report_complete`
+ * with `attributes_delta` OMITTED. This reproduces the real incremental-writeback
+ * dispatch shape the sign-off gate must bind to: the bound output lives only in
+ * the accumulated `attributes_set` writebacks, never on the terminal-final
+ * delta. `setDelta` is the value the agent writes incrementally; `buildArgs`
+ * produces the (delta-less) report_complete arguments per attempt.
+ */
 function makeIncrementalReportingHandle(
   req: CliSpawnRequest,
   setDelta: Record<string, unknown>,
@@ -170,7 +174,7 @@ function makeIncrementalReportingHandle(
     });
     try {
       await client.connect(transport);
-      // (1) Incremental writeback first — the supervisor records this delta;
+      // @deliberate: (1) Incremental writeback first — the supervisor records this delta;
       // the gate must reconstruct it as the effective bound value.
       const setRes = await client.callTool({
         name: "attributes_set",
@@ -182,7 +186,7 @@ function makeIncrementalReportingHandle(
           `attributes_set unexpectedly rejected: ${JSON.stringify(setStatus)}`,
         );
       }
-      // (2) report_complete with attributes_delta OMITTED (incremental path).
+      // @deliberate: (2) report_complete with attributes_delta OMITTED (incremental path).
       for (let attempt = 0; attempt < 10; attempt++) {
         const res = await client.callTool({
           name: "report_complete",
@@ -233,7 +237,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
   const posts: Array<{ url: string; body: unknown }> = [];
 
   beforeEach(async () => {
-    // Real mode: the gate only runs in runAgentReal (stub mode short-circuits).
+    // @deliberate: real mode: the gate only runs in runAgentReal (stub mode short-circuits).
     delete process.env.RIMSKY_EXECUTOR_STUB_MODE;
     posts.length = 0;
     cb = await startInternalMcpServer({ logger });
@@ -244,7 +248,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     await cb.close();
   });
 
-  // Two independent runs prove the gate. Each test starts its own bridge with
+  // @deliberate: two independent runs prove the gate. Each test starts its own bridge with
   // its own cliRunner; the beforeEach (resets `posts`, starts `cb`) and
   // afterEach (`bridge.shutdown()`) give each test framework-level isolation,
   // so there is no shared-buffer / shared-bridge coupling between them. The
@@ -257,7 +261,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
         makeReportingHandle(req, () => ({
           changed: true,
           attributes_delta: ATTRIBUTES_DELTA,
-          // No `signoffs` — the gate must reject every attempt and, after
+          // @deliberate: no `signoffs` — the gate must reject every attempt and, after
           // max_signoff_attempts, commit the run as agent/signoff_unobtained.
         })),
     };
@@ -301,7 +305,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     const error = unsignedBody.error as Record<string, unknown> | undefined;
     expect(error).toBeDefined();
     expect(error!.error_class).toBe("agent/signoff_unobtained");
-    // AsyncCallbackBody is a one-of: the unsigned outcome must carry exactly
+    // @deliberate: AsyncCallbackBody is a one-of: the unsigned outcome must carry exactly
     // the `error` key — never a stray `success` or `park` alongside it.
     expect(
       ["success", "error", "park"].filter((k) => k in unsignedBody),
@@ -315,7 +319,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
         makeReportingHandle(req, () => ({
           changed: true,
           attributes_delta: ATTRIBUTES_DELTA,
-          // Sign the value at the configured path (`endpoints`), bound to the
+          // @deliberate: sign the value at the configured path (`endpoints`), bound to the
           // dispatch_id the Execute request carries — the exact bytes the gate
           // re-derives.
           signoffs: [signer.sign(DISPATCH_ID, ENDPOINTS)],
@@ -360,20 +364,18 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     const success = signedBody.success as Record<string, unknown> | undefined;
     expect(success).toBeDefined();
     expect(success!.attributes_delta).toEqual(ATTRIBUTES_DELTA);
-    // Exactly one outcome key — `success`, never a stray `error`/`park`.
+    // @deliberate: exactly one outcome key — `success`, never a stray `error`/`park`.
     expect(
       ["success", "error", "park"].filter((k) => k in signedBody),
     ).toEqual(["success"]);
   });
 
-  // S-executors-signoff-binds-real-output / EXECUTORS-1.1.
-  //
-  // The agent produces its bound output via the incremental `attributes_set`
-  // MCP callback and then calls `report_complete` with `attributes_delta`
-  // OMITTED (null) — the path `report_complete`'s own tool description tells
-  // the agent to prefer. The sign-off gate MUST bind the run's REAL effective
-  // bound output (the accumulated incremental writeback at `path: endpoints`),
-  // not whatever rides the (absent) terminal-final delta.
+  // @deliberate: the agent produces its bound output via the incremental
+  // `attributes_set` MCP callback and then calls `report_complete` with
+  // `attributes_delta` OMITTED (null) — the path `report_complete`'s own tool
+  // description tells the agent to prefer. The sign-off gate MUST bind the
+  // run's REAL effective bound output (the accumulated incremental writeback at
+  // `path: endpoints`), not whatever rides the (absent) terminal-final delta.
   //
   // Two sub-cases, each driving the REAL HTTP-bridge `/execute` entry point
   // with its own bridge + cliRunner and a distinct dispatch_id (so the two
@@ -395,7 +397,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
   //     includes `endpoints`. (RED: today the gate verifies over `"null"`, so a
   //     signature over the real value does NOT match → the run is rejected.)
   it("sign-off gate binds the accumulated incremental writeback when report_complete omits attributes_delta", async () => {
-    // A succeeding writeback POST is required for the gate's accumulation to
+    // @deliberate: a succeeding writeback POST is required for the gate's accumulation to
     // observe the incremental delta (the `attributes_set` tool only reports
     // "accepted" on a 2xx, mirroring a live supervisor acknowledging the
     // writeback). Without this the real default would POST to the invalid
@@ -403,18 +405,18 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     const okPostAttributes: PostAttributesFn = async () => ({ status: 200 });
     const SET_DELTA = { endpoints: ENDPOINTS };
 
-    // --- Case A: stale signature over the literal "null" must be rejected. ---
+    // @deliberate: Case A: stale signature over the literal "null" must be rejected.
     {
       const signerA = makeTestSigner();
       const dispatchA = "acc-incremental-A";
-      // Sign over `undefined` → buildSignoffMessage canonicalizes to "null":
+      // @deliberate: sign over `undefined` → buildSignoffMessage canonicalizes to "null":
       // the exact old broken bytes today's gate (wrongly) verifies against.
       const staleSig = signerA.sign(dispatchA, undefined);
       const staleCli: CliRunner = {
         spawn: async (req: CliSpawnRequest) =>
           makeIncrementalReportingHandle(req, SET_DELTA, () => ({
             changed: true,
-            // attributes_delta OMITTED — incremental writeback path.
+            // @deliberate: attributes_delta OMITTED — incremental writeback path.
             signoffs: [staleSig],
           })),
       };
@@ -454,7 +456,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
 
       await waitFor(() => posts.length > 0, 5000);
       const bodyA = posts[0]!.body as Record<string, unknown>;
-      // The stale signature binds the OLD bytes, not the real accumulated
+      // @deliberate: the stale signature binds the OLD bytes, not the real accumulated
       // value, so the gate must reject the run.
       expect(bodyA.success).toBeUndefined();
       const errorA = bodyA.error as Record<string, unknown> | undefined;
@@ -467,19 +469,19 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
       await bridge.shutdown();
     }
 
-    // --- Case B: signature over the REAL accumulated value must succeed. ---
+    // @deliberate: Case B: signature over the REAL accumulated value must succeed.
     posts.length = 0;
     {
       const signerB = makeTestSigner();
       const dispatchB = "acc-incremental-B";
-      // Sign the value at the configured path (`endpoints`) = the ACTUAL
+      // @deliberate: sign the value at the configured path (`endpoints`) = the ACTUAL
       // accumulated incremental writeback (`[{url:"x"}]`), bound to dispatchB.
       const realSig = signerB.sign(dispatchB, ENDPOINTS);
       const signedCli: CliRunner = {
         spawn: async (req: CliSpawnRequest) =>
           makeIncrementalReportingHandle(req, SET_DELTA, () => ({
             changed: true,
-            // attributes_delta OMITTED — incremental writeback path.
+            // @deliberate: attributes_delta OMITTED — incremental writeback path.
             signoffs: [realSig],
           })),
       };
@@ -522,7 +524,7 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
       expect(bodyB.error).toBeUndefined();
       const successB = bodyB.success as Record<string, unknown> | undefined;
       expect(successB).toBeDefined();
-      // The committed delta must carry the accumulated incremental writeback —
+      // @deliberate: the committed delta must carry the accumulated incremental writeback —
       // the gate bound `endpoints`, so the supervisor commits it.
       const committed = successB!.attributes_delta as
         | Record<string, unknown>
@@ -538,10 +540,8 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
   });
 });
 
-// S-executors-mcp-catalog-transports / EXECUTORS-2.3 (RED).
-//
-// The executor is started with a startup MCP-server catalog. The catalog
-// declares a `module`-transport server and an `http-loopback`-transport
+// @deliberate: the executor is started with a startup MCP-server catalog. The
+// catalog declares a `module`-transport server and an `http-loopback`-transport
 // server, each resolving to a tiny in-tree MCP module exposing ONE tool.
 // A node references each by `{ ref: <name> }`; the executor must resolve the
 // ref, stand up the transport (in-process `import()` for `module`; a loopback
@@ -559,16 +559,20 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
 // node referencing a catalog server by `{ref:}` never resolves — spawn
 // assembly fails and the dispatch does NOT reach success.
 
-// The catalog's `module` / `http-loopback` entries resolve to this in-tree
-// fixture module (exports `createMcpServer()` exposing one `echo` tool).
-// Referenced as a module specifier the executor's catalog loader can import.
+/**
+ * The catalog's `module` / `http-loopback` entries resolve to this in-tree
+ * fixture module (exports `createMcpServer()` exposing one `echo` tool).
+ * Referenced as a module specifier the executor's catalog loader can import.
+ */
 const CATALOG_MODULE_SPECIFIER = "./mcp-catalog-test-module.js";
 
-// Build a fake CliHandle that drives `report_complete` to terminal success.
-// Mirrors makeReportingHandle above but with no sign-off gate in play — the
-// run completes on the first report_complete. The point under test is that
-// the catalog-resolved transport server was wired into the spawn (so the
-// dispatch could run at all), proven by the run reaching terminal success.
+/**
+ * Build a fake CliHandle that drives `report_complete` to terminal success.
+ * Mirrors makeReportingHandle above but with no sign-off gate in play — the
+ * run completes on the first report_complete. The point under test is that
+ * the catalog-resolved transport server was wired into the spawn (so the
+ * dispatch could run at all), proven by the run reaching terminal success.
+ */
 function makeCompletingHandle(req: CliSpawnRequest): CliHandle {
   const exitWaiters: ((r: {
     exitCode: number | null;
@@ -642,7 +646,7 @@ describe("MCP catalog module/http-loopback transports (real HTTP bridge)", () =>
     await cb.close();
   });
 
-  // One test exercises BOTH transports (module + http-loopback) so the named
+  // @deliberate: one test exercises BOTH transports (module + http-loopback) so the named
   // gate `-t 'dispatches successfully using a module-transport'` covers the
   // whole transport-stand-up surface in a single run.
   it("dispatches successfully using a module-transport catalog server and an http-loopback-transport catalog server", async () => {
@@ -657,7 +661,7 @@ describe("MCP catalog module/http-loopback transports (real HTTP bridge)", () =>
       },
     };
 
-    // Drive both transports sequentially against their own bridge so the two
+    // @deliberate: drive both transports sequentially against their own bridge so the two
     // runs never share a dispatch and the catalog stand-up/teardown is
     // exercised independently for each transport.
     for (const ref of ["echo-module", "echo-loopback"]) {
@@ -688,7 +692,7 @@ describe("MCP catalog module/http-loopback transports (real HTTP bridge)", () =>
           attributes: {
             user_prompt: "go",
             cli: {
-              // Reference the catalog server by {ref:}; the executor resolves
+              // @deliberate: reference the catalog server by {ref:}; the executor resolves
               // it, stands up the transport, and wires the server's `echo`
               // tool into the spawn.
               mcp_servers: [{ ref }],
@@ -702,7 +706,7 @@ describe("MCP catalog module/http-loopback transports (real HTTP bridge)", () =>
 
       await waitFor(() => posts.length > 0, 5000);
       const body = posts[0]!.body as Record<string, unknown>;
-      // The dispatch must reach terminal success — proving the catalog ref
+      // @deliberate: the dispatch must reach terminal success — proving the catalog ref
       // resolved and the transport stood up (a failed stand-up would error
       // the dispatch before report_complete could land).
       expect(body.error).toBeUndefined();
@@ -716,9 +720,7 @@ describe("MCP catalog module/http-loopback transports (real HTTP bridge)", () =>
   });
 });
 
-// S-executors-validator-header-secret-refs / EXECUTORS-5.1 (RED).
-//
-// A node wires an auth-gated validator MCP server whose connection header
+// @deliberate: a node wires an auth-gated validator MCP server whose connection header
 // carries an `${env:VALIDATOR_TOKEN}` reference rather than a plaintext
 // secret:
 //
@@ -759,16 +761,18 @@ interface RunningValidator {
   close(): Promise<void>;
 }
 
-// Stand up a REAL streamable-HTTP MCP validator that 401s every request whose
-// `Authorization` header is not exactly `Bearer <expectedToken>`. When the
-// header matches, it speaks MCP normally and exposes one `attest` tool. The
-// auth gate runs in the raw `http.createServer` handler — BEFORE the MCP
-// transport sees the request — so an unresolved `${env:...}` bearer never
-// completes the MCP initialize handshake.
-//
-// @source src/mcp-catalog.ts::standUpModuleLoopback (session-per-transport
-// streamable-HTTP loop); narrowed to one tool + a header auth gate. The
-// auth gate is the new surface this test needs.
+/**
+ * Stand up a REAL streamable-HTTP MCP validator that 401s every request whose
+ * `Authorization` header is not exactly `Bearer <expectedToken>`. When the
+ * header matches, it speaks MCP normally and exposes one `attest` tool. The
+ * auth gate runs in the raw `http.createServer` handler — BEFORE the MCP
+ * transport sees the request — so an unresolved `${env:...}` bearer never
+ * completes the MCP initialize handshake.
+ *
+ * @source src/mcp-catalog.ts::standUpModuleLoopback (session-per-transport
+ * streamable-HTTP loop); narrowed to one tool + a header auth gate. The
+ * auth gate is the new surface this test needs.
+ */
 async function startAuthGatedValidator(
   expectedToken: string,
 ): Promise<RunningValidator> {
@@ -811,7 +815,7 @@ async function startAuthGatedValidator(
     const authHeader = req.headers["authorization"];
     const auth = typeof authHeader === "string" ? authHeader : "";
     seenAuth.push(auth);
-    // The auth gate: reject anything that is not the exact resolved bearer.
+    // @deliberate: the auth gate: reject anything that is not the exact resolved bearer.
     // A verbatim `Bearer ${env:VALIDATOR_TOKEN}` (today's unresolved form)
     // does NOT match, so the MCP handshake never proceeds.
     if (auth !== `Bearer ${expectedToken}`) {
@@ -853,7 +857,7 @@ async function startAuthGatedValidator(
       }
     }
   });
-  // Hold the SSE GET stream open for the whole dispatch (mirrors the
+  // @deliberate: hold the SSE GET stream open for the whole dispatch (mirrors the
   // loopback listener's socket-cap disabling).
   httpServer.timeout = 0;
   httpServer.requestTimeout = 0;
@@ -863,7 +867,7 @@ async function startAuthGatedValidator(
     try {
       socket.destroy();
     } catch {
-      /* already gone */
+      /* @deliberate: already gone */
     }
   });
 
@@ -892,15 +896,17 @@ async function startAuthGatedValidator(
   return { url, seenAuth, close };
 }
 
-// Build a fake CliHandle that is the product-faithful stand-in for the real
-// `claude` binary reading `--mcp-config`: it dials the host validator MCP
-// server (the entry in `req.tools` other than `rimsky-callback`) using the
-// EXACT headers the executor assembled for that server, calls its `attest`
-// tool, and — only if that succeeds — drives `report_complete` to terminal
-// success. If the validator rejects the connection with 401 (because the
-// `${env:...}` bearer was copied verbatim and never resolved), the validator
-// tool call throws and the CLI exits WITHOUT reporting complete, so the
-// dispatch never reaches success.
+/**
+ * Build a fake CliHandle that is the product-faithful stand-in for the real
+ * `claude` binary reading `--mcp-config`: it dials the host validator MCP
+ * server (the entry in `req.tools` other than `rimsky-callback`) using the
+ * EXACT headers the executor assembled for that server, calls its `attest`
+ * tool, and — only if that succeeds — drives `report_complete` to terminal
+ * success. If the validator rejects the connection with 401 (because the
+ * `${env:...}` bearer was copied verbatim and never resolved), the validator
+ * tool call throws and the CLI exits WITHOUT reporting complete, so the
+ * dispatch never reaches success.
+ */
 function makeValidatorReachingHandle(req: CliSpawnRequest): CliHandle {
   const exitWaiters: ((r: {
     exitCode: number | null;
@@ -914,7 +920,7 @@ function makeValidatorReachingHandle(req: CliSpawnRequest): CliHandle {
   const callbackUrl = callbackTool!.kind === "mcp-http" ? callbackTool!.url : "";
   const token = req.env.RIMSKY_CALLBACK_TOKEN;
 
-  // The host validator server is the non-callback http server in the spawn
+  // @deliberate: the host validator server is the non-callback http server in the spawn
   // tools. Its `headers` are the resolved `--mcp-config` form the CLI dials
   // with — the spawn-boundary surface under test.
   const validatorTool = req.tools.find(
@@ -922,7 +928,7 @@ function makeValidatorReachingHandle(req: CliSpawnRequest): CliHandle {
   );
 
   const drive = async (): Promise<void> => {
-    // (1) Reach the auth-gated validator using EXACTLY the headers the
+    // @deliberate: (1) Reach the auth-gated validator using EXACTLY the headers the
     // executor assembled for `--mcp-config`. A 401 (unresolved bearer)
     // throws here and we never report complete → the dispatch errors.
     if (validatorTool === undefined || validatorTool.kind !== "mcp-http") {
@@ -946,7 +952,7 @@ function makeValidatorReachingHandle(req: CliSpawnRequest): CliHandle {
       await vClient.close().catch(() => {});
     }
 
-    // (2) Validator reached → report terminal success via the callback.
+    // @deliberate: (2) Validator reached → report terminal success via the callback.
     const cbTransport = new StreamableHTTPClientTransport(new URL(callbackUrl));
     const cbClient = new Client({
       name: "rimsky-validator-reaching-cli-cb",
@@ -965,7 +971,7 @@ function makeValidatorReachingHandle(req: CliSpawnRequest): CliHandle {
 
   setTimeout(() => {
     void (async () => {
-      // Swallow a validator-unreachable failure: the CLI simply exits
+      // @deliberate: swallow a validator-unreachable failure: the CLI simply exits
       // without reporting complete (exactly what a real CLI does when its
       // configured MCP server is unreachable), and the bridge resolves the
       // dispatch as an Error. The OBSERVABLE outcome on the callback URL is
@@ -1018,7 +1024,7 @@ describe("validator MCP header ${env:} resolution at spawn (real HTTP bridge + r
   it("resolves ${env:VAR} in validator mcp_servers headers at spawn so a 401-gated validator is reached, while persisted attributes keep only the reference form", async () => {
     validator = await startAuthGatedValidator(VALIDATOR_TOKEN_VALUE);
 
-    // The node's cli.mcp_servers wires the validator with an ${env:}-referenced
+    // @deliberate: the node's cli.mcp_servers wires the validator with an ${env:}-referenced
     // bearer header — never the plaintext token.
     const attributes = {
       user_prompt: "go",
@@ -1045,7 +1051,7 @@ describe("validator MCP header ${env:} resolution at spawn (real HTTP bridge + r
       cliRunner: reachingCli,
       silenceTimeoutMs: 30_000,
       logger,
-      // Inline server with no catalog: allow_inline left unset (permissive
+      // @deliberate: inline server with no catalog: allow_inline left unset (permissive
       // legacy path) so the inline validator entry is accepted at dispatch.
       postCallback: async (url, body) => {
         posts.push({ url, body });
@@ -1067,7 +1073,7 @@ describe("validator MCP header ${env:} resolution at spawn (real HTTP bridge + r
 
     await waitFor(() => posts.length > 0, 5000);
     const body = posts[0]!.body as Record<string, unknown>;
-    // Validator reached → header resolved to the real token on the wire →
+    // @deliberate: validator reached → header resolved to the real token on the wire →
     // the dispatch reaches terminal success.
     expect(body.error).toBeUndefined();
     expect(body.success).toBeDefined();
@@ -1075,12 +1081,12 @@ describe("validator MCP header ${env:} resolution at spawn (real HTTP bridge + r
       ["success", "error", "park"].filter((k) => k in body),
     ).toEqual(["success"]);
 
-    // The validator must have seen the RESOLVED bearer on the wire, never the
+    // @deliberate: the validator must have seen the RESOLVED bearer on the wire, never the
     // literal reference form — direct proof the resolution happened at spawn.
     expect(validator.seenAuth).toContain(`Bearer ${VALIDATOR_TOKEN_VALUE}`);
     expect(validator.seenAuth).not.toContain("Bearer ${env:VALIDATOR_TOKEN}");
 
-    // The attributes-derived form the supervisor persists/traces (the parsed
+    // @deliberate: the attributes-derived form the supervisor persists/traces (the parsed
     // cli.mcp_servers shape) MUST keep only the ${env:} reference — never the
     // plaintext token.
     const parsed = parseCliConfig(attributes.cli);

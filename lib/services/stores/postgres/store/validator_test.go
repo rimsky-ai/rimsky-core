@@ -70,7 +70,7 @@ func TestPGValidator_RejectsOldNames(t *testing.T) {
 
 func TestPGValidator_RejectsMissingFields(t *testing.T) {
 	pp := newPGValidPolicy()
-	pp.OnCommit = action.Action{} // zero
+	pp.OnCommit = action.Action{}
 	res := validatePickPolicy("@q", pp)
 	if res.OK() {
 		t.Fatal("expected error for missing OnCommit")

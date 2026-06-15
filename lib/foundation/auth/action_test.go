@@ -12,13 +12,13 @@ func TestActionMatches(t *testing.T) {
 		want       bool
 	}{
 		{"*", "node:read", true},
-		{"*", "", true}, // even empty matches "*"
+		{"*", "", true}, // @deliberate: bare "*" matches even the empty string
 		{"node:read", "node:read", true},
 		{"node:read", "node:write", false},
 		{"auth:*", "auth:create", true},
 		{"auth:*", "auth:rotate", true},
 		{"auth:*", "authority:create", false},
-		{"auth:*", "auth:", true}, // edge: ":*" → prefix is "auth:"
+		{"auth:*", "auth:", true}, // @deliberate: ":*" wildcard retains the colon, so prefix "auth:" matches "auth:"
 		{"*:read", "node:read", true},
 		{"*:read", "instance:read", true},
 		{"*:read", "node:readwrite", false},
@@ -55,7 +55,7 @@ func TestValidateActionString(t *testing.T) {
 		"foo:bar:*",
 		"*",
 	}
-	// Mark the lone "*" out (it's valid). Re-trim that.
+	// @deliberate: trailing "*" in the list above is valid; trim it off the bad-cases slice
 	bad = bad[:len(bad)-1]
 	for _, s := range bad {
 		if err := ValidateActionString(s); err == nil {

@@ -38,7 +38,6 @@ type PgLargeObjectBackend struct {
 	pool *pgxpool.Pool
 }
 
-// Compile-time interface check.
 var _ persistence.BlobBackend = (*PgLargeObjectBackend)(nil)
 
 // NewPgLargeObjectBackend constructs a backend bound to pool. The pool
@@ -171,9 +170,10 @@ func (b *PgLargeObjectBackend) Delete(ctx context.Context, handle persistence.Ha
 	los := tx.LargeObjects()
 	if err := los.Unlink(ctx, oid); err != nil {
 		if isMissingLOError(err) {
-			// Idempotent: missing -> success.
 			_ = tx.Rollback(ctx)
-			committed = true // suppress double-rollback
+			// @deliberate: set committed=true after the manual Rollback so the deferred
+			// rollback in the parent func is suppressed (no double-rollback).
+			committed = true
 			return nil
 		}
 		return fmt.Errorf("blob pglo: unlink: %w", err)
@@ -211,14 +211,15 @@ func isMissingLOError(err error) bool {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		// 42704 = undefined_object (LO doesn't exist).
-		// 22023 = invalid_parameter_value (older pg returns this for
-		// missing oid on lo_open). Either is "not found" semantically.
+		// @constraint: SQLSTATE 42704 (undefined_object) is the modern Postgres code for
+		// a missing LO; 22023 (invalid_parameter_value) is what older Postgres returns
+		// for a missing oid on lo_open. Both map to "not found" semantically.
 		if pgErr.Code == "42704" || pgErr.Code == "22023" {
 			return true
 		}
 	}
-	// Some pgx versions wrap the missing-LO message in a plain error.
+	// @deliberate: some pgx versions surface the missing-LO error as a plain error
+	// (not a *pgconn.PgError), so a string-match fallback is the only available signal.
 	msg := err.Error()
 	if strings.Contains(msg, "large object") && strings.Contains(msg, "does not exist") {
 		return true

@@ -57,7 +57,7 @@ func TestNotifyOnlyMode(t *testing.T) {
 	})
 	_, _ = instanceResume(t, h, iid)
 
-	// The dispatch should complete without an explicit resume call —
+	// @deliberate: The dispatch should complete without an explicit resume call —
 	// notify_only does not block. The terminal/success follows the
 	// usual path; the hit row stays unresumed.
 	n := h.FindNode(iid, "worker")
@@ -65,7 +65,7 @@ func TestNotifyOnlyMode(t *testing.T) {
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"notify_only must not block dispatch — worker should reach Fresh without a resume call")
 
-	// One hit row exists for the breakpoint, still unresumed.
+	// @constraint: One hit row exists for the breakpoint, still unresumed.
 	hits := waitForHitCount(t, h, bpID, 1, 5*time.Second)
 	require.Len(t, hits, 1)
 	require.Nil(t, hits[0].ResumedAt,

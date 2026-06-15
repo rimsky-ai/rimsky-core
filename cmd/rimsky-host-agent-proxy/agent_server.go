@@ -52,13 +52,13 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 		return status.Error(codes.InvalidArgument, "Register.api_key is required")
 	}
 
-	// The api-key id keys the agent index. v1 uses the api-key string
-	// verbatim as the routing key; control-api supplies the owner-api-key
-	// id on the same routing key via OnInstanceCreated.
+	// @concept: host-agent-proxy — the api-key id keys the agent index.
+	// v1 uses the api-key string verbatim as the routing key;
+	// control-api supplies the owner-api-key id on the same routing key
+	// via OnInstanceCreated.
 	apiKeyID := reg.GetApiKey()
 	conn, prior, displaced := s.state.registerAgent(apiKeyID, reg.GetAgentLabel(), reg.GetLocalCallbackBaseUrl())
 	if displaced && prior != nil {
-		// Gracefully close the displaced prior connection's writer.
 		prior.close()
 		prior.closeAllStreams()
 		slog.Info("agent connection displaced prior", "api_key_id", redact(apiKeyID), "agent_label", reg.GetAgentLabel())
@@ -72,7 +72,6 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 		return status.Error(codes.Unavailable, "connection closed before register ack")
 	}
 
-	// Writer goroutine: drain sendCh to the stream until closed.
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
@@ -92,11 +91,11 @@ func (s *agentServer) Connect(stream genv1.HostAgent_ConnectServer) error {
 		}
 	}()
 
-	// Reader loop: route inbound frames until the stream errors / EOFs.
 	readErr := s.readLoop(stream, conn)
 
-	// Teardown: drop the agent, close the writer, and notify in-flight
-	// dispatch readers via closed stream channels.
+	// @constraint: teardown — drop the agent, close the writer, and
+	// notify in-flight dispatch readers via closed stream channels so
+	// they don't wedge.
 	conn.close()
 	dropped := s.state.dropAgent(apiKeyID, conn)
 	conn.closeAllStreams()
@@ -129,13 +128,13 @@ func (s *agentServer) readLoop(stream genv1.HostAgent_ConnectServer, conn *agent
 		case *genv1.ClientFrame_DispatchFrame:
 			conn.deliverDispatch(body.DispatchFrame)
 		case *genv1.ClientFrame_HttpForward:
-			// Handle the local-HTTP-forward out of band so it doesn't
-			// block the reader loop on the upstream POST.
+			// @constraint: handle the local-HTTP-forward out of band so
+			// it doesn't block the reader loop on the upstream POST.
 			go s.forwards.handle(conn, body.HttpForward)
 		case *genv1.ClientFrame_Register:
-			// A second Register on an already-registered stream is a
-			// protocol error; ignore it (the agent should open a fresh
-			// stream to re-register).
+			// @constraint: a second Register on an already-registered
+			// stream is a protocol error; ignore it (the agent should
+			// open a fresh stream to re-register).
 			slog.Warn("ignoring duplicate Register on live stream", "api_key_id", redact(conn.apiKeyID))
 		default:
 			slog.Warn("unknown client frame body", "api_key_id", redact(conn.apiKeyID))

@@ -37,7 +37,7 @@ import (
 func seedFallbackNode(t *testing.T, ctx context.Context, suffix string) (persistence.Tables, persistence.Queue, shared.UUID, shared.UUID, shared.UUID) {
 	t.Helper()
 	return seedFallbackNodeWithErrorTypes(t, ctx, suffix, map[string]spec.ErrorTypePolicy{
-		// ONLY the generic family policy — no entry for the
+		// @deliberate: only the generic family policy — no entry for the
 		// producer-declared "pg/claim_unavailable" class.
 		"acquire/unavailable": {
 			Policy: []spec.PolicyAction{{Action: "retry", Count: 3}},

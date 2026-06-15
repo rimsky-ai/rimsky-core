@@ -2,23 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// node_attributes.go — SQLite-backed persistence.NodeAttributeTable.
-//
-// Under per-run keying (2026-05-20), the table is keyed by node_run_id
-// with a denormalized node_id for forensic queries.
-//
-// `data` is a TEXT (JSON) column. Upsert replaces it outright; MergeDelta
-// performs a SHALLOW merge by reading the existing row, merging in Go,
-// and writing back — SQLite has no JSONB `||` operator.
-//
-// Blob spill (plan §D6/D7): mirrors the postgres impl. When a configured
-// BlobBackend is non-nil and the marshalled `data` exceeds the spill
-// threshold, the bytes are written through the backend, the returned
-// handle is stored in value_handle + value_handle_backend, and the
-// inline `data` column is reset to '{}'. Reads transparently dereference
-// non-NULL value_handle entries via the backend. Overwriting a row that
-// previously had a value_handle queues the old handle in
-// rimsky_blob_orphans for the SweepOrphanedBlobs sweep.
+// @source: lib/foundation/persistence/postgres/node_attributes.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
+
 package sqlite
 
 import (
@@ -154,7 +141,7 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 	)
 	if persistence.ShouldSpillBlob(si.blob, si.blobThreshold, len(raw)) {
 		h, werr := si.blob.Write(ctx, persistence.BlobKey{
-			NodeID:        runID.String(), // per-run keying
+			NodeID:        runID.String(),
 			AttributeName: "data",
 		}, raw)
 		if werr != nil {
@@ -165,9 +152,9 @@ func (s *nodeAttributesImpl) Upsert(ctx context.Context, runID, nodeID shared.UU
 		dataToSave = "{}"
 	}
 
-	// SQLite Upsert always writes value_handle / value_handle_backend
-	// (NULL when not spilled, so a downgrade from spilled-to-inline
-	// correctly clears the prior pointer).
+	// @deliberate: always write value_handle / value_handle_backend (NULL
+	// when not spilled) so a downgrade from spilled-to-inline correctly
+	// clears the prior pointer.
 	var (
 		nullHandle  any
 		nullBackend any

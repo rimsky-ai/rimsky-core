@@ -38,7 +38,7 @@ import (
 
 func TestUnresolvedExecutor(t *testing.T) {
 	t.Parallel()
-	// NoSupervisor so we control exactly when the runner picks the
+	// @deliberate: NoSupervisor so we control exactly when the runner picks the
 	// candidate; the test re-points the node's executor to a name the
 	// resolver does not know about and then drives RunNode once.
 	h := scenario.Start(t, scenario.HarnessOpts{NoSupervisor: true})
@@ -54,7 +54,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	n := h.FindNode(iid, "ghost")
 	require.NotNil(t, n)
 
-	// Re-point the node's executor at an unregistered name. The dispatch
+	// @deliberate: Re-point the node's executor at an unregistered name. The dispatch
 	// row keeps executor_name='stub' (matches our AcceptedExecutors below)
 	// so the candidate is selected; nd.Executor is what `Resolver.Resolve`
 	// is called against, and that lookup misses.
@@ -67,7 +67,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	pool := executor.NewClientPool()
 	t.Cleanup(func() { _ = pool.Close() })
 
-	// Force the dispatch row to a known eligible shape: executor='stub'
+	// @deliberate: Force the dispatch row to a known eligible shape: executor='stub'
 	// (in our AcceptedExecutors), claimed_by NULL, enqueued_at a few
 	// seconds in the past (so any clock skew between test host and the
 	// Postgres container can't push it past NOW()).
@@ -84,7 +84,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Resolver has no entry for "does_not_exist_unknown" → §7.3 step 4a
+	// @deliberate: Resolver has no entry for "does_not_exist_unknown" → §7.3 step 4a
 	// fires. AcceptedExecutors contains "stub" so the dispatch SELECT
 	// admits the candidate.
 	args := runtime.RunArgs{
@@ -106,7 +106,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, out.Ran, "runner should commit acquisition for the candidate")
 
-	// With no policy declared for unresolved_executor, node.Evaluate
+	// @deliberate: With no policy declared for unresolved_executor, node.Evaluate
 	// defaults to give_up(unknown_error_class) → state failed.
 	var got *persistence.NodeRow
 	require.NoError(t, h.InTx(func(tx persistence.Tx) error {
@@ -116,7 +116,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 	}))
 	require.Equal(t, cascade.NodeStateFailed, got.State)
 
-	// Verify event trail: unresolved_executor followed by the canonical
+	// @deliberate: Verify event trail: unresolved_executor followed by the canonical
 	// terminal/error/unresolved_executor signal row (per Pass 5 of spec
 	// 2026-05-23-signal-taxonomy-and-policy-decoupling-design the legacy
 	// `error` fixed-string audit row retired in favor of the signal

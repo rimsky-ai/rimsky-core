@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// queue_in_tx.go — QueueInTxAndDispatchNode conformance area.
-//
+// @constraint: QueueInTxAndDispatchNode conformance area.
 // Covers the tx-taking variants Queue.EnqueueInTx and Queue.RemoveForNodeInTx
 // (rollback discards / commit lands), and Queue.GetDispatchNode's three
 // branches (not_found, unclaimed, claimed_by(supervisorID)). These were
@@ -31,7 +30,6 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("driver.Queue() returned nil")
 	}
 
-	// ---- EnqueueInTx: rollback discards ----
 	rollbackErr := errors.New("rollback enqueue")
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.EnqueueInTx(ctx, persistence.DispatchRequest{
@@ -49,14 +47,13 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("EnqueueInTx rollback: expected rollbackErr, got %v", err)
 	}
 
-	// Probe: SelectCandidates inside a fresh tx must find no row for our
-	// node — the rolled-back row was never visible. We roll the probe tx
-	// back to release FOR UPDATE locks.
+	// @constraint: SelectCandidates inside a fresh tx must find no row for the
+	// node — the rolled-back row was never visible. The probe tx rolls back to
+	// release FOR UPDATE locks.
 	if found := selectCandidateIDForNode(ctx, t, store, q, fix.NodeID); found != (shared.UUID{}) {
 		t.Fatalf("EnqueueInTx rollback: row %v leaked through after rollback", found)
 	}
 
-	// ---- EnqueueInTx: commit lands ----
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.EnqueueInTx(ctx, persistence.DispatchRequest{
 			NodeID:         fix.NodeID,
@@ -75,7 +72,6 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("EnqueueInTx commit: row not visible after commit")
 	}
 
-	// ---- GetDispatchNode: not_found branch ----
 	missingID := uuid.New()
 	gotNode, owner, err := q.GetDispatchNode(ctx, missingID)
 	if err != nil {
@@ -88,7 +84,6 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetDispatchNode not_found: nodeID=%v want zero", gotNode)
 	}
 
-	// ---- GetDispatchNode: unclaimed branch ----
 	gotNode, owner, err = q.GetDispatchNode(ctx, dispatchID)
 	if err != nil {
 		t.Fatalf("GetDispatchNode unclaimed: err: %v", err)
@@ -100,7 +95,6 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetDispatchNode unclaimed: nodeID=%v want %v", gotNode, fix.NodeID)
 	}
 
-	// ---- GetDispatchNode: claimed_by branch ----
 	supID := "queue-in-tx-supervisor"
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		ok, err := q.ClaimDispatchRow(ctx, tx, dispatchID, supID)
@@ -128,7 +122,6 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("GetDispatchNode claimed_by: nodeID=%v want %v", gotNode, fix.NodeID)
 	}
 
-	// ---- RemoveForNodeInTx: rollback preserves the row ----
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx); err != nil {
 			return err
@@ -146,7 +139,6 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 			owner.Kind, owner.SupervisorID)
 	}
 
-	// ---- RemoveForNodeInTx: claimant-guard mismatch is no-op ----
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, "different-supervisor", tx)
 	}); err != nil {
@@ -160,14 +152,12 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 		t.Fatalf("RemoveForNodeInTx with wrong supervisor was not a no-op: kind=%q", owner.Kind)
 	}
 
-	// ---- RemoveForNodeInTx: commit retires the row to terminal phase ----
-	//
-	// Post-stage-1 lifecycle flip (per the data-platform-extensions plan):
-	// RemoveForNodeInTx no longer deletes the row; it flips the row to
-	// terminal phase and clears claimed_by / last_heartbeat_at so the
-	// orphan-claim reaper and the in-flight predicate both stop treating
-	// the row as active. The row itself survives so frame-end / retention
-	// / run-tree aggregation can read the terminal state + last_outcome.
+	// @constraint: post-stage-1 lifecycle flip (per the data-platform-extensions
+	// plan) — RemoveForNodeInTx no longer deletes the row; it flips the row
+	// to terminal phase and clears claimed_by / last_heartbeat_at so the
+	// orphan-claim reaper and the in-flight predicate both stop treating the
+	// row as active. The row itself survives so frame-end / retention /
+	// run-tree aggregation can read the terminal state + last_outcome.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx)
 	}); err != nil {
@@ -180,8 +170,8 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 	if owner.Kind != "unclaimed" {
 		t.Fatalf("RemoveForNodeInTx commit did not clear claim (expected kind=unclaimed): kind=%q", owner.Kind)
 	}
-	// The retired row is no longer in-flight; a fresh EnqueueInTx must
-	// admit a new row alongside it (the partial unique index
+	// @constraint: The retired row is no longer in-flight; a fresh EnqueueInTx
+	// must admit a new row alongside it (the partial unique index
 	// uq_node_runs_in_flight_per_node allows this; the terminal row sits
 	// outside the in-flight predicate).
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {

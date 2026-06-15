@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`(instance_id, sender_kind, sender, sender_subject, idempotency_key)`.
+Per-instance, per-sender-kind, per-sender, per-sender-subject, per-idempotency-key (see `concept:message`).
 
 ## Rationale
 

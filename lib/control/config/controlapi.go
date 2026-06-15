@@ -71,55 +71,49 @@ type ControlAPIConfig struct {
 	Logger shared.Logger
 	Host   string
 	Port   int
-	// Auth is no longer carried in ControlAPIConfig — the auth model
-	// is data-derived (the active-status predicate on
-	// `rimsky_api_keys`) and not yml-config-derived. The control-api
-	// constructs its `*controlapi.AuthState` internally from the
-	// persistence handle.
+	// @deliberate: ControlAPIConfig deliberately carries no Auth field —
+	// the auth model is data-derived (active-status predicate on
+	// rimsky_api_keys), not yml-config-derived. The control-api constructs
+	// its *controlapi.AuthState internally from the persistence handle.
 	Stores RemoteStoresConfig
 	// NamedLocks is the operator-side named-lock config. The control-
-	// api consults this at template-deploy time to validate that
-	// every template-referenced lock name is declared.
+	// api consults this at template-deploy time to validate that every
+	// template-referenced lock name is declared.
 	NamedLocks locks.NamedLocksConfig
-	// Executors is the operator-side executors block from rimsky.yml
-	// (per docs/specs/2026-05-01-control-plane-and-store-lifecycle-
-	// design.md §3.1). The control-api consults this at template
-	// registration to validate that every node-referenced executor
-	// name is declared.
+	// Executors is the operator-side executors block. The control-api
+	// consults this at template registration to validate that every
+	// node-referenced executor name is declared.
 	Executors ExecutorsConfig
-	// Publishers is the operator-side publishers block from rimsky.yml
-	// (per spec
-	// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md).
-	// The control-api uses this at publisher-subscription dispatch
-	// time to look up the per-publisher gRPC endpoint.
+	// Publishers is the operator-side publishers block. The control-api
+	// uses this at publisher-subscription dispatch time to look up the
+	// per-publisher gRPC endpoint.
 	Publishers RemotePublishersConfig
-	// Metrics is the prometheus instrumentation hook (plan I2).
-	// Threaded into controlapi.AppDeps.Metrics so admin-fired
-	// invalidates increment `rimsky_invalidates_total{source="admin"}`.
-	// Optional; nil → no-op. Production wiring constructs an
-	// observability.RegistryHook from the per-process MetricsRegistry.
+	// Metrics is the prometheus instrumentation hook. Threaded into
+	// controlapi.AppDeps.Metrics so admin-fired invalidates increment
+	// `rimsky_invalidates_total{source="admin"}`. Optional; nil → no-op.
+	// Production wiring constructs an observability.RegistryHook from
+	// the per-process MetricsRegistry.
 	Metrics runtime.MetricsHook
 	// LateBindServiceProxies maps protocol name → proxy service name,
-	// passed verbatim from rimsky.yml's late_bind_service_proxies into
-	// controlapi.AppDeps. Consulted by LifecyclePeersForSpec to add the
-	// proxy peer to the fan-out when a template declares late_bind_services.
+	// consulted by LifecyclePeersForSpec to add the proxy peer to the
+	// fan-out when a template declares late_bind_services.
 	LateBindServiceProxies map[string]string
-	// RefValidationMode is the operator-set registration-time reference-
-	// validation mode (all / available / none), passed verbatim from
-	// rimsky.yml's templates.ref_validation_mode (env-overridable) into
-	// controlapi.AppDeps. Zero value (node.RefValidateAll) is the strict
-	// default. Story S-template-validation-ref-validation-mode.
+	// RefValidationMode is the operator-set registration-time
+	// reference-validation mode (all / available / none). Zero value
+	// (node.RefValidateAll) is the strict default. Story
+	// S-template-validation-ref-validation-mode.
 	RefValidationMode node.RefValidationMode
 }
 
 type ControlAPIHandle interface {
 	Shutdown(ctx context.Context) error
 	Addr() string
-	// ServeErr surfaces a fatal post-start failure of the HTTP serve
-	// loop (anything other than a graceful Shutdown). At most one error
-	// is ever sent; a clean shutdown sends nothing. Callers that
-	// supervise the role (the unified entrypoint, the role mains) select
-	// on it to exit non-zero instead of running on degraded.
+	// @agent-contract: ServeErr surfaces a fatal post-start failure of
+	// the HTTP serve loop (anything other than a graceful Shutdown). At
+	// most one error is ever sent; a clean shutdown sends nothing.
+	// Callers that supervise the role (the unified entrypoint, the role
+	// mains) select on it to exit non-zero instead of running on
+	// degraded.
 	ServeErr() <-chan error
 }
 
@@ -142,20 +136,20 @@ func (h *controlAPIHandle) Shutdown(ctx context.Context) error {
 	if h.srv != nil {
 		err = h.srv.Shutdown(ctx)
 	}
-	// Audit rows are written synchronously in the request goroutine
-	// (controlapi.AuthState.insertEvent), so by the time srv.Shutdown
-	// returns every in-flight handler has already persisted its audit
-	// row. There is no dispatcher to stop.
+	// @constraint: audit rows are written synchronously in the request
+	// goroutine (controlapi.AuthState.insertEvent), so by the time
+	// srv.Shutdown returns every in-flight handler has already persisted
+	// its audit row — no dispatcher to stop.
 	if h.cancelLoops != nil {
 		h.cancelLoops()
 	}
 	if h.cancelDiscovery != nil {
 		h.cancelDiscovery()
 	}
-	// Close the store registry before waiting for the terminator: any
-	// in-flight RPCs surface gRPC "connection closed" errors, the
-	// terminator's tickBudget bounds it from outside, and Stop's
-	// stopBudget bounds the join. This ordering prevents a wedged
+	// @constraint: close the store registry before waiting for the
+	// terminator. Any in-flight RPCs surface gRPC "connection closed"
+	// errors, the terminator's tickBudget bounds it from outside, and
+	// Stop's stopBudget bounds the join. This ordering prevents a wedged
 	// store RPC from blocking process shutdown forever.
 	if h.registry != nil {
 		h.registry.Close()
@@ -255,11 +249,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	disc := observability.RunHandshake(context.Background(), observability.NewGRPCProber(), execPeers, storePeers, obsLogger)
 	discoveryCtx, cancelDiscovery := context.WithCancel(context.Background())
 	go disc.RefreshLoop(discoveryCtx, ObservabilityRefreshInterval(), obsLogger)
-	// Dial the per-protocol registries any peer advertised in its
-	// `protocols:` block (publisher / validation / data_processing).
-	// Each registry is non-nil even when no peer advertises the
-	// protocol — controlapi treats nil and empty registries identically
-	// downstream.
+	// @constraint: dial the per-protocol registries any peer advertised
+	// in its `protocols:` block (publisher / validation /
+	// data_processing). Each registry is non-nil even when no peer
+	// advertises the protocol — controlapi treats nil and empty
+	// registries identically downstream.
 	publisherReg, validationReg, dataProcessorReg, peerClosers, err := DialPublisherAndValidationRegistries(context.Background(), cfg.Stores, cfg.Executors, cfg.Publishers)
 	if err != nil {
 		cancelDiscovery()
@@ -273,19 +267,13 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Clock:    cfg.Clock,
 		Logger:   cfg.Logger,
 	}
-	// Audit rows are written synchronously in the request goroutine
-	// (controlapi.AuthState.insertEvent) — the event log is the
-	// canonical forensic record and must never silently drop a row, so
-	// there is no background dispatcher to wire here.
-	// In-process bridge for the rotation-grace sweep: when sweep
-	// runs in the same process as this AuthState (lifecycle tests
-	// and any future single-binary deploy), drop the anonymous-
-	// mode cache after each successful sweep. The cross-process
-	// case (sweep in scheduler, controlapi in its own process)
-	// accepts the TTL-bounded staleness per spec.
-	// Production wiring keeps the registration for the life of the
-	// process. The unregister closure is dropped intentionally — the
-	// hook should fire for every sweep until process exit.
+	// @constraint: in-process bridge for the rotation-grace sweep —
+	// when sweep runs in the same process as this AuthState (lifecycle
+	// tests and any future single-binary deploy), drop the anonymous-
+	// mode cache after each successful sweep. The cross-process case
+	// (sweep in scheduler, controlapi in its own process) accepts the
+	// TTL-bounded staleness. The unregister closure is dropped
+	// intentionally — the hook fires for every sweep until process exit.
 	_ = runtime.RegisterAuthMutationHook(authState.OnAuthMutation)
 	deps := controlapi.AppDeps{
 		Persist:       persistStore,
@@ -297,11 +285,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		LifecycleSubs: lifecycleReg,
 		NamedLocks:    cfg.NamedLocks,
 		Executors:     executorsByName,
-		// Plan G3 / E3 / H2: control-api delegates admin
-		// invalidates to the foundation runtime's UnifiedInvalidate via
-		// this adapter; same code path that the parked-nodes sweep and
-		// the on_event handler dispatch use, so handler-emitted
-		// invalidates correctly resume parked targets.
+		// @deliberate: control-api delegates admin invalidates to the
+		// foundation runtime's UnifiedInvalidate via this adapter — same
+		// code path that the parked-nodes sweep and the on_event handler
+		// dispatch use, so handler-emitted invalidates correctly resume
+		// parked targets.
 		InvalidateHandler: &controlapiInvalidateAdapter{
 			inner: &runtime.InvalidateAdapter{
 				Persist:      persistStore,
@@ -312,15 +300,14 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				Metrics:      cfg.Metrics,
 			},
 		},
-		// Plan F6 / F7 + 2026-05-23 signal-taxonomy Pass 6:
-		// ExecutorCapabilities exposes the observability discovery cache's
-		// per-executor (declared_events, declared_error_classes,
-		// expected_attributes_schema) to the controlapi templates
-		// registration validator. The cache is already populated by
-		// RunHandshake at startup and refreshed by the RefreshLoop
-		// goroutine started above; this hook is a thin read-only adapter
-		// so templates.go can validate at registration without taking a
-		// direct observability import dependency.
+		// @deliberate: ExecutorCapabilities exposes the observability
+		// discovery cache's per-executor (declared_events,
+		// declared_error_classes, expected_attributes_schema) to the
+		// controlapi templates registration validator. The cache is
+		// already populated by RunHandshake at startup and refreshed by
+		// the RefreshLoop goroutine started above; this hook is a thin
+		// read-only adapter so templates.go can validate at registration
+		// without taking a direct observability import dependency.
 		ExecutorCapabilities: func(executorName string) ([]string, []string, []byte, bool) {
 			peer, ok := disc.GetExecutor(executorName)
 			if !ok || peer.Capabilities == nil {
@@ -331,10 +318,10 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 				peer.Capabilities.ExpectedAttributesSchema,
 				true
 		},
-		// StoreDeclaredErrorClasses exposes the discovery cache's
-		// per-store producer-declared error-class vocabulary (captured
-		// from the ClaimProducer.Capabilities handshake) to the
-		// controlapi templates registration validator — the producer
+		// @deliberate: StoreDeclaredErrorClasses exposes the discovery
+		// cache's per-store producer-declared error-class vocabulary
+		// (captured from the ClaimProducer.Capabilities handshake) to
+		// the controlapi templates registration validator — the producer
 		// half of the executor ∪ producer ∪ acquire/* union the
 		// `error_types:` range-check accepts.
 		StoreDeclaredErrorClasses: func(storeName string) ([]string, bool) {
@@ -358,12 +345,14 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		Publishers:     publisherReg,
 		Validators:     validationReg,
 		DataProcessors: dataProcessorReg,
-		// Plan: late-bind proxy fan-out. Threaded so LifecyclePeersForSpec
-		// can add the proxy peer when a template declares late_bind_services.
+		// @deliberate: late-bind proxy fan-out — threaded so
+		// LifecyclePeersForSpec can add the proxy peer when a template
+		// declares late_bind_services.
 		LateBindServiceProxies: cfg.LateBindServiceProxies,
-		// Operator-set registration-time reference-validation mode
-		// (all / available / none). Stamped onto the validator hooks so
-		// registration + POST /templates/validate share one strictness.
+		// @constraint: operator-set registration-time
+		// reference-validation mode (all / available / none) stamped
+		// onto the validator hooks so registration + POST
+		// /templates/validate share one strictness.
 		RefValidationMode: cfg.RefValidationMode,
 	}
 	app := controlapi.NewApp(deps)
@@ -400,20 +389,18 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		}
 	}()
 	go terminator.Run(loopCtx)
-	// Anonymous-mode banner: logs once at startup and every 5
-	// minutes thereafter while no API keys exist.
 	go controlapi.WatchAnonymousMode(loopCtx, authState, controlapi.DefaultBannerInterval)
-	// F8: reconcile publisher subscriptions against the live publisher
-	// peers at startup — re-issue subs rimsky persisted as active but the
-	// publisher dropped (e.g. publisher restart), tear down orphan subs the
-	// publisher reports for instances rimsky no longer tracks. The
-	// publisher registry lives in the control-api (the supervisor never
-	// holds one), so this is the correct home for resync.
-	//
-	// Run in a goroutine, best-effort, log-and-continue on error (matching
-	// the sweep discipline): a slow or unreachable publisher must not delay
-	// control-api from serving traffic, and one broken publisher cannot
-	// wedge startup. Bound by loopCtx so shutdown cancels it.
+	// @deliberate: reconcile publisher subscriptions against the live
+	// publisher peers at startup — re-issue subs rimsky persisted as
+	// active but the publisher dropped (e.g. publisher restart), tear
+	// down orphan subs the publisher reports for instances rimsky no
+	// longer tracks. The publisher registry lives in the control-api
+	// (the supervisor never holds one), so this is the correct home for
+	// resync. Run in a goroutine, best-effort, log-and-continue on error
+	// (matching the sweep discipline): a slow or unreachable publisher
+	// must not delay control-api from serving traffic, and one broken
+	// publisher cannot wedge startup. Bound by loopCtx so shutdown
+	// cancels it.
 	resyncLog := cfg.Logger
 	if resyncLog == nil {
 		resyncLog = shared.SilentLogger{}
@@ -429,11 +416,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			resyncLog.Warn("controlapi.publisher_resync.failed", "error", err.Error())
 		}
 	}()
-	// Publisher-subscription reconciler: drives the Subscribe handshake
-	// for rows instance-create persisted in `mounting` — retry-forever
-	// (the tick is the backoff), `failed` reserved for non-retryable
-	// errors. Same registry + persistence handles as resync; bound by
-	// loopCtx so shutdown stops it.
+	// @constraint: publisher-subscription reconciler drives the
+	// Subscribe handshake for rows instance-create persisted in
+	// `mounting` — retry-forever (the tick is the backoff), `failed`
+	// reserved for non-retryable errors. Same registry + persistence
+	// handles as resync; bound by loopCtx so shutdown stops it.
 	go runPublisherSubscriptionReconciler(loopCtx, publisherDeps,
 		runtime.DefaultPublisherSubscriptionReconcileInterval)
 	return h, nil

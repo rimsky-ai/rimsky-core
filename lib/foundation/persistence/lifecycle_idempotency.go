@@ -56,8 +56,8 @@ type LifecycleIdempotencyTable interface {
 	Delete(ctx context.Context, storeName string, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) error
 	DeleteByScope(ctx context.Context, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) error
 	ListByScope(ctx context.Context, scopeKind LifecycleIdempotencyScopeKind, scopeID string, tx Tx) ([]LifecycleIdempotencyRow, error)
-	// ListByStore returns every lifecycle row for a given store
-	// registration (across all scopes). Used by the observability
-	// per-store detail endpoint.
+	// @agent-contract: returns every lifecycle row for a given store
+	// registration across all scopes; backs the observability per-store
+	// detail endpoint.
 	ListByStore(ctx context.Context, storeName string, tx Tx) ([]LifecycleIdempotencyRow, error)
 }

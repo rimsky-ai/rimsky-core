@@ -51,12 +51,12 @@ func acquireClaim(
 	spec claimproducer.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, openResult, error) {
-	// Latency timer for `rimsky_claim_acquisition_latency_seconds`. Start
+	// @constraint: latency timer for `rimsky_claim_acquisition_latency_seconds`. Start
 	// the clock at the top of the function so the histogram includes the
 	// pre-Open advisory-lock + scope-conflict check; observe only on
 	// resolved outcomes (acquired / unavailable).
 	acquireStart := args.Clock.Now()
-	// Dispatch-time claim-producer resolution: late-bind-aware so a
+	// @constraint: dispatch-time claim-producer resolution: late-bind-aware so a
 	// per-instance service binding routes to the configured proxy. Falls
 	// through to a bare Get when no instance context / no late-bind config.
 	s, ok := args.StoreRegistry.GetWithContext(ctx, spec.ProducerName, instanceID.String())
@@ -70,7 +70,7 @@ func acquireClaim(
 	if err := args.AdvisoryLocker.TakeClaimScopeLockInTx(ctx, tx, spec.ProducerName, scopeInitial); err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: TakeClaimScopeLockInTx: %w", err)
 	}
-	// Pre-Open conflict check: any existing conflicting holder must permit
+	// @constraint: pre-Open conflict check: any existing conflicting holder must permit
 	// our intent under its own RealizedWriteSemantics. The conflict
 	// predicate is producer-aware (@blessed-invariant 4b) — byte-equal by
 	// default, or the producer's own ScopesConflict when advertised. Per
@@ -102,7 +102,7 @@ func acquireClaim(
 	}
 	if conflicted {
 		if persistent {
-			// Surface as unavailable so the operator's error_types chain
+			// @constraint: surface as unavailable so the operator's error_types chain
 			// routes the durable-conflict. UnavailableClass empty → the
 			// synthetic "acquire/unavailable" leaf the chain keys on.
 			// Count as a resolved acquisition outcome with
@@ -122,7 +122,7 @@ func acquireClaim(
 	dispatchID := cand.DispatchID
 	producerNameCopy := spec.ProducerName
 	intentCopy := string(spec.Intent)
-	// is_held is determined by the holding-subgraph membership for this
+	// @constraint: is_held is determined by the holding-subgraph membership for this
 	// (acquirerType, alias). When the alias declares a held subgraph of
 	// size > 1, the claim_handle persists past active terminal until
 	// auto-terminal resolution.
@@ -140,7 +140,7 @@ func acquireClaim(
 		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
 		FrameID:            &frameID,
 		IsHeld:             isHeld,
-		// Thread the template store-ref's lifetime hint onto the persisted
+		// @constraint: thread the template store-ref's lifetime hint onto the persisted
 		// row. spec.Lifetime is the rimsky-internal plain-string carried by
 		// the ClaimSpec (lib/protocols may not import lib/foundation/spec);
 		// convert at this persistence boundary. Empty → the persistence layer
@@ -152,12 +152,12 @@ func acquireClaim(
 	}
 
 	claimID := claimproducer.ClaimID(rowID.String())
-	// Stamp the producer name so a host-agent-proxy fronting the
+	// @constraint: stamp the producer name so a host-agent-proxy fronting the
 	// claim-producer protocol can route this Open by service name.
 	openCtx := peer.WithServiceName(ctx, spec.ProducerName)
 	outcome, err := s.Open(openCtx, claimID, spec)
 	if err != nil {
-		// A producer-side wire fault (the gRPC Open call returned an
+		// @constraint: A producer-side wire fault (the gRPC Open call returned an
 		// error) carries a translated error_class on *peer.ProducerCallError.
 		// Surface it as openResultErrored so tryAcquire routes the class
 		// through the operator's `error_types:` chain rather than aborting
@@ -169,18 +169,18 @@ func acquireClaim(
 		}
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: Open(%s): %w", spec.ProducerName, err)
 	}
-	// Producer has nothing to give right now (e.g. drained items-table
+	// @constraint: producer has nothing to give right now (e.g. drained items-table
 	// queue). The producer signals this via OpenOutcome.Available=false.
 	// Distinguished from openResultBail so the outer caller can route
 	// through the operator's `error_types: { acquire/unavailable:
 	// ... }` chain (default = give_up("unknown_error_class") absent
 	// an operator-declared policy).
 	if !outcome.Available {
-		// Producer signalled unavailable — count as a resolved
+		// @constraint: producer signalled unavailable — count as a resolved
 		// acquisition outcome with intent="unavailable".
 		metricsOf(args).IncClaimAcquisition(spec.ProducerName, "unavailable")
 		metricsOf(args).ObserveClaimAcquisitionLatency(spec.ProducerName, args.Clock.Now().Sub(acquireStart).Seconds())
-		// Carry the producer-declared acquisition-failure class (when the
+		// @constraint: carry the producer-declared acquisition-failure class (when the
 		// producer named one) out of this branch so tryAcquire can stamp it
 		// onto the acquisition and handleAcquireUnavailable keys the
 		// operator's `error_types:` chain on it. Empty → synthetic
@@ -192,14 +192,14 @@ func acquireClaim(
 	if err := args.ClaimHandles.UpdateAddress(ctx, rowID, args.SupervisorID, cr.Address, tx); err != nil {
 		return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateAddress: %w", err)
 	}
-	// Pick-policy claims have store-chosen claim-scope; scoped claims
+	// @constraint: pick-policy claims have store-chosen claim-scope; scoped claims
 	// keep the substituted selector (already written above).
 	if len(cr.ClaimScope) > 0 && string(cr.ClaimScope) != string(scopeInitial) {
 		if err := args.ClaimHandles.UpdateClaimScope(ctx, rowID, args.SupervisorID, cr.ClaimScope, tx); err != nil {
 			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdateClaimScope: %w", err)
 		}
 	}
-	// Persist the producer-supplied capture-time Payload so downstream
+	// @constraint: persist the producer-supplied capture-time Payload so downstream
 	// co-holders' `{{claim.<alias>.payload.<f>}}` substitution can read
 	// the same bytes at their own acquire-tx. Inert in rimsky per
 	// @blessed-invariant 20. Empty payload → no UPDATE (the column
@@ -212,7 +212,7 @@ func acquireClaim(
 			return AcquiredLock{}, openResultBail, fmt.Errorf("acquireClaim: UpdatePayload: %w", err)
 		}
 	}
-	// Persist the per-claim RealizedWriteSemantics returned by the
+	// @constraint: persist the per-claim RealizedWriteSemantics returned by the
 	// producer. Required for the in-Go scope-conflict check on
 	// subsequent acquisitions; per the uniformity invariant (§2.5) all
 	// byte-equal-Scope claims must share this value.
@@ -284,7 +284,7 @@ func evaluateClaimScopeConflict(
 	if err != nil {
 		return false, false, err
 	}
-	// Resolve the producer's conflict capability ONCE per evaluation. When
+	// @constraint: resolve the producer's conflict capability ONCE per evaluation. When
 	// advertised, each holder comparison routes through the producer's own
 	// ScopesConflict; otherwise byte-equal is the trivial default
 	// (@blessed-invariant 4b).
@@ -292,7 +292,7 @@ func evaluateClaimScopeConflict(
 	if err != nil {
 		return false, false, fmt.Errorf("evaluateClaimScopeConflict: Capabilities(%s): %w", spec.ProducerName, err)
 	}
-	// Track whether ANY conflicting holder is committed-durable so the
+	// @constraint: track whether ANY conflicting holder is committed-durable so the
 	// returned `persistent` reflects the worst case across the holder
 	// set, not just the first one inspected.
 	var (
@@ -300,15 +300,14 @@ func evaluateClaimScopeConflict(
 		sawDurableCommittedConf bool
 	)
 	for _, h := range holders {
-		// Same-node-skip note: this branch only takes effect on still-
-		// active claims that this supervisor is in the middle of
-		// acquiring inside the current in-flight transaction
-		// (`HolderSupervisorID == args.SupervisorID` matches the
-		// in-flight INSERT).
+		// @deliberate: skip same-node holders that are this supervisor's
+		// own in-flight INSERT inside the current acquire transaction —
+		// `HolderSupervisorID == args.SupervisorID` matches the row we
+		// are about to write, not a real conflicting holder.
 		if h.HolderNodeID == cand.NodeID && h.HolderSupervisorID != nil && *h.HolderSupervisorID == args.SupervisorID {
 			continue
 		}
-		// Same-node re-materialization of an existing durable asset:
+		// @constraint: same-node re-materialization of an existing durable asset:
 		// a row that has already promoted to (state='committed',
 		// lifetime='durable') and whose holder_node_id equals the
 		// candidate's node is an asset belonging to THIS node. The
@@ -331,7 +330,7 @@ func evaluateClaimScopeConflict(
 			h.Lifetime == fspec.ClaimLifetimeDurable {
 			continue
 		}
-		// @blessed-invariant 4b: producer-aware scope-overlap. A producer
+		// @constraint: invariant-4b producer-aware scope-overlap. A producer
 		// advertising SupportsScopesConflict owns the overlap predicate
 		// (e.g. prefix-containment), so a non-byte-equal-but-overlapping
 		// holder still conflicts; otherwise byte-equal is the trivial
@@ -348,11 +347,11 @@ func evaluateClaimScopeConflict(
 			holderIntent = claimproducer.Intent(*h.Intent)
 		}
 		holderRWS := claimproducer.WriteSemantics(h.RealizedWriteSemantics)
-		// By the uniformity invariant the candidate's realized semantics
+		// @constraint: by the uniformity invariant the candidate's realized semantics
 		// (post-Open) MUST match the holder's; we use the holder's
 		// recorded value for both sides of the matrix.
 		if !locks.ModeCoexists(spec.Intent, holderRWS, holderIntent, holderRWS) {
-			// At least one conflicting holder. Persistent iff THIS holder
+			// @constraint: at least one conflicting holder. Persistent iff THIS holder
 			// (or any prior in the loop) is the asset surface (committed-
 			// durable): the row won't release on its own, so the conflict
 			// cannot be cleared by waiting on the holder's terminal —

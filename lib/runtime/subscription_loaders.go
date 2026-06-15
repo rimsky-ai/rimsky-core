@@ -48,13 +48,13 @@ import (
 // Lifetime: process-global. Across test runs in the same process, the
 // cache persists. This is safe today because template_hash is
 // deterministic over canonical bytes (see
-// `code:graph/template/canonical/CanonicalSpecHash`); a future test
+// CanonicalSpecHash in lib/graph/template/canonical/); a future test
 // that rebuilds the validator (e.g. with a different
 // `Capabilities.declared_events` set) and re-registers the same hash
 // would observe the originally-cached edges. If that scenario lands,
 // add a per-test reset hook or key the cache on
 // `(template_hash, validator_revision)`.
-var templateSubscriptionEdges sync.Map // map[string]*node.SubscriptionEdgeMap
+var templateSubscriptionEdges sync.Map
 
 // subscriptionEdgesForTemplate returns the cached or freshly-built
 // inverse-edge map for the given template_hash. The persistence handle
@@ -77,20 +77,20 @@ func subscriptionEdgesForTemplate(
 	if err != nil {
 		return nil, fmt.Errorf("subscriptionEdgesForTemplate: build edges for %s: %w", templateHash, err)
 	}
-	// LoadOrStore wins races: if two goroutines compute concurrently,
-	// both maps are content-equal; we keep the first.
+	// @constraint: LoadOrStore wins races; both maps are content-equal when two goroutines compute concurrently, so the first stored value is the canonical one.
 	actual, _ := templateSubscriptionEdges.LoadOrStore(templateHash, edges)
 	return actual.(*node.SubscriptionEdgeMap), nil
 }
 
 // templateHardDepEdges caches the per-template hard-dep edge map
-// (computed from attribute schema fields with hard_dep: true) so
-// the cascade walker can look up hard deps without re-parsing the
+// (computed from attribute schema fields with hard_dep: true) keyed
+// by templateHash, holding node.HardDepEdgeMap values, so the
+// cascade walker can look up hard deps without re-parsing the
 // template spec on every walk.
 //
-//	@concept: attribute
-//	@concept: cascade
-var templateHardDepEdges sync.Map // map[string]node.HardDepEdgeMap
+// @concept: attribute
+// @concept: cascade
+var templateHardDepEdges sync.Map
 
 // hardDepEdgesForTemplate returns the cached or freshly-built
 // hard-dep edge map for templateHash. Returns an error if the

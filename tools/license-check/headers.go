@@ -15,15 +15,12 @@ import (
 	"strings"
 )
 
-// Header text written by --stamp. The marker substrings are what verify
-// looks for in the first 10 lines of an existing file.
-
 const (
-	markerLicensedUnder = "Licensed under"                      // any "Licensed under …" line counts as a header
-	markerApache        = "Apache License"                      // distinguishes apache headers (full-text form)
-	markerDualAGPL      = "Dual-licensed under AGPL"            // distinguishes agpl headers
-	markerSPDXApache    = "SPDX-License-Identifier: Apache-2.0" // distinguishes apache headers (SPDX short form)
-	markerSPDXDualAGPL  = "SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial"
+	markerLicensedUnder = "Licensed under"                                                              // @constraint: any "Licensed under …" line counts as a header
+	markerApache        = "Apache License"                                                              // @constraint: distinguishes full-text apache headers
+	markerDualAGPL      = "Dual-licensed under AGPL"                                                    // @constraint: distinguishes full-text agpl headers
+	markerSPDXApache    = "SPDX-License-Identifier: Apache-2.0"                                         // @constraint: distinguishes apache headers in SPDX short form
+	markerSPDXDualAGPL  = "SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-FallGuy-Commercial" // @constraint: distinguishes agpl headers in SPDX short form
 )
 
 const apacheHeaderGo = `// Copyright © 2026 Fall Guy Consulting.
@@ -130,10 +127,9 @@ func detectHeader(path string) (hasHeader, isApache, isAGPL bool, err error) {
 			isAGPL = true
 			hasHeader = true
 		}
-		// SPDX short-form headers: the bundled services (sensors/,
-		// subscribers/, executors/verifier-*) use the SPDX one-liner
-		// rather than the multi-line "Licensed under …" boilerplate.
-		// Recognize both Apache and the dual-license AGPL SPDX form.
+		// @deliberate: recognize both the multi-line "Licensed under …"
+		// boilerplate and the SPDX short-form one-liner — the bundled
+		// services use the SPDX form rather than the boilerplate.
 		if strings.Contains(line, markerSPDXApache) {
 			isApache = true
 			hasHeader = true
@@ -217,7 +213,7 @@ func commentPrefixFor(kind sourceKind) string {
 		return "--"
 	case kindShell:
 		return "#"
-	default: // go, ts, proto
+	default:
 		return "//"
 	}
 }
@@ -242,11 +238,11 @@ func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 		}
 	}
 	preambleEnd := i
-	// Walk forward across the contiguous header region. A header-marker
-	// line continues the block. A single blank line followed by another
-	// header-marker line also continues the block (this covers the
-	// boilerplate-then-SPDX layout). The first non-blank, non-marker line
-	// ends the block.
+	// @deliberate: walk forward across the contiguous header region — a
+	// header-marker line continues the block, and a single blank line
+	// followed by another header-marker line also continues the block
+	// (this covers the boilerplate-then-SPDX layout). The first non-blank,
+	// non-marker line ends the block.
 	lastHeaderIdx := -1
 	for i < len(lines) {
 		if isHeaderLine(lines[i], prefix) {
@@ -254,7 +250,7 @@ func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 			i++
 			continue
 		}
-		// Tolerate at most one blank line between marker runs.
+		// @deliberate: tolerate at most one blank line between marker runs.
 		if strings.TrimSpace(lines[i]) == "" && i+1 < len(lines) && isHeaderLine(lines[i+1], prefix) {
 			i++
 			continue
@@ -262,10 +258,12 @@ func stripLeadingHeader(body []byte, kind sourceKind) []byte {
 		break
 	}
 	if lastHeaderIdx < preambleEnd {
-		return body // no header boilerplate after the preamble
+		return body
 	}
-	// Position i at the first non-marker, non-tolerated-blank line. Drop
-	// one additional blank separator between header and body if present.
+	// @constraint: position i at the first non-marker,
+	// non-tolerated-blank line, then drop one additional blank
+	// separator between header and body if present so the rewritten
+	// file does not accumulate blank lines on repeated stamps.
 	if i < len(lines) && strings.TrimSpace(lines[i]) == "" {
 		i++
 	}
@@ -299,7 +297,7 @@ func headerFor(f fileEntry) string {
 		}
 		return apacheHeaderGo
 	case kindTS:
-		// All TS in this repo is Apache per the boundary map.
+		// @constraint: all TS in this repo is Apache per the boundary map.
 		return apacheHeaderTS
 	case kindProto:
 		return apacheHeaderProto
@@ -344,18 +342,15 @@ func splice(body []byte, header string, kind sourceKind) []byte {
 func spliceGo(body []byte, header string) []byte {
 	first := firstLine(body)
 	if strings.HasPrefix(first, "// Code generated") {
-		// Preserve the generated marker on top, then header, then rest.
 		idx := bytes.IndexByte(body, '\n')
 		return concat(body[:idx+1], []byte(header), []byte("\n"), body[idx+1:])
 	}
-	// Default: header then a blank line then the original body.
 	return concat([]byte(header), []byte("\n"), body)
 }
 
 func spliceTS(body []byte, header string) []byte {
 	first := firstLine(body)
 	if strings.HasPrefix(first, "#!") {
-		// Preserve the shebang on top, then header, then rest.
 		idx := bytes.IndexByte(body, '\n')
 		return concat(body[:idx+1], []byte(header), []byte("\n"), body[idx+1:])
 	}
@@ -363,21 +358,20 @@ func spliceTS(body []byte, header string) []byte {
 }
 
 func spliceProto(body []byte, header string) []byte {
-	// Proto3 accepts leading comments before `syntax`; put the header at
-	// the very top so the verify-scan window finds it without needing to
-	// skip multi-line documentation comments.
+	// @constraint: proto3 accepts leading comments before `syntax`; put
+	// the header at the very top so the verify-scan window finds it
+	// without needing to skip multi-line documentation comments.
 	return concat([]byte(header), []byte("\n"), body)
 }
 
 func spliceSQL(body []byte, header string) []byte {
-	// SQL has no shebang convention; header goes at the very top.
+	// @deliberate: SQL has no shebang convention; header goes at the very top.
 	return concat([]byte(header), []byte("\n"), body)
 }
 
 func spliceShell(body []byte, header string) []byte {
 	first := firstLine(body)
 	if strings.HasPrefix(first, "#!") {
-		// Preserve the shebang on top, then header, then rest.
 		idx := bytes.IndexByte(body, '\n')
 		return concat(body[:idx+1], []byte(header), []byte("\n"), body[idx+1:])
 	}

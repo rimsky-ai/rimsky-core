@@ -58,7 +58,6 @@ func signalForTerminal(t terminalEvent) signalpkg.Signal {
 			Payload: payload,
 		}
 	case terminalKindPark:
-		// Park reason maps to two leaves per concept:signal.
 		if t.ParkReason == genv1.ParkReason_PARK_REASON_SNOOZE {
 			return signalpkg.Signal{
 				Type: signalpkg.TypePath("terminal/park/snooze"),
@@ -71,10 +70,10 @@ func signalForTerminal(t terminalEvent) signalpkg.Signal {
 				},
 			}
 		}
-		// AWAIT_CALLBACK — resume_at may be zero; omit the key in that case
-		// so the payload stays value-based (no pointer indirection mismatch
-		// with the SNOOZE branch above, which always carries a `time.Time`
-		// value under `resume_at`).
+		// @deliberate: AWAIT_CALLBACK resume_at may be zero; omit the key
+		// in that case so the payload stays value-based — no pointer
+		// indirection mismatch with the SNOOZE branch above, which always
+		// carries a time.Time value under resume_at.
 		payload := map[string]any{
 			"session_token":       t.ParkSessionToken,
 			"park_payload":        t.ParkPayload,

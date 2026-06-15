@@ -69,7 +69,7 @@ import (
 func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	t.Parallel()
 
-	// Single-partition fan-out keeps the test deterministic: the
+	// @deliberate: Single-partition fan-out keeps the test deterministic: the
 	// fan-parent emits exactly one partition child, and that child's
 	// dispatch is the one subjected to the two-callback determinism
 	// check. Multi-partition would have all children sharing one stub
@@ -90,7 +90,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 		},
 	})
 
-	// Partition-child stub script: returns AwaitAsync with ack-1. The
+	// @deliberate: Partition-child stub script: returns AwaitAsync with ack-1. The
 	// fan-parent runs the same script — there's only one partition so
 	// only one dispatch fires.
 	h.Stub.WhenType("fan-parent").AwaitAsyncCallback("ack-1", 5000)
@@ -124,7 +124,6 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	parentNode := h.FindNode(iid, "fan-parent")
 	require.NotNil(t, parentNode, "fan-parent node missing")
 
-	// Wait for the partition RunScope to exist (created by AcquireSubClaims).
 	require.Eventually(t, func() bool {
 		var n int
 		h.QueryRowSQL(`
@@ -135,7 +134,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"single partition RunScope should be created by AcquireSubClaims")
 
-	// Resolve the partition RunScope id + the partition-child's
+	// @deliberate: Resolve the partition RunScope id + the partition-child's
 	// dispatch id (in-flight, phase ∈ {active, held}).
 	var partitionScopeID shared.UUID
 	h.QueryRowSQL(`
@@ -155,7 +154,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"partition-child dispatch row should reach phase ∈ {active, held}")
 
-	// Pin: the dispatch lives in the PARTITION scope, not the main scope.
+	// @deliberate: Pin: the dispatch lives in the PARTITION scope, not the main scope.
 	// If the determinism rule were silently resolving via the main scope
 	// instead of the partition scope, this assertion would catch it.
 	mainScopeID := h.GetMainRunScopeID(iid)
@@ -164,7 +163,6 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 			"the determinism rule resolves RunScopeID off the run row, so the "+
 			"partition branch must be exercised distinctly from the main branch")
 
-	// FIRST CALLBACK: success body. Expect HTTP 200 + ack_status = accepted.
 	cbBase := "http://" + h.Supervisor.CallbackAddr()
 	body, _ := json.Marshal(map[string]any{
 		"success": map[string]any{
@@ -181,7 +179,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	require.Equal(t, "accepted", firstAck.AckStatus,
 		"first callback should be accepted; got %q", firstAck.AckStatus)
 
-	// Wait for the partition-child run row to leave {active, held} so
+	// @deliberate: Wait for the partition-child run row to leave {active, held} so
 	// the determinism check on the second callback is meaningful.
 	require.Eventually(t, func() bool {
 		var phase string
@@ -195,7 +193,7 @@ func TestFanOutCallbackDeterminismE2E(t *testing.T) {
 	}, 30*time.Second, 100*time.Millisecond,
 		"partition-child dispatch row should leave {active, held} after first callback")
 
-	// SECOND CALLBACK: same dispatch_id (via a freshly registered
+	// @deliberate: SECOND CALLBACK: same dispatch_id (via a freshly registered
 	// ack_id). The Registry's single-shot Pop means the second
 	// callback CANNOT reuse ack-1; instead we manually register a new
 	// AsyncContext under ack-2 pointing at the now-terminal dispatch.

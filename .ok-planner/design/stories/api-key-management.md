@@ -19,7 +19,7 @@ Operators administer credentials end-to-end — from the bootstrap of the first 
 
 ## Acceptance
 
-Against a fresh deployment with no keys, the operator bootstraps an admin key through `rimsky auth init` and receives plaintext exactly once. With the admin key, the operator mints scoped keys; subsequent metadata reads never expose plaintext. Revoking a key causes subsequent requests bearing that key to be refused. Rotating a key produces new plaintext and the old key keeps working through its grace window, then stops. The auth-status surface reports the current mode and active key count.
+Against a fresh deployment with no keys, the operator bootstraps an admin key through the bootstrap surface and receives plaintext exactly once. With the admin key, the operator mints scoped keys; subsequent metadata reads never expose plaintext. Revoking a key causes subsequent requests bearing that key to be refused. Rotating a key produces new plaintext and the old key keeps working through its grace window, then stops. The auth-status surface reports the current mode and active key count.
 
 ## Falsifier
 

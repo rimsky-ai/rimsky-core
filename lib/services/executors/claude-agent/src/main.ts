@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// pino ships CJS; reach the callable through the interop namespace.
+// @deliberate: pino ships CJS; reach the callable through the interop namespace.
 import * as pinoNs from "pino";
 type PinoFn = (opts?: object) => import("pino").Logger;
 const pino: PinoFn = (((pinoNs as unknown) as { default?: PinoFn }).default ??
@@ -28,7 +28,7 @@ import { createClaudeCliRunner } from "./cli-runner.js";
  */
 async function main(): Promise<void> {
   const logger = pino({ name: "claude-agent-executor" });
-  // Registered before any server starts so a crash during startup (or
+  // @deliberate: registered before any server starts so a crash during startup (or
   // during a server's lifetime) is logged and surfaced as a non-zero
   // exit instead of a silent vanish.
   registerCrashHandlers(logger);
@@ -47,12 +47,11 @@ async function main(): Promise<void> {
     process.env.RIMSKY_EXECUTOR_SILENCE_MS ?? "120000",
     10,
   );
-  // README documents `RIMSKY_EXECUTOR_CLAUDE_BINARY` as the path to the
-  // Claude CLI. Read once at startup and thread through to both transports
-  // so a deployment can override the bare `claude` PATH lookup — required
-  // for cross-stack tests that bind a stub CLI replacing the third-party
-  // binary while keeping the rest of the dispatch path real. Empty leaves
-  // the default ("claude" from PATH).
+  // @deliberate: read RIMSKY_EXECUTOR_CLAUDE_BINARY once at startup and thread
+  // through to both transports so a deployment can override the bare `claude`
+  // PATH lookup — required for cross-stack tests that bind a stub CLI replacing
+  // the third-party binary while keeping the rest of the dispatch path real.
+  // Empty leaves the default ("claude" from PATH).
   const cliBinaryPath = process.env.RIMSKY_EXECUTOR_CLAUDE_BINARY ?? "";
 
   const cliAuth: CliAuthConfig = {
@@ -81,7 +80,7 @@ async function main(): Promise<void> {
     "cli auth resolved",
   );
 
-  // Startup MCP-server catalog + allow_inline policy
+  // @deliberate: startup MCP-server catalog + allow_inline policy
   // (S-executors-mcp-catalog-transports). Parsed ONCE here and threaded into
   // both transports so every dispatch's `cli.mcp_servers` `{ ref: }` resolves
   // against the same catalog. A malformed catalog throws and fails startup
@@ -107,14 +106,14 @@ async function main(): Promise<void> {
   });
   logger.info({ callback_url: callback.url }, "internal MCP listening");
 
-  // Single ledger shared between gRPC + HTTP transports so dashboards
+  // @deliberate: single ledger shared between gRPC + HTTP transports so dashboards
   // can fetch traces by supervisor's dispatch_id regardless of which
   // path delivered the dispatch.
   const observability = new Observability();
   const observabilityHttpBridgeUrl =
     process.env.RIMSKY_EXECUTOR_OBSERVABILITY_HTTP_BRIDGE_URL ?? "";
 
-  // In stub mode `runAgent` short-circuits before spawning the CLI, so the
+  // @deliberate: in stub mode `runAgent` short-circuits before spawning the CLI, so the
   // runner is never reached and we leave both transports to lazily build
   // their default. In real mode, when `RIMSKY_EXECUTOR_CLAUDE_BINARY` is
   // set, build the runner here once and inject the same instance into both

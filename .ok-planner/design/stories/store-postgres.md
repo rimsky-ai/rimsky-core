@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As an operator wiring a workflow whose claims persist in PostgreSQL, I can use the bundled `store-postgres` claim-producer to acquire row-locking claims via configurable pick policies, opt into atomic staging (staging schema swap at Commit), declare verifier checks including `row_count_ratio` over aggregate-only queries, and subscribe to declared error classes (`pg/claim_unavailable`, `pg/swap_failed`), so that I have a postgres-backed store that delivers staged-async semantically rather than as a no-op.
+As an operator wiring a workflow whose claims persist in PostgreSQL, I can use the bundled postgres store to acquire row-locking claims via configurable pick policies, opt into atomic staging (staging schema swap at commit), declare verifier checks including a row-count-ratio check over aggregate-only queries, and subscribe to declared error classes (postgres-side claim-unavailable, swap-failed, and per-check verifier-failed classes), so that I have a postgres-backed store that delivers staged-async semantically rather than as a no-op.
 
 ## Capability
 
-Bundled `store-postgres` claim-producer: row-locking claims with configurable pick policies; atomic staging-schema swap at Commit; `row_count_ratio` verifier check on aggregate-only queries; declared error classes (`pg/claim_unavailable`, `pg/swap_failed`, `pg/verifier_check_failed/*`).
+The bundled postgres store (see `concept:claim-producer`): row-locking claims with configurable pick policies; atomic staging-schema swap at commit; row-count-ratio verifier check on aggregate-only queries; declared error classes covering postgres-side claim-unavailable, swap-failed, and per-check verifier-failed conditions.
 
 ## Business value
 
@@ -19,11 +19,11 @@ Operators get a postgres-backed store delivering staged-async semantically — n
 
 ## Acceptance
 
-A template referencing `store-postgres`: `Open` with staged write-semantics creates/reserves a staging schema queryable through the store's observability; the executor writes rows to staging; `Commit` performs an atomic schema swap; a swap collision emits `pg/swap_failed` routable through `error_types`; a verifier check declaring `row_count_ratio` with bounds compiles and executes as an aggregate-only query, surfacing `pg/verifier_check_failed/row_count_ratio` on out-of-bounds; an empty pick policy queue emits `pg/claim_unavailable`.
+A template referencing the bundled postgres store: an open call with staged write-semantics creates or reserves a staging schema queryable through the store's observability; the executor writes rows to staging; a commit call performs an atomic schema swap; a swap collision emits a swap-failed error class routable through the error-type policy; a verifier check declaring row-count-ratio with bounds compiles and executes as an aggregate-only query, surfacing the per-check verifier-failed error class on out-of-bounds; an empty pick policy queue emits a claim-unavailable error class.
 
 ## Falsifier
 
-Atomic-staging schema is created but Commit doesn't atomically swap, OR `row_count_ratio` runs a non-aggregate query, OR `pg/swap_failed` is emitted as a generic error class, OR `pg/claim_unavailable` doesn't fire on a real empty-queue Open.
+Atomic-staging schema is created but commit doesn't atomically swap, OR the row-count-ratio check runs a non-aggregate query, OR the swap-failed condition surfaces as a generic error class, OR the claim-unavailable condition doesn't fire on a real empty-queue open.
 
 ## Proof
 

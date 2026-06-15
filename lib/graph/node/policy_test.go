@@ -35,14 +35,16 @@ func TestRetryIncrementsCounter(t *testing.T) {
 	}
 	r1 := Evaluate(policy, initialState(), "boom", nil)
 	require.Equal(t, "retry", r1.Kind)
-	require.Equal(t, 100, r1.DelayMs) // linear, attemptIndex 0 → base*1
+	// @deliberate: linear backoff, attemptIndex 0 → base*1.
+	require.Equal(t, 100, r1.DelayMs)
 	require.Equal(t, 1, r1.NewState.RetryCounter)
 	require.Equal(t, 0, r1.NewState.ActionIndex)
 	require.Equal(t, "boom", r1.NewState.CurrentErrorClass)
 
 	r2 := Evaluate(policy, r1.NewState, "boom", nil)
 	require.Equal(t, "retry", r2.Kind)
-	require.Equal(t, 200, r2.DelayMs) // linear, attemptIndex 1 → base*2
+	// @deliberate: linear backoff, attemptIndex 1 → base*2.
+	require.Equal(t, 200, r2.DelayMs)
 	require.Equal(t, 2, r2.NewState.RetryCounter)
 }
 
@@ -101,7 +103,8 @@ func TestDifferentErrorClassResetsCounters(t *testing.T) {
 	require.Equal(t, "retry", r2.Kind)
 	require.Equal(t, 1, r2.NewState.RetryCounter)
 	require.Equal(t, "other", r2.NewState.CurrentErrorClass)
-	require.Equal(t, 100, r2.DelayMs) // first-attempt delay, not boom continuation
+	// @deliberate: first-attempt delay, not boom continuation.
+	require.Equal(t, 100, r2.DelayMs)
 }
 
 func TestPolicyExhaustedFallsThroughToGiveUp(t *testing.T) {
@@ -115,9 +118,9 @@ func TestPolicyExhaustedFallsThroughToGiveUp(t *testing.T) {
 		}},
 	}
 	state := initialState()
-	r1 := Evaluate(policy, state, "boom", nil) // retry fires
+	r1 := Evaluate(policy, state, "boom", nil)
 	state = r1.NewState
-	r2 := Evaluate(policy, state, "boom", nil) // retry exhausted, no next action
+	r2 := Evaluate(policy, state, "boom", nil)
 	require.Equal(t, "give_up", r2.Kind)
 	require.Equal(t, "policy_exhausted", r2.Reason)
 }
@@ -201,7 +204,7 @@ func TestBackoffJitterConsumesRng(t *testing.T) {
 	calls := 0
 	rng := func() float64 {
 		calls++
-		return 0.5 // → 0.5 + 0.5 = 1.0 multiplier → delay unchanged
+		return 0.5
 	}
 	r1 := Evaluate(policy, initialState(), "boom", rng)
 	require.Equal(t, "retry", r1.Kind)

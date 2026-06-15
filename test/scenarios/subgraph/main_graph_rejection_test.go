@@ -32,7 +32,7 @@ func TestMainGraphWithEntryRejected(t *testing.T) {
 		FrameResolutionMode: node.FrameResolutionCoalesce,
 		Graphs: []tmplspec.GraphSpec{
 			{
-				// main MUST NOT declare entry or exit; the validator
+				// @constraint: main MUST NOT declare entry or exit; the validator
 				// enforces this with the subgraph_main_has_entry_or_exit
 				// rejection class.
 				Name:  tmplspec.MainGraphName,

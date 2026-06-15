@@ -2,9 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Conformance suite for persistence.APIKeyTable. Driver-agnostic;
-// invoked by the per-driver test wrappers.
-//
 // @concept: api-key
 
 package conformance
@@ -34,7 +31,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 
-	// Insert + GetByID round-trip.
 	t.Run("InsertGetByID", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_test_one"))
@@ -59,7 +55,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
-	// GetByName returns only active rows.
 	t.Run("GetByName_Active", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_test_active"))
@@ -71,7 +66,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if err != nil || !ok || got.ID != id {
 			t.Fatalf("GetByName active: err=%v ok=%v got.ID=%v", err, ok, got.ID)
 		}
-		// Mark revoked → GetByName returns false.
 		mustMarkRevoked(t, ctx, tables, keys, id, now)
 		_, ok, err = keys.GetByName(ctx, "active-only", nil)
 		if err != nil {
@@ -82,7 +76,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
-	// GetByHash returns rows regardless of active status.
 	t.Run("GetByHash_AllStatuses", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_test_byhash"))
@@ -90,12 +83,10 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 			ID: id, KeyHash: hash[:], Name: "by-hash",
 			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now,
 		})
-		// Active row.
 		got, ok, err := keys.GetByHash(ctx, hash[:], nil)
 		if err != nil || !ok || got.ID != id {
 			t.Fatalf("GetByHash active: err=%v ok=%v", err, ok)
 		}
-		// Revoke and re-fetch — GetByHash still finds it.
 		mustMarkRevoked(t, ctx, tables, keys, id, now)
 		got, ok, err = keys.GetByHash(ctx, hash[:], nil)
 		if err != nil || !ok || got.RevokedAt == nil {
@@ -103,7 +94,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
-	// List filters revoked, glob name.
 	t.Run("List_GlobAndRevoked", func(t *testing.T) {
 		var liveIDs []shared.UUID
 		for i, name := range []string{"alpha", "alphabet", "beta"} {
@@ -117,7 +107,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 			liveIDs = append(liveIDs, id)
 		}
 		mustMarkRevoked(t, ctx, tables, keys, liveIDs[1], now)
-		// Excluding revoked.
 		got, err := keys.List(ctx, false, "alpha*", nil)
 		if err != nil {
 			t.Fatalf("List: %v", err)
@@ -125,7 +114,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if len(got) != 1 || got[0].Name != "alpha" {
 			t.Fatalf("List excl-revoked: got %d rows (%+v)", len(got), names(got))
 		}
-		// Including revoked.
 		got, err = keys.List(ctx, true, "alpha*", nil)
 		if err != nil {
 			t.Fatalf("List incl-revoked: %v", err)
@@ -135,9 +123,8 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
-	// ActiveCount predicate.
 	t.Run("ActiveCount", func(t *testing.T) {
-		// Reset by revoking everything in the table.
+		// @deliberate: ActiveCount's predicate is global, not test-scoped, so prior subtests' rows must be revoked before counting.
 		all, err := keys.List(ctx, true, "", nil)
 		if err != nil {
 			t.Fatalf("list: %v", err)
@@ -151,7 +138,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if err != nil || n != 0 {
 			t.Fatalf("ActiveCount empty: n=%d err=%v", n, err)
 		}
-		// One active.
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_active_count"))
 		mustInsert(t, ctx, tables, keys, persistence.APIKey{
@@ -162,7 +148,7 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if err != nil || n != 1 {
 			t.Fatalf("ActiveCount after insert: n=%d err=%v", n, err)
 		}
-		// Future expiry still active.
+		// @constraint: future-expiry must still count as active.
 		idFuture := uuid.New()
 		exp := now.Add(1 * time.Hour)
 		hash = sha256Of([]byte("rk_future_exp"))
@@ -174,12 +160,12 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if err != nil || n != 2 {
 			t.Fatalf("ActiveCount after future-exp: n=%d err=%v", n, err)
 		}
-		// Past expiry: not active.
+		// @constraint: past-expiry must drop the row from the active count.
 		n, err = keys.ActiveCount(ctx, now.Add(2*time.Hour), nil)
 		if err != nil || n != 1 {
 			t.Fatalf("ActiveCount after expiry passes: n=%d err=%v", n, err)
 		}
-		// In-grace (revoke_at in the future) is still active.
+		// @constraint: a row in rotation-grace (revoke_at > now, revoked_at NULL) counts as active.
 		idGrace := uuid.New()
 		future := now.Add(1 * time.Hour)
 		hash = sha256Of([]byte("rk_in_grace"))
@@ -191,17 +177,14 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if err != nil || n != 3 {
 			t.Fatalf("ActiveCount with in-grace: n=%d err=%v", n, err)
 		}
-		// Past-grace: revoke_at <= now → not active.
+		// @constraint: once revoke_at <= now, the row drops out of the active count even before the sweep flips revoked_at.
 		n, err = keys.ActiveCount(ctx, future.Add(time.Second), nil)
 		if err != nil || n != 1 {
 			t.Fatalf("ActiveCount past-grace: n=%d err=%v", n, err)
 		}
 	})
 
-	// MarkRevoked is idempotent and distinguishes (changed, found)
-	// so handleRevokeKey can avoid emitting a duplicate
-	// auth.key_revoked when a prior caller (typically the rotation-
-	// grace sweep) revoked first.
+	// @agent-contract: MarkRevoked returns (changed, found) so callers (handleRevokeKey) can suppress duplicate auth.key_revoked emissions when the rotation-grace sweep revoked first.
 	t.Run("MarkRevoked_Idempotent", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_idem"))
@@ -209,24 +192,20 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 			ID: id, KeyHash: hash[:], Name: "idem-revoke",
 			Permissions: []byte(`[{"action":"*"}]`), CreatedAt: now,
 		})
-		// First call: mutates the row → (changed=true, found=true).
 		changed, found, err := keys.MarkRevoked(ctx, id, now, nil)
 		if err != nil || !changed || !found {
 			t.Fatalf("MarkRevoked first: changed=%v found=%v err=%v (want true,true,nil)", changed, found, err)
 		}
-		// Second call: row exists but already revoked → (changed=false, found=true).
 		changed, found, err = keys.MarkRevoked(ctx, id, now, nil)
 		if err != nil || changed || !found {
 			t.Fatalf("MarkRevoked second (already revoked): changed=%v found=%v err=%v (want false,true,nil)", changed, found, err)
 		}
-		// Nonexistent row → (changed=false, found=false, err=nil).
 		changed, found, err = keys.MarkRevoked(ctx, uuid.New(), now, nil)
 		if err != nil || changed || found {
 			t.Fatalf("MarkRevoked missing: changed=%v found=%v err=%v (want false,false,nil)", changed, found, err)
 		}
 	})
 
-	// SetRevokeAt + SweepRotationGrace.
 	t.Run("SweepRotationGrace", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_sweep"))
@@ -251,7 +230,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if !found {
 			t.Fatalf("expected swept to include id; got %+v", swept)
 		}
-		// Idempotent re-sweep.
 		swept2, err := keys.SweepRotationGrace(ctx, now, nil)
 		if err != nil {
 			t.Fatalf("Sweep2: %v", err)
@@ -261,16 +239,14 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 				t.Fatalf("re-sweep should not return already-revoked row")
 			}
 		}
-		// Verify the row is now revoked.
 		got, _, err := keys.GetByID(ctx, id, nil)
 		if err != nil || got.RevokedAt == nil {
 			t.Fatalf("post-sweep row: err=%v revoked_at=%v", err, got.RevokedAt)
 		}
 	})
 
-	// Unique-name partial index.
+	// @constraint: name uniqueness is enforced via a partial unique index gated on revoke_at IS NULL, so rotation can stage a new row before sweeping the old one.
 	t.Run("UniqueNameDuringRotation", func(t *testing.T) {
-		// Two active inserts with the same name → second errors.
 		hash1 := sha256Of([]byte("rk_dup_a"))
 		hash2 := sha256Of([]byte("rk_dup_b"))
 		mustInsert(t, ctx, tables, keys, persistence.APIKey{
@@ -286,9 +262,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		if !errors.Is(err, persistence.ErrAPIKeyNameTaken) {
 			t.Fatalf("expected ErrAPIKeyNameTaken; got %v", err)
 		}
-		// Rotation flow: set revoke_at on the first row, then insert
-		// the second — should succeed (the first drops out of the
-		// partial unique-name index).
 		oldID := getActiveIDByName(t, ctx, keys, "dup")
 		future := now.Add(1 * time.Hour)
 		err = tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -305,7 +278,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 
-	// Tx rollback semantics.
 	t.Run("Transaction_Rollback", func(t *testing.T) {
 		id := uuid.New()
 		hash := sha256Of([]byte("rk_rollback"))
@@ -331,8 +303,6 @@ func TestAPIKeys(t *testing.T, d persistence.Database) {
 		}
 	})
 }
-
-// helpers --------------------------------------------------------------
 
 func sha256Of(b []byte) [32]byte { return sha256.Sum256(b) }
 

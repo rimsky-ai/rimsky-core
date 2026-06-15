@@ -80,10 +80,10 @@ func TestCLIWatch_ChronologicalAcrossSources(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The stub executor must be reachable on the shared network before
-	// rimsky/all starts — the control-api fires a Capabilities handshake
-	// against declared executors at startup. Network first, then the
-	// executor peer, then rimsky on the baked SQLite default.
+	// @constraint: stub executor must be reachable on the shared network
+	// before rimsky/all starts — the control-api fires a Capabilities
+	// handshake against declared executors at startup. Network first, then
+	// the executor peer, then rimsky on the baked SQLite default.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartExecutorStubOnNetwork(ctx, t, netName, "executor-stub")
 
@@ -93,18 +93,17 @@ func TestCLIWatch_ChronologicalAcrossSources(t *testing.T) {
 		harness.WithExecutor("stub", "executor-stub:9300"),
 	)
 
-	// A single executor node carrying an attributes block. The stub returns
-	// Success, so once the breakpoint is resumed the node settles and
-	// (terminate_after_run) the instance terminates, ending the watch loop.
-	//
-	// The node carries an `attributes:` block: this is the canonical shape
-	// every breakpoint scenario exercises (the in-process pause-resume
-	// scenario gives its worker the same `{ok: boolean, readOnly}` schema),
-	// so the gate's interleaved sequence rides the most-trodden dispatch
-	// path. (The before_dispatch checkpoint also fires on an attribute-less
-	// node — see the breakpoints-scenario regression that pins that — but the
-	// attributed shape keeps this watch gate on the canonical path rather than
-	// an edge case.)
+	// @deliberate: a single executor node carrying an attributes block. The
+	// stub returns Success, so once the breakpoint is resumed the node
+	// settles and (terminate_after_run) the instance terminates, ending the
+	// watch loop. The `attributes:` block is the canonical shape every
+	// breakpoint scenario exercises (the in-process pause-resume scenario
+	// gives its worker the same `{ok: boolean, readOnly}` schema), so the
+	// gate's interleaved sequence rides the most-trodden dispatch path. (The
+	// before_dispatch checkpoint also fires on an attribute-less node — see
+	// the breakpoints-scenario regression that pins that — but the
+	// attributed shape keeps this watch gate on the canonical path rather
+	// than an edge case.)
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "cli-watch-chronological",
@@ -128,66 +127,62 @@ func TestCLIWatch_ChronologicalAcrossSources(t *testing.T) {
 		},
 	})
 
-	// Create the instance PAUSED so the breakpoint can be installed before any
-	// dispatch, and terminate_after_run so the post-resume settle terminates
-	// the instance and watch exits cleanly.
+	// @deliberate: instance is created PAUSED so the breakpoint can be
+	// installed before any dispatch, and terminate_after_run so the
+	// post-resume settle terminates the instance and watch exits cleanly.
 	instanceID := createWatchPausedInstance(t, ep, templateID, "ck-watch-chronological")
 
-	// Install a pause-mode breakpoint on the worker's before_dispatch
-	// checkpoint. before_dispatch runs AFTER the acquire-phase `work_started`
-	// event and BEFORE the dispatch's settle events, so the recorded hit's
-	// timestamp falls strictly between an earlier event and the later events —
-	// exactly the interleaving the story requires.
+	// @deliberate: pause-mode breakpoint on the worker's before_dispatch
+	// checkpoint. before_dispatch runs AFTER the acquire-phase
+	// `work_started` event and BEFORE the dispatch's settle events, so the
+	// recorded hit's timestamp falls strictly between an earlier event and
+	// the later events — exactly the interleaving the story requires.
 	bpID := createWatchBreakpoint(t, ep, instanceID)
 
-	// Resume the instance: the supervisor now claims the node, appends
-	// `work_started`, reaches before_dispatch, records the hit (a
-	// breakpoint.hit row on /events), and BLOCKS on pause mode.
+	// @deliberate: resuming the instance now drives the supervisor to claim
+	// the node, append `work_started`, reach before_dispatch, record the
+	// hit (a breakpoint.hit row on /events), and BLOCK on pause mode.
 	if status, raw := ep.PostJSON(t, "/v1/instances/"+instanceID+"/resume", map[string]any{}); status != http.StatusOK {
 		t.Fatalf("POST /instances/%s/resume: %d %s", instanceID, status, string(raw))
 	}
 
-	// Run watch in a goroutine with stdout captured. The capture holds the
-	// package stdout-swap lock for the whole watch lifetime (RunWatch streams
-	// until the instance terminates), so no other CLI capture interleaves.
+	// @constraint: watch runs in a goroutine with stdout captured. The
+	// capture holds the package stdout-swap lock for the whole watch
+	// lifetime (RunWatch streams until the instance terminates), so no
+	// other CLI capture interleaves.
 	watch := startWatchCapture(t, ctx, ep.BaseURL, instanceID)
 
-	// Wait until the supervisor has actually reached the checkpoint and
-	// recorded a hit (the pause is now blocking the dispatch). Only then
-	// resume the breakpoint — this guarantees the hit is durably between the
-	// pre-dispatch and post-dispatch events before the node proceeds.
+	// @constraint: wait until the supervisor has actually reached the
+	// checkpoint and recorded a hit (the pause is now blocking the
+	// dispatch). Only then resume the breakpoint — this guarantees the hit
+	// is durably between the pre-dispatch and post-dispatch events before
+	// the node proceeds.
 	hitID := waitForWatchBreakpointHit(t, ep, instanceID, 60*time.Second)
 
-	// While the dispatch is held at the pause-mode breakpoint, inject an
-	// admin invalidate against the worker node. This routes through
-	// `runtime.InvalidateNode`, which appends `operator_override` +
+	// @deliberate: while the dispatch is held at the pause-mode breakpoint,
+	// inject an admin invalidate against the worker node. This routes
+	// through `runtime.InvalidateNode`, which appends `operator_override` +
 	// `message_emitted` events onto the SAME /events stream — timestamped
 	// strictly AFTER the hit (the hit is already durably recorded above)
-	// and strictly BEFORE the post-resume settle events (the dispatch
-	// is still blocked). The invalidate uses `frame: "next"` so it
-	// enqueues a separate frame rather than racing the in-flight dispatch;
+	// and strictly BEFORE the post-resume settle events (the dispatch is
+	// still blocked). The invalidate uses `frame: "next"` so it enqueues a
+	// separate frame rather than racing the in-flight dispatch;
 	// terminate_after_run will terminate the instance after the running
-	// frame settles, so the newly-enqueued frame never runs and the
-	// watch loop still exits cleanly. The injection exhibits the
-	// message-activity interleaving the story names — without it, the
-	// feed would only carry node-lifecycle / breakpoint kinds and the
-	// "message activity in chronological order" acceptance clause would
-	// be untested.
-	//
-	// We protect the timestamp ordering by waiting for the hit BEFORE
-	// injecting (so message_emitted is provably after the hit) and by
-	// injecting BEFORE resuming the breakpoint (so message_emitted is
+	// frame settles, so the newly-enqueued frame never runs and the watch
+	// loop still exits cleanly. The injection exhibits the
+	// message-activity interleaving the story names — without it, the feed
+	// would only carry node-lifecycle / breakpoint kinds and the "message
+	// activity in chronological order" acceptance clause would be
+	// untested. Timestamp ordering is protected by waiting for the hit
+	// BEFORE injecting (so message_emitted is provably after the hit) and
+	// by injecting BEFORE resuming the breakpoint (so message_emitted is
 	// provably before the post-resume state_transition that the cascade
 	// emits during settle propagation).
 	workerNodeID := resolveWorkerNodeID(t, ep, instanceID, "worker")
 	injectAdminInvalidate(t, ep, workerNodeID, "watch-chronological-interleave")
 
-	// Resume the breakpoint hit: the node dispatches, settles, and
-	// terminate_after_run terminates the instance — which makes watch's
-	// terminal check fire and the loop return.
 	resumeWatchBreakpoint(t, ep, instanceID, bpID, hitID)
 
-	// Watch must exit cleanly once the instance terminates.
 	stdout := watch.wait(t, 90*time.Second)
 
 	assertWatchFeedChronological(t, stdout)
@@ -223,8 +218,6 @@ func startWatchCapture(t *testing.T, ctx context.Context, baseURL, instanceID st
 
 	wc := &watchCapture{out: make(chan string, 1), code: make(chan int, 1)}
 
-	// Reader goroutine: drain the pipe until the writer end closes (which
-	// happens after RunWatch returns and we restore os.Stdout).
 	readDone := make(chan string, 1)
 	go func() {
 		var b strings.Builder
@@ -241,8 +234,6 @@ func startWatchCapture(t *testing.T, ctx context.Context, baseURL, instanceID st
 		readDone <- b.String()
 	}()
 
-	// Watch goroutine: run the real verb, then restore os.Stdout, close the
-	// writer (unblocking the reader), release the lock, and publish results.
 	go func() {
 		code := cli.RunWatch(ctx, []string{
 			"--endpoint", baseURL,
@@ -354,8 +345,6 @@ func waitForWatchBreakpointHit(t *testing.T, ep harness.RimskyEndpoint, instance
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
-	// Diagnostics on timeout: dump instance, node, breakpoint, and events so a
-	// real sequencing defect is visible without re-running.
 	_, instRaw := ep.GetJSON(t, "/v1/instances/"+instanceID, "")
 	_, nodeRaw := ep.GetJSON(t, "/v1/observability/nodes/"+instanceID+"/worker", "")
 	_, bpRaw := ep.GetJSON(t, "/v1/instances/"+instanceID+"/breakpoints", "")
@@ -394,9 +383,9 @@ func injectAdminInvalidate(t *testing.T, ep harness.RimskyEndpoint, nodeID, reas
 	status, raw := ep.PostJSON(t,
 		"/v1/nodes/"+nodeID+"/invalidate",
 		map[string]any{"reason": reason, "frame": "next"})
-	// The handler returns 202 Accepted on success; treat any 2xx as success
-	// (the load-bearing assertion is on the events the call appended, not
-	// the status code itself).
+	// @deliberate: handler returns 202 Accepted on success; treat any 2xx
+	// as success — the load-bearing assertion is on the events the call
+	// appended, not the status code itself.
 	if status < 200 || status >= 300 {
 		t.Fatalf("POST /v1/nodes/%s/invalidate: %d %s", nodeID, status, string(raw))
 	}
@@ -413,10 +402,13 @@ func injectAdminInvalidate(t *testing.T, ep harness.RimskyEndpoint, nodeID, reas
 // so field[0] is the timestamp, field[1] the source, and (event rows only)
 // field[2] the kind. The breakpoint.hit unified onto /events surfaces as an
 // event-source row whose kind is "breakpoint.hit".
+// @constraint: source is one of "event" | "breakpoint.hit" | "terminal";
+// kind is populated only for event-source rows (the event Kind such as
+// work_started).
 type watchFeedLine struct {
 	ts     time.Time
-	source string // "event" | "breakpoint.hit" | "terminal"
-	kind   string // event-source rows only: the event Kind (e.g. work_started)
+	source string
+	kind   string
 	raw    string
 }
 
@@ -454,21 +446,22 @@ func assertWatchFeedChronological(t *testing.T, stdout string) {
 		t.Fatalf("rimsky watch printed no parseable timestamped lines; stdout:\n%s", stdout)
 	}
 
-	// 0. The hit must appear exactly once — as its /events row (source=event,
-	//    kind=breakpoint.hit), never ALSO as a pending-hits-route row
-	//    (source=breakpoint.hit). watch drains /events alone, so a
-	//    source=breakpoint.hit line would mean the redundant pending-hits
-	//    read came back and the hit is double-rendered.
+	// @constraint: hit must appear exactly once — as its /events row
+	// (source=event, kind=breakpoint.hit), never ALSO as a pending-hits-route
+	// row (source=breakpoint.hit). watch drains /events alone, so a
+	// source=breakpoint.hit line would mean the redundant pending-hits read
+	// came back and the hit is double-rendered.
 	for _, l := range lines {
 		if l.source == "breakpoint.hit" {
 			t.Fatalf("watch feed contains a pending-hits-route row (source=breakpoint.hit) — the hit is double-rendered; watch must drain /events alone\nfull feed:\n%s", stdout)
 		}
 	}
 
-	// 1. The whole feed must be timestamp-monotonic (timestamp-faithful, not
-	//    source-grouped). This is the load-bearing anti-regression: if watch
-	//    drained-and-printed each source as its own batch, a hit timestamped
-	//    before a later-printed event would break monotonicity here.
+	// @constraint: the whole feed must be timestamp-monotonic
+	// (timestamp-faithful, not source-grouped). Load-bearing
+	// anti-regression: if watch drained-and-printed each source as its own
+	// batch, a hit timestamped before a later-printed event would break
+	// monotonicity here.
 	for i := 1; i < len(lines); i++ {
 		if lines[i].ts.Before(lines[i-1].ts) {
 			t.Fatalf("watch feed is NOT timestamp-ordered: line %d (%s, %s) precedes line %d (%s, %s) in print order but is later in time — output is source-grouped, not chronological\nfull feed:\n%s",
@@ -478,13 +471,14 @@ func assertWatchFeedChronological(t *testing.T, stdout string) {
 		}
 	}
 
-	// 2. Anchor on the breakpoint hit as it appears on the unified /events
-	//    stream (the source the story's "single timestamp-ordered /events
-	//    stream" names), then prove a GENUINE (non-hit) event sits on each
-	//    side of it by printed order. Using the /events-sourced hit row (not
-	//    the redundant breakpoint-hits-route row) and requiring NON-hit
-	//    events on both sides is what makes this a real interleaving proof —
-	//    a duplicate of the same hit cannot satisfy either bracket.
+	// @constraint: anchor on the breakpoint hit as it appears on the
+	// unified /events stream (the source the story's "single
+	// timestamp-ordered /events stream" names), then prove a GENUINE
+	// (non-hit) event sits on each side of it by printed order. Using the
+	// /events-sourced hit row (not the redundant breakpoint-hits-route
+	// row) and requiring NON-hit events on both sides is what makes this a
+	// real interleaving proof — a duplicate of the same hit cannot satisfy
+	// either bracket.
 	hitIdx := -1
 	for i, l := range lines {
 		if l.isBreakpointHitEventRow() {
@@ -513,11 +507,12 @@ func assertWatchFeedChronological(t *testing.T, stdout string) {
 			beforeEvent != nil, afterEvent != nil, stdout)
 	}
 
-	// 3. Timestamp-faithfulness: the hit's own timestamp must fall between the
-	//    bracketing events' timestamps. The monotonic check (1) already
-	//    forbids a print-order violation, but pinning the hit's timestamp
-	//    strictly inside [before, after] proves the ordering is driven by the
-	//    real recorded times, not an accident of source-drain order.
+	// @constraint: timestamp-faithfulness — the hit's own timestamp must
+	// fall between the bracketing events' timestamps. The monotonic check
+	// above already forbids a print-order violation, but pinning the hit's
+	// timestamp strictly inside [before, after] proves the ordering is
+	// driven by the real recorded times, not an accident of source-drain
+	// order.
 	hitTS := lines[hitIdx].ts
 	if hitTS.Before(beforeEvent.ts) || afterEvent.ts.Before(hitTS) {
 		t.Fatalf("breakpoint.hit timestamp %s is not within [%s, %s] of its bracketing events — ordering is not timestamp-faithful\nfull feed:\n%s",
@@ -527,21 +522,22 @@ func assertWatchFeedChronological(t *testing.T, stdout string) {
 			stdout)
 	}
 
-	// 4. Message-activity interleaving: the admin invalidate injected during
-	//    the paused window must have produced a `message_emitted` event row
-	//    on the unified /events feed, printed AFTER the breakpoint.hit row
-	//    and BEFORE the post-resume node-lifecycle row (a `state_transition`
-	//    or `work_completed` event the cascade walk emits during settle).
-	//    This is the "node lifecycle transitions, breakpoint hits, message
-	//    activity, and supervisor decisions in true chronological order
-	//    across kinds" clause of STORY-event-log-read's Acceptance: the
-	//    bracket from (3) only proves event-source vs hit-source ordering,
-	//    while this clause proves three distinct event KINDS (hit, message,
-	//    lifecycle) appear interleaved by timestamp rather than grouped by
-	//    kind. A kind-grouped renderer (e.g. one that drained the feed by
-	//    kind and printed each batch in order) would fail this check the
-	//    moment message_emitted printed adjacent to other message kinds
-	//    rather than between the hit and the lifecycle event.
+	// @constraint: message-activity interleaving — the admin invalidate
+	// injected during the paused window must have produced a
+	// `message_emitted` event row on the unified /events feed, printed
+	// AFTER the breakpoint.hit row and BEFORE the post-resume
+	// node-lifecycle row (a `state_transition` or `work_completed` event
+	// the cascade walk emits during settle). This is the "node lifecycle
+	// transitions, breakpoint hits, message activity, and supervisor
+	// decisions in true chronological order across kinds" clause of
+	// STORY-event-log-read's Acceptance: the prior bracket only proves
+	// event-source vs hit-source ordering, while this clause proves three
+	// distinct event KINDS (hit, message, lifecycle) appear interleaved by
+	// timestamp rather than grouped by kind. A kind-grouped renderer (e.g.
+	// one that drained the feed by kind and printed each batch in order)
+	// would fail this check the moment message_emitted printed adjacent to
+	// other message kinds rather than between the hit and the lifecycle
+	// event.
 	messageIdx := -1
 	for i := hitIdx + 1; i < len(lines); i++ {
 		if lines[i].source == "event" && lines[i].kind == "message_emitted" {
@@ -553,14 +549,15 @@ func assertWatchFeedChronological(t *testing.T, stdout string) {
 		t.Fatalf("watch feed has no `message_emitted` event row after the breakpoint.hit — the admin invalidate injected during the paused window did not surface as a message-activity event on the unified /events feed\nfull feed:\n%s", stdout)
 	}
 
-	// The lifecycle row must be a post-resume node-state transition emitted
-	// by the cascade walk at settle. `state_transition` (cascade) or
-	// `work_completed` (acquire-side terminal) are the canonical kinds; any
-	// non-hit, non-message event row strictly after the message row is
-	// accepted so a future runtime that surfaces a different terminal kind
-	// (e.g. `claim_resolved` / `lock_released`) does not falsely fail the
-	// gate. The story's load-bearing claim is "three distinct kinds appear
-	// in chronological order", not "exactly these named kinds".
+	// @constraint: lifecycle row must be a post-resume node-state
+	// transition emitted by the cascade walk at settle. `state_transition`
+	// (cascade) or `work_completed` (acquire-side terminal) are the
+	// canonical kinds; any non-hit, non-message event row strictly after
+	// the message row is accepted so a future runtime that surfaces a
+	// different terminal kind (e.g. `claim_resolved` / `lock_released`)
+	// does not falsely fail the gate. The story's load-bearing claim is
+	// "three distinct kinds appear in chronological order", not "exactly
+	// these named kinds".
 	lifecycleIdx := -1
 	for i := messageIdx + 1; i < len(lines); i++ {
 		if lines[i].source == "event" && lines[i].kind != "breakpoint.hit" && lines[i].kind != "message_emitted" && lines[i].kind != "message_received" && lines[i].kind != "operator_override" {
@@ -572,12 +569,12 @@ func assertWatchFeedChronological(t *testing.T, stdout string) {
 		t.Fatalf("watch feed has no post-message non-message event row — the post-resume settle did not surface a node-lifecycle event after `message_emitted`, so the three-kind chronological interleaving cannot be proven\nfull feed:\n%s", stdout)
 	}
 
-	// Timestamp-faithfulness on the message bracket: the message_emitted
-	// timestamp must fall strictly within (hitTS, lifecycleTS]. The
-	// monotonic check (1) already forbids print-order violations, but
-	// pinning the message's timestamp inside (hitTS, lifecycleTS] proves
-	// the interleaving is driven by real recorded times rather than a
-	// drain-order accident.
+	// @constraint: timestamp-faithfulness on the message bracket — the
+	// message_emitted timestamp must fall strictly within (hitTS,
+	// lifecycleTS]. The monotonic check above already forbids print-order
+	// violations, but pinning the message's timestamp inside (hitTS,
+	// lifecycleTS] proves the interleaving is driven by real recorded
+	// times rather than a drain-order accident.
 	messageTS := lines[messageIdx].ts
 	lifecycleTS := lines[lifecycleIdx].ts
 	if messageTS.Before(hitTS) || lifecycleTS.Before(messageTS) {
@@ -609,7 +606,7 @@ func parseWatchFeed(stdout string) []watchFeedLine {
 		}
 		ts, err := time.Parse(time.RFC3339, strings.TrimSpace(fields[0]))
 		if err != nil {
-			// Some sources may print sub-second RFC3339Nano; accept that too.
+			// @deliberate: some sources print sub-second RFC3339Nano; accept that too.
 			ts, err = time.Parse(time.RFC3339Nano, strings.TrimSpace(fields[0]))
 			if err != nil {
 				continue
@@ -619,7 +616,7 @@ func parseWatchFeed(stdout string) []watchFeedLine {
 		if source != "event" && source != "breakpoint.hit" && source != "terminal" {
 			continue
 		}
-		// For event-source rows the kind is field[2]
+		// @constraint: for event-source rows the kind is field[2]
 		// (printWatchEvent: "<ts>\tevent\t<kind>\t<detail>").
 		kind := ""
 		if source == "event" && len(fields) >= 3 {
@@ -627,9 +624,9 @@ func parseWatchFeed(stdout string) []watchFeedLine {
 		}
 		out = append(out, watchFeedLine{ts: ts, source: source, kind: kind, raw: raw})
 	}
-	// Defensive: print order is already feed order; this sort is a no-op on a
-	// correctly-ordered feed and only documents the invariant the monotonic
-	// check enforces on the un-sorted print order.
+	// @deliberate: print order is already feed order; this sort check is a
+	// no-op on a correctly-ordered feed and only documents the invariant
+	// the monotonic check enforces on the un-sorted print order.
 	_ = sort.SliceIsSorted(out, func(i, j int) bool { return out[i].ts.Before(out[j].ts) })
 	return out
 }

@@ -28,7 +28,7 @@ func TestGiveUp(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Stub always errors with class "my_err".
+	// @constraint: Stub always errors with class "my_err".
 	h.Stub.WhenType("flaky").Error("my_err", map[string]any{"hint": "boom"})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -52,7 +52,6 @@ func TestGiveUp(t *testing.T) {
 	n := h.FindNode(iid, "flaky")
 	require.NotNil(t, n)
 
-	// Eventually retries exhaust and node transitions to failed.
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFailed, 30*time.Second),
 		"flaky did not reach failed after exhausting retries")
 }

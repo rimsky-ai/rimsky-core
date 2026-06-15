@@ -81,9 +81,9 @@ func TestDeepMergeJSON(t *testing.T) {
 			want: map[string]any{"items": []any{9.0}},
 		},
 		{
-			// Operators can realistically swap shapes: change a list to
-			// an object or vice versa. Verify documented behaviour
-			// (over wins) holds in both directions.
+			// @deliberate: operators can realistically swap shapes (list ↔ object);
+			// cover both directions to verify the documented over-wins behavior
+			// holds symmetrically.
 			name: "shape mismatch — array base, map override → map wins",
 			base: map[string]any{"k": []any{1.0, 2.0}},
 			over: map[string]any{"k": map[string]any{"x": 1.0}},

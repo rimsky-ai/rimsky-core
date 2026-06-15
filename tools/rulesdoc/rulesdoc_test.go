@@ -35,14 +35,14 @@ func TestRulesDoc_CitedPathsExist(t *testing.T) {
 	}
 	content := string(raw)
 
-	// --- Part 1: every cited repo-relative path must exist on disk. ---
-	// The Search Scoping section lists ignore-globs to EXCLUDE from file
-	// searches (e.g. `vendor/`, `tmp/`) — conventional patterns that need not
-	// exist in any given checkout, not paths the document instructs a
-	// contributor to run against. Drop that line before the existence scan so a
-	// correct ignore-glob is never flagged as a dead path. (Drift in that
-	// section's executor-prefix entries is still caught by the Part-2 negative
-	// contract below, which is the designated mechanism for that correction.)
+	// @deliberate: Part 1 — every cited repo-relative path must exist
+	// on disk. The Search Scoping section lists ignore-globs to EXCLUDE
+	// from file searches (e.g. `vendor/`, `tmp/`) — conventional
+	// patterns that need not exist in any given checkout, not paths the
+	// document instructs a contributor to run against. Drop that line
+	// before the existence scan so a correct ignore-glob is never
+	// flagged as a dead path. (Drift in that section's executor-prefix
+	// entries is still caught by the Part-2 negative contract below.)
 	scannable := dropSearchScopingLine(content)
 	var missing []string
 	seen := map[string]bool{}
@@ -60,18 +60,19 @@ func TestRulesDoc_CitedPathsExist(t *testing.T) {
 			len(missing), strings.Join(missing, ", "))
 	}
 
-	// --- Part 2: the specific positive/negative accuracy contract. ---
-	// Positive: the rebuild instruction must name the real mechanism.
+	// @deliberate: Part 2 — positive accuracy contract: the rebuild
+	// instruction must name the real mechanism.
 	if !strings.Contains(content, "make core-images") {
 		t.Errorf("rules.md must instruct the image rebuild via `make core-images`, but that token is absent")
 	}
 
-	// Negative: none of the currently-dead references may remain.
+	// @deliberate: negative accuracy contract — none of the
+	// currently-dead references may remain in rules.md.
 	deadRefs := []string{
-		"deploy/build-images.sh",             // rules.md:20 — absent deploy/ path
-		"deploy/docker-compose.yml",          // rules.md:20 — absent deploy/ path
-		"`executors/claude-agent",            // rules.md:21,46 — bare prefix; real tree is lib/services/executors/...
-		"docs/2026-04-25-stores-redesign.md", // rules.md:51 — absent docs/ path
+		"deploy/build-images.sh",
+		"deploy/docker-compose.yml",
+		"`executors/claude-agent",
+		"docs/2026-04-25-stores-redesign.md",
 	}
 	for _, ref := range deadRefs {
 		if strings.Contains(content, ref) {
@@ -124,7 +125,9 @@ func looksLikeRepoPath(tok string) bool {
 	if !strings.Contains(tok, "/") {
 		return false
 	}
-	// Exclude illustrative / non-literal forms.
+	// @constraint: exclude illustrative / non-literal forms (URLs,
+	// make-targets, glob-bearing tokens) so the path-existence gate
+	// does not flag them as dead paths.
 	if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
 		return false
 	}
@@ -134,7 +137,7 @@ func looksLikeRepoPath(tok string) bool {
 	if strings.ContainsAny(tok, "*{") {
 		return false
 	}
-	// Directory ref, or a known concrete file extension.
+	// @constraint: accept directory refs or known concrete file extensions.
 	if strings.HasSuffix(tok, "/") {
 		return true
 	}
@@ -151,7 +154,7 @@ func looksLikeRepoPath(tok string) bool {
 func backtickSpans(content string) []string {
 	var spans []string
 	parts := strings.Split(content, "`")
-	// Odd indices are inside a backtick pair; even indices are outside.
+	// @constraint: odd indices are inside a backtick pair; even indices are outside.
 	for i := 1; i < len(parts); i += 2 {
 		spans = append(spans, parts[i])
 	}

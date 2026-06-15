@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// effectiveCallbackHostPort is the single source of truth for both the
+// TestEffectiveCallbackHostPort is the single source of truth for both the
 // callback_url handed to executors and the host:port persisted to
 // rimsky_supervisors. These cases pin the preference order and guard the
 // invariant that the persisted row carries a dialable address (never the
@@ -64,7 +64,7 @@ func TestEffectiveCallbackHostPort(t *testing.T) {
 	}
 }
 
-// The URL handed to executors and the host:port written to the supervisor
+// TestAdvertisedURLMatchesPersistedHostPort URL handed to executors and the host:port written to the supervisor
 // row must agree — they are derived from the same helper, so a peer reading
 // the row reconstructs the exact callback base URL.
 func TestAdvertisedURLMatchesPersistedHostPort(t *testing.T) {

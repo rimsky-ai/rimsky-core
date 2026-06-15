@@ -78,8 +78,8 @@ func TestAwaitTerminal_SyncTerminalReturnedDirectly(t *testing.T) {
 }
 
 func TestAwaitTerminal_AsyncAccepted_NoCallbacksReturnsAsIs(t *testing.T) {
-	// env.Callbacks == nil → AwaitAsyncCallback is returned as-is rather
-	// than being followed.
+	// @deliberate: Env.Callbacks == nil → AwaitAsyncCallback is returned
+	// as-is rather than being followed.
 	stream := &fakeStream{events: []*genv1.ExecuteEvent{
 		awaitAsyncEvent("ack-x"),
 	}}
@@ -110,8 +110,8 @@ func TestAwaitTerminal_AsyncAccepted_FollowsCallbackToTerminal(t *testing.T) {
 	}}
 	env := Env{Callbacks: r}
 
-	// POST the synthesized terminal in the background once AwaitTerminal
-	// has started waiting on the receiver channel.
+	// @deliberate: POST the synthesized terminal in the background once
+	// AwaitTerminal has started waiting on the receiver channel.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		body, _ := json.Marshal(map[string]any{
@@ -145,10 +145,10 @@ func TestAwaitTerminal_AsyncAccepted_FollowsCallbackToTerminal(t *testing.T) {
 }
 
 func TestAwaitTerminal_AsyncAccepted_PreRegisteredCallbackArrivesEarly(t *testing.T) {
-	// Cover the race window: the executor's callback POST arrives BEFORE
-	// AwaitTerminal extracts the ack_id and calls Register. The receiver's
-	// handle() pre-creates the channel and buffers the event; Register
-	// returns the same channel and the event delivers immediately.
+	// @deliberate: cover the race window where the executor's callback POST
+	// arrives BEFORE AwaitTerminal extracts the ack_id and calls Register —
+	// the receiver's handle() pre-creates the channel and buffers the event;
+	// Register returns the same channel and the event delivers immediately.
 	r, err := StartCallbackReceiver()
 	if err != nil {
 		t.Fatalf("StartCallbackReceiver: %v", err)

@@ -25,10 +25,9 @@ func TestValidIdent(t *testing.T) {
 		{"items_42", true},
 		{"a", true},
 		{"_underscore_lead", true},
-		// Empty / non-identifier forms.
 		{"", false},
-		{"42items", false}, // leading digit
-		{"Items", false},   // uppercase
+		{"42items", false},
+		{"Items", false},
 		{"my-table", false},
 		{"my.table", false},
 		{"my table", false},

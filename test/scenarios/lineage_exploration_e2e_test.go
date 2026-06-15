@@ -113,7 +113,7 @@ import (
 func TestLineageExploration(t *testing.T) {
 	t.Parallel()
 
-	// Remote stub store advertising the ClaimProducer surface with
+	// @deliberate: Remote stub store advertising the ClaimProducer surface with
 	// SupportsSplitScope so the fan-out partition request decodes into
 	// per-key sub-claims. The fixture's Commit path writes a
 	// claim_terminal lineage row through the engine's
@@ -141,13 +141,15 @@ func TestLineageExploration(t *testing.T) {
 		},
 	})
 
-	// Per-node executor scripts: each Success terminal causes a leaf-run
+	// @deliberate: Per-node executor scripts: each Success terminal causes a leaf-run
 	// lineage row to be written, with substitution_refs populated from
 	// the directive layer at terminal time.
 	h.Stub.WhenType("producer").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("consumer").Success(map[string]any{"out": "done"}, true, "done")
 
-	// Template:
+	// @deliberate: the template is shaped to exercise both walkers in one
+	// run — descendant traversal via fan-out `parent_run_id` links and
+	// ancestor traversal via substitution-driven `substitution_refs`:
 	//   - `producer` fans out into two partition children (a, b). Each
 	//     child carries `parent_run_id = <producer-parent.run_id>` so the
 	//     descendant walker can find them via `record->>'parent_run_id'`.
@@ -185,7 +187,7 @@ func TestLineageExploration(t *testing.T) {
 					Type:     "consumer",
 					Executor: "stub",
 				},
-				// Explicit subscription on producer's terminal/* — fan-out
+				// @deliberate: Explicit subscription on producer's terminal/* — fan-out
 				// parents emit terminal cascades to subscribers when the
 				// aggregation policy settles, regardless of whether the
 				// attribute-substitution-derived auto-subscription wakes the
@@ -200,7 +202,7 @@ func TestLineageExploration(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// `source: "{{nodes.producer.attribute.ok}}"`
+						// @deliberate: `source: "{{nodes.producer.attribute.ok}}"`
 						// drives substitution_refs population on the
 						// consumer's leaf-run lineage row at terminal time
 						// (CollectSubstitutionRefsForEmit looks up the
@@ -211,7 +213,6 @@ func TestLineageExploration(t *testing.T) {
 							"type":   "boolean",
 							"source": "{{nodes.producer.attribute.ok}}",
 						},
-						// `out` is the executor-write-back slot.
 						"out": map[string]any{"type": "string", "readOnly": true},
 					},
 				}),
@@ -225,7 +226,7 @@ func TestLineageExploration(t *testing.T) {
 	consumerNode := h.FindNode(iid, "consumer")
 	require.NotNil(t, consumerNode, "consumer node missing on the instance")
 
-	// Wait for the lineage records to actually land in the projection.
+	// @deliberate: Wait for the lineage records to actually land in the projection.
 	// The producer's parent run and the per-partition children each write
 	// a leaf-run row at terminal; the consumer writes its own leaf-run row
 	// after it dispatches via the cascade from producer's terminal.
@@ -243,7 +244,7 @@ func TestLineageExploration(t *testing.T) {
 		t.Fatalf("the real assembled product must write leaf_run lineage rows for the producer (>=2 partition children) and the consumer (>=1 row); see dumped rows above")
 	}
 
-	// Look up the producer's PARENT fan-out run-id — the row whose
+	// @deliberate: Look up the producer's PARENT fan-out run-id — the row whose
 	// record.parent_run_id is empty/null (the top-level producer run on
 	// the main RunScope). The fan-out child rows carry
 	// parent_run_id = <this id>, so this is the seed for the descendant
@@ -253,13 +254,13 @@ func TestLineageExploration(t *testing.T) {
 	require.NotEqual(t, "", producerParentRunID,
 		"the producer's parent fan-out run-id must be discoverable from the leaf_run projection")
 
-	// The consumer's leaf-run row carries the substitution_refs the
+	// @constraint: The consumer's leaf-run row carries the substitution_refs the
 	// ancestor walker reads. Pick the most recent consumer run-id.
 	consumerRunID := mostRecentConsumerRunID(t, h, iid, consumerNode.ID)
 	require.NotEqual(t, "", consumerRunID,
 		"the consumer's leaf-run id must be discoverable from the leaf_run projection")
 
-	// Wait for the consumer's substitution_refs to include a
+	// @deliberate: Wait for the consumer's substitution_refs to include a
 	// `source_kind="run"` entry citing the producer's parent run. The
 	// lineage writer's `CollectSubstitutionRefsForEmit` looks up the
 	// most recent leaf-run for the upstream node — which can be the
@@ -272,12 +273,6 @@ func TestLineageExploration(t *testing.T) {
 	}, 30*time.Second, 200*time.Millisecond,
 		"the consumer's lineage row must carry a substitution_refs entry citing one of the producer's runs (source_kind=run); without this the ancestor walk has no link to follow")
 
-	// =========================================================================
-	// (1) GET /v1/lineage/runs/{consumer_run_id} — the seed-row surface
-	//     returns the consumer's leaf-run lineage row. We use the
-	//     consumer's run-id (not the producer's fan-out parent id, which
-	//     is the dispatch aggregator and has no leaf_run row of its own).
-	// =========================================================================
 	{
 		url := h.ControlBase + "/v1/lineage/runs/" + consumerRunID
 		status, body := httpGetJSON(t, url)
@@ -290,13 +285,10 @@ func TestLineageExploration(t *testing.T) {
 		require.Equal(t, consumerRunID, rec["run_id"])
 	}
 
-	// =========================================================================
-	// (2) LOAD-BEARING FALSIFIER LEG: GET /v1/lineage/runs/
-	//     {producer_parent_run_id}/descendants — the per-partition child
-	//     runs the supervisor REALLY dispatched must surface in the
-	//     descendants set (each child has parent_run_id linking back to
-	//     the producer parent).
-	// =========================================================================
+	// @constraint: LOAD-BEARING FALSIFIER LEG: the per-partition child
+	// runs the supervisor REALLY dispatched must surface in the
+	// descendants set (each child has parent_run_id linking back to
+	// the producer parent).
 	{
 		url := h.ControlBase + "/v1/lineage/runs/" + producerParentRunID + "/descendants?depth=3"
 		status, body := httpGetJSON(t, url)
@@ -305,14 +297,14 @@ func TestLineageExploration(t *testing.T) {
 		require.NoError(t, json.Unmarshal(body, &out))
 		descendants, ok := out["descendants"].([]any)
 		require.True(t, ok, "descendants array present")
-		// At LEAST the two fan-out partition children (a, b) must appear.
+		// @constraint: At LEAST the two fan-out partition children (a, b) must appear.
 		// The descendants set is BFS-level-bounded; depth=3 covers the
 		// child level (the children themselves have no further fan-out
 		// descendants in this template, so the set tops out at the
 		// children).
 		require.GreaterOrEqual(t, len(descendants), 2,
 			"descendants of producer parent must include the >=2 real fan-out child runs (one per partition); falsifier brief: 'a real downstream consumer is missing from the descendant walk'")
-		// Each descendant must be a leaf-run row with parent_run_id =
+		// @constraint: Each descendant must be a leaf-run row with parent_run_id =
 		// producer parent — pinning that the descendants are the real
 		// children, not unrelated rows leaked through a broken predicate.
 		for _, d := range descendants {
@@ -325,13 +317,10 @@ func TestLineageExploration(t *testing.T) {
 		}
 	}
 
-	// =========================================================================
-	// (3) LOAD-BEARING FALSIFIER LEG: GET /v1/lineage/runs/
-	//     {consumer_run_id}/ancestors — the producer's run the consumer
-	//     ACTUALLY substituted from must surface in the ancestors set
-	//     (consumer's substitution_refs cite producer's run via
-	//     source_kind="run").
-	// =========================================================================
+	// @constraint: LOAD-BEARING FALSIFIER LEG: the producer's run the
+	// consumer ACTUALLY substituted from must surface in the ancestors
+	// set (consumer's substitution_refs cite producer's run via
+	// source_kind="run").
 	{
 		url := h.ControlBase + "/v1/lineage/runs/" + consumerRunID + "/ancestors?depth=3"
 		status, body := httpGetJSON(t, url)
@@ -342,7 +331,7 @@ func TestLineageExploration(t *testing.T) {
 		require.True(t, ok, "ancestors array present")
 		require.GreaterOrEqual(t, len(ancestors), 1,
 			"ancestors of consumer run must include >=1 producer-node run (the upstream the consumer cited via {{nodes.producer.attribute.ok}}); falsifier brief: 'a real upstream producer is missing from the ancestor walk'")
-		// At least one ancestor row must be a producer-node leaf-run.
+		// @constraint: At least one ancestor row must be a producer-node leaf-run.
 		// The seed must NOT appear in its own ancestor set.
 		producerNodeIDStr := producerNode.ID.String()
 		consumerSeenAsAncestor := false
@@ -367,12 +356,6 @@ func TestLineageExploration(t *testing.T) {
 			"the producer node must appear in the consumer's ancestors set; the consumer's substitution_refs cited the producer's run as source_kind=run and the walker must follow that link")
 	}
 
-	// =========================================================================
-	// (4) GET /v1/lineage/claims/{claim_handle_id} — the producer's
-	//     committed claim handle id seeds the claim-pivot surface. The
-	//     runtime's WriteClaimTerminalLineage wrote a claim_terminal row
-	//     at the producer's claim Commit; the surface returns it.
-	// =========================================================================
 	claimHandleID := mostRecentClaimHandleID(t, h, iid)
 	require.NotEqual(t, "", claimHandleID,
 		"the producer's committed claim handle id must be discoverable from rimsky_claim_handles")
@@ -398,16 +381,13 @@ func TestLineageExploration(t *testing.T) {
 	}, 60*time.Second, 200*time.Millisecond,
 		"GET /v1/lineage/claims/{claim_handle_id} must return the claim_terminal lineage row the engine wrote on the producer's claim Commit")
 
-	// =========================================================================
-	// (5) GET /v1/lineage/by-source/run/{producer_run_id} — the
-	//     reverse-lookup pivot. The consumer's substitution_refs cite a
-	//     producer-node run via `source_kind="run",
-	//     source_version_or_id=<producer-run-id>`. The pivot must return
-	//     the consumer's lineage row when seeded with the cited
-	//     producer-node run-id.
-	// =========================================================================
+	// @constraint: the reverse-lookup pivot — the consumer's
+	// substitution_refs cite a producer-node run via
+	// `source_kind="run", source_version_or_id=<producer-run-id>`,
+	// and the pivot must return the consumer's lineage row when seeded
+	// with the cited producer-node run-id.
 	{
-		// The substitution_refs population helper picks the MOST RECENT
+		// @deliberate: The substitution_refs population helper picks the MOST RECENT
 		// producer-node leaf-run row; we discover which one the consumer
 		// actually cited (so the test pins the real link rather than
 		// guessing).
@@ -422,7 +402,7 @@ func TestLineageExploration(t *testing.T) {
 		require.NoError(t, json.Unmarshal(body, &out))
 		records, ok := out["records"].([]any)
 		require.True(t, ok, "by-source records array present")
-		// At least one record (the consumer's) must surface, because the
+		// @constraint: At least one record (the consumer's) must surface, because the
 		// consumer cited this producer-node run via substitution_refs.
 		consumerSurfaced := false
 		for _, r := range records {
@@ -441,12 +421,6 @@ func TestLineageExploration(t *testing.T) {
 			"by-source pivot on the cited producer run-id must surface the consumer's lineage row (the consumer's substitution_refs cite this producer run); without this the reverse pivot is broken")
 	}
 
-	// =========================================================================
-	// (6) GET /v1/lineage/by-producer/{producer_name} — returns the
-	//     claim_terminal rows whose record.producer_name matches. The
-	//     producer's durable claim Commit wrote one such row keyed on the
-	//     remote stub store's producer_name.
-	// =========================================================================
 	require.Eventually(t, func() bool {
 		url := h.ControlBase + "/v1/lineage/by-producer/" + producerName
 		status, body := httpGetJSON(t, url)
@@ -465,7 +439,7 @@ func TestLineageExploration(t *testing.T) {
 	}, 60*time.Second, 200*time.Millisecond,
 		"by-producer pivot must return >=1 claim_terminal record for the producer-store name; without this the named-producer pivot is broken")
 
-	// Final diagnostic dump confirming the test really exercised the
+	// @deliberate: Final diagnostic dump confirming the test really exercised the
 	// full topology (producer parent + 2 fan-out children + consumer +
 	// claim_terminal rows). On a green run this prints the produced
 	// rows; on a red run the failed assertion above prints first.
@@ -561,7 +535,6 @@ func consumerCitesAProducerRun(
 	consumerRunID string,
 ) bool {
 	t.Helper()
-	// Collect producer-node leaf-run run-ids in the instance.
 	producerRunIDs := map[string]bool{}
 	rows, err := h.Pool.Query(h.Ctx, `
 		SELECT record->>'run_id'
@@ -585,7 +558,7 @@ func consumerCitesAProducerRun(
 	if len(producerRunIDs) == 0 {
 		return false
 	}
-	// Inspect the consumer's row for substitution_refs[].source_kind="run".
+	// @deliberate: Inspect the consumer's row for substitution_refs[].source_kind="run".
 	var recordJSON []byte
 	row := h.Pool.QueryRow(h.Ctx, `
 		SELECT record
@@ -745,7 +718,7 @@ func waitForLineageReady(
 			   AND instance_id = $1
 			   AND record->>'node_id' = $2
 		`, []any{mustUUID(instanceID.String()), consumerNodeID.String()}, &nConsumer)
-		// The producer is a fan-out with 2 partitions; each partition
+		// @deliberate: The producer is a fan-out with 2 partitions; each partition
 		// child emits its own leaf_run row but the parent fan-out run
 		// itself doesn't emit a leaf_run (it's the dispatch aggregator,
 		// not a leaf). So we expect >=2 producer rows (the children) and

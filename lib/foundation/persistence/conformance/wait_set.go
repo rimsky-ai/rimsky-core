@@ -2,14 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// wait_set.go — WaitSetTable conformance fixture. Exercises the methods
-// against both drivers (postgres + sqlite). See the subscription-cascade
-// spec at .ok-planner/specs/2026-05-14-subscription-cascade-and-quality-of-life-design.md
-// and the per-run attribute pull spec at
-// .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md for
-// the mark-don't-delete-on-drain semantics.
-//
-//	@concept: wait-set
+// @concept: wait-set
+// @spec: 2026-05-14-subscription-cascade-and-quality-of-life-design
+// @spec: 2026-05-20-attribute-pull-resolution-design
 package conformance
 
 import (
@@ -27,10 +22,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// Seed three additional nodes so we have a (receiver, sender) pair plus
-	// a third unrelated sender. Post-stage-5, rimsky_wait_set is keyed by
-	// run id, so each node also gets a pending run row enqueued via the
-	// per-area helper.
 	receiverID := uuid.New()
 	senderAID := uuid.New()
 	senderBID := uuid.New()
@@ -61,8 +52,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	senderARunID := seedConformanceRunForNode(ctx, t, d, senderAID, fix.FrameID)
 	senderBRunID := seedConformanceRunForNode(ctx, t, d, senderBID, fix.FrameID)
 
-	// Insert wait-set rows: receiver waits on senderA (state, direct) and
-	// senderB (attribute, instance with filter).
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
@@ -71,7 +60,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		}, tx); err != nil {
 			return err
 		}
-		// Duplicate insert is idempotent.
+		// @constraint: duplicate Insert is idempotent — same (frame, receiver, sender, topic) key collapses.
 		if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
 			FrameID: fix.FrameID, ReceiverRunID: receiverRunID,
 			SenderRunID: senderARunID,
@@ -90,7 +79,6 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		t.Fatalf("wait_set insert: %v", err)
 	}
 
-	// ListForReceiver returns both rows.
 	var byReceiver []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.WaitSet().ListForReceiver(ctx, fix.FrameID, receiverRunID, tx)
@@ -102,14 +90,12 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 	if len(byReceiver) != 2 {
 		t.Fatalf("ListForReceiver: got %d rows want 2 (idempotent insert should not duplicate)", len(byReceiver))
 	}
-	// Before draining, both rows should have DrainedAt == nil.
 	for _, r := range byReceiver {
 		if r.DrainedAt != nil {
 			t.Fatalf("ListForReceiver: pre-drain row has DrainedAt != nil: %+v", r)
 		}
 	}
 
-	// ListForFrame returns the same two rows.
 	var byFrame []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.WaitSet().ListForFrame(ctx, fix.FrameID, tx)
@@ -122,8 +108,9 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		t.Fatalf("ListForFrame: got %d rows want 2", len(byFrame))
 	}
 
-	// MarkDrainedBySender(senderA) marks the state-direct row drained
-	// but retains it (the row's DrainedAt becomes non-nil).
+	// @constraint: MarkDrainedBySender(senderA) MUST mark the
+	// state-direct row drained but RETAIN it — the row's DrainedAt
+	// becomes non-nil; the row itself stays in the table.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderARunID, tx)
 	}); err != nil {
@@ -162,7 +149,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		t.Fatalf("senderB row: DrainedAt non-nil before drain")
 	}
 
-	// Idempotency: re-marking does not advance senderA's drained_at.
+	// @constraint: re-calling MarkDrainedBySender for an already-drained sender MUST NOT advance drained_at.
 	priorDrainedAt := *senderADrained.DrainedAt
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderARunID, tx)
@@ -186,7 +173,9 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// MarkDrainedBySender(senderB) drains the remainder.
+	// @constraint: MarkDrainedBySender(senderB) drains the remainder
+	// of the wait-set; combined with the senderA drain above the
+	// frame becomes fully drained.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return store.WaitSet().MarkDrainedBySender(ctx, fix.FrameID, senderBRunID, tx)
 	}); err != nil {
@@ -209,8 +198,7 @@ func testWaitSet(t *testing.T, d persistence.Database) {
 		}
 	}
 
-	// ListDrainedAttributeRowsForReceiver: should return only the
-	// attribute-topic row (senderB), since senderA's row is state-kind.
+	// @constraint: ListDrainedAttributeRowsForReceiver MUST filter to topic_kind=attribute, excluding state-kind rows.
 	var drainedAttrs []persistence.WaitSetRow
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		rows, err := store.WaitSet().ListDrainedAttributeRowsForReceiver(ctx, fix.FrameID, receiverRunID, tx)

@@ -76,10 +76,10 @@ func Run(ctx context.Context, cfg Config, grpcLis, httpLis, adminLis net.Listene
 	}
 	if cfg.EnableExecutor {
 		genv1.RegisterExecutorServer(grpcSrv, NewExecutorServer(st))
-		// 2026-05-23 signal-taxonomy Pass 6: surface the verifier
-		// executor's hierarchical error vocabulary via the executor
-		// observability handshake so operator templates'
-		// `error_types:` keys can be range-checked at registration.
+		// @constraint: the verifier executor's hierarchical error vocabulary
+		// must be surfaced via the executor observability handshake so
+		// operator templates' `error_types:` keys can be range-checked at
+		// registration time.
 		genv1.RegisterExecutorObservabilityServer(grpcSrv, NewExecutorObservabilityServer())
 	}
 	obsSrv := srv.RegisterObservability(grpcSrv)
@@ -173,10 +173,11 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 		return nil, err
 	}
 	if !outcome.Available {
-		// Carry the producer-declared acquisition-failure class (e.g.
-		// pg/claim_unavailable) on the Unavailable arm so rimsky keys the
-		// operator's `error_types:` chain on it. Empty when the store named
-		// no class — preserving the synthetic `acquire/unavailable` routing.
+		// @constraint: carry the producer-declared acquisition-failure class
+		// (e.g. pg/claim_unavailable) on the Unavailable arm so rimsky keys
+		// the operator's `error_types:` chain on it. Empty when the store
+		// named no class — preserving the synthetic `acquire/unavailable`
+		// routing.
 		return &genv1.OpenResponse{
 			Result: &genv1.OpenResponse_Unavailable{Unavailable: &genv1.Unavailable{
 				ErrorClass: outcome.UnavailableClass,

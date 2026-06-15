@@ -34,7 +34,7 @@ const handshakeTimeout = 30 * time.Second
 // there, whereas the observability service may be split onto a
 // dedicated observability endpoint.
 type Prober interface {
-	// peerName is the operator-configured peer name from rimsky.yml —
+	// @constraint: peerName is the operator-configured peer name from rimsky.yml —
 	// threaded into the dial so required-mode TLS failures name the
 	// peer the operator configured, not just the endpoint string.
 	ProbeExecutor(ctx context.Context, peerName, endpoint, tlsMode string) (*ObservabilityCapabilities, error)
@@ -88,7 +88,7 @@ func (gRPCProber) ProbeStoreDeclaredErrorClasses(ctx context.Context, peerName, 
 	if err != nil {
 		return nil, err
 	}
-	// Defensive copy: the cache must own a stable snapshot.
+	// @constraint: defensive copy: the cache must own a stable snapshot.
 	return append([]string(nil), resp.GetDeclaredErrorClasses()...), nil
 }
 
@@ -96,10 +96,11 @@ func executorCapsFromProto(r *genv1.ObservabilityCapabilities) *ObservabilityCap
 	if r == nil {
 		return nil
 	}
-	// Defensive copy of the expected_attributes_schema bytes: r.GetExpectedAttributesSchema()
-	// returns the proto's underlying slice, which the gRPC layer may
-	// reuse or mutate after this call. Cloning here gives the cache a
-	// stable snapshot that survives the proto's lifetime.
+	// @constraint: defensive copy of the expected_attributes_schema bytes:
+	// r.GetExpectedAttributesSchema() returns the proto's underlying slice,
+	// which the gRPC layer may reuse or mutate after this call. Cloning
+	// here gives the cache a stable snapshot that survives the proto's
+	// lifetime.
 	var schema []byte
 	if rs := r.GetExpectedAttributesSchema(); len(rs) > 0 {
 		schema = append([]byte(nil), rs...)
@@ -169,7 +170,7 @@ func customUIFromProto(r *genv1.CustomUI) *CustomUI {
 // blocking-dial wrappers and is not honored by NewClient itself.
 func dial(_ context.Context, peerName, endpoint, tlsMode string) (*grpc.ClientConn, error) {
 	target := stripScheme(endpoint)
-	// Required-mode failures must name the configured peer (the name
+	// @constraint: required-mode failures must name the configured peer (the name
 	// the operator can find in rimsky.yml), with the endpoint beside it
 	// for dial-target context.
 	label := peerName
@@ -288,7 +289,7 @@ func probeStoreEntry(ctx context.Context, prober Prober, s PeerSpec, log *slog.L
 	probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	caps, err := prober.ProbeStore(probeCtx, s.Name, probe, s.TLS)
 	cancel()
-	// Producer-declared error-class vocabulary (ClaimProducer.Capabilities
+	// @constraint: producer-declared error-class vocabulary (ClaimProducer.Capabilities
 	// on the PRIMARY endpoint — the service the runtime dials, which may
 	// differ from the observability endpoint probed above). Runs
 	// regardless of the observability probe's outcome: the template
@@ -386,7 +387,7 @@ func (d *Discovery) refreshAll(ctx context.Context, log *slog.Logger) {
 		wg.Add(1)
 		go func(e PeerEntry) {
 			defer wg.Done()
-			// Route through probeStoreEntry (the same path the startup
+			// @constraint: route through probeStoreEntry (the same path the startup
 			// handshake uses) so the refresh re-captures the producer-
 			// declared error-class vocabulary instead of wiping it.
 			d.SetStore(probeStoreEntry(ctx, d.prober, PeerSpec{

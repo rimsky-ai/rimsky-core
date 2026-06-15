@@ -330,9 +330,6 @@ func TestClient_ListEvents(t *testing.T) {
 	}
 }
 
-// (TestClient_AdminForceFire retired by the 2026-05-15 plan B10 / D7
-// / E16 schedule-retirement cascade.)
-
 func TestClient_Health(t *testing.T) {
 	srv := helperServer(t, http.MethodGet, "/v1/health", nil, http.StatusOK,
 		map[string]any{"status": "ok", "supervisors": []any{}, "node_counts": map[string]int{"fresh": 0}},

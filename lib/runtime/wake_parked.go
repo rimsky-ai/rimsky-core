@@ -77,7 +77,6 @@ func UnifiedInvalidate(ctx context.Context, args InvalidateArgs, supervisorID st
 		return err
 	}
 	if target == nil {
-		// Target not found — nothing to do.
 		if args.Logger != nil {
 			args.Logger.Debug("UnifiedInvalidate: target not found",
 				"node_id", args.TargetNodeID.String())
@@ -93,7 +92,6 @@ func UnifiedInvalidate(ctx context.Context, args InvalidateArgs, supervisorID st
 	case cascade.NodeStateRunning:
 		return ErrInvalidateRunning
 	default:
-		// fresh / stale / failed → frame-engine invalidate.
 		return InvalidateNode(ctx, args)
 	}
 }
@@ -108,9 +106,9 @@ func UnifiedInvalidate(ctx context.Context, args InvalidateArgs, supervisorID st
 // runner's SelectCandidates picks up phase='pending' rows and the
 // standard ready sweep re-enqueues stale nodes.
 func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistence.NodeRow, supervisorID string, reason WakeReason) error {
-	// `target.RunScopeID` (when set) addresses the specific parked run
-	// row via its RunScope. Without one, no in-flight row exists for
-	// this node — nothing to wake.
+	// @constraint: target.RunScopeID (when set) addresses the specific
+	// parked run row via its RunScope. Without one, no in-flight row
+	// exists for this node — nothing to wake.
 	if target.RunScopeID == nil {
 		return nil
 	}
@@ -120,8 +118,8 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 		return fmt.Errorf("wakeParkedNode: GetParkedByNode: %w", err)
 	}
 	if parked == nil {
-		// Race: the node is parked but the node-run row has been
-		// reaped or the parked status is in transition.
+		// @constraint: race — the node is parked but the node-run row
+		// has been reaped or the parked status is in transition.
 		if args.Logger != nil {
 			args.Logger.Warn("wakeParkedNode: no parked node-run row found",
 				"node_id", target.ID.String())
@@ -134,11 +132,11 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 			return err
 		}
 		if !resumed {
-			// Row already moved out of parked (raced); nothing to do.
 			return nil
 		}
-		// Thread targetRunScopeID so fan-out children's parked → stale
-		// transition lands on this run row rather than a sibling.
+		// @constraint: thread targetRunScopeID so fan-out children's
+		// parked → stale transition lands on this run row rather than a
+		// sibling.
 		if err := args.Persist.Nodes().UpdateState(ctx, target.ID, targetRunScopeID,
 			cascade.NodeStateStale, cascade.ReasonHandlerResume, nil, tx); err != nil {
 			return err
@@ -156,10 +154,10 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 		}, tx); err != nil {
 			return err
 		}
-		// Pessimistic-invalidate per spec Piece 1: parked → stale is
-		// the sender's invalidation in this frame (parked is settled).
-		// Gate downstream subscribers so they don't dispatch with
-		// stale upstream data while the woken sender re-runs.
+		// @constraint: pessimistic-invalidate per spec Piece 1 — parked →
+		// stale is the sender's invalidation in this frame (parked is
+		// settled). Gate downstream subscribers so they don't dispatch
+		// with stale upstream data while the woken sender re-runs.
 		//
 		//	@concept: cascade
 		//	@concept: wait-set
@@ -207,7 +205,7 @@ func wakeParkedReceiverInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	receiver persistence.NodeRow, frameID shared.UUID,
 ) error {
-	// Under RunScope-first the parked-row resolver keys on
+	// @constraint: under RunScope-first the parked-row resolver keys on
 	// (node_id, run_scope_id). Without a projected RunScope on the
 	// receiver, no parked row can exist for this node — return early.
 	if receiver.RunScopeID == nil {
@@ -219,53 +217,51 @@ func wakeParkedReceiverInTx(
 		return fmt.Errorf("wakeParkedReceiverInTx: GetParkedByNode: %w", err)
 	}
 	if parked == nil {
-		// Race: the receiver is parked but the node-run row is in
-		// transition. The cascade walker's MarkStaleForCascade path is
-		// the Phase B recovery surface; bail out cleanly here.
+		// @constraint: race — the receiver is parked but the node-run row
+		// is in transition. The cascade walker's MarkStaleForCascade path
+		// is the Phase B recovery surface; bail out cleanly here.
 		return nil
 	}
 	resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, "cascade_wake")
 	if err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: ResumeParkedInTx: %w", err)
 	}
-	// Stamp node.frame_id unconditionally. After ResumeParkedInTx
-	// transitioned the parked run to pending, an in-flight run row
-	// exists for this node, so MarkStaleForCascade's NOT EXISTS guard
-	// rejects and it does NOT touch node.frame_id — using SetFrameID
-	// directly is the stamp the eligibility-predicate JOIN
-	// (`w.frame_id = n.frame_id`) requires. Without it, the wait-set
-	// blocker the cascade walker inserts at the new frame is invisible
-	// to ListReadyForDispatch and the woken receiver dispatches without
-	// waiting.
+	// @constraint: stamp node.frame_id unconditionally. After
+	// ResumeParkedInTx transitioned the parked run to pending, an
+	// in-flight run row exists for this node, so MarkStaleForCascade's
+	// NOT EXISTS guard rejects and it does NOT touch node.frame_id —
+	// using SetFrameID directly is the stamp the eligibility-predicate
+	// JOIN (`w.frame_id = n.frame_id`) requires. Without it, the
+	// wait-set blocker the cascade walker inserts at the new frame is
+	// invisible to ListReadyForDispatch and the woken receiver dispatches
+	// without waiting.
 	if err := args.Persist.Nodes().SetFrameID(ctx, receiver.ID, &frameID, tx); err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: stamp node.frame_id: %w", err)
 	}
-	// Rebind the resumed run row's frame_id so receiver-side
+	// @constraint: rebind the resumed run row's frame_id so receiver-side
 	// GetInFlightRunForNode(node, frameID) resolves it. Done before the
 	// !resumed early-return so the (rare) raced-into-pending case
 	// (deadline sweep concurrently transitioned parked → pending) also
 	// gets the rebind — that scenario leaves an in-flight pending row
 	// at the prior parked frame that still needs migration.
 	if err := args.Queue.RebindRunFrameInTx(ctx, tx, parked.DispatchID, frameID); err != nil {
-		// Tolerate ErrRunRowMissing on the !resumed branch: the row
-		// may have been hard-deleted by orphan-reaper between our
-		// GetParkedByNode read and now. The MarkStaleForCascade call
+		// @constraint: tolerate ErrRunRowMissing on the !resumed branch
+		// — the row may have been hard-deleted by orphan-reaper between
+		// our GetParkedByNode read and now. The MarkStaleForCascade call
 		// below recovers by inserting a fresh pending stale row.
-		if !resumed && errors.Is(err, persistence.ErrRunRowMissing) {
-			// fall through
-		} else {
+		if resumed || !errors.Is(err, persistence.ErrRunRowMissing) {
 			return fmt.Errorf("wakeParkedReceiverInTx: rebind run frame: %w", err)
 		}
 	}
 	if !resumed {
-		// Already moved out of parked (raced with the deadline sweep
-		// or another cascade); skip UpdateState and the resume event
-		// to avoid double-firing. Phase B's cascade allocator handles
-		// the race-recovery affirm+mark sequence.
+		// @constraint: already moved out of parked (raced with the
+		// deadline sweep or another cascade); skip UpdateState and the
+		// resume event to avoid double-firing. Phase B's cascade
+		// allocator handles the race-recovery affirm+mark sequence.
 		return nil
 	}
-	// Thread receiverRunScopeID so the parked → stale transition
-	// disambiguates fan-out siblings.
+	// @constraint: thread receiverRunScopeID so the parked → stale
+	// transition disambiguates fan-out siblings.
 	if err := args.Persist.Nodes().UpdateState(ctx, receiver.ID, receiverRunScopeID,
 		cascade.NodeStateStale, cascade.ReasonHandlerResume, nil, tx); err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: UpdateState: %w", err)

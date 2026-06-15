@@ -74,7 +74,7 @@ func normalizePrefixes(in []string) []string {
 	for i, p := range in {
 		out[i] = strings.TrimSuffix(p, "/")
 	}
-	// Sort longest-first so the longest match wins on lookup.
+	// @constraint: sort longest-first so the longest match wins on lookup.
 	sort.SliceStable(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })
 	return out
 }
@@ -88,7 +88,6 @@ func (c *licensingConfig) classify(relPath string) classification {
 	exempt, exemptLen := matchPrefix(c.exemptEntries, relPath)
 	apache, apacheLen := matchPrefix(c.apachePrefixes, relPath)
 	agpl, agplLen := matchPrefix(c.agplPrefixes, relPath)
-	// Find the longest match across all three sets.
 	winner, winLen := classUnknown, -1
 	if exempt && exemptLen > winLen {
 		winner, winLen = classExempt, exemptLen

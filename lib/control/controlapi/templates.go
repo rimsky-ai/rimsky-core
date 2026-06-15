@@ -57,7 +57,8 @@ type templateRegisterRequest struct {
 }
 
 type templateRegisterResponse struct {
-	TemplateID string   `json:"template_id"` // content hash
+	// @constraint: TemplateID is the content hash.
+	TemplateID string   `json:"template_id"`
 	Tags       []string `json:"tags,omitempty"`
 	// ValidationWarnings carries the merged advisory set (static
 	// validator + Validation-mix-in pipeline) so warnings the system
@@ -67,7 +68,8 @@ type templateRegisterResponse struct {
 }
 
 type templateListItem struct {
-	ID           string   `json:"id"` // content hash
+	// @constraint: ID is the content hash.
+	ID           string   `json:"id"`
 	State        string   `json:"state"`
 	RegisteredAt string   `json:"registered_at"`
 	Source       string   `json:"source"`
@@ -86,7 +88,7 @@ type templateGetResponse struct {
 // registerTemplatesRoutes wires the /templates group.
 func registerTemplatesRoutes(r chi.Router, deps AppDeps) {
 	r.Post("/templates", gate(deps, "template:register", handleDeployTemplate(deps)))
-	// Static segment registered alongside the others; chi resolves the
+	// @constraint: static segment registered alongside the others; chi resolves the
 	// static `/templates/validate` ahead of the `/templates/{id}` wildcard.
 	r.Post("/templates/validate", gate(deps, "template:validate", handleValidateTemplate(deps)))
 	r.Get("/templates", gate(deps, "template:read", handleListTemplates(deps)))
@@ -126,7 +128,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		return false
 	}
 	hooks := node.RegistryHooks{
-		// Stamp the operator-set registration-time reference-validation
+		// @constraint: stamp the operator-set registration-time reference-validation
 		// mode onto the hooks so the registration path AND the
 		// POST /templates/validate path (both route through
 		// validatorHooksFor) share one operator-chosen strictness. The
@@ -145,7 +147,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 	if deps.StoreDeclaredErrorClasses != nil {
 		hooks.StoreDeclaredErrorClasses = func(name string) ([]string, bool) {
 			if isLateBind(name) {
-				// Late-bound producer: no discovery-cache entry yet; it
+				// @constraint: late-bound producer: no discovery-cache entry yet; it
 				// contributes no vocabulary at registration. Keys only it
 				// could attribute surface as advisory warnings, never
 				// rejections.
@@ -178,7 +180,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		}
 		hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
 			if isLateBind(name) {
-				// Declared, no schema cross-check — the spawned binary's
+				// @constraint: declared, no schema cross-check — the spawned binary's
 				// Capabilities supplies the schema at dispatch.
 				return nil, true
 			}
@@ -222,7 +224,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			for _, e := range res.Errors {
 				errs = append(errs, map[string]string{"path": e.Path, "msg": e.Msg})
 			}
-			// Parity with the pipeline rejection below: the warnings
+			// @constraint: parity with the pipeline rejection below: the warnings
 			// the validator computed alongside the errors ride the
 			// rejection body too, so an operator fixing the errors sees
 			// the advisories in the same pass.
@@ -233,13 +235,13 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// Static-validator advisories merge into the same
+		// @constraint: static-validator advisories merge into the same
 		// validation_warnings stream as the pipeline findings below
 		// (TD-merge-validator-warnings): a warning the validator
 		// computed must reach the response, and warnings_as_errors
 		// must trip on it exactly like a pipeline warning.
 		staticWarnings := staticWarningsToFindings(res.Warnings)
-		// Default-fill frame-resolution fields (FrameTimeoutMs == 0 →
+		// @constraint: default-fill frame-resolution fields (FrameTimeoutMs == 0 →
 		// FrameTimeoutDefaultMs). Validator is pure; the boundary handler
 		// applies defaults after validation passes so the persisted spec
 		// carries the resolved value.
@@ -253,7 +255,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// F9: Validation pipeline. After canonicalization + static-
+		// @constraint: F9: Validation pipeline. After canonicalization + static-
 		// check pass, fire `Validate` RPCs to advertising services.
 		// Errors at this step reject the registration; warnings fail
 		// only when `?warnings_as_errors=true` is set on the request.
@@ -282,7 +284,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			writeError(w, vErr)
 			return
 		}
-		// Merged advisory set: static-validator warnings first, then
+		// @constraint: merged advisory set: static-validator warnings first, then
 		// the pipeline's. Both feed the warnings_as_errors rejection
 		// gate and every response that carries validation_warnings.
 		mergedWarnings := append(staticWarnings, outcome.Warnings...)
@@ -296,7 +298,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Dry-run: validation (static + Validation mix-in pipeline)
+		// @constraint: dry-run: validation (static + Validation mix-in pipeline)
 		// has run faithfully against the registry; skip only the DB
 		// inserts. Per spec section "Synthetic response shape /
 		// template:register".
@@ -309,7 +311,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Idempotent re-register: if a row with this hash already exists,
+		// @constraint: idempotent re-register: if a row with this hash already exists,
 		// short-circuit per spec §1.5 step 1. If a tag was supplied, upsert
 		// it pointing at the existing row.
 		tGetByHash := time.Now()
@@ -342,7 +344,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Fire OnTemplateRegistered to every store referenced by the spec.
+		// @constraint: fire OnTemplateRegistered to every store referenced by the spec.
 		// Per spec §5.4 the fan-out runs synchronously before the row is
 		// inserted; on partial failure we surface a 5xx and leave the
 		// caller to retry. Carry the JCS-canonical spec bytes so
@@ -407,7 +409,7 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "read body: "+err.Error())
 			return
 		}
-		// Tag and source are accepted-but-ignored on the lint path: they
+		// @constraint: tag and source are accepted-but-ignored on the lint path: they
 		// only affect persistence, which validate-only never reaches.
 		specBody, _, _, err := decodeRegisterRequest(raw)
 		if err != nil {
@@ -418,18 +420,18 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		spec := *specBody
 		res := node.ValidateTemplate(&spec, validatorHooksFor(deps, spec))
 
-		// Project static findings into the unified {path, msg} shape.
+		// @constraint: project static findings into the unified {path, msg} shape.
 		validationErrors := make([]map[string]string, 0, len(res.Errors))
 		for _, e := range res.Errors {
 			validationErrors = append(validationErrors, map[string]string{"path": e.Path, "msg": e.Msg})
 		}
 
-		// Default-fill frame-resolution fields before the pipeline, exactly
+		// @constraint: default-fill frame-resolution fields before the pipeline, exactly
 		// as register does, so the spec the validators see matches what
 		// would be persisted.
 		node.ApplyFrameResolutionDefaults(&spec)
 
-		// CanonicalSpecHash is computed purely to feed the validation
+		// @constraint: CanonicalSpecHash is computed purely to feed the validation
 		// pipeline (validation input, not persistence). A hash error is a
 		// request-level failure.
 		hash, err := canonical.CanonicalSpecHash(spec)
@@ -456,7 +458,7 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// Merge the pipeline findings (ValidationFinding) into the unified
+		// @constraint: merge the pipeline findings (ValidationFinding) into the unified
 		// {path, msg} projection. Static-validator advisories lead the
 		// warnings array (TD-merge-validator-warnings): a warning the
 		// static validator computed must reach the response and count
@@ -597,7 +599,7 @@ func handleGetTemplate(deps AppDeps) http.HandlerFunc {
 func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idOrTag := chi.URLParam(req, "id")
-		// Resolve to (hash, isTagForm).
+		// @constraint: resolve to (hash, isTagForm).
 		isTag := !looksLikeHash(idOrTag)
 		hash, err := resolveTagOrHash(req.Context(), deps, idOrTag)
 		if err != nil {
@@ -610,7 +612,6 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 		}
 
 		if isTag {
-			// Tag-form: count remaining tags pointing at the same hash.
 			var n int
 			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 				v, err := deps.Persist.TemplateTags().CountByTemplate(ctx, hash, tx)
@@ -621,7 +622,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 				return
 			}
 			if n > 1 {
-				// Tag-only deletion validation has passed. Honor
+				// @constraint: tag-only deletion validation has passed. Honor
 				// dry-run by skipping the DELETE.
 				if WriteDryRunResponse(w, req, "would_have_deregistered", map[string]any{
 					"template_hash": hash,
@@ -640,7 +641,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 				writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "tag_only": true})
 				return
 			}
-			// last tag → fall through to template deregister.
+			// @constraint: last tag → fall through to template deregister.
 		}
 
 		var row *persistence.TemplateRow
@@ -678,7 +679,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// All validation has passed (template found, state not
+		// @constraint: all validation has passed (template found, state not
 		// 'deployed', no active instances). Dry-run skips fan-out +
 		// delete; the synthetic envelope is now an honest precursor.
 		if WriteDryRunResponse(w, req, "would_have_deregistered", map[string]any{
@@ -700,7 +701,7 @@ func handleDeleteTemplate(deps AppDeps) http.HandlerFunc {
 					return err
 				}
 			} else {
-				// Direct-hash form: drop all tags pointing at this row.
+				// @constraint: direct-hash form: drop all tags pointing at this row.
 				tags, err := deps.Persist.TemplateTags().ListByTemplate(ctx, hash, tx)
 				if err != nil {
 					return err
@@ -776,7 +777,7 @@ func handleDeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template not deployable from state "+string(row.State),
 					map[string]any{"template_hash": hash, "state": string(row.State)})
 			}
-			// Dry-run: every state validation has passed (template
+			// @constraint: dry-run: every state validation has passed (template
 			// found, state in {registered, undeployed}). Skip fan-out
 			// and the UPDATE; the synthetic envelope below is now an
 			// honest precursor to a real deploy.
@@ -897,7 +898,7 @@ func handleUndeployTemplateState(deps AppDeps) http.HandlerFunc {
 					"template has active instances",
 					map[string]any{"template_hash": hash, "active_count": active})
 			}
-			// Dry-run: every validation has passed. Skip fan-out and
+			// @constraint: dry-run: every validation has passed. Skip fan-out and
 			// the UPDATE; the synthetic envelope is now an honest
 			// precursor.
 			if isDryRun {

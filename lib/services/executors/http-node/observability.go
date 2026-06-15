@@ -30,8 +30,8 @@ const defaultStreamIdleTimeout = 5 * time.Minute
 
 // traceRecord holds the events for one dispatch plus terminal state.
 //
-// Note on @concept:inertness: the structural-inertness discipline
-// scopes Rimsky core's behavior toward attribute values on the wire.
+// @concept: inertness — the structural-inertness discipline scopes
+// Rimsky core's behavior toward attribute values on the wire.
 // Executor-supplied trace `attributes` are produced by the executor
 // itself and are fully introspectable by the executor — the
 // inertness discipline does NOT restrict an executor's freedom to
@@ -40,7 +40,8 @@ type traceRecord struct {
 	events     []*genv1.TraceEvent
 	terminal   bool
 	terminalAt time.Time
-	registered bool // true when a dispatch hook has formally claimed this id
+	// @constraint: true only when RegisterDispatch has claimed this id; AppendEvent/MarkTerminal silently no-op when false so forged dispatch ids cannot fill the ledger.
+	registered bool
 }
 
 // subscriber represents one live StreamTrace listener for a dispatch.
@@ -52,8 +53,10 @@ type traceRecord struct {
 // (capacity-1, coalescing pending wakeups), and there's no per-event
 // channel send.
 type subscriber struct {
-	wake chan struct{} // capacity 1; coalesces multiple appends
-	done chan struct{} // closed by MarkTerminal to signal terminal
+	// @constraint: capacity 1 so non-blocking send in AppendEvent coalesces multiple pending wakes — required for the never-drop event guarantee under contention.
+	wake chan struct{}
+	// @constraint: closed (not sent on) by MarkTerminal so any number of waiting subscribers unblock without coordination.
+	done chan struct{}
 }
 
 // ObservabilityServer is the http-node observability impl. Traces are
@@ -68,8 +71,7 @@ type ObservabilityServer struct {
 	traces      map[string]*traceRecord
 	subs        map[string]map[*subscriber]struct{}
 	idleTimeout time.Duration
-	// httpBridgeURL is set once at startup before the gRPC server
-	// accepts traffic; using sync.Once makes that contract loud.
+	// @constraint: set-once-at-startup before the gRPC server accepts traffic; sync.Once enforces that contract so concurrent SetHTTPBridgeURL races collapse to a single visible value.
 	httpBridgeURLOnce sync.Once
 	httpBridgeURL     string
 }
@@ -188,9 +190,7 @@ func (s *ObservabilityServer) StreamTrace(req *genv1.StreamTraceRequest, stream 
 	dispatchID := req.GetDispatchId()
 	sub, exists := s.subscribe(dispatchID)
 	if !exists {
-		// Mirror GetTrace's evicted shape: emit one trace_complete
-		// marker and close cleanly. Per spec §2.6 the snapshot and
-		// stream surfaces must agree on missing-dispatch behavior.
+		// @constraint: snapshot and stream surfaces must agree on missing-dispatch behavior per executor-observability spec §2.6 — mirror GetTrace's evicted shape with a single trace_complete marker.
 		return stream.Send(traceCompleteEvent())
 	}
 	defer s.unsubscribe(dispatchID, sub)
@@ -219,8 +219,7 @@ func (s *ObservabilityServer) StreamTrace(req *genv1.StreamTraceRequest, stream 
 		case <-stream.Context().Done():
 			return nil
 		case <-sub.done:
-			// Drain any tail events MarkTerminal made visible before
-			// closing the subscription, then emit trace_complete.
+			// @constraint: MarkTerminal may append tail events under the same lock before closing sub.done — drain them before trace_complete so the never-drop guarantee holds across the terminal edge.
 			tail, _ := s.drainFrom(dispatchID, cursor)
 			for _, ev := range tail {
 				if err := stream.Send(ev); err != nil {
@@ -229,11 +228,9 @@ func (s *ObservabilityServer) StreamTrace(req *genv1.StreamTraceRequest, stream 
 			}
 			return stream.Send(traceCompleteEvent())
 		case <-idleC:
-			// Spec §2.5: close idle streams cleanly with a final
-			// keepalive marker, not an error.
+			// @constraint: executor-observability spec §2.5 requires idle streams close cleanly with a trace_complete keepalive, not a gRPC error — operators must distinguish quiescence from failure.
 			return stream.Send(traceCompleteEvent())
 		case <-sub.wake:
-			// Loop back and drain.
 		}
 	}
 }
@@ -336,7 +333,7 @@ func (s *ObservabilityServer) MarkTerminal(dispatchID string) {
 		return
 	}
 	if rec.terminal {
-		// Already terminal — keep the original terminalAt; no-op.
+		// @constraint: terminalAt is captured exactly once so trace_complete timestamps stay stable across follow-on GetTrace requests; second MarkTerminal must not overwrite.
 		s.mu.Unlock()
 		return
 	}

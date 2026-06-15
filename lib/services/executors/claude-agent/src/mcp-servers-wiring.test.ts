@@ -2,7 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 // See LICENSE.apache at the repo root.
 
-// Pass 3 of the sign-off-gate plan: host-declared `cli.mcp_servers` must
+// @deliberate: pass 3 of the sign-off-gate plan: host-declared `cli.mcp_servers` must
 // reach the spawned CLI's `--mcp-config` (the per-spawn `tools` list) and
 // have all their tools auto-allowed into `--allowedTools` (the per-spawn
 // `allowedTools` list). The gate (later pass) depends on the agent being
@@ -28,11 +28,13 @@ import type {
 
 const logger = pino({ level: "silent" });
 
-// Minimal fake handle that exits 0 after a short delay so runAgent's
-// exit-watcher resolves the dispatch quickly. The fake-CLI never calls
-// any callback, so runAgent falls through to the clean-exit recovery /
-// before_complete path — we don't care about the outcome here, only the
-// captured spawn request.
+/**
+ * Minimal fake handle that exits 0 after a short delay so runAgent's
+ * exit-watcher resolves the dispatch quickly. The fake-CLI never calls
+ * any callback, so runAgent falls through to the clean-exit recovery /
+ * before_complete path — we don't care about the outcome here, only the
+ * captured spawn request.
+ */
 function makeQuickExitHandle(): CliHandle {
   const exitCbs: ((code: number | null, signal: NodeJS.Signals | null) => void)[] = [];
   type ExitResult = { exitCode: number | null; signal: NodeJS.Signals | null };
@@ -105,30 +107,27 @@ describe("host MCP servers wired into the spawned CLI", () => {
     expect(captured).not.toBeNull();
     const req = captured! as CliSpawnRequest;
 
-    // The internal rimsky-callback server is always present.
+    // @deliberate: the internal rimsky-callback server is always present.
     const callbackTool = req.tools.find((t) => t.name === "rimsky-callback");
     expect(callbackTool).toBeDefined();
     expect(callbackTool!.kind).toBe("mcp-http");
 
-    // The host-declared validator server is appended in addition.
+    // @deliberate: the host-declared validator server is appended in addition.
     const validatorTool = req.tools.find((t) => t.name === "validator");
     expect(validatorTool).toBeDefined();
     expect(validatorTool!.kind).toBe("mcp-http");
     expect(validatorTool!.url).toBe("https://validator/mcp");
 
-    // With no explicit per-server allowed_tools, the bare server-prefix
+    // @deliberate: with no explicit per-server allowed_tools, the bare server-prefix
     // entry `mcp__validator` auto-allows ALL of that server's tools.
     expect(req.allowedTools).toBeDefined();
     expect(req.allowedTools).toContain("mcp__validator");
   });
 
-  // S-executors-mcp-catalog-transports / EXECUTORS-2.1 (RED).
-  //
-  // The executor is started with a startup MCP-server catalog and an
-  // `allow_inline=false` policy. A node references a catalog entry via
-  // `{ ref: <name> }` rather than declaring an inline `{name,url}` server.
-  //
-  // Two observable behaviors the current tree does NOT deliver:
+  // @deliberate: the executor is started with a startup MCP-server catalog
+  // and an `allow_inline=false` policy. A node references a catalog entry
+  // via `{ ref: <name> }` rather than declaring an inline `{name,url}`
+  // server. Two observable behaviors the current tree does NOT deliver:
   //
   //   (1) A `{ ref: "shape-validator" }` reference must resolve against the
   //       catalog to its STDIO-transport definition. The captured spawn's
@@ -158,7 +157,7 @@ describe("host MCP servers wired into the spawned CLI", () => {
       },
     };
 
-    // (1) A `{ ref: "shape-validator" }` reference resolves to the catalog's
+    // @deliberate: (1) A `{ ref: "shape-validator" }` reference resolves to the catalog's
     //     stdio definition. Capture the spawn and inspect the resolved tool.
     let captured: CliSpawnRequest | null = null;
     const fakeCli: CliRunner = {
@@ -193,10 +192,10 @@ describe("host MCP servers wired into the spawned CLI", () => {
     expect(captured).not.toBeNull();
     const req = captured! as CliSpawnRequest;
 
-    // The resolved tool is the catalog's stdio definition, NOT an http leaf.
+    // @deliberate: the resolved tool is the catalog's stdio definition, NOT an http leaf.
     const resolved = req.tools.find((t) => t.name === "shape-validator");
     expect(resolved).toBeDefined();
-    // The stdio leaf carries the catalog's command/args; the http leaf would
+    // @deliberate: the stdio leaf carries the catalog's command/args; the http leaf would
     // be `kind: "mcp-http"` with a `url` — that is exactly what must NOT
     // happen for a stdio catalog entry.
     expect(resolved!.kind).not.toBe("mcp-http");
@@ -209,12 +208,12 @@ describe("host MCP servers wired into the spawned CLI", () => {
     expect(stdioTool.command).toBe("shape-validator");
     expect(stdioTool.args).toEqual(["--mode", "strict"]);
 
-    // The resolved server's tools are auto-allowed (bare server-prefix entry,
+    // @deliberate: the resolved server's tools are auto-allowed (bare server-prefix entry,
     // no per-server allowed_tools declared on the catalog ref).
     expect(req.allowedTools).toBeDefined();
     expect(req.allowedTools).toContain("mcp__shape-validator");
 
-    // (2) An inline server (name+url, no ref) under allow_inline=false is
+    // @deliberate: (2) An inline server (name+url, no ref) under allow_inline=false is
     //     rejected at dispatch with a config error citing `allow_inline`.
     let inlineSpawned = false;
     const inlineCli: CliRunner = {
@@ -246,7 +245,7 @@ describe("host MCP servers wired into the spawned CLI", () => {
       },
     });
 
-    // The inline server must be rejected BEFORE the CLI is spawned, and the
+    // @deliberate: the inline server must be rejected BEFORE the CLI is spawned, and the
     // rejection must surface as a config error (agent/attribute_invalid)
     // whose reason names the `allow_inline` policy.
     expect(inlineSpawned).toBe(false);
@@ -294,10 +293,10 @@ describe("host MCP servers wired into the spawned CLI", () => {
 
     expect(req.tools.find((t) => t.name === "validator")).toBeDefined();
     expect(req.allowedTools).toBeDefined();
-    // Explicit per-server allowed_tools narrow to the fully-qualified names.
+    // @deliberate: explicit per-server allowed_tools narrow to the fully-qualified names.
     expect(req.allowedTools).toContain("mcp__validator__sign");
     expect(req.allowedTools).toContain("mcp__validator__info");
-    // ...and do NOT add the broad server-prefix entry.
+    // @deliberate: ...and do NOT add the broad server-prefix entry.
     expect(req.allowedTools).not.toContain("mcp__validator");
   });
 });

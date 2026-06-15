@@ -123,7 +123,6 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 		tracked[folder] = struct{}{}
 	}
 
-	// Add brand-new folders.
 	addedAny := false
 	for folder := range extant {
 		if _, ok := tracked[folder]; ok {
@@ -139,10 +138,11 @@ func (s *Store) runSync(selector string, pp *PickPolicy) error {
 		if !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("create available sentinel %s: %w", folder, err)
 		}
-		// EEXIST: concurrent sync added it. Ignore.
+		// @deliberate: EEXIST means a concurrent runSync added the
+		// sentinel first; both callers want the same end-state so
+		// swallow the error rather than fault.
 	}
 
-	// Remove stale: folder gone from disk but still has an available sentinel.
 	for folder := range avail {
 		if _, ok := extant[folder]; ok {
 			continue
@@ -203,7 +203,6 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (claimp
 			}
 		}
 	case "explicit", "never":
-		// No sync trigger.
 	default:
 		return claimproducer.OpenOutcome{}, fmt.Errorf("filesystem store: invalid sync_strategy %q", pp.SyncStrategy)
 	}
@@ -214,8 +213,10 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (claimp
 	}
 	if outcome.Available {
 		if pp.SyncStrategy == "on_drain" && lastItem {
-			// Write drained sentinel atomically (O_EXCL).
-			// EEXIST is benign: a concurrent Open already wrote it.
+			// @deliberate: O_EXCL write — EEXIST is benign because a
+			// concurrent Open that also observed the empty state may
+			// have already written the drained sentinel; either writer
+			// satisfies the next Open's read.
 			f, ferr := os.OpenFile(drainedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 			if ferr == nil {
 				_ = f.Close()
@@ -223,8 +224,9 @@ func (s *Store) openPickPolicy(claimID, selector string, pp *PickPolicy) (claimp
 		}
 		return outcome, nil
 	}
-	// available/ empty after sync. on_drain corpus-empty case writes
-	// the drained sentinel so the next Open returns Unavailable.
+	// @deliberate: available/ was empty after sync. The on_drain
+	// corpus-empty case writes the drained sentinel here so the next
+	// Open short-circuits to Unavailable without re-syncing.
 	if pp.SyncStrategy == "on_drain" {
 		f, ferr := os.OpenFile(drainedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if ferr == nil {
@@ -265,14 +267,18 @@ func (s *Store) tryRenameClaim(claimID, selector string, pp *PickPolicy, availDi
 		nowNanos := time.Now().UnixNano()
 		dst := filepath.Join(inProgDir, fmt.Sprintf("%s.%s.%d", folder, claimID, nowNanos))
 		if err := os.Rename(src, dst); err != nil {
+			// @deliberate: a missing source means another worker won
+			// the rename race; advance to the next available entry
+			// rather than fault.
 			if errors.Is(err, fs.ErrNotExist) {
-				continue // raced; try next
+				continue
 			}
 			return claimproducer.OpenOutcome{}, false, fmt.Errorf("filesystem store: claim rename: %w", err)
 		}
-		// Re-read available/ to decide whether this was the last claim.
-		// Best-effort; on error we just won't write the drained sentinel
-		// this cycle — the next Open's empty-available path covers it.
+		// @deliberate: re-read available/ to detect last-claim and is
+		// best-effort — a readdir error just skips the drained-sentinel
+		// write for this cycle, which the next Open's empty-available
+		// path will cover.
 		remaining, _ := os.ReadDir(availDir)
 		lastItem := len(remaining) == 0
 
@@ -353,7 +359,9 @@ func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, 
 	src := filepath.Join(inProgDir, entry)
 	switch act.Kind {
 	case action.Pop:
-		// Queue entry consumed (sentinel removed); folder stays on disk.
+		// @constraint: Pop removes the queue sentinel only; the folder
+		// itself stays on disk (Pop is "claim consumed", not "data
+		// deleted").
 		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: pop unlink in_progress: %w", err)
 		}
@@ -379,8 +387,10 @@ func (s *Store) applyPickAction(pp *PickPolicy, selector, entry, folder string, 
 		}
 		return nil
 	case action.Recycle:
-		// Equivalent to the legacy release_to_back: bump mtime so the
-		// FIFO order moves the freshly-released sentinel to the tail.
+		// @constraint: Recycle implements release-to-back FIFO ordering
+		// by bumping the sentinel's mtime before moving it back to
+		// available/; tryRenameClaim sorts by mtime, so this places the
+		// recycled entry at the tail of the queue.
 		now := time.Now()
 		if err := os.Chtimes(src, now, now); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("filesystem store: recycle chtimes: %w", err)

@@ -107,7 +107,7 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	// Plan I3: classify invalidate sources by Reason for the metric.
+	// @deliberate: classify invalidate sources by Reason for the metric.
 	// Reasons today: "admin_invalidate" (G3), "policy_invalidate"
 	// (handler/error_types), "schedule_fired" (cron), "cascade" (post-
 	// commit), and bespoke event-handler reasons. The metric label uses
@@ -117,8 +117,8 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 		args.Metrics.IncInvalidate(invalidateSourceBucket(args.Reason))
 	}
 
-	// Load target to resolve instance_id BEFORE emitting events. The
-	// message_emitted / message_received events are part of an instance's
+	// @constraint: load target to resolve instance_id BEFORE emitting events.
+	// The message_emitted / message_received events are part of an instance's
 	// unified event feed (STORY-event-log-read: an operator filters
 	// /v1/events by instance_id and expects to see EVERY event of the
 	// instance), so each row must carry InstanceID alongside NodeID. We
@@ -143,9 +143,6 @@ func InvalidateNode(ctx context.Context, args InvalidateArgs) error {
 		return nil
 	}
 
-	// Emit + receive events for the audit trail. Both rows carry the
-	// resolved InstanceID so the operator's instance-scoped /v1/events
-	// query surfaces them on the unified feed.
 	params := map[string]any{
 		"reason": args.Reason,
 	}
@@ -256,7 +253,7 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 		log.Debug("InvalidateNode: frame=in fallback (no source); next-frame")
 		return invalidateNextFrame(ctx, args, target, log)
 	}
-	// Resolve frame_id outside the mutating tx. Calling
+	// @constraint: resolve frame_id outside the mutating tx. Calling
 	// invalidateNextFrame from inside an open tx would self-deadlock
 	// under SQLite (MaxOpenConns=1) and tie up two pool connections
 	// concurrently under postgres. Per spec §5 this fallback
@@ -284,7 +281,7 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 		frameID = src.FrameID
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// State-machine tx atomicity: if frame_id was resolved from
+		// @constraint: state-machine tx atomicity. If frame_id was resolved from
 		// the source node row (not supplied by the caller), re-read
 		// it inside the mutating tx and confirm it still matches.
 		// If it has staled (the source node's frame_id changed
@@ -304,7 +301,7 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 				return nil
 			}
 		}
-		// Resolve the target's in-flight run id (if any) so the
+		// @deliberate: resolve the target's in-flight run id (if any) so the
 		// MarkStaleForCascade UPDATE keys on the right row. Allocation
 		// of a fresh in-flight row when none exists is the cascade
 		// walker's job via AffirmNodeRunRow — Phase B wires that path.
@@ -327,7 +324,7 @@ func invalidateInFrame(ctx context.Context, args InvalidateArgs, target *persist
 		}, tx); err != nil {
 			return err
 		}
-		// Pessimistic-invalidate per spec Piece 1: the target's
+		// @constraint: pessimistic-invalidate per spec Piece 1. The target's
 		// invalidation triggers the cascade walk that gates the
 		// target's subscribers across multiple in-flight upstream
 		// senders. Without this, a receiver gated on N senders only
@@ -361,17 +358,12 @@ func walkCascadeForInvalidatedNode(
 	logger shared.Logger,
 	senderNodeID, instanceID, frameID shared.UUID,
 ) error {
-	// Minimal RunArgs shape with what cascadeSubscribersStaleInTx
-	// reads (Persist for the subscription-edge cache miss path;
-	// Queue for the parked-receiver wake fallback + the new
-	// GetInFlightRunForNode resolver on the receiver side).
 	args := RunArgs{Persist: sb, Queue: queue, Logger: logger}
-	// Look up the sender's node-type for the inverse-edge map key.
 	n, err := sb.Nodes().Get(ctx, senderNodeID, tx)
 	if err != nil || n == nil {
 		return err
 	}
-	// Resolve the sender's in-flight run id for the post-stage-5 wait-set
+	// @constraint: resolve the sender's in-flight run id for the post-stage-5 wait-set
 	// (rimsky_wait_set keys on the sender's run id). When the sender has
 	// no in-flight row in this frame the cascade walk has nothing to
 	// gate on; bail out quietly.
@@ -448,7 +440,7 @@ func stalemarkAndEnqueueInFrame(
 		return fmt.Errorf("stalemarkAndEnqueueInFrame: resolve in-flight run %s: %w", target.ID, err)
 	}
 	if !ok {
-		// No in-flight row — earlier visit (if any) already drove the
+		// @deliberate: no in-flight row — earlier visit (if any) already drove the
 		// audit event + recursion; skip.
 		return nil
 	}

@@ -4,13 +4,7 @@
 
 // messages.go — F1, F2. Unified message-layer endpoints.
 //
-// Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Messages / Control-api endpoints.
-//
 // Plus the 2026-05-17 publisher-protocol unification
-// (.ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md):
-//
 //   - POST /instances/{id}/messages accepts `sender_kind: "publisher"`
 //     with a `publisher_subscription_id` capability token, capability-
 //     checked against `rimsky_publisher_subscriptions`.
@@ -190,14 +184,14 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "kind is required")
 			return
 		}
-		// V1 only supports the `invalidate` kind; cross-instance kinds
+		// @constraint: V1 only supports the `invalidate` kind; cross-instance kinds
 		// are V2. Reject unknown kinds at the boundary so operators get
 		// a precise error instead of a silent dead-letter.
 		if body.Kind != "invalidate" {
 			badRequest(w, "kind must be 'invalidate' in V1")
 			return
 		}
-		// Sender kind defaults to "operator" for back-compat. Publisher
+		// @constraint: sender kind defaults to "operator" for back-compat. Publisher
 		// senders explicitly set "publisher" + publisher_subscription_id.
 		senderKind := body.SenderKind
 		if senderKind == "" {
@@ -211,13 +205,13 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "publisher_subscription_id required for sender_kind=publisher")
 			return
 		}
-		// `sender` defaults to "operator" for operator-side requests;
+		// @constraint: `sender` defaults to "operator" for operator-side requests;
 		// publisher-side requests overwrite it with the publisher-
 		// subscription's publisher_name (derived inside the tx below).
 		// V1 supplies "operator" because cross-instance senders are V2;
 		// the body's `sender` is ignored for trust until then.
 		sender := "operator"
-		// Idempotency-Key is MANDATORY on every emit: replay-dedup is a
+		// @constraint: idempotency-Key is MANDATORY on every emit: replay-dedup is a
 		// platform guarantee, not an opt-in. A missing key can never
 		// silently bypass dedup, so reject keyless requests at the
 		// boundary (request-level 400, pre-tx — alongside the other
@@ -234,7 +228,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
 		msgID := shared.UUID(uuid.New())
 		instUUID := shared.UUID(instanceID)
-		// senderSubject discriminates the dedup tuple by requester so two
+		// @constraint: senderSubject discriminates the dedup tuple by requester so two
 		// distinct api-keys posting to the same instance with the same
 		// Idempotency-Key can no longer cross-collide (the second caller
 		// would otherwise receive the first caller's message_id back as
@@ -260,7 +254,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
 			}
-			// Publisher capability check: the publisher-subscription must
+			// @constraint: publisher capability check: the publisher-subscription must
 			// be live (active, or still mounting) and bound to THIS
 			// instance. We look up the row by id, verify the state and
 			// that instance_id matches, then derive `sender` from the
@@ -286,12 +280,12 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 					return errPublisherSubscriptionNotLive
 				}
 				sender = row.PublisherName
-				// Publisher path: `sender = publisher_name` already gives
+				// @constraint: publisher path: `sender = publisher_name` already gives
 				// per-publisher isolation, so the senderSubject column
 				// stays empty.
 				senderSubject = ""
 			}
-			// Dry-run: every validation step a real call would run
+			// @constraint: dry-run: every validation step a real call would run
 			// has now completed (instance exists, not terminated,
 			// publisher capability gate passed). Skip the
 			// idempotency-key insert and the message envelope insert
@@ -299,7 +293,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			if isDryRun {
 				return errDryRunOK
 			}
-			// Idempotency dedup: INSERT or lookup the dedup tuple BEFORE
+			// @constraint: idempotency dedup: INSERT or lookup the dedup tuple BEFORE
 			// inserting the message envelope. The Idempotency-Key is
 			// mandatory (guarded request-level above), so this always
 			// runs. On conflict, return the previously-recorded message_id
@@ -334,7 +328,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq); err != nil {
 				return err
 			}
-			// Seed a frame so the message is actually delivered. Messages
+			// @constraint: seed a frame so the message is actually delivered. Messages
 			// are delivered ONLY into a running frame
 			// (SweepDeliverMessagesForRunningFrames); a message POSTed to a
 			// quiescent instance (no running frame) would otherwise stay
@@ -356,7 +350,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				return srcErr
 			}
 			if !ok {
-				// No node to source a frame on (instance has no nodes) —
+				// @constraint: no node to source a frame on (instance has no nodes) —
 				// nothing to deliver to; leave the message pending. This
 				// is degenerate (a template with zero nodes) and not worth
 				// failing the emit over.
@@ -396,7 +390,7 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 		}
 		status := http.StatusCreated
 		if replayed {
-			// Replay path: returning the original message_id with
+			// @constraint: replay path: returning the original message_id with
 			// 200 OK signals idempotent dedup. The body shape is
 			// identical so caller code can stay generic.
 			status = http.StatusOK
@@ -444,7 +438,7 @@ func resolveMessageFrameSource(
 				return n.ID, true, nil
 			}
 		}
-		// Target names a node type that doesn't exist in this instance —
+		// @constraint: target names a node type that doesn't exist in this instance —
 		// surface as a 400 rather than silently broadcasting. An operator
 		// typo must NOT fan out to nodes that have no subscription to the
 		// message (which would consume frame slots and risk starving other
@@ -484,7 +478,7 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 			u := shared.UUID(opID)
 			filter.BackfillOperationID = &u
 		}
-		// frame_id narrows to the messages delivered into a given frame —
+		// @constraint: frame_id narrows to the messages delivered into a given frame —
 		// the "what landed in frame X" forensic query for backfill / fan-out
 		// debugging. Backed by the frame_id predicate in both drivers' List.
 		if s := q.Get("frame_id"); s != "" {
@@ -532,7 +526,7 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-// handleGetMessage is GET /messages/{id}.
+// @constraint: handleGetMessage is GET /messages/{id}.
 //
 // @blessed-invariant: message-inertness — messages are inert in rimsky. The persistence-
 // layer fetch here is one of two sanctioned read sites for message

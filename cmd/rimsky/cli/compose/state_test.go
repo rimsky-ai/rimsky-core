@@ -18,16 +18,12 @@ func TestQueryState_FiltersByPrefix(t *testing.T) {
 	defer srv.Close()
 	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "compose:p:foo", "")
 	srv.State.SetTemplateState(hash, "deployed")
-	// Tag for another project should be filtered out.
 	srv.State.SetTagHash("compose:other:foo", hash)
-	// Manual tag (no compose: prefix) also filtered out.
 	srv.State.SetTagHash("manual-foo", hash)
-	// One owned instance.
 	key := "compose:p:hello"
 	if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {
 		t.Fatal(err)
 	}
-	// One foreign instance.
 	other := "compose:other:bar"
 	if _, _, err := srv.State.CreateInstance(hash, &other, nil); err != nil {
 		t.Fatal(err)

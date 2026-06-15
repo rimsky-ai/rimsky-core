@@ -34,7 +34,6 @@ func TestClaimProducer9b_Probe(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// Producer A — honest snapshot-delegating staged_async producer.
 	endpointA := startProducer(t, &honestProducer{})
 	clientA := dialProducer(t, ctx, "honest-9b", endpointA)
 	resultsA := runConformance(t, ctx, clientA)
@@ -46,7 +45,6 @@ func TestClaimProducer9b_Probe(t *testing.T) {
 		t.Fatalf("honest producer: Serialization9b reported FAIL, want ok: %v", checkA.Err)
 	}
 
-	// Producer B — dishonest reader-lease-serializing staged_async producer.
 	endpointB := startProducer(t, newDishonestProducer())
 	clientB := dialProducer(t, ctx, "dishonest-9b", endpointB)
 	resultsB := runConformance(t, ctx, clientB)

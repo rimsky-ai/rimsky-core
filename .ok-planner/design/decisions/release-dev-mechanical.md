@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`make dev-release` is mechanical; no SemVer judgment, no notes, version `v<next-minor>.0-dev.<YYYYMMDD>.g<sha>`.
+The dev-release flow is mechanical: no SemVer judgment, no notes, version derived as the next minor pre-release with a dev pre-release suffix that includes a build date and the current commit hash.
 
 ## Rationale
 

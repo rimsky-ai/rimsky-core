@@ -122,8 +122,8 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		log = shared.SilentLogger{}
 	}
 
-	// Outer read fetches only the immutable fields used outside the
-	// mutating tx — NodeType / InstanceID feed lookupPolicy and
+	// @deliberate: outer read fetches only the immutable fields used outside
+	// the mutating tx — NodeType / InstanceID feed lookupPolicy and
 	// requiredStoresForNode; Executor is needed for the retry-branch
 	// enqueue. The mutable fields (State, FrameID, InFlightRunID) are
 	// re-read INSIDE each mutating tx below so the state-machine
@@ -141,39 +141,39 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		return nil
 	}
 
-	// Resolve the per-error-class policy from the template spec.
 	policy, err := lookupPolicy(ctx, sb, nd, args.ErrorClass, args.PolicyFallbackClass)
 	if err != nil {
 		return err
 	}
 
-	// Compute required stores BEFORE entering any outer state-mutation tx.
-	// requiredStoresForNode internally opens its own sb.Transaction —
-	// if called inside the outer tx, the nested Transaction blocks
-	// forever on the SQLite single-conn pool (MaxOpenConns=1) and ties
-	// up two pool connections concurrently under postgres. Capture the
-	// result here; pass into the closure via the captured variable.
+	// @constraint: compute required stores BEFORE entering any outer
+	// state-mutation tx. requiredStoresForNode internally opens its own
+	// sb.Transaction — if called inside the outer tx, the nested
+	// Transaction blocks forever on the SQLite single-conn pool
+	// (MaxOpenConns=1) and ties up two pool connections concurrently under
+	// postgres. Capture the result here; pass into the closure via the
+	// captured variable.
 	requiredStores := requiredStoresForNode(ctx, sb, nd)
 
-	// Bundle the EvaluatorState read with the policy-state advance so
-	// they land in a single tx (state-machine tx atomicity invariant):
-	// the row's ActionIndex/RetryCounter/CurrentErrorClass that feed
-	// node.Evaluate are re-read here from the same tx that writes the
-	// advanced state, closing the race window where another writer
-	// could have advanced the row between read and write.
+	// @constraint: bundle the EvaluatorState read with the policy-state
+	// advance so they land in a single tx (state-machine tx atomicity
+	// invariant): the row's ActionIndex/RetryCounter/CurrentErrorClass that
+	// feed node.Evaluate are re-read here from the same tx that writes the
+	// advanced state, closing the race window where another writer could
+	// have advanced the row between read and write.
 	//
-	// The canonical signal emission does NOT happen here. The signal
-	// describes the run-row's terminal disposition (retry / give-up /
-	// pass), which is committed in the per-branch tx below; emitting
-	// the signal in this tx would let a tx#1-commit / tx#2-fail window
-	// land a `terminal/error/<class>` audit row on `rimsky_events`
-	// while the rimsky_nodes row still reads `running`, contradicting
-	// the signal. The per-branch tx below co-commits the signal with
-	// the matching state transition so subscribers never observe an
-	// audit row whose state column contradicts the disposition. The
+	// @deliberate: the canonical signal emission does NOT happen here. The
+	// signal describes the run-row's terminal disposition (retry / give-up
+	// / pass), which is committed in the per-branch tx below; emitting the
+	// signal in this tx would let a tx#1-commit / tx#2-fail window land a
+	// `terminal/error/<class>` audit row on `rimsky_events` while the
+	// rimsky_nodes row still reads `running`, contradicting the signal. The
+	// per-branch tx below co-commits the signal with the matching state
+	// transition so subscribers never observe an audit row whose state
+	// column contradicts the disposition. The
 	// `runner_error_policy.go::applyErrorPolicy` path uses the same
-	// pattern: signal-emit lives in the outer state-mutation tx, not
-	// in a post-commit closure. Per
+	// pattern: signal-emit lives in the outer state-mutation tx, not in a
+	// post-commit closure. Per
 	// `spec:2026-05-23-signal-taxonomy-and-policy-decoupling-design`.
 	var resolved node.ResolvedAction
 	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -195,34 +195,32 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		return err
 	}
 
-	// Construct the canonical signal envelope via the shared
+	// @deliberate: construct the canonical signal envelope via the shared
 	// `errorPolicySignal` helper so OnError's emit path matches the
-	// runtime's applyErrorPolicy path. `retriesSoFar` is best-effort
-	// here (the OnError path doesn't carry the consecutive-retries
-	// counter that applyErrorPolicy threads through buildResolution;
-	// resolved.NewState.RetryCounter is the chain-position counter,
-	// which is the closest available signal for the audit row's
-	// `attempt` field). The envelope is constructed once and emitted
-	// inside whichever per-branch tx commits the matching state
-	// transition.
+	// runtime's applyErrorPolicy path. `retriesSoFar` is best-effort here
+	// (the OnError path doesn't carry the consecutive-retries counter that
+	// applyErrorPolicy threads through buildResolution;
+	// resolved.NewState.RetryCounter is the chain-position counter, which
+	// is the closest available signal for the audit row's `attempt` field).
+	// The envelope is constructed once and emitted inside whichever
+	// per-branch tx commits the matching state transition.
 	resolutionSig := errorPolicySignal(args.ErrorClass, args.Payload, resolved.Kind,
 		resolved.NewState.RetryCounter, resolved.DelayMs)
 
 	switch resolved.Kind {
 	case "retry", "discard_claims_then_retry":
-		// Wrap remove + enqueue (and the optional running→stale
-		// transition + cascade walk) in one tx so a partial commit
-		// can't strand the node with no in-flight row and no
-		// replacement. Mirrors `applyResolvedAction` in
-		// `runner_error_policy.go`. Without this, a remove that
-		// committed followed by an enqueue that failed would leave
-		// the node with no in-flight row.
+		// @constraint: wrap remove + enqueue (and the optional running→stale
+		// transition + cascade walk) in one tx so a partial commit can't
+		// strand the node with no in-flight row and no replacement. Mirrors
+		// `applyResolvedAction` in `runner_error_policy.go`. Without this,
+		// a remove that committed followed by an enqueue that failed would
+		// leave the node with no in-flight row.
 		return sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// Re-read mutable fields (State, FrameID, InFlightRunID)
-			// INSIDE this tx so the read-then-write pair is atomic.
-			// Using these from the outer read could race with a
-			// concurrent sweep that rotated the in-flight dispatch
-			// between the two reads.
+			// @constraint: re-read mutable fields (State, FrameID,
+			// InFlightRunID) INSIDE this tx so the read-then-write pair is
+			// atomic. Using these from the outer read could race with a
+			// concurrent sweep that rotated the in-flight dispatch between
+			// the two reads.
 			cur, err := sb.Nodes().Get(ctx, args.NodeID, tx)
 			if err != nil {
 				return err
@@ -238,12 +236,12 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 					return err
 				}
 			}
-			// Run-disposition signal: transient/retry/<n>/<class> via the
-			// single emit chokepoint (signal_emit.go) — subscriber-driven
-			// cascade on the real transient/retry signal + audit, matching
-			// applyResolvedAction's retry branch. This replaces the prior
-			// pessimistic walkCascadeForInvalidatedNode + bare
-			// signalaudit.EmitSignal: the cascade now fires the actual
+			// @deliberate: run-disposition signal transient/retry/<n>/<class>
+			// via the single emit chokepoint (signal_emit.go) —
+			// subscriber-driven cascade on the real transient/retry signal +
+			// audit, matching applyResolvedAction's retry branch. This
+			// replaces the prior pessimistic walkCascadeForInvalidatedNode +
+			// bare signalaudit.EmitSignal: the cascade now fires the actual
 			// transient/retry/* subscribers rather than a synthetic
 			// invalidation signal. Emitted BEFORE the dispatch is retired so
 			// the cascade still sees the in-flight run; audits
@@ -261,11 +259,10 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				resolutionSig); err != nil {
 				return err
 			}
-			// Recovery-aware fields: the in-flight run row at this
-			// point is the predecessor dispatch being retired by
-			// RemoveForNodeInTx; capture its id BEFORE the remove so
-			// the new dispatch's proto:executor.proto::ExecuteRequest.
-			// prior_dispatch_id resolves to the run that errored.
+			// @constraint: capture the prior in-flight run id BEFORE
+			// RemoveForNodeInTx retires it; the new dispatch's
+			// proto:executor.proto::ExecuteRequest.prior_dispatch_id must
+			// resolve to the run that errored, not nil after the remove.
 			priorID := cur.InFlightRunID
 			if err := args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx); err != nil {
 				return err
@@ -280,12 +277,12 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				PriorDispatchID:          priorID,
 				PriorDispatchDisposition: "retry_after_error",
 			}, tx); err != nil {
-				// Defensive: closed RunScope means the rendezvous has
-				// fired before the retry could land. Walker discipline
-				// per concept:run-scope: do not enqueue into a closed
-				// scope; the policy chain's state advancement already
-				// committed (give-up path will fire on the next error
-				// occurrence if there is one).
+				// @constraint: closed RunScope means the rendezvous has fired
+				// before the retry could land. Walker discipline per
+				// concept:run-scope: do not enqueue into a closed scope; the
+				// policy chain's state advancement already committed
+				// (give-up path will fire on the next error occurrence if
+				// there is one).
 				if errors.Is(err, persistence.ErrRunScopeClosed) {
 					log.Warn("OnError retry: skip enqueue: run scope closed",
 						"node_id", args.NodeID.String(),
@@ -294,20 +291,17 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				}
 				return err
 			}
-			// The transient/retry signal + cascade were emitted above via
-			// the chokepoint, co-committed with the running→stale
-			// transition; nothing further to emit here.
 			return nil
 		})
 
 	case "give_up":
-		// Bundle state write + queue remove (and the optional wait-set
-		// drain) in one tx so a partial commit can't leave the run
-		// failed with its dispatch row stranded. Mirrors the retry
-		// branch's same-tx atomicity.
+		// @constraint: bundle state write + queue remove (and the optional
+		// wait-set drain) in one tx so a partial commit can't leave the run
+		// failed with its dispatch row stranded. Mirrors the retry branch's
+		// same-tx atomicity.
 		return sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// Re-read mutable fields inside the same tx that writes
-			// state (tx-atomicity invariant).
+			// @constraint: re-read mutable fields inside the same tx that
+			// writes state (tx-atomicity invariant).
 			cur, err := sb.Nodes().Get(ctx, args.NodeID, tx)
 			if err != nil {
 				return err
@@ -319,15 +313,15 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			if err := sb.Nodes().UpdateState(ctx, args.NodeID, args.RunScopeID, cascade.NodeStateFailed, cascade.ReasonPolicyGiveUp, &giveUpSig, tx); err != nil {
 				return err
 			}
-			// Settled-state cascade + drain on failed. The run-disposition
-			// signal (terminal/error/<class>) goes through the single emit
-			// chokepoint (signal_emit.go). The emit is UNCONDITIONAL so the
-			// failed resolution always lands its audit row; the chokepoint
-			// cascades only when a real in-flight run + frame resolve below
-			// (insert), after which the drain releases the gated receivers
-			// (insert-then-drain). The audit row co-commits with the failed
-			// transition. Post-stage-5 the wait-set keys on sender_run_id;
-			// resolve via the queue helper.
+			// @deliberate: settled-state cascade + drain on failed. The
+			// run-disposition signal (terminal/error/<class>) goes through
+			// the single emit chokepoint (signal_emit.go). The emit is
+			// UNCONDITIONAL so the failed resolution always lands its audit
+			// row; the chokepoint cascades only when a real in-flight run +
+			// frame resolve below (insert), after which the drain releases
+			// the gated receivers (insert-then-drain). The audit row
+			// co-commits with the failed transition. Post-stage-5 the
+			// wait-set keys on sender_run_id; resolve via the queue helper.
 			//
 			//	@concept: cascade
 			//	@concept: signal
@@ -355,8 +349,8 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 		})
 
 	case "pass":
-		// Pass settles the run as fresh. From a stale state (e.g.
-		// pre-dispatch acquire/unavailable resolved as pass) this is
+		// @deliberate: pass settles the run as fresh. From a stale state
+		// (e.g. pre-dispatch acquire/unavailable resolved as pass) this is
 		// the canonical acquire-pass transition, carrying the
 		// `terminal/error/<class>` envelope on settling_signal_type with
 		// Color=fresh. From a running state (executor errored, resolved
@@ -374,22 +368,22 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			if cur == nil {
 				return nil
 			}
-			// Pass settles fresh; settling_signal_type carries the
-			// terminal/error/<class> envelope (Color is fresh — see
+			// @deliberate: pass settles fresh; settling_signal_type carries
+			// the terminal/error/<class> envelope (Color is fresh — see
 			// substitution-visibility gate). Per Pass 3 of spec
 			// 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
 			//
-			// Only `stale` (pre-dispatch acquire/unavailable resolved
-			// pass) and `running` (executor errored, resolved pass via
-			// error_types) are reachable here — both prod call sites
+			// @constraint: only `stale` (pre-dispatch acquire/unavailable
+			// resolved pass) and `running` (executor errored, resolved pass
+			// via error_types) are reachable here — both prod call sites
 			// (`code:runtime/runner_lifecycle.go::handleAcquireUnavailable`
 			// for the stale path; the running path via
 			// `code:runtime/runner_error_policy.go::applyErrorPolicy`'s
 			// pass branch handles its own state and doesn't reach OnError)
-			// guarantee one of those two states. Any other state means
-			// the row was rotated under us by a sweep we didn't expect;
-			// fail loudly rather than emit a canonical signal that
-			// contradicts the actual run row.
+			// guarantee one of those two states. Any other state means the
+			// row was rotated under us by a sweep we didn't expect; fail
+			// loudly rather than emit a canonical signal that contradicts
+			// the actual run row.
 			passSig := "terminal/error/" + args.ErrorClass
 			switch cur.State {
 			case cascade.NodeStateStale:
@@ -408,7 +402,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 				return fmt.Errorf("OnError pass branch: unexpected node state %q for node %s (expected stale|running); a concurrent rotation moved the row out from under us between the policy-resolution tx and the action-apply tx",
 					cur.State, args.NodeID)
 			}
-			// Settled-state cascade + drain on fresh+pass. The
+			// @deliberate: settled-state cascade + drain on fresh+pass. The
 			// run-disposition signal (terminal/error/<class>, Color=fresh)
 			// goes through the single emit chokepoint (signal_emit.go). The
 			// emit is UNCONDITIONAL so the pass resolution always lands its
@@ -442,8 +436,9 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			return args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx)
 		})
 	}
-	// `invalidate` action retired under the 2026-05-14 subscription-
-	// cascade resolution; the validator rejects it at deploy time.
+	// @deliberate: `invalidate` action retired under the 2026-05-14
+	// subscription-cascade resolution; the validator rejects it at deploy
+	// time.
 	return nil
 }
 
@@ -500,7 +495,8 @@ func lookupPolicy(ctx context.Context, sb persistence.Tables, nd *persistence.No
 			continue
 		}
 		if p, ok := td.ErrorTypes[errorClass]; ok {
-			// Copy so the caller can take its address without aliasing the map.
+			// @constraint: copy so the caller can take its address without
+			// aliasing the map.
 			cp := p
 			return &cp, nil
 		}

@@ -35,11 +35,14 @@ import (
 // BackfillCreateRequest is the input to CreateBackfill. Spec
 // §Backfills / `POST /instances/{id}/backfills`.
 type BackfillCreateRequest struct {
-	InstanceID               shared.UUID
-	TargetNode               string
-	PartitionRequestOverride json.RawMessage // opaque to rimsky
+	InstanceID shared.UUID
+	TargetNode string
+	// @constraint: rimsky does not interpret these bytes; the fan-out
+	// node's `partition_request` substitution reads named fields by
+	// walkPath only (@blessed-invariant: payload-opaque-to-rimsky).
+	PartitionRequestOverride json.RawMessage
 	Reason                   string
-	Sender                   string // operator identity
+	Sender                   string
 }
 
 // BackfillCreated is the return shape carrying both the message id and
@@ -71,10 +74,9 @@ func CreateBackfill(
 	}
 	opID := shared.UUID(uuid.New())
 	msgID := shared.UUID(uuid.New())
-	// The payload carries the override + the op id + the reason. Rimsky
-	// does not interpret these bytes (`@blessed-invariant 21`); the
-	// fan-out node's `partition_request` substitution reads named
-	// fields by walkPath only.
+	// @constraint: rimsky does not interpret these bytes
+	// (@blessed-invariant: payload-opaque-to-rimsky); the fan-out node's
+	// `partition_request` substitution reads named fields by walkPath only.
 	payload := map[string]any{
 		"backfill_operation_id":      opID.String(),
 		"partition_request_override": json.RawMessage(req.PartitionRequestOverride),

@@ -124,9 +124,9 @@ func main() {
 		slog.Error("stubexecutor listen", "error", err.Error(), "bind", bind)
 		os.Exit(1)
 	}
-	// EXECUTOR_STUB_FORCE_ERROR=1 flips the stub from success-only to
-	// error-only. Default (unset) keeps the success-only behavior every
-	// existing harness scenario relies on.
+	// @deliberate: EXECUTOR_STUB_FORCE_ERROR=1 flips the stub from
+	// success-only to error-only; default (unset) preserves the
+	// success-only behavior existing harness scenarios rely on.
 	forceError := os.Getenv("EXECUTOR_STUB_FORCE_ERROR") == "1"
 	srv := grpc.NewServer()
 	genv1.RegisterExecutorServer(srv, server{forceError: forceError})

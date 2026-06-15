@@ -54,25 +54,20 @@ func main() {
 	state := newProxyState()
 	grpcSrv := grpc.NewServer()
 
-	// Agent-facing: long-lived bidi stream per connected dev-machine agent.
 	genv1.RegisterHostAgentServer(grpcSrv, newAgentServer(state))
 
-	// Supervisor-facing: the proxy fronts these protocols for late-bound
-	// dev-machine bindings.
 	genv1.RegisterExecutorServer(grpcSrv, newExecutorHandler(state, cfg))
 	genv1.RegisterExecutorObservabilityServer(grpcSrv, newExecutorObsHandler())
 	genv1.RegisterClaimProducerServer(grpcSrv, newClaimProducerHandler(state, cfg))
 	genv1.RegisterClaimProducerObservabilityServer(grpcSrv, newClaimProducerObsHandler())
 
-	// LifecycleSubscriber consumer-role: receives OnInstanceCreated to
-	// populate the binding cache and OnRunScopeTerminal to drive reap.
+	// @constraint: the proxy fronts every rimsky service protocol by one
+	// uniform resolve→spawn→tunnel mechanism — none ships as an
+	// Unimplemented stub. LifecycleSubscriber / Publisher / Validation /
+	// DataProcessing each present exactly the fronted service's protocol
+	// and forward the dispatch to the spawned local binary.
 	genv1.RegisterLifecycleSubscriberServer(grpcSrv, newLifecycleHandler(state, cfg))
 
-	// Publisher / Validation / DataProcessing: real transparent-forwarding
-	// handlers. The proxy fronts every rimsky service protocol by one
-	// uniform resolve→spawn→tunnel mechanism — none ships as an
-	// Unimplemented stub. Each presents exactly the fronted service's
-	// protocol and forwards the dispatch to the spawned local binary.
 	genv1.RegisterPublisherServer(grpcSrv, newPublisherHandler(state, cfg))
 	genv1.RegisterValidationServer(grpcSrv, newValidationHandler(state, cfg))
 	genv1.RegisterDataProcessingServer(grpcSrv, newDataProcessingHandler(state, cfg))

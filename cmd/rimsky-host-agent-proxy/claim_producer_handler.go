@@ -73,7 +73,7 @@ func (h *claimProducerHandler) Open(ctx context.Context, req *genv1.OpenRequest)
 		[]string{protocolClaimProducer},
 		req.GetInstanceId(),
 		req.GetRunScopeId(),
-		"", // claim-producer has no callback URL to rewrite
+		"", // @deliberate: claim-producer has no callback URL to rewrite
 		h.spawnTimeout,
 	)
 	if rerr != nil {
@@ -95,8 +95,8 @@ func (h *claimProducerHandler) Open(ctx context.Context, req *genv1.OpenRequest)
 		return nil, claimProducerStatus(&resolveError{class: errClassExecutorCrashed, msg: "unmarshal open response: " + err.Error()})
 	}
 
-	// Record the claim route so Commit/Abandon/Release (which carry only a
-	// claim_id) route back to this spawned producer.
+	// @constraint: record the claim route so Commit/Abandon/Release
+	// (which carry only a claim_id) route back to this spawned producer.
 	h.state.recordClaimRoute(req.GetClaimId(), res.agent.apiKeyID, res.spawnID)
 	return &resp, nil
 }

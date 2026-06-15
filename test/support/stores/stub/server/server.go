@@ -131,7 +131,7 @@ func (s *Server) Capabilities(_ context.Context, _ *genv1.CapabilitiesRequest) (
 		SupportsSplitScope:     true,
 		SupportsScopesConflict: true,
 		Protocols:              protocols,
-		// Producer-declared acquisition-failure vocabulary
+		// @deliberate: Producer-declared acquisition-failure vocabulary
 		// (claim_producer.proto::CapabilitiesResponse.declared_error_classes).
 		// The observability handshake captures this into the discovery
 		// cache, where the template registration validator's
@@ -152,7 +152,7 @@ func (s *Server) Open(ctx context.Context, req *genv1.OpenRequest) (*genv1.OpenR
 		return nil, err
 	}
 	if !outcome.Available {
-		// error_class carries the producer-declared acquisition-failure
+		// @deliberate: error_class carries the producer-declared acquisition-failure
 		// class (empty when the store names none) — rimsky's
 		// acquisition-failure routing keys error_types: on it.
 		return &genv1.OpenResponse{

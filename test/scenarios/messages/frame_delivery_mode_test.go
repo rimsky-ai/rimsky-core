@@ -55,7 +55,6 @@ func TestFrameDeliveryMode_SerialQueueOnlyOldest(t *testing.T) {
 		t.Errorf("serial_queue delivered the oldest? received_at: %v want %v",
 			delivered.Messages[0].ReceivedAt, t0)
 	}
-	// Pin: remaining messages still pending.
 	pending, err := m.ListPendingForInstance(ctx, nil, instanceID)
 	if err != nil {
 		t.Fatalf("ListPendingForInstance: %v", err)

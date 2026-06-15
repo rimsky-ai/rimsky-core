@@ -39,7 +39,7 @@ func validatorTestRoot(t *testing.T) (string, string) {
 func TestValidator_RejectsOldNames(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
-	// Construct an old-name kind manually to bypass UnmarshalYAML.
+	// @deliberate: assign the legacy kind directly to bypass UnmarshalYAML's name-translation layer, exercising the post-decode validator on a payload only an in-process producer could synthesize.
 	pp.OnCommit = action.Action{Kind: action.Kind("release_to_back")}
 	res := validatePickPolicy(root, "@r", pp)
 	if res.OK() {
@@ -54,7 +54,7 @@ func TestValidator_RejectsOldNames(t *testing.T) {
 func TestValidator_RejectsMissingFields(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
-	pp.OnCommit = action.Action{} // zero-value
+	pp.OnCommit = action.Action{}
 	res := validatePickPolicy(root, "@r", pp)
 	if res.OK() {
 		t.Fatal("expected validation error for missing OnCommit, got OK")
@@ -111,7 +111,7 @@ func TestValidator_RejectsUnknownAction(t *testing.T) {
 func TestValidator_RejectsMalformedParameterizedAction(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
-	// pop_and_move with no target — bypasses UnmarshalYAML.
+	// @deliberate: synthesize a pop_and_move with no MoveTarget directly so the validator's "non-empty target" check is exercised; UnmarshalYAML would otherwise reject this shape before validation.
 	pp.OnCommit = action.Action{Kind: action.PopAndMove}
 	res := validatePickPolicy(root, "@r", pp)
 	if res.OK() {
@@ -149,7 +149,8 @@ func TestValidator_AcceptsMatchingFilesystemTarget(t *testing.T) {
 func TestValidator_RejectsInvalidSyncStrategy(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
-	pp.SyncStrategy = "on_sweep" // dropped value
+	// @constraint: "on_sweep" was a previously-supported sync_strategy value; the validator must now reject it so stale operator configs surface a clear error rather than running with a silently-ignored setting.
+	pp.SyncStrategy = "on_sweep"
 	res := validatePickPolicy(root, "@r", pp)
 	if res.OK() {
 		t.Fatal("expected validation error for old on_sweep value")
@@ -173,11 +174,12 @@ func TestValidator_DefaultsEmptySyncStrategyToOnOpen(t *testing.T) {
 	}
 }
 
-// Empty pp.Root means the policy operates at the store root itself —
-// useful for single-entry policies whose FolderPattern matches one
-// specific top-level folder (e.g. a "consolidate-on-the-corpus-root"
-// pick policy). filepath.Clean("") == ".", so the canonicalization
-// checks treat empty and "." identically.
+// TestValidator_AcceptsEmptyPolicyRoot — an empty pp.Root means the
+// policy operates at the store root itself, useful for single-entry
+// policies whose FolderPattern matches one specific top-level folder
+// (e.g. a "consolidate-on-the-corpus-root" pick policy).
+// filepath.Clean("") == ".", so the canonicalization checks treat empty
+// and "." identically.
 func TestValidator_AcceptsEmptyPolicyRoot(t *testing.T) {
 	root, _ := validatorTestRoot(t)
 	pp := newValidPolicy(root, "")
@@ -218,7 +220,6 @@ func TestValidator_RejectsCrossFilesystemTarget(t *testing.T) {
 	}
 	rootDev := rootSys.Dev
 
-	// Probe for a tmpfs-or-other-fs mount point on a different device.
 	candidates := []string{"/dev/shm", "/run", "/proc"}
 	var altDir string
 	for _, c := range candidates {
@@ -230,7 +231,6 @@ func TestValidator_RejectsCrossFilesystemTarget(t *testing.T) {
 		if !ok || sys.Dev == rootDev {
 			continue
 		}
-		// We need a writable directory we can place a probe target in.
 		probe, err := os.MkdirTemp(c, "rimsky-fs-store-cross-fs-*")
 		if err != nil {
 			continue
@@ -243,10 +243,7 @@ func TestValidator_RejectsCrossFilesystemTarget(t *testing.T) {
 		t.Skip("no cross-filesystem directory available in this environment")
 	}
 
-	// Construct a target that is reachable from storeRoot via a
-	// relative path. We use filepath.Rel from storeRoot to altDir so
-	// the validator sees a relative target (the typical operator
-	// config). If Rel cannot produce a meaningful relative path, skip.
+	// @deliberate: feed the validator a *relative* MoveTarget (filepath.Rel from store root to the cross-fs probe dir), matching the typical operator config shape rather than the absolute-path shape that the absolute-target guard would short-circuit first; skip if Rel cannot bridge the two roots.
 	rel, err := filepath.Rel(root, altDir)
 	if err != nil {
 		t.Skip("cannot construct relative path between root and cross-fs dir")
@@ -260,11 +257,7 @@ func TestValidator_RejectsCrossFilesystemTarget(t *testing.T) {
 		t.Fatal("expected validation error for cross-filesystem target")
 	}
 	joined := errsString(res.Errors)
-	// The cross-fs error message is "different filesystem" — but if
-	// the relative path also happens to escape the store root, the
-	// containment check fires first. Either error path is the spec's
-	// intended rejection of the unsafe configuration; assert at least
-	// one rejection exists and mention either guard.
+	// @deliberate: accept either "different filesystem" or "escapes the store root" — when the cross-fs probe dir resolves to a relative path that climbs above the store root, the containment guard fires before the same-fs guard; either rejection satisfies the spec's "refuse unsafe pop_and_move target" contract.
 	if !strings.Contains(joined, "different filesystem") &&
 		!strings.Contains(joined, "escapes the store root") {
 		t.Errorf("expected 'different filesystem' or 'escapes the store root' error; got %q", joined)
@@ -338,7 +331,7 @@ func TestValidator_RejectsTargetEqualsPolicyRoot(t *testing.T) {
 func TestValidator_RejectsNullCommit(t *testing.T) {
 	root, sub := validatorTestRoot(t)
 	pp := newValidPolicy(root, sub)
-	pp.OnCommit = action.Action{} // zero Kind
+	pp.OnCommit = action.Action{}
 	res := validatePickPolicy(root, "@r", pp)
 	if res.OK() {
 		t.Fatal("expected validation error for null on_commit")

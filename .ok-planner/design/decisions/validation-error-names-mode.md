@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Reference-validation failure messages name the active validation mode, state that the mode made the failure fatal, and name the `templates.ref_validation_mode` config key with its relaxed settings (see `story:validation-names-the-mode`).
+Reference-validation failure messages name the active validation mode, state that the mode made the failure fatal, and name the template reference-validation-mode configuration knob with its relaxed settings (see `story:validation-names-the-mode`, `concept:validation`).
 
 ## Rationale
 

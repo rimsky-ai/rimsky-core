@@ -51,7 +51,7 @@ export interface HttpBridgeConfig {
    */
   mcpCatalog?: McpCatalog;
   /**
-   * `allow_inline` policy (default false) from
+   * Inline-server policy (`allow_inline`, default false) from
    * `RIMSKY_EXECUTOR_MCP_ALLOW_INLINE`. Gates whether inline
    * `cli.mcp_servers` entries are permitted at dispatch.
    */
@@ -82,7 +82,7 @@ interface ExecuteBody {
   node_id?: string;
   instance_id?: string;
   node_type?: string;
-  // Supervisor-supplied dispatch identifier. When present, the bridge
+  // @deliberate: supervisor-supplied dispatch identifier. When present, the bridge
   // keys the trace ledger by this value so dashboards can fetch the
   // trace via GET /observability/v1/trace/{dispatch_id}. Falls back to
   // the freshly-minted ackId for non-rimsky callers.
@@ -92,7 +92,7 @@ interface ExecuteBody {
   stores?: Record<string, unknown>;
   callback_url?: string;
   cancel_token?: string;
-  // Field number 10 (`resumed`) is reserved on the wire under
+  // @deliberate: field number 10 (`resumed`) is reserved on the wire under
   // stores-redesign-v2. Resume is universal — substrate-detected.
   // Field number 11 (`run_attempt`) is reserved on the wire under
   // the 2026-05-20 per-run attribute keying spec — each dispatch has
@@ -105,11 +105,11 @@ interface ExecuteBody {
   // `--resume <id>` arg; payload + reason are exposed to the prompt
   // template as `{{rimsky.resume_payload}}` / `{{rimsky.resume_reason}}`.
   resume_context?: {
-    payload?: string; // base64 of bytes; optional, may be empty
+    payload?: string; // @deliberate: base64 of bytes; optional, may be empty
     session_token?: string;
     resume_reason?: string;
   };
-  // Recovery-aware fields (per spec
+  // @deliberate: recovery-aware fields (per spec
   // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
   // §Recovery-aware executor protocol).
   prior_dispatch_id?: string;
@@ -140,7 +140,7 @@ export async function startHttpBridge(
   app.post("/execute", async (req, reply) => {
     const body = (req.body ?? {}) as ExecuteBody;
     const ackId = randomUUID();
-    // Per the 2026-05-20 per-run keying refactor, the writeback URL's run_id
+    // @deliberate: per the 2026-05-20 per-run keying refactor, the writeback URL's run_id
     // segment must equal the supervisor's dispatch_id so attributesAuth can
     // verify the cancel_token. The node_id is a poor proxy because it is
     // stable across runs of the same node. Fall back to a fresh UUID only
@@ -148,7 +148,7 @@ export async function startHttpBridge(
     const runId = body.dispatch_id && body.dispatch_id.length > 0
       ? body.dispatch_id
       : randomUUID();
-    // The trace ledger is keyed by supervisor's dispatch_id when one
+    // @deliberate: the trace ledger is keyed by supervisor's dispatch_id when one
     // arrives in the body (production path); otherwise by the locally
     // minted ackId (debug / integration callers). This is what makes
     // dashboard `getTrace(dispatch_id)` resolve.
@@ -208,11 +208,11 @@ async function runAndCallback(
       cwdFromStore: stringOrUndefined(attributes.cwd_from_store),
       cwdOverride: stringOrUndefined(attributes.cwd),
       cliConfig: parseCliConfig(attributes.cli),
-      // Startup MCP catalog + allow_inline policy thread through so a node's
+      // @deliberate: startup MCP catalog + allow_inline policy thread through so a node's
       // `cli.mcp_servers` `{ ref: }` resolves against the catalog at dispatch.
       mcpCatalog: config.mcpCatalog,
       mcpAllowInline: config.mcpAllowInline,
-      // Raw dispatch_id (not runId): the sign-off gate binds to and
+      // @deliberate: raw dispatch_id (not runId): the sign-off gate binds to and
       // enforces non-emptiness on this, distinct from the UUID-fallback
       // runId above.
       dispatchId: body.dispatch_id ?? "",
@@ -245,7 +245,7 @@ async function runAndCallback(
       logger.warn({ outcome: outcome.kind }, "no callback_url; outcome dropped");
     }
   } catch (e) {
-    // A CliConfigError means a present-but-malformed cli.* config (e.g. a
+    // @deliberate: A CliConfigError means a present-but-malformed cli.* config (e.g. a
     // required_signoffs entry missing public_key) — a host configuration
     // error, not an executor fault. Surface it as the declared
     // `agent/attribute_invalid` class so a misconfigured sign-off gate
@@ -264,7 +264,7 @@ async function runAndCallback(
       config.observability.markComplete(traceId);
     }
     if (body.callback_url) {
-      // Same AsyncCallbackBody oneof shape the supervisor's
+      // @deliberate: same AsyncCallbackBody oneof shape the supervisor's
       // parseAsyncCallback requires (success | error | park); the legacy
       // `{type: ...}` discriminator is rejected with HTTP 400.
       await post(
@@ -283,22 +283,25 @@ async function runAndCallback(
 }
 
 /**
- * encodeBase64 wraps a Uint8Array in a base64 string suitable for the
- * proto-JSON `bytes` field encoding (the convention Go's
- * `encoding/json.Unmarshal` uses to decode `[]byte` fields).
+ * Wraps a Uint8Array in a base64 string suitable for the proto-JSON
+ * `bytes` field encoding (the convention Go's `encoding/json.Unmarshal`
+ * uses to decode `[]byte` fields). Used by both transports — keep in sync
+ * with server.ts.
  */
 function encodeBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
 }
 
-// Projects the per-dispatch named-event buffer into the callback body's
-// `events` slot (proto field 1 of AsyncCallbackBody). Each entry is
-// `{name, payload}` with the payload base64-encoded — the proto-JSON
-// convention for `bytes` fields the Go supervisor's
-// `asyncCallbackNamedEvent.Payload []byte` decodes regardless of transport.
-// An empty / absent buffer yields no `events` key.
-//
-// Exported for unit tests; not part of the agent-contract surface.
+/**
+ * Projects the per-dispatch named-event buffer into the callback body's
+ * `events` slot (proto field 1 of AsyncCallbackBody). Each entry is
+ * `{name, payload}` with the payload base64-encoded — the proto-JSON
+ * convention for `bytes` fields the Go supervisor's
+ * `asyncCallbackNamedEvent.Payload []byte` decodes regardless of transport.
+ * An empty / absent buffer yields no `events` key.
+ *
+ * Exported for unit tests; not part of the agent-contract surface.
+ */
 export function emittedEventsCallbackSlot(
   outcome: AgentOutcome,
 ): { events: { name: string; payload: string }[] } | Record<string, never> {
@@ -312,12 +315,14 @@ export function emittedEventsCallbackSlot(
   };
 }
 
-// Exported for unit tests; not part of the agent-contract surface.
+/**
+ * Exported for unit tests; not part of the agent-contract surface.
+ */
 export function outcomeToCallbackBody(
   outcome: AgentOutcome,
   ackId: string,
 ): Record<string, unknown> {
-  // The callback body uses the AsyncCallbackBody outcome-oneof shape
+  // @deliberate: the callback body uses the AsyncCallbackBody outcome-oneof shape
   // (success | error | park), identical to the gRPC variant in server.ts —
   // both POST to the same supervisor `/v1/callback/{ack}` endpoint, whose
   // parser (Go parseAsyncCallback) requires exactly one of success | error |
@@ -342,7 +347,7 @@ export function outcomeToCallbackBody(
     };
   }
   if (outcome.kind === "blocked") {
-    // Post-E.2 collapse: `Blocked` maps to
+    // @deliberate: post-E.2 collapse: `Blocked` maps to
     // `Error{error_class: "agent/blocked"}` (renamed 2026-05-23 per
     // signal-taxonomy spec, hierarchical-class convention).
     return {
@@ -355,7 +360,7 @@ export function outcomeToCallbackBody(
     };
   }
   if (outcome.kind === "park_requested") {
-    // The proto-JSON convention for `bytes` fields is base64; Go's
+    // @deliberate: the proto-JSON convention for `bytes` fields is base64; Go's
     // `encoding/json.Unmarshal` into []byte expects a base64 string.
     return {
       async_ack_id: ackId,
@@ -514,7 +519,7 @@ export function parseCliConfig(v: unknown): {
   if (hr !== undefined) out!.handleRateLimits = hr;
   const msc = numberOrUndefined(cli.max_schema_corrections);
   if (msc !== undefined) out!.maxSchemaCorrections = msc;
-  // Sign-off gate: host-wired validator MCP servers and the required
+  // @deliberate: sign-off gate: host-wired validator MCP servers and the required
   // (public_key, path) signature pairs. Type-shape-only validation,
   // like every other field here — rimsky never inspects the values.
   const ms = parseMcpServers(cli.mcp_servers);

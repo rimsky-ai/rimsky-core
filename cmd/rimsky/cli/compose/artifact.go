@@ -118,8 +118,9 @@ func EnsureRunDir(root, timestamp, name string) (string, error) {
 	base := filepath.Join(runsRoot, timestamp+"-"+name)
 	if err := os.Mkdir(base, 0o700); err == nil {
 		if mkErr := os.MkdirAll(filepath.Join(base, "blobs"), 0o700); mkErr != nil {
-			// Partial success: release the atomic-claim slot so the
-			// caller's next sequential attempt sees a clean path.
+			// @deliberate: release the atomic-claim slot on partial
+			// success so the caller's next sequential attempt sees a
+			// clean path rather than skipping a suffix budget slot.
 			_ = os.RemoveAll(base)
 			return "", fmt.Errorf("create blobs dir under %q: %w", base, mkErr)
 		}
@@ -190,12 +191,12 @@ func UpdateLatestSymlink(root, runDir string) error {
 		return fmt.Errorf("compute relative symlink target from %q to %q: %w", linkDir, runDir, err)
 	}
 
-	// Ensure the live link exists before staging the new target. The
-	// sentinel target is `.` — a valid symlink that resolves to the
-	// link directory itself. Two concurrent bootstrappers race on
-	// os.Symlink; the kernel guarantees exactly one wins (EEXIST for
-	// the loser), so after this block the live dent is present in
-	// every caller's view.
+	// @deliberate: install a sentinel `.` symlink before staging the
+	// new target so the swap path is universal. The sentinel target
+	// resolves to the link directory itself; two concurrent
+	// bootstrappers race on os.Symlink, the kernel guarantees exactly
+	// one wins (EEXIST for the loser), so after this block the live
+	// dent is present in every caller's view.
 	if sentinelErr := os.Symlink(".", linkPath); sentinelErr != nil && !errors.Is(sentinelErr, os.ErrExist) {
 		return fmt.Errorf("install sentinel symlink %q: %w", linkPath, sentinelErr)
 	}
@@ -211,10 +212,10 @@ func UpdateLatestSymlink(root, runDir string) error {
 		return fmt.Errorf("latest at %q is not a symlink (mode %s); refusing to swap", linkPath, fi.Mode())
 	}
 
-	// Temp name embeds PID + nanoseconds + a per-process atomic counter
-	// so two concurrent callers — across processes (PID) or within one
-	// process (counter, also robust to coarse-resolution UnixNano) —
-	// never collide on the staging file.
+	// @deliberate: temp name embeds PID + nanoseconds + a per-process
+	// atomic counter so two concurrent callers — across processes (PID)
+	// or within one process (counter, also robust to coarse-resolution
+	// UnixNano) — never collide on the staging file.
 	tmpName := fmt.Sprintf("latest.tmp.%d.%d.%d", os.Getpid(), time.Now().UnixNano(), stagingCounter.Add(1))
 	tmpPath := filepath.Join(linkDir, tmpName)
 	if symErr := os.Symlink(relTarget, tmpPath); symErr != nil {
@@ -224,8 +225,9 @@ func UpdateLatestSymlink(root, runDir string) error {
 		_ = os.Remove(tmpPath)
 		return fmt.Errorf("atomic swap %q <-> %q: %w", tmpPath, linkPath, swapErr)
 	}
-	// After the swap, tmpPath now holds the previous target's symlink;
-	// remove it so the staging slot stays clean.
+	// @deliberate: after the swap, tmpPath now holds the previous
+	// target's symlink (swap semantics, not rename); remove it so the
+	// staging slot stays clean.
 	_ = os.Remove(tmpPath)
 	return nil
 }

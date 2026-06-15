@@ -79,25 +79,22 @@ func TestMigratePersistence_CompletesBeforeStartRoleStack(t *testing.T) {
 
 	dbPath := filepath.Join(runDir, "state.db")
 
-	// Save and restore the production seam.
 	origFn := startRoleStackFn
 	defer func() { startRoleStackFn = origFn }()
 
 	var migrationsTableSeen atomic.Bool
 	var runnerStartCalled atomic.Int32
-	// errFakeRunnerStart short-circuits StartRoleStack — we do not need
-	// the real role runners to boot, only to confirm migrate completed
-	// first. The caller in StartRoleStack closes the driver and surfaces
-	// this error.
+	// @deliberate: errFakeRunnerStart short-circuits StartRoleStack — the
+	// real role runners do not need to boot, only to confirm migrate
+	// completed first. The caller in StartRoleStack closes the driver and
+	// surfaces this error.
 	errFakeRunnerStart := errors.New("fake startRoleStackFn: synthetic stop")
 	startRoleStackFn = func(ctx context.Context, logger *slog.Logger, driver persistence.Database, cfg *config.RimskyConfig) (*launch.UnifiedStack, error) {
 		runnerStartCalled.Add(1)
-		// Open state.db on a separate connection and confirm the
-		// migrations bookkeeping row exists at the moment the runner-
-		// start would happen. Doing the read INSIDE the runner-start
-		// callback rules out the post-condition race: a Migrate that
-		// runs concurrently would not have committed by now if it
-		// hadn't completed before this function was called.
+		// @deliberate: read rimsky_migrations on a separate connection
+		// INSIDE the runner-start callback to rule out the post-condition
+		// race — a Migrate that runs concurrently would not have committed
+		// by now unless it completed before this function was called.
 		db, oerr := sql.Open("sqlite", dbPath)
 		if oerr == nil {
 			defer db.Close()

@@ -56,13 +56,11 @@ func isSettledForSubstitution(senderRun *persistence.RunTreeRow) bool {
 	if senderRun.State != cascade.NodeStateFresh {
 		return false
 	}
-	// Pre-Pass-5 the gate also required a non-empty settled-success
-	// LastOutcome to exclude the "freshly-created, never-dispatched"
-	// run row from being treated as settled. Under Pass 5, settled-
-	// fresh runs always carry a non-nil settling_signal_type (writes
-	// land via UpdateState / UpdateStateAndOutcome with a non-nil
-	// pointer). Nil pointer means "fresh from initial creation, never
-	// ran" — not a substitution source.
+	// @constraint: settled-fresh runs always carry a non-nil
+	// settling_signal_type (writes land via UpdateState /
+	// UpdateStateAndOutcome with a non-nil pointer); a nil pointer means
+	// "fresh from initial creation, never ran" and must not be treated as
+	// a substitution source.
 	return senderRun.SettlingSignalType != nil
 }
 
@@ -117,8 +115,9 @@ func BuildAttributeDeps(
 			return nil, fmt.Errorf("BuildAttributeDeps: run-tree lookup for sender_run_id %s: %w", r.SenderRunID, err)
 		}
 		if senderRun == nil {
-			// Inconsistency: wait-set references a run that doesn't
-			// exist in the run-tree. Log and skip; don't block dispatch.
+			// @deliberate: a wait-set row referencing a non-existent
+			// run-tree row is an inconsistency, but a stray wait-set
+			// row must not block dispatch — log and skip.
 			if args.Logger != nil {
 				args.Logger.Warn("BuildAttributeDeps: wait-set sender_run_id has no run-tree row",
 					"sender_run_id", r.SenderRunID.String(),
@@ -130,14 +129,12 @@ func BuildAttributeDeps(
 		if !isSettledForSubstitution(senderRun) {
 			continue
 		}
-		// "Row missing" and "row present, empty data" are two distinct
-		// signals and must be distinguished. A sender that settled but
-		// wrote no attributes still has a substitution-context entry
-		// (empty JSON object) so per-field directives surface
-		// ErrMissingSource for the specific absent field rather than
-		// the whole sender being silently dropped. Receiver-side
-		// required-field gates handle the "no data" case correctly via
-		// the normal missing-source path.
+		// @constraint: "row missing" and "row present, empty data" are
+		// distinct signals. A sender that settled but wrote no
+		// attributes still gets a substitution-context entry (empty JSON
+		// object) so per-field directives surface ErrMissingSource for
+		// the specific absent field rather than silently dropping the
+		// whole sender.
 		attrRow, err := args.Persist.NodeAttributes().GetByRun(ctx, r.SenderRunID, tx)
 		if err != nil {
 			return nil, fmt.Errorf("BuildAttributeDeps: attribute row for sender_run_id %s: %w", r.SenderRunID, err)

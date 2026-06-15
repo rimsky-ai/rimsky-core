@@ -60,8 +60,6 @@ func ReleaseHeldDurableClaims(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	instanceID shared.UUID, log shared.Logger,
 ) (HeldDurableReleaseReport, error) {
-	// Row-discovery via `ListByInstanceAndState(committed, durable)` —
-	// the asset surface (state='committed' AND lifetime='durable').
 	rows, err := args.ClaimHandles.ListByInstanceAndState(
 		ctx, instanceID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, tx,
 	)
@@ -74,10 +72,10 @@ func ReleaseHeldDurableClaims(
 		if r.ProducerName != nil {
 			producerName = *r.ProducerName
 		}
-		// Instance-scoped release of a durable asset: resolve late-bind-
-		// aware so a producer that was bound to a per-instance proxy at
-		// acquire time is released through the same proxy. Falls through
-		// to bare Get when no late-bind config (identical to today).
+		// @constraint: resolve the producer late-bind-aware so a producer
+		// bound to a per-instance proxy at acquire time is released
+		// through the same proxy; falls through to bare Get when no
+		// late-bind config is set.
 		producer, ok := args.StoreRegistry.GetWithContext(ctx, producerName, instanceID.String())
 		if !ok {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
@@ -87,8 +85,9 @@ func ReleaseHeldDurableClaims(
 			continue
 		}
 		claimID := claimproducer.ClaimID(r.ID.String())
-		// Stamp the producer name so a host-agent-proxy fronting the
-		// claim-producer protocol can route this Release by service name.
+		// @constraint: stamp the producer name onto the context so a
+		// host-agent-proxy fronting the claim-producer protocol can
+		// route this Release by service name.
 		relCtx := peer.WithServiceName(ctx, producerName)
 		if err := producer.Release(relCtx, claimID, []byte(r.ClaimScopeData), []byte(r.Address)); err != nil {
 			report.Failures = append(report.Failures, HeldDurableReleaseFailure{
@@ -100,7 +99,7 @@ func ReleaseHeldDurableClaims(
 			}
 			continue
 		}
-		// DeleteResolved is absence-guarded — the row has
+		// @constraint: DeleteResolved is absence-guarded — the row has
 		// `holder_supervisor_id IS NULL` by construction post-Promote
 		// (the post-Stage-4 CHECK constraint nulls the column whenever
 		// `state` exits `'active'`). See @blessed-invariant 4 (post-

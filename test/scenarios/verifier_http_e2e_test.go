@@ -59,7 +59,6 @@
 //     would land the row in `fresh` and the assertion fails.
 //
 // @concept: signal
-// @concept: verifier-pattern
 // @story: verifier-http
 package scenarios
 
@@ -101,19 +100,19 @@ const verifierHTTPExecutorName = "verifier-http"
 // Not t.Parallel(): the test owns the verifier-http binary process and the
 // upstream recorder and shares them across legs.
 func TestVerifierHttpCrossStack(t *testing.T) {
-	// 1. Build the bundled verifier-http executor binary out of lib/services/
+	// @deliberate: 1. Build the bundled verifier-http executor binary out of lib/services/
 	//    (a separate Go module the workspace's go.work pulls in). The build
 	//    is invoked from the workspace root because go.work resolves the
 	//    `./lib/services/executors/verifier-http` package path there.
 	verifierBin := buildVerifierHTTPBinary(t)
 
-	// 2. Launch the verifier-http binary on an OS-assigned port. The
+	// @deliberate: 2. Launch the verifier-http binary on an OS-assigned port. The
 	//    executor's gRPC server reads RIMSKY_EXECUTOR_VERIFIER_HTTP_PORT (and
 	//    _HOST); we pin both to the OS-assigned values so the harness's
 	//    ExtraExecutors entry can dial it.
 	verifierGRPCAddr := startVerifierHTTPBinary(t, verifierBin)
 
-	// 3. Stand up the in-process harness with the verifier-http binary wired
+	// @deliberate: 3. Stand up the in-process harness with the verifier-http binary wired
 	//    as an ExtraExecutors entry. The supervisor's dispatch path now
 	//    resolves the `verifier-http` executor name to the launched gRPC
 	//    endpoint.
@@ -123,20 +122,20 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 		},
 	})
 
-	// 4. Stand up the fake verifier upstream. The recorder field captures the
+	// @deliberate: 4. Stand up the fake verifier upstream. The recorder field captures the
 	//    most-recent request body for each path, keyed by path, so each leg
 	//    can assert the upstream received the operator's configured body
 	//    BYTE-FOR-BYTE (the falsifier-discriminator against "the payload
 	//    posted is canned").
 	rec := &upstreamRecorder{lastBodyByPath: map[string][]byte{}}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Recording is universal: we want to inspect what the executor
+		// @deliberate: Recording is universal: we want to inspect what the executor
 		// actually POSTed regardless of which leg this hit belongs to.
 		raw, _ := io.ReadAll(r.Body)
 		rec.record(r.URL.Path, raw)
 		switch r.URL.Path {
 		case "/ok":
-			// 2xx leg: success path. Echo the inbound body back as the
+			// @deliberate: 2xx leg: success path. Echo the inbound body back as the
 			// response so the executor (and the test) could in principle
 			// reflect on what reached the upstream from the response side
 			// too; the recorder is the primary discriminator.
@@ -144,7 +143,7 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(raw)
 		case "/reject":
-			// 4xx-with-class leg: the upstream rejects the payload with a
+			// @deliberate: 4xx-with-class leg: the upstream rejects the payload with a
 			// 400 carrying a `class` field. The verifier-http executor
 			// reads that field and surfaces it on the error class as
 			// `verifier/check_failed/<class>` — the property the
@@ -153,7 +152,7 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"class":"rate_limited","reason":"echo: ` + safeString(raw) + `"}`))
 		case "/boom":
-			// 5xx leg: server error. The verifier MUST route to terminal
+			// @constraint: 5xx leg: server error. The verifier MUST route to terminal
 			// error — never resolve to success — under the "verifier
 			// resolves to success when the upstream returned 5xx"
 			// falsifier sentinel.
@@ -165,10 +164,10 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	// 5. Drive each leg through a fresh template + instance.
+	// @deliberate: 5. Drive each leg through a fresh template + instance.
 
 	t.Run("leg1_2xx_terminal_success_with_echo", func(t *testing.T) {
-		// The body the operator wants the verifier to POST. Carrying both
+		// @deliberate: The body the operator wants the verifier to POST. Carrying both
 		// a string and a nested object guards against any "canned payload"
 		// regression in which the executor silently substitutes a fixed
 		// stub.
@@ -199,14 +198,14 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 		okNode := h.FindNode(iid, "verify-ok")
 		require.NotNil(t, okNode)
 
-		// 2xx → terminal/success. Any cheaper shape (e.g. silent error
+		// @deliberate: 2xx → terminal/success. Any cheaper shape (e.g. silent error
 		// because the executor mis-read the configured body) falsifies
 		// the spec's "a payload the service accepts reaches a terminal
 		// success" Acceptance clause.
 		require.True(t, h.WaitForNodeState(okNode.ID, cascade.NodeStateFresh, 30*time.Second),
 			"2xx-leg: node must reach fresh terminal")
 
-		// Falsifier guard: assert the upstream actually received the
+		// @deliberate: Falsifier guard: assert the upstream actually received the
 		// operator's body, byte-for-byte. The recorder captured the
 		// most-recent POST to /ok; decode it as JSON and require deep
 		// equality against the configured body. A canned-payload
@@ -217,7 +216,7 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 		var decoded map[string]any
 		require.NoError(t, json.Unmarshal(gotBody, &decoded),
 			"2xx-leg: upstream-received body must be JSON; got %q", string(gotBody))
-		// Normalize both sides through JSON so numeric/float equivalence is
+		// @constraint: Normalize both sides through JSON so numeric/float equivalence is
 		// uniform (every JSON number decodes to float64).
 		normExpected := jsonRoundtrip(t, configuredBody)
 		require.True(t, reflect.DeepEqual(normExpected, decoded),
@@ -226,7 +225,7 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 	})
 
 	t.Run("leg2_4xx_with_class_terminal_error_typed", func(t *testing.T) {
-		// The 4xx-with-class discriminating leg: the upstream body carries
+		// @constraint: The 4xx-with-class discriminating leg: the upstream body carries
 		// `{"class":"rate_limited",...}`. The executor MUST read the class
 		// field and surface it on the error-class hierarchy as
 		// `verifier/check_failed/rate_limited`. The settling signal type
@@ -260,12 +259,12 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 		rj := h.FindNode(iid, "verify-reject")
 		require.NotNil(t, rj)
 
-		// give_up is the default policy for an undeclared error class,
+		// @constraint: give_up is the default policy for an undeclared error class,
 		// so the node lands in failed (NOT fresh).
 		require.True(t, h.WaitForNodeState(rj.ID, cascade.NodeStateFailed, 30*time.Second),
 			"4xx-leg: node must fail when upstream returns 4xx")
 
-		// The settling signal is the typed verifier/check_failed/<class>
+		// @deliberate: The settling signal is the typed verifier/check_failed/<class>
 		// path: this is the property the falsifier names — if the
 		// executor ignored the upstream's class field, the signal would
 		// instead be `verifier/check_failed` without the typed suffix
@@ -274,7 +273,7 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 			"terminal/error/verifier/check_failed/rate_limited", 30*time.Second),
 			"4xx-leg: settling signal must be terminal/error/verifier/check_failed/rate_limited (proving the upstream's class field surfaced)")
 
-		// Also assert the upstream actually received the configured
+		// @constraint: Also assert the upstream actually received the configured
 		// body (echo-back guard against canned payloads).
 		gotBody := rec.lastBody("/reject")
 		require.NotEmpty(t, gotBody, "4xx-leg: upstream must have received a body")
@@ -288,7 +287,7 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 	})
 
 	t.Run("leg3_5xx_terminal_error_never_success", func(t *testing.T) {
-		// The 5xx leg: upstream returns 500. The verifier MUST route to
+		// @constraint: The 5xx leg: upstream returns 500. The verifier MUST route to
 		// terminal error — never silently to success — under the
 		// "verifier resolves to success when the upstream returned 5xx"
 		// falsifier sentinel.
@@ -318,12 +317,12 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 		bm := h.FindNode(iid, "verify-boom")
 		require.NotNil(t, bm)
 
-		// 5xx → terminal/error (NOT terminal/success). The default
+		// @constraint: 5xx → terminal/error (NOT terminal/success). The default
 		// give_up policy lands the node in failed.
 		require.True(t, h.WaitForNodeState(bm.ID, cascade.NodeStateFailed, 30*time.Second),
 			"5xx-leg: node must fail when upstream returns 5xx (must NOT resolve to success)")
 
-		// The settling signal type must be a `terminal/error/verifier/...`
+		// @constraint: The settling signal type must be a `terminal/error/verifier/...`
 		// path — any `terminal/success/` prefix would falsify the
 		// "verifier resolves to success when the upstream returned 5xx"
 		// sentinel directly. The 5xx body in this leg does NOT carry a
@@ -333,7 +332,7 @@ func TestVerifierHttpCrossStack(t *testing.T) {
 			"terminal/error/verifier/check_failed", 30*time.Second),
 			"5xx-leg: settling signal must be a terminal/error/verifier/check_failed* path")
 
-		// Echo-back guard.
+		// @constraint: Echo-back guard.
 		gotBody := rec.lastBody("/boom")
 		require.NotEmpty(t, gotBody, "5xx-leg: upstream must have received a body")
 		var decoded map[string]any
@@ -377,7 +376,7 @@ func safeString(body []byte) string {
 		return ""
 	}
 	enc, _ := json.Marshal(string(body))
-	// Strip the surrounding quotes; json.Marshal of a string yields
+	// @deliberate: Strip the surrounding quotes; json.Marshal of a string yields
 	// `"..."`. We just want the escaped content.
 	if len(enc) >= 2 && enc[0] == '"' && enc[len(enc)-1] == '"' {
 		return string(enc[1 : len(enc)-1])

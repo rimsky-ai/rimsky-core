@@ -49,7 +49,7 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "bp-concurrent-frame", Version: "1",
-		// Coalesce so both root nodes (worker_a and worker_b) live in
+		// @deliberate: Coalesce so both root nodes (worker_a and worker_b) live in
 		// the SAME frame — that's the only mode in which both root
 		// dispatches can be in-flight concurrently. Under serial_queue
 		// each root gets its own frame and frames are dispatched one at
@@ -68,7 +68,7 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 	})
 
 	iid := createInstanceWithPause(t, h, tid, "ck-concurrent-frame", map[string]any{})
-	// Breakpoint only matches worker_a; worker_b should be unaffected.
+	// @deliberate: Breakpoint only matches worker_a; worker_b should be unaffected.
 	bpID := breakpointCreate(t, h, iid, map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": "worker_a"},
@@ -76,16 +76,16 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 	status, _ := instanceResume(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	// Wait for worker_a's hit to land. This proves the breakpoint
+	// @deliberate: Wait for worker_a's hit to land. This proves the breakpoint
 	// caught its dispatch.
 	hit := waitForHitOnBreakpoint(t, h, bpID, 10*time.Second)
 
-	// While worker_a is paused, worker_b should still reach Fresh —
+	// @deliberate: While worker_a is paused, worker_b should still reach Fresh —
 	// the breakpoint does not match worker_b.
 	nb := h.FindNode(iid, "worker_b")
 	require.NotNil(t, nb)
 	if !h.WaitForNodeState(nb.ID, cascade.NodeStateFresh, 15*time.Second) {
-		// Diagnostic: dump the run rows + their current phase/state for
+		// @deliberate: Diagnostic: dump the run rows + their current phase/state for
 		// the instance so a regression here surfaces what's blocking
 		// worker_b's progress.
 		h.QuerySQL(`
@@ -119,7 +119,6 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 	require.Equal(t, 0, stubObservedCount(h, "worker_a"),
 		"executor must NOT observe worker_a while paused at the breakpoint")
 
-	// Resume the breakpoint hit; worker_a should now proceed.
 	status, _ = breakpointResume(t, h, iid, bpID, map[string]any{
 		"hit_id": hit.ID.String(),
 	})

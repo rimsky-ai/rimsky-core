@@ -58,12 +58,12 @@ const maxWaitPollInterval = 5 * time.Second
 // cadence for the steady state.
 const waitPollBackoffAfter = 5
 
-// Instance outcome strings the wait loop and the verb's exit-code
-// classification share. The control-api returns terminal nodes with
-// `state` in {"success", "failed", "parked"} (the last meaning the
-// node parked itself with a timeout); the verb maps "failed" to
-// failure and "parked" to parked-timeout for the operator-facing
-// summary.
+// @decision: exit-codes — instance outcome strings shared between the
+// wait loop and the verb's exit-code classification. The control-api
+// returns terminal nodes with `state` in {"success", "failed",
+// "parked"} (the last meaning the node parked itself with a timeout);
+// the verb maps "failed" to failure and "parked" to parked-timeout
+// for the operator-facing summary.
 const (
 	OutcomeSuccess       = "success"
 	OutcomeFailure       = "failure"
@@ -126,15 +126,11 @@ func WaitForInstancesTerminal(
 		return outcomes, nil
 	}
 
-	// seenNodeTerminal records which node IDs have already had a
-	// printer event emitted so the verb does not double-print a
-	// terminal node when the poll lands again after the instance's
-	// terminated_at flips. Keyed by node ID (unique across the run).
+	// @constraint: dedupe printer events for terminal nodes across
+	// repeat polls — the poll lands again after terminated_at flips
+	// and would otherwise re-emit the same NodeRunTerminal event.
 	seenNodeTerminal := make(map[string]bool)
 
-	// remaining is the set of instances still being polled. We delete
-	// an entry once its terminated_at has been observed; the loop
-	// exits when len(remaining) == 0. A live ticker controls cadence.
 	remaining := make(map[string]bool, len(instanceIDs))
 	for _, id := range instanceIDs {
 		remaining[id] = true
@@ -145,20 +141,20 @@ func WaitForInstancesTerminal(
 		}
 	}
 
-	// Back-off scheduling: the first waitPollBackoffAfter ticks run
-	// at the requested cadence, then the interval doubles each tick
-	// up to maxWaitPollInterval. Using a Timer (not a Ticker) lets us
-	// change the period without dropping ticks.
+	// @deliberate: Timer (not Ticker) so the back-off can change the
+	// period each tick without dropping pending fires; the first
+	// waitPollBackoffAfter ticks run at the requested cadence, then
+	// the interval doubles each tick up to maxWaitPollInterval.
 	currentInterval := pollInterval
 	timer := time.NewTimer(currentInterval)
 	defer timer.Stop()
 	tickCount := 0
 
 	for len(remaining) > 0 {
-		// Poll each still-running instance once per tick. A single
-		// pass is sequential per id; if one id's poll errors we let
-		// the loop continue to the next so a transient blip on one
-		// instance does not stall the whole wait.
+		// @constraint: per-id polls are sequential within a tick but
+		// errors on one id must not stall the others — a transient
+		// blip on one instance falls through `continue` and retries
+		// on the next tick instead of aborting the wait.
 		for id := range remaining {
 			inst, err := client.GetInstance(ctx, id)
 			if err != nil {
@@ -172,10 +168,6 @@ func WaitForInstancesTerminal(
 				continue
 			}
 
-			// Surface per-node terminals as they appear. The poll's
-			// nodes-list call is bounded by the same ctx, so a
-			// cancel during ListInstanceNodes returns ctx.Err()
-			// upstream.
 			nodes, nerr := client.ListInstanceNodes(ctx, id)
 			if nerr == nil && nodes != nil {
 				name := keys[id]
@@ -216,9 +208,6 @@ func WaitForInstancesTerminal(
 			if nodes == nil {
 				continue
 			}
-			// Instance terminal — classify by walking its nodes:
-			// any failed → failure; else any parked → parked-timeout;
-			// else success.
 			name := keys[id]
 			if name == "" {
 				name = id
@@ -238,9 +227,10 @@ func WaitForInstancesTerminal(
 		case <-timer.C:
 		}
 
-		// Back-off after the warm-up window so a long-running wait
-		// stops hammering the local control-api (and the audit-row
-		// writer) at the original cadence.
+		// @decision: progress-default — back off after the warm-up
+		// window so a long-running wait stops hammering the local
+		// control-api (and the audit-row writer) at the original
+		// cadence.
 		tickCount++
 		if tickCount >= waitPollBackoffAfter && currentInterval < maxWaitPollInterval {
 			currentInterval *= 2
@@ -338,7 +328,7 @@ func classifyWaitErr(err error) ShutdownReason {
 	}
 }
 
-// reasonStringer keeps the fmt-Stringer impl close to the constants
+// reasonString keeps the fmt-Stringer impl close to the constants
 // it formats so a debug log of the reason is human-legible.
 func reasonString(r ShutdownReason) string {
 	switch r {

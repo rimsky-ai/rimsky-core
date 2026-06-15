@@ -133,7 +133,7 @@ func (s *Server) BeginCandidate(_ context.Context, req *genv1.BeginCandidateRequ
 			return &genv1.BeginCandidateResponse{CandidateHandle: []byte(handle)}, nil
 		}
 	}
-	// Allocate a fresh candidate_handle. Format is
+	// @deliberate: Allocate a fresh candidate_handle. Format is
 	// "cand:<claim_handle_id>:<idempotency_key>" — opaque to rimsky;
 	// stable so test assertions can pin it.
 	handle := fmt.Sprintf("cand:%s:%s", req.GetClaimHandleId(), req.GetIdempotencyKey())
@@ -143,7 +143,7 @@ func (s *Server) BeginCandidate(_ context.Context, req *genv1.BeginCandidateRequ
 		IdempotencyKey:  req.GetIdempotencyKey(),
 		SubScopeBytes:   cloneBytes(req.GetSubScopeDescriptor()),
 	}
-	// Sniff a partition_key from the sub_scope_descriptor when it
+	// @deliberate: Sniff a partition_key from the sub_scope_descriptor when it
 	// JSON-decodes as {"partition_key": "..."}. Best-effort.
 	var sniff struct {
 		PartitionKey string `json:"partition_key"`

@@ -113,12 +113,9 @@ instances:
 	if err := os.WriteFile(mf, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// First up brings the manifest to convergence.
 	if got := compose.RunComposeUp(context.Background(), []string{"-f", mf, "--yes"}); got != 0 {
 		t.Fatal("up failed")
 	}
-	// Mutate params on disk so the next plan sees drift on a running
-	// instance (no terminal_at). Plan must report exit 3.
 	driftBody := `project: p
 templates:
   - path: spec.yml
@@ -163,7 +160,6 @@ func TestRunComposeUp_NonTerminalOrphanFails(t *testing.T) {
 func TestApplyPlan_FailureMidPlan(t *testing.T) {
 	srv := setupServer(t)
 	mf := writeFullManifest(t)
-	// Inject a 5xx on POST /tags so the plan fails after register.
 	srv.SetFailure("POST", "/v1/tags", clitest.FailureSpec{Status: 500, Body: map[string]any{"error": "boom"}, Times: 5})
 	if got := compose.RunComposeUp(context.Background(), []string{"-f", mf, "--yes"}); got != 1 {
 		t.Errorf("exit %d", got)
@@ -173,11 +169,9 @@ func TestApplyPlan_FailureMidPlan(t *testing.T) {
 func TestRunComposeUp_NonTTYDestructiveRequiresYes(t *testing.T) {
 	srv := setupServer(t)
 	mf := writeFullManifest(t)
-	// Run compose up once to create the instance.
 	if got := compose.RunComposeUp(context.Background(), []string{"-f", mf, "--yes"}); got != 0 {
 		t.Fatal("up failed")
 	}
-	// Mark instance as failed-terminal.
 	insts := srv.State.ListInstances("", "")
 	if len(insts) != 1 {
 		t.Fatalf("got %+v", insts)
@@ -185,7 +179,6 @@ func TestRunComposeUp_NonTTYDestructiveRequiresYes(t *testing.T) {
 	srv.State.AddNode(insts[0].ID, cli.Node{ID: "n", InstanceID: insts[0].ID, NodeType: "a", State: "failed"})
 	now := time.Now()
 	srv.State.SetInstanceTerminated(insts[0].ID, &now)
-	// Now flip the manifest to restart=on_failure: re-write.
 	body := `project: p
 templates:
   - path: spec.yml
@@ -198,7 +191,7 @@ instances:
 	if err := os.WriteFile(mf, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// stdin is a pipe → not a TTY. Without --yes, exits 2.
+	// @constraint: test stdin is a pipe (not a TTY); destructive ops without --yes must exit 2.
 	if got := compose.RunComposeUp(context.Background(), []string{"-f", mf}); got != 2 {
 		t.Errorf("exit %d", got)
 	}
@@ -302,9 +295,7 @@ func TestApplyPlan_TerminateAfterRunPropagates(t *testing.T) {
 		}
 		body := srv.lastBody(t)
 		if v, present := body["terminate_after_run"]; present {
-			// json `omitempty` on a false bool keeps the field absent
-			// from the wire — preserving the durable-by-default
-			// semantics of the existing up/down/plan/status verbs.
+			// @constraint: json `omitempty` on a false bool keeps the field absent on the wire, preserving durable-by-default semantics of up/down/plan/status verbs.
 			t.Fatalf("default ApplyOpts must omit terminate_after_run; got %v", v)
 		}
 	})

@@ -45,13 +45,13 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 	worker := h.FindNode(iid, "worker")
 	require.NotNil(t, worker)
 
-	// Drop any auto-created frames so we have full control. Post-
+	// @deliberate: Drop any auto-created frames so we have full control. Post-
 	// stage-3 cutover: state lives on rimsky_node_runs.
 	h.ExecSQL(`DELETE FROM rimsky_node_runs WHERE frame_id IN (SELECT frame_id FROM rimsky_frames WHERE instance_id = $1)`, uuid.UUID(iid))
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
-	// Seed a wedged frame with last_progress_at 5 minutes in the past
+	// @deliberate: Seed a wedged frame with last_progress_at 5 minutes in the past
 	// against a 60s timeout; the source node is stale within this frame
 	// and there are no claimed dispatches.
 	const timeoutMs = 60000
@@ -70,26 +70,25 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
 	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
 
-	// Capture log output via a buffer-backed slog handler.
+	// @deliberate: Capture log output via a buffer-backed slog handler.
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Drive the frame engine.
+	// @deliberate: Drive the frame engine.
 	require.NoError(t, frame.RunTick(h.Ctx, h.Driver.Tables(), h.Driver.Queue(), logger))
 
-	// The observer should have fired the warning.
 	logged := buf.String()
 	require.Contains(t, logged, "frame.stuck.observed",
 		"expected stuck-frame warning; got logger output: %q", logged)
 
-	// The frame must stay running — the warning is non-destructive.
+	// @deliberate: The frame must stay running — the warning is non-destructive.
 	var state string
 	h.QueryRowSQL(`SELECT state FROM rimsky_frames WHERE frame_id = $1`,
 		[]any{frameID}, &state)
 	require.Equal(t, "running", state,
 		"stuck-frame warning must not transition the frame to terminal")
 
-	// The wedged source node must keep its state — no fail-fanout.
+	// @deliberate: The wedged source node must keep its state — no fail-fanout.
 	// Post-stage-3: read state from the in-flight run row.
 	var nodeState string
 	h.QueryRowSQL(`SELECT COALESCE(r.state, 'fresh')
@@ -102,7 +101,6 @@ func TestFrameTimeoutStuckFrame(t *testing.T) {
 	require.Equal(t, "stale", nodeState,
 		"warning must not mutate node state")
 
-	// Sanity check on the warning content: should reference frame_id.
 	require.True(t, strings.Contains(logged, frameID.String()),
 		"warning should mention frame_id %s; got %q", frameID.String(), logged)
 }

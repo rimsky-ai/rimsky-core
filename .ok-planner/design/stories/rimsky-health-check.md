@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As an operator running rimsky behind a load balancer or k8s liveness/readiness probe, I can query `GET /health` (or `rimsky health` CLI) and get back the control-api's deployment health status, so that infrastructure operators have a probe surface to gate traffic on.
+As an operator running rimsky behind a load balancer or container-orchestrator liveness/readiness probe, I can query the deployment-health probe surface (or the health CLI verb) and get back the control-api's deployment health status, so that infrastructure operators have a probe surface to gate traffic on.
 
 ## Capability
 
-`GET /health` unauthenticated probe surface: returns success while the deployment is healthy, non-success when a critical dependency is down; fast, probe-suitable.
+Unauthenticated deployment-health probe surface: returns success while the deployment is healthy, non-success when a critical dependency is down; fast, probe-suitable.
 
 ## Business value
 
@@ -23,7 +23,7 @@ Against a running control-api, a request to the health surface returns a success
 
 ## Falsifier
 
-Health route returns success while a critical dependency is down (false-positive), OR requires auth (incompatible with anonymous probes).
+The health probe surface returns success while a critical dependency is down (false-positive), OR requires auth (incompatible with anonymous probes).
 
 ## Proof
 

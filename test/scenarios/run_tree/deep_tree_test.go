@@ -29,7 +29,7 @@ import (
 // fan-out policy.
 func TestDeepTree_SubgraphOfFanout(t *testing.T) {
 	t.Parallel()
-	// Two fan-out partitions; each partition's sub-graph terminated
+	// @deliberate: Two fan-out partitions; each partition's sub-graph terminated
 	// fresh_changed.
 	innerVerdicts := []runtime.ChildState{
 		{State: cascade.NodeStateFresh, SettlingSignalType: signalpkg.TypePath("terminal/success"), Changed: true},
@@ -74,7 +74,7 @@ func TestDeepTree_SubgraphOfFanoutOneInnerFails(t *testing.T) {
 // single ChildState upward.
 func TestDeepTree_FanoutOfSubgraph(t *testing.T) {
 	t.Parallel()
-	// Inner fan-out had a mixed outcome but `best_effort` policy
+	// @deliberate: Inner fan-out had a mixed outcome but `best_effort` policy
 	// produced a successful inner verdict.
 	innerChildren := []runtime.ChildState{
 		{State: cascade.NodeStateFailed, SettlingSignalType: signalpkg.TypePath("terminal/error/test_failure")},
@@ -87,7 +87,7 @@ func TestDeepTree_FanoutOfSubgraph(t *testing.T) {
 	if innerVerdict.ParentState != cascade.NodeStateFresh {
 		t.Errorf("inner best_effort verdict: %s (want fresh)", innerVerdict.ParentState)
 	}
-	// Outer sub-graph: a single ChildState carries the inner
+	// @deliberate: Outer sub-graph: a single ChildState carries the inner
 	// fan-out's settled verdict upward.
 	outer := runtime.Aggregate([]runtime.ChildState{
 		{State: innerVerdict.ParentState, SettlingSignalType: innerVerdict.ParentSettlingSignalType},

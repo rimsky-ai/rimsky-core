@@ -8,10 +8,8 @@
 // payload and returns a Success or Error terminal based on aggregate
 // pass/fail.
 //
-// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Verifier executors / verifier-shape-checks.
-//
-// @concept: verifier-pattern
+// @deliberate: implements the verifier-executor pattern
+// (documentation-only, no successor concept).
 //
 // Attribute schema (passed at Execute time via ExecuteRequest.attributes):
 //
@@ -76,9 +74,10 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 	if err != nil {
 		return sendErrored(send, "verifier/attribute_invalid", err.Error())
 	}
-	// Run each check and pair its Result with the declared Severity so the
-	// aggregator can partition failures: only error-severity failures block
-	// the commit; warning-severity failures are non-blocking soft findings.
+	// @deliberate: pair each Result with its declared Severity so the
+	// aggregator can partition failures — only error-severity failures
+	// block the commit; warning-severity failures are non-blocking soft
+	// findings.
 	results := make([]scoredResult, 0, len(specs))
 	blockingFailures := 0
 	firstBlockingKind := ""
@@ -90,10 +89,10 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 		}
 		blockingFailures++
 		if firstBlockingKind == "" {
-			// Prefer the spec's declared kind; fall back to the
-			// runner-reported kind (which is what the "unknown"
-			// dispatcher sets when spec.Kind isn't a registered
-			// check name).
+			// @deliberate: prefer the spec's declared kind; fall back to
+			// the runner-reported kind (which is what the "unknown"
+			// dispatcher sets when spec.Kind isn't a registered check
+			// name).
 			firstBlockingKind = spec.Kind
 			if firstBlockingKind == "" {
 				firstBlockingKind = r.Kind
@@ -101,11 +100,11 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 		}
 	}
 	if blockingFailures > 0 {
-		// Aggregate failure messages in a Struct payload; the
-		// rimsky-side error_class policy fires on the hierarchical
-		// `verifier/check_failed/<kind>` leaf per `concept:signal`. The
-		// payload also carries any warning-severity failures so the
-		// operator sees the full picture even when an error blocks.
+		// @concept: signal — aggregate failure messages in a Struct
+		// payload; the rimsky-side error_class policy fires on the
+		// hierarchical `verifier/check_failed/<kind>` leaf. The payload
+		// also carries any warning-severity failures so the operator
+		// sees the full picture even when an error blocks.
 		payload := buildErrorPayload(results)
 		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
@@ -114,9 +113,9 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 			}}},
 		}})
 	}
-	// No blocking failure: the dispatch succeeds. Any warning-severity
-	// failure is surfaced as a non-blocking finding in the Success delta so
-	// the operator still sees the soft signal.
+	// @deliberate: no blocking failure means the dispatch succeeds; any
+	// warning-severity failure is surfaced as a non-blocking finding in
+	// the Success delta so the operator still sees the soft signal.
 	delta := buildSuccessDelta(results, len(rows))
 	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
 		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
@@ -301,6 +300,6 @@ func stubSuccess() *genv1.ExecuteEvent {
 	}}
 }
 
-// keepCompilerHappy retains references that linters might otherwise
+// @deliberate: retains references that linters might otherwise
 // classify as unused.
 var _ = json.Marshal

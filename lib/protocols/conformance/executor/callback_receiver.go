@@ -41,8 +41,8 @@ import (
 // runtime/callback.go.
 type CallbackReceiver struct {
 	srv          *http.Server
-	bindAddr     string // listening "ip:port"
-	advertiseURL string // base URL executors should POST to
+	bindAddr     string // @constraint: listening "ip:port"
+	advertiseURL string // @constraint: base URL executors should POST to
 	mu           sync.Mutex
 	wait         map[string]chan *genv1.ExecuteEvent
 }
@@ -53,8 +53,8 @@ type CallbackReceiver struct {
 // need BindHost="0.0.0.0" and AdvertiseHost="host.docker.internal" or a
 // reachable host IP so their callback POST can cross the network boundary.
 type ReceiverOptions struct {
-	BindHost      string // default "127.0.0.1"
-	AdvertiseHost string // default same as BindHost; never "0.0.0.0"
+	BindHost      string // @constraint: default "127.0.0.1"
+	AdvertiseHost string // @constraint: default same as BindHost; never "0.0.0.0"
 }
 
 // StartCallbackReceiver binds an HTTP listener and returns a CallbackReceiver
@@ -127,7 +127,7 @@ func (r *CallbackReceiver) Close() error {
 }
 
 func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
-	// Path: /v1/callback/{async_ack_id}
+	// @constraint: path is /v1/callback/{async_ack_id}.
 	parts := strings.Split(strings.TrimPrefix(req.URL.Path, "/v1/callback/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		http.Error(w, "missing async_ack_id", http.StatusBadRequest)
@@ -154,7 +154,8 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 	select {
 	case ch <- ev:
 	default:
-		// Channel already has a buffered terminal; discard duplicates.
+		// @constraint: channel already has a buffered terminal; discard
+		// duplicates so the consumer sees the first synthesized event only.
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -227,17 +228,17 @@ func mapPark(m map[string]any) (*genv1.ExecuteEvent, error) {
 	payloadStr := asString(m["payload"])
 	var payloadBytes []byte
 	if payloadStr != "" {
-		// Payload is base64 over the JSON wire (Go []byte convention).
-		// Tolerate non-base64 by treating it as a literal.
+		// @constraint: payload is base64 over the JSON wire (Go []byte
+		// convention) — tolerate non-base64 by treating it as a literal.
 		if decoded, err := base64.StdEncoding.DecodeString(payloadStr); err == nil {
 			payloadBytes = decoded
 		} else {
 			payloadBytes = []byte(payloadStr)
 		}
 	}
-	// ParkReason is a closed two-value set (proto:executor.proto::ParkReason).
-	// Unknown / empty falls back to PARK_REASON_AWAIT_CALLBACK — the safer
-	// default (no auto-resume).
+	// @constraint: ParkReason is a closed two-value set
+	// (proto:executor.proto::ParkReason). Unknown / empty falls back to
+	// PARK_REASON_AWAIT_CALLBACK — the safer default (no auto-resume).
 	reasonStr := asString(m["reason"])
 	reasonEnum := genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
 	if reasonStr != "" {

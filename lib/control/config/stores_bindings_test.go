@@ -13,7 +13,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite" // installs the sqlite driver via init()
+	// @constraint: installs the sqlite driver via init().
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
@@ -37,13 +38,14 @@ func openMigratedSQLite(t *testing.T) persistence.Database {
 	return d
 }
 
-// lookupInstanceBindings reads through persistence.Tables.Get, which panics
-// on a nil tx under the option-C contract. This is a regression guard for a
-// late-bind resolution path that passed nil tx — under both drivers that
-// panicked the executor resolver mid-dispatch (it surfaced historically as
-// the all-in-one read path wedging). A lookup of an unknown instance is
-// enough to exercise the broken line: the read runs (and would panic) before
-// the row is ever examined.
+// TestLookupInstanceBindings_UnknownInstanceNoPanic reads through
+// persistence.Tables.Get, which panics on a nil tx under the option-C
+// contract. This is a regression guard for a late-bind resolution path
+// that passed nil tx — under both drivers that panicked the executor
+// resolver mid-dispatch (it surfaced historically as the all-in-one read
+// path wedging). A lookup of an unknown instance is enough to exercise
+// the broken line: the read runs (and would panic) before the row is
+// ever examined.
 func TestLookupInstanceBindings_UnknownInstanceNoPanic(t *testing.T) {
 	store := openMigratedSQLite(t).Tables()
 	bindings, ok, err := lookupInstanceBindings(context.Background(), store, uuid.NewString())
@@ -55,8 +57,8 @@ func TestLookupInstanceBindings_UnknownInstanceNoPanic(t *testing.T) {
 	}
 }
 
-// The happy path returns the parsed service_bindings map for an instance
-// that carries them.
+// TestLookupInstanceBindings_ReturnsServiceBindings — happy path returns
+// the parsed service_bindings map for an instance that carries them.
 func TestLookupInstanceBindings_ReturnsServiceBindings(t *testing.T) {
 	store := openMigratedSQLite(t).Tables()
 	ctx := context.Background()

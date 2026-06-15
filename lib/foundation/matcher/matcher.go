@@ -43,7 +43,7 @@ type Context struct {
 	NodeType     string
 	Graph        string
 	ChildKey     string
-	AttributeBag map[string]any // post-L5 merged attributes per concept:attribute
+	AttributeBag map[string]any // @concept: attribute — post-L5 merged attribute bag
 }
 
 // allowedKeys is the closed set of recognised matcher keys.
@@ -67,7 +67,8 @@ var allowedKeys = map[string]struct{}{
 // The attrs.<path> branch is the concept:inertness sanctioned
 // attribute-value read site.
 func Evaluate(m Matcher, ctx Context, logger shared.Logger, entryIndex int) bool {
-	// Defensive guard against unknown keys (out-of-band corruption).
+	// @deliberate: defensive guard against unknown keys (out-of-band
+	// persistence corruption — validator already rejects at registration).
 	for k := range m {
 		if _, ok := allowedKeys[k]; !ok {
 			if logger != nil {
@@ -146,8 +147,8 @@ func walkAttrPath(bag map[string]any, path string) (any, bool) {
 // existing by_match validator + runtime convention. Returns false
 // when either side is non-primitive.
 func primitiveEqual(a, b any) bool {
-	// Reduce json.Number on either side to float64 for the numeric
-	// branches.
+	// @deliberate: Reduce json.Number on either side to float64 so the numeric
+	// branches below have a single shape to compare against.
 	if n, ok := a.(json.Number); ok {
 		if f, err := n.Float64(); err == nil {
 			a = f

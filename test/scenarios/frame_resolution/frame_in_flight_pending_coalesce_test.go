@@ -37,13 +37,12 @@ func TestFrameInFlightPendingCoalesce(t *testing.T) {
 	require.True(t, waitForFramesByState(t, h, iid, "running", 1, 5*time.Second),
 		"first frame did not enter running")
 
-	// Fire many invalidates rapidly. The partial unique index prevents
+	// @deliberate: Fire many invalidates rapidly. The partial unique index prevents
 	// more than one queued coalesce row from existing simultaneously.
 	for i := 0; i < 25; i++ {
 		fireInvalidate(t, h, iid, worker.ID)
 	}
 
-	// Sample over a window: at every read, queued coalesce rows ≤ 1.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		n := countFramesByState(t, h, iid, "queued")
@@ -52,7 +51,6 @@ func TestFrameInFlightPendingCoalesce(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// Eventually drain.
 	require.Eventually(t, func() bool {
 		return countFramesByState(t, h, iid, "completed") == 2
 	}, 30*time.Second, 100*time.Millisecond,

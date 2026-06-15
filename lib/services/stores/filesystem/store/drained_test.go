@@ -19,7 +19,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/action"
 )
 
-// drainedPath is the absolute path to the per-policy drained sentinel.
+// drainedPathFor is the absolute path to the per-policy drained sentinel.
 func drainedPathFor(root, selector string) string {
 	return filepath.Join(policyStateDir(root, selector), "drained")
 }
@@ -50,7 +50,6 @@ func TestOnDrain_SinglePass(t *testing.T) {
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	// Pass 1: 3 picks, then Unavailable consumes drained.
 	for i := 0; i < 3; i++ {
 		o, err := st.Open(context.Background(), fmt.Sprintf("p1-c%d", i), "@r")
 		must(t, err)
@@ -71,9 +70,7 @@ func TestOnDrain_SinglePass(t *testing.T) {
 		t.Errorf("pass 1: drained should be consumed; stat err = %v", err)
 	}
 
-	// Pass 2: corpus unchanged on disk → sync re-discovers a, b, c → 3 more picks.
-	//
-	// Note: under `pop`, folders stay on disk; runSync re-discovers
+	// @deliberate: under `pop`, folders stay on disk; runSync re-discovers
 	// them on the next pass. Operators using `pop` + `on_drain` MUST
 	// mutate the corpus externally between passes (e.g. delete the
 	// folder after processing it through the executor) to actually
@@ -95,7 +92,6 @@ func TestOnDrain_SinglePass(t *testing.T) {
 		t.Fatal("pass 2: expected Unavailable to consume drained")
 	}
 
-	// Pass 3: corpus shrunk externally (remove `b`) → 2 picks then Unavailable.
 	must(t, os.RemoveAll(filepath.Join(root, sub, "b")))
 	picks := 0
 	for {
@@ -166,7 +162,6 @@ func TestOnDrain_SweepClearsDrained(t *testing.T) {
 	st, err := New(Config{Root: root, PickPolicies: map[string]*PickPolicy{"@r": pp}})
 	must(t, err)
 
-	// Open #1: claims alpha (last item) → drained written.
 	o, err := st.Open(context.Background(), "c", "@r")
 	must(t, err)
 	if !o.Available {
@@ -176,16 +171,15 @@ func TestOnDrain_SweepClearsDrained(t *testing.T) {
 		t.Errorf("expected drained sentinel after claiming sole item; stat err = %v", err)
 	}
 
-	// Wait past visibility timeout, then sweep — the in-progress
-	// sentinel is reclaimed AND drained is cleared.
 	time.Sleep(80 * time.Millisecond)
 	must(t, st.sweepOnce())
 	if _, err := os.Stat(drainedPathFor(root, "@r")); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("drained should be cleared by sweep reclaim; stat err = %v", err)
 	}
 
-	// Next Open must see the reclaimed sentinel directly: available is
-	// non-empty, so the on_drain check skips the empty-branch entirely.
+	// @deliberate: next Open must see the reclaimed sentinel directly —
+	// available is non-empty, so the on_drain check skips the
+	// empty-branch entirely.
 	o2, err := st.Open(context.Background(), "c-y", "@r")
 	must(t, err)
 	if !o2.Available {
@@ -275,16 +269,13 @@ func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 		t.Errorf("expected at most 1 drained sentinel; got %d", drainedCount)
 	}
 
-	// Post-storm drained-cycle check. Drive serialized Opens until we
-	// observe one Unavailable outcome — this proves the drained
-	// pass-boundary signal still works after the storm. Per spec §5.3
-	// drained is the load-bearing pass-boundary signal: under
-	// `pop + on_drain` every drain pass must terminate in exactly one
-	// Unavailable that consumes (or writes-and-then-the-next-Open-
-	// consumes) the sentinel. With `pop` folders stay on disk, so
-	// sync re-discovers them; the Unavailable must come within a
-	// bounded number of iterations (<= 2N + 1: one full repopulate +
-	// drain + the trailing Unavailable).
+	// @constraint: per spec §5.3, drained is the load-bearing
+	// pass-boundary signal — under `pop + on_drain` every drain pass
+	// must terminate in exactly one Unavailable that consumes (or
+	// writes-and-then-the-next-Open-consumes) the sentinel. With `pop`
+	// folders stay on disk, so sync re-discovers them; the Unavailable
+	// must come within a bounded number of iterations (<= 2N + 1: one
+	// full repopulate + drain + the trailing Unavailable).
 	const maxIters = 2*N + 5
 	sawUnavailable := false
 	drainedFlipped := false
@@ -308,9 +299,6 @@ func TestOnDrain_RaceUnderConcurrentOpens(t *testing.T) {
 		t.Errorf("post-storm: expected at least one Unavailable within %d iterations (drained pass-boundary signal not working); drainedFlipped=%v",
 			maxIters, drainedFlipped)
 	}
-	// After we saw Unavailable, the drained sentinel must have been
-	// consumed — i.e., it should now be absent (until the next Open
-	// triggers another sync that empties available/).
 	if sawUnavailable && drainedFileExists(drainedPathFor(root, "@r")) {
 		t.Errorf("post-storm: drained should be consumed after returning Unavailable; still present")
 	}

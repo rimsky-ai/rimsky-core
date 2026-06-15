@@ -121,7 +121,7 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 		return nil, nil
 	case ActionTagCreate:
 		if _, err := c.CreateTag(ctx, cli.CreateTagRequest{Tag: step.Tag, Template: step.TemplateHash}); err != nil {
-			// Conflict: tag already exists pointing at the same hash → ignore.
+			// @deliberate: tag already exists pointing at the same hash → idempotent skip rather than error.
 			if cli.IsConflict(err) {
 				logf("tag", step.Tag, "skipped (already exists)")
 				return nil, nil
@@ -445,9 +445,7 @@ func clientForManifest(flags *composeUpFlags, m *Manifest) (*cli.Client, string,
 		return nil, "", 2
 	}
 	c := cli.NewClient(endpoint)
-	// Compose owns the reserved `compose:` prefix: stamp the trusted
-	// compose-origin marker so the control-api's server-side guard
-	// admits compose-originated tag/instance writes (CLICTRL-4).
+	// @constraint: CLICTRL-4 — compose owns the reserved `compose:` prefix; stamp the trusted compose-origin marker so the control-api server-side guard admits compose-originated tag/instance writes.
 	c.SetComposeOrigin(true)
 	return c, endpoint, 0
 }
@@ -477,10 +475,7 @@ func runComposeUpWithManifest(ctx context.Context, m *Manifest, c *cli.Client, f
 	if err != nil {
 		return reportPlanError(err)
 	}
-	// Destructive pre-check. Precompute the active-binding table for
-	// undeploys once so we issue at most one ListInstances per unique
-	// hash — not one per undeploy step (which previously drove N+1
-	// calls on a plan with multiple undeploys).
+	// @deliberate: precompute the active-binding table for undeploys once so we issue at most one ListInstances per unique hash — not one per undeploy step (which previously drove N+1 calls on a plan with multiple undeploys).
 	undeployBindings := precomputeUndeployBindings(ctx, c, m.Project, plan)
 	destructiveSteps := []Step{}
 	for _, step := range plan.Steps {
@@ -521,10 +516,7 @@ func RunComposePlan(ctx context.Context, args []string) int {
 		return reportPlanError(err)
 	}
 	EmitPlan(os.Stdout, plan, flags.common.Format)
-	// Exit 3 mirrors `terraform plan -detailed-exitcode`: any pending
-	// change OR any drift warning (params drift on a non-terminal compose-
-	// owned instance, where there is no step to schedule but the operator
-	// still needs to know) must fail CI gating.
+	// @deliberate: exit 3 mirrors `terraform plan -detailed-exitcode` — any pending change OR any drift warning (params drift on a non-terminal compose-owned instance, where there is no step to schedule but the operator still needs to know) must fail CI gating.
 	if plan.Summary.Changes == 0 && !plan.HasDriftWarnings {
 		return 0
 	}

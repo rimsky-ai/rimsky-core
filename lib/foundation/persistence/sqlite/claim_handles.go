@@ -2,6 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @source: lib/foundation/persistence/postgres/claim_handles.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql, immediate-mode tx subsumes per-row locking) vs Postgres (pgx, $-params, explicit FOR UPDATE)
+
 // claim_handles.go — SQLite-backed persistence.ClaimHandleTable.
 //
 // @blessed-invariant 9a: lock state lives only in the persistence layer.
@@ -194,8 +198,8 @@ func (s *claimHandlesImpl) ReassignHolderSupervisor(
 	ctx context.Context, id shared.UUID, fromSupervisorID, toSupervisorID string, tx persistence.Tx,
 ) error {
 	if toSupervisorID == "" {
-		// Active rows must carry a holder (migration-009 CHECK pair); an
-		// empty target would be a disguised release.
+		// @constraint: active rows must carry a holder (migration-009
+		// CHECK pair); an empty target would be a disguised release.
 		return fmt.Errorf("lockholders.ReassignHolderSupervisor: empty toSupervisorID")
 	}
 	res, err := s.q(tx).ExecContext(ctx,
@@ -377,8 +381,8 @@ func (s *claimHandlesImpl) Promote(
 	ctx context.Context, id shared.UUID, supervisorID string,
 	newState spec.ClaimHandleState, tx persistence.Tx,
 ) error {
-	// resolved_at is stamped Go-side in the driver's canonical
-	// fixed-width UTC text format (timeLayoutFixedNanos, whose
+	// @deliberate: resolved_at is stamped Go-side in the driver's
+	// canonical fixed-width UTC text format (timeLayoutFixedNanos, whose
 	// lexicographic order matches chronological order) — NOT via
 	// CURRENT_TIMESTAMP, whose "YYYY-MM-DD HH:MM:SS" shape sorts
 	// lexically BEFORE any 'T'-separated string of the same date
@@ -555,8 +559,8 @@ func qualifiedLockHolderCols(alias string) string {
 // see the postgres mirror for the full rationale.
 func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
 	now := nowUTC()
-	// Mirror the postgres exclusion: non-active rows are outside the
-	// heartbeat loop (predicate `state = 'active'`).
+	// @constraint: mirror the postgres exclusion — non-active rows are
+	// outside the heartbeat loop (predicate `state = 'active'`).
 	_, err := s.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_claim_handles
 		   SET last_heartbeat_at = ?,
@@ -827,11 +831,11 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 	}
 	r.ID = id
 	r.LockKind = persistence.LockKind(kind)
-	// HolderSupervisorID is nullable: non-active rows always carry NULL
-	// per the migration-009 CHECKs. Carrying the column as `*string`
-	// preserves the NULL ↔ "no holder" distinction so claimant-guarded
-	// checks (`@blessed-invariant 4`) cannot mis-match a NULL row to an
-	// empty supervisor id.
+	// @deliberate: HolderSupervisorID is nullable — non-active rows
+	// always carry NULL per the migration-009 CHECKs. Carrying the
+	// column as `*string` preserves the NULL ↔ "no holder" distinction
+	// so claimant-guarded checks (`@blessed-invariant 4`) cannot
+	// mis-match a NULL row to an empty supervisor id.
 	if holderSupervisorID.Valid {
 		v := holderSupervisorID.String
 		r.HolderSupervisorID = &v

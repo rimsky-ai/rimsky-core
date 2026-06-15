@@ -142,7 +142,7 @@ func TestExecutor_AllChecksPass(t *testing.T) {
 
 func TestExecutor_RowCountFails(t *testing.T) {
 	pool, ex := bootExecutor(t)
-	// Only 2 rows, but min is 100 → fail.
+	// @deliberate: seed 2 rows against min=100 so row_count_absolute must fail.
 	seedStagingTable(t, pool, "staging_low", "items", []map[string]any{
 		{"id": "a", "payload": "x"},
 		{"id": "b", "payload": "y"},
@@ -170,7 +170,6 @@ func TestExecutor_RowCountFails(t *testing.T) {
 
 func TestExecutor_PKUniqueFails(t *testing.T) {
 	pool, ex := bootExecutor(t)
-	// Two rows with the same id.
 	seedStagingTable(t, pool, "staging_dupe", "items", []map[string]any{
 		{"id": "a", "payload": "x"},
 		{"id": "a", "payload": "y"},
@@ -194,7 +193,6 @@ func TestExecutor_PKUniqueFails(t *testing.T) {
 
 func TestExecutor_NoNullsFails(t *testing.T) {
 	pool, ex := bootExecutor(t)
-	// payload is NULL on one row.
 	if _, err := pool.Exec(context.Background(), "CREATE SCHEMA staging_nulls"); err != nil {
 		t.Fatalf("create schema: %v", err)
 	}
@@ -241,8 +239,8 @@ func TestExecutor_NoNullsFails(t *testing.T) {
 func TestExecutor_RowCountRatio(t *testing.T) {
 	pool, ex := bootExecutor(t)
 
-	// In-bounds: 4 rows against baseline 4 → ratio 1.0, inside [0.5, 2.0]
-	// → Success.
+	// @deliberate: 4 rows against baseline 4 yields ratio 1.0, inside
+	// [0.5, 2.0], so row_count_ratio must terminate Success.
 	t.Run("in_bounds_success", func(t *testing.T) {
 		seedStagingTable(t, pool, "staging_ratio_ok", "items", []map[string]any{
 			{"id": "a", "payload": "x"},
@@ -275,8 +273,9 @@ func TestExecutor_RowCountRatio(t *testing.T) {
 		}
 	})
 
-	// Out-of-bounds: 4 rows against baseline 1 → ratio 4.0, above
-	// high=2.0 → Error with the computed ratio in the failure payload.
+	// @deliberate: 4 rows against baseline 1 yields ratio 4.0, above
+	// high=2.0, so row_count_ratio must terminate Error and carry the
+	// computed ratio in the failure payload.
 	t.Run("out_of_bounds_error", func(t *testing.T) {
 		seedStagingTable(t, pool, "staging_ratio_high", "items", []map[string]any{
 			{"id": "a", "payload": "x"},
@@ -308,8 +307,9 @@ func TestExecutor_RowCountRatio(t *testing.T) {
 		if got := errOutcome.GetErrorClass(); got != "pg/verifier_check_failed/row_count_ratio" {
 			t.Fatalf("error_class: %q want pg/verifier_check_failed/row_count_ratio", got)
 		}
-		// The computed ratio (4.0) must be present in the failure payload
-		// so a subscriber on this class can read the offending number.
+		// @constraint: the computed ratio must be present in the failure
+		// payload so a subscriber on this error_class can read the
+		// offending number.
 		ratio, ok := ratioFromFailurePayload(errOutcome.GetPayload())
 		if !ok {
 			t.Fatalf("computed ratio not present in failure payload: %v", errOutcome.GetPayload().AsMap())

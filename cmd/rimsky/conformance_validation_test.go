@@ -111,7 +111,7 @@ func TestValidationConformance_Executor(t *testing.T) {
 			t.Errorf("%s: unexpected error: %v", r.Name, r.Err)
 		}
 	}
-	// Pin: every executor-role check name appears in results.
+	// @constraint: every executor-role check name appears in results.
 	want := map[string]bool{
 		"ExecutorHappy":                     false,
 		"ExecutorMalformedAttributesSchema": false,

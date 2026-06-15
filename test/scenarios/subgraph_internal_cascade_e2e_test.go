@@ -38,7 +38,7 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Stub scripts: caller (absorbing inner-entry) succeeds, then
+	// @deliberate: Stub scripts: caller (absorbing inner-entry) succeeds, then
 	// inner-mid and inner-exit each fire via internal cascade.
 	h.Stub.WhenType("caller").Success(map[string]any{"ok": true}, true, "ok")
 	h.Stub.WhenType("inner-mid").Success(map[string]any{"ok": true}, true, "ok")
@@ -92,7 +92,7 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 	innerExitNode := h.FindNode(iid, "inner-exit")
 	require.NotNil(t, innerExitNode, "inner-exit node missing")
 
-	// Wait for inner-mid + inner-exit to reach fresh — these only
+	// @deliberate: Wait for inner-mid + inner-exit to reach fresh — these only
 	// dispatch after the caller's Success terminal fires the internal
 	// cascade per applyTerminalCompleteSubgraphCaller.
 	require.True(t,
@@ -102,7 +102,7 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 		h.WaitForNodeState(innerExitNode.ID, cascade.NodeStateFresh, 30*time.Second),
 		"inner-exit must reach fresh via internal cascade")
 
-	// Sub-graph RunScope created with graph_name = "worker". The
+	// @deliberate: Sub-graph RunScope created with graph_name = "worker". The
 	// internal dispatches live in this RunScope (NOT in the main scope).
 	mainScopeID := h.GetMainRunScopeID(iid)
 	var subgraphScopes int
@@ -116,7 +116,6 @@ func TestSubgraphInternalCascadeE2E(t *testing.T) {
 	require.GreaterOrEqual(t, subgraphScopes, 1,
 		"applyTerminalCompleteSubgraphCaller must create a sub-graph RunScope")
 
-	// Inner-mid + inner-exit runs live in the sub-graph RunScope.
 	for _, internal := range []struct {
 		typ    string
 		nodeID interface{}

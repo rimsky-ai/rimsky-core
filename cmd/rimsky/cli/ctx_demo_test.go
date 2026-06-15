@@ -57,7 +57,7 @@ import (
 // not pull from a registry).
 const rimskyAllInOneImage = "rimsky-all-in-one:latest"
 
-// healthDeadline bounds the wait for each rimsky/all stack to start
+// ctxDemoHealthDeadline bounds the wait for each rimsky/all stack to start
 // serving `GET /v1/health` 200.
 const ctxDemoHealthDeadline = 90 * time.Second
 
@@ -94,10 +94,9 @@ func TestCtxDemo(t *testing.T) {
 	stagingURL := bringUpRimskyAllInOne(ctx, t, "ctx-demo-staging")
 	prodURL := bringUpRimskyAllInOne(ctx, t, "ctx-demo-prod")
 
-	// Sanity-check: the two stacks are independent, on distinct host
-	// ports. If they collided, the demo's "switch is observable" claim
-	// would be vacuously satisfied — both contexts would resolve to the
-	// same backend.
+	// @deliberate: assert the two stacks resolved to distinct host ports.
+	// If they collided, the demo's "switch is observable" claim would be
+	// vacuously satisfied — both contexts would resolve to the same backend.
 	if stagingURL == prodURL {
 		t.Fatalf("the two rimsky-all-in-one stacks resolved to the same URL %q — the test cannot exhibit the switch", stagingURL)
 	}
@@ -108,12 +107,14 @@ func TestCtxDemo(t *testing.T) {
 
 	scriptPath := repoFile(t, "examples", "client-context-demo.sh")
 
-	// HOME=tempdir so the demo's `rimsky ctx add` mutations write into
-	// a throwaway ~/.rimsky/config.yml — never the developer's real one.
+	// @deliberate: HOME points at a tempdir so the demo's `rimsky ctx add`
+	// mutations write into a throwaway ~/.rimsky/config.yml — never the
+	// developer's real one.
 	homeDir := t.TempDir()
 
-	// PATH prepended with binDir so the demo's bare `rimsky` invocation
-	// finds the freshly-built binary.
+	// @deliberate: PATH is prepended with binDir so the demo's bare `rimsky`
+	// invocation finds the freshly-built binary rather than a stale one on
+	// the developer's PATH.
 	pathEnv := binDir + string(os.PathListSeparator) + os.Getenv("PATH")
 
 	cmd := exec.CommandContext(ctx, "bash", scriptPath)
@@ -122,9 +123,10 @@ func TestCtxDemo(t *testing.T) {
 		"PATH="+pathEnv,
 		"STAGING_URL="+stagingURL,
 		"PROD_URL="+prodURL,
-		// Make sure no stray RIMSKY_CONTEXT / RIMSKY_CONTROL_API in the
-		// test process's environment overrides the demo's active-context
-		// resolution chain — those would defeat the test's purpose.
+		// @deliberate: clear any stray RIMSKY_CONTEXT / RIMSKY_CONTROL_API in
+		// the test process's environment so they cannot override the demo's
+		// active-context resolution chain — those would defeat the test's
+		// purpose.
 		"RIMSKY_CONTEXT=",
 		"RIMSKY_CONTROL_API=",
 	)
@@ -236,7 +238,8 @@ func buildRimskyCLI(t *testing.T, binPath string) {
 	args := []string{"build", "-o", binPath, "./cmd/rimsky/"}
 	cmd := exec.Command("go", args...)
 	cmd.Dir = repoRoot
-	// Inherit os.Environ so the developer's GOFLAGS / GOPROXY are honored.
+	// @deliberate: inherit os.Environ so the developer's GOFLAGS / GOPROXY
+	// are honored by the build.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go build ./cmd/rimsky/ failed: %v\n%s", err, string(out))

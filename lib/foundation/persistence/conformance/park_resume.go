@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// park_resume.go — ParkResume conformance area.
-//
+// @constraint: ParkResume conformance area.
 // Pins the full park → resume lifecycle the supervisor's E1/E3/E4
 // paths drive (claimant-guard coverage for ParkActiveInTx lives in
 // claimant_guard.go; this area covers the lifecycle semantics):
@@ -135,7 +134,8 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 	q := d.Queue()
 	now := time.Now()
 
-	// Three parked runs:
+	// @constraint: Three parked runs cover ListParkedReadyForResume
+	// ordering and ListParkedOverdue selection:
 	//   A: resume_at 2h overdue   → ready (first in ascending order)
 	//   B: resume_at 1h overdue   → ready (second)
 	//   C: resume_at 24h in the future, parked 1h ago with a 60s
@@ -164,16 +164,16 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 		ParkedAt: now.Add(-3 * time.Hour), ResumeAt: now.Add(-1 * time.Hour),
 		Reason: "snooze",
 	})
-	// "await_callback" is the second value of the closed ParkReason set
-	// (postgres enforces it with a storage CHECK; sqlite constrains at
-	// the application layer only).
+	// @constraint: "await_callback" is the second value of the closed
+	// ParkReason set (postgres enforces it with a storage CHECK; sqlite
+	// constrains at the application layer only).
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		DispatchID: runC, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: now.Add(-1 * time.Hour), ResumeAt: now.Add(24 * time.Hour),
 		Reason: "await_callback",
 	})
 
-	// Cutoff between A and B: only A is ready.
+	// @constraint: cutoff between A and B's resume_at — only A is ready.
 	ready, err := q.ListParkedReadyForResume(ctx, now.Add(-90*time.Minute), 10)
 	if err != nil {
 		t.Fatalf("ListParkedReadyForResume(mid cutoff): %v", err)
@@ -182,8 +182,8 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 		t.Fatalf("mid-cutoff ready set = %+v, want exactly [runA=%s]", ready, runA)
 	}
 
-	// Cutoff now: A then B, resume_at ascending; C (future resume_at)
-	// is excluded.
+	// @constraint: cutoff=now surfaces A then B in resume_at-ascending
+	// order; C (future resume_at) is excluded.
 	ready, err = q.ListParkedReadyForResume(ctx, now, 10)
 	if err != nil {
 		t.Fatalf("ListParkedReadyForResume(now): %v", err)
@@ -192,7 +192,7 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 		t.Fatalf("ready set = %+v, want [runA=%s, runB=%s] ascending", ready, runA, runB)
 	}
 
-	// Limit caps the batch from the front of the ordering.
+	// @constraint: limit caps the batch from the front of the ordering.
 	ready, err = q.ListParkedReadyForResume(ctx, now, 1)
 	if err != nil {
 		t.Fatalf("ListParkedReadyForResume(limit 1): %v", err)
@@ -201,9 +201,9 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 		t.Fatalf("limit-1 ready set = %+v, want [runA=%s]", ready, runA)
 	}
 
-	// Watchdog: only C is overdue — A/B have no max_park_duration and
-	// their resume_at is already due (the deadline path owns them, not
-	// the watchdog).
+	// @constraint: watchdog returns only C — A/B have no
+	// max_park_duration and their resume_at is already due (the deadline
+	// path owns them, not the watchdog).
 	overdue, err := q.ListParkedOverdue(ctx, now, 10)
 	if err != nil {
 		t.Fatalf("ListParkedOverdue: %v", err)
@@ -212,7 +212,6 @@ func testParkResumeSweepSelection(t *testing.T, d persistence.Database) {
 		t.Fatalf("overdue set = %+v, want exactly [runC=%s]", overdue, runC)
 	}
 
-	// CountParkedByReason groups the live parked rows by typed reason.
 	counts, err := q.CountParkedByReason(ctx)
 	if err != nil {
 		t.Fatalf("CountParkedByReason: %v", err)
@@ -238,7 +237,8 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 	nodeC := seedExtraNode(ctx, t, d, fix, "diag-node-c")
 	runA := seedClaimedRunForNode(ctx, t, d, fix, nodeA, parkResumeSup)
 	runB := seedClaimedRunForNode(ctx, t, d, fix, nodeB, parkResumeSup)
-	// runC stays active (claimed, not parked): it must never surface.
+	// @constraint: runC stays active (claimed, not parked) — it must
+	// never surface in ListParkedDiagnostic.
 	_ = seedClaimedRunForNode(ctx, t, d, fix, nodeC, parkResumeSup)
 
 	resumeA := now.Add(2 * time.Hour)
@@ -261,8 +261,8 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 			if err != nil {
 				return err
 			}
-			// Scope to the test's own instance — the suite shares one
-			// database per subtest.
+			// @constraint: scope to the test's own instance — the suite
+			// shares one database per subtest.
 			for _, r := range rows {
 				if r.InstanceID == fix.InstanceID.String() {
 					out = append(out, r)
@@ -275,8 +275,9 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 		return out
 	}
 
-	// Unfiltered: both parked rows, parked_at ascending (A first), with
-	// the joined instance id and the park metadata populated.
+	// @constraint: unfiltered call returns both parked rows in
+	// parked_at-ascending order (A first), with the joined instance id
+	// and the park metadata populated.
 	got := listDiag("")
 	if len(got) != 2 || got[0].DispatchID != runA || got[1].DispatchID != runB {
 		t.Fatalf("diagnostic set = %+v, want [runA=%s, runB=%s] parked_at-ascending", got, runA, runB)
@@ -288,13 +289,12 @@ func testParkResumeParkedDiagnostic(t *testing.T, d persistence.Database) {
 	if a.Reason != "snooze" || a.ReasonNote != "diag note A" {
 		t.Fatalf("diagnostic row metadata = %+v, want reason=snooze note=\"diag note A\"", a)
 	}
-	// resume_at survives the projection (drivers store timestamps at
-	// different precisions; compare with a 1s tolerance).
+	// @constraint: resume_at survives the projection (drivers store
+	// timestamps at different precisions; compare with a 1s tolerance).
 	if diff := a.ResumeAt.Sub(resumeA); diff < -time.Second || diff > time.Second {
 		t.Fatalf("diagnostic resume_at = %v drifted from %v", a.ResumeAt, resumeA)
 	}
 
-	// Typed-reason filter narrows to the matching rows only.
 	if got := listDiag("snooze"); len(got) != 1 || got[0].DispatchID != runA {
 		t.Fatalf("snooze-filtered set = %+v, want exactly [runA=%s]", got, runA)
 	}
@@ -327,7 +327,6 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 		return n
 	}
 
-	// No parked runs: nothing held.
 	runA := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, parkResumeSup)
 	nodeB := seedExtraNode(ctx, t, d, fix, "held-node-b")
 	runB := seedClaimedRunForNode(ctx, t, d, fix, nodeB, parkResumeSup)
@@ -335,7 +334,6 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 		t.Fatalf("CountHeldFrames = %d with no parked runs, want 0", got)
 	}
 
-	// One parked run holds the frame.
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		DispatchID: runA, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
@@ -345,8 +343,8 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 		t.Fatalf("CountHeldFrames = %d with one parked run, want 1", got)
 	}
 
-	// A second parked run in the SAME frame: still one held frame —
-	// the gauge counts frames, not parked rows.
+	// @constraint: a second parked run in the SAME frame still counts
+	// as one held frame — the gauge counts frames, not parked rows.
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		DispatchID: runB, ExpectedClaimedBy: parkResumeSup,
 		ParkedAt: time.Now(), ResumeAt: time.Now().Add(1 * time.Hour),
@@ -356,7 +354,6 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 		t.Fatalf("CountHeldFrames = %d with two parked runs in one frame, want 1", got)
 	}
 
-	// Both resumed: the hold releases.
 	for _, runID := range []shared.UUID{runA, runB} {
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			_, err := q.ResumeParkedInTx(ctx, tx, runID, "deadline_elapsed")
@@ -394,7 +391,6 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		PayloadInline:     payload,
 	})
 
-	// The parked row is visible with its metadata.
 	parked, err := q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
 	if err != nil {
 		t.Fatalf("GetParkedByNode: %v", err)
@@ -407,9 +403,9 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		t.Fatalf("parked metadata mismatch: %+v", parked)
 	}
 
-	// Resume exactly once: first wake succeeds, second is a no-op
-	// (gated on phase='parked' — the exactly-once property the E3
-	// sweep and the G3 invalidate handler both rely on when racing).
+	// @constraint: resume exactly once — first wake succeeds, second is
+	// a no-op (gated on phase='parked' — the exactly-once property the
+	// E3 sweep and the G3 invalidate handler both rely on when racing).
 	resume := func(wakeReason string) bool {
 		var resumed bool
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -428,7 +424,6 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		t.Fatalf("second ResumeParkedInTx resumed an already-pending row")
 	}
 
-	// The row left the parked set…
 	parked, err = q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
 	if err != nil {
 		t.Fatalf("GetParkedByNode after resume: %v", err)
@@ -437,8 +432,9 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		t.Fatalf("row still parked after resume: %+v", parked)
 	}
 
-	// …and re-entered the dispatch-candidate pool unclaimed (the same
-	// dispatch id — resume does not allocate a new run row).
+	// @constraint: resumed row re-enters the dispatch-candidate pool
+	// unclaimed under the same dispatch id — resume does not allocate a
+	// new run row.
 	owner, err := q.GetClaimedBy(ctx, runID)
 	if err != nil {
 		t.Fatalf("GetClaimedBy after resume: %v", err)
@@ -466,8 +462,9 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		t.Fatalf("SelectCandidates after resume: %v", err)
 	}
 
-	// The park metadata survived the parked → pending transition so E4
-	// can build ResumeContext, and wake_reason rode along.
+	// @constraint: park metadata survives the parked → pending
+	// transition so E4 can build ResumeContext, and wake_reason rides
+	// along.
 	var meta *persistence.ResumeMetadataRow
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -486,15 +483,17 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	if meta.WakeReason != "deadline_elapsed" {
 		t.Fatalf("wake_reason = %q, want deadline_elapsed", meta.WakeReason)
 	}
-	// parked_at is preserved across the transition (drivers store it at
-	// different precisions; compare with a 1s tolerance).
+	// @constraint: parked_at is preserved across the transition
+	// (drivers store it at different precisions; compare with a 1s
+	// tolerance).
 	if diff := meta.ParkedAt.Sub(parkedAt); diff < -time.Second || diff > time.Second {
 		t.Fatalf("parked_at = %v drifted from %v", meta.ParkedAt, parkedAt)
 	}
 
-	// After a successful resume dispatch the runner clears the metadata
-	// — a re-park cycle starts clean (LoadResumeMetadataInTx's nil
-	// contract distinguishes fresh dispatch from resume).
+	// @constraint: after a successful resume dispatch the runner clears
+	// the metadata — a re-park cycle starts clean
+	// (LoadResumeMetadataInTx's nil contract distinguishes fresh
+	// dispatch from resume).
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.ClearResumeMetadataInTx(ctx, tx, runID)
 	}); err != nil {

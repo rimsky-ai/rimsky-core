@@ -66,7 +66,7 @@ func TestClaimTerminalRecordCreation(t *testing.T) {
 
 func TestClaimTerminalRecordCreation_HashBytesIsStable(t *testing.T) {
 	t.Parallel()
-	// Pin the hash convention so downstream consumers can rely on it.
+	// @deliberate: Pin the hash convention so downstream consumers can rely on it.
 	got1 := runtime.HashBytes([]byte(`{"k":"v"}`))
 	got2 := runtime.HashBytes([]byte(`{"k":"v"}`))
 	if got1 != got2 {

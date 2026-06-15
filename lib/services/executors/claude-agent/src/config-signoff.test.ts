@@ -11,10 +11,12 @@ import {
 } from "./expected-attributes-schema.js";
 import { CliConfigError } from "./cli-config-error.js";
 
-// The gRPC server and the HTTP bridge each carry a copy of parseCliConfig
-// (the bridge's is `@source: lib/services/executors/claude-agent/src/server.ts`). The sign-off feature adds
-// three cli fields — exercise both copies so the tracked duplication can
-// only pass when the two stay identical.
+/**
+ * The gRPC server and the HTTP bridge each carry a copy of parseCliConfig
+ * (the bridge's is `@source: lib/services/executors/claude-agent/src/server.ts`). The sign-off feature adds
+ * three cli fields — exercise both copies so the tracked duplication can
+ * only pass when the two stay identical.
+ */
 const PARSERS: { name: string; parse: typeof parseCliConfigServer }[] = [
   { name: "server.ts", parse: parseCliConfigServer },
   { name: "http-bridge.ts", parse: parseCliConfigBridge },
@@ -37,12 +39,12 @@ describe("parseCliConfig sign-off fields", () => {
   }
 });
 
-// A present-but-malformed sign-off / validator config must fail LOUDLY, not
-// silently drop the malformed entry. Silent dropping is the exact failure the
-// gate exists to prevent: a `required_signoffs: [{ path: "x" }]` (missing
-// public_key) would parse to nothing, the gate would never fire, and unsigned
-// output would resolve to terminal success. Both parser copies must throw
-// CliConfigError (error_class agent/attribute_invalid) identically.
+// @constraint: a present-but-malformed sign-off / validator config must fail
+// LOUDLY, not silently drop the malformed entry. Silent dropping is the exact
+// failure the gate exists to prevent: a `required_signoffs: [{ path: "x" }]`
+// (missing public_key) would parse to nothing, the gate would never fire, and
+// unsigned output would resolve to terminal success. Both parser copies must
+// throw CliConfigError (error_class agent/attribute_invalid) identically.
 describe("parseCliConfig fails loudly on malformed gate config", () => {
   for (const { name, parse } of PARSERS) {
     describe(name, () => {
@@ -98,7 +100,7 @@ describe("parseCliConfig fails loudly on malformed gate config", () => {
       });
 
       it("does NOT throw when the gate fields are absent (no gate configured)", () => {
-        // Field-absent is distinct from field-present-but-malformed: an
+        // @deliberate: field-absent is distinct from field-present-but-malformed: an
         // absent required_signoffs / mcp_servers means no gate, which is a
         // legitimate ungated run, not a misconfiguration.
         expect(parse({ permission_mode: "bypassPermissions" })).toEqual({

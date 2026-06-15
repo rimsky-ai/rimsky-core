@@ -42,7 +42,7 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
 	require.Equal(t, http.StatusOK, deployStatus)
 
-	// Instance A: created WITH terminate_after_run: true.
+	// @constraint: instance A: created WITH terminate_after_run: true.
 	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        "ck-tar-true-" + uuid.NewString(),
@@ -56,7 +56,7 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	require.Equal(t, true, out["terminate_after_run"],
 		"GET projection must surface terminate_after_run=true")
 
-	// Row inspection confirms persistence.
+	// @constraint: row inspection confirms persistence.
 	uTrue, err := uuid.Parse(idTrue)
 	require.NoError(t, err)
 	var instTrue *persistence.InstanceRow
@@ -69,7 +69,7 @@ func TestTerminateAfterRunRoundTrip(t *testing.T) {
 	require.True(t, instTrue.TerminateAfterRun,
 		"persisted row must carry terminate_after_run=true")
 
-	// Instance B: created WITHOUT the field → defaults to false.
+	// @constraint: instance B: created WITHOUT the field → defaults to false.
 	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":     tplID,
 		"instance_key": "ck-tar-false-" + uuid.NewString(),
@@ -117,7 +117,7 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 
 	key := "ck-tar-idem-" + uuid.NewString()
 
-	// First create: terminate_after_run = true → 201 Created.
+	// @constraint: first create: terminate_after_run = true → 201 Created.
 	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
 		"instance_key":        key,
@@ -127,7 +127,7 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 	firstID, _ := out["instance_id"].(string)
 	require.NotEmpty(t, firstID)
 
-	// Idempotent re-create: SAME key, CONFLICTING flag (false). Spec §1 — the
+	// @constraint: idempotent re-create: SAME key, CONFLICTING flag (false). Spec §1 — the
 	// re-create resolves to the existing row (200 OK) and ignores the flag.
 	status, out = h.httpJSON(t, "POST", "/v1/instances", map[string]any{
 		"template":            tplID,
@@ -139,13 +139,13 @@ func TestTerminateAfterRunIdempotentRecreateIgnoresFlag(t *testing.T) {
 	require.Equal(t, firstID, secondID,
 		"idempotent re-create must return the existing instance, not a new one")
 
-	// GET projection still reports true — the re-create's false was ignored.
+	// @constraint: GET projection still reports true — the re-create's false was ignored.
 	status, out = h.httpJSON(t, "GET", "/v1/instances/"+firstID, nil)
 	require.Equal(t, http.StatusOK, status, out)
 	require.Equal(t, true, out["terminate_after_run"],
 		"idempotent re-create must ignore the flag; stored terminate_after_run=true must be unchanged")
 
-	// Persisted row confirms the stored value survived the conflicting re-create.
+	// @constraint: persisted row confirms the stored value survived the conflicting re-create.
 	uID, err := uuid.Parse(firstID)
 	require.NoError(t, err)
 	var inst *persistence.InstanceRow

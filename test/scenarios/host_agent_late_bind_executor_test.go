@@ -23,7 +23,7 @@ import (
 )
 
 func TestHostAgentLateBindExecutorHappyPath(t *testing.T) {
-	// Not parallel: execs real child processes and binds free ports; keep it
+	// @deliberate: Not parallel: execs real child processes and binds free ports; keep it
 	// serial so the port reservations and process reaping stay predictable.
 	fx := newHostAgentFixture(t, fixtureOpts{withAgent: true})
 
@@ -33,7 +33,7 @@ func TestHostAgentLateBindExecutorHappyPath(t *testing.T) {
 	worker := fx.h.FindNode(iid, "worker")
 	require.NotNil(t, worker, "worker node should exist")
 
-	// The dispatch must traverse proxy → agent → stub and the run must reach
+	// @constraint: The dispatch must traverse proxy → agent → stub and the run must reach
 	// fresh (terminal/success), proving the tunnel carried the Execute and
 	// the spawned binary handled it.
 	require.True(t, fx.h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 45*time.Second),

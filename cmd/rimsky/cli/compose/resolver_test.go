@@ -39,7 +39,6 @@ func TestResolveTemplate_HashMatchesCanonical(t *testing.T) {
 	if len(gotSpec.Nodes) == 0 {
 		t.Errorf("spec missing nodes: %+v", gotSpec)
 	}
-	// Cross-check against direct canonical hash.
 	var domainSpec node.TemplateSpec
 	if err := yaml.Unmarshal([]byte(exampleSpec), &domainSpec); err != nil {
 		t.Fatal(err)

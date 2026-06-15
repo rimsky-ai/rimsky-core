@@ -78,26 +78,24 @@ func StartClaudeAgentFakeOnNetwork(
 ) (endpoint string) {
 	t.Helper()
 
-	// Anonymous-mode auth: the stub CLI never dials Anthropic, but the
-	// claude-agent executor's main.ts hard-requires one of ANTHROPIC_API_KEY
-	// or CLAUDE_CODE_OAUTH_TOKEN at startup (unless stub-mode is on, which
-	// would short-circuit runAgent and defeat the entire cross-stack
-	// proof). Pass a dummy OAuth token so the auth gate is satisfied;
-	// the stub binary ignores it.
+	// @constraint: the claude-agent executor's main.ts hard-requires one of
+	// ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN at startup unless stub-mode
+	// is on (and stub-mode would short-circuit runAgent and defeat the
+	// cross-stack proof). Pass a dummy OAuth token so the auth gate is
+	// satisfied; the stub binary ignores it.
 	env := map[string]string{
 		"CLAUDE_CODE_OAUTH_TOKEN":   "dummy-token-for-fake-cli-cross-stack-test",
 		"RIMSKY_EXECUTOR_HOST":      "0.0.0.0",
 		"RIMSKY_EXECUTOR_PORT_GRPC": "9090",
 		"RIMSKY_EXECUTOR_PORT_HTTP": "9190",
-		// The callback host the executor advertises in the internal
-		// MCP URL the spawned CLI dials. The stub CLI runs as a child
-		// of the executor process inside the same container, so the
-		// loopback default is correct.
+		// @deliberate: loopback is the callback host the executor advertises in
+		// the internal MCP URL the spawned CLI dials. The stub CLI runs as a
+		// child of the executor process inside the same container, so loopback
+		// is correct.
 		"RIMSKY_EXECUTOR_CALLBACK_HOST": "127.0.0.1",
-		// Override silence timeout: the stub CLI's stream-json output
-		// is one line; the production 120s default would amplify any
-		// inadvertent hang. 30s is enough for the MCP exchange + the
-		// gate's retry budget under load.
+		// @deliberate: the stub CLI's stream-json output is one line; the
+		// production 120s default would amplify any inadvertent hang. 30s is
+		// enough for the MCP exchange + the gate's retry budget under load.
 		"RIMSKY_EXECUTOR_SILENCE_MS": "30000",
 	}
 	if opts.AllowInline != "" {
@@ -146,10 +144,10 @@ func StartClaudeAgentFakeOnNetwork(
 		t.Fatalf("harness: start claude-agent-fake: %v", err)
 	}
 	t.Cleanup(func() {
-		// Dump the executor container's logs on test failure so the cross-
-		// stack proof's "the dispatch hung" / "the stub crashed" failure
-		// modes are diagnosable without re-running with manual docker logs.
-		// Inlined here (rather than at every call site) so EVERY test
+		// @deliberate: dump the executor container's logs on test failure so
+		// the cross-stack proof's "the dispatch hung" / "the stub crashed"
+		// failure modes are diagnosable without re-running with manual docker
+		// logs. Inlined here (rather than at every call site) so every test
 		// using the fake executor benefits.
 		if t.Failed() {
 			DumpClaudeAgentFakeLogsForFailure(t, c)

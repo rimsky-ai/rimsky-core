@@ -35,7 +35,7 @@ import (
 // error, 2 on usage/flag error. The ctx is threaded from RunAuth (matching
 // the sibling sub-handler convention).
 func RunAuthLogin(ctx context.Context, args []string) int {
-	// auth login takes no positional args; reject any so a stray token isn't
+	// @constraint: auth login takes no positional args; reject any so a stray token isn't
 	// silently swallowed (it could be a key the user meant to type at the
 	// prompt, and we never want a key on the command line / shell history).
 	if len(args) > 0 {
@@ -54,8 +54,8 @@ func RunAuthLogin(ctx context.Context, args []string) int {
 		return 1
 	}
 
-	// Resolve the active context name. login writes into the current
-	// context; if none is set we create a `default` one.
+	// @deliberate: resolve the active context name. login writes into the
+	// current context; if none is set we create a `default` one.
 	ctxName := cfg.CurrentContext
 	if envCtx := os.Getenv("RIMSKY_CONTEXT"); envCtx != "" {
 		ctxName = envCtx
@@ -63,7 +63,9 @@ func RunAuthLogin(ctx context.Context, args []string) int {
 	if ctxName == "" {
 		ctxName = "default"
 	}
-	current := cfg.Contexts[ctxName] // zero Context if absent
+	// @deliberate: Go map read returns the zero Context if ctxName is
+	// absent; the prompt loop fills the zero fields.
+	current := cfg.Contexts[ctxName]
 
 	reader := bufio.NewReader(os.Stdin)
 
@@ -87,11 +89,12 @@ func RunAuthLogin(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	// Optional verification: hit GET /auth/status with the key. A transport
-	// failure is surfaced as an error; a 401 means the key is rejected.
+	// @deliberate: optional verification — hit GET /auth/status with the
+	// key. A transport failure is surfaced as an error; a 401 means the
+	// key is rejected.
 	if _, reachable := fetchAuthStatus(ctx, url, key); !reachable {
-		// Distinguish "key rejected" from "endpoint unreachable" with a
-		// follow-up call so the operator gets an actionable message.
+		// @deliberate: distinguish "key rejected" from "endpoint unreachable"
+		// with a follow-up call so the operator gets an actionable message.
 		c := newAuthClient(url, key)
 		var resp authStatusResp
 		if _, callErr := c.RawCall(ctx, http.MethodGet, "/v1/auth/status", nil, &resp); callErr != nil {
@@ -150,7 +153,7 @@ func promptAPIKey(reader *bufio.Reader) (string, error) {
 	fd := int(os.Stdin.Fd())
 	if term.IsTerminal(fd) {
 		raw, err := term.ReadPassword(fd)
-		fmt.Fprintln(os.Stdout) // newline the suppressed Enter didn't echo
+		fmt.Fprintln(os.Stdout)
 		if err != nil {
 			return "", err
 		}

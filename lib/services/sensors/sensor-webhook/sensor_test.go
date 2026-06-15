@@ -162,7 +162,6 @@ func TestIdempotencyHeader_Deduplicates(t *testing.T) {
 	if pushed != 1 {
 		t.Errorf("pushed: %d (want 1; idempotency dedup)", pushed)
 	}
-	// Different idempotency value → push.
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/wh/idem", bytes.NewReader([]byte(`{"event":"y"}`)))
 	req.Header.Set("X-Idem", "k2")
 	resp, err := http.DefaultClient.Do(req)

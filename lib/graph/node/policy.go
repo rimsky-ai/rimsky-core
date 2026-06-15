@@ -10,7 +10,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// Row-type aliases — canonical definitions live in foundation/spec.
+// @deliberate: Row-type aliases — canonical definitions live in foundation/spec.
 type (
 	ErrorTypePolicy = spec.ErrorTypePolicy
 	PolicyAction    = spec.PolicyAction
@@ -83,9 +83,10 @@ func step(chain []PolicyAction, state EvaluatorState, errorClass string, rng fun
 			ActionIndex: state.ActionIndex + 1, RetryCounter: 0, CurrentErrorClass: errorClass,
 		}, errorClass, rng)
 	case "pass":
-		// Pass settles the run as fresh (color decided at runtime-side
-		// via Resolution.Color). The chain advances so a subsequent
-		// same-class error in the same dispatch wouldn't `pass` again.
+		// @deliberate: pass settles the run as fresh (color decided at
+		// runtime-side via Resolution.Color). The chain advances so a
+		// subsequent same-class error in the same dispatch wouldn't
+		// `pass` again.
 		return ResolvedAction{
 			Kind: "pass",
 			NewState: EvaluatorState{

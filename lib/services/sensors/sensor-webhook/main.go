@@ -58,7 +58,7 @@ func main() {
 	})
 	svc := NewSensorService(rimskyEndpoint, router, slogAdapter{l: slog.Default()})
 
-	// Optional state-DB persistence. Empty env → in-memory mode.
+	// @deliberate: state-DB persistence is optional; empty env → in-memory mode.
 	ctxState, cancelState := context.WithCancel(context.Background())
 	defer cancelState()
 	state, err := openStateDB(ctxState)
@@ -72,9 +72,8 @@ func main() {
 		slog.Info("sensor-webhook state db attached")
 	}
 
-	// Inbound-webhook HTTP server. Distinct from the gRPC port so
-	// operator routing can expose the webhook surface publicly while
-	// keeping the gRPC port private.
+	// @deliberate: webhook HTTP listens on a distinct port from gRPC so operator
+	// routing can expose the webhook surface publicly while keeping gRPC private.
 	webhookSrv := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", host, webhookPort),
 		Handler:           router,

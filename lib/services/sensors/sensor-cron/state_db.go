@@ -40,7 +40,7 @@ import (
 	"os"
 	"time"
 
-	// jackc/pgx/v5 stdlib driver; registers the "pgx" driver name.
+	// @constraint: blank import registers the "pgx" driver name with database/sql so sql.Open("pgx", dsn) resolves.
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -96,8 +96,7 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	// Drop the obsolete missed_fires column from any pre-existing dev
-	// table. IF EXISTS makes this idempotent and a no-op on fresh installs.
+	// @deliberate: IF EXISTS keeps the drop idempotent across restarts and a no-op on fresh installs where the obsolete missed_fires column was never created.
 	_, err := s.db.ExecContext(ctx,
 		`ALTER TABLE sensor_cron_state DROP COLUMN IF EXISTS missed_fires`)
 	return err

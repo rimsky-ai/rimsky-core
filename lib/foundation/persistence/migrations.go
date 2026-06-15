@@ -31,7 +31,7 @@ import (
 type Migrator struct {
 	FS        embed.FS
 	QueryHas  func(ctx context.Context, filename string) (bool, error)
-	Bootstrap func(ctx context.Context) error // ensures rimsky_migrations exists
+	Bootstrap func(ctx context.Context) error
 	// ApplyOne runs the migration SQL and records it in rimsky_migrations
 	// inside a single driver-internal transaction. Per-file atomicity is
 	// load-bearing — a partially-applied migration with no
@@ -48,8 +48,9 @@ func (m Migrator) Run(ctx context.Context, advLock AdvisoryLocker, log shared.Lo
 	}
 	defer func() {
 		if err := release(); err != nil {
-			// We can't bubble this once Run has already returned, so log
-			// at Warn level so unlock failures are at least visible.
+			// @deliberate: log-not-bubble — Run has already returned by the
+			// time defer fires, so the unlock error has nowhere to go;
+			// Warn-level keeps it visible.
 			slog.Default().Warn("persistence.Migrator: release migration lock", "err", err)
 		}
 	}()

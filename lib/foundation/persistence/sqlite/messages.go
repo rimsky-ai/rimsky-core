@@ -2,8 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// SQLite impl of persistence.MessagesTable — mirror of the postgres
-// impl. SQLite is dev-only; multi-host deployments must use postgres.
+// @source: lib/foundation/persistence/postgres/messages.go
+// @diverged: true
+// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
 
 package sqlite
 
@@ -20,6 +21,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
+// messagesImpl is the SQLite-backed persistence.MessagesTable — the
+// unified message queue per spec §Unified message layer.
 type messagesImpl tablesImpl
 
 var _ persistence.MessagesTable = (*messagesImpl)(nil)
@@ -46,7 +49,7 @@ func (b *messagesImpl) Insert(ctx context.Context, tx persistence.Tx, req persis
 	if req.BackfillOperationID != nil {
 		backfill = req.BackfillOperationID.String()
 	}
-	// received_at goes through formatTime (fixed-width UTC text) — a raw
+	// @constraint: received_at goes through formatTime (fixed-width UTC text) — a raw
 	// time.Time bind would store modernc's zone-embedded t.String() form,
 	// which breaks ORDER BY / range comparisons on non-UTC hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertMessageSQL,
@@ -198,13 +201,13 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		var target sql.NullString
 		var backfillStr sql.NullString
 		var frameStr sql.NullString
-		// Timestamp columns are fixed-width UTC TEXT; scan as strings and
+		// @constraint: Timestamp columns are fixed-width UTC TEXT; scan as strings and
 		// run through parseTime (per queue_park.go::LoadResumeMetadataInTx)
 		// instead of scanning into time.Time / sql.NullTime.
 		var receivedAtStr string
 		var deliveredAtStr sql.NullString
 		var cancelled int
-		// payload may be NULL (e.g. an invalidate envelope with no body).
+		// @constraint: payload may be NULL (e.g. an invalidate envelope with no body).
 		// The database/sql driver cannot store a NULL driver.Value into a
 		// *json.RawMessage directly, so scan through a nullable []byte and
 		// leave m.Payload nil when the column is NULL. (pgx tolerates NULL

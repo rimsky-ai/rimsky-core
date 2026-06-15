@@ -75,7 +75,7 @@ func TestValidate_MissingRequired(t *testing.T) {
 	}
 	data := map[string]any{
 		"area": "northwest",
-		// subtopic intentionally omitted
+		// @deliberate: subtopic omitted to exercise the required-missing case.
 	}
 	err := Validate(schema, data, PhaseDispatch)
 	if err == nil {
@@ -92,8 +92,8 @@ func TestValidate_MissingRequired(t *testing.T) {
 func TestValidate_BadSchema(t *testing.T) {
 	t.Parallel()
 
-	// JSON Schema declares `required` must be an array of strings; passing
-	// a string instead is a schema-compile error.
+	// @deliberate: JSON Schema declares `required` must be an array of
+	// strings; passing a string instead is a schema-compile error.
 	schema := map[string]any{
 		"type":     "object",
 		"required": "not-an-array",
@@ -110,8 +110,6 @@ func TestValidate_BadSchema(t *testing.T) {
 
 // TestValidate_WholeDirectiveLift covers the receiver-side schema
 // validation for the whole-directive value lift added by spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// Item 3. After SubstituteValue lifts a JSON object into an attribute
 // data slot, the Validate pass runs the JSON Schema over the typed
 // value (no string coercion).
 func TestValidate_WholeDirectiveLift(t *testing.T) {
@@ -127,7 +125,6 @@ func TestValidate_WholeDirectiveLift(t *testing.T) {
 				},
 			},
 		}
-		// What SubstituteValue would return for {{nodes.X.attribute}}.
 		data := map[string]any{
 			"config": map[string]any{"a": float64(1)},
 		}
@@ -162,9 +159,10 @@ func TestValidate_WholeDirectiveLift(t *testing.T) {
 				"count": map[string]any{"type": "integer"},
 			},
 		}
-		// {{params.count}} against count=42 now lifts as float64(42).
-		// jsonschema/v5 accepts float64(42) for type:integer when it's a
-		// whole number (per JSON Schema's number-vs-integer rules).
+		// @deliberate: {{params.count}} against count=42 lifts as
+		// float64(42). jsonschema/v5 accepts float64(42) for type:integer
+		// when it's a whole number (per JSON Schema's number-vs-integer
+		// rules).
 		data := map[string]any{"count": float64(42)}
 		if err := Validate(schema, data, PhaseDispatch); err != nil {
 			t.Fatalf("expected validation to pass for integer lift, got %v", err)

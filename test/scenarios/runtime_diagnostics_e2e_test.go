@@ -72,7 +72,7 @@ import (
 func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 	t.Parallel()
 
-	// Stand up a stub claim-producer the acquirer node can hold a claim
+	// @deliberate: Stand up a stub claim-producer the acquirer node can hold a claim
 	// against. Sync write-semantics so the open path immediately yields
 	// an acquired handle (the same shape the parked_lifecycle held-claim
 	// test uses).
@@ -92,21 +92,21 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		},
 	})
 
-	// Acquirer parks indefinitely (no resume_at) under await-callback,
+	// @deliberate: Acquirer parks indefinitely (no resume_at) under await-callback,
 	// so the held-claim row + held frame stay live for the duration of
 	// the diagnostic reads. A separately-keyed terminal Success script
 	// is NOT registered — the test asserts the wedged state, not the
 	// resume path (parked_lifecycle_test.go covers the wake leg).
 	h.Stub.WhenType("acquirer").
 		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "wedge_callback", []byte(`{"ticket":"R-1"}`), time.Time{}, "")
-	// inheritor pre-scripted but unreachable while the acquirer stays
+	// @deliberate: inheritor pre-scripted but unreachable while the acquirer stays
 	// parked. The Holds binding below makes the acquirer's claim
 	// `is_held=TRUE` (the runtime sets is_held based on holding-subgraph
 	// membership in runner_acquire_claims.go), which is what the
 	// claim-holders surface needs to see in order to surface a held row.
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "should-not-run")
 
-	// transient_sender errors with class `flaky`; the stub prefixes a
+	// @deliberate: transient_sender errors with class `flaky`; the stub prefixes a
 	// single-segment class with `stub/`, so the wire error_class is
 	// `stub/flaky`. transient_receiver subscribes via transient/retry/*
 	// so each retry emits a signal that gates the receiver under
@@ -158,11 +158,10 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 	require.NotNil(t, acq)
 	require.NotNil(t, rcv)
 
-	// Wait for the acquirer to reach parked.
 	require.True(t, h.WaitForNodeState(acq.ID, cascade.NodeStateParked, 30*time.Second),
 		"acquirer should reach parked under await-callback")
 
-	// Wait for the transient_receiver to be genuinely gated mid-retry —
+	// @constraint: Wait for the transient_receiver to be genuinely gated mid-retry —
 	// the supervisor must have inserted an undrained topic_kind=transient
 	// row before we read the wait-set surface, otherwise the diagnostic
 	// reflects "no gate" instead of the actual state.
@@ -172,18 +171,15 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"transient_receiver must carry an undrained topic_kind=transient wait-set row "+
 			"keyed on a real frame before the diagnostic surfaces are read")
 
-	// =====================================================================
-	// Surface 1 — GET /v1/diagnostics/parked  (spec-named operator route)
-	// =====================================================================
-	//
-	// The acquirer is genuinely parked; the parked-node surface must
-	// list it. The falsifier ("a parked node that's really parked isn't
-	// on the parked surface") names exactly this clause.
+	// @constraint: the acquirer is genuinely parked; the parked-node
+	// surface must list it. The falsifier ("a parked node that's
+	// really parked isn't on the parked surface") names exactly this
+	// clause.
 	require.True(t, waitForNodeOnParkedSurface(t, h, acq.ID.String(), 10*time.Second),
 		"GET /v1/diagnostics/parked must list the acquirer node-id "+
 			"(spec-named operator surface; Falsifier rule 1)")
 
-	// Cross-check: the supervisor's actual state has phase='parked' for
+	// @deliberate: Cross-check: the supervisor's actual state has phase='parked' for
 	// the acquirer's node-run. Both must agree.
 	var phase string
 	h.QueryRowSQL(
@@ -195,18 +191,14 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"the supervisor's actual phase for the acquirer must be 'parked' — "+
 			"the parked surface lying would falsify the story")
 
-	// The ?reason= filter is part of the operator surface contract; the
+	// @constraint: The ?reason= filter is part of the operator surface contract; the
 	// snake_case `await_callback` reason must select the wedged row.
 	require.True(t, parkedSurfaceContainsNodeWithReason(t, h, acq.ID.String(), "await_callback"),
 		"GET /v1/diagnostics/parked?reason=await_callback must return the acquirer (reason filter contract)")
 
-	// =====================================================================
-	// Surface 2 — GET /v1/admin/diagnostics/wait-sets?frame=<uuid>
-	// =====================================================================
-	//
-	// The transient_receiver is genuinely gated on the transient_sender
-	// via a topic_kind="transient" wait-set row inside transientFrame.
-	// The supervisor reads this same row through
+	// @deliberate: the transient_receiver is genuinely gated on the
+	// transient_sender via a topic_kind="transient" wait-set row inside
+	// transientFrame. The supervisor reads this same row through
 	// persistence.WaitSet().ListForFrame; the HTTP surface must return
 	// it (the falsifier rule 2 is the row missing from the surface).
 	waitSetURL := h.ControlBase + "/v1/admin/diagnostics/wait-sets?frame=" + transientFrame.String()
@@ -221,7 +213,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"GET /v1/admin/diagnostics/wait-sets?frame=<frame> must list the supervisor's wait-set rows "+
 			"(Falsifier rule 2: a wait-set edge the supervisor is consulting is missing from the surface)")
 
-	// Assert the specific receiver↔sender edge the supervisor is
+	// @deliberate: Assert the specific receiver↔sender edge the supervisor is
 	// actually consulting appears in the response. Both ids come from
 	// rimsky_wait_set ground truth above.
 	foundEdge := false
@@ -238,7 +230,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 			"(receiver_run=%s, sender_run=%s, topic_kind=transient) must appear on the wait-set surface",
 		transientReceiverRun, transientSenderRun)
 
-	// The receiver_run-scoped variant must narrow correctly.
+	// @constraint: The receiver_run-scoped variant must narrow correctly.
 	resp2, err := http.Get(waitSetURL + "&receiver_run=" + transientReceiverRun.String())
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp2.StatusCode,
@@ -254,12 +246,8 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 			"every narrowed row must key on the supplied receiver_run")
 	}
 
-	// =====================================================================
-	// Surface 3 — GET /v1/admin/diagnostics/held-frames
-	// =====================================================================
-	//
-	// The acquirer's parked node-run holds its frame open per
-	// blessed-invariant-13 (durable-by-default lifecycle): the
+	// @deliberate: the acquirer's parked node-run holds its frame open
+	// per blessed-invariant-13 (durable-by-default lifecycle): the
 	// supervisor treats parked as unresolved, so the frame stays
 	// running. The held-frames surface must surface it.
 	require.True(t, waitForHeldFrameListingNode(t, h, acq.ID.String(), 10*time.Second),
@@ -267,19 +255,15 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 			"include the parked acquirer — the supervisor is holding the frame open "+
 			"and the diagnostic must show what the supervisor sees")
 
-	// =====================================================================
-	// Surface 4 — GET /v1/lock-holders/{claim_handle_id}/claim-holders
-	// =====================================================================
-	//
-	// The acquirer holds a real claim. Ground truth: a rimsky_claim_handles
-	// row keyed on holder_node_id=acq.ID exists. Fetch its id, then hit
-	// the holders surface; the response must list at least one holder
-	// keyed on a node-run owned by the acquirer.
-	// The held claim_handle row is written inside the acquirer's
-	// dispatch tx — under heavy parallel testcontainer load it can
-	// settle to the row a beat after the parked phase appears. Poll
-	// until the supervisor's ground-truth held row exists, then read
-	// it through the claim-holders surface.
+	// @deliberate: the acquirer holds a real claim. Ground truth: a
+	// rimsky_claim_handles row keyed on holder_node_id=acq.ID exists.
+	// Fetch its id, then hit the holders surface; the response must
+	// list at least one holder keyed on a node-run owned by the
+	// acquirer. The held claim_handle row is written inside the
+	// acquirer's dispatch tx — under heavy parallel testcontainer load
+	// it can settle to the row a beat after the parked phase appears.
+	// Poll until the supervisor's ground-truth held row exists, then
+	// read it through the claim-holders surface.
 	claimHandleID := waitForHeldClaimHandle(t, h, iid, 10*time.Second)
 	require.NotEqual(t, shared.UUID{}, claimHandleID,
 		"the acquirer must hold a real rimsky_claim_handles row "+
@@ -315,7 +299,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 		"at least one returned holder must be in state=active — the supervisor "+
 			"is gripping this claim, the surface must reflect that")
 
-	// Defensive: the holder_run_id surfaced by the endpoint must
+	// @deliberate: Defensive: the holder_run_id surfaced by the endpoint must
 	// correspond to a real node-run owned by the acquirer. The
 	// supervisor reads the same row when checking holdership; both must
 	// agree.

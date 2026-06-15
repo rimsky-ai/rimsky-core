@@ -53,7 +53,7 @@ func TestLeafRunRecordCreation(t *testing.T) {
 	if row.FrameID != frameID {
 		t.Errorf("frame_id mismatch")
 	}
-	// Pin the payload shape: must JSON-decode to a LeafRunRecord with
+	// @deliberate: Pin the payload shape: must JSON-decode to a LeafRunRecord with
 	// preserved fields.
 	var decoded runtime.LeafRunRecord
 	if err := json.Unmarshal(row.Record, &decoded); err != nil {

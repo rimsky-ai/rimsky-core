@@ -116,17 +116,15 @@ func SubgraphInternalCascade(in SubgraphInternalCascadeArgs) ([]node.TemplateNod
 	if in.DelegateGraphName == "" {
 		return nil, fmt.Errorf("SubgraphInternalCascade: DelegateGraphName is required")
 	}
-	// Locate the delegate graph in the template's `graphs:` block. The
-	// flatten step in the canonicalizer (template_validator_graphs.go)
-	// concatenates every graph's nodes into TemplateSpec.Nodes; the
-	// per-graph membership info still lives on the GraphSpec list.
+	// @constraint: walk Graphs (not Nodes) — the canonicalizer's flatten step
+	// concatenates every graph's nodes into TemplateSpec.Nodes, but per-graph
+	// membership info only survives on the GraphSpec list.
 	for _, g := range in.Template.Graphs {
 		if g.Name != in.DelegateGraphName {
 			continue
 		}
-		// Filter to non-entry internal nodes. Exit is included (it's a
-		// child like any other internal; the carry-rule fires at exit's
-		// terminal).
+		// @deliberate: exit IS included — it's a child like any other internal
+		// node, with the carry-rule firing at exit's terminal.
 		out := make([]node.TemplateNodeDef, 0, len(g.Nodes))
 		for _, n := range g.Nodes {
 			if n.Type == g.Entry {
@@ -172,9 +170,9 @@ func SubgraphParentSuccessCascade(
 	if err != nil {
 		return nil, cascade.TransitionReason{}, err
 	}
-	// Validate the running → running transition is legal under the
-	// `subgraph_internal_cascade_fired` reason. Surfaces precise errors
-	// to the caller when somehow invoked from a non-running parent.
+	// @constraint: state-machine self-check — the running → running transition
+	// under subgraph_internal_cascade_fired must remain legal; surfaces precise
+	// errors when invoked from a non-running parent.
 	if _, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired); err != nil {
 		if !cascade.IsParentAggregateOK(err) {
 			return nil, cascade.TransitionReason{}, fmt.Errorf(
@@ -300,20 +298,17 @@ func applyTerminalCompleteSubgraphCaller(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
-	// Resolve the settling signal type-path. Post-2026-05-23 the
-	// on_executor_complete handler's always_propagate /
-	// never_propagate / by_changed resolves retired with
-	// concept:lifecycle-handler — cascade-fire is subscriber-driven
-	// (per concept:signal). Selectivity on changed-vs-unchanged is now
-	// declared receiver-side via CEL `when: payload.changed`. Post-
-	// Pass 5 the run row carries settling_signal_type instead of the
-	// retired last_outcome enum.
+	// @deliberate: hardcoded settling signal type-path — post-2026-05-23 the
+	// on_executor_complete handler's always_propagate / never_propagate /
+	// by_changed resolves retired with concept:lifecycle-handler. Cascade-fire
+	// is subscriber-driven (per concept:signal); changed-vs-unchanged selectivity
+	// is declared receiver-side via CEL `when: payload.changed`. Post-Pass 5 the
+	// run row carries settling_signal_type instead of the retired last_outcome enum.
 	settlingSig := "terminal/success"
 
-	// Validate the running → running parent transition under the
-	// subgraph_internal_cascade_fired reason is legal — the state
-	// machine accepts it via NextStateParent's parentAggregateOK
-	// sentinel.
+	// @constraint: running → running parent transition under
+	// subgraph_internal_cascade_fired must be legal — the state machine accepts
+	// it via NextStateParent's parentAggregateOK sentinel.
 	if _, err := cascade.NextStateParent(cascade.NodeStateRunning, cascade.ReasonSubGraphInternalCascadeFired); err != nil {
 		if !cascade.IsParentAggregateOK(err) {
 			return nil, fmt.Errorf(
@@ -322,15 +317,13 @@ func applyTerminalCompleteSubgraphCaller(
 		}
 	}
 
-	// Resolve the sub-graph's non-entry internal nodes. The helper walks
-	// the deploy-time template; the rimsky_nodes rows for the internal
-	// nodes were created by `provisionInstanceTx` at instance creation,
-	// so the dispatch below just needs to (a) create one child run row
-	// per internal node (parent_run_id = the calling run) and (b)
-	// stale-mark the rimsky_nodes row so the next dispatcher tick picks
-	// it up. The template load happens inside the outer tx — a stale
-	// read of an immutable template is harmless and avoids a separate
-	// round-trip.
+	// @deliberate: template load runs inside the outer tx — a stale read of an
+	// immutable template is harmless and avoids a separate round-trip. The
+	// helper walks the deploy-time template; the rimsky_nodes rows for the
+	// internal nodes were created by `provisionInstanceTx` at instance creation,
+	// so the dispatch below just needs to (a) create one child run row per
+	// internal node (parent_run_id = the calling run) and (b) stale-mark the
+	// rimsky_nodes row so the next dispatcher tick picks it up.
 	var internalNodes []node.TemplateNodeDef
 	var tmplSpec *node.TemplateSpec
 	{
@@ -363,30 +356,27 @@ func applyTerminalCompleteSubgraphCaller(
 		internalNodes = nodes
 	}
 
-	// Primary state-mutation work runs inline in the caller's outer tx.
-	// Persist the parent run's writeback (the absorbed entry's outcome)
-	// so any in-graph subscriber that reads the calling node's
-	// attributes sees the entry's bytes.
+	// @constraint: writeback upsert runs inline in the caller's outer tx so any
+	// in-graph subscriber reading the calling node's attributes sees the absorbed
+	// entry's bytes atomically with the rest of the terminal write.
 	if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: upsert attributes: %w", err)
 	}
-	// Record the transition reason on the run-tree row so the
-	// observability layer surfaces the cascade-fire. The run stays
-	// `running`; only the settling_signal_type moves.
+	// @constraint: run stays `running` — only the settling_signal_type moves;
+	// the recorded transition reason lets the observability layer surface the
+	// cascade-fire.
 	if err := args.Persist.RunTree().UpdateStateAndOutcome(ctx, tx, acq.DispatchID,
 		cascade.NodeStateRunning, &settlingSig); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: update run-tree: %w", err)
 	}
-	// Sub-graph internal-cascade dispatch: delegation is the degenerate
-	// child-execution shape — ONE partition (the sub-graph RunScope,
-	// empty partition key) holding one child run per non-entry internal
-	// node, entry absorbed (the parent's executor terminal WAS the
-	// absorbed entry's, so each child run is stale-marked for the
-	// cascade walker / SweepReady to pick up). The per-partition
-	// RunScope + child-row allocation runs in the unified
-	// `child_execution.go::DispatchChildren` primitive, inside this
-	// caller's tx. State-propagation aggregates the children's
-	// terminals back to this parent on completion via
+	// @deliberate: delegation is the degenerate child-execution shape — ONE
+	// partition (the sub-graph RunScope, empty partition key) holding one child
+	// run per non-entry internal node, entry absorbed (the parent's executor
+	// terminal WAS the absorbed entry's, so each child run is stale-marked for
+	// the cascade walker / SweepReady to pick up). The per-partition RunScope +
+	// child-row allocation runs in the unified `child_execution.go::DispatchChildren`
+	// primitive, inside this caller's tx; state-propagation aggregates the
+	// children's terminals back to this parent on completion via
 	// PropagateFromChildState.
 	if len(internalNodes) > 0 {
 		instNodes, err := args.Persist.Nodes().ListByInstance(ctx, acq.InstanceID, tx)
@@ -424,12 +414,11 @@ func applyTerminalCompleteSubgraphCaller(
 			return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
 		}
 	}
-	// Emit the cascade-fire event for observability + audit. Two events
-	// fire here: the legacy `subgraph_internal_cascade_fired`
-	// (transitioning observers can still rely on the existing kind
-	// string) and the post-2026-05-16 forensics kind
-	// `subgraph.dispatched` summarizing the per-invocation dispatch
-	// across child runs. Payloads carry rimsky-side identifiers only;
+	// @constraint: two events fire here — the legacy
+	// `subgraph_internal_cascade_fired` (transitioning observers can still rely
+	// on the existing kind string) and the post-2026-05-16 forensics kind
+	// `subgraph.dispatched` summarizing the per-invocation dispatch across
+	// child runs. Payloads carry rimsky-side identifiers only;
 	// @blessed-invariant 20 + 21 preserved.
 	childAliases := make([]string, 0, len(internalNodes))
 	for _, def := range internalNodes {
@@ -470,9 +459,9 @@ func applyTerminalCompleteSubgraphCaller(
 			"delegate", acq.NodeDef.Delegate,
 			"settling_signal_type", settlingSig)
 	}
-	// Post-commit: emit leaf-run lineage record for the sub-graph caller
-	// terminal. EmitLeafRunLineage opens its own tx so must run after
-	// the outer state-mutation tx commits.
+	// @constraint: leaf-run lineage emission deferred to post-commit because
+	// EmitLeafRunLineage opens its own tx and must run after the outer
+	// state-mutation tx commits.
 	dispatchID := acq.DispatchID
 	post := func(ctx context.Context) {
 		scope := resolveAcqScope(ctx, args, acq)
@@ -520,18 +509,17 @@ func applyTerminalCompleteSubgraphExit(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	merged map[string]any, tx persistence.Tx,
 ) error {
-	// Encode the merged attributes back to bytes so SettleChildren's
-	// JSON-decodable check has something to validate. Per
-	// @blessed-invariant 20 we do not transform the bytes — we ROUND
-	// TRIP through json.Marshal to match the persistence-layer
-	// representation, then the primitive validates and records.
+	// @constraint: round-trip through json.Marshal — per @blessed-invariant 20
+	// we do not transform the bytes, only match the persistence-layer
+	// representation so SettleChildren's JSON-decodable check has something to
+	// validate.
 	//
-	// An empty attribute map produces a nil Writeback, and the primitive
-	// runs the FULL settlement minus the attribute upsert: the sub-graph
-	// RunScope close, OnRunScopeTerminal fan-out, parent-settlement
-	// cascade bridge, in-tx wait-set drain, and the `subgraph.exit_carry`
-	// forensics event all still fire. Early-returning here would skip the
-	// primitive entirely and leak the scope open (the defect class the
+	// @deliberate: empty attribute map produces a nil Writeback but we still
+	// call SettleChildren — the primitive runs the FULL settlement minus the
+	// attribute upsert (sub-graph RunScope close, OnRunScopeTerminal fan-out,
+	// parent-settlement cascade bridge, in-tx wait-set drain, and the
+	// `subgraph.exit_carry` forensics event). Early-returning here would skip
+	// the primitive entirely and leak the scope open (the defect class the
 	// settle-children unification removes).
 	var wb []byte
 	if len(merged) > 0 {

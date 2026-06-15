@@ -165,7 +165,6 @@ func TestAbandonCandidate(t *testing.T) {
 	if len(versions.GetVersions()) != 0 {
 		t.Errorf("ListVersions: expected 0 versions after abandon, got %d", len(versions.GetVersions()))
 	}
-	// Idempotent commit on abandoned handle.
 	if _, err := s.CommitCandidate(ctx, &genv1.CommitCandidateRequest{
 		CandidateHandle: begin.GetCandidateHandle(),
 	}); err != nil {

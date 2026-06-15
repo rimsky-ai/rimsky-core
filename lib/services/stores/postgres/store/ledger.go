@@ -185,9 +185,9 @@ func (l *ClaimLedger) RecordTerminal(claimID, category string, attrs map[string]
 	}
 	rec.History = append(rec.History, ev)
 	l.broadcast(claimID, ev)
-	// Close every subscriber's channel so the StreamClaim handler exits
-	// cleanly on terminal — the producer side will not append any more
-	// events to a terminal record.
+	// @constraint: close every subscriber channel on terminal so StreamClaim
+	// handlers exit via range-loop completion; no further events will be
+	// appended to a terminal record.
 	for sub := range l.subs[claimID] {
 		close(sub.ch)
 	}
@@ -211,8 +211,6 @@ func (l *ClaimLedger) Subscribe(claimID string) (<-chan ClaimEvent, func()) {
 	defer l.mu.Unlock()
 	sub := &subscriber{ch: make(chan ClaimEvent, 32)}
 	if _, ok := l.records[claimID]; !ok {
-		// Unknown claim — close immediately so callers fall through to
-		// the evicted-shape marker.
 		close(sub.ch)
 		return sub.ch, func() {}
 	}
@@ -226,7 +224,8 @@ func (l *ClaimLedger) Subscribe(claimID string) (<-chan ClaimEvent, func()) {
 		if subs, ok := l.subs[claimID]; ok {
 			if _, ok := subs[sub]; ok {
 				delete(subs, sub)
-				// Drain so close() doesn't race with a producer.
+				// @constraint: drain one buffered event so a concurrent
+				// producer's non-blocking send cannot race a future close().
 				select {
 				case <-sub.ch:
 				default:
@@ -258,7 +257,6 @@ func (l *ClaimLedger) SubscribeWithSnapshot(claimID string) ([]ClaimEvent, *Clai
 	cp := *rec
 	cp.History = append([]ClaimEvent(nil), rec.History...)
 	if rec.State != ClaimStateOpen {
-		// Already terminal — return history; no live subscribe needed.
 		ch := make(chan ClaimEvent)
 		close(ch)
 		return cp.History, &cp, ch, func() {}
@@ -286,7 +284,6 @@ func (l *ClaimLedger) broadcast(claimID string, ev ClaimEvent) {
 		select {
 		case sub.ch <- ev:
 		default:
-			// drop on full buffer; consumer can recover via GetClaim
 		}
 	}
 }
@@ -321,9 +318,9 @@ func (l *ClaimLedger) List(stateFilter, cursor string, limit int) ([]*ClaimRecor
 	if limit <= 0 {
 		limit = 50
 	}
-	// Position the scan at the first slot after the cursor's claim_id.
-	// Because order is append-only at insert, walking it linearly is
-	// O(n); the scan stops once we've collected `limit` records.
+	// @deliberate: scan order linearly from the cursor's claim_id; order is
+	// append-only at insert, so the linear walk is O(n) until `limit`
+	// records are collected — adequate given the bounded ledger size.
 	skip := cursor != ""
 	out := make([]*ClaimRecord, 0, limit)
 	lastID := ""
@@ -351,8 +348,6 @@ func (l *ClaimLedger) List(stateFilter, cursor string, limit int) ([]*ClaimRecor
 	}
 	next := ""
 	if len(out) >= limit && lastID != "" {
-		// More records may follow — return the last claim_id as the
-		// next cursor.
 		next = lastID
 	}
 	return out, next

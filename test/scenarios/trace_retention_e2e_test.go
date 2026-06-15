@@ -55,7 +55,7 @@ import (
 
 func TestTraceRetention_EndToEnd(t *testing.T) {
 	t.Parallel()
-	// NoScheduler so the harness's own tick loop doesn't race our seeded
+	// @constraint: NoScheduler so the harness's own tick loop doesn't race our seeded
 	// rows; NoSupervisor so the durable instance never spawns real frames /
 	// run rows. We drive scheduler.Tick synchronously below.
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true, NoSupervisor: true})
@@ -69,17 +69,16 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
 	})
-	// Durable instance — NO terminate_after_run flag. Trace retention is the
+	// @deliberate: Durable instance — NO terminate_after_run flag. Trace retention is the
 	// mechanism that keeps a long-lived durable instance's trace bounded.
 	instanceID := h.CreateInstance(tplHash, "", map[string]any{})
 	scopeID := h.GetMainRunScopeID(instanceID)
 
-	// A node to hang the seeded run/event rows off.
 	nodeID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_nodes (id, instance_id, node_type, executor)
 	           VALUES ($1, $2, 'retention-node', 'worker')`, nodeID, instanceID)
 
-	// Retention window: reap anything older than 1h. Old rows are seeded at
+	// @deliberate: Retention window: reap anything older than 1h. Old rows are seeded at
 	// now-24h (well past the window AND past the count cap), recent rows at
 	// now-1min (inside the window).
 	const window = time.Hour
@@ -87,7 +86,7 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	old := time.Now().Add(-24 * time.Hour)
 	recent := time.Now().Add(-1 * time.Minute)
 
-	// --- Seed terminal frames + their node_runs --------------------------
+	// @deliberate: Seed terminal frames + their node_runs
 	// Three old terminal frames (ended_at = now-24h, staggered by minutes so
 	// they rank below the recent two) + two recent terminal frames
 	// (ended_at ~ now-1min). With RecentFramesKept=2 and a 1h window, the two
@@ -121,12 +120,12 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 		}
 	}
 
-	// Three old terminal frames (reaped). Stagger ended_at within the old
+	// @deliberate: Three old terminal frames (reaped). Stagger ended_at within the old
 	// epoch so ranks are deterministic.
 	for i := 0; i < 3; i++ {
 		seedTerminalFrame(old.Add(time.Duration(i)*time.Minute), false)
 	}
-	// Two recent terminal frames (survive — the count-cap survivors, inside
+	// @deliberate: Two recent terminal frames (survive — the count-cap survivors, inside
 	// the window).
 	seedTerminalFrame(recent, true)
 	seedTerminalFrame(recent.Add(time.Minute), true)
@@ -134,7 +133,7 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	require.Len(t, reapedFrameIDs, 3)
 	require.Len(t, survivingFrameIDs, recentKept)
 
-	// --- Seed an in-flight parked-held frame (must survive) --------------
+	// @deliberate: Seed an in-flight parked-held frame (must survive)
 	// The instance already carries exactly one real running root frame from
 	// its create (the partial-uniqueness index uq_rimsky_frames_running
 	// permits only one running frame per instance), so we attach the parked
@@ -155,15 +154,15 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	            'await_callback', $3, $4)`,
 		inflightRunID, nodeID, inflightFrameID, scopeID)
 
-	// --- Seed audit events (rimsky_events) — old reaped, recent survive --
+	// @deliberate: Seed audit events (rimsky_events) — old reaped, recent survive
 	oldAuditID := insertAuditEvent(h, instanceID, nodeID, "terminal/success", old)
 	recentAuditID := insertAuditEvent(h, instanceID, nodeID, "terminal/success", recent)
 
-	// --- Seed named events (rimsky_node_events) — old reaped, recent survive
+	// @deliberate: Seed named events (rimsky_node_events) — old reaped, recent survive
 	oldNamedID := insertNamedEvent(h, instanceID, nodeID, "progress", old)
 	recentNamedID := insertNamedEvent(h, instanceID, nodeID, "progress", recent)
 
-	// --- Drive one tick with trace retention configured ------------------
+	// @deliberate: Drive one tick with trace retention configured
 	cfg := scheduler.Config{
 		Persist:        h.Persist,
 		Queue:          h.Queue,
@@ -178,7 +177,6 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	}
 	require.NoError(t, scheduler.Tick(h.Ctx, cfg))
 
-	// --- Assert structural retention (frames + cascade node_runs) --------
 	for fid := range reapedFrameIDs {
 		assert.Equal(t, 0, countRows(h, `SELECT COUNT(*) FROM rimsky_frames WHERE frame_id = $1`, fid),
 			"old terminal frame %s should be reaped", fid)
@@ -196,13 +194,13 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 			"recent terminal frame's node_run %s must survive", rid)
 	}
 
-	// --- Assert in-flight parked-held frame survives ---------------------
+	// @constraint: Assert in-flight parked-held frame survives
 	assert.Equal(t, 1, countRows(h, `SELECT COUNT(*) FROM rimsky_frames WHERE frame_id = $1`, inflightFrameID.String()),
 		"in-flight parked-held frame must survive (nothing live is reaped)")
 	assert.Equal(t, 1, countRows(h, `SELECT COUNT(*) FROM rimsky_node_runs WHERE id = $1`, inflightRunID.String()),
 		"in-flight parked-held node_run must survive")
 
-	// --- Assert event-log retention (audit + named) ----------------------
+	// @constraint: Assert event-log retention (audit + named)
 	assert.Equal(t, 0, countRows(h, `SELECT COUNT(*) FROM rimsky_events WHERE id = $1`, oldAuditID),
 		"old audit event should be reaped by the time window")
 	assert.Equal(t, 1, countRows(h, `SELECT COUNT(*) FROM rimsky_events WHERE id = $1`, recentAuditID),
@@ -212,7 +210,7 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	assert.Equal(t, 1, countRows(h, `SELECT COUNT(*) FROM rimsky_node_events WHERE id = $1`, recentNamedID),
 		"recent named event (inside window) must survive")
 
-	// --- Assert no dangling: surviving events reference a live node ------
+	// @deliberate: Assert no dangling: surviving events reference a live node
 	// The frame reap cascades to node_runs only; the rimsky_nodes row
 	// survives, so the surviving events' node_id still resolves. Confirm the
 	// node row is intact and every surviving event still points at it.

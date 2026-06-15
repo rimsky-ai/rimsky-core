@@ -175,7 +175,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 					"source": "{{params.absent}}",
 				},
 			},
-			// `required` deliberately omits "prompt".
+			// @deliberate: `required` deliberately omits "prompt".
 		}
 		_, err := substituteAttributesSchema(schema, attributes.ResolveContext{})
 		if err == nil {
@@ -220,7 +220,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("lenient miss: want nil error, got %v", err)
 		}
-		// The `?` marker recovers to the property's type-appropriate empty
+		// @deliberate: The `?` marker recovers to the property's type-appropriate empty
 		// value ("" for a string) so the dispatch type check admits it —
 		// not a raw null (which would fail `type: string` validation).
 		if v, ok := out["prompt"]; !ok || v != "" {
@@ -389,7 +389,7 @@ func TestRelaxRequiredToSourceDriven(t *testing.T) {
 // can exercise it with a zero-value RunArgs.Persist — we never reach
 // the persistence call.
 func TestResolveAttributes_ExecutorSchemaUnavailable(t *testing.T) {
-	// Acquisition with one node-side property declared. The property has
+	// @deliberate: Acquisition with one node-side property declared. The property has
 	// no `source:`, no `default:`, and no `readOnly: true` — its
 	// admissibility depends entirely on the executor's expected schema
 	// being visible.
@@ -429,7 +429,7 @@ func TestResolveAttributes_ExecutorSchemaUnavailable(t *testing.T) {
 	})
 
 	t.Run("nil resolver fails dispatch with executor_schema_unavailable", func(t *testing.T) {
-		// No resolver wired at all — same outcome as resolver returning
+		// @deliberate: No resolver wired at all — same outcome as resolver returning
 		// ok=false. The dispatch gate cannot distinguish "you didn't wire
 		// observability" from "your executor doesn't advertise a schema."
 		args := RunArgs{}
@@ -443,7 +443,7 @@ func TestResolveAttributes_ExecutorSchemaUnavailable(t *testing.T) {
 	})
 
 	t.Run("permissive schema visible — gate does NOT fire", func(t *testing.T) {
-		// With the permissive `{"type":"object"}` schema visible the gate
+		// @deliberate: With the permissive `{"type":"object"}` schema visible the gate
 		// passes: `computeEffectiveAttributeSchema` reports the schema as
 		// visible, and the unified-attribute-surface check sees a
 		// permissive executor schema and skips the readOnly-fallback leg.
@@ -465,7 +465,7 @@ func TestResolveAttributes_ExecutorSchemaUnavailable(t *testing.T) {
 		if !node.IsPermissiveExecutorSchema(execSchema) {
 			t.Fatalf("permissive schema: expected IsPermissiveExecutorSchema to return true for %#v", execSchema)
 		}
-		// Re-run the same gate check resolveAttributes performs, in
+		// @deliberate: Re-run the same gate check resolveAttributes performs, in
 		// isolation, to confirm the bypass admits a sourceless+defaultless
 		// property under a permissive schema.
 		errs := node.CheckEffectiveAttributesSchema(
@@ -508,7 +508,7 @@ func TestResolveAttributes_DispatchExecutorSchemaValidation(t *testing.T) {
 			"model": map[string]any{"type": "string"},
 		},
 	}
-	// Bag the dispatch path would build after source+default+override
+	// @deliberate: Bag the dispatch path would build after source+default+override
 	// merge: `model` is an integer, but the executor's schema declares
 	// it `string`. The relaxed dispatchSchema (matching what
 	// relaxRequiredToSourceDriven would emit) accepts it because the
@@ -517,7 +517,7 @@ func TestResolveAttributes_DispatchExecutorSchemaValidation(t *testing.T) {
 	// in-depth pass against the executor's raw schema rejects it.
 	resolved := map[string]any{"model": 42}
 
-	// Wrap the validation error the same way resolveAttributes does —
+	// @deliberate: Wrap the validation error the same way resolveAttributes does —
 	// the wrapping is the load-bearing part of the contract for
 	// classifyAttributeFailure to route correctly.
 	rawErr := attributes.Validate(executorSchema, resolved, attributes.PhaseDispatch)
@@ -559,7 +559,7 @@ func TestResolveAttributes_RequiredReadOnlyExecutorWritten(t *testing.T) {
 		},
 		"required": []any{"prompt", "response"},
 	}
-	// Dispatch bag the substitution pass would produce: `prompt` is
+	// @deliberate: Dispatch bag the substitution pass would produce: `prompt` is
 	// populated (source-bound resolved); `response` is absent because
 	// the executor will write it at commit.
 	resolved := map[string]any{"prompt": "hello"}
@@ -570,7 +570,7 @@ func TestResolveAttributes_RequiredReadOnlyExecutorWritten(t *testing.T) {
 		if len(req) != 1 || req[0] != "prompt" {
 			t.Fatalf("relaxed required: want [prompt], got %#v", req)
 		}
-		// Source schema must be unchanged (no mutation).
+		// @deliberate: Source schema must be unchanged (no mutation).
 		origReq, _ := executorSchema["required"].([]any)
 		if len(origReq) != 2 {
 			t.Fatalf("source schema mutated: required=%#v", origReq)
@@ -578,7 +578,7 @@ func TestResolveAttributes_RequiredReadOnlyExecutorWritten(t *testing.T) {
 	})
 
 	t.Run("validate against raw schema fires false-positive required", func(t *testing.T) {
-		// Control: validating directly against the raw executor schema
+		// @deliberate: Control: validating directly against the raw executor schema
 		// (without the relaxation) is expected to fail with a missing-
 		// `response` complaint — that's the false positive the fix
 		// avoids.
@@ -596,7 +596,7 @@ func TestResolveAttributes_RequiredReadOnlyExecutorWritten(t *testing.T) {
 	})
 
 	t.Run("source-bound required stays enforced", func(t *testing.T) {
-		// Drop `prompt` from the bag — a source-bound `required:` entry
+		// @deliberate: Drop `prompt` from the bag — a source-bound `required:` entry
 		// must still fire under the relaxed schema (only readOnly-
 		// required entries get dropped).
 		relaxed := relaxRequiredForExecutorWritten(executorSchema)
@@ -683,7 +683,7 @@ func TestRelaxRequiredForExecutorWritten(t *testing.T) {
 	})
 
 	t.Run("required entry referring to undeclared property stays", func(t *testing.T) {
-		// Defensive: a malformed schema with `required:` listing a name
+		// @deliberate: Defensive: a malformed schema with `required:` listing a name
 		// that has no corresponding `properties` entry should not be
 		// dropped — we can't classify it as readOnly without a property
 		// declaration. The validator will surface the underlying
@@ -747,7 +747,7 @@ func TestClassifyAttributeFailure_RoutesByErrorType(t *testing.T) {
 	})
 
 	t.Run("unrecognised error falls back to template_resolution_failed", func(t *testing.T) {
-		// Defensive: anything that didn't go through resolveAttributes'
+		// @deliberate: Defensive: anything that didn't go through resolveAttributes'
 		// typed wrappers still routes through the resolution chain so
 		// existing call-site assumptions hold.
 		err := errors.New("unrecognised")

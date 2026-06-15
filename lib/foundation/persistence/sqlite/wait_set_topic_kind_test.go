@@ -2,17 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// wait_set_topic_kind_test.go — SQLite mirror of the postgres
-// wait_set_topic_kind test. Proves the rimsky_wait_set.topic_kind CHECK
-// admits the full 5-value signal taxonomy
-// ('state','attribute','event','transient','message','terminal') on a
-// freshly-migrated SQLite. The legacy schema (001-schema.sql) only
-// permits ('state','attribute','event'); SQLite cannot alter a CHECK in
-// place, so 006-waitset-topic-kind-taxonomy rebuilds the leaf table with
-// the broadened CHECK. RED until that migration exists.
-//
-// Backs S-cascade-waitset-topic-taxonomy.
-
 package sqlite_test
 
 import (
@@ -51,7 +40,7 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed template: %v", err)
 	}
-	// instance + main_run_scope mutually FK each other; seed in one tx.
+	// @constraint: rimsky_instances and rimsky_run_scopes mutually reference each other via FK, so both rows must be inserted inside a single transaction to satisfy deferred FK checks at commit.
 	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
@@ -72,7 +61,7 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// rimsky_frames requires frame_timeout_ms >= 60000 (CHECK).
+	// @constraint: rimsky_frames CHECK enforces frame_timeout_ms >= 60000, so the seed value must clear the floor.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
 		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at)
@@ -81,9 +70,7 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
-	// Two distinct nodes: uq_node_runs_in_flight_per_run_scope forbids two
-	// in-flight runs sharing (node_id, run_scope_id), so the receiver and
-	// sender runs each get their own node.
+	// @constraint: uq_node_runs_in_flight_per_run_scope forbids two in-flight runs sharing (node_id, run_scope_id), so the receiver and sender runs each need their own node.
 	for _, nID := range []string{receiverNodeID, senderNodeID} {
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id) VALUES (?, ?, 'fixture', ?)`,
@@ -92,8 +79,6 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 			t.Fatalf("seed node %s: %v", nID, err)
 		}
 	}
-	// One in-flight node_run per node: one is the wait-set receiver, one
-	// the sender.
 	runs := []struct{ runID, nodeID string }{
 		{receiverRunID, receiverNodeID},
 		{senderRunID, senderNodeID},
@@ -109,9 +94,7 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 		}
 	}
 
-	// One wait-set row per broadened topic_kind value. Each insert must
-	// be admitted by the topic_kind CHECK; the legacy CHECK rejects all
-	// three.
+	// @deliberate: each of the three broadened topic_kind values must be admitted by the rebuilt CHECK; the legacy CHECK rejects all three, which is what migration 006 fixes.
 	for _, topicKind := range []string{"transient", "message", "terminal"} {
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_wait_set

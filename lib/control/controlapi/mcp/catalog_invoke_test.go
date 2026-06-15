@@ -27,7 +27,7 @@ import (
 func TestCatalogInvoke_BodylessRequestDoesNotPanic(t *testing.T) {
 	r := chi.NewRouter()
 	var sawIdempotency string
-	// Mirrors readAllBody (defer Close + ReadAll) — the exact site that
+	// @constraint: mirrors readAllBody (defer Close + ReadAll) — the exact site that
 	// nil-dereferenced when the inner request carried no body.
 	r.Post("/things", func(w http.ResponseWriter, req *http.Request) {
 		defer func() { _ = req.Body.Close() }()
@@ -37,7 +37,7 @@ func TestCatalogInvoke_BodylessRequestDoesNotPanic(t *testing.T) {
 		_, _ = w.Write([]byte(`{"len":` + strconv.Itoa(len(body)) + `}`))
 	})
 	r.Get("/things", func(w http.ResponseWriter, req *http.Request) {
-		// A defensive read handler still must not panic on a body-less GET.
+		// @constraint: A defensive read handler still must not panic on a body-less GET.
 		_, _ = io.ReadAll(req.Body)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -52,7 +52,7 @@ func TestCatalogInvoke_BodylessRequestDoesNotPanic(t *testing.T) {
 	}
 	cat := &mcp.Catalog{Registry: reg, Router: r}
 
-	// Body-less POST: must not panic, must succeed, and must carry an
+	// @constraint: body-less POST: must not panic, must succeed, and must carry an
 	// Idempotency-Key so the message-emit idempotency gate accepts it.
 	got, mcpErr := cat.Invoke(httptest.NewRequest("POST", "/mcp", nil), "thing_create", json.RawMessage(`{}`))
 	if mcpErr != nil {
@@ -65,7 +65,7 @@ func TestCatalogInvoke_BodylessRequestDoesNotPanic(t *testing.T) {
 		t.Fatalf("thing_create: expected synthesized Idempotency-Key header, got none")
 	}
 
-	// GET tool: dispatches cleanly with a non-nil empty body.
+	// @constraint: GET tool: dispatches cleanly with a non-nil empty body.
 	if _, mcpErr := cat.Invoke(httptest.NewRequest("GET", "/mcp", nil), "thing_list", nil); mcpErr != nil {
 		t.Fatalf("thing_list: unexpected error %+v", mcpErr)
 	}

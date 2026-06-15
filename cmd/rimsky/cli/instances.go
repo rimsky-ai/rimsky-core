@@ -456,7 +456,6 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 
 	id := rest[0]
 	if !LooksLikeUUID(id) {
-		// Resolve key → UUID via GET /instances/{key}.
 		inst, err := c.GetInstance(ctx, id)
 		if err != nil {
 			return reportError(err)
@@ -467,28 +466,27 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 	signalCtx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 	defer cancel()
 
-	// Cursor discipline mirrors the live control-api's keyset pagination
-	// (foundation/persistence/{sqlite,postgres}/events.go): the event log
-	// is read newest-first ((occurred_at, id) DESC) and NextCursor is an
-	// OPAQUE base64 keyset token that walks backward through history. The
-	// CLI must pass that exact token back — fabricating a numeric cursor
-	// (the old fmt.Sprintf("%d", lastSeenID)) makes the server 500 with
-	// "events.list: bad cursor" on the first advance (issue #1). NextCursor
-	// is set only on a full page; a partial page returns "" to signal the
-	// backlog is drained.
-	//
-	// lastSeenID is a purely-local dedup high-watermark and is NEVER sent
-	// as a cursor. Because pages arrive newest-first, the skip test uses a
-	// per-poll snapshot (prevSeen) rather than the running max: the first
-	// event of a full backlog is the global newest, so updating the
-	// watermark mid-drain would suppress every older (lower-ID) event on
-	// the following pages. We compare each event against the watermark as
-	// it stood at the start of the poll and only advance the committed
-	// watermark after the whole backlog is drained.
+	// @constraint: cursor discipline mirrors the live control-api's keyset
+	// pagination (foundation/persistence/{sqlite,postgres}/events.go): the
+	// event log is read newest-first ((occurred_at, id) DESC) and
+	// NextCursor is an OPAQUE base64 keyset token that walks backward
+	// through history. The CLI must pass that exact token back —
+	// fabricating a numeric cursor (the old fmt.Sprintf("%d", lastSeenID))
+	// makes the server 500 with "events.list: bad cursor" on the first
+	// advance (issue #1). NextCursor is set only on a full page; a partial
+	// page returns "" to signal the backlog is drained.
+	// @constraint: lastSeenID is a purely-local dedup high-watermark and
+	// is NEVER sent as a cursor. Because pages arrive newest-first, the
+	// skip test uses a per-poll snapshot (prevSeen) rather than the
+	// running max: the first event of a full backlog is the global newest,
+	// so updating the watermark mid-drain would suppress every older
+	// (lower-ID) event on the following pages. We compare each event
+	// against the watermark as it stood at the start of the poll and only
+	// advance the committed watermark after the whole backlog is drained.
 	var lastSeenID int64
 	for {
 		prevSeen := lastSeenID
-		nextCursor := "" // opaque server token; empty re-scans the newest page
+		nextCursor := "" // @constraint: opaque server token; empty re-scans the newest page
 		for {
 			page, err := c.ListEvents(signalCtx, ListEventsQuery{InstanceID: id, Cursor: nextCursor, Limit: 100})
 			if err != nil {
@@ -511,10 +509,9 @@ func RunInstanceEvents(ctx context.Context, args []string) int {
 				}
 			}
 			if page.NextCursor == "" {
-				break // partial page: backlog drained for this poll
+				break // @constraint: partial page: backlog drained for this poll
 			}
-			// Full page: continue draining older events via the opaque
-			// token, without sleeping.
+			// @constraint: full page — continue draining older events via the opaque token, without sleeping.
 			nextCursor = page.NextCursor
 		}
 		if !follow {

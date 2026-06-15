@@ -7,9 +7,7 @@ status: as-is
 
 ## Choice
 
-Rimsky's coding methodology is Plumbline, consumed as a Claude Code plugin. The plugin materializes the methodology's per-session cheatsheet into the repo where every contributor and agent reads it; the cheatsheet is committed so contributors without the plugin still see the rules. A PostToolUse lint blocks edits that introduce stale `@source:` references or uncovered `@blessed-invariant:` slugs; CI invokes the same lint against the full tree. Project-specific tag-vocabulary extensions configure the plugin to recognize the design-citation tags this project uses (`@concept:`, `@story:`, `@decision:`).
-
-Two of three Plumbline checks run: source_validity and blessed_invariant_test_coverage; comment_hygiene is off.
+Rimsky's coding methodology is Plumbline, consumed as a Claude Code plugin. The plugin materializes the methodology's per-session cheatsheet into the repo where every contributor and agent reads it; the cheatsheet is committed so contributors without the plugin still see the rules. The lint runs all three checks — `source_validity`, `blessed_invariant_test_coverage`, and `comment_hygiene` — with the comment-hygiene check honoring GoDoc-style and JSDoc-style block exemptions for Go and TS/JS respectively, so canonical doc shapes pass without per-comment tagging. A PostToolUse lint blocks edits that introduce new violations across any check; CI invokes the same lint against the full tree. Project-specific tag-vocabulary extensions configure the plugin to recognize the design-citation tags this project uses (`@concept:`, `@story:`, `@decision:`).
 
 ## Rationale
 

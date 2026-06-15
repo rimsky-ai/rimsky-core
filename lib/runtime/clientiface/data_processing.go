@@ -24,31 +24,24 @@ import "context"
 // field (CandidateHandle, CandidateMetadata, VersionID payloads) as
 // opaque per @blessed-invariant 20-class.
 type DataProcessingClient interface {
-	// Name returns the operator-configured producer name (matches the
-	// `producer_name` slot in the matching ClaimProducer client).
 	Name() string
 
-	// BeginCandidate opens a candidate write on the producer for the
-	// given sub-claim. Idempotent in `idempotency_key`. Returns the
-	// `candidate_handle` bytes the leaf executor receives in its
-	// ExecuteRequest.
+	// @agent-contract: idempotent in `in.IdempotencyKey`; the returned
+	// CandidateHandle bytes are the same bytes the leaf executor later
+	// receives in its ExecuteRequest.
 	BeginCandidate(ctx context.Context, in BeginCandidateInput) (BeginCandidateOutput, error)
 
-	// CommitCandidate finalizes a candidate. Returns the producer's
-	// per-version metadata (opaque bytes).
+	// @agent-contract: returns the producer's per-version metadata as
+	// opaque bytes; rimsky does not interpret them.
 	CommitCandidate(ctx context.Context, in CommitCandidateInput) (CommitCandidateOutput, error)
 
-	// AbandonCandidate disposes of an outstanding candidate.
 	AbandonCandidate(ctx context.Context, in AbandonCandidateInput) error
 
-	// ListVersions enumerates versions associated with a claim handle.
 	ListVersions(ctx context.Context, in ListVersionsInput) (ListVersionsOutput, error)
 
-	// ListPartitions enumerates partitions for a (claim_handle, version_id).
 	ListPartitions(ctx context.Context, in ListPartitionsInput) (ListPartitionsOutput, error)
 
-	// GetVersionSchema returns the producer-declared schema for a
-	// given version. Bytes are opaque to rimsky.
+	// @agent-contract: schema bytes are opaque to rimsky.
 	GetVersionSchema(ctx context.Context, in GetVersionSchemaInput) (GetVersionSchemaOutput, error)
 }
 

@@ -15,7 +15,9 @@ import (
 )
 
 type Endpoint struct {
-	Transport string // "grpc" | "http"
+	// @constraint: Transport must be "grpc" or "http"; validated at
+	// config-parse time.
+	Transport string
 	URL       string
 	// TLS is the dial mode: "off" (plaintext) or "required" (verified
 	// TLS). Validated at config-parse time; empty is treated as "off".
@@ -31,15 +33,20 @@ type DispatchContext struct {
 	// lookup (a DB hit) so it honors the dispatch's deadline/cancellation
 	// rather than running uncancellable on context.Background(). May be
 	// nil; resolvers fall back to context.Background() when so.
-	Ctx        context.Context
-	InstanceID string // empty for non-instance-scoped resolution
-	RunScopeID string // ditto
+	Ctx context.Context
+	// @constraint: empty InstanceID / RunScopeID signal non-instance-scoped
+	// resolution; the late-bind path short-circuits when InstanceID is
+	// empty.
+	InstanceID string
+	RunScopeID string
 }
 
 type Resolver interface {
 	Resolve(name string, ctx DispatchContext) (Endpoint, bool)
-	// AcceptedNames returns all configured executor names. Used as the
-	// supervisor's accept list when claiming dispatch rows.
+	// @agent-contract: AcceptedNames returns all configured executor
+	// names, used as the supervisor's accept list when claiming dispatch
+	// rows. Does not include names reachable only via late-bind
+	// fallback.
 	AcceptedNames() []string
 }
 
@@ -85,9 +92,12 @@ func (r *StaticResolver) AcceptedNames() []string {
 // reads the header to route. LateBindResolver does not add any
 // metadata to the returned Endpoint.
 type LateBindResolver struct {
-	static          Resolver
-	lookupBindings  func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)
-	lateBindProxies map[string]string // protocol → proxy service name
+	static         Resolver
+	lookupBindings func(ctx context.Context, instanceID string) (map[string]json.RawMessage, bool, error)
+	// @constraint: lateBindProxies maps protocol name (e.g. "executor")
+	// to the static-resolver service name of the proxy that fronts late-
+	// bound bindings for that protocol.
+	lateBindProxies map[string]string
 }
 
 // NewLateBindResolver wraps a static resolver with late-bind fallback.

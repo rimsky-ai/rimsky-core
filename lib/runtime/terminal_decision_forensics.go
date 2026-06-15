@@ -58,22 +58,21 @@ func emitTerminalForensics(
 	if args.Persist == nil || args.Clock == nil {
 		return
 	}
-	// Lineage hint must carry enough context to be useful; skip the
-	// projection write when the call site lacks instance / frame
-	// metadata (the per-call lineage hint is optional and some callers
-	// — e.g. cycle-4 pre-rename paths — fire without filling it in).
+	// @deliberate: skip the projection write when the call site lacks
+	// instance / frame metadata. The per-call lineage hint is optional
+	// and some callers (e.g. cycle-4 pre-rename paths) fire without
+	// filling it in; a partial hint cannot anchor a useful row.
 	if (td.LineageHint == ClaimLineageHint{}) {
 		return
 	}
 	outcome := terminalOutcomeKey(td)
 	now := args.Clock.Now()
-	// Walk the immediate sub-claim list under this claim_handle (one
-	// level) so the lineage row carries the fan-out manifest the
-	// OpenLineage emitter renders as the per-claim sub-claim_handle_ids
-	// facet. ListChildClaimHandles is a single SELECT; pre-v1 we keep
-	// it bounded at one level to avoid quadratic walks on deep trees —
-	// downstream consumers can chain ancestor lookups via
-	// `GET /lineage/claims/{id}/ancestors?depth=N`.
+	// @deliberate: walk one level of sub-claims only. ListChildClaimHandles
+	// is a single SELECT; pre-v1 we keep it bounded to avoid quadratic
+	// walks on deep trees. Downstream consumers chain ancestor lookups
+	// via `GET /lineage/claims/{id}/ancestors?depth=N`. The OpenLineage
+	// emitter renders this slice as the per-claim sub-claim_handle_ids
+	// facet.
 	var subIDs []string
 	if args.ClaimHandles != nil {
 		children, cerr := args.ClaimHandles.ListChildClaimHandles(ctx, td.ClaimHandleID, tx)
@@ -91,12 +90,12 @@ func emitTerminalForensics(
 	rec := ClaimTerminalRecord{
 		ClaimHandleID: td.ClaimHandleID,
 		RunID:         td.LineageHint.RunID,
-		// OpenLineageRunRef seeds the OpenLineage emitter's
+		// @constraint: OpenLineageRunRef seeds the OpenLineage emitter's
 		// `Run.RunID` (subscribers/openlineage/emitter.go::
-		// MakeClaimTerminalEvent). Using the holding-run's RunID
-		// keeps the OL graph aligned with the run that resolved the
-		// claim. NOT a parent-run reference in the run-tree sense —
-		// see the struct comment on ClaimTerminalRecord.
+		// MakeClaimTerminalEvent). Using the holding-run's RunID keeps
+		// the OL graph aligned with the run that resolved the claim.
+		// NOT a parent-run reference in the run-tree sense — see the
+		// struct comment on ClaimTerminalRecord.
 		OpenLineageRunRef:   td.LineageHint.RunID.String(),
 		NodeID:              td.LineageHint.NodeID,
 		FrameID:             td.LineageHint.FrameID,
@@ -121,8 +120,9 @@ func emitTerminalForensics(
 				"error", err.Error())
 		}
 	}
-	// Event payload mirrors the lineage shape but excludes node_id (the
-	// event row already carries it as a column). The kind discriminates
+	// @deliberate: event payload mirrors the lineage shape but excludes
+	// node_id — the event row already carries it as a column, so
+	// duplicating into the payload wastes bytes. The kind discriminates
 	// commit vs abandon; the cause field carries the abandon-flavor.
 	kind := events.KindClaimResolutionCommit()
 	payload := map[string]any{
@@ -143,10 +143,10 @@ func emitTerminalForensics(
 			cause = TerminalCauseNatural
 		}
 		payload["cause"] = string(cause)
-		// version_id is meaningful on Commit (the producer's emitted
-		// version label); on Abandon it is rarely populated and never
-		// load-bearing. Drop the key when empty so the event payload
-		// stays tight.
+		// @deliberate: drop empty version_id on Abandon. It is meaningful
+		// on Commit (the producer's emitted version label) but on Abandon
+		// it is rarely populated and never load-bearing; dropping the key
+		// when empty keeps the event payload tight.
 		if rec.VersionID == "" {
 			delete(payload, "version_id")
 		}

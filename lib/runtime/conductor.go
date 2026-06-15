@@ -103,10 +103,6 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 	for _, n := range stale {
 		nodeID := n.ID
 		instanceID := n.InstanceID
-		// Resolve the dispatch id for the transient/heartbeat_missed
-		// signal payload. InFlightRunID may be nil if the row has
-		// already been retired between the outer scan and this loop;
-		// fall back to a zero UUID in that case.
 		var dispatchID shared.UUID
 		if n.InFlightRunID != nil {
 			dispatchID = *n.InFlightRunID
@@ -126,49 +122,27 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 			},
 		}
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// transient/heartbeat_missed signal is the canonical audit
-			// row for this transition per concept:signal. The pre-Pass-5
-			// fixed-string "heartbeat_lost" audit-row retired alongside
-			// spec 2026-05-23-signal-taxonomy-and-policy-decoupling-design.
+			// @concept: signal — transient/heartbeat_missed is the canonical audit row for this transition.
+			// @deliberate: the 2026-05-23 signal-taxonomy / policy-decoupling spec retired the pre-Pass-5 fixed-string "heartbeat_lost" audit row.
 			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
 				instanceID, nodeID, heartbeatSig, args.Clock.Now(), tx)
 		}); err != nil {
 			log.Warn("tick: append heartbeat_missed signal failed",
 				"node_id", n.ID.String(), "error", err.Error())
 		}
-		// running → stale (also clears assigned_supervisor_id + heartbeat
-		// as part of the state transition; no separate clear call needed).
-		//
-		// Pessimistic-invalidate per spec Piece 1: the running → stale
-		// transition IS this sender's invalidation in this frame. Gate
-		// downstream subscribers so they don't dispatch with stale
-		// upstream data while the re-enqueued sender is re-running.
-		//
-		//	@concept: cascade
-		//	@concept: wait-set
+		// @constraint: the running → stale transition also clears assigned_supervisor_id + heartbeat as part of the state transition; no separate clear call needed.
+		// @constraint: pessimistic-invalidate — the running → stale transition IS this sender's invalidation in this frame; gates downstream subscribers so they don't dispatch with stale upstream data while the re-enqueued sender is re-running.
+		// @concept: cascade
+		// @concept: wait-set
 		if n.RunScopeID == nil {
-			// No in-flight RunScope projected — nothing to transition.
-			// Phase B's cascade allocation path is responsible for
-			// affirming a row before state-machine writes can land.
+			// @constraint: no in-flight RunScope projected means nothing to transition; Phase B's cascade allocation path is responsible for affirming a row before state-machine writes can land.
 			continue
 		}
-		// Bundle the state-mutation (UpdateState + zombie row retirement +
-		// cascade walk) AND the recovery Enqueue in a single tx so a
-		// crash between them can't strand the node in state=stale with no
-		// in-flight dispatch row. Mirrors the OnError-retry branch's
-		// tx-atomic remove+enqueue pair. See @blessed-invariant:
-		// "State-machine writes for a single run must be tx-atomic".
+		// @constraint: bundle state-mutation (UpdateState + zombie row retirement + cascade walk) AND the recovery Enqueue in a single tx so a crash between them can't strand the node in state=stale with no in-flight dispatch row; mirrors the OnError-retry branch's tx-atomic remove+enqueue pair.
+		// @blessed-invariant: state-machine-writes-single-tx
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// Re-read mutable fields (FrameID, InFlightRunID, Executor,
-			// RunScopeID) INSIDE this tx so the read-then-write pair is
-			// atomic. Using these from the outer batch read (the `stale`
-			// slice populated by ListWithStaleHeartbeat) could race with
-			// another supervisor's orphan reaper that rotated the
-			// in-flight run between the outer batch read and this tx —
-			// in which case `n.InFlightRunID` would point at a pre-
-			// predecessor instead of the row this tx is about to retire.
-			// Per @blessed-invariant: "State-machine writes for a single
-			// run must be tx-atomic".
+			// @constraint: re-read mutable fields (FrameID, InFlightRunID, Executor, RunScopeID) INSIDE this tx so the read-then-write pair is atomic; using the outer batch read (the `stale` slice from ListWithStaleHeartbeat) could race with another supervisor's orphan reaper that rotated the in-flight run between the outer batch read and this tx, in which case `n.InFlightRunID` would point at a pre-predecessor instead of the row this tx is about to retire.
+			// @blessed-invariant: state-machine-writes-single-tx
 			cur, err := args.Persist.Nodes().Get(ctx, n.ID, tx)
 			if err != nil {
 				return err
@@ -176,46 +150,26 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 			if cur == nil {
 				return nil
 			}
-			// Use the re-read RunScopeID — a concurrent close + reopen
-			// could move the node into a different scope; we want this
-			// tx to address whatever scope the node is in NOW.
+			// @constraint: use the re-read RunScopeID — a concurrent close + reopen could move the node into a different scope; we want this tx to address whatever scope the node is in NOW.
 			if cur.RunScopeID == nil {
 				return nil
 			}
 			curScopeID := *cur.RunScopeID
-			// Thread the projected RunScope id so the running →
-			// stale transition addresses this specific run row even when
-			// fan-out siblings share the same node_id.
+			// @constraint: thread the projected RunScope id so the running → stale transition addresses this specific run row even when fan-out siblings share the same node_id.
 			if err := args.Persist.Nodes().UpdateState(ctx, cur.ID, curScopeID,
 				cascade.NodeStateStale, cascade.ReasonHeartbeatLost, nil, tx); err != nil {
 				return err
 			}
-			// Capture the predecessor dispatch id BEFORE retiring the
-			// zombie row. Querying GetInFlightRunForNode inside the
-			// same tx returns the row this sweep is about to retire,
-			// which is the correct prior_dispatch_id for the recovery
-			// enqueue. Falling back to cur.InFlightRunID is safe — the
-			// re-read above was tx-atomic with the projection.
+			// @constraint: capture the predecessor dispatch id BEFORE retiring the zombie row; GetInFlightRunForNode inside this tx returns the row this sweep is about to retire (the correct prior_dispatch_id for the recovery enqueue), and falling back to cur.InFlightRunID is safe because the re-read above was tx-atomic with the projection.
 			priorDispatchID, _, err := args.Queue.GetInFlightRunForNode(ctx, tx, cur.ID, curScopeID)
 			if err != nil {
 				return fmt.Errorf("resolve prior dispatch id: %w", err)
 			}
-			// Retire the zombie row to phase='completed' so the
-			// (node_id, run_scope_id) in-flight slot frees up — without
-			// this the recovery EnqueueInTx below is blocked by the NOT
-			// EXISTS guard on the in-flight uniqueness predicate. Empty
-			// expectedClaimedBy: the sweep is by definition retiring a
-			// row whose holder is gone; no claimant guard.
+			// @constraint: retire the zombie row to phase='completed' so the (node_id, run_scope_id) in-flight slot frees up — without this the recovery EnqueueInTx below is blocked by the NOT EXISTS guard on the in-flight uniqueness predicate; empty expectedClaimedBy because the sweep is by definition retiring a row whose holder is gone (no claimant guard).
 			if err := args.Queue.RemoveForNodeInTx(ctx, cur.ID, curScopeID, "", tx); err != nil {
 				return fmt.Errorf("retire zombie run: %w", err)
 			}
-			// Pair the retired dispatch's work_started with a
-			// work_completed{terminal_kind:"abandoned"} so the ledger's
-			// started/completed pairing survives heartbeat loss — the
-			// dispatch never reaches applyTerminal, so this sweep is
-			// the only site that can close the pair. supervisor_id is
-			// the (gone) holder recorded on the node row; dispatch_id
-			// is the retired row (the pairing join key).
+			// @constraint: pair the retired dispatch's work_started with a work_completed{terminal_kind:"abandoned"} so the ledger's started/completed pairing survives heartbeat loss — the dispatch never reaches applyTerminal, so this sweep is the only site that can close the pair; supervisor_id is the (gone) holder recorded on the node row; dispatch_id is the retired row (the pairing join key).
 			if reapedDispatchID := reapedDispatchIDFor(cur, priorDispatchID); reapedDispatchID != (shared.UUID{}) {
 				if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 					NodeID: &cur.ID, InstanceID: &cur.InstanceID,
@@ -234,27 +188,13 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 					return err
 				}
 			}
-			// Re-enqueue without bumping retry_counter. RequiredStores is
-			// left empty — the foundation tick does not have the in-memory
-			// template registry threaded through, and an empty
-			// RequiredStores trivially satisfies the supervisor-pool
-			// predicate (RequiredStores ⊆ AcceptedStores). FrameID is
-			// sourced from the node row — heartbeat-lost nodes were
-			// running in a frame and that frame_id remains the running
-			// frame (per blessed-invariant 19). A nil FrameID skips
-			// re-enqueue (the row is stranded only until the next tick
-			// re-resolves a frame; the state transition still commits).
+			// @constraint: re-enqueue without bumping retry_counter; RequiredStores is left empty because the foundation tick does not have the in-memory template registry threaded through, and an empty RequiredStores trivially satisfies the supervisor-pool predicate (RequiredStores ⊆ AcceptedStores). FrameID is sourced from the node row — heartbeat-lost nodes were running in a frame and that frame_id remains the running frame (per blessed-invariant 19). A nil FrameID skips re-enqueue (the row is stranded only until the next tick re-resolves a frame; the state transition still commits).
 			if cur.FrameID == nil {
 				log.Warn("tick: skip re-enqueue: node frame_id is nil",
 					"node_id", cur.ID.String())
 				return nil
 			}
-			// Recovery-aware fields: the predecessor dispatch_id is the
-			// id captured above (or the in-flight projection if the
-			// lookup raced with retirement). The new dispatch supersedes
-			// it; the executor reads the predecessor id on
-			// proto:executor.proto::ExecuteRequest.prior_dispatch_id at
-			// dispatch.
+			// @constraint: recovery-aware fields — the predecessor dispatch_id is the id captured above (or the in-flight projection if the lookup raced with retirement); the new dispatch supersedes it, and the executor reads the predecessor id on proto:executor.proto::ExecuteRequest.prior_dispatch_id at dispatch.
 			priorPtr := cur.InFlightRunID
 			if priorDispatchID != (shared.UUID{}) {
 				idCopy := priorDispatchID
@@ -270,11 +210,8 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 				PriorDispatchID:          priorPtr,
 				PriorDispatchDisposition: "heartbeat_stale",
 			}, tx); err != nil {
-				// Defensive: closed RunScope means the rendezvous fired
-				// while the sweep was preparing the retry. Walker
-				// discipline per concept:run-scope: do not enqueue into
-				// a closed scope; the state-machine writes above
-				// already committed.
+				// @constraint: defensive — closed RunScope means the rendezvous fired while the sweep was preparing the retry; walker discipline per concept:run-scope is do not enqueue into a closed scope (the state-machine writes above already committed).
+				// @concept: run-scope
 				if errors.Is(err, persistence.ErrRunScopeClosed) {
 					log.Warn("tick: skip re-enqueue: run scope closed",
 						"node_id", cur.ID.String(),
@@ -316,9 +253,7 @@ func SweepOrphanedNodeRuns(ctx context.Context, args ConductorArgs) error {
 		if o.ClaimedBy != nil {
 			prior = *o.ClaimedBy
 		}
-		// Claimant-guarded release: passing prior ensures a fresh supervisor
-		// that re-claimed the row between ListOrphanedClaims and this UPDATE
-		// keeps its live claim intact.
+		// @constraint: claimant-guarded release — passing prior ensures a fresh supervisor that re-claimed the row between ListOrphanedClaims and this UPDATE keeps its live claim intact.
 		if err := args.Queue.ReleaseClaim(ctx, o.ID, prior); err != nil {
 			log.Warn("tick: release orphaned claim failed",
 				"dispatch_id", o.ID.String(), "error", err.Error())
@@ -328,14 +263,8 @@ func SweepOrphanedNodeRuns(ctx context.Context, args ConductorArgs) error {
 		if o.LastHeartbeatAt != nil {
 			hb = *o.LastHeartbeatAt
 		}
-		// Resolve the owning instance_id by fetching the node row, so the
-		// orphaned_claim_released event surfaces on the instance-scoped
-		// /v1/events feed (STORY-event-log-read: operator filters by
-		// instance_id). Without InstanceID set, the row is dropped by the
-		// events read filter and the orphan-recovery audit trail is
-		// silently invisible. A lookup failure here is non-fatal: we still
-		// append the event with NodeID alone rather than skipping it, so
-		// the global feed retains the orphan record.
+		// @constraint: resolve the owning instance_id by fetching the node row so the orphaned_claim_released event surfaces on the instance-scoped /v1/events feed (operator filters by instance_id); without InstanceID set, the row is dropped by the events read filter and the orphan-recovery audit trail is silently invisible. A lookup failure here is non-fatal — we still append the event with NodeID alone rather than skipping it, so the global feed retains the orphan record.
+		// @story: event-log-read
 		var instancePtr *shared.UUID
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			n, err := args.Persist.Nodes().Get(ctx, nodeID, tx)
@@ -384,11 +313,7 @@ func SweepReady(ctx context.Context, args ConductorArgs) error {
 		return err
 	}
 	for _, n := range ready {
-		// RequiredStores is left empty; mirrors SweepStaleHeartbeats.
-		// FrameID is sourced from the node row — every stale node is
-		// part of the in-flight frame (blessed-invariant 19). A nil
-		// frame_id here means the frame engine has not yet advanced this
-		// node's queued frame; we skip and re-evaluate next tick.
+		// @constraint: RequiredStores is left empty (mirrors SweepStaleHeartbeats). FrameID is sourced from the node row — every stale node is part of the in-flight frame (blessed-invariant 19); a nil frame_id here means the frame engine has not yet advanced this node's queued frame, so skip and re-evaluate next tick.
 		if n.FrameID == nil {
 			log.Debug("tick: ready-sweep skip: node frame_id is nil",
 				"node_id", n.ID.String())
@@ -407,9 +332,8 @@ func SweepReady(ctx context.Context, args ConductorArgs) error {
 			FrameID:        *n.FrameID,
 			RunScopeID:     *n.RunScopeID,
 		}); err != nil {
-			// Defensive: a closed RunScope means the rendezvous fired
-			// while the sweep was preparing the dispatch. Walker
-			// discipline per concept:run-scope: skip silently.
+			// @constraint: defensive — a closed RunScope means the rendezvous fired while the sweep was preparing the dispatch; walker discipline per concept:run-scope is to skip silently.
+			// @concept: run-scope
 			if errors.Is(err, persistence.ErrRunScopeClosed) {
 				log.Debug("tick: ready-sweep skip: run scope closed",
 					"node_id", n.ID.String(),

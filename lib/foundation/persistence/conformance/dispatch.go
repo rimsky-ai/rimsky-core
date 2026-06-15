@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// dispatch.go — DispatchClaimRelease conformance area.
-//
+// @constraint: DispatchClaimRelease conformance area.
 // Inv 4 (claimant-guarded release), inv 6 (orphan cutoff), inv 2
 // (dispatch-claim brackets running window).
 package conformance
@@ -37,8 +36,9 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		t.Fatalf("enqueue: %v", err)
 	}
 
-	// Two concurrent supervisors race the same dispatch row. Exactly one
-	// should win the claim.
+	// @constraint: two concurrent supervisors racing the same dispatch row
+	// must produce exactly one successful ClaimDispatchRow; the other
+	// observes a false return.
 	supA := "supervisor-A"
 	supB := "supervisor-B"
 
@@ -95,10 +95,9 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		t.Fatalf("expected exactly 1 winning claim, got wins=%d losses=%d", wins, losses)
 	}
 
-	// Find the dispatch row id + winner via Queue.GetDispatchNode-ish path.
-	// We don't have a "find by node_id" helper; instead, pull from
-	// ListOrphanedClaims with a future cutoff (returns rows under any
-	// last_heartbeat_at).
+	// @deliberate: no "find by node_id" helper exists; ListOrphanedClaims
+	// with a far-future cutoff is the only way to retrieve the dispatch row
+	// (it returns rows under any last_heartbeat_at).
 	rows, err := q.ListOrphanedClaims(ctx, time.Now().Add(1*time.Hour))
 	if err != nil {
 		t.Fatalf("ListOrphanedClaims: %v", err)
@@ -125,7 +124,9 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		loser = supB
 	}
 
-	// ReleaseClaim with the wrong supervisor is a no-op (claimant guard).
+	// @constraint: ReleaseClaim called with a non-claimant supervisor must
+	// be a no-op — the claimant-guarded release predicate rejects it
+	// silently, leaving the original winner as ClaimedBy.
 	if err := q.ReleaseClaim(ctx, dispatchID, loser); err != nil {
 		t.Fatalf("releaseClaim wrong sup: %v", err)
 	}
@@ -138,9 +139,9 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 			owner.Kind, owner.SupervisorID, winner)
 	}
 
-	// ListOrphanedClaims cutoff: the row's last_heartbeat_at was set to
-	// "now" at claim time. A cutoff in the past returns nothing; a cutoff
-	// in the future returns the row.
+	// @constraint: ListOrphanedClaims filters by last_heartbeat_at < cutoff.
+	// The row's heartbeat was set to "now" at claim time, so a past cutoff
+	// must exclude it and a future cutoff must include it.
 	pastCutoff := time.Now().Add(-1 * time.Hour)
 	rowsPast, err := q.ListOrphanedClaims(ctx, pastCutoff)
 	if err != nil {

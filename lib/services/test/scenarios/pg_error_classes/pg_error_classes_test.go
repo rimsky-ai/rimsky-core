@@ -105,16 +105,16 @@ func testClaimUnavailableDelivered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// Network first: the substrate postgres and the store must be up and
-	// reachable when rimsky fires its startup claim-producer Capabilities
-	// handshake.
+	// @constraint: substrate postgres and the store must be up and reachable
+	// before rimsky boots — rimsky fires a Capabilities handshake against
+	// every declared claim producer at startup and exits non-zero on miss.
 	netName := harness.NewNetwork(ctx, t)
 	substrate := harness.StartPostgresOnNetwork(ctx, t, netName, "store-pg")
 	pool := dialSubstrate(ctx, t, substrate.HostDSN)
 
-	// The items table must exist (store verifies it at startup) but stay
-	// EMPTY so Open returns Unavailable. createItemsTable seeds the schema
-	// the pg store's pick-policy SELECT expects; no rows are inserted.
+	// @constraint: the items table must exist (the store verifies its
+	// configured items_table at startup) yet stay EMPTY so Open returns
+	// Unavailable — the value path this RED proof drives.
 	createItemsTable(t, pool, queueItemsTable)
 
 	storeEndpoint := harness.StartPostgresStore(ctx, t, netName, "store-postgres", harness.PostgresStoreSpec{
@@ -138,20 +138,15 @@ func testClaimUnavailableDelivered(t *testing.T) {
 		harness.WithExecutor("stub", execEndpoint),
 	)
 
-	// Template: a `worker` node acquires a write-claim on the empty
-	// pick-policy selector; its acquire fails Unavailable. A `subscriber`
-	// node matches the producer-declared class via an instance-scoped
-	// `terminal/error/*` wildcard — the operator's subscription surface
-	// that must receive the `pg/claim_unavailable` signal. (A wildcard /
-	// instance-scoped subscription is the surface that does NOT range-check
-	// the leaf against an executor's declared vocabulary at registration,
-	// because the producer-declared class is owned by the store, not the
-	// worker's executor; the GREEN routing is what makes the wildcard fire
-	// on the producer-declared leaf.)
-	//
-	// The observable is asserted directly on the canonical event log
-	// (`GET /events`), which is the same `terminal/error/pg/claim_unavailable`
-	// row the subscriber reacts to.
+	// @deliberate: the `subscriber` node uses an INSTANCE-SCOPED
+	// `terminal/error/*` wildcard, not a node-scoped declared-vocabulary
+	// subscribe. The producer-declared `pg/claim_unavailable` class is owned
+	// by the store, not the worker's executor, so a node-scoped subscribe
+	// would be range-checked against the wrong vocabulary at registration.
+	// The wildcard surface is what makes the GREEN routing fire on the
+	// producer-declared leaf. The assertion below reads `GET /events`
+	// directly — same `terminal/error/pg/claim_unavailable` row the
+	// subscriber reacts to.
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "pg-claim-unavailable",
@@ -188,12 +183,11 @@ func testClaimUnavailableDelivered(t *testing.T) {
 
 	instanceID := createInstance(t, ep, templateID, "ck-pg-claim-unavailable")
 
-	// The observable contract: the canonical `terminal/error/pg/claim_unavailable`
-	// signal lands on the event log because rimsky keyed the empty-queue
-	// acquisition failure on the PRODUCER-DECLARED class. RED today: the
-	// failure routes under the synthetic `acquire/unavailable` class, so this
-	// exact signal never appears — the declared `pg/claim_unavailable` class
-	// carries no real signal.
+	// @constraint: the observable for AUTHSTORES-19 is the canonical
+	// `terminal/error/pg/claim_unavailable` signal on the event log — the
+	// PRODUCER-DECLARED class, not the synthetic `acquire/unavailable`
+	// rimsky routes the empty-queue Unavailable under today. RED until the
+	// declared class is threaded through the acquisition-failure chain.
 	requireEventKind(t, ep, instanceID,
 		"terminal/error/pg/claim_unavailable", 90*time.Second,
 		"the empty pick-policy items table must deliver the producer-declared "+
@@ -224,15 +218,17 @@ func testSwapFailedDelivered(t *testing.T) {
 	substrate := harness.StartPostgresOnNetwork(ctx, t, netName, "store-pg")
 	pool := dialSubstrate(ctx, t, substrate.HostDSN)
 
-	// Pre-create the canonical schema with a depended-upon object so the
-	// swap's DROP SCHEMA (RESTRICT) collides. A view in a SEPARATE schema
-	// depending on a table inside the canonical blocks the non-CASCADE
-	// drop the atomic swap relies on.
+	// @constraint: the canonical schema must be pre-created with a
+	// depended-upon object before rimsky boots so the store's atomic swap
+	// (`DROP SCHEMA canonical` RESTRICT) collides at Commit. A view in a
+	// SEPARATE schema depending on a table inside the canonical blocks the
+	// non-CASCADE drop — exactly the `pg/swap_failed` collision under test.
 	seedSwapCollision(t, pool, canonicalSchema)
 
-	// staged_async store with the Executor role enabled so the same binary
-	// serves both ClaimProducer (Open/Commit with the staging swap) and the
-	// SQL-verifier Executor the held subgraph's verifier dispatches against.
+	// @deliberate: staged_async with EnableExecutor — the same binary serves
+	// both ClaimProducer (Open/Commit with the staging swap) and the
+	// SQL-verifier Executor the held subgraph's verifier dispatches against,
+	// so the swap-collision value path runs end-to-end on one peer.
 	storeEndpoint := harness.StartPostgresStore(ctx, t, netName, "store-postgres", harness.PostgresStoreSpec{
 		Connection:     substrate.InternalDSN,
 		WriteSemantics: "staged_async",
@@ -247,22 +243,15 @@ func testSwapFailedDelivered(t *testing.T) {
 		harness.WithExecutor("stub", execEndpoint),
 	)
 
-	// Held subgraph: an acquirer opens a staged-write claim on the
-	// canonical-schema selector (aliased `held`); a co-holding verifier
-	// passes (executor stub → success) and subscribes to the acquirer's
-	// terminal. Both succeed → auto-terminal fires one aggregate Commit →
-	// the store's atomic swap collides on the depended-upon canonical →
-	// the producer's Commit RPC returns a `pg/swap_failed`-classed error.
-	// A `subscriber` node matches the producer-declared class via an
-	// instance-scoped `terminal/error/*` wildcard — the operator's
-	// subscription surface that must receive the `pg/swap_failed` signal.
-	// (The dispatch executors are the stub — the acquirer/verifier only
-	// need to SUCCEED so auto-terminal fires Commit; the swap and its
-	// collision are the value path under test.)
-	//
-	// The observable is asserted directly on the canonical event log
-	// (`GET /events`), the same `terminal/error/pg/swap_failed` row the
-	// subscriber reacts to.
+	// @deliberate: the held-subgraph shape exists so auto-terminal fires the
+	// aggregate Commit that drives the store's atomic swap into the seeded
+	// collision. The acquirer/verifier dispatch the stub only because they
+	// must SUCCEED for auto-terminal to fire — the swap and its collision
+	// are the value path under test. The `subscriber` uses an
+	// instance-scoped `terminal/error/*` wildcard for the same reason as
+	// the claim_unavailable case: the producer-declared `pg/swap_failed`
+	// class is owned by the store, not the dispatching executors. The
+	// assertion below reads `GET /events` directly.
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
 			"name":                  "pg-swap-failed",
@@ -309,34 +298,28 @@ func testSwapFailedDelivered(t *testing.T) {
 
 	instanceID := createInstance(t, ep, templateID, "ck-pg-swap-failed")
 
-	// Right-reason guard #1: the staged claim's Open must reserve a
-	// per-claim staging schema (the `rimsky_stg_` prefix). Poll for it to
-	// APPEAR during the run — race-free positive proof the atomic-staging
-	// value path engaged (the swap can only collide if a staging schema was
-	// reserved to swap FROM). The acquirer + co-holding verifier dispatch
-	// against the stub and aggregate success, which fires the aggregate
-	// Commit on the held claim → the store's atomic swap → the collision.
+	// @deliberate: right-reason guard #1 — poll the substrate for the
+	// `rimsky_stg_` staging schema the staged claim's Open must reserve. Its
+	// APPEARANCE during the run is race-free positive proof the
+	// atomic-staging value path engaged; the swap can only collide if a
+	// staging schema was reserved to swap FROM.
 	requireStagingSchemaReserved(t, pool, 120*time.Second)
 
-	// Right-reason guard #2: after the auto-terminal Commit has had time to
-	// attempt the swap, the canonical's pinned table — the depended-upon
-	// object that blocks the swap's `DROP SCHEMA canonical` (RESTRICT) —
-	// must still be present, AND the reserved staging schema must STILL
-	// exist. A successful swap would have dropped the canonical and consumed
-	// the staging; their joint survival across a settle window is proof the
-	// swap was attempted and COLLIDED (leaving staging intact via the
-	// rolled-back swap tx), so the missing signal below is for the right
-	// reason — not because the swap silently succeeded.
+	// @deliberate: right-reason guard #2 — after the settle window, the
+	// canonical's pinned table AND the reserved staging schema must both
+	// survive. A successful swap would have dropped the canonical and
+	// consumed the staging; their joint survival is proof the swap was
+	// attempted and COLLIDED (rolled-back swap tx leaves staging intact),
+	// so the missing event signal below is for the right reason — not
+	// because the swap silently succeeded.
 	requireSwapCollidedAndLeftStaging(t, pool, canonicalSchema, 30*time.Second)
 
-	// The observable contract: the canonical `terminal/error/pg/swap_failed`
-	// signal lands on the event log because the forced swap collision's
-	// `pg/swap_failed` Commit error was routed to a claim-terminal error
-	// signal. RED today: the producer-verb Commit error bubbles up as a
-	// tx-level error from the auto-terminal drain (wedging the holder's
-	// terminal resolution) and is NOT turned into a
-	// `terminal/error/pg/swap_failed` signal, so this exact signal never
-	// appears — the declared `pg/swap_failed` class carries no real signal.
+	// @constraint: the observable for AUTHSTORES-19 is the canonical
+	// `terminal/error/pg/swap_failed` signal on the event log — the
+	// producer-declared class routed to a claim-terminal error signal. RED
+	// until the holder's `error_types:` chain receives the producer-verb
+	// Commit error instead of letting it bubble as a tx-level error from
+	// the auto-terminal drain.
 	requireEventKind(t, ep, instanceID,
 		"terminal/error/pg/swap_failed", 90*time.Second,
 		"the forced atomic-staging swap collision must deliver the "+
@@ -498,8 +481,9 @@ func requireEventKind(t *testing.T, ep harness.RimskyEndpoint, instanceID, kind 
 // (the swap silently succeeded — not the collision the test forces).
 func requireSwapCollidedAndLeftStaging(t *testing.T, pool *pgxpool.Pool, canonical string, settle time.Duration) {
 	t.Helper()
-	// Wait out the settle window so the auto-terminal Commit has time to
-	// run the swap before we assert on its (failed) effect.
+	// @deliberate: wait the full settle window before checking — the
+	// auto-terminal Commit needs time to run the swap before the assertion
+	// on its (failed) effect is meaningful.
 	deadline := time.Now().Add(settle)
 	for time.Now().Before(deadline) {
 		time.Sleep(500 * time.Millisecond)

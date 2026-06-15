@@ -30,12 +30,15 @@ type WaitSetRow struct {
 	FrameID       shared.UUID
 	ReceiverRunID shared.UUID
 	SenderRunID   shared.UUID
-	// TopicKind is one of: "terminal" | "transient" | "attribute" | "event" | "message"
+	// @constraint: TopicKind is one of "terminal" | "transient" | "attribute" | "event" | "message"
 	// (the 5-value taxonomy), with "state" tolerated as a legacy/fallback value.
-	TopicKind         string
-	SubscriptionScope string          // "direct" | "instance"
-	TopicFilter       json.RawMessage // nullable; carried for observability
-	DrainedAt         *time.Time      // nil means not yet drained
+	TopicKind string
+	// @constraint: SubscriptionScope is one of "direct" | "instance".
+	SubscriptionScope string
+	// @constraint: TopicFilter is nullable; carried for observability.
+	TopicFilter json.RawMessage
+	// @constraint: DrainedAt nil means not yet drained.
+	DrainedAt *time.Time
 }
 
 // WaitSetTable is the persistence-layer access surface for
@@ -44,36 +47,34 @@ type WaitSetRow struct {
 //
 //	@concept: wait-set
 type WaitSetTable interface {
-	// Insert adds one wait-set row. Idempotent under the table's PK
-	// (frame_id, receiver, sender, topic_kind, subscription_scope) —
-	// duplicate inserts within the same transaction are dropped via
-	// ON CONFLICT DO NOTHING.
+	// @agent-contract: Insert adds one wait-set row. Idempotent under the table's PK
+	// (frame_id, receiver, sender, topic_kind, subscription_scope) — duplicate
+	// inserts within the same transaction are dropped via ON CONFLICT DO
+	// NOTHING. Does NOT promote drained rows.
 	Insert(ctx context.Context, row WaitSetRow, tx Tx) error
 
-	// MarkDrainedBySender bulk-marks every wait-set row where
+	// @agent-contract: MarkDrainedBySender bulk-marks every wait-set row where
 	// (frame_id, sender_run_id) match as drained (sets drained_at to NOW()).
 	// Drained rows remain queryable for the substitution-context builder.
-	// Idempotent: rows already drained are not re-touched. Replaces the
-	// prior DeleteBySender semantic (rows used to be deleted on drain;
-	// post-2026-05-20 they're retained for trigger-context queries).
+	// Idempotent: rows already drained are not re-touched. Does NOT delete
+	// rows (replaces the pre-2026-05-20 DeleteBySender semantic).
 	MarkDrainedBySender(ctx context.Context, frameID, senderRunID shared.UUID, tx Tx) error
 
-	// ListForReceiver returns the wait-set rows currently gating the
-	// receiver run. Used by /admin/diagnostics/wait-sets for stuck-frame
-	// debugging.
+	// @agent-contract: ListForReceiver returns the wait-set rows currently gating the
+	// receiver run, used by /admin/diagnostics/wait-sets for stuck-frame
+	// debugging. Does NOT filter drained rows.
 	ListForReceiver(ctx context.Context, frameID, receiverRunID shared.UUID, tx Tx) ([]WaitSetRow, error)
 
-	// ListForFrame returns every wait-set row in a frame. Used by
-	// /admin/diagnostics/wait-sets without a receiver filter.
+	// @agent-contract: ListForFrame returns every wait-set row in a frame, used by
+	// /admin/diagnostics/wait-sets without a receiver filter. Does NOT
+	// filter drained rows.
 	ListForFrame(ctx context.Context, frameID shared.UUID, tx Tx) ([]WaitSetRow, error)
 
-	// ListDrainedAttributeRowsForReceiver returns the drained wait-set
+	// @agent-contract: ListDrainedAttributeRowsForReceiver returns the drained wait-set
 	// rows for the receiver in the frame, filtered to topic_kind='attribute'.
-	// Used by the substitution-context builder to enumerate sender_run_ids
-	// that contributed to this dispatch via attribute-topic edges.
-	//
-	// Per .ok-planner/specs/2026-05-20-attribute-pull-resolution-design.md
-	// §"Substitution context builder".
+	// Drives the substitution-context builder by enumerating sender_run_ids
+	// that contributed to this dispatch via attribute-topic edges. Does NOT
+	// return non-drained or non-attribute rows.
 	ListDrainedAttributeRowsForReceiver(
 		ctx context.Context, frameID, receiverRunID shared.UUID, tx Tx,
 	) ([]WaitSetRow, error)

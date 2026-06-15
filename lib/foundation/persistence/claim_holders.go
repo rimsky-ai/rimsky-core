@@ -51,19 +51,18 @@ type ClaimHolderTable interface {
 	ListActiveByClaimHandleID(ctx context.Context, claimHandleID shared.UUID, tx Tx) ([]ClaimHolderRow, error)
 	Complete(ctx context.Context, id shared.UUID, state ClaimHolderState, tx Tx) error
 	CompleteByClaimHandleAndRun(ctx context.Context, claimHandleID, holderRunID shared.UUID, state ClaimHolderState, tx Tx) error
-	// FailAllActiveByClaimHandle marks every still-'active' row for the
-	// given claim_handle as 'failed'. Used by the held-claim
+	// @agent-contract FailAllActiveByClaimHandle marks every still-'active'
+	// row for the given claim_handle as 'failed'. Used by the held-claim
 	// acquirer-failure path (operator-declared `error_types:` chain
 	// resolving give_up for an executor Error or for synthetic
-	// `acquire/unavailable`) so auto-terminal can fire immediately
-	// rather than waiting for inheritors that will never reach a
-	// terminal — the acquirer's failure means the held subgraph
-	// aborts.
-	//
-	// Claimant-guarded per blessed-invariant 4: the UPDATE applies only
-	// when rimsky_claim_handles.holder_supervisor_id matches supervisorID.
-	// Defense-in-depth — today's call site is the legitimate owner by
-	// construction (it just acquired the handle), but the guard prevents
-	// a future refactor from acting on rows whose ownership has moved.
+	// `acquire/unavailable`) so auto-terminal can fire immediately rather
+	// than waiting for inheritors that will never reach a terminal — the
+	// acquirer's failure means the held subgraph aborts.
+	// @constraint: claimant-guarded per blessed-invariant 4 — the UPDATE
+	// applies only when rimsky_claim_handles.holder_supervisor_id matches
+	// supervisorID. Defense-in-depth: today's call site is the legitimate
+	// owner by construction (it just acquired the handle), but the guard
+	// prevents a future refactor from acting on rows whose ownership has
+	// moved.
 	FailAllActiveByClaimHandle(ctx context.Context, claimHandleID shared.UUID, supervisorID string, tx Tx) error
 }

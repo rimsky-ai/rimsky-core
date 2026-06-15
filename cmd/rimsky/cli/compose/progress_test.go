@@ -23,10 +23,9 @@ func TestDefaultPrinter_LineFlushed(t *testing.T) {
 	var buf bytes.Buffer
 	p := newDefaultPrinter(&buf)
 
-	// One InstanceStarting call must land in the buffer immediately.
-	// If the bufio.Writer were not flushed, buf.Len() after this call
-	// would be zero (the default 4096-byte buffer would absorb the
-	// line without writing through).
+	// @deliberate: assertion proves the line is flushed through bufio —
+	// without an explicit flush the default 4096-byte buffer would absorb
+	// the line and buf.Len() here would be zero.
 	p.InstanceStarting("proj", "inst")
 	got := buf.String()
 	if !strings.Contains(got, "instance proj/inst: tracking") {
@@ -36,7 +35,6 @@ func TestDefaultPrinter_LineFlushed(t *testing.T) {
 		t.Errorf("default printer must terminate lines with newline; got %q", got)
 	}
 
-	// A second event lands as a second whole line, also flushed.
 	buf.Reset()
 	p.NodeRunTerminal("proj", "inst", "node1", "success", "")
 	got = buf.String()
@@ -109,8 +107,9 @@ func TestJSONPrinter_EmitsJSONLines(t *testing.T) {
 		}
 	}
 
-	// Spot-check the per-event keys so a regression that swaps two
-	// records cannot pass.
+	// @deliberate: per-event spot-checks (not just count + JSON-parse)
+	// because a regression that swapped two records would still satisfy
+	// the loop above.
 	var first map[string]any
 	_ = json.Unmarshal([]byte(lines[0]), &first)
 	if first["event"] != "instance_starting" {
@@ -145,8 +144,8 @@ func TestJSONPrinter_NodeRunTerminalReasonOptional(t *testing.T) {
 // test surfaces the divergence as a string mismatch.
 func TestLinePrinter_ProseSingleSource(t *testing.T) {
 	emit := func(p ProgressPrinter) string {
-		// Drive every prose-shared method through the printer so any
-		// flavor that overrides one but not the others is caught too.
+		// @deliberate: exercise every prose-shared method, not just one,
+		// so a flavor that overrides one but not the others is still caught.
 		p.InstanceStarting("proj", "inst")
 		p.NodeRunTerminal("proj", "inst", "node1", "success", "")
 		p.NodeRunTerminal("proj", "inst", "node2", "failure", "exec_error")
@@ -181,7 +180,7 @@ func TestNewProgressPrinter_FlagDispatch(t *testing.T) {
 	if _, ok := newProgressPrinter(&buf, false, false, true).(*jsonPrinter); !ok {
 		t.Errorf("--json should produce *jsonPrinter")
 	}
-	// --json wins over --quiet / --verbose flag-flavor selection.
+	// @decision: progress-flags — --json wins over --quiet / --verbose.
 	if _, ok := newProgressPrinter(&buf, true, false, true).(*jsonPrinter); !ok {
 		t.Errorf("--quiet --json should still produce *jsonPrinter")
 	}

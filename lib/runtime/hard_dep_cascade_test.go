@@ -96,7 +96,7 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 		return nil
 	}))
 
-	// Seed an EARLIER frame F0 where b parked, then a NEW running frame
+	// @deliberate: Seed an EARLIER frame F0 where b parked, then a NEW running frame
 	// F1 where the cascade walk fires. b's parked-frame is F0 so
 	// GetInFlightRunForNode(b, F1) returns hasRun=false and the
 	// parked-branch probe + wake fires.
@@ -111,7 +111,7 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	}))
 	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID)
 
-	// Seed sender (a) with an in-flight 'active' run in the running
+	// @deliberate: Seed sender (a) with an in-flight 'active' run in the running
 	// frame F1 so the cascade walk can resolve it as the sender.
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
@@ -122,7 +122,7 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, aN.ID)
 
-	// Seed b with a parked node-run row in F0 (an earlier frame).
+	// @deliberate: Seed b with a parked node-run row in F0 (an earlier frame).
 	// State=parked, phase=parked. parked_at NOW() so the parked-sweep
 	// doesn't preempt the test.
 	bParkedRunID := shared.UUID(uuid.New())
@@ -134,7 +134,7 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, earlierFrameID, bN.ID)
 
-	// c has no in-flight row yet — MarkStaleForCascade in the walk
+	// @deliberate: c has no in-flight row yet — MarkStaleForCascade in the walk
 	// will insert one.
 
 	args := runtime.RunArgs{
@@ -146,7 +146,7 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 		)
 	}))
 
-	// Verify parked_resume_started fired for b.
+	// @deliberate: Verify parked_resume_started fired for b.
 	var events persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.Events().List(ctx, persistence.EventListFilter{NodeID: &bN.ID},
@@ -164,14 +164,14 @@ func TestPullHardDepUpstreams_WakesParkedUpstream(t *testing.T) {
 	require.True(t, wokeUp,
 		"pullHardDepUpstreams must wake b's parked run and emit parked_resume_started; events: %+v",
 		events.Events)
-	_ = cN // silence unused warning if c never gets touched
+	_ = cN // @deliberate: silence unused warning if c never gets touched
 }
 
 // TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight verifies
-// Issue 3 / case 1: when a hard-dep upstream already has an in-flight
-// run pinned to senderFrameID (pending/active/held — i.e.
-// GetInFlightRunForNode returns hasRun=true), pullHardDepUpstreams
-// MUST NOT re-probe GetParkedByNode and fire wakeParkedReceiverInTx.
+// that when a hard-dep upstream already has an in-flight run pinned to
+// senderFrameID (pending/active/held — i.e. GetInFlightRunForNode
+// returns hasRun=true), pullHardDepUpstreams MUST NOT re-probe
+// GetParkedByNode and fire wakeParkedReceiverInTx.
 // The existing wait-set blocker keys on the existing run id; an
 // extra wake would emit a duplicate `parked_resume_started` event
 // and churn state-transition surface.
@@ -234,7 +234,7 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 
 	frameID := seedFrame(ctx, t, backend, inst.ID, aN.ID)
 
-	// Sender a: active in current frame.
+	// @deliberate: Sender a: active in current frame.
 	aRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_node_runs
@@ -244,7 +244,7 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`, frameID, aN.ID)
 
-	// Upstream b: in-flight pending in CURRENT frame (NOT parked).
+	// @deliberate: Upstream b: in-flight pending in CURRENT frame (NOT parked).
 	// GetInFlightRunForNode(b, frameID) returns hasRun=true.
 	bRunID := shared.UUID(uuid.New())
 	pgtest.ExecForTest(ctx, t, d, `
@@ -264,7 +264,7 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 		)
 	}))
 
-	// Assert NO parked_resume_started fired for b (it was never parked).
+	// @deliberate: Assert NO parked_resume_started fired for b (it was never parked).
 	var events persistence.EventListResult
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := backend.Events().List(ctx, persistence.EventListFilter{NodeID: &bN.ID},
@@ -277,7 +277,7 @@ func TestPullHardDepUpstreams_NoExtraWakeForCurrentFrameInFlight(t *testing.T) {
 			"pullHardDepUpstreams must not fire wake on a non-parked in-flight upstream; events: %+v",
 			events.Events)
 	}
-	_ = cN // silence unused warning if c never gets touched
+	_ = cN // @deliberate: silence unused warning if c never gets touched
 }
 
 // makeHardDepTemplate builds a 3-node template (a, b, c) where c

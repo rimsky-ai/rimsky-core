@@ -89,17 +89,15 @@ func insertCoHolderClaimHoldersAtAcquire(
 		return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: nodes.Get: %w", err)
 	}
 	if nd == nil {
-		// Defense-in-depth: the candidate's node row must exist (the
-		// scheduler tick that produced this candidate read it minutes
-		// earlier). A missing node here would mean the row was deleted
-		// between candidate selection and acquisition — a structural
-		// invariant violation rather than a transient race. Fail loudly
-		// so the acquisition tx rolls back instead of inserting an
-		// orphan holder row.
+		// @constraint: the candidate's node row must exist — the scheduler
+		// tick that produced this candidate read it minutes earlier. A
+		// missing node here means the row was deleted between candidate
+		// selection and acquisition, a structural invariant violation
+		// rather than a transient race. Fail loudly so the acquisition tx
+		// rolls back instead of inserting an orphan holder row.
 		return fmt.Errorf("insertCoHolderClaimHoldersAtAcquire: node %s not found", cand.NodeID.String())
 	}
 	frameID := cand.FrameID
-	// `holds:` entries (post-co-holdership wiring).
 	for alias, binding := range nodeDef.Holds {
 		upstreamType := binding.From
 		if upstreamType == "" {
@@ -115,9 +113,9 @@ func insertCoHolderClaimHoldersAtAcquire(
 		}
 		lh := lookupClaimHandleForAlias(ctx, args, tx, upstreamNode.ID, tmpl, upstreamType, alias)
 		if lh == nil {
-			// Upstream's claim handle is missing — either the upstream
-			// hasn't acquired yet (DAG violation: holds.from must be an
-			// upstream dependency), or auto-terminal already fired
+			// @deliberate: upstream's claim handle is missing — either the
+			// upstream hasn't acquired yet (DAG violation: holds.from must
+			// be an upstream dependency), or auto-terminal already fired
 			// (committed-subgraph row swept, or abandoned). Skip silently;
 			// CheckAndFireResolution is idempotent.
 			continue

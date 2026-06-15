@@ -46,7 +46,7 @@ func newFanOutFixture(t *testing.T) *fanOutFixture {
 	reg.Add("alpha", alpha)
 	reg.Add("beta", beta)
 
-	// Fake satisfies both ClaimProducer and LifecycleSubscriber; register
+	// @constraint: fake satisfies both ClaimProducer and LifecycleSubscriber; register
 	// both alpha and beta as lifecycle subscribers.
 	lcReg := locks.NewLifecycleRegistry()
 	lcReg.Add("alpha", alpha)
@@ -91,7 +91,7 @@ func TestFanOutTemplateEvent_DedupAndSortedOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"alpha", "beta"}, storeNames, "must dedupe + sort")
 
-	// Each store saw exactly one OnTemplateRegistered call.
+	// @constraint: each store saw exactly one OnTemplateRegistered call.
 	require.Len(t, f.alpha.Calls(), 1)
 	require.Len(t, f.beta.Calls(), 1)
 	require.Equal(t, "on_template_registered", f.alpha.Calls()[0].Verb)
@@ -111,7 +111,7 @@ func TestFanOutTemplateEvent_SkipsAlreadyTargetState(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, f.alpha.Calls(), 1)
 
-	// Second fire — both rows are already at target state.
+	// @constraint: second fire — both rows are already at target state.
 	_, _, err = FanOutTemplateEvent(ctx, f.deps, EventTemplateRegistered, hash, twoStoreSpec(), TemplatePayload{}, nil)
 	require.NoError(t, err)
 	require.Len(t, f.alpha.Calls(), 1, "second fire must skip when already at target")
@@ -131,7 +131,7 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 
 	ctx := context.Background()
 	hash := "sha256-" + repeatHex("c", 64)
-	// "beta" sorts after "alpha" → first call goes to alpha, second to beta.
+	// @constraint: "beta" sorts after "alpha" → first call goes to alpha, second to beta.
 	f.beta.ErrorFunc = func(verb string, _ claimproducer.ClaimID) error {
 		if verb == "on_template_registered" {
 			return errors.New("simulated beta failure")
@@ -143,7 +143,6 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	require.NotNil(t, perStore["beta"])
 	require.Contains(t, perStore["beta"].Error(), "simulated beta failure")
 
-	// alpha row was committed before beta failed.
 	var row *persistence.LifecycleIdempotencyRow
 	require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "alpha",
@@ -154,7 +153,6 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	require.NotNil(t, row, "alpha row must persist past beta's failure")
 	require.Equal(t, persistence.LifecycleIdempotencyStateRegistered, row.State)
 
-	// beta row was never written.
 	var betaRow *persistence.LifecycleIdempotencyRow
 	require.NoError(t, f.deps.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := f.deps.Persist.LifecycleIdempotency().Get(ctx, "beta",
@@ -164,7 +162,7 @@ func TestFanOutTemplateEvent_PartialFailurePreservesProgress(t *testing.T) {
 	}))
 	require.Nil(t, betaRow)
 
-	// Deterministic-sort assertion: alpha's recorded call must precede
+	// @constraint: deterministic-sort assertion: alpha's recorded call must precede
 	// beta's, regardless of the spec's input ordering. The
 	// twoStoreSpec function deliberately lists beta first to make this
 	// test meaningful; the fan-out helper sorts before iterating.

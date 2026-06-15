@@ -89,13 +89,15 @@ exempt:
 }
 
 func TestWalkerNoHardcodedNodeModulesSkip(t *testing.T) {
-	// Per issue #5: node_modules is no longer in the hardcoded skipDirs set.
-	// It must be in licensing.yml's exempt list to be skipped. Without an
-	// entry, the walker would surface the .go files as classUnknown.
+	// @constraint: node_modules is not in the hardcoded skipDirs set —
+	// it must appear in licensing.yml's exempt list to be skipped.
+	// Without an entry, the walker surfaces .go files there as
+	// classUnknown.
 	root := t.TempDir()
 	mkfile(t, root, "licensing.yml", "apache:\n  - cmd/\nagpl: []\nexempt: []\n")
 	mkfile(t, root, "cmd/main.go", "package main\n")
-	// Create node_modules WITHOUT putting it in the exempt list.
+	// @deliberate: create node_modules WITHOUT an exempt entry to
+	// exercise the surface-as-classUnknown path.
 	mkfile(t, root, "stuff/node_modules/dep/x.go", "package x\n")
 
 	cfg, err := loadLicensingYAML(root)
@@ -106,8 +108,9 @@ func TestWalkerNoHardcodedNodeModulesSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The node_modules .go file must NOT be silently skipped — it should
-	// surface as classUnknown so the operator notices the missing entry.
+	// @constraint: the node_modules .go file must NOT be silently
+	// skipped — it should surface as classUnknown so the operator
+	// notices the missing entry.
 	found := false
 	for _, f := range files {
 		if f.relPath == "stuff/node_modules/dep/x.go" && f.classification == classUnknown {
@@ -120,8 +123,8 @@ func TestWalkerNoHardcodedNodeModulesSkip(t *testing.T) {
 }
 
 func TestWalkerNodeModulesSkipsWhenExempt(t *testing.T) {
-	// With node_modules in the exempt list (as licensing.yml does), the
-	// walker descends but classifies-and-skips.
+	// @deliberate: with node_modules in the exempt list (as
+	// licensing.yml does), the walker descends but classifies-and-skips.
 	root := t.TempDir()
 	mkfile(t, root, "licensing.yml", `apache:
   - cmd/

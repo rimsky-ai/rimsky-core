@@ -33,13 +33,13 @@ import (
 // convention (stores/postgres/store/admin.go).
 func (s *Store) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
-	// POST /admin/sync/{selector}: operator-triggered queue refresh. For
-	// sync_strategy: explicit|never policies, Open never auto-syncs, so a
-	// folder that lands on disk after the queue drains is invisible until
-	// an operator re-primes the queue here. runSync reconciles available/
-	// against the policy root; it is idempotent and concurrency-safe via
-	// pp.syncMu, so a redundant POST is harmless. Mirrors the bump-to-head
-	// handler's method guard and selector decoding; takes no body.
+	// @constraint: POST /admin/sync/{selector} is the operator-triggered queue
+	// refresh. For sync_strategy: explicit|never policies, Open never auto-syncs,
+	// so a folder that lands on disk after the queue drains is invisible until
+	// an operator re-primes the queue here. runSync reconciles available/ against
+	// the policy root; it is idempotent and concurrency-safe via pp.syncMu, so a
+	// redundant POST is harmless. Mirrors the bump-to-head handler's method
+	// guard and selector decoding; takes no body.
 	mux.HandleFunc("/admin/sync/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -102,11 +102,11 @@ func (s *Store) AdminHandler() http.Handler {
 			http.Error(w, "folder must not start with '.'", http.StatusBadRequest)
 			return
 		}
-		// Reject any path-traversal shape: embedded separators, "..",
-		// or anything that filepath.Clean wouldn't preserve as a single
-		// component. Without this, FolderPattern-less policies could
-		// accept "foo/../../etc" and have filepath.Join resolve outside
-		// pp.Root. Mirrors openRegional's escape-check stance.
+		// @constraint: reject any path-traversal shape — embedded separators, "..",
+		// or anything that filepath.Clean wouldn't preserve as a single component.
+		// Without this, FolderPattern-less policies could accept "foo/../../etc"
+		// and have filepath.Join resolve outside pp.Root. Mirrors openRegional's
+		// escape-check stance.
 		if strings.ContainsAny(folder, `/\`) {
 			http.Error(w, "folder must not contain path separators", http.StatusBadRequest)
 			return

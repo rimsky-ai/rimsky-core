@@ -56,7 +56,7 @@ func TestValidatePlaintextRejects(t *testing.T) {
 		"",
 		"rk_",
 		"rk_short",
-		"rk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // wrong length suffix
+		"rk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // @deliberate: wrong-length suffix triggers ErrInvalidPlaintext
 	}
 	for _, c := range cases {
 		if err := ValidatePlaintext(c); !errors.Is(err, ErrInvalidPlaintext) {

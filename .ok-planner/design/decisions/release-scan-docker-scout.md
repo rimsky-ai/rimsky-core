@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`docker scout cves --only-severity critical,high --exit-code` against all local images.
+A vulnerability-scanning step over every locally-built image that fails the build on any unaddressed critical or high severity finding.
 
 ## Rationale
 

@@ -11,4 +11,4 @@ Dot-joined into the SemVer pre-release segment, not `+` build metadata.
 
 ## Rationale
 
-`+` is invalid in Docker tags + npm + go-get.
+The SemVer build-metadata separator is rejected by the downstream tag and module grammars rimsky distributes through, so the SHA has to ride the pre-release segment instead.

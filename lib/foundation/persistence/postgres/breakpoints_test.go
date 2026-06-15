@@ -2,11 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// breakpoints_test.go — exercises the postgres impls of
-// persistence.BreakpointTable and persistence.BreakpointHitTable against
-// a fresh testcontainers Postgres. Covers the contract from Pass 3
-// Task 15 of .ok-planner/plans/2026-05-24-instance-debugger.md.
-//
 // @concept: breakpoint
 
 package postgres_test
@@ -188,8 +183,6 @@ func TestPGBreakpoints_ListForInstance_IncludeExpired(t *testing.T) {
 	store := d.Tables()
 	instanceID := seedBreakpointFixture(t, ctx, d)
 
-	// One active (long TTL), one already-expired (we'll force expires_at
-	// backwards via the testaccess pool).
 	activeTTL := 3600
 	active := newBreakpoint(instanceID, func(b *persistence.BreakpointRow) {
 		b.TTLSeconds = &activeTTL
@@ -214,9 +207,9 @@ func TestPGBreakpoints_ListForInstance_IncludeExpired(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Force the expired row's expires_at into the past via the test pool.
-	// Using the test escape hatch keeps the testcontainers Postgres in the
-	// same connection pool and avoids leaking driver internals.
+	// @deliberate: drive expires_at into the past through the test pool
+	// escape hatch so the testcontainers Postgres stays in the same
+	// connection pool and no driver internals leak into the test.
 	pool, ok := pgpersist.PoolFromDatabaseForTest(d)
 	if !ok {
 		t.Fatalf("PoolFromDatabaseForTest: no pool")
@@ -227,7 +220,6 @@ func TestPGBreakpoints_ListForInstance_IncludeExpired(t *testing.T) {
 		t.Fatalf("force expiry: %v", err)
 	}
 
-	// includeExpired=false → only active row.
 	var rows []persistence.BreakpointRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -240,7 +232,6 @@ func TestPGBreakpoints_ListForInstance_IncludeExpired(t *testing.T) {
 		t.Fatalf("includeExpired=false: got %d rows want 1 (id=%v)", len(rows), activeID)
 	}
 
-	// includeExpired=true → both rows.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
 		rows, err = store.Breakpoints().ListForInstance(ctx, instanceID, true, tx)
@@ -299,7 +290,6 @@ func TestPGBreakpoints_SweepExpired(t *testing.T) {
 	ttl := 600
 	bp := newBreakpoint(instanceID, func(b *persistence.BreakpointRow) { b.TTLSeconds = &ttl })
 
-	// Create two breakpoints with TTL; force one expires_at backwards.
 	var liveID, deadID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -323,7 +313,6 @@ func TestPGBreakpoints_SweepExpired(t *testing.T) {
 		t.Fatalf("force expiry: %v", err)
 	}
 
-	// Sweep at now.
 	var n int
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -336,7 +325,6 @@ func TestPGBreakpoints_SweepExpired(t *testing.T) {
 		t.Errorf("SweepExpired rowcount: got %d want 1", n)
 	}
 
-	// liveID survives, deadID gone.
 	var live, dead *persistence.BreakpointRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -356,8 +344,6 @@ func TestPGBreakpoints_SweepExpired(t *testing.T) {
 		t.Errorf("dead row still present after sweep")
 	}
 }
-
-// ---------------- BreakpointHits ----------------
 
 func makeHit(bpID, instanceID shared.UUID, customise func(*persistence.BreakpointHitRow)) persistence.BreakpointHitRow {
 	h := persistence.BreakpointHitRow{
@@ -423,7 +409,6 @@ func TestPGBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 	instanceID := seedBreakpointFixture(t, ctx, d)
 	bpID := createBreakpoint(t, ctx, store, newBreakpoint(instanceID, nil))
 
-	// Create 4 hits; resume the 2nd.
 	var hitIDs [4]shared.UUID
 	for i := 0; i < 4; i++ {
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -443,8 +428,8 @@ func TestPGBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 
-	// ListSinceForInstance returns all 4 rows in seq order regardless of
-	// resume status.
+	// @constraint: ListSinceForInstance returns every hit for the instance
+	// in strictly ascending seq order regardless of resume status.
 	var instRows []persistence.BreakpointHitRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -461,7 +446,6 @@ func TestPGBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 			t.Errorf("seq not strictly ascending: %d then %d", instRows[i-1].Seq, instRows[i].Seq)
 		}
 	}
-	// The 2nd hit (hitIDs[1]) should be present with non-nil ResumedAt.
 	var found bool
 	for _, r := range instRows {
 		if r.ID == hitIDs[1] {
@@ -475,7 +459,6 @@ func TestPGBreakpointHits_ListSinceIncludesResumedRows(t *testing.T) {
 		t.Errorf("resumed hit %v missing from ListSinceForInstance", hitIDs[1])
 	}
 
-	// ListSinceForBreakpoint same shape.
 	var bpRows []persistence.BreakpointHitRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -578,7 +561,9 @@ func TestPGBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 	}
 	firstResumeAt := *got.ResumedAt
 
-	// Replay returns nil and leaves the row unchanged.
+	// @constraint: Resume is idempotent — a second Resume on the same hit
+	// returns nil and leaves ResumedAt and ResumedByKey at the first call's
+	// values.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.BreakpointHits().Resume(ctx, hitID, "different-operator", nil, tx)
 	}); err != nil {
@@ -598,7 +583,9 @@ func TestPGBreakpointHits_ResumeSetsFieldsAndIdempotent(t *testing.T) {
 		t.Errorf("ResumedByKey changed on replay: %v", got.ResumedByKey)
 	}
 
-	// Missing id → ErrBreakpointHitNotFound.
+	// @constraint: Resume on a missing hit returns ErrBreakpointHitNotFound
+	// (not a silent no-op), so callers can distinguish "already resumed"
+	// from "never existed".
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return store.BreakpointHits().Resume(ctx, uuid.New(), "operator", nil, tx)
 	}); !errors.Is(err, shared.ErrBreakpointHitNotFound) {
@@ -612,8 +599,9 @@ func TestPGBreakpointHits_AutoResumeStale(t *testing.T) {
 	store := d.Tables()
 	instanceID := seedBreakpointFixture(t, ctx, d)
 
-	// Create two breakpoints: one auto_resume with short ttl, one
-	// drop_oldest (should NOT be touched by AutoResumeStale).
+	// @constraint: AutoResumeStale must only resume hits whose parent
+	// breakpoint's overflow_policy is auto_resume_after_ttl — a
+	// drop_oldest hit with the same elapsed TTL stays unresumed.
 	autoBP := newBreakpoint(instanceID, func(b *persistence.BreakpointRow) {
 		b.OverflowPolicy = persistence.OverflowAutoResumeAfterTTL
 		b.HitTTLSeconds = 1
@@ -642,8 +630,9 @@ func TestPGBreakpointHits_AutoResumeStale(t *testing.T) {
 		t.Fatalf("seed hits: %v", err)
 	}
 
-	// AutoResumeStale at now+2s → past the 1s hit TTL → resumes the
-	// auto_resume hit but leaves the drop_oldest one alone.
+	// @deliberate: call AutoResumeStale at now+2s so both hits are past
+	// the 1s hit TTL — the auto_resume hit must flip and the drop_oldest
+	// hit must stay put, isolating the policy gate from the time gate.
 	var n int
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -723,7 +712,9 @@ func TestPGBreakpointHits_DropOldest(t *testing.T) {
 		t.Errorf("UnresumedCount after drop: got %d want %d", remaining, keep)
 	}
 
-	// Confirm we kept the NEWEST keep rows (largest seq values).
+	// @constraint: DropOldest keeps the newest `keep` rows by seq, not
+	// the oldest — the surviving set must be exactly the largest seq
+	// values.
 	var rows []persistence.BreakpointHitRow
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -757,7 +748,6 @@ func TestPGBreakpointHits_UnresumedCount(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed hits: %v", err)
 	}
-	// Resume 2 of them.
 	for _, idx := range []int{0, 2} {
 		if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			return store.BreakpointHits().Resume(ctx, ids[idx], "op", nil, tx)
@@ -789,8 +779,10 @@ func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 	store := d.Tables()
 	instanceID := seedBreakpointFixture(t, ctx, d)
 
-	// Two breakpoints: one block_dispatch (orphan-reapable) and one
-	// auto_resume (must NOT be touched).
+	// @constraint: orphan reaping targets block_dispatch hits only;
+	// auto_resume_after_ttl hits are owned by the AutoResumeStale path
+	// and must survive SweepOrphanedUnresumed even when they match the
+	// time cutoff.
 	blockBP := newBreakpoint(instanceID, func(b *persistence.BreakpointRow) {
 		b.OverflowPolicy = persistence.OverflowBlockDispatch
 	})
@@ -803,9 +795,9 @@ func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 
 	var blockHitID, autoHitID, blockResumedID shared.UUID
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Two hits on the block_dispatch breakpoint; we'll resume one
-		// before the sweep to confirm the reaper skips already-resumed
-		// rows.
+		// @constraint: seed two hits on the block_dispatch breakpoint and
+		// resume one of them before the sweep so the test pins that the
+		// reaper deletes only unresumed rows.
 		bh, _, err := store.BreakpointHits().Create(ctx, makeHit(blockID, instanceID, nil), tx)
 		if err != nil {
 			return err
@@ -821,16 +813,17 @@ func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 			return err
 		}
 		autoHitID = ah
-		// Resume one of the block_dispatch hits — sweeper should leave
-		// it alone.
+		// @constraint: the resumed block_dispatch hit must survive the
+		// sweep — the reaper's predicate is `ResumedAt IS NULL`.
 		return store.BreakpointHits().Resume(ctx, blockResumedID, "op", nil, tx)
 	}); err != nil {
 		t.Fatalf("seed hits: %v", err)
 	}
 
-	// Sweep with cutoff = now+1m: every hit's hit_at is in the past
-	// relative to that, so the predicate `hit_at <= cutoff` matches
-	// all of them. The policy gate is what filters the auto_resume hit.
+	// @deliberate: cutoff = now+1m puts every seeded hit's hit_at in the
+	// past relative to the predicate, so the time gate matches all of
+	// them; whatever survives proves the policy gate (not the time gate)
+	// is what protects auto_resume hits.
 	var n int
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
@@ -843,7 +836,8 @@ func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 		t.Errorf("SweepOrphanedUnresumed rowcount: got %d want 1 (only the unresumed block_dispatch hit)", n)
 	}
 
-	// Reaped: the unresumed block_dispatch hit.
+	// @constraint: the unresumed block_dispatch hit is the only row
+	// SweepOrphanedUnresumed deletes in this scenario.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		got, err := store.BreakpointHits().Get(ctx, blockHitID, tx)
 		if err != nil {
@@ -857,8 +851,9 @@ func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 		t.Fatalf("post-sweep Get(blockHitID): %v", err)
 	}
 
-	// Untouched: the already-resumed block_dispatch hit AND the
-	// auto_resume hit.
+	// @constraint: SweepOrphanedUnresumed leaves the already-resumed
+	// block_dispatch hit and any auto_resume hit untouched, even when
+	// both match the time cutoff.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		resumed, err := store.BreakpointHits().Get(ctx, blockResumedID, tx)
 		if err != nil {
@@ -879,7 +874,8 @@ func TestPGBreakpointHits_SweepOrphanedUnresumed(t *testing.T) {
 		t.Fatalf("post-sweep Get(survivors): %v", err)
 	}
 
-	// Cutoff in the past → no hits old enough to reap.
+	// @constraint: a cutoff in the past means no hit_at satisfies the
+	// `hit_at <= cutoff` predicate, so the sweep is a no-op.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var err error
 		n, err = store.BreakpointHits().SweepOrphanedUnresumed(ctx, time.Now().Add(-time.Hour), tx)
