@@ -24,6 +24,20 @@ durable model — four catalogs, each self-contained:
   has made
 - **tensions** — open ambiguities and unresolved tradeoffs
 
+**A note on the name `design/`.** The directory name is a label,
+not a load-bearing claim about content. "Design" here is shorthand
+for the project's **durable identity / model** — the high-level,
+general framing of what the project is and what it owes its users.
+It is NOT a place for *specific* designs: interface grammars, route
+shapes, schema details, implementation diagrams, or anything else
+that prescribes how a particular piece of the product looks. Those
+live in code, in `specs/`, and in other project documentation.
+Concepts are general; stories are durable user expectations;
+decisions are tradeoffs, not specs; tensions are open questions
+about those three. If something in `design/` reads like a
+specification of a specific interface or implementation, it's
+out of place — it belongs elsewhere.
+
 Code references the design (via `@concept:`, `@story:`,
 `@decision:` annotations at points of enforcement), not the
 other way around. The design docs are **a source of truth with
