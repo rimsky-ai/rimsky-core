@@ -396,10 +396,22 @@ func buildSessionResumeTemplate() map[string]any {
 
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  "claude-agent-session-resume",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "claude-agent-session-resume",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			// @deliberate: declared message type the operator POSTs to
+			// re-fire the worker. Under messaging's typed-message model
+			// the worker subscribes to this message-type as a virtual
+			// node; each POST /v1/instances/{id}/messages opens a fresh
+			// frame.
+			"messages": []map[string]any{
+				{
+					"type": "operator/worker-rerun",
+					"body_schema": map[string]any{
+						"type": "object",
+					},
+				},
+			},
 			"graphs": []map[string]any{
 				{
 					"name": "main",
@@ -410,16 +422,20 @@ func buildSessionResumeTemplate() map[string]any {
 							"attributes": mainAgentAttrs,
 							"subscribes": []map[string]any{
 								{
-									// Operator-source invalidate targeting
-									// worker. Each POST /v1/instances/{id}/
-									// messages opens a fresh frame that re-
-									// dispatches the worker in the same
-									// instance's RunScope, so carry-forward
-									// surfaces the prior dispatch's
-									// session_token on every post-first turn.
-									"instance": true,
-									"type":     "message/invalidate/operator/worker",
-									"frame":    "next",
+									// @deliberate: subscribe to the
+									// `operator/worker-rerun` message
+									// as a virtual node. Each POST
+									// /v1/instances/{id}/messages of
+									// that type opens a fresh frame
+									// that re-dispatches the worker in
+									// the same instance's RunScope, so
+									// carry-forward surfaces the prior
+									// dispatch's session_token on
+									// every post-first turn.
+									"node":                   "operator/worker-rerun",
+									"type":                   "terminal/success",
+									"wake_on_change":         true,
+									"force_upstream_refresh": false,
 								},
 							},
 						},
@@ -489,8 +505,10 @@ func buildSessionResumeTemplate() map[string]any {
 							"attributes": subAgentAttrs,
 							"subscribes": []map[string]any{
 								{
-									"node": "sub_trigger",
-									"type": "terminal/*",
+									"node":                   "sub_trigger",
+									"type":                   "terminal/*",
+									"wake_on_change":         true,
+									"force_upstream_refresh": false,
 								},
 							},
 						},
@@ -516,8 +534,8 @@ func buildSessionResumeTemplate() map[string]any {
 func postWorkerInvalidate(t *testing.T, ep harness.RimskyEndpoint, instanceID, idempotencyKey string) {
 	t.Helper()
 	body := map[string]any{
-		"kind":   "invalidate",
-		"target": "worker",
+		"type":    "operator/worker-rerun",
+		"payload": map[string]any{},
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
