@@ -265,8 +265,8 @@ func seedTerminateAfterRunInstance(ctx context.Context, t *testing.T, d persiste
 		}, tx); err != nil {
 			return err
 		}
-		// Seed a synthetic typed-message envelope to satisfy the
-		// rimsky_frames.triggering_message_id FK introduced by Pass 1.
+		// @constraint: synthetic envelope satisfies the
+		// rimsky_frames.triggering_message_id NOT NULL FK.
 		messageID := shared.UUID(uuid.New())
 		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         messageID,

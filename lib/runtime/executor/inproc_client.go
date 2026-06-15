@@ -36,7 +36,7 @@ type HandlerContextFactory func(dispatchID, nodeID shared.UUID) HandlerContext
 // @concept: executor
 type InProcessClient struct {
 	registry *InProcessRegistry
-	url      string // inproc executor URL, e.g. "inproc://loop_counter"
+	url      string
 	newHctx  HandlerContextFactory
 }
 
@@ -61,11 +61,11 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	if !ok {
 		return nil, fmt.Errorf("InProcessClient.Execute: no handler for %q", c.url)
 	}
-	// Parse the typed UUIDs ONCE at this boundary. The supervisor
-	// populates these proto fields from the acquisition's typed values
-	// at buildExecuteRequest; a parse failure here is a runtime
-	// invariant violation, not user input — surface it as an Execute
-	// error rather than a silent zero-UUID HandlerContext.
+	// @constraint: parse the typed UUIDs ONCE at this boundary. The
+	// supervisor populates these proto fields from the acquisition's
+	// typed values at buildExecuteRequest; a parse failure here is a
+	// runtime invariant violation, not user input — surface it as an
+	// Execute error rather than a silent zero-UUID HandlerContext.
 	dispatchID, err := uuid.Parse(req.DispatchId)
 	if err != nil {
 		return nil, fmt.Errorf("InProcessClient.Execute: parse dispatch_id %q: %w", req.DispatchId, err)
@@ -78,31 +78,31 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	if c.newHctx != nil {
 		hctx = c.newHctx(shared.UUID(dispatchID), shared.UUID(nodeID))
 	}
-	// Derive an internal cancellable context so EventStream.Close /
-	// abandoning the dispatch mid-stream can signal the handler
-	// goroutine to drop its in-flight Send and exit promptly. Without
-	// this, a handler whose Send blocks on a full buffer after the
-	// supervisor abandoned the stream would leak the goroutine for
-	// the supervisor's lifetime (the gRPC analogue cancels the
-	// server-stream when the client goes away; we mirror it).
+	// @constraint: derive an internal cancellable context so
+	// EventStream.Close / abandoning the dispatch mid-stream can signal
+	// the handler goroutine to drop its in-flight Send and exit
+	// promptly. Without this, a handler whose Send blocks on a full
+	// buffer after the supervisor abandoned the stream would leak the
+	// goroutine for the supervisor's lifetime (the gRPC analogue cancels
+	// the server-stream when the client goes away; we mirror it).
 	handlerCtx, cancel := context.WithCancel(ctx)
-	// Buffered channel + close-on-handler-return is the EOF protocol.
-	// Buffer of 16 covers heartbeat/named-event bursts without blocking
-	// typical handler loops; a deeper buffer would mask handler bugs
-	// (the dispatch loop is supposed to drain at gRPC-stream cadence).
+	// @deliberate: buffer of 16 covers heartbeat/named-event bursts
+	// without blocking typical handler loops; a deeper buffer would
+	// mask handler bugs (the dispatch loop is supposed to drain at
+	// gRPC-stream cadence). Close-on-handler-return is the EOF protocol.
 	ch := make(chan *genv1.ExecuteEvent, 16)
 	errCh := make(chan error, 1)
 	sink := &channelSink{ch: ch, ctx: handlerCtx}
 	go func() {
-		// Panic-safe goroutine: a panicking handler must NOT crash the
-		// supervisor (the gRPC analogue only crashes the remote executor
-		// process; the inproc model must not be qualitatively less
-		// robust). The recover deferred translates a panic into a
-		// non-nil error written to errCh, and `close(errCh)` runs from
-		// the deferred so both panic and clean-return paths close errCh
-		// — without that, a panic would close ch but leak errCh, and
-		// inprocEventStream.Recv would wedge forever waiting on a
-		// channel that is never closed and never sent to.
+		// @constraint: panic-safe goroutine — a panicking handler must
+		// NOT crash the supervisor (the gRPC analogue only crashes the
+		// remote executor process; the inproc model must not be
+		// qualitatively less robust). The recover deferred translates a
+		// panic into a non-nil error written to errCh, and `close(errCh)`
+		// runs from the deferred so both panic and clean-return paths
+		// close errCh — without that, a panic would close ch but leak
+		// errCh, and inprocEventStream.Recv would wedge forever waiting
+		// on a channel that is never closed and never sent to.
 		defer func() {
 			if p := recover(); p != nil {
 				select {
@@ -154,8 +154,6 @@ type inprocEventStream struct {
 func (s *inprocEventStream) Recv() (*genv1.ExecuteEvent, error) {
 	ev, ok := <-s.ch
 	if !ok {
-		// Channel closed — handler returned. If the handler returned an
-		// error, surface it; otherwise EOF.
 		if err, ok := <-s.errCh; ok && err != nil {
 			return nil, err
 		}

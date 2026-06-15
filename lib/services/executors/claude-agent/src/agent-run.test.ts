@@ -159,7 +159,7 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
   let resumeInvocations: Array<{
     sessionId: string;
     prompt: string;
-    tools: Array<{ kind: string; name: string; url: string }>;
+    tools: Array<{ kind: string; name: string; url?: string }>;
   }>;
   let fakeCli: CliRunner;
 
@@ -208,7 +208,11 @@ describe("runAgent retries via resume() when subprocess exits clean without repo
         resumeInvocations.push({
           sessionId: req.sessionId,
           prompt: req.prompt,
-          tools: req.tools.map((t) => ({ kind: t.kind, name: t.name, url: t.url })),
+          tools: req.tools.map((t) => ({
+            kind: t.kind,
+            name: t.name,
+            url: t.kind === "mcp-http" ? t.url : undefined,
+          })),
         });
         return makeQuietExit0Handle();
       },
@@ -451,8 +455,9 @@ describe("runAgent in stub mode", () => {
     });
     expect(outcome.kind).toBe("complete");
     if (outcome.kind === "complete") {
-      // Stub mode now stamps `session_token: runId` on every terminal Success
-      // (mirroring runAgentReal); the session_token field rides along.
+      // @constraint: stub mode stamps `session_token: runId` on every
+      // terminal Success (mirroring runAgentReal); the session_token
+      // field rides along.
       expect(outcome.attributesDelta).toEqual({ stub: true, session_token: "run-1" });
       expect(outcome.changed).toBe(true);
       expect(outcome.changeSummary).toBe("stub");
@@ -613,9 +618,9 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
     });
     expect(outcome.kind).toBe("complete");
     if (outcome.kind === "complete") {
-      // Every terminal Success augments the committed delta with
-      // `session_token: runId` to ride the rimsky attribute carry-
-      // forward mechanism (per the 2026-06-14 carry-forward design).
+      // @constraint: every terminal Success augments the committed
+      // delta with `session_token: runId` to ride the rimsky attribute
+      // carry-forward mechanism.
       expect(outcome.attributesDelta).toEqual({ ...DELTA, session_token: "gate-b-run" });
     }
   });

@@ -125,75 +125,56 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	netName := harness.NewNetwork(ctx, t)
 	executorEndpoint := harness.StartClaudeAgentFakeOnNetwork(
 		ctx, t, netName, "claude-agent-fake-session-resume",
-		harness.ClaudeAgentFakeOptions{
-			// No MCP catalog, no signoff key, no extra auth env — the
-			// session_resume scenario does not need any of them.
-		},
+		harness.ClaudeAgentFakeOptions{},
 	)
 
-	// Postgres backend (not the SQLite default) — the test drives
-	// multiple sequential dispatches with message triggers; the
-	// SQLite single-writer path has shown non-deterministic dispatch
-	// latency on multi-instance sequences (see
-	// verifier_severity_partition_e2e_test.go which made the same
-	// switch for the same reason).
+	// @deliberate: Postgres backend (not the SQLite default) — the
+	// test drives multiple sequential dispatches with message
+	// triggers; the SQLite single-writer path has shown
+	// non-deterministic dispatch latency on multi-instance sequences.
 	rimskyHandle := harness.BringUpRimskyHandle(ctx, t,
 		harness.WithExistingNetwork(netName),
 		harness.WithExecutor("claude-agent", executorEndpoint),
-		// Surface supervisor + scheduler + cascade-walker logs so a
-		// cascade-side defect (missed wait-set satisfaction,
-		// terminal-callback rejection, executor-resolution miss) is
-		// observable in the dumped rimsky logs without manual
-		// `docker logs`.
 		harness.WithContainerEnv("RIMSKY_LOG_LEVEL", "debug"),
 	)
 	ep := rimskyHandle.Endpoint
-	// Dump the rimsky/all container's logs on test failure so a
-	// cascade-side defect (rejected callback, missed wait-set
-	// satisfaction, kind-sugar resolution error) is observable
-	// without manual `docker logs`.
 	t.Cleanup(func() {
 		if t.Failed() {
 			rimskyHandle.DumpRimskyLogs(t)
 		}
 	})
 
-	// Open a host-mapped pgxpool against rimsky's state DB so we can
-	// inspect per-dispatch rows + per-dispatch attribute bags. The
-	// /v1/observability/nodes/{instance_id}/{node_type} route surfaces
-	// only the latest_attributes snapshot (forensic single-bag); the
-	// session-resume proof needs ALL dispatches' bags in dispatch
-	// order to pin the carry-forward chain. Direct SQL is the
-	// smallest surface that exposes that.
+	// @deliberate: open a host-mapped pgxpool against rimsky's state
+	// DB to inspect per-dispatch rows + per-dispatch attribute bags.
+	// The observability route surfaces only the latest_attributes
+	// snapshot; the session-resume proof needs ALL dispatches' bags
+	// in dispatch order to pin the carry-forward chain. Direct SQL
+	// is the smallest surface that exposes that.
 	pgPool := connectStatePostgres(ctx, t, ep.HostDSN)
 	t.Cleanup(pgPool.Close)
 
-	// Deploy the template — a single claude-agent `worker` (main graph)
-	// + a `caller` delegating to a `subworker` sub-graph whose exit is
-	// a second claude-agent dispatch.
 	tid := deployScenarioTemplate(t, ep, buildSessionResumeTemplate())
 
 	iid := createScenarioInstance(t, ep, tid, "ck-claude-agent-session-resume")
 	mainWorkerNodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 	subAgentNodeID := resolveWorkerNodeID(t, ep, iid, "sub_agent")
 
-	// ----------------------------------------------------------------
-	// Acceptance 1: THREE claude-agent dispatches in ONE RunScope (the
-	// main-instance RunScope), each with semantic continuity from the
-	// prior turn.
-	// ----------------------------------------------------------------
+	// @constraint: Acceptance 1 — THREE claude-agent dispatches in
+	// ONE RunScope (the main-instance RunScope), each with semantic
+	// continuity from the prior turn.
 	for i := 1; i <= 3; i++ {
-		// Each operator-source invalidate message opens a new frame
-		// that re-dispatches the worker. The Idempotency-Key MUST be
-		// unique per emit so each post lands a distinct envelope.
+		// @constraint: each operator-source invalidate message opens
+		// a new frame that re-dispatches the worker. The
+		// Idempotency-Key MUST be unique per emit so each post lands
+		// a distinct envelope.
 		postWorkerInvalidate(t, ep, iid,
 			fmt.Sprintf("session-resume-main-%d", i))
 	}
 
-	// Wait for three settled worker dispatches with non-empty
-	// attribute bags. The fake CLI writes session_token + the
+	// @constraint: wait for three settled worker dispatches with
+	// non-empty attribute bags. The fake CLI writes session_token +
 	// fake_cli_* fields on each turn, so a row whose data is empty
-	// (e.g. claimed-but-not-yet-completed) does not count.
+	// (claimed-but-not-yet-completed) does not count.
 	waitForWorkerDispatchCount(t, ctx, pgPool, mainWorkerNodeID, 3, 180*time.Second)
 
 	dispatches := getWorkerDispatchesInOrder(t, ctx, pgPool, mainWorkerNodeID)
@@ -202,51 +183,52 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 			len(dispatches), dispatches)
 	}
 
-	// Turn 1: launched WITHOUT --resume (no prior session_token to
-	// carry forward), so the fake CLI resets the log. session_token
-	// written = its own runId. prior_recall = "".
+	// @constraint: turn 1 launches WITHOUT --resume (no prior
+	// session_token to carry forward), so the fake CLI resets the
+	// log. session_token written = its own runId. prior_recall = "".
 	d1 := dispatches[0]
 	requireFakeCliTurn(t, d1.attributes, 1)
 	requireFakeCliRecall(t, d1.attributes, "")
 	requireFakeCliResumedWith(t, d1.attributes, "")
 	requireSessionTokenWritten(t, d1.attributes, d1.runID)
 
-	// Turn 2: carry-forward MUST surface dispatch-1's runId on this
-	// dispatch's incoming attribute bag (the rimsky-platform side of
-	// the test); the executor MUST pass that runId on the CLI's
-	// --resume argv (the executor-side wiring); the fake CLI MUST
-	// recall "Alpha" from dispatch-1's prior-turn log (the CLI-side
-	// semantic continuity); session_token gets re-stamped to
-	// dispatch-2's runId for the next turn.
+	// @constraint: turn 2 — carry-forward MUST surface dispatch-1's
+	// runId on this dispatch's incoming attribute bag (the
+	// rimsky-platform side); the executor MUST pass that runId on
+	// the CLI's --resume argv (the executor-side wiring); the fake
+	// CLI MUST recall "Alpha" from dispatch-1's prior-turn log (the
+	// CLI-side semantic continuity); session_token gets re-stamped
+	// to dispatch-2's runId for the next turn.
 	d2 := dispatches[1]
 	requireFakeCliTurn(t, d2.attributes, 2)
 	requireFakeCliRecall(t, d2.attributes, "Alpha")
 	requireFakeCliResumedWith(t, d2.attributes, d1.runID)
 	requireSessionTokenWritten(t, d2.attributes, d2.runID)
 
-	// Turn 3: same shape as turn 2, but resumed against dispatch-2's
-	// runId. prior_recall = "Alpha" again — the chain is unbroken.
+	// @constraint: turn 3 — same shape as turn 2, but resumed against
+	// dispatch-2's runId. prior_recall = "Alpha" again — the chain is
+	// unbroken.
 	d3 := dispatches[2]
 	requireFakeCliTurn(t, d3.attributes, 3)
 	requireFakeCliRecall(t, d3.attributes, "Alpha")
 	requireFakeCliResumedWith(t, d3.attributes, d2.runID)
 	requireSessionTokenWritten(t, d3.attributes, d3.runID)
 
-	// And all three in-scope dispatches MUST live in the same
-	// RunScope — the carry-forward semantic only spans inside one
-	// RunScope. A split RunScope shape would mean the cascade
+	// @constraint: all three in-scope dispatches MUST live in the
+	// same RunScope — the carry-forward semantic only spans inside
+	// one RunScope. A split RunScope shape would mean the cascade
 	// re-fire crossed a RunScope boundary mid-loop.
 	if d1.runScopeID != d2.runScopeID || d2.runScopeID != d3.runScopeID {
 		t.Fatalf("the three main-instance worker dispatches MUST share one RunScope (got %q, %q, %q)",
 			d1.runScopeID, d2.runScopeID, d3.runScopeID)
 	}
 
-	// ----------------------------------------------------------------
-	// Acceptance 2: the sub-graph's claude-agent dispatch starts with
-	// a fresh CLI conversation — no carry-forward from the parent
-	// (main-instance) RunScope. This is the load-bearing case the
-	// spec names: the build/validate orchestrator's "fresh pass"
-	// boundary IS the sub-graph RunScope boundary.
+	// @constraint: Acceptance 2 — the sub-graph's claude-agent
+	// dispatch starts with a fresh CLI conversation, no carry-forward
+	// from the parent (main-instance) RunScope. This is the
+	// load-bearing case the spec names: the build/validate
+	// orchestrator's "fresh pass" boundary IS the sub-graph RunScope
+	// boundary.
 	// ----------------------------------------------------------------
 	waitForWorkerDispatchCount(t, ctx, pgPool, subAgentNodeID, 1, 180*time.Second)
 
@@ -257,38 +239,42 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	}
 	sub := subDispatches[0]
 
-	// The fake CLI reports turn=1 + prior_recall="" — this is what
-	// the fake CLI produces when launched WITHOUT --resume. The
+	// @constraint: the fake CLI reports turn=1 + prior_recall="" —
+	// the shape it produces when launched WITHOUT --resume. The
 	// resumed_with field is the verbatim `--resume <token>` value,
 	// so absence shows as "". These three fields land on the
 	// sub_agent's own attribute row via the incremental
-	// attributes_set callback path (per §12.5).
+	// attributes_set callback path.
 	//
-	// NOTE: we deliberately do NOT assert session_token on the
-	// sub_agent's own row here. The sub-graph exit carve-out
+	// @concept: sub-graph
+	//
+	// @deliberate: do NOT assert session_token on the sub_agent's
+	// own row. The sub-graph exit carve-out
 	// (applyTerminalCompleteSubgraphExit) routes the executor's
 	// final-delta writeback — including the platform-stamped
 	// `session_token: runId` — onto the PARENT (caller) run's
-	// attribute row, NOT the exit's own row, per `concept:sub-graph`
-	// "Writeback carry-rule for exit". The exit's own row therefore
-	// carries only the incremental attributes_set writebacks plus
-	// the schema defaults; session_token in that row stays at the
-	// schema default "". The session_token property is asserted
-	// separately on the main worker dispatches above, where the
-	// regular terminal-complete path writes it onto the dispatch's
-	// own row (no carry-rule).
+	// attribute row, NOT the exit's own row ("Writeback carry-rule
+	// for exit"). The exit's own row therefore carries only the
+	// incremental attributes_set writebacks plus the schema
+	// defaults; session_token in that row stays at the schema
+	// default "". The session_token property is asserted separately
+	// on the main worker dispatches above, where the regular
+	// terminal-complete path writes it onto the dispatch's own row
+	// (no carry-rule).
 	requireFakeCliTurn(t, sub.attributes, 1)
 	requireFakeCliRecall(t, sub.attributes, "")
 	requireFakeCliResumedWith(t, sub.attributes, "")
 
-	// Cross-check: the sub-graph dispatch's RunScope MUST be distinct
+	// @concept: run-scope
+	//
+	// @constraint: the sub-graph dispatch's RunScope MUST be distinct
 	// from the main RunScope AND MUST be a `graph_name='subworker'`
 	// RunScope. The same node-kind (claude-agent) firing in a
 	// DIFFERENT RunScope is the platform-level proof the sub-graph
 	// hydration boundary held — fresh-state in a new RunScope is the
-	// property concept:run-scope §"Carry-forward boundary" pins. The
-	// graph_name check guards against a regression where the sub-graph
-	// carve-out routed the exit's dispatch through the parent scope
+	// "Carry-forward boundary" property. The graph_name check guards
+	// against a regression where the sub-graph carve-out routed the
+	// exit's dispatch through the parent scope
 	// (which would silently pass the "different RunScope" check via
 	// some other unrelated scope but defeat the actual sub-graph
 	// boundary).
@@ -298,10 +284,6 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	}
 	requireSubgraphRunScope(t, ctx, pgPool, sub.runScopeID, "subworker", iid)
 }
-
-// ----------------------------------------------------------------
-// Template
-// ----------------------------------------------------------------
 
 // buildSessionResumeTemplate constructs the POST /v1/templates body
 // for the session-resume scenario. The template has:
@@ -343,11 +325,11 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 // independently of the message-driven worker loop; the two RunScopes
 // run in parallel and the assertions can pin both independently.
 func buildSessionResumeTemplate() map[string]any {
-	// agentAttrsFor builds a claude-agent attribute schema whose
-	// `user_prompt` default carries the chain-id suffix the fake CLI
-	// reads to scope its per-chain memory file. The main worker and
-	// the sub-graph worker MUST use distinct chain ids so a
-	// fresh-RunScope sub-graph dispatch interleaving with the main
+	// @constraint: agentAttrsFor builds a claude-agent attribute
+	// schema whose `user_prompt` default carries the chain-id suffix
+	// the fake CLI reads to scope its per-chain memory file. The main
+	// worker and the sub-graph worker MUST use distinct chain ids so
+	// a fresh-RunScope sub-graph dispatch interleaving with the main
 	// worker's resumed dispatches does not reset the main chain's
 	// memory file out from under the main chain (a real contamination
 	// risk in the fake CLI's container-shared /tmp).
@@ -368,20 +350,21 @@ func buildSessionResumeTemplate() map[string]any {
 						"type":    "string",
 						"default": "scenario:session_resume:" + chainID,
 					},
-					// session_token is the carry-forward attribute the
-					// claude-agent executor reads to drive --resume. The
-					// schema default ("" empty) is what the first
-					// dispatch in any RunScope sees — including the
-					// sub-graph dispatch, whose sub-graph RunScope has no
-					// prior node_run carrying session_token forward.
+					// @constraint: session_token is the carry-forward
+					// attribute the claude-agent executor reads to
+					// drive --resume. The schema default ("" empty) is
+					// what the first dispatch in any RunScope sees —
+					// including the sub-graph dispatch, whose
+					// sub-graph RunScope has no prior node_run
+					// carrying session_token forward.
 					"session_token": map[string]any{
 						"type":     "string",
 						"readOnly": true,
 						"default":  "",
 					},
-					// CLI attribute slot — the executor reads
-					// attributes.cli.* for tuning. Empty default keeps
-					// the executor on its built-in defaults.
+					// @deliberate: CLI attribute slot — the executor
+					// reads attributes.cli.* for tuning. Empty default
+					// keeps the executor on its built-in defaults.
 					"cli": map[string]any{
 						"type":       "object",
 						"properties": map[string]any{},
@@ -440,12 +423,13 @@ func buildSessionResumeTemplate() map[string]any {
 							},
 						},
 						{
-							// caller delegates to the sub-graph at
-							// instance creation (no `subscribes:` ⇒
-							// initial frame). The sub-graph's entry's
-							// executor (`kind: loop_counter` with
-							// max=1) gets absorbed into this node by
-							// the template canonicalizer. The caller's
+							// @deliberate: caller delegates to the
+							// sub-graph at instance creation (no
+							// `subscribes:` ⇒ initial frame). The
+							// sub-graph entry's executor (`kind:
+							// loop_counter` with max=1) gets absorbed
+							// into this node by the template
+							// canonicalizer. The caller's
 							// run is the single loop_counter dispatch;
 							// on terminal Success it emits the
 							// internal-cascade through `sub_trigger`'s
@@ -461,8 +445,9 @@ func buildSessionResumeTemplate() map[string]any {
 					"exit":  "sub_agent",
 					"nodes": []map[string]any{
 						{
-							// Sub-graph entry — gets absorbed into the
-							// main-graph `caller` node by the canonical
+							// @deliberate: sub-graph entry — gets
+							// absorbed into the main-graph `caller`
+							// node by the canonical
 							// identity-and-absorption rule. `executor:
 							// rimsky.loop_counter` is the bundled
 							// inproc loop_counter's executor alias
@@ -491,10 +476,12 @@ func buildSessionResumeTemplate() map[string]any {
 							},
 						},
 						{
-							// Sub-graph exit — the claude-agent
-							// dispatch the test asserts on. Its
-							// dispatch runs in the sub-graph RunScope
-							// (graph_name='subworker'); concept:run-scope
+							// @concept: run-scope
+							//
+							// @deliberate: sub-graph exit — the
+							// claude-agent dispatch the test asserts
+							// on. Its dispatch runs in the sub-graph
+							// RunScope (graph_name='subworker') which
 							// blocks carry-forward across that
 							// boundary, so the schema default
 							// (session_token: "") surfaces here
@@ -518,10 +505,6 @@ func buildSessionResumeTemplate() map[string]any {
 		},
 	}
 }
-
-// ----------------------------------------------------------------
-// Cascade driver: operator-source invalidate messages
-// ----------------------------------------------------------------
 
 // postWorkerInvalidate posts one operator-source invalidate message
 // targeting `worker` against the given instance. The Idempotency-Key
@@ -559,10 +542,6 @@ func postWorkerInvalidate(t *testing.T, ep harness.RimskyEndpoint, instanceID, i
 			path, idempotencyKey, resp.StatusCode, string(raw))
 	}
 }
-
-// ----------------------------------------------------------------
-// Dispatch / attribute lookup helpers
-// ----------------------------------------------------------------
 
 // workerDispatch is one dispatch of a claude-agent node. Fields are
 // the per-dispatch runId, its RunScope, and the persisted attribute

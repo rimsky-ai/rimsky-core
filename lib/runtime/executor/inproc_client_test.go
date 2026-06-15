@@ -99,7 +99,6 @@ func TestInProcessClient_HandlerPanicSurfacesAsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	// Recv must return a non-EOF error (not wedge, not io.EOF).
 	_, err = stream.Recv()
 	if err == nil {
 		t.Fatalf("expected handler-panic error from Recv, got nil")
@@ -198,8 +197,6 @@ func TestInProcessClient_ParsesTypedUUIDsAtBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	// Malformed dispatch_id should fail at the Execute boundary, never
-	// reach the handler.
 	bad := &genv1.ExecuteRequest{NodeId: uuid.New().String(), DispatchId: "not-a-uuid"}
 	if _, err := client.Execute(context.Background(), bad); err == nil {
 		t.Fatalf("expected parse error for malformed dispatch_id, got nil")
@@ -226,7 +223,6 @@ func TestInProcessClient_PoolWiresInprocCase(t *testing.T) {
 	if c == nil {
 		t.Fatalf("expected non-nil client")
 	}
-	// Same key returns cached instance.
 	c2, err := pool.GetOrCreate(Endpoint{Transport: "inproc", URL: url})
 	if err != nil {
 		t.Fatalf("GetOrCreate cached: %v", err)
@@ -237,7 +233,7 @@ func TestInProcessClient_PoolWiresInprocCase(t *testing.T) {
 }
 
 func TestClientPool_InprocRequiresRegistry(t *testing.T) {
-	pool := NewClientPool() // no inproc registry
+	pool := NewClientPool()
 	if _, err := pool.GetOrCreate(Endpoint{Transport: "inproc", URL: "inproc://x"}); err == nil {
 		t.Fatalf("expected error for inproc without registry, got nil")
 	}
@@ -258,9 +254,7 @@ func TestInProcessClient_HandlerContextFactoryReceivesTypedIDs(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	// Factory binds a sentinel ScratchWriter.
 	factory := HandlerContextFactory(func(dispatchID, nodeID shared.UUID) HandlerContext {
-		// Sanity: typed UUIDs reach the factory non-zero.
 		if dispatchID == (shared.UUID{}) || nodeID == (shared.UUID{}) {
 			t.Errorf("expected non-zero typed UUIDs, dispatch=%v node=%v", dispatchID, nodeID)
 		}

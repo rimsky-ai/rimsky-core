@@ -43,9 +43,9 @@ import (
 // examples/inproc-loop-counter/template.yml.
 func resolveInprocExampleTemplate(t *testing.T) string {
 	t.Helper()
-	// First try a path relative to the test binary's working dir
-	// (which is the package directory under `go test`). Repo root is
-	// two levels up.
+	// @deliberate: try a path relative to the test binary's working
+	// dir (the package directory under `go test`); repo root is two
+	// levels up.
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 	rel := filepath.Join(cwd, "..", "..", "examples", "inproc-loop-counter", "template.yml")
@@ -54,9 +54,9 @@ func resolveInprocExampleTemplate(t *testing.T) string {
 		require.NoError(t, err)
 		return abs
 	}
-	// Fall back to a one-level-up resolution (in case go test is
-	// invoked from the repo root under a non-package-cwd config). The
-	// first path is the production layout; this is just defensive.
+	// @deliberate: fall back to one-level-up resolution in case
+	// `go test` is invoked from the repo root under a
+	// non-package-cwd config.
 	rel = filepath.Join(cwd, "..", "examples", "inproc-loop-counter", "template.yml")
 	if _, err := os.Stat(rel); err == nil {
 		abs, err := filepath.Abs(rel)
@@ -70,16 +70,18 @@ func resolveInprocExampleTemplate(t *testing.T) string {
 func TestInprocUtilityExecutorE2E(t *testing.T) {
 	t.Parallel()
 
-	// Harness with NO ExtraExecutors for loop_counter. The supervisor's
-	// startup seeds the inproc registry + resolver alias for the
-	// rimsky-bundled builtins via `builtin.RegisterAll` +
-	// `BuiltinExecutorAliases`; the control-API seeds the kind-alias
-	// map via `RegisterAllKindAliases`. Both surfaces are populated
-	// from the same package constants — no operator config needed.
+	// @constraint: harness with NO ExtraExecutors for loop_counter.
+	// The supervisor's startup seeds the inproc registry + resolver
+	// alias for the rimsky-bundled builtins via `builtin.RegisterAll`
+	// + `BuiltinExecutorAliases`; the control-API seeds the
+	// kind-alias map via `RegisterAllKindAliases`. Both surfaces are
+	// populated from the same package constants — no operator config
+	// needed.
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Read the example YAML from disk so the test fails loudly if the
-	// example artifact disappears or its shape stops parsing.
+	// @constraint: read the example YAML from disk so the test fails
+	// loudly if the example artifact disappears or its shape stops
+	// parsing.
 	templatePath := resolveInprocExampleTemplate(t)
 	raw, err := os.ReadFile(templatePath)
 	require.NoError(t, err, "read example template")
@@ -95,21 +97,19 @@ func TestInprocUtilityExecutorE2E(t *testing.T) {
 	require.Empty(t, spec.Nodes[0].Executor,
 		"sanity: the example must NOT pre-spell out an executor; the kind-sugar resolver does the resolution")
 
-	// Register the template via the harness's DeployTemplate, which is
-	// the same path the production `POST /v1/templates` HTTP route
-	// uses (the harness POSTs to the in-process control-API). Without
-	// the kind-sugar resolver inside the control-API, registration
-	// would fail with `template_validation_failed` — the success
-	// here is part of the proof.
+	// @constraint: register the template via DeployTemplate, the same
+	// path the production `POST /v1/templates` HTTP route uses.
+	// Without the kind-sugar resolver inside the control-API,
+	// registration would fail with `template_validation_failed` —
+	// the success here is part of the proof.
 	tid := h.DeployTemplate(spec)
 	require.NotEmpty(t, tid, "template_id from DeployTemplate must be non-empty")
 
-	// Create an instance.
 	iid := h.CreateInstance(tid, "ck-inproc-loop-counter", map[string]any{})
 
-	// Find the counter node and wait for its `done` event to surface
-	// on the events feed. `done` only fires after the loop_counter
-	// reaches new_count == max — observable proof that the inproc
+	// @constraint: wait for `event/done` to surface on the events
+	// feed. `done` only fires after the loop_counter reaches
+	// new_count == max — observable proof that the inproc
 	// loop_counter handler ran AND completed under no external
 	// executor configuration.
 	counter := h.FindNode(iid, "counter")
@@ -119,9 +119,9 @@ func TestInprocUtilityExecutorE2E(t *testing.T) {
 		h.WaitForEventKind(counter.ID, "event/done", 30*time.Second),
 		"counter MUST emit `event/done` within the timeout — proves the inproc loop_counter handler is dispatching")
 
-	// Cross-check: at terminal, the node row's state is `fresh` and
-	// the run terminated cleanly. The harness's WaitForNodeState
-	// returns false if the state never lands.
+	// @constraint: at terminal, the node row's state is `fresh` and
+	// the run terminated cleanly. WaitForNodeState returns false if
+	// the state never lands.
 	require.True(t,
 		h.WaitForNodeState(counter.ID, cascade.NodeStateFresh, 30*time.Second),
 		"counter MUST reach fresh — proves the dispatch terminated cleanly without falling through to an unresolved executor")

@@ -118,7 +118,7 @@ func seedFallbackNodeWithErrorTypes(
 		}, tx); err != nil {
 			return err
 		}
-		// Seed a synthetic typed-message envelope so the
+		// @constraint: seed a synthetic typed-message envelope so the
 		// rimsky_frames.triggering_message_id FK is satisfied.
 		msgID := shared.UUID(uuid.New())
 		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{

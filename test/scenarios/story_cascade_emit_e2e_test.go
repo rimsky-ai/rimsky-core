@@ -51,22 +51,22 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// The producer node (`pong`) runs through the stub executor and
-	// emits an attribute. Its terminal/success drives the emit-node's
-	// subscription, and the emit-node's attribute pulls from
-	// {{nodes.pong.attribute.status}} so the resolved body field
+	// @deliberate: the producer node (`pong`) runs through the stub
+	// executor and emits an attribute. Its terminal/success drives the
+	// emit-node's subscription, and the emit-node's attribute pulls
+	// from {{nodes.pong.attribute.status}} so the resolved body field
 	// reflects the upstream's value.
 	h.Stub.WhenType("pong").Success(map[string]any{"status": "needs_work"}, true, "produced status")
 
-	// One more receiver subscribed to the cascade-emit message, so the
-	// "the next frame opens carrying that message" leg has an observable
-	// downstream effect (terminal/success on `tail`).
+	// @deliberate: a downstream receiver subscribed to the cascade-emit
+	// message so the "the next frame opens carrying that message" leg
+	// has an observable downstream effect (terminal/success on `tail`).
 	h.Stub.WhenType("tail").Success(map[string]any{"observed": "ok"}, true, "saw cascade-emit")
 
-	// Initial trigger uses an "initial/wakeup" message type so the
-	// producer node's frame opens cleanly. (The pong node must be
-	// stale-marked somehow to wake the cascade; subscribing it to a
-	// declared message type is the cheapest, most realistic shape.)
+	// @deliberate: initial trigger uses an "initial/wakeup" message
+	// type so the producer node's frame opens cleanly. The pong node
+	// must be stale-marked to wake the cascade; subscribing it to a
+	// declared message type is the cheapest, most realistic shape.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "story-cascade-emit", Version: "1",
 		Messages: []spec.MessageSchema{
@@ -93,8 +93,9 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "pong",
 					Executor: "stub",
-					// Pong subscribes to the initial wakeup message so a
-					// single POST drives the whole cascade end-to-end.
+					// @deliberate: pong subscribes to the initial wakeup
+					// message so a single POST drives the whole cascade
+					// end-to-end.
 					Subscribes: []node.SubscriptionEntry{
 						{Node: "initial/wakeup", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
@@ -118,10 +119,10 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// The emit-node body field IS the attribute. The
-						// attribute pulls from the producer; the runtime
-						// JSON-marshals the resolved set into the wire
-						// payload.
+						// @deliberate: the emit-node body field IS the
+						// attribute. The attribute pulls from the
+						// producer; the runtime JSON-marshals the
+						// resolved set into the wire payload.
 						"pong_status": map[string]any{
 							"type":   "string",
 							"source": "{{nodes.pong.attribute.status}}",
@@ -155,7 +156,6 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-story-cascade-emit", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
-	// Drive the wakeup message that fires pong.
 	resp := postMessage(t, h.ControlBase, iid, map[string]any{
 		"type":    "initial/wakeup",
 		"payload": map[string]any{"kick": "go"},
@@ -167,9 +167,10 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(resp.raw, &wakeupBody))
 
-	// The emit-node has no executor; it cannot be looked up via the
-	// stub. Wait for tail's terminal/success — that's the proof the
-	// entire chain ran:
+	// @deliberate: the emit-node has no executor; it cannot be looked
+	// up via the stub. Wait for tail's terminal/success — that's the
+	// proof the entire chain ran:
+	//
 	//   wakeup → pong frame → pong runs → emit-node fires
 	//   → cascade-emit message lands → next frame opens
 	//   → tail subscribed to ping/recheck stale-marks → tail runs.
@@ -186,11 +187,10 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 	_ = pongNode
 	_ = emitterNode
 
-	// Persistence-layer assertion: a ping/recheck envelope landed in the
-	// ledger with the resolved body. The body's pong_status reflects the
-	// pong node's attribute via substitution. The body bytes are inert,
-	// so the test reads them through the persistence layer rather than
-	// re-serializing on the wire.
+	// @deliberate: persistence-layer assertion — a ping/recheck
+	// envelope landed in the ledger with the resolved body. The body's
+	// pong_status reflects the pong node's attribute via substitution.
+	// Read through persistence rather than re-serializing on the wire.
 	var emittedMsgID, emittedSender, emittedSenderKind string
 	var emittedBody []byte
 	h.QueryRowSQL(
@@ -214,10 +214,11 @@ func TestStoryCascadeEmit_EmitsAndOpensNextFrame(t *testing.T) {
 		"emit-node body must reflect the substituted upstream attribute value; got %v",
 		bodyDecoded)
 
-	// The next-frame property: a frame exists whose triggering_message_id
-	// is the cascade-emitted envelope. This pins the spec acceptance
-	// "the next frame opens carrying that message" — the load-bearing
-	// link between the emit-node's dispatch and the receiver's wake.
+	// @deliberate: the next-frame property — a frame exists whose
+	// triggering_message_id is the cascade-emitted envelope. This pins
+	// the spec acceptance "the next frame opens carrying that message"
+	// — the load-bearing link between the emit-node's dispatch and the
+	// receiver's wake.
 	frames := getFrames(t, h.ControlBase, iid, emittedMsgID)
 	require.NotEmpty(t, frames,
 		"no frame carries triggering_message_id = %s (the cascade-emit envelope)",
@@ -238,10 +239,11 @@ func TestStoryCascadeEmit_SchemaMismatchRejectsAtRegistration(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Emit-node attribute schema declares an extra field the destination
-	// `ping/recheck` body_schema does NOT carry. Per concept:message-
-	// emitter-node "hidden state is not allowed because the attribute set
-	// IS the body," this MUST reject at registration.
+	// @concept: message-emitter-node — emit-node attribute schema
+	// declares an extra field the destination `ping/recheck`
+	// body_schema does NOT carry. "Hidden state is not allowed because
+	// the attribute set IS the body" — this MUST reject at
+	// registration.
 	specMap := map[string]any{
 		"name":    "story-cascade-emit-mismatch",
 		"version": "1",
@@ -263,7 +265,8 @@ func TestStoryCascadeEmit_SchemaMismatchRejectsAtRegistration(t *testing.T) {
 					"type": "object",
 					"properties": map[string]any{
 						"pong_status": map[string]any{"type": "string"},
-						// Extra field the destination body doesn't have.
+						// @deliberate: extra field the destination body
+						// doesn't have.
 						"sneaky_extra": map[string]any{"type": "string"},
 					},
 					"required": []any{"pong_status"},

@@ -194,6 +194,7 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 // is the assertion that c's substitution context at re-dispatch
 // contains b's second-fire value.
 //
+//	@blessed-invariant: upstream-staled-before-receiver-dispatch
 //	@story: upstream-pull-on-invalidate
 func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *testing.T) {
 	t.Parallel()

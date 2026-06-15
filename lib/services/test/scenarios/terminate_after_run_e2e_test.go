@@ -87,10 +87,11 @@ func deployTerminateAfterRunTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 			"name":             "terminate-after-run",
 			"version":          "1",
 			"frame_timeout_ms": 600000,
-			// A declared message type so the follow-up rejection path runs
-			// the test's POST against a recognized envelope shape (the
-			// post-message-schema-layer route rejects undeclared types
-			// before the terminal-state predicate fires).
+			// @deliberate: a declared message type so the follow-up
+			// rejection path runs the test's POST against a recognized
+			// envelope shape (the post-message-schema-layer route
+			// rejects undeclared types before the terminal-state
+			// predicate fires).
 			"messages": []map[string]any{
 				{
 					"type": "term/probe",

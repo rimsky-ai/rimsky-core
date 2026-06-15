@@ -149,11 +149,10 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 		if body["type"] != "system/invalidate" {
 			t.Errorf("body.type: %v", body["type"])
 		}
-		// `target` is no longer on the envelope: the
-		// `rimsky_messages.target` column was retired in migration 010 of
-		// the 2026-06-14 message-schema-layer reshape, and the sensor
+		// @constraint: `target` is no longer on the envelope — the
+		// `rimsky_messages.target` column was retired and the sensor
 		// no longer sends it. Routing happens via the subscription's
-		// target_node on rimsky's side, not via a wire envelope field.
+		// target_node on rimsky's side.
 		if _, present := body["target"]; present {
 			t.Errorf("body.target unexpectedly present: %v", body["target"])
 		}

@@ -124,9 +124,8 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	`, nodeID, instanceID)
 	frameID := uuid.New()
 	now := time.Now()
-	// Pass 1 of the message-schema-layer plan added the
-	// rimsky_frames.triggering_message_id NOT NULL FK; seed a typed
-	// envelope first so the frame's FK resolves.
+	// @constraint: rimsky_frames.triggering_message_id is NOT NULL;
+	// seed a typed envelope first.
 	messageID := uuid.New()
 	h.ExecSQL(`
 		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)

@@ -94,17 +94,18 @@ func CompileWhenWithBodyFields(typeSpec TypePath, when string, bodyFields map[st
 			}
 		}
 	}
-	// Message-virtual-node body-field cross-check. The receiver
-	// subscribes via `node: <message-type>, type: terminal/success`;
-	// `payload.attributes_delta` is the bridge field (populated by
-	// `code:runtime/message_delivery.go::messageVirtualNodeSettleSignal`
-	// from the message body), so a `payload.attributes_delta.<field>`
-	// reference is really a body-field read. Without this check, the
-	// substitution side ({{messages.T.field}}) rejects typos at
-	// registration but the CEL side admits them silently — asymmetric
-	// coverage that STORY-typed-message-substitution's falsifier
-	// rules out. The check is only meaningful when bodyFields is
-	// supplied (the template validator on message-virtual-node subs).
+	// @constraint: message-virtual-node body-field cross-check. The
+	// receiver subscribes via `node: <message-type>, type:
+	// terminal/success`; `payload.attributes_delta` is the bridge field
+	// (populated by `runtime/message_delivery.go::
+	// messageVirtualNodeSettleSignal` from the message body), so a
+	// `payload.attributes_delta.<field>` reference is really a
+	// body-field read. Without this check, the substitution side
+	// ({{messages.T.field}}) rejects typos at registration but the CEL
+	// side admits them silently — asymmetric coverage the typed-message
+	// substitution falsifier rules out. Only meaningful when bodyFields
+	// is supplied (the template validator on message-virtual-node subs).
+	// @story: typed-message-substitution
 	if bodyFields != nil {
 		if err := checkAttributesDeltaFields(checked, bodyFields); err != nil {
 			return nil, fmt.Errorf("invalid CEL expression %q: %w", when, err)

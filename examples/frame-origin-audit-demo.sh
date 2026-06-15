@@ -3,12 +3,13 @@
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-# frame-origin-audit-demo.sh — STORY-frame-origin-audit proof.
+# @story: frame-origin-audit
 #
-# An operator answers "why did this frame open" for every frame the
-# cascade-graph observability endpoint surfaces. The spec's acceptance
-# is "every frame carries a pointer back to the message ledger entry
-# that triggered it." The demo script:
+# frame-origin-audit-demo.sh: An operator answers "why did this frame
+# open" for every frame the cascade-graph observability endpoint
+# surfaces. The story's acceptance is "every frame carries a pointer
+# back to the message ledger entry that triggered it." The demo
+# script:
 #
 #   1. Boots / connects to a rimsky stack.
 #   2. Registers + deploys the demo template (a two-frame bounded
@@ -122,18 +123,18 @@ while [ "$( date +%s )" -lt "${END}" ]; do
     FRAMES_OUT="$( curl -sS \
         "${RIMSKY_ENDPOINT}/v1/instances/${INSTANCE_ID}/frames?limit=100" )"
 
-    # Human-facing demo output: every frame, its triggering message.
-    # The format reads "frame=<id> trigger=<msg-id> type=<type>
-    # sender=<sender> kind=<sender_kind>" so the operator's eye flows
-    # naturally from frame to origin.
+    # @deliberate: human-facing demo output — every frame, its
+    # triggering message. The format keeps frame and trigger ids
+    # adjacent and the joined envelope fields trailing so the
+    # operator's eye flows naturally from frame to origin.
     LINES="$( echo "${FRAMES_OUT}" | jq -r '.frames[] |
         "frame=" + .frame_id +
         " trigger=" + .triggering_message_id +
         " type=" + (.message_type // "<missing>") +
         " sender=" + (.message_sender // "<missing>") +
         " kind=" + (.message_sender_kind // "<missing>")' )"
-    # Reset the log on every poll so the final assertion runs against
-    # the most recent snapshot.
+    # @deliberate: reset the log on every poll so the final assertion
+    # runs against the most recent snapshot.
     echo "${LINES}" > "${SELF_CHECK_LOG}"
     echo "${LINES}"
 
@@ -144,8 +145,8 @@ while [ "$( date +%s )" -lt "${END}" ]; do
         SAW_INSTANCE=1
     fi
     if [ "${SAW_OPERATOR}" -eq 1 ] && [ "${SAW_INSTANCE}" -eq 1 ]; then
-        # Both origins exhibited — continue polling briefly to allow R
-        # to settle before we self-check.
+        # @deliberate: both origins exhibited — continue polling
+        # briefly to allow R to settle before we self-check.
         sleep 2
         FRAMES_OUT="$( curl -sS \
             "${RIMSKY_ENDPOINT}/v1/instances/${INSTANCE_ID}/frames?limit=100" )"
@@ -162,16 +163,16 @@ while [ "$( date +%s )" -lt "${END}" ]; do
     sleep 2
 done
 
-# Step 6 — self-check the captured output. Spec acceptance:
-#   "Every frame carries a pointer back to the message ledger entry
-#    that triggered it, surfaced through the existing frames-read
-#    observability endpoint."
-#
-# The structural assertions: every frame line must have (a) a UUID-
-# shaped triggering_message_id and (b) a non-empty type + sender. The
-# joined-envelope-missing case would surface as `<missing>` in the
-# printed format; that's a load-bearing falsifier ("a frame appears
-# without an originating message reference").
+# @constraint: self-check the captured output against the story
+# acceptance — every frame carries a pointer back to the message
+# ledger entry that triggered it, surfaced through the existing
+# frames-read observability endpoint. Structural assertions: every
+# frame line must have (a) a UUID-shaped triggering_message_id and
+# (b) a non-empty type + sender. The joined-envelope-missing case
+# would surface as a `missing` literal in the printed format; that
+# is the load-bearing falsifier — a frame appears without an
+# originating message reference.
+# @story: frame-origin-audit
 echo "frame-origin-audit-demo: running self-check on captured observability log"
 
 TOTAL_FRAMES="$( grep -c '^frame=' "${SELF_CHECK_LOG}" || true )"
@@ -180,17 +181,18 @@ if [ "${TOTAL_FRAMES}" -eq 0 ]; then
     exit 1
 fi
 
-# Every frame line must carry a UUID-shaped triggering_message_id.
+# @constraint: every frame line must carry a UUID-shaped triggering_message_id.
 FRAMES_WITH_TRIGGER="$( grep -cE '^frame=[0-9a-fA-F-]{36} trigger=[0-9a-fA-F-]{36} ' "${SELF_CHECK_LOG}" || true )"
 if [ "${TOTAL_FRAMES}" -ne "${FRAMES_WITH_TRIGGER}" ]; then
     echo "frame-origin-audit-demo: only ${FRAMES_WITH_TRIGGER}/${TOTAL_FRAMES} frame lines carry a triggering_message_id" >&2
     exit 1
 fi
 
-# Every frame line must have a non-empty joined envelope type and
-# sender. A `<missing>` in either field means the LEFT JOIN fell back
-# — the frames row exists but the join against rimsky_messages failed,
-# which violates the FK constraint and the spec acceptance.
+# @constraint: every frame line must have a non-empty joined envelope
+# type and sender. A `<missing>` in either field means the LEFT JOIN
+# fell back — the frames row exists but the join against
+# rimsky_messages failed, which violates the FK constraint and the
+# story acceptance.
 if grep -q 'type=<missing>' "${SELF_CHECK_LOG}"; then
     echo "frame-origin-audit-demo: at least one frame has no joined message type" >&2
     exit 1
@@ -200,11 +202,12 @@ if grep -q 'sender=<missing>' "${SELF_CHECK_LOG}"; then
     exit 1
 fi
 
-# At least one operator-posted origin AND at least one cascade-emit
-# origin — exercises the spec's "operator message, a publisher
-# message, or a cascade-emitted message" enumeration end-to-end. The
-# kick is operator; the emit-node's audit/loop is cascade-emit.
-# Without both, the demo only proved one half of the origin surface.
+# @constraint: at least one operator-posted origin AND at least one
+# cascade-emit origin must appear — the kick is operator and the
+# emit-node's audit/loop is cascade-emit, so seeing both exercises the
+# spec's "operator message, publisher message, or cascade-emit"
+# enumeration end-to-end; without both, the demo only proved one half
+# of the origin surface.
 if ! grep -q ' kind=operator' "${SELF_CHECK_LOG}"; then
     echo "frame-origin-audit-demo: no operator-origin frame observed" >&2
     exit 1

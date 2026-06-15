@@ -63,8 +63,8 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		}, tx); err != nil {
 			return err
 		}
-		// Seed a synthetic message envelope to satisfy the
-		// rimsky_frames.triggering_message_id FK.
+		// @constraint: synthetic envelope satisfies the
+		// rimsky_frames.triggering_message_id NOT NULL FK.
 		pausedMessageID := shared.UUID(uuid.New())
 		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         pausedMessageID,

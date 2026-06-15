@@ -93,9 +93,10 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 				// firing because `attribute/maybe/changed` never emits.
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{Node: "upstream", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					// Cover the {{nodes.upstream.attribute.maybe?}} read.
-					// wake_on_change is true (today-equivalent) but since
-					// `maybe` never emits, this edge never fires the receiver.
+					// @constraint: substitution coverage for
+					// `{{nodes.upstream.attribute.maybe?}}` requires the
+					// attribute/maybe/changed edge even though `maybe`
+					// never emits — coverage is a registration-time check.
 					node.SubscriptionEntry{Node: "upstream", Type: "attribute/maybe/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
@@ -121,7 +122,9 @@ func TestLenientMarkerRecoveryE2E(t *testing.T) {
 				},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{Node: "upstream", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					// Cover the {{nodes.upstream.attribute.maybe}} read.
+					// @constraint: substitution coverage for
+					// `{{nodes.upstream.attribute.maybe}}` requires the
+					// attribute/maybe/changed edge at registration time.
 					node.SubscriptionEntry{Node: "upstream", Type: "attribute/maybe/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{

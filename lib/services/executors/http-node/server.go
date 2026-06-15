@@ -158,13 +158,14 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
 		return s.executeStub(req, send)
 	}
-	// Conformance-probe escape hatch for the Park-outcome shape: when
-	// the suite flags attributes with `probe_park: true`, return a Park
-	// terminal carrying the named `park_reason` in the closed two-value
-	// set (await_callback | snooze) per the ParkReason collapse. Mirrors
-	// the analogous hatch in claude-agent's runAgentStub so the
-	// per-protocol `park_reason_emission` conformance scenario passes
-	// against any in-rimsky stub executor uniformly.
+	// @deliberate: conformance-probe escape hatch for the Park-outcome
+	// shape — when the suite flags attributes with `probe_park: true`,
+	// return a Park terminal carrying the named `park_reason` in the
+	// closed two-value set (await_callback | snooze) per the ParkReason
+	// collapse. Mirrors the analogous hatch in claude-agent's
+	// runAgentStub so the per-protocol `park_reason_emission`
+	// conformance scenario passes against any in-rimsky stub executor
+	// uniformly.
 	if probePark, _ := ud["probe_park"].(bool); probePark && s.stubMode {
 		return s.executeParkProbe(ud, send)
 	}

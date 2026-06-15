@@ -47,11 +47,10 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// debugOverrideAction enumerates the mutations the debug channel
-// supports. Two for Pass 9: invalidate_node (stale-mark every in-flight
-// run of the named node-type in the running frame) and set_attribute
-// (merge a single key into the named node-type's latest attribute bag,
-// then stale-mark so the next cycle picks the new value up).
+// @agent-contract: invalidate_node stale-marks every in-flight run of
+// the named node-type in the running frame; set_attribute merges a
+// single key into the named node-type's latest attribute bag and
+// stale-marks so the next cycle picks the new value up.
 const (
 	debugActionInvalidateNode = "invalidate_node"
 	debugActionSetAttribute   = "set_attribute"
@@ -94,10 +93,11 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "invalid JSON body: "+err.Error())
 			return
 		}
-		// Request-level validation runs BEFORE the tx so a malformed
-		// request never probes the gate. An attacker could otherwise
-		// use timing differences between "well-formed-but-gated" and
-		// "malformed" to fingerprint which instances are paused.
+		// @constraint: request-level validation runs BEFORE the tx so a
+		// malformed request never probes the gate; an attacker could
+		// otherwise use timing differences between
+		// "well-formed-but-gated" and "malformed" to fingerprint which
+		// instances are paused.
 		switch body.Action {
 		case debugActionInvalidateNode:
 			if body.NodeType == "" {
@@ -130,7 +130,6 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 			notFound    bool
 		)
 		txErr := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			// Step 1: existence + gate-state read, INSIDE the tx.
 			inst, err := deps.Persist.Instances().Get(ctx, instUUID, tx)
 			if err != nil {
 				return err
@@ -139,16 +138,16 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 				notFound = true
 				return nil
 			}
-			// Gate predicate: paused OR there is an unresumed pause-
-			// mode breakpoint hit BLOCKING A RUNNER on this instance.
-			// `HasUnresumedPauseHitForInstance` joins the hit row to its
-			// referenced node-run and requires the node-run still be in
-			// a non-terminal phase (pending/active/held/parked) — a
-			// stale hit row whose runner died or has already terminated
-			// is NOT a blocker and the gate refuses. Both reads share
-			// the tx, so a concurrent pause-toggle or breakpoint-resume
-			// committing between the two reads sees one or the other
-			// snapshot consistently — never half.
+			// @constraint: gate predicate is paused OR there is an
+			// unresumed pause-mode breakpoint hit BLOCKING A RUNNER on
+			// this instance. `HasUnresumedPauseHitForInstance` joins the
+			// hit row to its referenced node-run and requires the
+			// node-run still be in a non-terminal phase
+			// (pending/active/held/parked) — a stale hit row whose
+			// runner died or has already terminated is NOT a blocker
+			// and the gate refuses. Both reads share the tx so a
+			// concurrent pause-toggle or breakpoint-resume committing
+			// between them sees one or the other snapshot, never half.
 			gatePaused := inst.Paused
 			gateHit := false
 			if !gatePaused {
@@ -167,22 +166,21 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 			case gateHit:
 				gateState = "breakpoint"
 			}
-			// Dry-run gate: instance + gate validated, mutation not yet
-			// applied. Surface the would_have_applied envelope and roll
-			// back the tx so the never-mutate property holds.
+			// @constraint: dry-run gate fires after instance + gate
+			// validation, before mutation; surface the
+			// would_have_applied envelope and roll back the tx so the
+			// never-mutate property holds.
 			if isDryRun {
 				return errDryRunOK
 			}
-			// Step 2: apply the mutation inside the same tx as the
-			// gate-check.
 			n, err := applyDebugOverride(ctx, deps, tx, instUUID, body)
 			if err != nil {
 				return err
 			}
 			mutatedRuns = n
-			// Step 3: audit event in the SAME tx so a rollback mid-flow
-			// never audits a mutation that didn't happen, nor mutates
-			// without auditing.
+			// @constraint: audit event rides the mutation's tx so a
+			// rollback mid-flow never audits a mutation that didn't
+			// happen and never mutates without auditing.
 			payload := map[string]any{
 				"action":          body.Action,
 				"node_type":       body.NodeType,
@@ -212,9 +210,9 @@ func handleDebugOverride(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		if errors.Is(txErr, errInstanceNotDebuggable) {
-			// HTTP 409 with both predicate names. The body shape lets
-			// the operator see the gate predicate without having to
-			// re-read the spec.
+			// @deliberate: HTTP 409 body carries both predicate names so
+			// the operator sees which states would have unlocked the
+			// override without re-reading the spec.
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error":  errInstanceNotDebuggable.Error(),
 				"states": []string{"paused", "breakpoint"},
@@ -247,23 +245,20 @@ func applyDebugOverride(
 	instanceID shared.UUID,
 	body DebugOverrideRequest,
 ) (int, error) {
-	// Find the currently-running frame so the stale-mark binds to the
-	// right frame_id (MarkStaleForCascade requires a frame_id; staling
-	// a run without one would strand the run with no frame to carry
-	// it — concept:cascade blessed-invariant 19). When no frame is
-	// running, the stale-mark cannot be applied; surface that as a
-	// no-op (zero runs mutated) so the operator sees the audit row
-	// recording the attempt even on an idle instance.
+	// @constraint: stale-mark binds to the running frame's frame_id;
+	// staling a run without one would strand the run with no frame to
+	// carry it (concept:cascade). When no frame is running, the
+	// stale-mark cannot be applied; surface that as a no-op (zero runs
+	// mutated) so the operator still sees the audit row recording the
+	// attempt on an idle instance.
 	frameID, err := deps.Persist.Frames().GetRunningFrameID(ctx, instanceID, tx)
 	if err != nil {
 		return 0, err
 	}
-	// Walk every node of the named type for this instance and stale-
-	// mark its in-flight run. The NodeListFilter type does not yet
-	// carry a `NodeType` field; we list by instance and filter in code.
-	// Pages aren't necessary at this scale — debug overrides target a
-	// single node-type, typically with a one-digit-count of matching
-	// nodes per instance.
+	// @deliberate: list by instance and filter in code because
+	// NodeListFilter has no NodeType field yet; paging isn't necessary
+	// at this scale (debug overrides target a single node-type,
+	// typically a one-digit-count of matches per instance).
 	nodes, err := deps.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
 	if err != nil {
 		return 0, err
@@ -274,9 +269,9 @@ func applyDebugOverride(
 			continue
 		}
 		touched := false
-		// set_attribute writes the attribute value to the latest
-		// attribute row for (node, main_run_scope) BEFORE stale-
-		// marking, so the next run picks up the override.
+		// @constraint: set_attribute writes the attribute value to the
+		// latest attribute row for (node, main_run_scope) BEFORE
+		// stale-marking so the next run picks up the override.
 		if body.Action == debugActionSetAttribute {
 			wrote, err := setNodeAttributeForDebugOverride(ctx, deps, tx, n, body)
 			if err != nil {
@@ -286,10 +281,9 @@ func applyDebugOverride(
 				touched = true
 			}
 		}
-		// invalidate_node AND set_attribute both stale-mark the in-
-		// flight run if one exists. set_attribute without a stale-mark
-		// would leave the new value sitting in storage but the run
-		// wouldn't re-evaluate against it.
+		// @constraint: both actions stale-mark the in-flight run when
+		// one exists; set_attribute without a stale-mark would leave
+		// the new value sitting in storage with the run unaware of it.
 		if n.InFlightRunID != nil && frameID != nil {
 			if err := deps.Persist.Nodes().MarkStaleForCascade(ctx, *n.InFlightRunID, *frameID, tx); err != nil {
 				return mutated, err
@@ -334,13 +328,13 @@ func setNodeAttributeForDebugOverride(
 ) (bool, error) {
 	delta := map[string]any{body.AttributeKey: body.AttributeValue}
 	if n.InFlightRunID == nil {
-		// No in-flight run: refuse the write. See the docstring's
-		// resolution-scope paragraph for the rationale.
+		// @constraint: refuse the write when there is no in-flight run
+		// (see the docstring's resolution-scope paragraph).
 		return false, nil
 	}
-	// In-flight: MergeDelta writes the value into the active run's
-	// attribute row. If the row hasn't been created yet (lazy
-	// allocation), we Upsert a fresh one carrying just the override.
+	// @deliberate: MergeDelta writes into the active run's attribute
+	// row; if the row hasn't been created yet (lazy allocation), Upsert
+	// a fresh one carrying just the override.
 	existing, err := deps.Persist.NodeAttributes().GetByRun(ctx, *n.InFlightRunID, tx)
 	if err != nil {
 		return false, err

@@ -53,9 +53,9 @@ func (h *Handler) Execute(ctx context.Context, req *genv1.ExecuteRequest, sink e
 	if v, ok := attrs["count"]; ok {
 		n, err := asInt(v)
 		if err != nil {
-			// A non-numeric incoming `count` violates the executor's
-			// declared schema (count: { type: integer }). Silently
-			// defaulting to 0 would silently erase the loop's
+			// @constraint: a non-numeric incoming `count` violates the
+			// executor's declared schema (count: { type: integer }).
+			// Silently defaulting to 0 would erase the loop's
 			// accumulated state — a stale string carried in via a
 			// schema-mismatch or a hand-crafted attribute writeback
 			// would otherwise restart the counter at 1 with no

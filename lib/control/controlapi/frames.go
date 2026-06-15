@@ -55,10 +55,11 @@ type frameItem struct {
 	LastProgressAt *time.Time `json:"last_progress_at,omitempty"`
 	FrameTimeoutMs int64      `json:"frame_timeout_ms"`
 
-	// Joined message envelope fields. Always non-empty under the
-	// frame→message ON DELETE RESTRICT FK; the LEFT JOIN inside the
-	// accessor degrades to empty strings rather than a query error if a
-	// row ever lacks an envelope (which the FK should prevent).
+	// @constraint: joined message envelope fields. Always non-empty
+	// under the frame→message ON DELETE RESTRICT FK; the LEFT JOIN
+	// inside the accessor degrades to empty strings rather than a query
+	// error if a row ever lacks an envelope (which the FK should
+	// prevent).
 	MessageType       string `json:"message_type,omitempty"`
 	MessageSender     string `json:"message_sender,omitempty"`
 	MessageSenderKind string `json:"message_sender_kind,omitempty"`
@@ -109,20 +110,19 @@ func handleListInstanceFrames(deps AppDeps) http.HandlerFunc {
 			}
 		}
 
-		// Single tx covers BOTH the instance-existence check and the
-		// frame list. Splitting them into two txs would open a TOCTOU
-		// window where the instance can be deleted between checks —
-		// the same cross-tx-read concern the LEFT JOIN below avoids
-		// for the frame ↔ message pair applies to the instance ↔
-		// frames pair.
-		//
-		// One SQL per page (after the instance lookup): a LEFT JOIN
-		// against rimsky_messages inside the caller's tx. A per-row
-		// Messages().Get would (a) make this N+1 (50-row page → 51
-		// round-trips) and (b) open a cross-tx read window between the
-		// frame row and its message row, during which a hypothetical
-		// message reaper could leave the page seeing frame-then-no-
-		// message.
+		// @constraint: single tx covers BOTH the instance-existence
+		// check and the frame list. Splitting them into two txs would
+		// open a TOCTOU window where the instance can be deleted
+		// between checks — the same cross-tx-read concern the LEFT JOIN
+		// below avoids for the frame ↔ message pair applies to the
+		// instance ↔ frames pair.
+		// @deliberate: one SQL per page (after the instance lookup):
+		// a LEFT JOIN against rimsky_messages inside the caller's tx.
+		// A per-row Messages().Get would (a) make this N+1 (50-row page
+		// → 51 round-trips) and (b) open a cross-tx read window between
+		// the frame row and its message row, during which a
+		// hypothetical message reaper could leave the page seeing
+		// frame-then-no-message.
 		ctx := req.Context()
 		var (
 			instExists bool
@@ -177,15 +177,17 @@ func handleGetInstanceFrame(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		ctx := req.Context()
-		// Single tx, single round-trip: instance-existence check + frame
-		// row + joined message envelope. The instance check mirrors the
-		// list endpoint above — without it, a deleted instance returns
-		// "frame not found" (a frame CASCADE-removed when its instance
-		// was deleted) while the list endpoint at the same path returns
-		// "instance not found", giving two divergent 404 surfaces. The
-		// frame-origin-audit story's load-bearing property is "every
-		// frame, its triggering message, end-to-end"; consistent error
-		// surfaces matter for the diagnostic story too.
+		// @constraint: single tx, single round-trip: instance-existence
+		// check + frame row + joined message envelope. The instance
+		// check mirrors the list endpoint above — without it, a deleted
+		// instance returns "frame not found" (a frame CASCADE-removed
+		// when its instance was deleted) while the list endpoint at the
+		// same path returns "instance not found", giving two divergent
+		// 404 surfaces. The frame-origin-audit story's load-bearing
+		// property is "every frame, its triggering message,
+		// end-to-end"; consistent error surfaces matter for the
+		// diagnostic story too.
+		// @story: frame-origin-audit
 		instUUID := shared.UUID(instanceID)
 		var (
 			instExists bool

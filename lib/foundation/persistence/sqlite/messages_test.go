@@ -211,8 +211,9 @@ func TestMessagesList_DeliveredAfterBefore(t *testing.T) {
 	messages := d.Tables().Messages()
 	rawDB := sqlitepersistdrv.DBFromDatabase(d)
 
-	// Seed three rows: one with delivered_at = t1, one with t2, one
-	// with t3, frame_id NULL so the rimsky_frames FK is not exercised.
+	// @deliberate: seed three rows: one with delivered_at = t1, one
+	// with t2, one with t3, frame_id NULL so the rimsky_frames FK is
+	// not exercised.
 	t1 := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
 	t2 := time.Date(2026, 6, 14, 11, 0, 0, 0, time.UTC)
 	t3 := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
@@ -231,11 +232,12 @@ func TestMessagesList_DeliveredAfterBefore(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Messages.Insert[%d]: %v", i, err)
 		}
-		// Stamp delivered_at directly — MarkDelivered requires a real
-		// frame row, which would mean threading the rimsky_frames FK
-		// just for this filter test. The persistence layer's WHERE
-		// clause is the unit under test; the column write itself goes
-		// through the same fixed-width format formatTime emits.
+		// @deliberate: stamp delivered_at directly — MarkDelivered
+		// requires a real frame row, which would mean threading the
+		// rimsky_frames FK just for this filter test. The persistence
+		// layer's WHERE clause is the unit under test; the column write
+		// itself goes through the same fixed-width format formatTime
+		// emits.
 		if _, err := rawDB.ExecContext(ctx,
 			`UPDATE rimsky_messages SET delivered_at = ? WHERE id = ?`,
 			tt.Format("2006-01-02T15:04:05.000000000Z07:00"), ids[i].String(),
@@ -246,8 +248,8 @@ func TestMessagesList_DeliveredAfterBefore(t *testing.T) {
 
 	instUUID := shared.UUID(instanceID)
 
-	// delivered_after = t1 → returns rows with delivered_at strictly
-	// greater than t1 (so the t2 and t3 rows, NOT the t1 row).
+	// @deliberate: delivered_after = t1 returns rows with delivered_at
+	// strictly greater than t1 (the t2 and t3 rows, NOT the t1 row).
 	after := t1
 	page, err := messages.List(ctx, persistence.MessageListFilter{
 		InstanceID:     &instUUID,
@@ -260,8 +262,8 @@ func TestMessagesList_DeliveredAfterBefore(t *testing.T) {
 		t.Fatalf("delivered_after filter: got %d rows, want 2 (t2, t3)", len(page.Rows))
 	}
 
-	// delivered_before = t3 → returns rows with delivered_at strictly
-	// less than t3 (so the t1 and t2 rows, NOT the t3 row).
+	// @deliberate: delivered_before = t3 returns rows with delivered_at
+	// strictly less than t3 (the t1 and t2 rows, NOT the t3 row).
 	before := t3
 	page, err = messages.List(ctx, persistence.MessageListFilter{
 		InstanceID:      &instUUID,
@@ -274,8 +276,8 @@ func TestMessagesList_DeliveredAfterBefore(t *testing.T) {
 		t.Fatalf("delivered_before filter: got %d rows, want 2 (t1, t2)", len(page.Rows))
 	}
 
-	// Both bounds in combination → returns rows strictly between them
-	// (so only the t2 row).
+	// @deliberate: both bounds in combination return rows strictly
+	// between them (only the t2 row).
 	page, err = messages.List(ctx, persistence.MessageListFilter{
 		InstanceID:      &instUUID,
 		DeliveredAfter:  &after,

@@ -99,8 +99,9 @@ func Handler(deps HandlerDeps) http.Handler {
 			return
 		}
 		token := strings.TrimSpace(r.Header.Get("Authorization"))
-		// Strip an optional `Bearer ` prefix; tolerated for executor
-		// convenience, mirroring the attributes-callback handler.
+		// @deliberate: strip an optional `Bearer ` prefix; tolerated for
+		// executor convenience, mirroring the attributes-callback
+		// handler.
 		token = strings.TrimPrefix(token, "Bearer ")
 		token = strings.TrimSpace(token)
 		if token == "" {
@@ -113,10 +114,11 @@ func Handler(deps HandlerDeps) http.Handler {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		// Bound the body read so a malicious / runaway executor cannot
-		// exhaust supervisor memory by streaming gigabytes. The cap
-		// mirrors the attribute-writeback body limit; spill threshold
-		// policy lives in the ScratchWriter adapter.
+		// @constraint: bound the body read so a malicious / runaway
+		// executor cannot exhaust supervisor memory by streaming
+		// gigabytes. The cap mirrors the attribute-writeback body
+		// limit; spill threshold policy lives in the ScratchWriter
+		// adapter.
 		const maxBody = 64 * 1024 * 1024
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 		if err != nil {

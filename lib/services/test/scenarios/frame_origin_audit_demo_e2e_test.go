@@ -59,7 +59,9 @@ func TestFrameOriginAuditDemo_RunExitsZero(t *testing.T) {
 		t.Fatalf("frame-origin-audit-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
 	}
 
-	// Sanity: confirm the template path exists on disk.
+	// @deliberate: confirm the template path exists on disk —
+	// belt-and-suspenders for the Falsifier "shipped example isn't a
+	// real runnable templatespec."
 	if _, err := os.Stat(templatePath); err != nil {
 		t.Fatalf("shipped template %s missing on disk: %v — the frame-origin-audit demo's template is broken", templatePath, err)
 	}

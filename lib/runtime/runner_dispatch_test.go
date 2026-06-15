@@ -794,8 +794,8 @@ func TestSubstituteAttributesSchema_CarryForward_SourceBoundOverwrites(t *testin
 		},
 	}
 	rctx := attributes.ResolveContext{Params: json.RawMessage(`{"what": "config"}`)}
-	// Carry-forward holds a stale value for the same property name; the
-	// source-bound resolution MUST replace it.
+	// @constraint: carry-forward holds a stale value for the same
+	// property name; the source-bound resolution MUST replace it.
 	carryForward := map[string]any{"prompt": "stale carried value"}
 	out, err := substituteAttributesSchema(schema, rctx, carryForward)
 	if err != nil {
@@ -845,18 +845,20 @@ func TestSubstituteAttributesSchema_CarryForward_DefaultIsFloor(t *testing.T) {
 		if err != nil {
 			t.Fatalf("substituteAttributesSchema: %v", err)
 		}
-		// The carry-forward value wins; the static default is the floor
-		// under it (only lands when carry-forward has no entry).
+		// @constraint: the carry-forward value wins; the static default
+		// is the floor under it (only lands when carry-forward has no
+		// entry).
 		if got, want := out["model"], "claude-opus-4-7"; got != want {
 			t.Fatalf("carry-forward did not beat default: want %q, got %v", want, got)
 		}
 	})
 
 	t.Run("executor-written carry-forward survives unchanged", func(t *testing.T) {
-		// Canonical stateful pattern: a readOnly+no-source+no-default
-		// property whose carry-forward value must reach the executor
-		// (the loop_counter `count` shape). Substitution does NOT touch
-		// such properties — the seed survives verbatim.
+		// @constraint: canonical stateful pattern — a
+		// readOnly+no-source+no-default property whose carry-forward
+		// value must reach the executor (the loop_counter `count`
+		// shape). Substitution does NOT touch such properties — the
+		// seed survives verbatim.
 		schemaRO := map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -965,7 +967,6 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 		}, tx); err != nil {
 			return err
 		}
-		// Main RunScope first, then instance referring to it.
 		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
 			ID:         fx.mainScopeID,
 			GraphName:  tmplspec.MainGraphName,
@@ -1010,8 +1011,8 @@ func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixt
 			return err
 		}
 		fx.frameID = frameID
-		// A parent run in the main scope on the caller node, used to
-		// anchor the sub-graph RunScope's parent_run_id. Keyed on
+		// @constraint: a parent run in the main scope on the caller
+		// node anchors the sub-graph RunScope's parent_run_id. Keyed on
 		// callerNodeID, NOT nodeID, so the (stateful-node, main-scope)
 		// idempotency slot stays free for the writeback rows.
 		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
@@ -1109,10 +1110,11 @@ func makeStatefulCounterAcq(fx carryForwardFixture, scopeID shared.UUID) *acquis
 func TestResolveAttributes_CarryForward_SameScope(t *testing.T) {
 	ctx := context.Background()
 	fx := seedCarryForwardFixture(t, ctx)
-	// Two prior writebacks in the same RunScope: count=1, then count=2.
-	// updated_at ORDER BY DESC in GetLatestByNode picks the most recent
-	// row (count=2). The intermediate run must be `Complete`d before the
-	// next CreateChildRun so the (node_id, run_scope_id) idempotency
+	// @constraint: two prior writebacks in the same RunScope —
+	// count=1, then count=2. updated_at ORDER BY DESC in
+	// GetLatestByNode picks the most recent row (count=2). The
+	// intermediate run must be `Complete`d before the next
+	// CreateChildRun so the (node_id, run_scope_id) idempotency
 	// guard (in-flight phase) admits a fresh row — mirrors how a
 	// production retry / recalculate cycle settles the prior dispatch
 	// before the next runs.
@@ -1137,9 +1139,9 @@ func TestResolveAttributes_CarryForward_SameScope(t *testing.T) {
 	if schema == nil {
 		t.Fatalf("expected non-nil schema, got nil")
 	}
-	// The third dispatch sees count=2 from carry-forward (NOT the schema
-	// default of 0). The `max` property has no carry-forward source — it
-	// lands at the static default of 3.
+	// @constraint: the third dispatch sees count=2 from carry-forward
+	// (NOT the schema default of 0). The `max` property has no
+	// carry-forward source — it lands at the static default of 3.
 	if got := resolved["count"]; got != float64(2) {
 		t.Fatalf("count: want carry-forward 2, got %v", got)
 	}
@@ -1164,8 +1166,8 @@ func TestResolveAttributes_CarryForward_SameScope(t *testing.T) {
 func TestResolveAttributes_CarryForward_CrossRunScope_Empty(t *testing.T) {
 	ctx := context.Background()
 	fx := seedCarryForwardFixture(t, ctx)
-	// Seed a writeback in the MAIN RunScope; the sub-graph dispatch
-	// below must NOT see it (sub-graph sealing).
+	// @constraint: a writeback in the MAIN RunScope must NOT leak into
+	// the sub-graph dispatch below (sub-graph sealing).
 	_ = seedPriorWriteback(t, ctx, fx, fx.mainScopeID, map[string]any{"count": float64(5)})
 
 	args := RunArgs{
@@ -1174,10 +1176,10 @@ func TestResolveAttributes_CarryForward_CrossRunScope_Empty(t *testing.T) {
 		Clock:        shared.SystemClock{},
 		SupervisorID: "sup-carry-forward",
 	}
-	// Dispatch in the SUB-graph RunScope. Carry-forward hydration lookup
-	// keys on (nodeID, subScopeID) and the JOIN filter excludes the
-	// main-scope row written above. The bag falls through to the schema
-	// default.
+	// @constraint: dispatch in the SUB-graph RunScope — carry-forward
+	// hydration lookup keys on (nodeID, subScopeID) and the JOIN
+	// filter excludes the main-scope row written above. The bag falls
+	// through to the schema default.
 	acq := makeStatefulCounterAcq(fx, fx.subScopeID)
 	resolved, _, err := resolveAttributes(ctx, args, acq)
 	if err != nil {

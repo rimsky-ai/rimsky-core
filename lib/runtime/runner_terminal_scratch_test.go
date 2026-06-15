@@ -53,9 +53,9 @@ func TestApplyTerminalScratchInTx_EmptyScratchIsNoOp(t *testing.T) {
 		NodeID:     shared.UUID{2},
 	}
 
-	// Empty scratch: WriteScratchInTx MUST NOT be issued. Any prior
-	// row state (mid-dispatch callback write, recovery-copied bytes)
-	// survives.
+	// @constraint: empty scratch — WriteScratchInTx MUST NOT be issued.
+	// Any prior row state (mid-dispatch callback write, recovery-copied
+	// bytes) survives.
 	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, nil); err != nil {
 		t.Fatalf("applyTerminalScratchInTx nil scratch: %v", err)
 	}
@@ -87,7 +87,6 @@ func TestApplyTerminalScratchInTx_SubgraphExitIsNoOp(t *testing.T) {
 		NodeID:     shared.UUID{2},
 		NodeDef:    &node.TemplateNodeDef{IsSubgraphExit: true},
 	}
-	// Non-empty scratch + exit marker → no write.
 	if err := applyTerminalScratchInTx(context.Background(), args, nil, acq, []byte("ignored")); err != nil {
 		t.Fatalf("applyTerminalScratchInTx exit: %v", err)
 	}
@@ -99,8 +98,9 @@ func TestApplyTerminalScratchInTx_SubgraphExitIsNoOp(t *testing.T) {
 func TestApplyTerminalScratchInTx_NonEmptyWritesInline(t *testing.T) {
 	t.Parallel()
 	rec := &scratchRecorder{}
-	// Zero BlobSpillThreshold + nil Blob means shouldSpillBlob returns
-	// false, so this lands inline regardless of size.
+	// @deliberate: zero BlobSpillThreshold + nil Blob means
+	// shouldSpillBlob returns false, so this lands inline regardless
+	// of size.
 	args := RunArgs{Queue: rec}
 	acq := &acquisition{
 		DispatchID: shared.UUID{1},

@@ -120,11 +120,12 @@ func StartPublisherSubscriptionsForInstance(
 			// below.
 			resolvedConfig = p.Config
 		}
-		// MessageType has no default — the legacy "invalidate" fallback
-		// retired with the envelope's kind→type rename. The template
-		// validator rejects PublisherSpec entries with an empty
-		// message_type at registration, so by the time we mount a
-		// publisher-subscription the value is non-empty by construction.
+		// @constraint: MessageType has no default — the legacy
+		// "invalidate" fallback retired with the envelope's kind→type
+		// rename. The template validator rejects PublisherSpec entries
+		// with an empty message_type at registration, so by the time we
+		// mount a publisher-subscription the value is non-empty by
+		// construction.
 		row := persistence.PublisherSubscriptionRow{
 			ID:             subID,
 			InstanceID:     instanceID,

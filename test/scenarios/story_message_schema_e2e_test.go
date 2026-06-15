@@ -54,17 +54,17 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// The receiver runs through the stub executor and produces a small
-	// terminal/success row each dispatch — the observable proxy for "the
-	// message-virtual-node settled and stale-marked me, the supervisor
-	// ran my dispatch."
+	// @deliberate: the receiver runs through the stub executor and
+	// produces a small terminal/success row each dispatch — the
+	// observable proxy for "the message-virtual-node settled and
+	// stale-marked me, the supervisor ran my dispatch."
 	h.Stub.WhenType("receiver").Success(map[string]any{"observed": "ok"}, true, "ran")
 
-	// Two declared message types: a simple one with a single string
-	// field, and a more complex one with a nested array. Both leg
-	// behaviour tests rely on the simple one; the second exists to
-	// confirm the declared_types response carries the full registry on
-	// rejection, not just the first entry.
+	// @deliberate: two declared message types — a simple one with a
+	// single string field, and a more complex one with a nested array.
+	// Both leg-behaviour tests rely on the simple one; the second
+	// exists to confirm the declared_types response carries the full
+	// registry on rejection, not just the first entry.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "story-message-schema", Version: "1",
 		Messages: []spec.MessageSchema{
@@ -93,9 +93,9 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "receiver",
 					Executor: "stub",
-					// Subscribe to the message-virtual-node-type's
-					// terminal/success — the standard subscription grammar
-					// the cascade walker matches at frame boundary.
+					// @deliberate: subscribe to the message-virtual-node-
+					// type's terminal/success — the standard subscription
+					// grammar the cascade walker matches at frame boundary.
 					Subscribes: []node.SubscriptionEntry{
 						{Node: "ping/recheck", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 					},
@@ -103,11 +103,11 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// The substitution leaf that reads from the
-						// triggering message body. The auto-subscribe
-						// rule and the explicit subscribes: entry above
-						// both ground the receiver to ping/recheck's
-						// settle.
+						// @deliberate: the substitution leaf that reads
+						// from the triggering message body. The auto-
+						// subscribe rule and the explicit subscribes:
+						// entry above both ground the receiver to
+						// ping/recheck's settle.
 						"reason": map[string]any{
 							"type":   "string",
 							"source": "{{messages.ping/recheck.reason}}",
@@ -122,15 +122,11 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-story-message-schema", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
-	// -------------------------------------------------------------------
-	// Leg A — UNDECLARED type
-	// -------------------------------------------------------------------
-	// Drive the rejection leg FIRST so the persistence assertion below
-	// ("no rimsky_messages row for the rejected type") is checked at a
-	// clean baseline. The handler's registry-lookup gate runs INSIDE the
-	// tx but BEFORE the idempotency-key insert and BEFORE the envelope
-	// insert (see lib/control/controlapi/messages.go), so a 400 leaves
-	// neither row.
+	// @deliberate: drive the rejection leg FIRST so the persistence
+	// assertion below ("no rimsky_messages row for the rejected type")
+	// is checked at a clean baseline. The handler's registry-lookup
+	// gate runs INSIDE the tx but BEFORE the idempotency-key insert and
+	// BEFORE the envelope insert, so a 400 leaves neither row.
 	respUndeclared := postMessage(t, h.ControlBase, iid, map[string]any{
 		"type":    "totally-not-declared",
 		"payload": map[string]any{},
@@ -149,10 +145,11 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 	require.ElementsMatch(t, []string{"flush/cache", "ping/recheck"}, undeclaredBody.DeclaredTypes,
 		"response must list the full declared registry, not just the first entry")
 
-	// Persistence-layer falsifier: no rimsky_messages row landed for the
-	// rejected type. The handler's gate runs before the envelope insert,
-	// so a 400 must leave the ledger untouched. Falsifier: "a message of
-	// an undeclared type lands in the ledger and is silently dropped."
+	// @deliberate: persistence-layer falsifier — no rimsky_messages row
+	// landed for the rejected type. The handler's gate runs before the
+	// envelope insert, so a 400 must leave the ledger untouched.
+	// Falsifier: "a message of an undeclared type lands in the ledger
+	// and is silently dropped."
 	var undeclaredCount int
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = $2`,
@@ -160,9 +157,6 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 	require.Equal(t, 0, undeclaredCount,
 		"undeclared type must not pollute the message ledger")
 
-	// -------------------------------------------------------------------
-	// Leg B — DECLARED type opens a frame and stale-marks the receiver
-	// -------------------------------------------------------------------
 	respDeclared := postMessage(t, h.ControlBase, iid, map[string]any{
 		"type":    "ping/recheck",
 		"payload": map[string]any{"reason": "operator-triggered-check"},
@@ -177,19 +171,17 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 	require.NoError(t, json.Unmarshal(respDeclared.raw, &declaredResp))
 	require.NotEmpty(t, declaredResp.MessageID)
 
-	// Locate the receiver node row so we can poll its state. The node
-	// materializes at instance-create time (the same path as every other
-	// scenario test).
 	receiver := h.FindNode(iid, "receiver")
 	require.NotNil(t, receiver, "receiver node must exist on the instance")
 
-	// The acceptance assertion is at the user-observable surface: the
-	// receiver runs and emits terminal/success after the message lands.
-	// "Stale → running → terminal/success" is what the user sees through
-	// the supervisor's dispatch path — the message-virtual-node-settle
-	// → cascade-walker pipeline drove it. Asserting only at fresh-state
-	// would catch the cascade but miss the dispatch; asserting at
-	// terminal/success demonstrates the full round-trip.
+	// @deliberate: the acceptance assertion is at the user-observable
+	// surface — the receiver runs and emits terminal/success after the
+	// message lands. "Stale → running → terminal/success" is what the
+	// user sees through the supervisor's dispatch path — the message-
+	// virtual-node-settle → cascade-walker pipeline drove it. Asserting
+	// only at fresh-state would catch the cascade but miss the
+	// dispatch; asserting at terminal/success demonstrates the full
+	// round-trip.
 	require.True(t,
 		h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 20*time.Second),
 		"receiver did not reach fresh — message-virtual-node settle did not stale-mark and dispatch")
@@ -197,12 +189,13 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 		h.WaitForEventKind(receiver.ID, "terminal/success", 20*time.Second),
 		"receiver did not emit terminal/success — frame did not open with the delivered message")
 
-	// The triggering_message_id surface assertion: the frame that opened
-	// to deliver this message carries triggering_message_id = the
-	// just-inserted envelope's id. This is the load-bearing observability
-	// invariant the frame-origin-audit story rests on, and the only way
-	// to confirm the spec's acceptance "the instance opens a frame and
-	// the receivers I have declared via subscriptions stale-mark."
+	// @deliberate: the triggering_message_id surface assertion — the
+	// frame that opened to deliver this message carries
+	// triggering_message_id = the just-inserted envelope's id. This is
+	// the load-bearing observability invariant the frame-origin-audit
+	// story rests on, and the only way to confirm the spec's acceptance
+	// "the instance opens a frame and the receivers I have declared via
+	// subscriptions stale-mark."
 	frames := getFrames(t, h.ControlBase, iid, "")
 	require.NotEmpty(t, frames, "at least one frame must exist for this instance")
 	matched := false
@@ -218,11 +211,6 @@ func TestStoryMessageSchema_DeclaredAndUndeclaredTypes(t *testing.T) {
 		"no frame carries triggering_message_id = %s; observed: %+v",
 		declaredResp.MessageID, frames)
 }
-
-// -------------------------------------------------------------------
-// HTTP helpers — shared by every Pass-11 acceptance proof in this
-// package.
-// -------------------------------------------------------------------
 
 // postMessage POSTs a typed message to /v1/instances/{id}/messages with
 // the mandatory Idempotency-Key header. Returns the raw HTTP response

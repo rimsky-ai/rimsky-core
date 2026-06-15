@@ -128,11 +128,10 @@ func TestMessageRouting_PublisherPostsEnvelopeToInstanceMessages(t *testing.T) {
 	if rec.Body["type"] != "sensor/observation" {
 		t.Errorf("body.type: %v", rec.Body["type"])
 	}
-	// `target` is no longer on the envelope: the
-	// `rimsky_messages.target` column was retired in migration 010 of
-	// the 2026-06-14 message-schema-layer reshape; routing happens via
-	// the subscription's target_node on rimsky's side, not via a wire
-	// envelope field.
+	// @constraint: `target` is no longer on the envelope — the
+	// `rimsky_messages.target` column was retired by the message-
+	// schema-layer reshape; routing happens via the subscription's
+	// target_node on rimsky's side, not via a wire envelope field.
 	if _, present := rec.Body["target"]; present {
 		t.Errorf("body.target unexpectedly present: %v", rec.Body["target"])
 	}

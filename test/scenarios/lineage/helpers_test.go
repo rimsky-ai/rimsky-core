@@ -63,8 +63,8 @@ func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables,
 	_ = sourceNodeID
 	var frameID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// Seed a synthetic typed-message envelope so the
-		// rimsky_frames.triggering_message_id FK is satisfied.
+		// @constraint: synthetic envelope satisfies the
+		// rimsky_frames.triggering_message_id NOT NULL FK.
 		msgID := shared.UUID(uuid.New())
 		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,

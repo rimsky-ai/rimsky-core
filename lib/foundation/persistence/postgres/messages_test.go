@@ -164,10 +164,10 @@ func TestMessagesList_DeliveredAfterBefore_Postgres(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Messages.Insert[%d]: %v", i, err)
 		}
-		// Stamp delivered_at directly — MarkDelivered requires a real
-		// rimsky_frames row, which would mean threading the FK just for
-		// this filter test. The persistence-layer WHERE clause is the
-		// unit under test.
+		// @deliberate: stamp delivered_at directly — MarkDelivered
+		// requires a real rimsky_frames row, which would mean threading
+		// the FK just for this filter test. The persistence-layer WHERE
+		// clause is the unit under test.
 		pgtest.ExecForTest(ctx, t, d,
 			`UPDATE rimsky_messages SET delivered_at = $1 WHERE id = $2`, tt, ids[i])
 	}

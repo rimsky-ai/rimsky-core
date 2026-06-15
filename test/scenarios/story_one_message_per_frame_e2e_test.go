@@ -52,8 +52,9 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// The receiver runs through the stub executor; its terminal/success
-	// count must equal N (one run per delivered message).
+	// @deliberate: the receiver runs through the stub executor; its
+	// terminal/success count must equal N (one run per delivered
+	// message).
 	h.Stub.WhenType("receiver").Success(map[string]any{"observed": "ok"}, true, "ran")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
@@ -82,11 +83,11 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// Substitution from the message body — this
-						// surface fails LOUDLY ("multiple messages
-						// error") if a frame ever carried more than
-						// one delivered message. The spec falsifier
-						// pins exactly this.
+						// @deliberate: substitution from the message body
+						// — this surface fails LOUDLY ("multiple
+						// messages error") if a frame ever carried more
+						// than one delivered message. The spec
+						// falsifier pins exactly this.
 						"observed_index": map[string]any{
 							"type":   "integer",
 							"source": "{{messages.ping/recheck.index}}",
@@ -101,18 +102,16 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-story-one-msg-per-frame", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
-	// POST N messages in quick succession. The handler enqueues each
-	// envelope AND its delivering frame inside the request tx
-	// (lib/control/controlapi/messages.go::handleCreateMessage). With
-	// the one-message-per-frame guarantee (TD-one-message-per-frame),
-	// each envelope opens its own queued frame; the supervisor's
-	// frame engine promotes one at a time and the delivery sweep
-	// stamps delivered_at on exactly the running frame's envelope.
+	// @deliberate: POST N messages in quick succession. The handler
+	// enqueues each envelope AND its delivering frame inside the
+	// request tx. With the one-message-per-frame guarantee, each
+	// envelope opens its own queued frame; the supervisor's frame
+	// engine promotes one at a time and the delivery sweep stamps
+	// delivered_at on exactly the running frame's envelope.
 	//
-	// N = 10 mirrors the plan task wording verbatim. Lower N values
-	// would still exercise the property; 10 is large enough to expose
-	// any "two-messages-share-a-frame" coalescence regression while
-	// staying within scenario-test timing budgets.
+	// @deliberate: N = 10 is large enough to expose any "two-messages-
+	// share-a-frame" coalescence regression while staying within
+	// scenario-test timing budgets.
 	const N = 10
 	postedIDs := make([]string, 0, N)
 	for i := 0; i < N; i++ {
@@ -126,8 +125,6 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 			resp.status == http.StatusOK || resp.status == http.StatusCreated,
 			"message %d POST must succeed; status=%d body=%s",
 			i, resp.status, string(resp.raw))
-		// Decode the message_id so we can correlate envelopes with
-		// frames later.
 		var body struct {
 			MessageID string `json:"message_id"`
 		}
@@ -137,10 +134,10 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 		postedIDs = append(postedIDs, body.MessageID)
 	}
 
-	// Poll the cascade-graph endpoint until all N frames have settled.
-	// The exit condition: rimsky_frames has N completed rows for this
-	// instance AND the receiver has run N times. We bound the wait so a
-	// stuck cascade fails the test rather than hanging.
+	// @deliberate: poll until all N frames have settled. Exit when
+	// rimsky_frames has N completed rows for this instance AND the
+	// receiver has run N times. Bound the wait so a stuck cascade fails
+	// the test rather than hanging.
 	receiver := h.FindNode(iid, "receiver")
 	require.NotNil(t, receiver)
 
@@ -163,12 +160,12 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	require.GreaterOrEqual(t, receiverRuns, N,
 		"receiver must run %d times; got %d (one-message-per-frame broken)", N, receiverRuns)
 
-	// Persistence-layer assertions. These are the load-bearing
-	// falsifier-killing checks: the spec's "two messages share a
-	// frame" failure mode lands exactly here.
+	// @deliberate: persistence-layer falsifier-killing checks below —
+	// the spec's "two messages share a frame" failure mode lands
+	// exactly here.
 
-	// (1) Exactly N message envelopes exist for this instance with the
-	// declared type.
+	// @deliberate: (1) exactly N message envelopes exist for this
+	// instance with the declared type.
 	var msgCount int
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'ping/recheck'`,
@@ -176,12 +173,12 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 	require.Equal(t, N, msgCount,
 		"exactly %d ping/recheck envelopes must exist; got %d", N, msgCount)
 
-	// (2) At least N rimsky_frames rows exist for this instance, and
-	// the distinct triggering_message_id count equals at least N. The
-	// "at least" wording leaves room for any synthetic wake frame the
-	// frame engine might insert as a tail-housekeeping step; the
-	// load-bearing property is that no two of OUR posted message IDs
-	// share a triggering_message_id.
+	// @deliberate: (2) at least N rimsky_frames rows exist for this
+	// instance, and the distinct triggering_message_id count equals at
+	// least N. The "at least" wording leaves room for any synthetic
+	// wake frame the frame engine might insert as a tail-housekeeping
+	// step; the load-bearing property is that no two of OUR posted
+	// message IDs share a triggering_message_id.
 	var distinctTriggers int
 	h.QueryRowSQL(
 		`SELECT count(DISTINCT triggering_message_id) FROM rimsky_frames WHERE instance_id = $1`,
@@ -190,7 +187,7 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 		"each posted message must produce a distinct frame; got %d distinct triggering_message_id values for %d posted messages",
 		distinctTriggers, N)
 
-	// (3) Every posted message_id appears as some frame's
+	// @deliberate: (3) every posted message_id appears as some frame's
 	// triggering_message_id. Pin the per-message frame mapping.
 	frames := getFrames(t, h.ControlBase, iid, "")
 	triggers := make(map[string]frameView, len(frames))
@@ -208,10 +205,10 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 			mid, fr.MessageType)
 	}
 
-	// (4) The load-bearing one-message-per-frame property at the
-	// message-ledger join: every frame in the in-flight cohort carries
-	// at most one delivered message. We assert this with a GROUP BY
-	// frame_id query against rimsky_messages.
+	// @deliberate: (4) the load-bearing one-message-per-frame property
+	// at the message-ledger join — every frame in the in-flight cohort
+	// carries at most one delivered message. Assert this with a GROUP
+	// BY frame_id query against rimsky_messages.
 	var maxMessagesPerFrame int
 	h.QueryRowSQL(
 		`SELECT COALESCE(MAX(c), 0) FROM (
@@ -225,10 +222,10 @@ func TestStoryOneMessagePerFrame_NMessagesProduceNDistinctFrames(t *testing.T) {
 		"no frame may carry more than one delivered message; got max=%d (coalescence regression)",
 		maxMessagesPerFrame)
 
-	// (5) Receiver dispatch count matches frame count. One frame, one
-	// dispatch. This pins the spec's "two messages posted in close
-	// succession produce two frames (one each)" wording at the
-	// observable-dispatch level.
+	// @deliberate: (5) receiver dispatch count matches frame count —
+	// one frame, one dispatch. This pins the spec's "two messages
+	// posted in close succession produce two frames (one each)"
+	// wording at the observable-dispatch level.
 	require.Equal(t, N, receiverRuns,
 		"receiver must run exactly %d times (one per frame); got %d",
 		N, receiverRuns)

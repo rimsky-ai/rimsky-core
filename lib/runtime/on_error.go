@@ -264,7 +264,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			// proto:executor.proto::ExecuteRequest.prior_dispatch_id must
 			// resolve to the run that errored, not nil after the remove.
 			priorID := cur.InFlightRunID
-			// Scratch carry-forward: load the prior dispatch row's
+			// @constraint: load the prior dispatch row's
 			// executor-attached scratch BEFORE the remove so the new
 			// retry dispatch carries the executor's in-flight state
 			// across the retry-after-error transition. Skipping it

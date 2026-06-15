@@ -101,7 +101,7 @@ func TestHandler_TerminalIteration_EmitsDoneAtMax(t *testing.T) {
 }
 
 func TestHandler_BeyondMax_EmitsDone(t *testing.T) {
-	// Defensive: even when count already equals or exceeds max, the
+	// @constraint: even when count already equals or exceeds max, the
 	// handler emits `done` rather than looping forever. The cascade
 	// stops firing once `done` lights up.
 	events := dispatchAndCapture(t, newReq(t, map[string]any{"max": 3, "count": 5}))

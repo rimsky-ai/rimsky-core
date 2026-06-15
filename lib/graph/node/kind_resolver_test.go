@@ -30,7 +30,8 @@ func TestKindAliasMap_DuplicateRegisterReturnsError(t *testing.T) {
 	if !strings.Contains(err.Error(), "duplicate registration") {
 		t.Fatalf("expected duplicate-registration error, got %q", err.Error())
 	}
-	// The original mapping is preserved when the duplicate is rejected.
+	// @constraint: the original mapping is preserved when the duplicate
+	// is rejected.
 	alias, ok := m.Resolve("loop_counter")
 	if !ok || alias != "rimsky.loop_counter" {
 		t.Fatalf("original mapping should be preserved, got alias=%q ok=%v", alias, ok)
@@ -125,9 +126,9 @@ func TestValidateKindDeclaration_NilAliasesRejectsAnyKind(t *testing.T) {
 }
 
 func TestValidateKindDeclaration_NoKindNoExecutorIsLegal(t *testing.T) {
-	// Pure-cascade node with neither kind nor executor stays admitted —
-	// the kind-validator must not regress existing behavior. Validate
-	// without seeded aliases.
+	// @constraint: pure-cascade node with neither kind nor executor
+	// stays admitted — the kind-validator must not regress existing
+	// behavior. Validate without seeded aliases.
 	spec := &TemplateSpec{
 		Name:    "t",
 		Version: "1",
@@ -172,7 +173,7 @@ func TestCanonicalizeKindSugar_Idempotent(t *testing.T) {
 		}},
 	}
 	CanonicalizeKindSugar(spec, aliases)
-	// No-op when Kind is empty.
+	// @constraint: no-op when Kind is empty.
 	if spec.Nodes[0].Executor != "rimsky.loop_counter" {
 		t.Fatalf("expected Executor unchanged, got %q", spec.Nodes[0].Executor)
 	}

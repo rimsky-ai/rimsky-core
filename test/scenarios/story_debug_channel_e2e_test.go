@@ -86,10 +86,10 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// The worker echoes the resolved attribute bag back through Observed
-	// so Leg 3 can confirm the operator-supplied attribute landed on the
-	// executor's ExecuteRequest after the gate clears. Every leg uses the
-	// same worker stub.
+	// @deliberate: the worker echoes the resolved attribute bag back
+	// through Observed so Leg 3 can confirm the operator-supplied
+	// attribute landed on the executor's ExecuteRequest after the gate
+	// clears. Every leg uses the same worker stub.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "ran")
 
 	tpl := node.TemplateSpec{
@@ -109,21 +109,19 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 	}
 	tid := h.DeployTemplate(tpl)
 
-	// -------------------------------------------------------------------
-	// Leg 1 — HEALTHY instance refuses with 409 + predicate names in body
-	// -------------------------------------------------------------------
-	// A fresh instance with no pause-flag and no breakpoint must refuse;
-	// this is the falsifier-side "override accepted on neither legal
-	// state" property. The handler's gate runs INSIDE the request tx, so
-	// the 409 is the authoritative read of "neither paused nor breakpoint-
-	// stopped" at request-arrival time.
+	// @deliberate: a fresh instance with no pause-flag and no breakpoint
+	// must refuse; this is the falsifier-side "override accepted on
+	// neither legal state" property. The handler's gate runs INSIDE the
+	// request tx, so the 409 is the authoritative read of "neither
+	// paused nor breakpoint-stopped" at request-arrival time.
 	iidHealthy := h.CreateInstance(tid, "ck-debug-healthy", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iidHealthy)
 
 	workerHealthy := h.FindNode(iidHealthy, "worker")
 	require.NotNil(t, workerHealthy)
-	// Let the initial dispatch retire so the instance is unambiguously
-	// "healthy" (Fresh, not in-flight, not paused) when we probe the gate.
+	// @deliberate: let the initial dispatch retire so the instance is
+	// unambiguously "healthy" (Fresh, not in-flight, not paused) when we
+	// probe the gate.
 	require.True(t,
 		h.WaitForNodeState(workerHealthy.ID, cascade.NodeStateFresh, 15*time.Second),
 		"initial dispatch must reach fresh before the healthy-gate leg probes")
@@ -145,33 +143,31 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 	require.ElementsMatch(t, []string{"paused", "breakpoint"}, healthyBody.States,
 		"the 409 body must list BOTH legal predicates, not just one")
 
-	// Falsifier protection: a 409 must NOT have written a debug.override.applied
-	// audit row. The handler short-circuits before the audit append; this
-	// pins that the gate is structural and not merely cosmetic.
+	// @deliberate: falsifier protection — a 409 must NOT have written a
+	// debug.override.applied audit row. The handler short-circuits
+	// before the audit append; this pins that the gate is structural
+	// and not merely cosmetic.
 	require.Equal(t, 0, countDebugOverrideAuditRows(t, h, iidHealthy),
 		"healthy-instance refusal must not leave an audit row")
 
-	// -------------------------------------------------------------------
-	// Leg 2 — PAUSED instance accepts; node-run mutates to stale; the
-	// cascade picks the stale run up after the gate clears.
-	// -------------------------------------------------------------------
-	// To exercise the invalidate_node mutation arm, the override must
-	// land while an in-flight run row exists for the worker node. The
-	// natural way to hold a run in-flight without spinning bare SQL is
-	// the pause-mode breakpoint: the supervisor enters before_dispatch,
-	// the matcher matches, the hit row commits, and the dispatch parks
-	// with the in-flight run row alive. We then ALSO toggle paused=true
-	// via /pause so the gate reads as "paused" first (the handler
-	// short-circuits on paused before consulting BreakpointHits, so
-	// gate_state lands on "paused" — exactly the Leg-2 acceptance).
+	// @deliberate: to exercise the invalidate_node mutation arm, the
+	// override must land while an in-flight run row exists for the
+	// worker node. The natural way to hold a run in-flight without
+	// spinning bare SQL is the pause-mode breakpoint: the supervisor
+	// enters before_dispatch, the matcher matches, the hit row commits,
+	// and the dispatch parks with the in-flight run row alive. We then
+	// ALSO toggle paused=true via /pause so the gate reads as "paused"
+	// first (the handler short-circuits on paused before consulting
+	// BreakpointHits, so gate_state lands on "paused" — exactly the
+	// Leg-2 acceptance).
 	iidPaused := createInstanceWithPaused(t, h.ControlBase, tid, "ck-debug-paused")
 	require.NotEqual(t, shared.UUID{}, iidPaused)
 
 	bpIDPaused := installPauseModeBreakpoint(t, h.ControlBase, iidPaused, "worker")
 
-	// Resume the create-time pause so the supervisor begins dispatching;
-	// the breakpoint will catch the worker before the executor fires and
-	// park the dispatch with an in-flight run row.
+	// @deliberate: resume the create-time pause so the supervisor begins
+	// dispatching; the breakpoint will catch the worker before the
+	// executor fires and park the dispatch with an in-flight run row.
 	resumeResp := postJSON(t,
 		h.ControlBase+fmt.Sprintf("/v1/instances/%s/resume", iidPaused.String()),
 		map[string]any{})
@@ -182,18 +178,16 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 	require.Equal(t, "before_dispatch", string(hitPaused.Checkpoint),
 		"the parked dispatch's hit must record the before_dispatch checkpoint")
 
-	// Re-pause via the real /pause endpoint so the gate's "paused" leg
-	// is the one that satisfies the predicate. This is the Leg-2
-	// observable: an operator decides to pause an instance that has
-	// already entered debug state.
+	// @deliberate: re-pause via the real /pause endpoint so the gate's
+	// "paused" leg is the one that satisfies the predicate. This is the
+	// Leg-2 observable: an operator decides to pause an instance that
+	// has already entered debug state.
 	pauseResp := postJSON(t,
 		h.ControlBase+fmt.Sprintf("/v1/instances/%s/pause", iidPaused.String()),
 		map[string]any{})
 	require.Equal(t, http.StatusOK, pauseResp.status,
 		"re-pause via /pause must succeed; body=%s", string(pauseResp.raw))
 
-	// Snapshot the worker node row so we can verify its run state
-	// transitions to "stale" after the override.
 	workerPaused := h.FindNode(iidPaused, "worker")
 	require.NotNil(t, workerPaused, "worker node row must exist on the paused instance")
 	preMutateRunID := getInFlightRunID(t, h, workerPaused.ID)
@@ -222,17 +216,17 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 			"a 200 with runs_mutated=0 means the handler returned a status struct "+
 			"without actually mutating the graph")
 
-	// The user-observable assertion the falsifier names: the named
-	// node-run row's state actually transitions to "stale". Assert on
-	// the run row's state, not merely the HTTP status struct.
+	// @deliberate: the user-observable assertion the falsifier names —
+	// the named node-run row's state actually transitions to "stale".
+	// Assert on the run row's state, not merely the HTTP status struct.
 	require.Equal(t, cascade.NodeStateStale,
 		getRunState(t, h, *preMutateRunID),
 		"invalidate_node must transition the run row to state=stale; "+
 			"asserting at the HTTP-status layer alone would let a no-op handler pass")
 
-	// Audit-event-row assertion the falsifier also names. The handler
-	// appends in the same tx as the mutation; by the time the 200 is
-	// observed the row is committed.
+	// @deliberate: audit-event-row assertion the falsifier also names.
+	// The handler appends in the same tx as the mutation; by the time
+	// the 200 is observed the row is committed.
 	require.Equal(t, 1, countDebugOverrideAuditRows(t, h, iidPaused),
 		"a successful override must leave exactly one audit row of kind debug.override.applied")
 	auditPaused := readLatestDebugOverrideAudit(t, h, iidPaused)
@@ -240,15 +234,14 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 	require.Equal(t, "worker", auditPaused["node_type"])
 	require.Equal(t, "paused", auditPaused["gate_state"])
 
-	// Cascade-resume observation: after the gate clears (resume +
-	// breakpoint delete), the supervisor picks the stale run up and the
-	// worker re-dispatches. This is the "the override applies in that
-	// frame" observable — the override didn't just mutate state, the
-	// cascade observed the mutation and progressed.
+	// @deliberate: cascade-resume observation — after the gate clears
+	// (resume + breakpoint delete), the supervisor picks the stale run
+	// up and the worker re-dispatches. This is the "the override
+	// applies in that frame" observable — the override didn't just
+	// mutate state, the cascade observed the mutation and progressed.
 	observedBeforeResume := stubWorkerCount(h)
-	// Resume the pause, then delete the breakpoint so the parked
-	// dispatch releases. Deleting cascade-removes the hit row (per the
-	// existing breakpoint lifecycle), unblocking waitForResume.
+	// @deliberate: deleting the breakpoint cascade-removes the hit row
+	// (per the existing breakpoint lifecycle), unblocking waitForResume.
 	resumeResp2 := postJSON(t,
 		h.ControlBase+fmt.Sprintf("/v1/instances/%s/resume", iidPaused.String()),
 		map[string]any{})
@@ -256,18 +249,14 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 		"resume after override must succeed; body=%s", string(resumeResp2.raw))
 	deleteBreakpoint(t, h.ControlBase, iidPaused, bpIDPaused)
 
-	// The cascade picks the stale node up — the worker re-dispatches.
 	require.True(t, waitForStubWorkerCount(h, observedBeforeResume+1, 20*time.Second),
 		"after the gate clears, the supervisor must re-dispatch the stale-marked worker — "+
 			"this is the falsifier's user-observable: the override actually drove the cascade forward")
 
-	// -------------------------------------------------------------------
-	// Leg 3 — BREAKPOINT-stopped instance accepts; attribute commits;
-	// the cascade carries the override into the next dispatch.
-	// -------------------------------------------------------------------
-	// A fresh instance lets us pin the breakpoint-gate leg in isolation
-	// (no pause flag set); the gate's "paused" check is false, the
-	// "breakpoint" check is true, so gate_state lands on "breakpoint".
+	// @deliberate: a fresh instance lets us pin the breakpoint-gate leg
+	// in isolation (no pause flag set); the gate's "paused" check is
+	// false, the "breakpoint" check is true, so gate_state lands on
+	// "breakpoint".
 	iidBP := createInstanceWithPaused(t, h.ControlBase, tid, "ck-debug-breakpoint")
 	require.NotEqual(t, shared.UUID{}, iidBP)
 	bpIDBP := installPauseModeBreakpoint(t, h.ControlBase, iidBP, "worker")
@@ -311,16 +300,16 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 			"a 200 with runs_mutated=0 means the handler returned a status struct "+
 			"without actually mutating the graph")
 
-	// The user-observable assertion: the attribute row for the in-flight
-	// run commits the operator key. Asserting at the HTTP-status layer
-	// alone would let a no-op handler pass. The override invalidate side
-	// of set_attribute also stale-marks; we read the run's attribute row
-	// and confirm the operator value is there.
+	// @deliberate: the user-observable assertion — the attribute row for
+	// the in-flight run commits the operator key. Asserting at the
+	// HTTP-status layer alone would let a no-op handler pass. The
+	// override invalidate side of set_attribute also stale-marks; we
+	// read the run's attribute row and confirm the operator value is
+	// there.
 	require.Equal(t, operatorAttrValue,
 		getRunAttributeValue(t, h, *preBPRunID, operatorAttrKey),
 		"set_attribute must merge the operator key/value into the in-flight run's attribute row")
 
-	// Audit assertion.
 	require.Equal(t, 1, countDebugOverrideAuditRows(t, h, iidBP),
 		"a successful override must leave exactly one audit row of kind debug.override.applied")
 	auditBP := readLatestDebugOverrideAudit(t, h, iidBP)
@@ -330,15 +319,15 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 	require.Equal(t, operatorAttrKey, auditBP["attribute_key"])
 	require.Equal(t, operatorAttrValue, auditBP["attribute_value"])
 
-	// Cascade-resume observation: after the breakpoint is deleted, the
-	// parked dispatch releases (waitForResume returns) and the cascade
-	// progresses. This is the "the override applies in that frame"
-	// observable for the set_attribute arm — the operator value
+	// @deliberate: cascade-resume observation — after the breakpoint is
+	// deleted, the parked dispatch releases (waitForResume returns) and
+	// the cascade progresses. This is the "the override applies in that
+	// frame" observable for the set_attribute arm — the operator value
 	// committed to the attribute row AND the cascade actually advanced
 	// past the breakpoint, rather than the override being a no-op
 	// trapped in persistence.
 	//
-	// Per the spec, the set_attribute override is read by downstream
+	// @deliberate: the set_attribute override is read by downstream
 	// substitution from `{{nodes.<type>.attribute.<field>}}`; the same-
 	// node next-dispatch re-runs the template's schema so the in-place
 	// rebound value is not observable on the executor's bag for THIS
@@ -352,22 +341,18 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 		"after the breakpoint is deleted, the parked dispatch must release; "+
 			"without this assertion the proof would not exhibit the cascade resume")
 
-	// -------------------------------------------------------------------
-	// Leg 4 — PERMISSION DENIED — an API key without `instance:debug-override`
-	// gets HTTP 403 from the auth gate, regardless of the instance's
-	// debug state.
-	// -------------------------------------------------------------------
-	// Minting the admin key leaves anonymous mode for the rest of the
-	// control-api process; we do this LAST so prior legs' bare-HTTP
-	// helpers continued to traverse the anonymous-mode allow path. After
-	// this point, every request needs a Bearer.
+	// @deliberate: minting the admin key leaves anonymous mode for the
+	// rest of the control-api process; we do this LAST so prior legs'
+	// bare-HTTP helpers continued to traverse the anonymous-mode allow
+	// path. After this point, every request needs a Bearer.
 	adminKey := mintAnonymousAdminKey(t, h.ControlBase)
 	restrictedKey := mintRestrictedKey(t, h.ControlBase, adminKey)
 
-	// Re-use iidBP for the deny probe. The instance state does not
-	// matter for the auth-gate leg — the gate fires before the handler
-	// runs, so 403 is the answer regardless of paused / breakpoint /
-	// healthy. We pick an arbitrary instance that already exists.
+	// @deliberate: re-use iidBP for the deny probe. The instance state
+	// does not matter for the auth-gate leg — the gate fires before the
+	// handler runs, so 403 is the answer regardless of paused /
+	// breakpoint / healthy. We pick an arbitrary instance that already
+	// exists.
 	respDenied := postDebugOverride(t, h.ControlBase, iidBP, map[string]any{
 		"action":    "invalidate_node",
 		"node_type": "worker",
@@ -375,18 +360,15 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, respDenied.status,
 		"a key without `instance:debug-override` must receive HTTP 403 from the auth gate; "+
 			"body=%s", string(respDenied.raw))
-	// Auth-gate denial must not have written a debug.override.applied
-	// audit row — the audit row in the handler counts mutations, not
-	// denied requests. The deny path's own auth.access_denied row is
-	// orthogonal to the falsifier and not asserted here.
+	// @deliberate: auth-gate denial must not have written a
+	// debug.override.applied audit row — the audit row in the handler
+	// counts mutations, not denied requests. The deny path's own
+	// auth.access_denied row is orthogonal to the falsifier and not
+	// asserted here.
 	require.Equal(t, 1, countDebugOverrideAuditRows(t, h, iidBP),
 		"403 from the auth gate must not write a debug.override.applied row — "+
 			"the row in the handler counts actual mutations only")
 }
-
-// -------------------------------------------------------------------
-// Helpers — scoped to the STORY-debug-channel proof.
-// -------------------------------------------------------------------
 
 // postDebugOverride POSTs to /v1/instances/{id}/debug/override and
 // returns the raw response. When bearerKey is empty (anonymous-mode
@@ -452,7 +434,8 @@ func installPauseModeBreakpoint(t *testing.T, controlBase string, instanceID sha
 	body := map[string]any{
 		"checkpoint": "before_dispatch",
 		"matcher":    map[string]any{"node_type": nodeType},
-		// `mode` omitted → defaults to "pause" per the breakpoint spec.
+		// @constraint: `mode` omitted → defaults to "pause" per the
+		// breakpoint spec.
 	}
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)

@@ -65,8 +65,8 @@ func TestFrames_ListReturnsAllForInstance(t *testing.T) {
 
 	instID := newInstanceForMessages(t, h, "frames-list")
 	instUUID := mustParseUUID(t, instID)
-	// Seed 3 additional frames beyond the root frame already minted at
-	// instance create — total 4 (or however the test template produces).
+	// @deliberate: seed 3 additional frames beyond the root frame
+	// already minted at instance create.
 	want := map[string]string{}
 	for i := 0; i < 3; i++ {
 		fid, mid := seedFrameForTest(t, ctx, h, instUUID, fmt.Sprintf("test/seed-%d", i))

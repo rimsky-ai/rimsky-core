@@ -292,16 +292,16 @@ func TestV1Registry(t *testing.T) {
 		// header is stamped. Only the compose-CLI's privileged key
 		// carries it.
 		"compose:origin": true,
-		// Cascade-graph frames-read surface (spec
-		// 2026-06-14-message-schema-layer-design). The read endpoints
-		// expose the rimsky_frames.triggering_message_id wiring the
-		// frame-origin-audit story consumes.
+		// @deliberate: cascade-graph frames-read surface. The read
+		// endpoints expose rimsky_frames.triggering_message_id wiring
+		// the frame-origin-audit story consumes.
+		// @story: frame-origin-audit
 		"instance:list-frames": true,
 		"instance:read-frame":  true,
-		// Debug channel (spec 2026-06-14-message-schema-layer-design,
-		// Pass 9 / STORY-debug-channel). Ad-hoc operator override on a
+		// @deliberate: debug-channel ad-hoc operator override on a
 		// paused or pause-mode-breakpoint-hit instance; gated to the
 		// debuggable lifecycle states only.
+		// @story: debug-channel
 		"instance:debug-override": true,
 	}
 	for _, a := range surplus {

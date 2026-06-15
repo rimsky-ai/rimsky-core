@@ -178,8 +178,8 @@ func TestHandler_BodyTooLarge(t *testing.T) {
 	writer := newFakeScratchWriter()
 	srv := mountHandler(t, HandlerDeps{Writer: writer, Auth: func(string, shared.UUID) error { return nil }})
 
-	// One byte over the 64 MiB cap. Use a streaming reader so we don't
-	// allocate the full buffer in test memory.
+	// @deliberate: one byte over the 64 MiB cap. Use a streaming reader
+	// so we don't allocate the full buffer in test memory.
 	const maxBody = 64 * 1024 * 1024
 	body := io.MultiReader(
 		io.LimitReader(zeroReader{}, maxBody),

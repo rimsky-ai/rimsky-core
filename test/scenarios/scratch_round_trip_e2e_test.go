@@ -95,12 +95,13 @@ func (h *scratchAware) Execute(
 ) error {
 	n := atomic.AddInt64(&h.dispatches, 1)
 	if n == 1 {
-		// Persist scratch onto this dispatch row BEFORE terminating so
-		// the recovery enqueue path can find it. Use the in-process
-		// ScratchWriter (the runtime helper threaded in through
-		// HandlerContext per decision:scratch-protocol) — that's the
-		// in-process equivalent of the HTTP `POST /v1/runs/{run_id}/
-		// scratch` route.
+		// @constraint: persist scratch onto this dispatch row BEFORE
+		// terminating so the recovery enqueue path can find it. Use
+		// the in-process ScratchWriter (the runtime helper threaded
+		// through HandlerContext per
+		// decision:scratch-protocol) — the in-process equivalent of
+		// the HTTP `POST /v1/runs/{run_id}/scratch` route.
+		// @decision: scratch-protocol
 		sw := hctx.Scratch
 		if sw == nil {
 			return fmt.Errorf("scratchAware: HandlerContext.Scratch is nil")
@@ -108,8 +109,8 @@ func (h *scratchAware) Execute(
 		if err := sw.Write(ctx, h.writeBytes); err != nil {
 			return fmt.Errorf("scratchAware: scratch.Write: %w", err)
 		}
-		// Terminal: Success on the happy path; Error on the retry-
-		// after-error path so the supervisor's policy chain
+		// @deliberate: terminal — Success on the happy path; Error on
+		// the retry-after-error path so the supervisor's policy chain
 		// supersedes this dispatch with a retry row.
 		if h.failOnFirst {
 			return sink.Send(&genv1.ExecuteEvent{
@@ -134,8 +135,8 @@ func (h *scratchAware) Execute(
 			},
 		})
 	}
-	// Recovery dispatch: capture the incoming Scratch verbatim and
-	// exit Success.
+	// @deliberate: recovery dispatch — capture the incoming Scratch
+	// verbatim and exit Success.
 	h.mu.Lock()
 	h.seenOnRetry = append([]byte(nil), req.Scratch...)
 	h.mu.Unlock()
@@ -195,10 +196,11 @@ func runHeartbeatStaleVariant(t *testing.T, scratchBytes []byte) {
 		NoScheduler:  true,
 	})
 
-	// Register a no-op node and let the harness's startup seed the
-	// node row; the recovery enqueue we drive directly via
-	// SweepStaleHeartbeats. The template's executor doesn't need to
-	// resolve — the test doesn't actually dispatch the recovery row.
+	// @deliberate: register a no-op node and let the harness's
+	// startup seed the node row; the recovery enqueue is driven
+	// directly via SweepStaleHeartbeats. The template's executor
+	// doesn't need to resolve — the test doesn't dispatch the
+	// recovery row.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "scratch-heartbeat-stale", Version: "1",
 		Nodes: []node.TemplateNodeDef{
@@ -208,10 +210,10 @@ func runHeartbeatStaleVariant(t *testing.T, scratchBytes []byte) {
 	iid := h.CreateInstance(tid, "ck-scratch-heartbeat-stale", map[string]any{})
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n, "worker node missing")
-	_ = url // referenced in the comment above; the variant doesn't need an inproc handler for the round-trip assertion at the persistence layer
+	_ = url
 
-	// Build the partition RunScope manually so the sweep can
-	// re-enqueue into it (matches the existing
+	// @deliberate: build the partition RunScope manually so the sweep
+	// can re-enqueue into it (matches the existing
 	// fanout_heartbeat_stale_recovery pattern).
 	mainScopeID := h.GetMainRunScopeID(iid)
 	parentRunID := shared.UUID(uuid.New())
@@ -241,8 +243,8 @@ func runHeartbeatStaleVariant(t *testing.T, scratchBytes []byte) {
 		})
 	}))
 
-	// Clear pre-existing run rows except the parent so the zombie
-	// shows up unambiguously.
+	// @constraint: clear pre-existing run rows except the parent so
+	// the zombie shows up unambiguously.
 	_, err = h.Pool.Exec(h.Ctx,
 		`DELETE FROM rimsky_node_runs WHERE node_id = $1 AND id != $2`,
 		n.ID, parentRunID)
@@ -274,8 +276,8 @@ func runHeartbeatStaleVariant(t *testing.T, scratchBytes []byte) {
 		HeartbeatTimeout: 5 * time.Second,
 	}))
 
-	// Read the new dispatch row's scratch_inline column. It MUST be
-	// byte-for-byte equal to the zombie's scratch.
+	// @constraint: the new dispatch row's scratch_inline column MUST
+	// be byte-for-byte equal to the zombie's scratch.
 	var got []byte
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
 		SELECT scratch_inline
@@ -327,8 +329,8 @@ func runRetryAfterErrorVariant(t *testing.T, scratchBytes []byte) {
 	n := harness.FindNode(iid, "worker")
 	require.NotNil(t, n, "worker node missing")
 
-	// Wait for the retry to terminate — the second dispatch's
-	// Success transitions the node to fresh.
+	// @constraint: the retry's second dispatch's Success transitions
+	// the node to fresh.
 	require.True(t,
 		harness.WaitForNodeState(n.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker MUST reach fresh after retry — first dispatch errors with retry policy, second succeeds")
@@ -382,9 +384,9 @@ func runRecalculateVariant(t *testing.T, scratchBytes []byte) {
 		uuid.UUID(iid),
 	).Scan(&frameID))
 
-	// Clear pre-existing dispatch rows so the seeded prior is
-	// unambiguous, then seed a terminal prior dispatch row carrying
-	// scratch.
+	// @constraint: clear pre-existing dispatch rows so the seeded
+	// prior is unambiguous, then seed a terminal prior dispatch row
+	// carrying scratch.
 	_, err := harness.Pool.Exec(harness.Ctx,
 		`DELETE FROM rimsky_node_runs WHERE node_id = $1`, target.ID)
 	require.NoError(t, err)
@@ -399,10 +401,10 @@ func runRecalculateVariant(t *testing.T, scratchBytes []byte) {
 	`, priorID, target.ID, frameID, mainScopeID, scratchBytes)
 	require.NoError(t, err)
 
-	// Drive the recalculate enqueue: load prior scratch + enqueue
-	// with disposition="recalculate" + InitialScratch* set. Identical
-	// SQL shape to cascade_recalculate.go's branch that handles a
-	// retired-prior recalculate.
+	// @constraint: drive the recalculate enqueue — load prior scratch
+	// + enqueue with disposition="recalculate" + InitialScratch* set.
+	// Identical SQL shape to cascade_recalculate.go's branch that
+	// handles a retired-prior recalculate.
 	priorCopy := shared.UUID(priorID)
 	require.NoError(t, harness.Persist.Transaction(harness.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		inline, handle, handleBackend, lerr := harness.Queue.LoadScratchInTx(ctx, tx, priorCopy)
@@ -426,10 +428,10 @@ func runRecalculateVariant(t *testing.T, scratchBytes []byte) {
 		}, tx)
 	}))
 
-	// The recalculate enqueue created a new dispatch row for target
-	// with prior_dispatch_id=priorID + disposition=recalculate. Read
-	// its scratch_inline + disposition. Both MUST be the bytes/disp
-	// we asked for.
+	// @constraint: the recalculate enqueue created a new dispatch row
+	// for target with prior_dispatch_id=priorID + disposition=
+	// recalculate. The scratch_inline + disposition MUST be the
+	// bytes/disp we asked for.
 	var got []byte
 	var priorDispCheck string
 	require.NoError(t, harness.Pool.QueryRow(harness.Ctx, `
@@ -492,7 +494,7 @@ func TestScratchRoundTripMidDispatchHTTPCallbackE2E(t *testing.T) {
 	n := harness.FindNode(iid, "worker")
 	require.NotNil(t, n, "worker node missing")
 
-	// Wait for the first dispatch to terminate (Success) — the
+	// @constraint: the first dispatch terminates Success — the
 	// handler does the HTTP POST mid-dispatch then closes with
 	// Success carrying NO scratch attachment.
 	require.True(t,
@@ -503,12 +505,11 @@ func TestScratchRoundTripMidDispatchHTTPCallbackE2E(t *testing.T) {
 	case err := <-postErr:
 		t.Fatalf("mid-dispatch HTTP scratch POST failed: %v", err)
 	case <-posted:
-		// good — the handler observed a 204 from the supervisor
 	case <-time.After(time.Second):
 		t.Fatalf("handler never reported a successful mid-dispatch HTTP scratch POST")
 	}
 
-	// Read back the dispatch row's scratch_inline column — proves
+	// @constraint: the dispatch row's scratch_inline column proves
 	// the HTTP callback persisted the bytes onto the row that
 	// received them.
 	var first []byte
@@ -523,26 +524,26 @@ func TestScratchRoundTripMidDispatchHTTPCallbackE2E(t *testing.T) {
 		"after the mid-dispatch HTTP POST the dispatch row's scratch_inline MUST be the posted bytes: want=%x got=%x",
 		scratchBytes, first)
 
-	// Now seed a heartbeat-stale recovery against the row that just
-	// completed: re-open the row by simulating a zombie that holds
-	// scratch=first. The simplest deterministic shape is the
-	// existing zombie-seed pattern from runHeartbeatStaleVariant —
-	// but the existing row is already completed with the scratch
-	// on it, so we can simply update it to look like a zombie and
-	// drive SweepStaleHeartbeats.
+	// @deliberate: seed a heartbeat-stale recovery against the row
+	// that just completed — re-open the row by simulating a zombie
+	// that holds scratch=first. The simplest deterministic shape is
+	// the existing zombie-seed pattern from
+	// runHeartbeatStaleVariant; the existing row is already
+	// completed with the scratch on it, so we update it to look like
+	// a zombie and drive SweepStaleHeartbeats.
 	var dispatchID uuid.UUID
 	require.NoError(t, harness.Pool.QueryRow(harness.Ctx,
 		`SELECT id FROM rimsky_node_runs WHERE node_id = $1 ORDER BY enqueued_at DESC, id DESC LIMIT 1`,
 		n.ID,
 	).Scan(&dispatchID))
 
-	// Restore the dispatch row to an "active running with stale
-	// heartbeat" shape so the sweep picks it up. Per the post-stage-3
-	// column drop, every state-machine column (state, last_heartbeat_at,
-	// claimed_by → assigned_supervisor_id projection) lives on
-	// rimsky_node_runs — rimsky_nodes carries only identity + scheduling
-	// metadata. The LATERAL projection in `nodeSelect` re-surfaces the
-	// in-flight row's columns to NodeRow callers.
+	// @constraint: restore the dispatch row to an "active running
+	// with stale heartbeat" shape so the sweep picks it up. Every
+	// state-machine column (state, last_heartbeat_at, claimed_by →
+	// assigned_supervisor_id projection) lives on rimsky_node_runs;
+	// rimsky_nodes carries only identity + scheduling metadata. The
+	// LATERAL projection in `nodeSelect` re-surfaces the in-flight
+	// row's columns to NodeRow callers.
 	_, err := harness.Pool.Exec(harness.Ctx, `
 		UPDATE rimsky_node_runs
 		   SET phase = 'active', state = 'running',
@@ -552,13 +553,13 @@ func TestScratchRoundTripMidDispatchHTTPCallbackE2E(t *testing.T) {
 		 WHERE id = $1
 	`, dispatchID)
 	require.NoError(t, err)
-	// Bind rimsky_nodes.frame_id + executor so the sweep's re-enqueue
-	// path resolves them when the node row is the row source.
-	// SweepStaleHeartbeats reads the dispatch row's frame_id directly,
-	// but it also re-reads `cur.Executor` for the recovery enqueue;
-	// without an executor stamped on rimsky_nodes the recovery row's
-	// executor_name lands NULL and the supervisor's SelectCandidates
-	// filter drops it.
+	// @constraint: bind rimsky_nodes.frame_id + executor so the
+	// sweep's re-enqueue path resolves them when the node row is the
+	// row source. SweepStaleHeartbeats reads the dispatch row's
+	// frame_id directly, but it also re-reads `cur.Executor` for the
+	// recovery enqueue; without an executor stamped on rimsky_nodes
+	// the recovery row's executor_name lands NULL and the
+	// supervisor's SelectCandidates filter drops it.
 	var dispatchFrameID uuid.UUID
 	require.NoError(t, harness.Pool.QueryRow(harness.Ctx,
 		`SELECT frame_id FROM rimsky_node_runs WHERE id = $1`, dispatchID,
@@ -576,8 +577,8 @@ func TestScratchRoundTripMidDispatchHTTPCallbackE2E(t *testing.T) {
 		HeartbeatTimeout: 5 * time.Second,
 	}))
 
-	// The new dispatch row MUST carry the scratch bytes the
-	// mid-dispatch HTTP callback wrote — the bytes the executor
+	// @constraint: the new dispatch row MUST carry the scratch bytes
+	// the mid-dispatch HTTP callback wrote — the bytes the executor
 	// would observe on `req.Scratch` at the recovery dispatch.
 	var got []byte
 	require.NoError(t, harness.Pool.QueryRow(harness.Ctx, `

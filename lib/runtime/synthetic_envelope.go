@@ -118,8 +118,8 @@ func EnqueueSyntheticWakeFrame(
 	for k, v := range extraPayload {
 		body[k] = v
 	}
-	// `wake_node_ids` is set after the merge so a caller cannot smuggle
-	// in a contradictory list via extraPayload.
+	// @constraint: `wake_node_ids` is set after the merge so a caller
+	// cannot smuggle in a contradictory list via extraPayload.
 	body["wake_node_ids"] = wakeStrs
 	if len(pairs) > 0 {
 		pairStrs := make([]map[string]string, 0, len(pairs))
@@ -170,6 +170,14 @@ type upstreamRefreshPair struct {
 // template, or edge map cannot be resolved — the caller's wake list is
 // returned unchanged in that case.
 //
+// @blessed-invariant: upstream-staled-before-receiver-dispatch — for
+// every force_upstream_refresh subscription whose receiver is wake-
+// marked by a synthetic envelope, the upstream is wake-marked in the
+// same frame and a (receiver_run, upstream_run) wait-set row is pre-
+// installed so the existing eligibility predicate gates the receiver
+// until the upstream settles. The structural guarantee the user
+// named: upstream candidates are evaluated before receiver dispatch
+// begins, with no callbacks, no complete flags, no per-site code.
 // @story: upstream-pull-on-invalidate
 // @concept: cascade
 func expandWakeWithUpstreamRefresh(

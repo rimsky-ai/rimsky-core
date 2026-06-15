@@ -151,10 +151,10 @@ func emitCascadeMessageInTx(
 	if emitMessageType == "" {
 		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: emits_message type required")
 	}
-	// Serialize the resolved attribute set as the message body.
-	// nil/empty resolves to `{}` (a body shape that's structurally valid
-	// JSON but carries no fields) rather than `null` — receivers walking
-	// `payload.<field>` expect an object envelope.
+	// @constraint: serialize the resolved attribute set as the message
+	// body. nil/empty resolves to `{}` (a body shape that's structurally
+	// valid JSON but carries no fields) rather than `null` — receivers
+	// walking `payload.<field>` expect an object envelope.
 	if resolvedAttrs == nil {
 		resolvedAttrs = map[string]any{}
 	}
@@ -167,17 +167,18 @@ func emitCascadeMessageInTx(
 	senderKind := "instance"
 	sender := "instance:" + instanceID.String()
 
-	// Reserve a candidate message id. The idempotency table will return
-	// the actual id to use (either this fresh one on a clean insert, or
-	// the previously-recorded one on replay).
+	// @deliberate: reserve a candidate message id. The idempotency
+	// table returns the actual id to use (either this fresh one on a
+	// clean insert, or the previously-recorded one on replay).
 	candidateID := shared.UUID(uuid.New())
 
 	dedupRow, inserted, err := tables.MessageIdempotencies().InsertOrLookup(ctx, tx, persistence.MessageIdempotencyRow{
 		InstanceID: instanceID,
 		SenderKind: senderKind,
 		Sender:     sender,
-		// Cascade-emit has no per-caller "subject" — the sender's
-		// `instance:<id>` already provides isolation among instances.
+		// @deliberate: cascade-emit has no per-caller "subject" — the
+		// sender's `instance:<id>` already provides isolation among
+		// instances.
 		SenderSubject:  "",
 		IdempotencyKey: idempotencyKey,
 		MessageID:      candidateID,
@@ -186,10 +187,11 @@ func emitCascadeMessageInTx(
 		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: idempotency upsert: %w", err)
 	}
 	if !inserted {
-		// Replay: a prior emit-attempt for this dispatch_id already
-		// landed an envelope row. Return the original id; the caller's
-		// downstream observers (event log, cascade walker) can use it
-		// just as if this attempt had succeeded. No second envelope row.
+		// @deliberate: replay — a prior emit-attempt for this
+		// dispatch_id already landed an envelope row. Return the
+		// original id; the caller's downstream observers (event log,
+		// cascade walker) can use it just as if this attempt had
+		// succeeded. No second envelope row.
 		return dedupRow.MessageID, true, nil
 	}
 
@@ -204,13 +206,15 @@ func emitCascadeMessageInTx(
 	if err := EnqueueMessage(ctx, tx, tables.Messages(), enqueueReq); err != nil {
 		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: insert envelope: %w", err)
 	}
-	// Queue the frame that will deliver this envelope. Same outer tx
-	// keeps {envelope, frame} atomic — a rollback after this point rolls
-	// both back; a crash between the two is impossible. Without this
-	// enqueue the envelope would stay pending forever (the delivery
-	// sweep only iterates RUNNING frames and never creates new ones),
-	// breaking STORY-cascade-emit / STORY-cross-frame-coupling /
-	// STORY-one-message-per-frame.
+	// @constraint: queue the frame that will deliver this envelope.
+	// Same outer tx keeps {envelope, frame} atomic — a rollback after
+	// this point rolls both back; a crash between the two is
+	// impossible. Without this enqueue the envelope would stay pending
+	// forever (the delivery sweep only iterates RUNNING frames and
+	// never creates new ones).
+	// @story: cascade-emit
+	// @story: cross-frame-coupling
+	// @story: one-message-per-frame
 	if _, err := frame.EnqueueFrame(ctx, tables, tx, instanceID, candidateID); err != nil {
 		return shared.UUID{}, false, fmt.Errorf("emitCascadeMessageInTx: enqueue frame: %w", err)
 	}

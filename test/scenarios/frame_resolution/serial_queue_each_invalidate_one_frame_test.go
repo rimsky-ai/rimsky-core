@@ -58,8 +58,8 @@ func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {
 		require.Equal(t, "completed", f.State, "frame %d not completed", i)
 		require.NotEqual(t, (frameRow{}).TriggeringMessageID, f.TriggeringMessageID,
 			"frame %d missing triggering_message_id", i)
-		// Each frame carries a distinct triggering message: each invalidate
-		// produces its own envelope (one-message-per-frame).
+		// @deliberate: distinct triggering message per frame proves
+		// one-envelope-per-invalidate.
 		seenTriggers[f.TriggeringMessageID.String()] = struct{}{}
 	}
 	require.Equal(t, totalFrames, len(seenTriggers),

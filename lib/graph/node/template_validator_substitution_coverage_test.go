@@ -54,7 +54,7 @@ func TestSubstitutionCoverage_PerFieldAttributeRefUncovered(t *testing.T) {
 			{
 				Type:     "rcv",
 				Executor: "h",
-				// NO subscribes: block — the substitution ref below is
+				// @deliberate: no subscribes — the substitution ref below is
 				// uncovered.
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
 					"type": "object",
@@ -97,8 +97,8 @@ func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 				Type:     "rcv",
 				Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					// Per-field subscription on `bar` — does NOT cover the
-					// whole-pull below (per the wildcard-asymmetry rule).
+					// @deliberate: per-field subscription on `bar` does NOT
+					// cover the whole-pull below (wildcard-asymmetry rule).
 					{
 						Node:                 "foo",
 						Type:                 "attribute/bar/changed",
@@ -144,7 +144,7 @@ func TestSubstitutionCoverage_EventRefUncovered(t *testing.T) {
 			{
 				Type:     "rcv",
 				Executor: "h",
-				// NO subscribes: entry naming foo's event — uncovered.
+				// @deliberate: no subscribes — event ref uncovered.
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -220,9 +220,9 @@ func assertSuggestedEntryShape(t *testing.T, entry map[string]any, expectedSende
 	require.Equal(t, false, suggested["force_upstream_refresh"],
 		"the suggested entry's force_upstream_refresh default must be false (conservative)")
 
-	// The note must be a sibling field — NOT embedded inside the
-	// suggested entry — so the entry remains valid drop-in JSON the
-	// author can copy-paste verbatim.
+	// @decision: uncovered-substitution-error-shape — the note must
+	// be a sibling field, not embedded inside the suggested entry, so
+	// the entry remains valid drop-in JSON the author can copy verbatim.
 	_, hasNoteInside := suggested["_note"]
 	require.False(t, hasNoteInside,
 		"suggested_subscribes_entry must not embed a _note field "+

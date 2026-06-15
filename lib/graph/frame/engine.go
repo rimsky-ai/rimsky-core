@@ -335,20 +335,19 @@ func advanceOneFrame(
 			}
 			runIDByNode[nodeID] = runID
 		}
-		// @deliberate: pre-install wait-set rows for every
-		// `wait_set_pairs` entry the synthetic envelope embedded. Each
-		// pair maps a receiver to a force_upstream_refresh upstream the
-		// receiver depends on; both are in this frame's wake_node_ids
-		// (the synthetic-envelope chokepoint auto-expanded them). The
-		// pre-installed wait-set row keys (frame, receiver_run,
-		// upstream_run) so the supervisor's existing eligibility
-		// predicate gates the receiver until the upstream settles +
-		// drains its wait-set; the cascade walker drains the row in the
-		// upstream's terminal tx; the substitution context builder
-		// reads the drained row at the receiver's dispatch — all
-		// existing machinery, no race window between stale-mark and
-		// gate install.
-		//
+		// @blessed-invariant: upstream-staled-before-receiver-dispatch
+		// — pre-install wait-set rows for every `wait_set_pairs` entry
+		// the synthetic envelope embedded. Each pair maps a receiver to
+		// a force_upstream_refresh upstream the receiver depends on;
+		// both are in this frame's wake_node_ids (the synthetic-envelope
+		// chokepoint auto-expanded them). The pre-installed wait-set
+		// row keys (frame, receiver_run, upstream_run) so the
+		// supervisor's existing eligibility predicate gates the receiver
+		// until the upstream settles + drains its wait-set; the cascade
+		// walker drains the row in the upstream's terminal tx; the
+		// substitution context builder reads the drained row at the
+		// receiver's dispatch — all existing machinery, no race window
+		// between stale-mark and gate install.
 		// @story: upstream-pull-on-invalidate
 		// @concept: wait-set
 		// @concept: cascade

@@ -80,11 +80,11 @@ func TestStoryTypedMessageSubstitution_RejectsReceiverTypoFieldAtRegistration(t 
 				"schema": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// Typo: the body_schema declares `reason`,
-						// not `not_a_real_field`. Registration must
-						// refuse, naming the offending field, so the
-						// author sees the typo at registration rather
-						// than at dispatch.
+						// @deliberate: typo — the body_schema declares
+						// `reason`, not `not_a_real_field`. Registration
+						// must refuse, naming the offending field, so
+						// the author sees the typo at registration
+						// rather than at dispatch.
 						"observed": map[string]any{
 							"type":   "string",
 							"source": "{{messages.ping/recheck.not_a_real_field}}",
@@ -107,7 +107,6 @@ func TestStoryTypedMessageSubstitution_RejectsReceiverTypoFieldAtRegistration(t 
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode,
 		"receiver-side typo must reject at registration; got status=%d body=%s",
 		resp.StatusCode, string(raw))
-	// Diagnostic mentions the offending substitution path.
 	require.Contains(t, string(raw), "not_a_real_field",
 		"rejection diagnostic must name the typo'd field; body=%s", string(raw))
 }
@@ -141,10 +140,10 @@ func TestStoryTypedMessageSubstitution_RejectsEmitterExtraFieldAtRegistration(t 
 					"type": "object",
 					"properties": map[string]any{
 						"pong_status": map[string]any{"type": "string"},
-						// Extra field the destination body doesn't
-						// have. Per concept:message-emitter-node
-						// "hidden state is not allowed because the
-						// attribute set IS the body."
+						// @concept: message-emitter-node — extra field
+						// the destination body doesn't have. "Hidden
+						// state is not allowed because the attribute
+						// set IS the body."
 						"extra_field": map[string]any{"type": "string"},
 					},
 					"required": []any{"pong_status"},
@@ -188,9 +187,9 @@ func TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge(t *testi
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// The receiver node reads the message body's `reason` field; the
-	// stub records that value back as its attribute so the test can
-	// verify the substitution resolved.
+	// @deliberate: the receiver node reads the message body's `reason`
+	// field; the stub records that value back as its attribute so the
+	// test can verify the substitution resolved.
 	h.Stub.WhenType("receiver").Success(map[string]any{
 		"echoed_reason": "saw-it",
 	}, true, "receiver ran")
@@ -238,7 +237,6 @@ func TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge(t *testi
 	iid := h.CreateInstance(tid, "ck-story-typed-msg-subst-runtime", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
-	// Post the message with a known reason field.
 	expectedReason := "operator-said-recheck"
 	resp := postMessage(t, h.ControlBase, iid, map[string]any{
 		"type":    "ping/recheck",
@@ -247,10 +245,9 @@ func TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge(t *testi
 	require.Truef(t, resp.status == http.StatusOK || resp.status == http.StatusCreated,
 		"message POST must succeed; status=%d body=%s", resp.status, string(resp.raw))
 
-	// Wait for the receiver to settle. The substitution at dispatch
-	// resolves `{{messages.ping/recheck.reason}}` against the
-	// envelope's body — the same resolver function the unit test in
-	// lib/graph/attribute/substitution_test.go exercises for both
+	// @deliberate: substitution at dispatch resolves
+	// `{{messages.ping/recheck.reason}}` against the envelope's body —
+	// the same resolver function the unit test exercises for both
 	// substitution surfaces.
 	receiver := h.FindNode(iid, "receiver")
 	require.NotNil(t, receiver)
@@ -258,12 +255,10 @@ func TestStoryTypedMessageSubstitution_RuntimeResolutionThroughBackEdge(t *testi
 		h.WaitForEventKind(receiver.ID, "terminal/success", 20*time.Second),
 		"receiver did not run — substitution may have failed")
 
-	// Read the persisted attribute row for this dispatch. The
-	// substitution must have resolved `reason_from_body` to the
-	// envelope's reason field. The persistence layer's attribute store
-	// keeps the resolved value alongside the dispatch row; the test
-	// asserts on the stored value rather than the wire shape so it's
-	// robust to any cosmetic JSON projection changes.
+	// @deliberate: read the persisted attribute row — substitution must
+	// have resolved `reason_from_body` to the envelope's reason field.
+	// Assert on the stored value rather than the wire shape so the
+	// test is robust to any cosmetic JSON projection changes.
 	var resolvedBody []byte
 	h.QueryRowSQL(
 		`SELECT data FROM rimsky_node_attributes

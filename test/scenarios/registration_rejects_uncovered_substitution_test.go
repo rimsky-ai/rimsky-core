@@ -76,8 +76,8 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 			refContains:      "nodes.foo.attribute",
 			attrPropContains: "all_of_foo",
 			suggestedSender:  "foo",
-			// asymmetry rule: per-field subscription does not cover the
-			// whole-pull; the wildcard is required.
+			// @deliberate: per-field subscription does not cover the
+			// whole-pull; the wildcard is required (coverage asymmetry).
 			suggestedType: "attribute/*",
 		},
 		{
@@ -160,7 +160,7 @@ func perFieldUncoveredSpec(name, version string) map[string]any {
 			{
 				"type":     "rcv",
 				"executor": "stub",
-				// NO subscribes — the substitution ref is uncovered.
+				// @deliberate: no subscribes — the substitution ref is uncovered.
 				"attributes": map[string]any{
 					"schema": map[string]any{
 						"type": "object",
@@ -226,7 +226,7 @@ func eventUncoveredSpec(name, version string) map[string]any {
 			{
 				"type":     "rcv",
 				"executor": "stub",
-				// NO subscribes — the event ref is uncovered.
+				// @deliberate: no subscribes — the event ref is uncovered.
 				"attributes": map[string]any{
 					"schema": map[string]any{
 						"type": "object",

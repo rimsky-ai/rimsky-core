@@ -55,11 +55,11 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// A's handler counts how many times it has run and decides whether
-	// the loop continues. The stub's per-type script always returns the
-	// same Success payload, so the "decide to stop" signal lives in
-	// `should_loop`. The body schema makes that a top-level field the
-	// emit-node can read via substitution.
+	// @deliberate: A's handler counts how many times it has run and
+	// decides whether the loop continues. The stub's per-type script
+	// always returns the same Success payload, so the "decide to stop"
+	// signal lives in `should_loop`. The body schema makes that a top-
+	// level field the emit-node can read via substitution.
 	h.Stub.WhenType("a").Success(map[string]any{
 		"counter":     1,
 		"should_loop": false,
@@ -98,12 +98,12 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 				node.TemplateNodeDef{
 					Type:     "a",
 					Executor: "stub",
-					// A subscribes to BOTH the initial wake-up and the
-					// loop-iterate message. Each frame that opens with
-					// either type fires A. The receiver reads
+					// @deliberate: A subscribes to BOTH the initial wake-up
+					// and the loop-iterate message. Each frame that opens
+					// with either type fires A. The receiver reads
 					// loop/iterate's body via the typed-message
-					// substitution grammar, pinning the spec's
-					// "receiver reads through the message body" surface.
+					// substitution grammar, pinning the spec's "receiver
+					// reads through the message body" surface.
 					Subscribes: []node.SubscriptionEntry{
 						{Node: "loop/wake", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 						{Node: "loop/iterate", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
@@ -138,11 +138,11 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 					Type:         "emitter",
 					EmitsMessage: "loop/iterate",
 					Subscribes: []node.SubscriptionEntry{
-						// Only fire when B's settle says the loop should
-						// continue. The cycle converges because the stub
-						// returns `should_loop=false` — the emit-node's
-						// CEL gate refuses, no message lands, no new
-						// frame opens.
+						// @deliberate: only fire when B's settle says the
+						// loop should continue. The cycle converges
+						// because the stub returns `should_loop=false` —
+						// the emit-node's CEL gate refuses, no message
+						// lands, no new frame opens.
 						{
 							Node:                 "b",
 							Type:                 "terminal/success",
@@ -180,7 +180,6 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-story-cfc-cycle", map[string]any{})
 	require.NotEqual(t, shared.UUID{}, iid)
 
-	// Send the initial wake message.
 	resp := postMessage(t, h.ControlBase, iid, map[string]any{
 		"type":    "loop/wake",
 		"payload": map[string]any{"trip_counter": 0},
@@ -188,11 +187,12 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 	require.Truef(t, resp.status == http.StatusOK || resp.status == http.StatusCreated,
 		"initial wake POST must succeed; status=%d body=%s", resp.status, string(resp.raw))
 
-	// Convergence: A runs at least once (the initial wake → A → B). The
-	// emit-node's CEL gate is `payload.attributes_delta.should_loop`,
-	// which is false because the stub returns should_loop=false. So no
-	// emit, no second frame, no second A run. Wait long enough that a
-	// hypothetical re-fire WOULD have shown up if the cycle were broken.
+	// @deliberate: convergence — A runs at least once (the initial wake
+	// → A → B). The emit-node's CEL gate is
+	// `payload.attributes_delta.should_loop`, which is false because
+	// the stub returns should_loop=false. So no emit, no second frame,
+	// no second A run. Wait long enough that a hypothetical re-fire
+	// WOULD have shown up if the cycle were broken.
 	aNode := h.FindNode(iid, "a")
 	bNode := h.FindNode(iid, "b")
 	require.NotNil(t, aNode)
@@ -215,10 +215,9 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle(t *testing.T) {
 	require.GreaterOrEqual(t, aRuns, 1, "A must run at least once on the initial wake")
 	require.GreaterOrEqual(t, bRuns, 1, "B must run at least once driven by A's terminal/success")
 
-	// The acceptance property: a SECOND frame must have opened for A
-	// after the initial wake-up frame. The wake message opened frame 1;
-	// the cycle didn't re-fire because should_loop=false, so we expect
-	// exactly the wake frame. Look at the message ledger:
+	// @deliberate: the acceptance property — the wake message opened
+	// frame 1; the cycle didn't re-fire because should_loop=false, so
+	// we expect exactly the wake frame in the message ledger:
 	// loop/wake from the initial post + zero loop/iterate emits (CEL
 	// blocked the emit).
 	var iterateMsgs int
@@ -244,16 +243,14 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// The stub returns should_loop=true for the first two trips through
-	// A/B and false on the third — encoded as a sequence in script
-	// order. The stub's WhenType doesn't natively support per-call
-	// outputs, so we drive convergence differently: A's "should_loop"
+	// @deliberate: the stub's WhenType doesn't natively support per-call
+	// outputs, so we drive convergence differently — A's "should_loop"
 	// depends on the typed-message trip_counter coming from the emit-
 	// node. A's attribute source reads the message body; the body's
 	// trip_counter increments each round; when it hits a ceiling, A's
 	// next run sees the ceiling and stops the loop.
 	//
-	// Since the stub returns a CONSTANT payload (always
+	// @deliberate: since the stub returns a CONSTANT payload (always
 	// should_loop=true), we converge by capping the emit-node CEL gate
 	// at trip_counter < 3 — the emit-node refuses to emit once the body
 	// it WOULD send carries trip_counter >= 3.
@@ -340,10 +337,10 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						// trip_counter increments by B's counter each
-						// iteration. Hard ceiling at 6 (B always returns
-						// counter=2, so the loop converges in three
-						// iterations: trip 2 → 4 → 6 → ceiling).
+						// @deliberate: trip_counter increments by B's
+						// counter each iteration. Hard ceiling at 6 (B
+						// always returns counter=2, so the loop converges
+						// in three iterations: trip 2 → 4 → 6 → ceiling).
 						"trip_counter": map[string]any{
 							"type":   "integer",
 							"source": "{{nodes.b.attribute.counter}}",
@@ -365,15 +362,15 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 	require.Truef(t, resp.status == http.StatusOK || resp.status == http.StatusCreated,
 		"initial wake must succeed; status=%d body=%s", resp.status, string(resp.raw))
 
-	// Allow up to 30s for the loop to converge. Each iteration takes a
-	// few scheduler ticks (~250ms each) + dispatch latency, so 5 trips
-	// is well within budget.
+	// @deliberate: allow up to 30s for the loop to converge. Each
+	// iteration takes a few scheduler ticks + dispatch latency, so 5
+	// trips is well within budget.
 	//
-	// The acceptance criterion: A runs at least twice. The first run is
-	// the initial wake-up; the second is the back-edge feedback from
-	// the emitter's first emission. Two runs prove the back-edge fires.
-	// (A real bug in the emit-node dispatch would leave A at exactly 1
-	// run.)
+	// @deliberate: the acceptance criterion — A runs at least twice.
+	// The first run is the initial wake-up; the second is the back-edge
+	// feedback from the emitter's first emission. Two runs prove the
+	// back-edge fires. A real bug in the emit-node dispatch would leave
+	// A at exactly 1 run.
 	aNode := h.FindNode(iid, "a")
 	require.NotNil(t, aNode)
 
@@ -392,11 +389,11 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 		"A must run at least twice — once on wake, then again on the back-edge feedback frame; got %d",
 		aRuns)
 
-	// Pin the typed-message substitution path: at least one loop/iterate
-	// envelope in the ledger, and the second one carries the body field
-	// that B's attribute produced. The body field IS the receiver's
-	// substitution source — this proves the substitution flowed
-	// end-to-end through the back-edge.
+	// @deliberate: pin the typed-message substitution path — at least
+	// one loop/iterate envelope in the ledger, and the second one
+	// carries the body field that B's attribute produced. The body
+	// field IS the receiver's substitution source — this proves the
+	// substitution flowed end-to-end through the back-edge.
 	var iterateBody []byte
 	h.QueryRowSQL(
 		`SELECT payload FROM rimsky_messages
@@ -411,9 +408,10 @@ func TestStoryCrossFrameCoupling_BackEdgeCycle_LoopsThenConverges(t *testing.T) 
 		"the body's trip_counter must reflect B's counter attribute via substitution; got %v",
 		decoded)
 
-	// Frame audit: at least two frames exist for this instance, each
-	// with a distinct triggering_message_id. The frame-origin-audit
-	// story's load-bearing surface: every frame has its origin.
+	// @deliberate: frame audit — at least two frames exist for this
+	// instance, each with a distinct triggering_message_id. The frame-
+	// origin-audit story's load-bearing surface: every frame has its
+	// origin.
 	frames := getFrames(t, h.ControlBase, iid, "")
 	require.GreaterOrEqual(t, len(frames), 2,
 		"at least two frames must exist (wake + at least one loop)")
@@ -453,9 +451,9 @@ func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// Worker fires on each drain message and produces a counter
-	// attribute. The constant value keeps the proof simple: the
-	// convergence is owned by the emit-node's CEL gate, not by the
+	// @deliberate: worker fires on each drain message and produces a
+	// counter attribute. The constant value keeps the proof simple —
+	// the convergence is owned by the emit-node's CEL gate, not by the
 	// worker's behaviour. The substitution chain in the emit-node
 	// always reads the same value, so it's the gate predicate that
 	// must terminate the loop.
@@ -504,17 +502,17 @@ func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
 					Type:         "self-drain-emit",
 					EmitsMessage: "drain/tick",
 					Subscribes: []node.SubscriptionEntry{
-						// The emit-node fires every time worker
-						// settles, regardless of frame origin. With
-						// the stub's constant value the chain reaches
-						// the bounded convergence inherent in the
-						// receiver's wait-set logic: the cascade
+						// @deliberate: the emit-node fires every time
+						// worker settles, regardless of frame origin.
+						// With the stub's constant value the chain
+						// reaches the bounded convergence inherent in
+						// the receiver's wait-set logic — the cascade
 						// walker drains finitely per frame, and the
-						// next-frame opening is gated by the
-						// terminal-resolution of THIS frame's emit-
-						// node. The bounded count comes from the
-						// runner's frame-end gating, not from a
-						// payload-content predicate.
+						// next-frame opening is gated by the terminal-
+						// resolution of THIS frame's emit-node. The
+						// bounded count comes from the runner's frame-
+						// end gating, not from a payload-content
+						// predicate.
 						{Node: "worker", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 						// @constraint: cascade substitution-coverage —
 						// covers {{nodes.worker.attribute.step}} in the
@@ -551,26 +549,26 @@ func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
 	require.True(t, h.WaitForEventKind(workerNode.ID, "terminal/success", 20*time.Second),
 		"worker did not run after the drain kick; the kick → worker leg is broken")
 
-	// Bounded-convergence assertion: after a settling window, the
-	// drain/tick message count and the frame count must be in the same
-	// ballpark — that's the load-bearing property the spec calls out
-	// ("the self-drain loops until convergence" — not "loops forever").
-	// We pin a hard ceiling: in a 15-second settling window with a 250
-	// ms scheduler tick, a runaway loop would produce well over 60
-	// frames; a converged loop produces at most a few dozen.
+	// @deliberate: bounded-convergence assertion — after a settling
+	// window, the drain/tick message count and the frame count must be
+	// in the same ballpark, that's the load-bearing property the spec
+	// calls out ("the self-drain loops until convergence" — not "loops
+	// forever"). Pin a hard ceiling: in a 15-second settling window
+	// with a 250 ms scheduler tick, a runaway loop would produce well
+	// over 60 frames; a converged loop produces at most a few dozen.
 	//
-	// The cheaper shape "any positive number passes" would let an
-	// infinite-loop bug through (the test would observe "lots of frames
-	// → assert passes"). The bounded-ceiling shape is the falsifier:
-	// the test fails LOUDER as the loop diverges, faster than a
-	// runaway can finish.
+	// @deliberate: the cheaper shape "any positive number passes" would
+	// let an infinite-loop bug through (the test would observe "lots of
+	// frames → assert passes"). The bounded-ceiling shape is the
+	// falsifier — the test fails LOUDER as the loop diverges, faster
+	// than a runaway can finish.
 	time.Sleep(15 * time.Second)
 	var frameCount int
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1`,
 		[]any{iid}, &frameCount)
-	// Capacity ceiling: under a 250 ms scheduler tick and the
-	// supervisor + runner round-trip latencies, an unbounded self-
+	// @deliberate: capacity ceiling — under a 250 ms scheduler tick and
+	// the supervisor + runner round-trip latencies, an unbounded self-
 	// drain produces well over 100 frames in 15s. A converged loop
 	// settles to a finite number. The ceiling here (300) lives a
 	// safety margin above the runaway-detection threshold while still
@@ -578,19 +576,16 @@ func TestStoryCrossFrameCoupling_SelfDrain(t *testing.T) {
 	require.Less(t, frameCount, 300,
 		"self-drain did not converge; frame count = %d is runaway (the loop fires forever)",
 		frameCount)
-	// And the receiver did re-run at least once (the self-drain's
-	// observable proof that the emit-node delivered a frame back to
-	// itself / its workers).
 	var workerRuns int
 	h.QueryRowSQL(
 		`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind = 'terminal/success'`,
 		[]any{workerNode.ID}, &workerRuns)
-	// Lower-bound > 1: the falsifier for STORY-cross-frame-coupling's
-	// self-drain proof is "the loop self-emits once and silently drops
-	// the second iteration"; a `>= 1` assertion would pass for that
-	// degenerate case (the initial kick alone hits 1). Requiring
-	// strictly more than one run is what proves the self-emit chain
-	// actually fired across frames.
+	// @deliberate: lower-bound > 1 — the falsifier for STORY-cross-
+	// frame-coupling's self-drain proof is "the loop self-emits once
+	// and silently drops the second iteration"; a `>= 1` assertion
+	// would pass for that degenerate case (the initial kick alone hits
+	// 1). Requiring strictly more than one run is what proves the
+	// self-emit chain actually fired across frames.
 	require.Greater(t, workerRuns, 1,
 		"worker must run more than once (the self-emit must fire across frames); got %d", workerRuns)
 }

@@ -86,8 +86,9 @@ func applyTerminalScratchInTx(
 		}
 		h, err := args.Blob.Write(ctx, key, scratch)
 		if err != nil {
-			// Spill failure → fall back to inline so the terminal still
-			// commits. Mirrors applyTerminalPark's spill-failure fallback.
+			// @deliberate: spill failure → fall back to inline so the
+			// terminal still commits. Mirrors applyTerminalPark's
+			// spill-failure fallback.
 			if args.Logger != nil {
 				args.Logger.Warn("applyTerminalScratchInTx: blob spill failed; falling back to inline",
 					"node_id", acq.NodeID.String(),

@@ -70,11 +70,11 @@ func seedEmitInstance(t *testing.T, ctx context.Context, d persistence.Database)
 		Name:           "emit-message-fixture",
 		Version:        "1",
 		FrameTimeoutMs: 600000,
-		// Declare the destination message type so receivers / cross-checks
-		// would find it; the helper under test does not consult the
-		// template at all (it relies on the validator having already
-		// approved the shape) but seeding a realistic shape keeps the
-		// fixture self-documenting.
+		// @deliberate: declare the destination message type so receivers
+		// / cross-checks would find it; the helper under test does not
+		// consult the template at all (it relies on the validator
+		// having already approved the shape) but seeding a realistic
+		// shape keeps the fixture self-documenting.
 		Messages: []spec.MessageSchema{{
 			Type: "ping/recheck",
 			BodySchema: []byte(`{
@@ -204,10 +204,11 @@ func TestEmitCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 
 	preCount := countMessages(t, ctx, d, instanceID)
 
-	// Run the emit inside a tx that returns a synthetic error, forcing
-	// the persistence layer to roll back. The returned message id IS
-	// populated inside the tx; that part of the helper succeeded. The
-	// load-bearing claim is that the rollback unmakes the envelope.
+	// @deliberate: run the emit inside a tx that returns a synthetic
+	// error, forcing the persistence layer to roll back. The returned
+	// message id IS populated inside the tx; that part of the helper
+	// succeeded. The load-bearing claim is that the rollback unmakes
+	// the envelope.
 	sentinelErr := errors.New("forced rollback after emit")
 	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, replayed, emitErr := emitCascadeMessageInTx(ctx, d.Tables(), tx,
@@ -222,8 +223,8 @@ func TestEmitCascadeMessageInTx_RollbackAtomic(t *testing.T) {
 		if id == (shared.UUID{}) {
 			t.Errorf("expected a non-zero candidate id inside the tx")
 		}
-		// Caller decides to abort. Atomicity claim: the prior insert is
-		// undone.
+		// @deliberate: caller decides to abort — atomicity claim is
+		// that the prior insert is undone.
 		return sentinelErr
 	})
 	if !errors.Is(err, sentinelErr) {
@@ -277,10 +278,11 @@ func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 		t.Errorf("first emit must not be a replay")
 	}
 
-	// Retry with the same (node_id, frame_id) and a DIFFERENT body —
-	// replay must return the original id, NOT insert a second envelope.
-	// (The dedup tuple ignores the payload by design; idempotency keys
-	// identify the logical operation, not the data carried.)
+	// @constraint: retry with the same (node_id, frame_id) and a
+	// DIFFERENT body — replay must return the original id, NOT insert a
+	// second envelope. The dedup tuple ignores the payload by design;
+	// idempotency keys identify the logical operation, not the data
+	// carried.
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		id, replayed, err := emitCascadeMessageInTx(ctx, d.Tables(), tx,
 			instanceID, nodeID, frameID, "ping/recheck",
@@ -302,13 +304,13 @@ func TestEmitCascadeMessageInTx_IdempotentOnNodeAndFrame(t *testing.T) {
 		t.Errorf("replayed id = %s; want first id %s", secondID.String(), firstID.String())
 	}
 
-	// Net effect: exactly one envelope row for this instance.
+	// @constraint: net effect — exactly one envelope row for this instance.
 	if got := countMessages(t, ctx, d, instanceID); got != 1 {
 		t.Fatalf("envelope row count = %d after retry; want exactly 1 (deterministic idempotency on (node_id, frame_id))", got)
 	}
 
-	// And the persisted payload is the FIRST emit's payload, not the
-	// retry's. The retry must not overwrite the prior body.
+	// @constraint: the persisted payload is the FIRST emit's payload,
+	// not the retry's — the retry must not overwrite the prior body.
 	row, err := d.Tables().Messages().Get(ctx, firstID)
 	if err != nil {
 		t.Fatalf("Messages.Get: %v", err)
@@ -358,9 +360,10 @@ func TestEmitCascadeMessageInTx_EnqueuesFrameForEnvelope(t *testing.T) {
 		t.Fatalf("emit tx: %v", err)
 	}
 
-	// There must be exactly one queued frame for this instance pointing
-	// at the new envelope. Read via ListForObservability with the
-	// triggering-message filter to confirm the FK was set correctly.
+	// @constraint: there must be exactly one queued frame for this
+	// instance pointing at the new envelope. Read via
+	// ListForObservability with the triggering-message filter to
+	// confirm the FK was set correctly.
 	var page persistence.PaginatedListResult[persistence.FrameRow]
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		p, err := d.Tables().Frames().ListForObservability(ctx,
@@ -416,8 +419,8 @@ func TestEmitCascadeMessageInTx_ReplayDoesNotDoubleEnqueueFrame(t *testing.T) {
 		}
 	}
 
-	// Exactly one envelope from the idempotency property, exactly one
-	// frame from this fix's load-bearing property.
+	// @constraint: exactly one envelope from the idempotency property,
+	// exactly one frame from this fix's load-bearing property.
 	if got := countMessages(t, ctx, d, instanceID); got != 1 {
 		t.Fatalf("envelope count = %d; want 1 (replay dedups envelope)", got)
 	}

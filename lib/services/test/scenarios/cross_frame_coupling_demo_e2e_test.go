@@ -53,9 +53,10 @@ func TestCrossFrameCouplingDemo_RunExitsZero(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	// The verifier-shape-checks executor must be reachable on the shared
-	// network before rimsky/all starts — the control-api fires a
-	// Capabilities handshake against declared executors at startup.
+	// @constraint: the verifier-shape-checks executor must be reachable
+	// on the shared network before rimsky/all starts — the control-api
+	// fires a Capabilities handshake against declared executors at
+	// startup.
 	netName := harness.NewNetwork(ctx, t)
 	harness.StartVerifierShapeChecksOnNetwork(ctx, t, netName, "verifier-shape-checks")
 
@@ -73,18 +74,19 @@ func TestCrossFrameCouplingDemo_RunExitsZero(t *testing.T) {
 		t.Fatalf("cross-frame-coupling-demo.sh exited %d (want 0)\nstdout:\n%s", exitCode, stdout)
 	}
 
-	// Sanity: confirm the template path the script points at exists on
-	// disk. A missing template would have already failed the script run;
-	// this is belt-and-suspenders for the Falsifier ("shipped example
-	// isn't a real runnable templatespec").
+	// @deliberate: confirm the template path the script points at exists
+	// on disk. A missing template would have already failed the script
+	// run; this is belt-and-suspenders for the Falsifier ("shipped
+	// example isn't a real runnable templatespec").
 	if _, err := os.Stat(templatePath); err != nil {
 		t.Fatalf("shipped template %s missing on disk: %v — the cross-frame-coupling demo's template is broken", templatePath, err)
 	}
 
-	// Reach into the instance via the API to verify the back-edge actually
-	// fired. The script's self-check already asserts the frames pattern;
-	// this is the persistence-layer witness that the loop/iterate envelope
-	// landed AND its sender_kind is instance (the cascade-emit origin).
+	// @deliberate: reach into the instance via the API to verify the
+	// back-edge actually fired. The script's self-check already asserts
+	// the frames pattern; this is the persistence-layer witness that
+	// the loop/iterate envelope landed AND its sender_kind is instance
+	// (the cascade-emit origin).
 	requireCrossFrameInstanceEmittedIterate(t, ep, 60*time.Second)
 }
 
@@ -135,11 +137,9 @@ func requireCrossFrameInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndp
 	end := time.Now().Add(deadline)
 	var lastBody string
 	for time.Now().Before(end) {
-		// Use the cross-instance message list filter to find an envelope of
-		// type loop/iterate. The control-API exposes per-instance message
-		// reads but not a global filter; iterate by polling the recent
-		// instance's frames. We just look for any frame in any instance
-		// from this run that has type=loop/iterate.
+		// @deliberate: the control-API exposes per-instance message
+		// reads but not a global filter; iterate by polling each
+		// instance's frames for a type=loop/iterate row.
 		status, raw := ep.GetJSON(t, "/v1/instances?limit=20", "")
 		if status != http.StatusOK {
 			time.Sleep(250 * time.Millisecond)
@@ -147,10 +147,10 @@ func requireCrossFrameInstanceEmittedIterate(t *testing.T, ep harness.RimskyEndp
 		}
 		var resp struct {
 			Instances []struct {
-				// The instances-list endpoint returns the instance UUID
-				// under `id` (not `instance_id`). The other CRUD endpoints
-				// use `instance_id`; this is a known shape divergence in
-				// the list response.
+				// @deliberate: the instances-list endpoint returns the
+				// instance UUID under `id` (not `instance_id`). The other
+				// CRUD endpoints use `instance_id`; this is a known
+				// shape divergence in the list response.
 				ID string `json:"id"`
 			} `json:"instances"`
 		}

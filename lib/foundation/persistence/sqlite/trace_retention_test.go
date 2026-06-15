@@ -84,9 +84,8 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 		frameID := uuid.New().String()
 		nodeID := uuid.New().String()
 		runID := uuid.New().String()
-		// Pass 1 of the message-schema-layer plan added the
-		// rimsky_frames.triggering_message_id NOT NULL FK; seed the
-		// triggering message per frame.
+		// @constraint: the rimsky_frames.triggering_message_id NOT
+		// NULL FK requires a triggering message per frame.
 		msgID := uuid.New().String()
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)

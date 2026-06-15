@@ -77,12 +77,10 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 		if err != nil {
 			return err
 		}
-		// Seed a non-terminal node-run row so the gate predicate's
-		// node-run join clears (hit must be blocking a runner; a row
-		// with no node_run_id, or one whose node_run is completed/
-		// failed, is NOT a blocker). Reuse the standard
-		// AffirmNodeRunRow + ensureRunningFrameForTest scaffolding the
-		// other debug-override tests already use.
+		// @constraint: seed a non-terminal node-run row so the gate
+		// predicate's node-run join clears — the hit must be blocking
+		// a runner; a row with no node_run_id, or one whose node_run
+		// is completed/failed, is NOT a blocker.
 		inst, err := h.persist.Instances().Get(ctx, instanceID, tx)
 		if err != nil {
 			return err
@@ -92,7 +90,6 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 		if err != nil {
 			return err
 		}
-		// Find the root node so we can affirm a run row for it.
 		var rootNodeID shared.UUID
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, instanceID, tx)
 		if err != nil {
@@ -131,10 +128,9 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 	}))
 }
 
-// findNodeIDByType walks the instance's nodes and returns the row of
-// the first node with NodeType == typ. Tests use this to confirm the
-// invalidate_node action keyed off node_type actually mutated the
-// matching node-run.
+// @agent-contract: findNodeIDByType returns the first node with
+// NodeType == typ on the instance; tests use it to confirm
+// invalidate_node mutated the matching node-run keyed off node_type.
 func findNodeIDByType(t *testing.T, h *harness, instanceID shared.UUID, typ string) persistence.NodeRow {
 	t.Helper()
 	var found *persistence.NodeRow
@@ -156,12 +152,11 @@ func findNodeIDByType(t *testing.T, h *harness, instanceID shared.UUID, typ stri
 	return *found
 }
 
-// ensureRunningFrameForTest returns the instance's currently-running
-// frame's id, or promotes a queued frame to running and returns that
-// id. The runtime engine isn't booted in this harness so a freshly-
-// created instance has a queued root frame but no running one yet;
-// tests that need to seed a node-run inside a frame call this to get a
-// frame in the running state without spinning up the engine.
+// @agent-contract: ensureRunningFrameForTest returns the instance's
+// running frame id, promoting a queued frame to running if none is
+// running yet. The runtime engine isn't booted in this harness so a
+// freshly-created instance has a queued root frame but no running
+// one; tests that need to seed a node-run inside a frame call this.
 func ensureRunningFrameForTest(ctx context.Context, h *harness, instanceID shared.UUID, tx persistence.Tx) (shared.UUID, error) {
 	running, err := h.persist.Frames().GetRunningFrameID(ctx, instanceID, tx)
 	if err != nil {
@@ -170,8 +165,6 @@ func ensureRunningFrameForTest(ctx context.Context, h *harness, instanceID share
 	if running != nil {
 		return *running, nil
 	}
-	// No running frame; look up the oldest queued frame for this
-	// instance via the observability accessor and promote it.
 	filter := persistence.FrameListFilter{InstanceID: &instanceID, State: persistence.FrameStateQueued}
 	page, err := h.persist.Frames().ListForObservability(ctx, filter, persistence.ListPagination{Limit: 1}, tx)
 	if err != nil {
@@ -289,26 +282,22 @@ func TestDebugOverride_BodyValidation_RejectsAtBoundary(t *testing.T) {
 
 	instID := newInstanceForMessages(t, h, "debug-body")
 
-	// Missing action.
 	status, out := h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
 		"node_type": "root",
 	})
 	require.Equal(t, http.StatusBadRequest, status, out)
 
-	// Unknown action.
 	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
 		"action":    "kaboom",
 		"node_type": "root",
 	})
 	require.Equal(t, http.StatusBadRequest, status, out)
 
-	// invalidate_node without node_type.
 	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
 		"action": "invalidate_node",
 	})
 	require.Equal(t, http.StatusBadRequest, status, out)
 
-	// set_attribute without attribute_key.
 	status, out = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
 		"action":    "set_attribute",
 		"node_type": "root",
@@ -316,9 +305,9 @@ func TestDebugOverride_BodyValidation_RejectsAtBoundary(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status, out)
 }
 
-// TestDebugOverride_UnknownInstance404 pins the not-found surface. An
-// override on a non-existent instance returns 404, never 409 — the
-// gate check requires a found row.
+// @deliberate: pins the not-found surface — an override on a
+// non-existent instance returns 404, never 409, because the gate
+// check requires a found row.
 func TestDebugOverride_UnknownInstance404(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -332,11 +321,10 @@ func TestDebugOverride_UnknownInstance404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-// TestDebugOverride_InvalidateNodeMutatesNodeRun pins the falsifier
-// "the invalidate_node action does not stale-mark a node." We pause
-// the instance, manually allocate an in-flight run row for the `root`
-// node bound to a fresh frame, then POST the override and confirm the
-// run row's state transitions to `stale`.
+// @deliberate: pins the falsifier "invalidate_node does not
+// stale-mark a node" — pause the instance, manually allocate an
+// in-flight run row for `root` bound to a fresh frame, POST the
+// override, confirm the run row's state transitions to `stale`.
 func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -347,17 +335,11 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 	instUUID := mustParseUUID(t, instID)
 	pauseInstanceForTest(t, h, instUUID)
 
-	// Resolve the root node and seed an in-flight run row + frame so
-	// MarkStaleForCascade has something to write against. The
-	// invalidate_node action no-ops on nodes with no in-flight run by
-	// design (the override is for nodes currently running or pending);
-	// this test must seed one to exercise the mutation arm.
+	// @deliberate: seed an in-flight run row + frame so
+	// MarkStaleForCascade has something to write against;
+	// invalidate_node no-ops on nodes with no in-flight run by design.
 	rootNode := findNodeIDByType(t, h, instUUID, "root")
 
-	// Allocate an in-flight run in the running frame. The instance was
-	// just created so it already has a root frame; reuse it. The
-	// node's per-row RunScopeID is nil until it has a live run, so we
-	// thread the instance's main RunScope explicitly.
 	var inFlightRunID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		inst, err := h.persist.Instances().Get(ctx, instUUID, tx)
@@ -372,7 +354,6 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 		if err := h.persist.Nodes().AffirmNodeRunRow(ctx, rootNode.ID, inst.MainRunScopeID, frameID, tx); err != nil {
 			return err
 		}
-		// Re-read the node to pick up its InFlightRunID.
 		fresh, err := h.persist.Nodes().Get(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
@@ -391,15 +372,14 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 	require.Equal(t, http.StatusOK, status, out)
 	require.GreaterOrEqual(t, int(out["runs_mutated"].(float64)), 1)
 
-	// Confirm the run is now in state=stale.
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		fresh, err := h.persist.Nodes().Get(ctx, rootNode.ID, tx)
 		if err != nil {
 			return err
 		}
 		require.NotNil(t, fresh)
-		// The InFlightRunID from re-read may differ if a new row has
-		// been allocated, but our seeded row should be staled.
+		// @deliberate: re-read InFlightRunID may differ if a new row
+		// has been allocated, but the seeded row should be staled.
 		_ = inFlightRunID
 		require.Equal(t, cascade.NodeStateStale, fresh.State,
 			"invalidate_node must stale-mark the in-flight node-run")
@@ -407,11 +387,10 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 	}))
 }
 
-// TestDebugOverride_SetAttributeWritesAttribute pins the falsifier
-// "the set_attribute action does not write the attribute." The action
-// targets the in-flight run's attribute row; we seed an attribute row
-// for the in-flight run, POST the override, and confirm the row now
-// carries the operator-supplied key.
+// @deliberate: pins the falsifier "set_attribute does not write the
+// attribute" — the action targets the in-flight run's attribute row;
+// seed an attribute row, POST the override, confirm the row carries
+// the operator-supplied key.
 func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -424,10 +403,8 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 
 	rootNode := findNodeIDByType(t, h, instUUID, "root")
 
-	// Allocate an in-flight run + a seed attribute row so MergeDelta
-	// has something to merge into. The node's per-row RunScopeID is
-	// nil until it has a live run, so we thread the instance's main
-	// RunScope explicitly.
+	// @deliberate: seed an in-flight run + an attribute row so
+	// MergeDelta has something to merge into.
 	var inFlightRunID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		inst, err := h.persist.Instances().Get(ctx, instUUID, tx)
@@ -459,7 +436,6 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, status, out)
 
-	// Confirm the attribute row now carries the override.
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		row, err := h.persist.NodeAttributes().GetByRun(ctx, inFlightRunID, tx)
 		if err != nil {
@@ -468,30 +444,23 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 		require.NotNil(t, row)
 		require.Equal(t, "override_value", row.Data["override_key"],
 			"set_attribute must write the attribute key/value into the run's attribute row")
-		// Seed key survives — MergeDelta is a shallow merge, not a
-		// replace. Confirming this keeps a future "replace instead of
-		// merge" regression from sneaking by.
+		// @constraint: seed key must survive — MergeDelta is shallow
+		// merge, not replace; pinning this catches a future
+		// "replace instead of merge" regression.
 		require.Equal(t, "yes", row.Data["seed"])
 		return nil
 	}))
 }
 
-// TestDebugOverride_SetAttributeNoInFlightRunIsNoOp pins the
-// resolution-scope rule documented on
-// `code:control/controlapi/debug_override.go::setNodeAttributeForDebugOverride`:
-// when there is no in-flight run for the named node-type, set_attribute
-// is a no-op — it does NOT fall through to write into the latest
-// attribute row in the main RunScope (the silent two-segment fallback
-// the prior implementation carried). The request still returns 200 and
-// the audit row is written (the attempt was gate-validated), but
-// `runs_mutated` is zero and no attribute row exists for the node
-// outside the in-flight scope after the call.
-//
-// This is the falsifier for the gate "the override applies in that
-// frame": writing to a retired run's attribute row may or may not be
-// visible at the next dispatch depending on the resolver's preference
-// order, which is implicit; refusing the write keeps the visibility
-// guarantee crisp.
+// @deliberate: pins the resolution-scope rule (see
+// `code:control/controlapi/debug_override.go::setNodeAttributeForDebugOverride`):
+// when there is no in-flight run for the named node-type,
+// set_attribute is a no-op and does NOT fall through to write into
+// the latest attribute row in the main RunScope (the silent
+// two-segment fallback the prior implementation carried). The
+// request returns 200 + audit row (the attempt was gate-validated)
+// but runs_mutated is zero — refusing the write keeps the gate's
+// "the override applies in that frame" guarantee crisp.
 func TestDebugOverride_SetAttributeNoInFlightRunIsNoOp(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -503,9 +472,6 @@ func TestDebugOverride_SetAttributeNoInFlightRunIsNoOp(t *testing.T) {
 	pauseInstanceForTest(t, h, instUUID)
 
 	rootNode := findNodeIDByType(t, h, instUUID, "root")
-	// No in-flight run is seeded. The instance was just created so
-	// rootNode has no InFlightRunID — exactly the case the resolution
-	// scope refuses.
 	require.Nil(t, rootNode.InFlightRunID,
 		"test precondition: the root node must have no in-flight run")
 
@@ -515,18 +481,12 @@ func TestDebugOverride_SetAttributeNoInFlightRunIsNoOp(t *testing.T) {
 		"attribute_key":   "override_key",
 		"attribute_value": "override_value",
 	})
-	// 200 + audit row: the gate accepted, the attempt was recorded.
 	require.Equal(t, http.StatusOK, status, out)
 	require.True(t, hasDebugOverrideAuditEvent(t, h, instUUID),
 		"audit log must carry the debug.override.applied row even when no run was mutated")
-	// `runs_mutated` is zero — set_attribute with no in-flight run is a
-	// no-op, and the test pins this so a future regression that
-	// re-introduces the silent two-segment fallback fails here.
 	require.EqualValues(t, 0, out["runs_mutated"],
 		"set_attribute with no in-flight run must not mutate any run")
 
-	// And no attribute row materialized for the node outside the
-	// in-flight scope (the resolution-scope guarantee).
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		inst, err := h.persist.Instances().Get(ctx, instUUID, tx)
 		if err != nil {
@@ -543,25 +503,15 @@ func TestDebugOverride_SetAttributeNoInFlightRunIsNoOp(t *testing.T) {
 	}))
 }
 
-// TestDebugOverride_TOCTOU_GateAndMutationShareTx is the load-bearing
-// test for Task 39's TOCTOU resistance property: the gate-check and
-// the mutation share the request tx, so an external `paused = false`
-// toggle interleaved between them either fully applies (the read at
-// gate-check time wins) or fully rejects (the interleaved write wins)
-// — never a partial state.
-//
-// We exercise this by racing two goroutines:
-//   - one POSTs the debug override against a paused instance
-//   - the other concurrently flips `paused = false`
-//
-// The test repeats many times to give the race a chance to interleave.
-// After each iteration we assert:
-//   - if the response was 200 (override applied), the audit row exists
-//   - if the response was 409 (gate refused), no audit row was written
-//
-// If the gate and the mutation didn't share a tx, the alternative
-// outcome — audit row written but the gate would have read paused=false
-// — would be observable as a mismatch between status and audit.
+// @deliberate: TOCTOU resistance — the gate-check and the mutation
+// share the request tx, so an external `paused = false` toggle
+// interleaved between them either fully applies (gate-check read
+// wins) or fully rejects (interleaved write wins) — never a partial
+// state. Two goroutines race: one POSTs the override against a
+// paused instance, the other flips paused=false. Repeated to give
+// the race a chance to interleave. If the gate and mutation didn't
+// share a tx, an audit row would appear without the gate's
+// paused=true having held — observable as a status/audit mismatch.
 func TestDebugOverride_TOCTOU_GateAndMutationShareTx(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
@@ -580,7 +530,6 @@ func TestDebugOverride_TOCTOU_GateAndMutationShareTx(t *testing.T) {
 			body   map[string]any
 		)
 		wg.Add(2)
-		// Goroutine 1: POST the debug override.
 		go func() {
 			defer wg.Done()
 			status, body = h.httpJSON(t, "POST", "/v1/instances/"+instID+"/debug/override", map[string]any{
@@ -588,10 +537,9 @@ func TestDebugOverride_TOCTOU_GateAndMutationShareTx(t *testing.T) {
 				"node_type": "root",
 			})
 		}()
-		// Goroutine 2: flip paused = false. Small sleep to let the
-		// override request reach the gate-check before the toggle
-		// fires; without it the toggle may land before the request
-		// opens its tx, which doesn't exercise the race.
+		// @deliberate: small sleep so the toggle lands after the
+		// override request opens its tx; without it the toggle may
+		// fire before the gate-check and the race never exercises.
 		go func() {
 			defer wg.Done()
 			time.Sleep(time.Microsecond * 250)

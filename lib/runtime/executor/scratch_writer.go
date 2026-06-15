@@ -88,7 +88,7 @@ func (w *ScratchWriter) Write(ctx context.Context, bytes []byte) error {
 		key := persistence.BlobKey{NodeID: w.NodeID.String(), Hint: "scratch"}
 		h, err := w.Blob.Write(ctx, key, bytes)
 		if err != nil {
-			// Spill failure → fall back to inline. Mirrors
+			// @deliberate: spill failure → fall back to inline. Mirrors
 			// scratchStoreAdapter (callback.go) and applyTerminalPark.
 			if w.Logger != nil {
 				w.Logger.Warn("ScratchWriter: blob spill failed; falling back to inline",

@@ -6,13 +6,14 @@ package node
 
 import "testing"
 
+// @story: inproc-utility-executor
+//
 // TestKindE2E_LoopCounterReferenceAcceptsAndCanonicalizes pins the
-// end-to-end registration contract for STORY-inproc-utility-executor:
-// a template declaring `kind: loop_counter` validates with seeded
-// KindAliases, then canonicalizes to `executor: <alias>` with `kind`
-// cleared. Asserting on the canonicalized shape proves the two steps
-// (validation + canonicalization) compose so the persisted spec is in
-// normal form.
+// end-to-end registration contract: a template declaring
+// `kind: loop_counter` validates with seeded KindAliases, then
+// canonicalizes to `executor: <alias>` with `kind` cleared. Asserting
+// on the canonicalized shape proves the two steps (validation +
+// canonicalization) compose so the persisted spec is in normal form.
 //
 // The test uses the same kind name + alias string the loop_counter
 // builtin package exports (`loop_counter.KindName` / `.ExecutorAlias`)

@@ -247,11 +247,11 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 			Logger: c.Logger,
 		}))
 	}
-	// Incremental executor-scratch writeback — paralleling §12.5
-	// attributes. Mounted on the same listener as the attributes
-	// callback. The cancel_token auth shape is identical (per-run keyed
-	// on dispatch id), so c.attributesAuth is reused verbatim. Requires
-	// the Queue + Blob threading (BlobSpillThreshold > 0 → spill).
+	// @deliberate: incremental executor-scratch writeback paralleling
+	// the attributes callback. Mounted on the same listener. The
+	// cancel_token auth shape is identical (per-run keyed on dispatch
+	// id), so c.attributesAuth is reused verbatim. Requires the Queue +
+	// Blob threading (BlobSpillThreshold > 0 → spill).
 	if c.Persist != nil && c.Queue != nil {
 		r.Method(http.MethodPost, "/v1/runs/{run_id}/scratch", rimskyscratch.Handler(rimskyscratch.HandlerDeps{
 			Writer: scratchStoreAdapter{
@@ -910,16 +910,17 @@ func (a scratchStoreAdapter) Write(ctx context.Context, runID shared.UUID, b []b
 		handle        string
 		handleBackend string
 	)
-	// Spill decision matches the parked-payload + terminal-scratch sites:
-	// honor BlobSpillThreshold > 0 AND the backend's not-inline gate.
+	// @deliberate: spill decision matches the parked-payload +
+	// terminal-scratch sites: honor BlobSpillThreshold > 0 AND the
+	// backend's not-inline gate.
 	if a.blob != nil && persistence.ShouldSpillBlob(a.blob, a.spillThreshold, len(b)) {
-		// Resolve the NodeID for the BlobKey hint via a non-locking
-		// SELECT (no separate Transaction, no FOR UPDATE). The hint is
-		// path-derivation metadata for the filesystem backend; an empty
-		// hint is still valid (the backend has a path-derivation
-		// fallback), so a lookup failure degrades to spill-with-empty-
-		// NodeID — same conservative posture as applyTerminalPark's
-		// spill-failure fallback.
+		// @deliberate: resolve the NodeID for the BlobKey hint via a
+		// non-locking SELECT (no separate Transaction, no FOR UPDATE).
+		// The hint is path-derivation metadata for the filesystem
+		// backend; an empty hint is still valid (the backend has a
+		// path-derivation fallback), so a lookup failure degrades to
+		// spill-with-empty-NodeID — same conservative posture as
+		// applyTerminalPark's spill-failure fallback.
 		var nodeID shared.UUID
 		if id, _, err := a.queue.GetDispatchNode(ctx, runID); err == nil {
 			nodeID = id
@@ -930,7 +931,7 @@ func (a scratchStoreAdapter) Write(ctx context.Context, runID shared.UUID, b []b
 		key := persistence.BlobKey{NodeID: nodeID.String(), Hint: "scratch"}
 		h, err := a.blob.Write(ctx, key, b)
 		if err != nil {
-			// Spill failure → fall back to inline. Mirrors applyTerminalPark.
+			// @deliberate: spill failure → fall back to inline. Mirrors applyTerminalPark.
 			if a.logger != nil {
 				a.logger.Warn("scratchStoreAdapter: blob spill failed; falling back to inline",
 					"dispatch_id", runID.String(), "error", err.Error())
@@ -946,12 +947,12 @@ func (a scratchStoreAdapter) Write(ctx context.Context, runID shared.UUID, b []b
 	if err := a.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return a.queue.WriteScratchInTx(ctx, tx, runID, inline, handle, handleBackend)
 	}); err != nil {
-		// Translate the persistence missing-row sentinel into the
-		// scratch-callback sentinel so the HTTP handler maps to 410 Gone
-		// instead of swallowing the failure behind a generic 500. Per
-		// STORY-opaque-executor-scratch the missing-row case must
-		// surface — the executor's mid-dispatch checkpoint was NOT
-		// persisted.
+		// @constraint: translate the persistence missing-row sentinel
+		// into the scratch-callback sentinel so the HTTP handler maps
+		// to 410 Gone instead of swallowing the failure behind a
+		// generic 500. The missing-row case must surface — the
+		// executor's mid-dispatch checkpoint was NOT persisted.
+		// @story: opaque-executor-scratch
 		if errors.Is(err, persistence.ErrRunRowMissing) {
 			return rimskyscratch.ErrRunRowMissing
 		}

@@ -48,16 +48,12 @@ func TestFrameStartAtomicity(t *testing.T) {
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
-	// Pass 1 of the message-schema-layer plan added the
-	// rimsky_frames.triggering_message_id NOT NULL FK; seed a typed
-	// envelope first so the frame's FK resolves. The retired
-	// source_node_ids column carried "which nodes to stale-mark at
-	// frame-start"; the post-message-schema engine instead expects the
-	// stale runs to already be present when the frame is enqueued (the
-	// emitter / instance-factory inserts them). For this test we seed
-	// a stale run row directly, attached to the queued frame so the
-	// frame-engine has a node to track and the frame does not race
-	// straight through queued → running → completed.
+	// @constraint: rimsky_frames.triggering_message_id is NOT NULL;
+	// seed a typed envelope first. The frame-engine expects stale
+	// runs already present at frame-enqueue time (the emitter /
+	// instance-factory inserts them); seed a stale run row directly
+	// here so the engine has a node to track and the frame does not
+	// race straight through queued → running → completed.
 	messageID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_messages
 	    (id, instance_id, type, sender, sender_kind)

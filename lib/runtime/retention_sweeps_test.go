@@ -93,8 +93,8 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 		frameID := uuid.New().String()
 		nodeID := uuid.New().String()
 		runID := uuid.New().String()
-		// Seed a synthetic typed-message envelope so the frame's
-		// triggering_message_id FK is satisfied.
+		// @constraint: seed a synthetic typed-message envelope so the
+		// frame's triggering_message_id FK is satisfied.
 		msgID := uuid.New().String()
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_messages
