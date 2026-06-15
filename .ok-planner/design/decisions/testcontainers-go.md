@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`testcontainers-go`.
+An integration-test container helper that boots real container instances of the persistence backends from inside the Go test process.
 
 ## Rationale
 

@@ -11,7 +11,7 @@ aliases:
 
 Operator-facing CLI for rimsky: a thin HTTP+JSON client over the control-api for operating a deployed rimsky stack, plus an embedded one-shot orchestration mode that self-hosts the runtime stack to drive a manifest to terminal without standing up rimsky infrastructure. The CLI is the binary operators invoke directly; the embedded stack reuses the same role implementations as the deployed binaries, configured for a single ephemeral run rooted at a per-run artifact directory.
 
-The binary name is `rimsky`.
+The binary name is the same as the project name.
 
 ## Purpose
 
@@ -19,23 +19,25 @@ Operator tool of first resort. Thin pass-through means there's no client-side bu
 
 ## Boundaries
 
-Owns: command-line UX, request building, the `compose:` prefix reservation discipline (client-side only), the bundled role definitions (see `concept:role-template`), resolution of `source_file:` references in spec YAML at template-register time, before the wire call that submits the template, the host-agent-daemon bundling (the CLI binary doubles as the `concept:host-agent` daemon when invoked as `rimsky agent start`), and client-side `--service` alias resolution. The wire-side spec is always resolved bytes. Does NOT own: control-api routes (server-side), authentication enforcement (server-side; the CLI carries a Bearer token via a `--key` flag or an API-key environment variable). Adjacent: `concept:control-api`, `concept:tag`, `concept:instance`, `concept:api-key`, `concept:role-template`, `concept:host-agent`.
+Owns: command-line UX, request building, the compose-tag prefix reservation discipline (client-side only), the bundled role definitions (see `concept:role-template`), resolution of source-file references in spec YAML at template-register time, before the wire call that submits the template, the host-agent-daemon bundling (the CLI binary doubles as the `concept:host-agent` daemon when invoked under the agent-start verb), and client-side service-alias resolution for late-bound services. The wire-side spec is always resolved bytes. Does NOT own: control-api routes (server-side), authentication enforcement (server-side; the CLI carries an authentication token via a key flag or an API-key environment variable). Adjacent: `concept:control-api`, `concept:tag`, `concept:instance`, `concept:api-key`, `concept:role-template`, `concept:host-agent`.
 
 ## Invariants
 
 - HTTP+JSON only; no proto. The CLI assumes the routes it knows are present.
-- `compose:<project>:<...>` tag and instance-key prefix reservation is enforced client-side only.
-- The `compose` workflow uses the prefix to scan/diff/teardown project artifacts via the server's tag/key tables.
-- **API key resolution**: every verb takes `--key=<token>` and falls back to an API-key environment variable. `auth status` and `auth init` tolerate a missing key (anonymous-mode bootstrap path); other verbs send the key as a Bearer token and surface 401 when missing.
-- **`auth init` is special.** It posts a key-creation request without a Bearer token (anonymous-mode bootstrap) and refuses to run when any active key exists — the server's anonymous-mode predicate is the authoritative gate; the CLI's pre-check is a UX nicety.
-- **`rimsky run` template + param + service flags.** A template is supplied by either a positional `<file>` argument or `--template <name>` (mutually exclusive). Params are supplied by `--params <json>` and/or repeatable `--param k=v` (mixable, later-wins). `--service <name>=<path>` binds a late-bound service.
-- **Per-context api-key.** Each CLI context grows an api-key field alongside its endpoint, populated by `auth login` and consumed by the `concept:host-agent` for outbound authentication. The api-key field is optional on a context config.
+- The compose-tag prefix reservation on tag and instance-key namespaces is enforced client-side only.
+- The compose workflow uses the prefix to scan/diff/teardown project artifacts via the server's tag/key tables.
+- **API key resolution**: every verb accepts an API-key flag and falls back to an API-key environment variable. The auth-status and anonymous-bootstrap surfaces tolerate a missing key; every other verb sends the key as the authentication token and surfaces an unauthorized response when missing.
+- **Anonymous-mode bootstrap is special.** It posts a key-creation request without an authentication token and refuses to run when any active key exists — the server's anonymous-mode predicate is the authoritative gate; the CLI's pre-check is a UX nicety.
+- **Ephemeral-run template + param + service surfaces.** The ephemeral-run verb resolves a template by either a positional file argument or a named-template flag (mutually exclusive). Params are supplied via a whole-params-blob flag and/or a repeatable per-entry flag (mixable, later-wins). A late-bound service binds a service name to a local binary path.
+- **Per-context api-key.** Each CLI context grows an api-key field alongside its endpoint, populated at login time and consumed by the `concept:host-agent` for outbound authentication. The api-key field is optional on a context config.
 
-## Subcommand groups
+## Capability surfaces
 
-- **Dev loop**: `run`, `register`, `deploy`, `undeploy`, `instantiate`, `rm-instance`, `ls`, `logs`, `health`, `init`
-- **Compose**: `compose`, `dev`
-- **Literal API**: `template`, `tag`, `instance`, `node`, `admin`, `messages`, `backfill`, `asset`, `lineage`, `parked`
-- **Context**: `ctx`
-- **Auth**: `auth init | login | create-key | list | show | revoke | rotate | status`
-- **Agent**: `agent start | status | stop` — runs the bundled `concept:host-agent` daemon
+The CLI exposes capability surfaces grouped by operator workflow. The literal verbs and flags are owned by the CLI code and its operator-facing reference, not this concept; the durable model is the surfaces themselves.
+
+- **Dev-loop surface** — interactive bring-up of work against a deployed stack: ephemeral runs, template register / deploy / undeploy, instance instantiate / remove, listing, logs, health, and operator-init.
+- **Compose surface** — manifest-driven project orchestration: compose-family verbs (up, down, plan, status, run) plus a dev shorthand.
+- **Resource surface** — direct access to the control-api's resource families: templates, tags, instances, nodes, admin actions, messages, backfill, assets, lineage, parked-state.
+- **Context surface** — switching between configured endpoints + credentials.
+- **Authentication surface** — anonymous-mode bootstrap, login, key creation, listing, detail, revoke, rotate, and status (see `concept:role-template` for the bundled grant templates and `concept:api-key` for the wire-side key model).
+- **Host-agent control surface** — start / status / stop verbs for the embedded `concept:host-agent` daemon.

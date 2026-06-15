@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Plain YAML for `rimsky.yml` and per-service configs.
+A single human-readable text-config format for the unified config file (see `concept:rimsky-yml`) and per-service configs.
 
 ## Rationale
 

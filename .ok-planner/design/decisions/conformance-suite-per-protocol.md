@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-One conformance suite per protocol under the protocols module's conformance package, exposed as `rimsky conformance <protocol>`.
+One conformance suite per protocol under the protocols module's conformance package, exposed as a per-protocol conformance subcommand on the CLI.
 
 ## Rationale
 

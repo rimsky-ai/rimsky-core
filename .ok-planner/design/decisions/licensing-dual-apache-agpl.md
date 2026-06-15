@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-Per `concept:module-layout`, the protocols module + the services module's TypeScript reference executor + the examples module are Apache-2.0; everything else (the foundation module, graph layer, runtime layer, control layer, the other bundled services, the binaries group, the test group, the tools group) is AGPL-3.0-or-later with a commercial alternative.
+Per `concept:module-layout`, dual-track licensing across two surfaces: a permissive open-source license covers the protocols module, the examples module, and the bundled TypeScript executor reference (the surface external implementers copy, modify, or link against); a strong-copyleft license with a commercial alternative covers everything else (the foundation module, graph layer, runtime layer, control layer, the other bundled services, the binaries group, the test group, the tools group).
 
 ## Rationale
 
-Apache surface for everything an external implementer is meant to copy, modify, or link against; AGPL for the orchestrator itself.
+Permissive surface for everything an external implementer is meant to copy, modify, or link against; copyleft for the orchestrator itself, with a commercial alternative so organizations that prefer not to take on copyleft obligations on modified or derivative work, or on network-delivered services, can use the orchestrator under negotiated terms.

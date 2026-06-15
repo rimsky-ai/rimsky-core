@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-Go for all core code; TypeScript only in the services module's claude-agent executor.
+A single primary systems language for all core code; a secondary language used only inside the services module's bundled agentic executor reference, chosen to match the upstream SDK ecosystem for that integration.
 
 ## Rationale
 
-Single core ecosystem; TS where the upstream SDK lives.
+A single core ecosystem keeps the build, lint, and module-graph discipline uniform across the codebase; the secondary language is confined to one bundled reference where the upstream SDK lives natively, so the cost of a second toolchain is paid in only one isolated place.

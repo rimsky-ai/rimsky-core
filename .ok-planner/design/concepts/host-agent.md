@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-A long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary and invoked as the `rimsky agent` subcommand. Authenticates outbound to a `concept:host-agent-proxy` with the user's `concept:api-key`. Serves spawn / dispatch / reap / local-HTTP-forward requests against locally-running binaries.
+A long-running daemon on a user's dev machine, bundled into the rimsky CLI binary and invoked as the agent subcommand. Authenticates outbound to a `concept:host-agent-proxy` with the user's `concept:api-key`. Serves spawn / dispatch / reap / local-HTTP-forward requests against locally-running binaries.
 
 ## Purpose
 

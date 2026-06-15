@@ -11,7 +11,7 @@ As an operator running the all-in-one deployment, I get one process serving all 
 
 ## Capability
 
-The all-in-one entrypoint's no-command path runs migrations synchronously and then starts all three roles in-process, each on its configured port, with one signal-handled shutdown. `RIMSKY_PROCESS_ROLE=unified` is set only in — and truthfully describes — this single-process mode, which is what gates the in-memory blob backend (see `decision:single-process-mode`, `decision:memory-gate-premise-corrected`, `concept:blob-backend`, `concept:replica`). Single-role deployments (an explicit role command per container) keep their per-role process behavior.
+The all-in-one entrypoint's no-command path runs migrations synchronously and then starts all three roles in-process, each on its configured port, with one signal-handled shutdown. A process-role env marker that names the unified single-process mode is set only in — and truthfully describes — this mode, which is what gates the in-memory blob backend (see `decision:single-process-mode`, `decision:memory-gate-premise-corrected`, `concept:blob-backend`, `concept:replica`). Single-role deployments (an explicit role command per container) keep their per-role process behavior.
 
 ## Business value
 

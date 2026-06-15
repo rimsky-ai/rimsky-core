@@ -7,7 +7,7 @@ status: adopted
 
 ## Choice
 
-`rimsky compose run <manifest>` is a sub-verb of the compose dispatcher, sibling to `up | down | plan | status`. The other four require a running rimsky reachable over the control-api; this one does not.
+The ephemeral-run capability is exposed as a sub-verb under the compose dispatcher, sibling to the existing compose lifecycle verbs (up, down, plan, status). The lifecycle verbs require a running rimsky reachable over the control-api; the ephemeral-run sub-verb does not.
 
 ## Rationale
 

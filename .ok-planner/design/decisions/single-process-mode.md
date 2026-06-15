@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The entrypoint's no-command path runs migrate synchronously, then starts all three roles (scheduler, supervisor, control-api) in-process via the existing library entry points, each on its configured port, with one signal-handled shutdown. The single-role path (explicit role command) keeps its per-role process behavior. `RIMSKY_PROCESS_ROLE=unified` is set only in — and truthfully describes — the single-process mode (see `concept:replica`, `story:single-process-all-in-one`).
+The entrypoint's no-command path runs migrate synchronously, then starts all three roles (scheduler, supervisor, control-api) in-process via the existing library entry points, each on its configured port, with one signal-handled shutdown. The single-role path (explicit role command) keeps its per-role process behavior. A process-role env marker that names the unified single-process mode is set only in — and truthfully describes — that mode (see `concept:replica`, `story:single-process-all-in-one`).
 
 ## Rationale
 

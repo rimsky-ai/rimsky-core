@@ -22,13 +22,13 @@ These ship embedded in the CLI binary and are loaded at startup. Operators can d
 
 ## Purpose
 
-The server has no concept of roles — its only auth primitive is the per-key grant. The CLI provides the friendly layer: operators say "give me an `operator` key with `--add=auth:create`" and the CLI assembles the grant and submits a key-creation request. The server stores the raw expanded grant; no role identifier is recorded server-side.
+The server has no concept of roles — its only auth primitive is the per-key grant. The CLI provides the friendly layer: an operator names a bundled role plus per-grant overrides (e.g. an operator role with an additional grant for the auth-create action), the CLI assembles the expanded grant, and submits a key-creation request. The server stores the raw expanded grant; no role identifier is recorded server-side.
 
 ## Boundaries
 
-Owns: the bundled JSON files, the CLI expansion logic, the grant patch operators (`--add`, `--remove`). Does NOT own: server-side authorization (that's `concept:permission`), preview-vs-commit (a per-request flag; see `concept:dry-run`). Adjacent: `concept:permission`, `concept:rimsky` (the CLI binary).
+Owns: the bundled JSON files, the CLI expansion logic, the grant-patch operators (an add-grant operator and a remove-grant operator on the CLI). Does NOT own: server-side authorization (that's `concept:permission`), preview-vs-commit (a per-request flag; see `concept:dry-run`). Adjacent: `concept:permission`, `concept:rimsky` (the CLI binary).
 
 ## Invariants
 
-- **CLI-side only.** The server does not know roles exist. `rimsky auth show <name>` may pattern-match a grant against bundled roles for display ("role:operator + 1 override") but this is a display nicety; the wire surface is always the raw grant.
+- **CLI-side only.** The server does not know roles exist. The CLI's key-detail surface may pattern-match a grant against bundled roles for display ("role:operator + 1 override") but this is a display nicety; the wire surface is always the raw grant.
 - **Operator-defined roles are local.** No server-side surface for "register a role with the cluster".

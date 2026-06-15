@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-A `rimsky conformance <protocol>` subcommand family — one subcommand per protocol — over a shared conformance library in the protocols module (one sub-package per protocol). Third-party service implementers run a conformance subcommand against their service endpoint; Go service authors can also invoke the underlying library from a Go test without going through the CLI.
+A per-protocol conformance subcommand family on the CLI — one subcommand per protocol — over a shared conformance library in the protocols module (one sub-package per protocol). Third-party service implementers run a conformance subcommand against their service endpoint; Go service authors can also invoke the underlying library from a Go test without going through the CLI.
 
 - Executor conformance — exercises an executor against its execute RPC. Configurable transport (gRPC or HTTP+JSON), a require-stub-mode flag, scenario include/skip filters, and observability/lifecycle check flags. The registered scenarios (one each) cover the happy path, async handoff, cancel, heartbeats, terminal-is-last, stream-close-without-terminal, malformed userdata, attributes serialization, and unknown-ack-id.
 - Stub-mode probe — its own subcommand; protocol-agnostic. Issues one execute RPC carrying a stub-probe userdata flag and asserts the completion event carries the stub attributes-delta map shape. Spins up a callback receiver so async-handoff executors can complete the probe via the callback path.
@@ -22,11 +22,11 @@ The conformance library lives in the protocols module; each subcommand is a thin
 
 ## Purpose
 
-A third-party implementer runs `rimsky conformance <protocol>` against their service endpoint. Pass/fail validates wire compatibility without forcing the implementer to import internal Go test code. The runner logic lives in an importable Go library, so Go service authors can also invoke the same suite from their own Go tests against an in-process or testcontainers-hosted target.
+A third-party implementer runs the per-protocol conformance subcommand against their service endpoint. Pass/fail validates wire compatibility without forcing the implementer to import internal Go test code. The runner logic lives in an importable Go library, so Go service authors can also invoke the same suite from their own Go tests against an in-process or testcontainers-hosted target.
 
 ## Boundaries
 
-Owns: the conformance library, the `rimsky conformance <protocol>` subcommand handlers, the two shared fixture packages, and the stub-mode probe. Does NOT own: in-repo unit tests (those live with the source), the in-repo scenario harness, the lifecycle-subscriber protocol's own conformance (no dedicated subcommand; the lifecycle check flag on the executor conformance subcommand is the documented escape hatch, backed by a lifecycle-check entry point in the conformance library). Adjacent: `executor`, `claim-producer`, `blob-backend`.
+Owns: the conformance library, the per-protocol conformance subcommand handlers, the two shared fixture packages, and the stub-mode probe. Does NOT own: in-repo unit tests (those live with the source), the in-repo scenario harness, the lifecycle-subscriber protocol's own conformance (no dedicated subcommand; the lifecycle check flag on the executor conformance subcommand is the documented escape hatch, backed by a lifecycle-check entry point in the conformance library). Adjacent: `executor`, `claim-producer`, `blob-backend`.
 
 ## Invariants
 

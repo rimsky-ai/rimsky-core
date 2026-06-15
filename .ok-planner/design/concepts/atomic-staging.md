@@ -23,7 +23,7 @@ Owns: the producer-side discipline, the documented pattern, a filesystem-substra
 |---|---|
 | Postgres schema swap | Atomic via transaction. |
 | Iceberg branch fast-forward | Atomic via metadata pointer. |
-| POSIX filesystem `rename` | Atomic within a filesystem. |
+| Filesystem directory atomic-rename | Atomic within a filesystem. |
 | S3 copy+delete | Windowed; not strictly atomic. |
 | Manifest pointer flip | Atomic if the manifest write is. |
 | Kafka | Incoherent for the pattern. |

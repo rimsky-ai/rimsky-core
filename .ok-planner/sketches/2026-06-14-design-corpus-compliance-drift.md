@@ -1,84 +1,81 @@
-# Design-corpus compliance drift after the v3.0.0 rule tightening — Design Sketch
+# Bundled-service stories: true-user-stories vs captured-task drift — Design Sketch
 
-**Date:** 2026-06-14
+**Date:** 2026-06-14 (origin); 2026-06-15 (scope narrowed)
 **Status:** Sketch (not a spec; not authorization to build)
-**Origin:** surfaced by the post-execute-plan `review-work` cycle 2 (design-doc compliance) run during the closing of `plan:2026-06-13-plumbline-comment-hygiene-sweep`. The plumbline plan never modified the flagged files — this is pre-existing drift in the rimsky design corpus that the cycle-2 reviewer caught.
+**Origin:** surfaced by the post-execute-plan `review-work` cycle 2 (design-doc compliance) run during the closing of `plan:2026-06-13-plumbline-comment-hygiene-sweep`. The plumbline plan never modified the flagged files — this is pre-existing structural drift in the rimsky design corpus that the cycle-2 reviewer caught.
 
 ## Idea
 
-The ok-planner `review-work` skill's cycle 2 (design-doc compliance) runs unconditionally when `.ok-planner/design/concepts/` exists and audits **every live design file** against the concept self-containment rule and the tension surface rule. The rule is canonically stated in `discover-design/SKILL.md` as the `{{SELF-CONTAINMENT-RULE}}` block; the cycle 2 reviewer prompt embeds it. Findings get passed through `review-cleanup` to a fixer loop.
+The rimsky design corpus carries six story files — `stories/store-filesystem.md`, `stories/store-postgres.md`, `stories/sensor-cron.md`, `stories/sensor-http.md`, `stories/claude-agent.md`, `stories/mcp-transport.md` — whose bodies and filename slugs name a **specific bundled service**. Under the project's design-doc methodology, this is a category drift, not a true user-story shape:
 
-That cycle just surfaced ~80 + ~25 findings against the rimsky design corpus. The plumbline plan didn't touch any of them — they're pre-existing drift. Two layered causes:
+- **Concepts** are general — load-bearing nouns, definitions, purposes, boundaries, invariants. Not implementation detail.
+- **Decisions** record technical tradeoffs (Choice + Rationale + Alternatives). The specific artifact picked to satisfy a tradeoff is incidental scaffolding; the tradeoff itself is the content.
+- **Stories** are intended as **true user stories** — role / capability / business value / acceptance / falsifier / proof, where the capability is the user-outcome and the surface a user reaches through is owned by the relevant decision (a CLI verb / HTTP route / wire message / scheduled job lives in `decisions/`, not in the story).
+- **Specifics live in specs, code, and other documentation. NOT in `design/`.**
 
-1. **The rule got stricter in ok-planner v3.0.0 (2026-06-11).** The compliance reviewer prompt's "Disallowed in artifact body" / "Current-state only" sections were tightened — new prohibitions on `## Notes` / `## History` / `## Changelog` sections, on dated audit-trail entries, on backward-looking phrasing ("previously called X"), and on forward-looking phrasing ("we plan to", "TODO"). The previously-allowed "Spec slugs in dated Notes entries (`spec:YYYY-MM-DD-<topic>`)" and "Dates" were removed from the allowed list. Rimsky's design corpus was built between 2026-06-09 and 2026-06-13, with a prior compliance pass (`commit:3f800f3 design-corpus compliance pass`, 2026-06-10) cleaning to the v2.x rule. The v3.0.0 release on 2026-06-11 then redrew the line; files compliant with v2.x are not all compliant with v3.0.0.
+A story file named `stories/store-postgres.md` whose body says "as a maintainer, I can use the bundled postgres store to persist runs" is a **captured task in the shape of a story**, not a true user story. The user-outcome ("I can persist runs to a relational backend with the queue paths intact under load") is general; the bundled-service-name is implementation detail that belongs in a decision (e.g., `decisions/store-postgres-bundled.md` recording the tradeoff between using a bundled postgres backend vs. an external one, with its rationale and alternatives).
 
-2. **The reviewer extended the rule beyond its canonical text.** The canonical `{{SELF-CONTAINMENT-RULE}}` block's explicit "Disallowed in artifact body" list calls out: file/dir paths, `code:`/`pkg:`/URL citations, references to external documentation, quoted code / lint-config / external prose, and "Owns / Does NOT own" sections naming code paths. The reviewer this dispatch extended that spirit to CLI verb literals (`rimsky agent`), HTTP route literals (`POST /instances`), env-var literals (`RIMSKY_PROCESS_ROLE=unified`), proto verb names (`Capabilities`, `Open`, `Commit`), external-library names (`testcontainers-go`, `pgx`), license identifiers (`Apache-2.0`, `AGPL-3.0-or-later`), license-text section IDs (AGPL `§5` / `§13`), regex literals, network-address literals, registry coordinates (`golang:1.25-alpine`), and bundled-service slugs (`store-filesystem`, `claude-agent`). Half of these the reviewer self-flagged as "Borderline" — explicit acknowledgement that the canonical text doesn't actually enumerate them. The other half were flagged firmly even though the canonical text is silent on the class.
-
-The result is a thrash pattern: every post-execute-plan compliance cycle will surface a fresh batch of findings depending on (a) which subset of v3.0.0 tightenings the corpus has accumulated and (b) how strictly the dispatched reviewer extends the rule's spirit. Same corpus, different reviewer dispatch, different verdict on the borderline classes.
-
-Drive the corpus to a stable compliance state, AND drive the rule's canonical text to a state where reviewer judgment doesn't keep producing different verdicts on the same shapes. Two pieces of work, distinct in scope.
+Rewrite each of the six story files into the true-user-story shape: a general user-outcome plus its acceptance/falsifier/proof, with the specific bundled-service choice extracted into one or more sibling decision files. Update `@story:` annotation sites in code to point at the new general story slugs.
 
 ## Shape
 
 ### Today (what we're replacing)
 
-The corpus carries three classes of compliance debt:
+Six story files name specific bundled services:
 
-**Class A — real v3.0.0 drift.** Files written under the v2.x rule that carry `## Notes` sections, dated spec-citation entries, or backward-looking phrasing. The most current data point from the cycle-2 run found this in: `concepts/node.md:24` ("also numbered §17" — backward-looking lineage). A fresh enumeration is part of this work's first phase; the cycle-2 run only sampled.
+| Story file | Names | Likely true-story extraction |
+|---|---|---|
+| `stories/store-postgres.md` | the bundled postgres store + protocol verbs | "as a maintainer, I can persist runs to a relational backend so that…" + decision `store-postgres-bundled` |
+| `stories/store-filesystem.md` | the bundled filesystem store + claim-producer protocol surface | "as a maintainer, I can run rimsky without a relational backend (single-node)…" + decision `store-filesystem-bundled` |
+| `stories/sensor-cron.md` | the bundled cron sensor | "as a publisher, I can schedule sensor invocations on a time cadence…" + decision `sensor-cron-bundled` |
+| `stories/sensor-http.md` | the bundled HTTP-poll sensor | "as a publisher, I can poll an HTTP endpoint for messages…" + decision `sensor-http-bundled` |
+| `stories/claude-agent.md` | the bundled agentic executor + the underlying tool + MCP-catalog wire formats | "as a publisher, I can run an agentic executor against my templates…" + decisions for catalog mechanism, transport, env-var resolution |
+| `stories/mcp-transport.md` | the MCP client product name + the executor-MCP surface | "as a publisher, I can register an executor that speaks MCP…" + decision recording the MCP-transport choice |
 
-**Class B — reviewer-over-extension on CLI-grammar artifacts.** `concepts/rimsky.md`, `concepts/host-agent.md`, `concepts/conformance.md`, `concepts/role-template.md`, `decisions/cli-verb.md`, `decisions/conformance-suite-per-protocol.md`. These artifacts describe surfaces — CLI verbs, subcommand families, flag conventions — whose vocabulary IS the artifact's content. Applying "no CLI literal" strictly produces concepts whose bodies are paraphrases ("an auth subcommand family covering bootstrap, login, key management, status") that lose the actual surface a reader / agent needs.
+These were authored in earlier discover-design / refine-design / execute-plan runs that didn't fully internalize the story-vs-decision split. The cycle-2 reviewer flagged them as "naming external library / wire-format / service-image identifiers" — which is the right call structurally, but the simple text-fix (replace the literal with prose) doesn't address the underlying shape: a true user story shouldn't be reaching for the literal in the first place.
 
-**Class C — reviewer-over-extension on tool-choice and license-choice decisions.** `decisions/testcontainers-go.md`, `decisions/persistence-driver.md` (`sqlite` named), `decisions/licensing-dual-apache-agpl.md` (license names), `decisions/implementation-language-go-plus-ts.md` (language names), `decisions/cron-robfig-v3.md`, `decisions/postgres-pgx-v5.md`, `decisions/yaml-gopkg-v3.md`, etc. The decision's filename IS the choice; the body cannot avoid restating it. The canonical rule's "no external-documentation references / no quoted external prose" does not say "no library names" — but the reviewer extended it that way.
-
-**Class D — reviewer-over-extension on bundled-service stories.** `stories/store-filesystem.md`, `stories/store-postgres.md`, `stories/sensor-cron.md`, `stories/sensor-http.md`, `stories/claude-agent.md`, `stories/mcp-transport.md`, etc. These describe specific bundled services — and the slug naming the service is also a `story:<slug>` reference in the corpus's own grammar. Whether the literal name `store-filesystem` is a violation or a project-owned slug is a rule-text question.
+Each story file also has `@story: <slug>` annotation sites in code (per `git grep '@story:'`). Those annotations point at the literal `store-postgres` / `claude-agent` / etc. — they'll need retargeting when the stories are reshaped.
 
 ### Proposed
 
-A spec with two stories on its `## Manifest`:
+A spec with a `## Manifest` carrying:
 
-**STORY-corpus-compliant-with-v3** — As a rimsky maintainer / future agent, I can run the post-execute-plan `review-work` cycle 2 (design-doc compliance) against the rimsky design corpus and have it report clean against the v3.0.0 rule, so that every subsequent execute-plan run closes cleanly without surfacing pre-existing drift.
-- **Acceptance**: the maintainer runs `review-work` against a tree with no uncommitted code changes; cycle 2 reports approved.
-- **Falsifier**: the maintainer runs cycle 2 and it reports any finding against a live design file in the rimsky corpus.
-- **Proof**: executable — the post-cycle reviewer's output records "Approved — no findings."
+- **One general user story per bundled service surface**, expressing the user-outcome at the level the user actually experiences ("persist runs to a relational backend", "schedule sensor invocations on a time cadence", "run an agentic executor against my templates"). Each story keeps the acceptance / falsifier / proof shape; the proof artifact stays at its current test path (`test/scenarios/`-shaped) but is described in terms of the user-observable outcome, not the bundled service identity.
+- **A sibling decision per bundled-service choice** recording the tradeoff that ELECTED that service for the bundled tier — Choice ("use the bundled postgres backend for the relational-persistence story"), Rationale (why postgres vs. mysql vs. a non-relational option), Alternatives (the others considered).
+- **Retargeting of `@story:` annotation sites in code** from the old specific slugs to the new general slugs. (Per-site sweep similar to the plumbline plan's per-module passes; well-bounded mechanical work.)
 
-**STORY-rule-text-disambiguates-its-edges** (upstream-in-ok-planner work; potentially not for rimsky to drive) — As a rimsky maintainer running compliance cycles, I can trust that the canonical rule text explicitly answers whether CLI verb literals, tool / library names, license identifiers, and bundled-service slugs are allowed or disallowed, so that two consecutive reviewer dispatches against the same file produce the same verdict. (Rimsky's role here is to surface the question upstream; the actual rule update is ok-planner's work.)
+The TDs on the spec capture the structural decisions:
 
-And technical decisions covering: per-class treatment (auto-fix Class A; auto-fix Classes B/C/D only if rule is updated to say so; otherwise document); whether to file an issue on ok-planner for Classes B/C/D before reshaping rimsky; whether to write a project-specific extension or carve-out to the rule.
+- **TD-bundled-services-extract-to-decisions** — bundled-service-name belongs in a decision (where the tradeoff lives), not in a story (where the user-outcome lives).
+- **TD-story-slugs-name-outcomes-not-products** — `stories/<slug>.md` filenames name the outcome being delivered, not the artifact delivering it.
+- **TD-annotation-retarget-mechanical** — `@story:` annotation sites in code retarget per-site without rationale rewriting; the annotation marks where the new story is enforced, not what its content is.
 
-## Why this can't ride a Plumbline-style mechanical falsifier
+## Context: A/B/C from the cycle-2 batch are already cleaned
 
-The 2026-06-13 plumbline plan's falsifier was mechanical (run the lint, count violations). That works because plumbline's check is a pure-shape predicate.
+For reference: the cycle-2 reviewer surfaced ~25 findings split across four classes. Three of them (A — incidental literals like HTTP routes, env-vars, license-text section IDs; B — CLI-grammar concepts that were enumerating literal verbs; C — tool/license/library-choice decisions that were naming the chosen artifact in the Choice section) were applied during the 2026-06-15 follow-up to the plumbline plan's closing — the rewrites are role-description shape, same pattern as the plumbline plan's cycle-1 fixer work. This sketch's scope is ONLY the fourth class, the bundled-service stories.
 
-The compliance rule's edges are not pure-shape. Whether `concept:rimsky` naming the rimsky CLI's verbs is "quoting external prose" or "the artifact's own vocabulary" is a category-decision, not a shape-decision. Whether `decision:testcontainers-go` naming testcontainers-go is "referencing an external library" or "stating the decision content" is also category. The rule's spirit covers both readings depending on how you interpret "external."
+The applied A/B/C work also incorporated the methodology framing more explicitly than the original cycle-2 reviewer's framing did: not "literal X is disallowed by the rule" but "literal X is implementation detail that lives outside `design/`; the concept / decision should express its content at the durability altitude, with specifics in specs, code, or other docs." That framing settled the borderline cases the reviewer self-flagged.
 
-So this work has two phases:
-1. **Resolve the rule-interpretation question upstream** — file the rule-text ambiguity with ok-planner (it's not rimsky's call to make alone; ok-planner is the methodology owner). Until that's settled, every rimsky compliance run will produce different verdicts on Classes B/C/D.
-2. **Apply the resolved rule to the corpus** — auto-fix Class A regardless (the v3.0.0 tightening is concrete). Apply the upstream-resolved verdict on B/C/D.
+## What was layered into the original surface (now resolved)
 
-The downside of accepting the strict reading without upstream resolution: rimsky's design corpus loses surface information (CLI grammar paraphrased into prose). The downside of taking the carve-out reading without upstream resolution: every subsequent run flips between approve and find-issues depending on the reviewer dispatched.
+The cycle-2 reviewer's initial finding set also reflected an ok-planner rule tightening at v3.0.0 (2026-06-11) that added a "Current-state only" sub-rule. That tightening is genuine and applies to: `## Notes` / `## History` / `## Changelog` sections, dated audit-trail entries, backward-looking phrasing ("previously", "(was 60s)"), forward-looking phrasing ("we plan to", "TODO"). Cycle-1 of the design-doc compliance fixer (and the follow-up A/B/C pass) caught the rimsky cases of this drift (e.g. `concepts/node.md:24`'s "also numbered §17" phrasing). No known residual drift of this class remains as of 2026-06-15 — confirm by re-running cycle 2 if a fresh signal is wanted.
 
 ## Open questions
 
-- **Should rimsky drive both phases or only phase 2 (after upstream resolves)?** Phase 1 is methodology-owner territory. Rimsky filing a precise issue describing the ambiguity (with the four classes named and the trade-off articulated) gives ok-planner the input to resolve. Then rimsky's phase 2 is purely mechanical against the resolved rule.
+- **Story split granularity for `claude-agent.md`.** The current story conflates several user-outcomes (catalog mechanism, sign-off gate, error classes, validator-header secret refs). The natural extraction is multiple general stories — one per user-observable outcome — plus per-mechanism decisions. The spec phase will need to surface these.
 
-- **Does the prior `commit:54f2fcf refactor(design): make concept docs self-contained` work bear on this?** It was a v2.x-era refactor. Reviewing what it did and what cycle-2 still flags on the same files might reveal whether it intentionally accepted Class B/C/D literals (because the rule allowed them at v2.x) or just missed them.
+- **Should `mcp-transport` survive as a story, or migrate entirely into decisions?** "I can register an executor that speaks MCP" is a meaningful user-outcome; "we use this specific MCP client product" is a decision. The split needs walking case by case.
 
-- **Is there value in a project-local extension to the rule** (`.ok-planner/CLAUDE.md` adds: "in this project, CLI verb literals are allowed when cited by a CLI-grammar concept; bundled-service slug references are allowed")? Cleaner than a sweeping reshape, narrower than waiting on upstream. But it splits compliance between project-local and upstream-canonical, which has its own thrash risk.
+- **Spec timing.** The bundled-service tier is fairly settled; this refactor is documentation-shape, not behavior change. Whether to drive it via `/brainstorm` now or wait until adjacent design corpus work surfaces it (e.g., the still-open `S-`-prefix promotion conversation from the plumbline plan's closing) is a sequencing call.
 
-- **Cycle 2's whole-corpus scope is by design (since 2026-05-26).** Cycle 1 is uncommitted-only; cycle 2 explicitly is not. Confirming this isn't a skill bug — it's the intended shape — so any conversation about "this shouldn't trip on pre-existing drift" is a question for ok-planner, not a skill bug to report.
+- **Upstream methodology surface.** The "story is non-prescribed user outcome; decision owns the surface and the choice; specs/code own specifics" framing is consistent with ok-planner's `discover-design` SKILL.md (which says "the delivery surface is not part of the story; which surface a user reaches through — CLI verb, HTTP route, wire message, scheduled job, UI — is a technical choice and lives in `decisions/`"). The drift in the rimsky corpus is not a methodology disagreement; it's pre-existing corpus debt that should be cleaned per the methodology that already exists. No upstream change is implicated.
 
 ## Starting data
 
-The cycle-2 reviewer's full finding list (~80 + ~25) is preserved in the 2026-06-13 plumbline plan's task notification context. The fixer for cycle 1 produced rewrites for ~80 of them; the cycle-2 reviewer then surfaced ~25 more (which were not auto-fixed pending this decision).
-
-Concrete files to enumerate fresh in phase 1 of this work:
-- Class A (real drift): `concepts/node.md` (backward-looking phrase), plus any others with `## Notes` / dated entries / "previously" / "we plan to" phrasing.
-- Class B (CLI grammar): the 6 files named above.
-- Class C (tool/license): the 7+ decision files named above.
-- Class D (bundled-service stories): the 6+ story files named above.
+Six story files, file paths above. `@story:` annotation sites in code can be enumerated with `git grep -nE "@story:\s*(claude-agent|store-postgres|store-filesystem|sensor-cron|sensor-http|mcp-transport)\b"` to scope the per-site retargeting phase.
 
 ## What this is NOT
 
-- Not part of the plumbline plan's responsibility. The plumbline plan delivered its stated outcomes (clean lint, active check, proof, design deltas) and closed. The corpus drift surfaced here is independent.
-- Not a methodology critique. ok-planner's whole-corpus cycle-2 scope (since 2026-05-26) is deliberate; the v3.0.0 rule tightening is deliberate. This work is about applying the methodology consistently to the rimsky corpus, plus surfacing the genuine rule ambiguity upstream.
-- Not a code change. No source files outside `.ok-planner/design/` are in scope.
+- Not a code-behavior change. The bundled services keep working as they do. This is corpus shape.
+- Not a methodology debate. The story-vs-decision split is already canonical in ok-planner's `discover-design` rules; the rimsky stories drifted from it during their original authoring.
+- Not part of the plumbline plan's responsibility. The plumbline plan's outcomes are delivered and committed. This is pre-existing structural debt with its own spec.

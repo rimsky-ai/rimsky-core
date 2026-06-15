@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-End-to-end via the test group's scenarios directory + the services module's scenarios test directory driving the assembled product; persistence tests use `testcontainers-go`.
+End-to-end via the test group's scenarios directory + the services module's scenarios test directory driving the assembled product; persistence tests use an integration-test container helper to boot real backends.
 
 ## Rationale
 
