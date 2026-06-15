@@ -168,7 +168,6 @@ TEMPLATE_BODY='{
   "spec": {
     "name": "subscription-mounting-demo",
     "version": "1",
-    "frame_resolution_mode": "serial_queue",
     "frame_timeout_ms": 600000,
     "nodes": [
       {

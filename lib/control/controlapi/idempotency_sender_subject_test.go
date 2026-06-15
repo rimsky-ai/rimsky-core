@@ -199,9 +199,11 @@ func (h *senderSubjectHarness) newInstance(t *testing.T, adminKey, tag string) s
 	t.Helper()
 	tplBody := map[string]any{
 		"spec": map[string]any{
-			"name":                  "msg-pub-" + tag + "-" + uuid.NewString(),
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    "msg-pub-" + tag + "-" + uuid.NewString(),
+			"version": "v1",
+			"messages": []map[string]any{
+				{"type": "system/invalidate"},
+			},
 			"nodes": []map[string]any{
 				{"type": "root", "executor": "worker"},
 			},
@@ -288,8 +290,7 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 
 	// @constraint: (1) Key A first emit: 201, captures the persisted message_id.
 	statusA1, bodyA1 := h.httpPostAs(t, path, map[string]any{
-		"kind":    "invalidate",
-		"target":  "root",
+		"type":    "system/invalidate",
 		"payload": messagePayload("A-first"),
 	}, keyAPlain, sharedKey)
 	require.Equal(t, http.StatusCreated, statusA1, "key A first insert must succeed: %+v", bodyA1)
@@ -302,8 +303,7 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	// message and return msgAID — that's the regression this test is
 	// the lock for.
 	statusB, bodyB := h.httpPostAs(t, path, map[string]any{
-		"kind":    "invalidate",
-		"target":  "root",
+		"type":    "system/invalidate",
 		"payload": messagePayload("B-first"),
 	}, keyBPlain, sharedKey)
 	require.Equal(t, http.StatusCreated, statusB,
@@ -318,8 +318,7 @@ func TestIdempotency_SenderSubject_DistinctAPIKeys_NoCollision(t *testing.T) {
 	// step 1). The replay's payload P3 is dropped on the floor; the
 	// persisted envelope still carries P1's bytes.
 	statusA2, bodyA2 := h.httpPostAs(t, path, map[string]any{
-		"kind":    "invalidate",
-		"target":  "root",
+		"type":    "system/invalidate",
 		"payload": messagePayload("A-replay-P3"),
 	}, keyAPlain, sharedKey)
 	require.Equal(t, http.StatusOK, statusA2,

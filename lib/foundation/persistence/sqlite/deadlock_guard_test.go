@@ -376,14 +376,11 @@ func TestStoreMethodsRejectNilTx(t *testing.T) {
 		{"Frames.ListOrphanFrameDispatches", func() {
 			_, _ = store.Frames().ListOrphanFrameDispatches(ctx, nil)
 		}},
-		{"Frames.LookupFrameResolutionMode", func() {
-			_, _, _ = store.Frames().LookupFrameResolutionMode(ctx, someID, nil)
+		{"Frames.LookupFrameTimeoutMs", func() {
+			_, _ = store.Frames().LookupFrameTimeoutMs(ctx, someID, nil)
 		}},
-		{"Frames.EnqueueSerialFrame", func() {
-			_, _ = store.Frames().EnqueueSerialFrame(ctx, someID, someID, 1000, nil)
-		}},
-		{"Frames.EnqueueCoalesceFrame", func() {
-			_, _ = store.Frames().EnqueueCoalesceFrame(ctx, someID, someID, 1000, nil)
+		{"Frames.InsertFrame", func() {
+			_, _ = store.Frames().InsertFrame(ctx, someID, someID, 1000, nil)
 		}},
 		{"Frames.ListForObservability", func() {
 			_, _ = store.Frames().ListForObservability(ctx, persistence.FrameListFilter{}, persistence.ListPagination{Limit: 1}, nil)

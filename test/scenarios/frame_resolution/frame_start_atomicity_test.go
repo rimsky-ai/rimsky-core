@@ -32,7 +32,6 @@ func TestFrameStartAtomicity(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "frame-start-atomicity", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -49,12 +48,35 @@ func TestFrameStartAtomicity(t *testing.T) {
 	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(iid))
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
+	// Pass 1 of the message-schema-layer plan added the
+	// rimsky_frames.triggering_message_id NOT NULL FK; seed a typed
+	// envelope first so the frame's FK resolves. The retired
+	// source_node_ids column carried "which nodes to stale-mark at
+	// frame-start"; the post-message-schema engine instead expects the
+	// stale runs to already be present when the frame is enqueued (the
+	// emitter / instance-factory inserts them). For this test we seed
+	// a stale run row directly, attached to the queued frame so the
+	// frame-engine has a node to track and the frame does not race
+	// straight through queued → running → completed.
+	messageID := uuid.New()
+	h.ExecSQL(`INSERT INTO rimsky_messages
+	    (id, instance_id, type, sender, sender_kind)
+	    VALUES ($1, $2, 'fixture/frame-start-atomicity', 'operator', 'operator')`,
+		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, frame_timeout_ms)
-		VALUES ($1, 'serial_queue', 'queued', ARRAY[$2]::UUID[], now(), 600000)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, frame_timeout_ms)
+		VALUES ($1, $2, 'queued', now(), 600000)
 		RETURNING frame_id
-	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
+	`, []any{uuid.UUID(iid), messageID}, &frameID)
+	mainScopeID := h.GetMainRunScopeID(iid)
+	h.ExecSQL(`
+		INSERT INTO rimsky_node_runs
+		    (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
+		VALUES (gen_random_uuid(), $1, 'stub', ARRAY[]::text[], now(), 'pending', 'stale', $2, $3)
+	`, uuid.UUID(worker.ID), frameID, uuid.UUID(mainScopeID))
+	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1 WHERE id = $2`,
+		frameID, uuid.UUID(worker.ID))
 
 	// @deliberate: Race two RunTicks.
 	var wg sync.WaitGroup

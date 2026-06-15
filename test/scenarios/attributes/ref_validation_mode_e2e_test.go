@@ -132,9 +132,8 @@ func postTemplate(t *testing.T, h *scenario.Harness, specBody map[string]any) (i
 // set / discovery cache).
 func notProvisionedTemplate(name string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               "v1",
-		"frame_resolution_mode": "serial_queue",
+		"name":    name,
+		"version": "v1",
 		"nodes": []map[string]any{
 			{"type": "root", "executor": "ghost-executor"},
 		},
@@ -147,9 +146,8 @@ func notProvisionedTemplate(name string) map[string]any {
 // genuinely-invalid provisioned reference.
 func provisionedInvalidTemplate(name string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               "v1",
-		"frame_resolution_mode": "serial_queue",
+		"name":    name,
+		"version": "v1",
 		"nodes": []map[string]any{
 			{
 				"type":     "root",

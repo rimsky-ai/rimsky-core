@@ -28,7 +28,7 @@ Owns: the route mounts, the per-route handlers, the lifecycle-subscriber fan-out
 - Bare paths only; v1 does not version the wire format. Rolling upgrades are operator-managed.
 - Lifecycle events fire from control-api (not the supervisor) synchronously at state transitions. A slow subscriber holds up the response.
 - The compose tag/instance-key prefix is server-enforced: tag-create and instance-create reject the reserved prefix from non-compose origins.
-- **Every route is auth-gated** except the health and readiness probes (infrastructure paths predating control-plane semantics). The action registry is the canonical route → action mapping; an unmapped route is a wiring bug.
+- **Every route is auth-gated** except the health and readiness probes, which are unauthenticated infrastructure paths. The action registry is the canonical route → action mapping; an unmapped route is a wiring bug.
 - **MCP shares the auth gate.** Tool invocations re-enter the routing pipeline via the catalog's invoke path, so the same action-gating middleware runs. The audit row records the MCP protocol skin.
 
 ## MCP-as-skin

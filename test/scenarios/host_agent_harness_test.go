@@ -279,10 +279,9 @@ func startProxyOnPort(t *testing.T, port int, controlBase, adminKey string) {
 // the authority for late-bound nodes).
 func lateBindTemplateSpec(name string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               "1",
-		"frame_resolution_mode": "serial_queue",
-		"late_bind_services":    []string{lateBindServiceName},
+		"name":               name,
+		"version":            "1",
+		"late_bind_services": []string{lateBindServiceName},
 		"nodes": []map[string]any{
 			{"type": "worker", "executor": lateBindServiceName},
 		},

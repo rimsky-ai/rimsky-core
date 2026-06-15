@@ -13,7 +13,7 @@ import (
 
 func TestRunTagCreate_OK(t *testing.T) {
 	srv := setupClitest(t)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "", "")
 	if got := cli.RunTagCreate(context.Background(), []string{"--template", hash, "v1"}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
@@ -25,7 +25,7 @@ func TestRunTagCreate_OK(t *testing.T) {
 // space-separated and `=` forms must now work.
 func TestRunTagCreate_FlagAfterPositional(t *testing.T) {
 	srv := setupClitest(t)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "", "")
 	if got := cli.RunTagCreate(context.Background(), []string{"v1", "--template", hash}); got != 0 {
 		t.Errorf("space form: exit %d, want 0", got)
 	}
@@ -43,7 +43,7 @@ func TestRunTagCreate_RejectComposePrefix(t *testing.T) {
 
 func TestRunTagList(t *testing.T) {
 	srv := setupClitest(t)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	srv.State.SetTagHash("v2", hash)
 	if got := cli.RunTagList(context.Background(), []string{"--prefix", "v"}); got != 0 {
 		t.Errorf("exit %d", got)
@@ -59,7 +59,7 @@ func TestRunTagGet_NotFound(t *testing.T) {
 
 func TestRunTagGet_Found(t *testing.T) {
 	srv := setupClitest(t)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	_ = hash
 	if got := cli.RunTagGet(context.Background(), []string{"v1"}); got != 0 {
 		t.Errorf("exit %d", got)
@@ -68,8 +68,8 @@ func TestRunTagGet_Found(t *testing.T) {
 
 func TestRunTagMv_OK(t *testing.T) {
 	srv := setupClitest(t)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
-	hash2, _ := srv.State.RegisterTemplate(map[string]any{"name": "y", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
+	hash2, _ := srv.State.RegisterTemplate(map[string]any{"name": "y", "version": "1.0", "nodes": []any{}}, "", "")
 	if got := cli.RunTagMv(context.Background(), []string{"--template", hash2, "v1"}); got != 0 {
 		t.Errorf("exit %d", got)
 	}
@@ -78,7 +78,7 @@ func TestRunTagMv_OK(t *testing.T) {
 
 func TestRunTagRm_OK(t *testing.T) {
 	srv := setupClitest(t)
-	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	if got := cli.RunTagRm(context.Background(), []string{"v1"}); got != 0 {
 		t.Errorf("exit %d", got)
 	}

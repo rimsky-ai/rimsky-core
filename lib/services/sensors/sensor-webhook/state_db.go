@@ -56,7 +56,7 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    path_prefix               TEXT NOT NULL,
 		    idempotency_header        TEXT,
 		    target_node               TEXT NOT NULL,
-		    message_kind              TEXT NOT NULL,
+		    message_type              TEXT NOT NULL,
 		    last_idempotency_key      TEXT,
 		    last_seen_at              TIMESTAMPTZ,
 		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -80,18 +80,18 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 	const q = `
 		INSERT INTO sensor_webhook_state (
 		    publisher_subscription_id, instance_id, path_prefix,
-		    idempotency_header, target_node, message_kind
+		    idempotency_header, target_node, message_type
 		) VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (publisher_subscription_id) DO UPDATE SET
 		    instance_id        = EXCLUDED.instance_id,
 		    path_prefix        = EXCLUDED.path_prefix,
 		    idempotency_header = EXCLUDED.idempotency_header,
 		    target_node        = EXCLUDED.target_node,
-		    message_kind       = EXCLUDED.message_kind
+		    message_type       = EXCLUDED.message_type
 	`
 	_, err := s.db.ExecContext(ctx, q,
 		w.SubscriptionID, w.InstanceID, w.PathPrefix,
-		w.IdempotencyHeader, w.TargetNode, w.MessageKind)
+		w.IdempotencyHeader, w.TargetNode, w.MessageType)
 	return err
 }
 
@@ -122,7 +122,7 @@ type SubscriptionState struct {
 	PathPrefix         string
 	IdempotencyHeader  string
 	TargetNode         string
-	MessageKind        string
+	MessageType        string
 	LastIdempotencyKey string
 }
 
@@ -132,7 +132,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT publisher_subscription_id, instance_id, path_prefix,
-		        COALESCE(idempotency_header, ''), target_node, message_kind,
+		        COALESCE(idempotency_header, ''), target_node, message_type,
 		        COALESCE(last_idempotency_key, '')
 		   FROM sensor_webhook_state`)
 	if err != nil {
@@ -143,7 +143,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 	for rows.Next() {
 		var w SubscriptionState
 		if err := rows.Scan(&w.SubscriptionID, &w.InstanceID, &w.PathPrefix,
-			&w.IdempotencyHeader, &w.TargetNode, &w.MessageKind, &w.LastIdempotencyKey); err != nil {
+			&w.IdempotencyHeader, &w.TargetNode, &w.MessageType, &w.LastIdempotencyKey); err != nil {
 			return nil, err
 		}
 		out = append(out, w)
@@ -161,14 +161,14 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 	}
 	row := s.db.QueryRowContext(ctx,
 		`SELECT publisher_subscription_id, instance_id, path_prefix,
-		        COALESCE(idempotency_header, ''), target_node, message_kind,
+		        COALESCE(idempotency_header, ''), target_node, message_type,
 		        COALESCE(last_idempotency_key, '')
 		   FROM sensor_webhook_state
 		  WHERE publisher_subscription_id = $1`,
 		subscriptionID)
 	var w SubscriptionState
 	if err := row.Scan(&w.SubscriptionID, &w.InstanceID, &w.PathPrefix,
-		&w.IdempotencyHeader, &w.TargetNode, &w.MessageKind, &w.LastIdempotencyKey); err != nil {
+		&w.IdempotencyHeader, &w.TargetNode, &w.MessageType, &w.LastIdempotencyKey); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}

@@ -226,9 +226,20 @@ func insertDeployedTemplateAsset(ctx context.Context, t *testing.T, sb persisten
 // @diverged: false
 func seedFrameAsset(ctx context.Context, t *testing.T, sb persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
+	_ = sourceNodeID
 	var frameID shared.UUID
 	require.NoError(t, sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		fid, err := sb.Frames().EnqueueSerialFrame(ctx, instanceID, sourceNodeID, 600000, tx)
+		msgID := shared.UUID(uuid.New())
+		if err := sb.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := sb.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

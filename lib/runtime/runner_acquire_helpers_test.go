@@ -82,18 +82,17 @@ type messagesPersist struct {
 func (p *messagesPersist) Messages() persistence.MessagesTable { return p.msgs }
 
 // TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage is
-// the Task 20 regression pin for the silent backfill-override drop. It
+// the regression pin for the silent partition-request override drop. It
 // asserts the SUBSTITUTED partition_request bytes carry the triggering
 // message's `partition_request_override` — i.e. the override changes the
 // partitions that reach SplitScope — and that the absence of a trigger
 // message falls back to the template default (the `|`-fallback), never a
 // panic or a silent wrong-partition run.
 //
-// Before this pass, acquireFanOutIfDeclared passed the literal template
-// bytes verbatim, so the `{{trigger.message.payload…}}` directive was
-// never resolved and every backfill silently processed the default.
+// Without runtime substitution the literal template bytes flow verbatim,
+// so the `{{trigger.message.payload…}}` directive never resolves and the
+// override is silently lost (the `|`-fallback always fires).
 //
-// @concept: backfill
 // @concept: fan-out
 func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *testing.T) {
 	t.Parallel()
@@ -116,7 +115,7 @@ func TestSubstituteFanOutPartitionRequest_OverrideBindsFromTriggerMessage(t *tes
 		if err := msgs.Insert(ctx, nil, persistence.EnqueueMessageRequest{
 			ID:         id,
 			InstanceID: instanceID,
-			Kind:       "invalidate",
+			Type:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
 			Payload:    json.RawMessage(payload),
@@ -390,8 +389,8 @@ func TestAcquireFanOutIfDeclared_NoFanOutSpecIsNoOp(t *testing.T) {
 
 // TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope
 // pins the FORWARDING seam between substitution and acquisition: the
-// substituted partition_request (carrying the backfill override) must be
-// the bytes acquireFanOutIfDeclared hands to AcquireSubClaims →
+// substituted partition_request (carrying the trigger-message override)
+// must be the bytes acquireFanOutIfDeclared hands to AcquireSubClaims →
 // ClaimProducer.SplitScope — NOT the literal template directive. The
 // companion TestSubstituteFanOutPartitionRequest_* tests prove the
 // substitution itself binds the override; this one proves the caller
@@ -404,7 +403,6 @@ func TestAcquireFanOutIfDeclared_NoFanOutSpecIsNoOp(t *testing.T) {
 // sentinel error to short-circuit before any sub-claim persistence runs;
 // the forwarded bytes are the whole subject under test.
 //
-// @concept: backfill
 // @concept: fan-out
 func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *testing.T) {
 	t.Parallel()
@@ -421,14 +419,14 @@ func TestAcquireFanOutIfDeclared_ForwardsSubstitutedOverrideToSplitScope(t *test
 	scopes := &staticScopeTable{}
 	_ = scopes.Create(ctx, nil, persistence.RunScopeRow{ID: rootScopeID, GraphName: "main"})
 
-	// @deliberate: Deliver an invalidate message to the frame carrying the backfill
-	// override, exactly as a real backfill would.
+	// @deliberate: Deliver an invalidate message to the frame carrying the
+	// partition_request override, exactly as a real operator request would.
 	msgs := newFakeMessages()
 	msgID := shared.UUID(uuid.New())
 	if err := msgs.Insert(ctx, nil, persistence.EnqueueMessageRequest{
 		ID:         msgID,
 		InstanceID: instanceID,
-		Kind:       "invalidate",
+		Type:       "invalidate",
 		Sender:     "operator",
 		SenderKind: "operator",
 		Payload:    json.RawMessage(`{"partition_request_override":{"partition_keys":["region-x","region-y"]}}`),

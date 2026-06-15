@@ -19,35 +19,29 @@ import (
 // extraction (graph/attribute/substitution.go::walkPath); never
 // logged, formatted, or otherwise inspected.
 //
-// SenderKind is one of {"operator", "publisher", "instance"} per spec
-// .ok-planner/specs/2026-05-17-sensor-messaging-unification-design.md
-// §Publisher protocol unification.
+// SenderKind is one of {"operator", "publisher", "instance"}.
 type MessageRow struct {
-	ID                  shared.UUID
-	InstanceID          shared.UUID
-	Kind                string
-	Sender              string
-	SenderKind          string
-	Target              string          // @constraint: node alias; empty string when broadcast
-	Payload             json.RawMessage // opaque per @blessed-invariant 21
-	BackfillOperationID *shared.UUID    // non-nil when part of a backfill
-	ReceivedAt          time.Time
-	DeliveredAt         *time.Time
-	FrameID             *shared.UUID
-	Cancelled           bool
+	ID          shared.UUID
+	InstanceID  shared.UUID
+	Type        string // @constraint: typed-message discriminator declared in the template messages: block
+	Sender      string
+	SenderKind  string
+	Payload     json.RawMessage // @constraint: opaque per @blessed-invariant 21 — bytes inert; named-field path read only at substitution-leaf extraction
+	ReceivedAt  time.Time
+	DeliveredAt *time.Time
+	FrameID     *shared.UUID
+	Cancelled   bool
 }
 
 // EnqueueMessageRequest is the payload for MessagesTable.Insert.
 type EnqueueMessageRequest struct {
-	ID                  shared.UUID
-	InstanceID          shared.UUID
-	Kind                string
-	Sender              string
-	SenderKind          string
-	Target              string
-	Payload             json.RawMessage
-	BackfillOperationID *shared.UUID
-	ReceivedAt          time.Time
+	ID         shared.UUID
+	InstanceID shared.UUID
+	Type       string
+	Sender     string
+	SenderKind string
+	Payload    json.RawMessage
+	ReceivedAt time.Time
 }
 
 // MessageListFilter selects rows for the messages list endpoints.
@@ -58,14 +52,12 @@ type EnqueueMessageRequest struct {
 // partition_request can be substituted from the override the message
 // carries (see runtime/runner_acquire_helpers.go::acquireFanOutIfDeclared).
 type MessageListFilter struct {
-	InstanceID          *shared.UUID
-	Kind                string
-	SenderKind          string
-	Target              string
-	BackfillOperationID *shared.UUID
-	FrameID             *shared.UUID
-	DeliveredAfter      *time.Time
-	DeliveredBefore     *time.Time
+	InstanceID      *shared.UUID
+	Type            string
+	SenderKind      string
+	FrameID         *shared.UUID
+	DeliveredAfter  *time.Time
+	DeliveredBefore *time.Time
 }
 
 // MessagesTable is the per-row-type Table accessor for
@@ -73,7 +65,6 @@ type MessageListFilter struct {
 //
 //   - runtime/message_delivery.go — EnqueueMessage / DeliverPendingMessages
 //   - control/controlapi/messages.go — list / detail endpoints
-//   - runtime/backfill.go — CreateBackfill / CancelBackfill
 type MessagesTable interface {
 	// @agent-contract Insert enqueues a new message row (delivered_at IS NULL).
 	Insert(ctx context.Context, tx Tx, req EnqueueMessageRequest) error
@@ -83,12 +74,6 @@ type MessagesTable interface {
 	// updated. Does NOT validate that the frame exists or that the message was
 	// previously pending.
 	MarkDelivered(ctx context.Context, tx Tx, id shared.UUID, frame shared.UUID, deliveredAt time.Time) (bool, error)
-
-	// @agent-contract MarkCancelled sets cancelled=TRUE (and delivered_at=now()
-	// with frame_id NULL) on the message rows matching backfill_operation_id that
-	// have not yet been delivered. Used by CancelBackfill. Does NOT cascade to
-	// frames already opened from those messages.
-	MarkCancelled(ctx context.Context, tx Tx, backfillOperationID shared.UUID, at time.Time) (int, error)
 
 	// @agent-contract ListPendingForInstance returns pending messages for an
 	// instance, ordered by received_at ascending. Used at frame-boundary delivery.
@@ -101,12 +86,21 @@ type MessagesTable interface {
 	// to call from inside an open transaction (the SQLite driver's MaxOpenConns=1
 	// makes a fresh-connection read from inside a tx deadlock). Used by fan-out
 	// acquisition to recover the frame's trigger message so the node's
-	// partition_request substitutes the backfill's override.
+	// partition_request substitutes the triggering override.
 	ListDeliveredForFrame(ctx context.Context, tx Tx, frame shared.UUID) ([]MessageRow, error)
 
 	// @agent-contract Get returns a single message by id, or nil when absent.
 	// Does NOT join the message's frame or instance state.
 	Get(ctx context.Context, id shared.UUID) (*MessageRow, error)
+
+	// @agent-contract GetInTx returns a single message by id, or nil when absent,
+	// reusing the caller's open tx.
+	// @constraint: Use this from inside a transaction to avoid the SQLite
+	// MaxOpenConns=1 deadlock (a tx-less Get goes through the pool and blocks on
+	// the only connection, which is held by the open tx). The frame-engine's
+	// promotion path (graph/frame/engine.go::advanceOneFrame) and any other
+	// inside-tx reader must use this variant.
+	GetInTx(ctx context.Context, tx Tx, id shared.UUID) (*MessageRow, error)
 
 	// @agent-contract List returns messages matching filter, paginated. Opens its
 	// own read connection; not safe to call from inside an open tx on SQLite.

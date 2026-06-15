@@ -37,15 +37,14 @@ func TestOperatorInvalidateToCascade(t *testing.T) {
 	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
 		ID:         msgID,
 		InstanceID: instanceID,
-		Kind:       "invalidate",
+		Type:       "invalidate",
 		Sender:     "operator/admin",
 		SenderKind: "operator",
-		Target:     "ingest_results",
 		ReceivedAt: now,
 	}); err != nil {
 		t.Fatalf("EnqueueMessage: %v", err)
 	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now, nil)
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, now)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}

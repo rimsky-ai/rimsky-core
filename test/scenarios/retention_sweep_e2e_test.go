@@ -43,16 +43,23 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true, NoSupervisor: true})
 
 	tplHash := h.DeployTemplate(node.TemplateSpec{
-		Name:                "retention-sweep-" + uuid.NewString(),
-		Version:             "v1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      node.FrameTimeoutDefaultMs,
+		Name:           "retention-sweep-" + uuid.NewString(),
+		Version:        "v1",
+		FrameTimeoutMs: node.FrameTimeoutDefaultMs,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
 	})
 	instanceID := h.CreateInstance(tplHash, "", map[string]any{})
 	scopeID := h.GetMainRunScopeID(instanceID)
+
+	// @deliberate: Clear the instance-factory's auto-created root frames so the test
+	// sees only the rows it seeds. Under the typed-message schema layer
+	// every root node gets a seeded synthetic message + frame at
+	// instance-create; those auto frames count toward
+	// PruneTraceForRetention's per-instance ranking and would skew the
+	// expected survivor set. node_runs CASCADE via the frame FK.
+	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(instanceID))
 
 	// @constraint: A node to hang the seeded run rows off (node.frame_id stays NULL;
 	// the run rows carry frame_id directly).
@@ -77,14 +84,21 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	for i := 0; i < totalFrames; i++ {
 		frameID := uuid.New()
 		// @deliberate: ended_at increases with i so the highest-i frames are the most
-		// recent terminal frames (the survivors).
+		// recent terminal frames (the survivors). The typed-message schema
+		// layer added the rimsky_frames.triggering_message_id NOT NULL FK;
+		// seed a typed envelope first so the frame's FK resolves.
 		endedAt := base.Add(time.Duration(i) * time.Hour)
+		messageID := uuid.New()
+		h.ExecSQL(`INSERT INTO rimsky_messages
+		    (id, instance_id, type, sender, sender_kind)
+		    VALUES ($1, $2, 'fixture/retention-sweep', 'operator', 'operator')`,
+			messageID, instanceID)
 		h.ExecSQL(`INSERT INTO rimsky_frames
-		    (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		    (frame_id, instance_id, triggering_message_id, state,
 		     queued_at, started_at, ended_at, frame_timeout_ms)
-		    VALUES ($1, $2, 'serial_queue', 'completed', ARRAY[$3]::UUID[],
+		    VALUES ($1, $2, $3, 'completed',
 		            $4, $4, $5, 600000)`,
-			frameID, instanceID, nodeID, endedAt, endedAt)
+			frameID, instanceID, messageID, endedAt, endedAt)
 
 		runID := uuid.New()
 		h.ExecSQL(`INSERT INTO rimsky_node_runs
@@ -108,12 +122,17 @@ func TestRetentionSweepsReapOnTick(t *testing.T) {
 	// the prune predicate (observed_at < cutoff AND run gone AND
 	// claim_handle gone) matches them.
 	staleFrameID := uuid.New()
+	staleMessageID := uuid.New()
+	h.ExecSQL(`INSERT INTO rimsky_messages
+	    (id, instance_id, type, sender, sender_kind)
+	    VALUES ($1, $2, 'fixture/retention-sweep-stale', 'operator', 'operator')`,
+		staleMessageID, instanceID)
 	h.ExecSQL(`INSERT INTO rimsky_frames
-	    (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+	    (frame_id, instance_id, triggering_message_id, state,
 	     queued_at, started_at, ended_at, frame_timeout_ms)
-	    VALUES ($1, $2, 'serial_queue', 'completed', ARRAY[$3]::UUID[],
+	    VALUES ($1, $2, $3, 'completed',
 	            $4, $4, $4, 600000)`,
-		staleFrameID, instanceID, nodeID, base)
+		staleFrameID, instanceID, staleMessageID, base)
 
 	staleLineageIDs := []uuid.UUID{uuid.New(), uuid.New()}
 	for _, lid := range staleLineageIDs {

@@ -107,11 +107,15 @@ func builtinSchemas() map[string][]byte {
 	return map[string][]byte{
 		"instance_list":      obj,
 		"instance_get":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
-		"instance_create":    []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"},"frame_delivery_mode":{"type":"string","enum":["serial_queue","coalesce"]}},"required":["template"]}`),
+		"instance_create":    []byte(`{"type":"object","properties":{"template":{"type":"string","description":"template tag or content hash"},"instance_key":{"type":"string"},"params":{"type":"object"},"attribute_overrides":{"type":"object"}},"required":["template"]}`),
 		"instance_terminate": []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_pause":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_resume":    []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_kill":      []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"reason":{"type":"string","description":"optional reason recorded on the teardown audit event"}},"required":["idOrKey"]}`),
+		// @concept: debug-channel — gated to paused / pause-mode-breakpoint
+		// instances; applies an ad-hoc operator override on a node-type.
+		// Replaces the retired operator-invalidate route.
+		"instance_debug_override": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"action":{"type":"string","enum":["invalidate_node","set_attribute"]},"node_type":{"type":"string"},"attribute_key":{"type":"string"},"attribute_value":{}},"required":["id","action","node_type"]}`),
 
 		// @concept: breakpoint — instance-debugger surface.
 		"breakpoint_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
@@ -132,12 +136,11 @@ func builtinSchemas() map[string][]byte {
 		"tag_set":    []byte(`{"type":"object","properties":{"tag":{"type":"string"},"template":{"type":"string"}},"required":["tag","template"]}`),
 		"tag_delete": []byte(`{"type":"object","properties":{"tag":{"type":"string"}},"required":["tag"]}`),
 
-		"node_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string"}},"required":["idOrKey"]}`),
-		"node_get":        []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
-		"node_invalidate": []byte(`{"type":"object","properties":{"id":{"type":"string"},"reason":{"type":"string"},"frame":{"type":"string","enum":["","in","next"]}},"required":["id"]}`),
-		"node_reset":      []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		"node_list":  []byte(`{"type":"object","properties":{"idOrKey":{"type":"string"}},"required":["idOrKey"]}`),
+		"node_get":   []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
+		"node_reset": []byte(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`),
 
-		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"kind":{"type":"string"},"target":{"type":"string"},"payload":{},"sender":{"type":"string"},"sender_kind":{"type":"string","enum":["operator","publisher"]},"publisher_subscription_id":{"type":"string"}},"required":["id","kind"]}`),
+		"message_send": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"type":{"type":"string"},"payload":{},"sender":{"type":"string"},"sender_kind":{"type":"string","enum":["operator","publisher"]},"publisher_subscription_id":{"type":"string"}},"required":["id","type"]}`),
 		"message_list": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"message_get":  []byte(`{"type":"object","properties":{"id":{"type":"string","description":"message id"}},"required":["id"]}`),
 
@@ -149,12 +152,6 @@ func builtinSchemas() map[string][]byte {
 		"parked_node_list":   []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`),
 		"waitset_list":       obj,
 		"claim_holders_list": []byte(`{"type":"object","properties":{"claim_handle_id":{"type":"string"}},"required":["claim_handle_id"]}`),
-
-		"backfill_create":     []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"target_node":{"type":"string"},"partition_request_override":{},"reason":{"type":"string"}},"required":["id","target_node"]}`),
-		"backfill_list":       []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
-		"backfill_get":        []byte(`{"type":"object","properties":{"op_id":{"type":"string"}},"required":["op_id"]}`),
-		"backfill_partitions": []byte(`{"type":"object","properties":{"op_id":{"type":"string"}},"required":["op_id"]}`),
-		"backfill_cancel":     []byte(`{"type":"object","properties":{"op_id":{"type":"string"}},"required":["op_id"]}`),
 
 		"asset_list":                    []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"}},"required":["id"]}`),
 		"asset_get":                     []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),

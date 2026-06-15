@@ -135,7 +135,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		// validatorHooksFor) share one operator-chosen strictness. The
 		// zero value is node.RefValidateAll — strict by default.
 		RefValidationMode: deps.RefValidationMode,
-		// Plumb the static `kind:` → executor-alias map so the per-node
+		// @constraint: plumb the static `kind:` → executor-alias map so the per-node
 		// `kind:` validator can range-check the optional kind field.
 		// Same map drives the canonicalizer's substitution after
 		// validation succeeds.
@@ -166,7 +166,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		_, ok := deps.NamedLocks.Get(name)
 		return ok
 	}
-	// inprocAlias reports whether `name` matches a rimsky-bundled inproc
+	// @constraint: inprocAlias reports whether `name` matches a rimsky-bundled inproc
 	// executor identity. The inproc executor is always "declared" (it
 	// ships with the binary) and exposes its capabilities via the
 	// builtin handler package so the validator's executor-declared /
@@ -189,7 +189,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			return ok
 		}
 	} else if deps.KindAliases != nil {
-		// Inproc-only deployment (no operator-declared external
+		// @constraint: inproc-only deployment (no operator-declared external
 		// executors): the loop_counter alias must still validate as
 		// declared. Without this clause an inproc-only operator would
 		// fail validation under the strict reference-validation mode.
@@ -198,7 +198,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		}
 	}
 	if deps.ExecutorCapabilities != nil {
-		// Wrap the operator-supplied observability hook so the inproc
+		// @constraint: wrap the operator-supplied observability hook so the inproc
 		// executor's baked-in capabilities shadow it for the inproc
 		// alias only; every other name still routes through the cache.
 		hooks.ExecutorDeclaredEvents = func(name string) ([]string, bool) {
@@ -210,7 +210,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		}
 		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
 			if inprocAlias(name) {
-				// Inproc executors declare no error-class vocabulary;
+				// @constraint: inproc executors declare no error-class vocabulary;
 				// returning (nil, true) is the "visible, empty"
 				// sentinel — the runtime-synthesized error classes
 				// plus the producer side of the union still apply.
@@ -232,7 +232,7 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 			return schema, ok
 		}
 	} else if deps.KindAliases != nil {
-		// No observability cache wired (e.g. inproc-only deployment or
+		// @constraint: no observability cache wired (e.g. inproc-only deployment or
 		// a test harness that didn't run the handshake), but kind sugar
 		// is in use: install minimal hooks that surface the inproc
 		// executor's baked-in capabilities and stay nil-shaped for
@@ -326,7 +326,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// applies defaults after validation passes so the persisted spec
 		// carries the resolved value.
 		node.ApplyFrameResolutionDefaults(&spec)
-		// Rewrite any `kind: <name>` sugar to its canonical
+		// @constraint: rewrite any `kind: <name>` sugar to its canonical
 		// `executor: <alias>` form before hashing, so the persisted
 		// spec is in normal form and downstream registration code does
 		// not need to know about kind sugar. Validation has already
@@ -334,7 +334,7 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// executor (validateKindDeclaration), so this is a pure
 		// rewrite — nothing to reject.
 		//
-		// Alias-stability assumption (`kind:` → `executor:` map):
+		// @deliberate: alias-stability assumption (`kind:` → `executor:` map):
 		// canonicalize-then-hash silently couples the persisted hash to
 		// the alias map state at registration time. Two consequences:
 		//
@@ -553,7 +553,7 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		// as register does, so the spec the validators see matches what
 		// would be persisted.
 		node.ApplyFrameResolutionDefaults(&spec)
-		// Rewrite any `kind: <name>` sugar to its canonical
+		// @constraint: rewrite any `kind: <name>` sugar to its canonical
 		// `executor: <alias>` form before hashing, so the persisted
 		// spec is in normal form and downstream registration code does
 		// not need to know about kind sugar. Validation has already

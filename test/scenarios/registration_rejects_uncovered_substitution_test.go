@@ -155,7 +155,6 @@ func perFieldUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
 		"name":                  name,
 		"version":               version,
-		"frame_resolution_mode": "serial_queue",
 		"nodes": []map[string]any{
 			{"type": "foo", "executor": "stub"},
 			{
@@ -186,7 +185,6 @@ func wholePullUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
 		"name":                  name,
 		"version":               version,
-		"frame_resolution_mode": "serial_queue",
 		"nodes": []map[string]any{
 			{"type": "foo", "executor": "stub"},
 			{
@@ -223,7 +221,6 @@ func eventUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
 		"name":                  name,
 		"version":               version,
-		"frame_resolution_mode": "serial_queue",
 		"nodes": []map[string]any{
 			{"type": "foo", "executor": "stub"},
 			{

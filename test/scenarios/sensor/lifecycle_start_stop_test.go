@@ -35,7 +35,7 @@ type subscription struct {
 	InstanceID     string
 	Kind           string
 	TargetNode     string
-	MessageKind    string
+	MessageType    string
 	StartedAt      time.Time
 }
 
@@ -61,7 +61,7 @@ func (s *fixturePublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequ
 		InstanceID:     req.GetInstanceId(),
 		Kind:           req.GetKind(),
 		TargetNode:     req.GetTargetNode(),
-		MessageKind:    req.GetMessageKind(),
+		MessageType:    req.GetMessageType(),
 		StartedAt:      time.Now(),
 	}
 	return &genv1.SubscribeResponse{}, nil
@@ -84,7 +84,7 @@ func (s *fixturePublisher) ListSubscriptions(_ context.Context, _ *emptypb.Empty
 			InstanceId:              sub.InstanceID,
 			Kind:                    sub.Kind,
 			TargetNode:              sub.TargetNode,
-			MessageKind:             sub.MessageKind,
+			MessageType:             sub.MessageType,
 			StartedAt:               timestamppb.New(sub.StartedAt),
 		})
 	}
@@ -97,7 +97,7 @@ func TestLifecycleStartStop_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 	if _, err := s.Subscribe(ctx, &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron",
-		TargetNode: "tick", MessageKind: "invalidate",
+		TargetNode: "tick", MessageType: "system/invalidate",
 	}); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}

@@ -171,10 +171,9 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 	var frameID shared.UUID
 
 	tmplSpec := spec.TemplateSpec{
-		Name:                "on-error-tx-test",
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "on-error-tx-test",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []spec.TemplateNodeDef{
 			{
 				Type:     "worker",
@@ -219,7 +218,17 @@ func TestOnErrorTxAtomicity(t *testing.T) {
 		}, tx); err != nil {
 			return err
 		}
-		fid, err := store.Frames().EnqueueSerialFrame(ctx, instanceID, nodeID, 600000, tx)
+		msgID := shared.UUID(uuid.New())
+		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := store.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

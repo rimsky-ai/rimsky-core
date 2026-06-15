@@ -169,7 +169,7 @@ func (x *PublisherKindCapability) GetConfigSchema() []byte {
 
 // SubscribeRequest carries the publisher-subscription routing fields
 // inline (no on-observation substruct). The publisher uses target_node
-// and message_kind to build the message envelope at publish time.
+// and message_type to build the message envelope at publish time.
 type SubscribeRequest struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
 	PublisherSubscriptionId string                 `protobuf:"bytes,1,opt,name=publisher_subscription_id,json=publisherSubscriptionId,proto3" json:"publisher_subscription_id,omitempty"`
@@ -180,13 +180,20 @@ type SubscribeRequest struct {
 	// Substituted by rimsky from the template `publishers:` block before
 	// dispatch.
 	ResolvedConfig []byte `protobuf:"bytes,4,opt,name=resolved_config,json=resolvedConfig,proto3" json:"resolved_config,omitempty"`
-	// target_node is the receiver node alias on the instance side; the
-	// publisher copies this onto each message envelope as `target`.
+	// target_node is the receiver node alias on the instance side. It is
+	// used by rimsky for subscription routing only; the publisher does NOT
+	// copy it onto each message envelope as a wire field (the
+	// `rimsky_messages.target` column was retired in the 2026-06-14
+	// message-schema-layer reshape, and the receipt handler has no `target`
+	// field on `postMessageRequest`).
 	TargetNode string `protobuf:"bytes,5,opt,name=target_node,json=targetNode,proto3" json:"target_node,omitempty"`
-	// message_kind is the wire-level message kind (default "invalidate"
-	// when empty); the publisher copies this onto each message envelope
-	// as `kind`.
-	MessageKind   string `protobuf:"bytes,6,opt,name=message_kind,json=messageKind,proto3" json:"message_kind,omitempty"`
+	// message_type is the wire-level message type-path declared in the
+	// target instance's template `messages:` registry. The publisher
+	// copies this onto each message envelope as `type`. No default —
+	// an empty value is rejected at the receipt-time registry gate. The
+	// legacy `"invalidate"` default retired in the 2026-06-14 message-
+	// schema-layer reshape (templates declare their accepted types).
+	MessageType   string `protobuf:"bytes,6,opt,name=message_type,json=messageType,proto3" json:"message_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -256,9 +263,9 @@ func (x *SubscribeRequest) GetTargetNode() string {
 	return ""
 }
 
-func (x *SubscribeRequest) GetMessageKind() string {
+func (x *SubscribeRequest) GetMessageType() string {
 	if x != nil {
-		return x.MessageKind
+		return x.MessageType
 	}
 	return ""
 }
@@ -430,7 +437,7 @@ type PublisherSubscriptionDescriptor struct {
 	Kind                    string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	ResolvedConfig          []byte                 `protobuf:"bytes,4,opt,name=resolved_config,json=resolvedConfig,proto3" json:"resolved_config,omitempty"`
 	TargetNode              string                 `protobuf:"bytes,5,opt,name=target_node,json=targetNode,proto3" json:"target_node,omitempty"`
-	MessageKind             string                 `protobuf:"bytes,6,opt,name=message_kind,json=messageKind,proto3" json:"message_kind,omitempty"`
+	MessageType             string                 `protobuf:"bytes,6,opt,name=message_type,json=messageType,proto3" json:"message_type,omitempty"`
 	StartedAt               *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
@@ -501,9 +508,9 @@ func (x *PublisherSubscriptionDescriptor) GetTargetNode() string {
 	return ""
 }
 
-func (x *PublisherSubscriptionDescriptor) GetMessageKind() string {
+func (x *PublisherSubscriptionDescriptor) GetMessageType() string {
 	if x != nil {
-		return x.MessageKind
+		return x.MessageType
 	}
 	return ""
 }
@@ -535,7 +542,7 @@ const file_publisher_proto_rawDesc = "" +
 	"\x0fresolved_config\x18\x04 \x01(\fR\x0eresolvedConfig\x12\x1f\n" +
 	"\vtarget_node\x18\x05 \x01(\tR\n" +
 	"targetNode\x12!\n" +
-	"\fmessage_kind\x18\x06 \x01(\tR\vmessageKind\"\x13\n" +
+	"\fmessage_type\x18\x06 \x01(\tR\vmessageType\"\x13\n" +
 	"\x11SubscribeResponse\"P\n" +
 	"\x12UnsubscribeRequest\x12:\n" +
 	"\x19publisher_subscription_id\x18\x01 \x01(\tR\x17publisherSubscriptionId\"\x15\n" +
@@ -550,7 +557,7 @@ const file_publisher_proto_rawDesc = "" +
 	"\x0fresolved_config\x18\x04 \x01(\fR\x0eresolvedConfig\x12\x1f\n" +
 	"\vtarget_node\x18\x05 \x01(\tR\n" +
 	"targetNode\x12!\n" +
-	"\fmessage_kind\x18\x06 \x01(\tR\vmessageKind\x129\n" +
+	"\fmessage_type\x18\x06 \x01(\tR\vmessageType\x129\n" +
 	"\n" +
 	"started_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt2\xbe\x02\n" +
 	"\tPublisher\x12H\n" +

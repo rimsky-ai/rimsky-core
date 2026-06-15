@@ -83,10 +83,10 @@ func handleCreateKey(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		// @constraint: canonicalize: trim whitespace on action strings before
-		// validation so an operator's accidental `"node:invalidate "`
+		// validation so an operator's accidental `"node:reset "`
 		// surfaces as either accepted (after trim) or rejected with
 		// a precise error rather than a confusing
-		// `unknown action: node:invalidate ` (trailing space).
+		// `unknown action: node:reset ` (trailing space).
 		for i := range body.Permissions {
 			body.Permissions[i].Action = strings.TrimSpace(body.Permissions[i].Action)
 		}

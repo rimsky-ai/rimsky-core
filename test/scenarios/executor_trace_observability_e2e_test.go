@@ -490,9 +490,8 @@ func TestExecutorTraceObservability(t *testing.T) {
 	})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name:                "trace-observability-" + traceExecutorName,
-		Version:             "v1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
+		Name:    "trace-observability-" + traceExecutorName,
+		Version: "v1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",

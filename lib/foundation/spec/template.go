@@ -20,12 +20,11 @@ import "encoding/json"
 // .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
 // §Sub-graphs.
 type TemplateSpec struct {
-	Name                string            `yaml:"name" json:"name"`
-	Version             string            `yaml:"version" json:"version"`
-	Description         string            `yaml:"description,omitempty" json:"description,omitempty"`
-	FrameResolutionMode string            `yaml:"frame_resolution_mode" json:"frame_resolution_mode"`
-	FrameTimeoutMs      int64             `yaml:"frame_timeout_ms,omitempty" json:"frame_timeout_ms,omitempty"`
-	Nodes               []TemplateNodeDef `yaml:"nodes,omitempty" json:"nodes,omitempty"`
+	Name           string            `yaml:"name" json:"name"`
+	Version        string            `yaml:"version" json:"version"`
+	Description    string            `yaml:"description,omitempty" json:"description,omitempty"`
+	FrameTimeoutMs int64             `yaml:"frame_timeout_ms,omitempty" json:"frame_timeout_ms,omitempty"`
+	Nodes          []TemplateNodeDef `yaml:"nodes,omitempty" json:"nodes,omitempty"`
 	// Graphs is the post-spec-2026-05-15 nested form. When non-empty,
 	// the canonicalizer rejects any non-empty `Nodes` field.
 	Graphs []GraphSpec `yaml:"graphs,omitempty" json:"graphs,omitempty"`
@@ -57,6 +56,33 @@ type TemplateSpec struct {
 	//
 	// @concept: attribute
 	Defaults *TemplateDefaults `yaml:"defaults,omitempty" json:"defaults,omitempty"`
+
+	// Messages declares the typed messages this template accepts. Each
+	// entry pairs a message `type:` (the discriminator that travels on
+	// the wire as `rimsky_messages.type` and as the virtual-node-type
+	// receivers subscribe to via `node: <type>, type: terminal/success`)
+	// with a JSON Schema describing the message body shape.
+	//
+	// The registry is load-bearing at two surfaces:
+	//   - Registration-time: the template validator rejects unknown
+	//     message-type references (substitution refs, `node:` values of
+	//     message-type shape).
+	//   - Receipt-time: `POST /instances/{id}/messages` rejects
+	//     undeclared types with HTTP 400 before any persistence side
+	//     effect, so an undeclared type can never silently dead-letter.
+	//
+	// @concept: message-schema
+	Messages []MessageSchema `yaml:"messages,omitempty" json:"messages,omitempty"`
+}
+
+// MessageSchema is one entry in the template-level `messages:` registry.
+// Type is the discriminator the wire and the cascade walker route on;
+// BodySchema is a JSON Schema fragment describing the body shape.
+//
+// @concept: message-schema
+type MessageSchema struct {
+	Type       string          `yaml:"type" json:"type"`
+	BodySchema json.RawMessage `yaml:"body_schema,omitempty" json:"body_schema,omitempty"`
 }
 
 // TemplateDefaults declares template-author baselines applied at
@@ -91,10 +117,11 @@ type TemplateAttributeDefaults struct {
 }
 
 // @concept: frame
-// @constraint: frame-resolution policy (coalesce vs. serial_queue) is part of the template surface; the timeout floor and default come from the design.
+// @constraint: per-frame timeout floor and default come from the design; the
+// pre-message-schema `frame_resolution_mode:` toggle (coalesce | serial_queue)
+// is retired — the message-schema layer collapses frame resolution to a single
+// shape (one message per frame).
 const (
-	FrameResolutionCoalesce    = "coalesce"
-	FrameResolutionSerialQueue = "serial_queue"
 	// @constraint: FrameTimeoutDefaultMs is the default per-frame timeout (10 minutes).
 	FrameTimeoutDefaultMs = int64(600000)
 	// @constraint: FrameTimeoutMinMs is the hard floor for per-frame timeout (60 seconds).
@@ -183,6 +210,27 @@ type TemplateNodeDef struct {
 	// canonicalization (per spec §Sub-graphs / Identity and absorption).
 	Delegate string `yaml:"delegate,omitempty" json:"delegate,omitempty"`
 
+	// EmitsMessage names a message type declared in the template's
+	// top-level `messages:` block. When set, this node is a message-
+	// emitter node: its dispatch mode is "build a message envelope
+	// from the node's resolved attributes and insert it into the
+	// message ledger" — there is no executor invocation. The node's
+	// `attributes:` schema must match the destination message type's
+	// `body_schema` exactly (same field set, same types); the
+	// registration-time validator enforces this.
+	//
+	// Mutually exclusive with Executor and Delegate: a node declares
+	// exactly one dispatch mode. The runtime constructs the envelope
+	// with `sender_kind = "instance"`, `sender = "instance:<id>"`,
+	// `payload = resolved attribute set`, and an `Idempotency-Key`
+	// deterministic on `(node_id, frame_id)` — stable across stale-mark
+	// cycles and supervisor hard-failure re-enqueue, so retries collapse
+	// to the same ledger row. The envelope inserts inside the node's
+	// terminal-resolution tx; rollback rolls the emit back.
+	//
+	// @concept: message-emitter-node
+	EmitsMessage string `yaml:"emits_message,omitempty" json:"emits_message,omitempty"`
+
 	// Holds declares the node co-holds upstream claims. The outer key
 	// is the local alias; the value names the upstream node whose
 	// claim is being co-held. The supervisor INSERTs rows into
@@ -231,16 +279,14 @@ type TemplateNodeDef struct {
 	IsSubgraphExit bool `yaml:"is_subgraph_exit,omitempty" json:"is_subgraph_exit,omitempty"`
 }
 
-// @deliberate: frame + target constants for SubscriptionEntry. The lifecycle-handler
-// resolve vocabulary (`pass | retry | error | by_changed |
-// always_propagate | never_propagate`) retired with the handler types
-// 2026-05-23; ErrorPolicy's 4-value action vocabulary (`pass | give_up |
-// retry | discard_claims_then_retry`) is the replacement and lives on
-// `concept:error-policy`.
+// @deliberate: SelfTarget is the only remaining SubscriptionEntry target constant.
+// The lifecycle-handler resolve vocabulary (`pass | retry | error | by_changed |
+// always_propagate | never_propagate`) retired with the handler types 2026-05-23
+// (ErrorPolicy's 4-value action vocabulary on `concept:error-policy` replaces it).
+// The per-subscription `frame:` modifier and its `"in"` / `"next"` constants retired
+// with the message-schema layer — the cascade walker has one path (in-tx, in-frame)
+// and cross-frame coupling is expressed via `concept:message-emitter-node`.
 const (
-	FrameIn   = "in"
-	FrameNext = "next"
-
 	SelfTarget = "self"
 )
 

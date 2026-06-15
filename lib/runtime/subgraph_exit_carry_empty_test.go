@@ -67,10 +67,9 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 	exitRunID := shared.UUID(uuid.New())
 
 	tmpl := tmplspec.TemplateSpec{
-		Name:                "exit-carry-empty-fixture",
-		Version:             "1",
-		FrameResolutionMode: tmplspec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "exit-carry-empty-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []tmplspec.TemplateNodeDef{
 			{Type: "caller", Delegate: "inner"},
 			{Type: "inner-exit", Executor: "test-executor"},
@@ -112,7 +111,17 @@ func TestApplyTerminalCompleteSubgraphExit_EmptyAttributes_ClosesScopeAndEmitsCa
 		}, tx); err != nil {
 			return err
 		}
-		frameID, err := tables.Frames().EnqueueSerialFrame(ctx, instanceID, callerNodeID, 600000, tx)
+		msgID := shared.UUID(uuid.New())
+		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		frameID, err := tables.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

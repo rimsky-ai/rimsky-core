@@ -38,10 +38,6 @@ func TestPickCanonicalRoute(t *testing.T) {
 		{Method: "GET", Path: "/templates"},
 		{Method: "GET", Path: "/templates/{id}"},
 	}
-	invalidateRoutes := []RegistryRoute{
-		{Method: "POST", Path: "/nodes/{id}/invalidate"},
-		{Method: "POST", Path: "/admin/instances/{instance}/nodes/{node_id}/invalidate"},
-	}
 
 	cases := []struct {
 		name   string
@@ -62,8 +58,6 @@ func TestPickCanonicalRoute(t *testing.T) {
 		{"instance_get → item", "instance_get", instRoutes, withArgs("idOrKey"), "/instances/{idOrKey}"},
 		{"template_list → collection", "template_list", tmplRoutes, withArgs(), "/templates"},
 		{"template_get → item", "template_get", tmplRoutes, withArgs("id"), "/templates/{id}"},
-		// @constraint: /admin/ variant is dropped even though it is not the shortest.
-		{"node_invalidate skips admin", "node_invalidate", invalidateRoutes, withArgs("id"), "/nodes/{id}/invalidate"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,7 +75,7 @@ func TestIsItemRoute(t *testing.T) {
 		"/instances/{idOrKey}/nodes": false,
 		"/instances":                 false,
 		"/messages/{id}":             true,
-		"/nodes/{id}/invalidate":     false,
+		"/nodes/{id}/reset":          false,
 	}
 	for path, want := range cases {
 		if got := isItemRoute(path); got != want {

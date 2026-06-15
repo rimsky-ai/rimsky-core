@@ -661,10 +661,36 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 // @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
 // @concept: run-scope
 func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
+	// @constraint: cascade-emit (concept:message-emitter-node) routes through
+	// the supervisor's dispatch path but has `n.executor == ''`. To admit
+	// such rows through SelectCandidates' executor-accepted branch,
+	// AffirmNodeRunRow stamps the sentinel `@emit-message` on the dispatch
+	// row's `executor_name` when the template node declares an
+	// `emits_message:` field. The supervisor auto-injects `@emit-message`
+	// into its `accepted_executors` list. Mirrors the postgres path; the
+	// sentinel constant is declared as `runtime.EmitMessageDispatchName`.
+	//
+	// @story: cascade-emit
+	// @concept: message-emitter-node
 	res, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		 SELECT ?, n.id, n.executor,
+		 SELECT ?,
+		        n.id,
+		        COALESCE(
+		          NULLIF(n.executor, ''),
+		          (SELECT CASE
+		                    WHEN json_extract(nd.value, '$.emits_message') IS NOT NULL
+		                     AND json_extract(nd.value, '$.emits_message') <> ''
+		                    THEN '@emit-message'
+		                  END
+		             FROM rimsky_instances i
+		             JOIN rimsky_templates t ON t.id = i.template_hash
+		             JOIN json_each(t.spec, '$.nodes') AS nd
+		            WHERE i.id = n.instance_id
+		              AND json_extract(nd.value, '$.type') = n.node_type
+		            LIMIT 1)
+		        ),
 		        COALESCE((
 		          SELECT json_group_array(json_extract(store.value, '$.name'))
 		            FROM rimsky_instances i

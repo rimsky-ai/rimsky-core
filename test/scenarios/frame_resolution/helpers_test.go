@@ -13,6 +13,7 @@ package frame_resolution
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -22,19 +23,19 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
 type frameRow struct {
-	FrameID        uuid.UUID
-	InstanceID     uuid.UUID
-	Mode           string
-	State          string
-	SourceNodeIDs  []uuid.UUID
-	QueuedAt       time.Time
-	StartedAt      *time.Time
-	EndedAt        *time.Time
-	FrameTimeoutMs int64
+	FrameID             uuid.UUID
+	InstanceID          uuid.UUID
+	State               string
+	TriggeringMessageID uuid.UUID
+	QueuedAt            time.Time
+	StartedAt           *time.Time
+	EndedAt             *time.Time
+	FrameTimeoutMs      int64
 }
 
 // listFrames returns rimsky_frames rows for the given instance, ordered
@@ -43,7 +44,7 @@ func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []fra
 	t.Helper()
 	var out []frameRow
 	h.QuerySQL(`
-		SELECT frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		SELECT frame_id, instance_id, state, triggering_message_id,
 		       queued_at, started_at, ended_at, frame_timeout_ms
 		FROM rimsky_frames
 		WHERE instance_id = $1
@@ -51,7 +52,7 @@ func listFrames(t *testing.T, h *scenario.Harness, instanceID shared.UUID) []fra
 	`, []any{uuid.UUID(instanceID)}, func(scan func(...any) error) error {
 		var r frameRow
 		if err := scan(
-			&r.FrameID, &r.InstanceID, &r.Mode, &r.State, &r.SourceNodeIDs,
+			&r.FrameID, &r.InstanceID, &r.State, &r.TriggeringMessageID,
 			&r.QueuedAt, &r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs,
 		); err != nil {
 			return err
@@ -71,15 +72,41 @@ func countFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUI
 	return n
 }
 
-// fireInvalidate runs frame.EnqueueOrCoalesce in its own short tx via
-// the persistence driver. Used by tests that want to fire many
+// fireInvalidate seeds a synthetic operator-sourced message carrying a
+// wake_node_ids payload, and calls frame.EnqueueFrame in its own short
+// tx via the persistence driver. Used by tests that want to fire many
 // invalidates rapidly without going through the controlapi HTTP path.
-func fireInvalidate(t *testing.T, h *scenario.Harness, instanceID, sourceNodeID shared.UUID) shared.UUID {
+//
+// Pass 4 of the 2026-06-14 message-schema-layer reshape: the legacy
+// rimsky_frames.source_node_ids column retired (Pass 1) along with the
+// frame-engine path that stale-marked source nodes at promotion. The
+// replacement is a `wake_node_ids` JSON array on the message payload —
+// the frame engine reads it at promotion and stale-marks each in the
+// same tx (promote + stale-mark co-committed).
+func fireInvalidate(t *testing.T, h *scenario.Harness, instanceID, targetNodeID shared.UUID) shared.UUID {
 	t.Helper()
 	var fid uuid.UUID
 	require.NoError(t, h.Driver.Tables().Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		got, err := frame.EnqueueOrCoalesce(ctx, h.Driver.Tables(), tx,
-			uuid.UUID(instanceID), uuid.UUID(sourceNodeID))
+		msgID := shared.UUID(uuid.New())
+		var payload []byte
+		if targetNodeID != (shared.UUID{}) {
+			b, _ := json.Marshal(map[string]any{
+				"wake_node_ids": []string{targetNodeID.String()},
+			})
+			payload = b
+		}
+		if err := runtime.EnqueueMessage(ctx, tx, h.Driver.Tables().Messages(), persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "node/invalidate",
+			Sender:     "test-helper",
+			SenderKind: "operator",
+			Payload:    payload,
+		}); err != nil {
+			return err
+		}
+		got, err := frame.EnqueueFrame(ctx, h.Driver.Tables(), tx,
+			uuid.UUID(instanceID), uuid.UUID(msgID))
 		if err != nil {
 			return err
 		}

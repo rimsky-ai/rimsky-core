@@ -15,18 +15,20 @@
 //   - The instance is NOT terminated while parked, even though it was
 //     created with `terminate_after_run = true` (the Pass-3 parked-aware
 //     instance-terminal guard).
-//   - Only after the parked node is woken (admin invalidate), resumes, and
-//     resolves to Success — i.e. the frame genuinely ends — does
-//     `terminate_after_run` fire and stamp `terminated_at` (the Pass-3
-//     strict "terminate after the next frame ends" semantics).
+//   - Only after the parked node is woken (runtime-synthetic invalidate),
+//     resumes, and resolves to Success — i.e. the frame genuinely ends —
+//     does `terminate_after_run` fire and stamp `terminated_at` (the
+//     Pass-3 strict "terminate after the next frame ends" semantics).
 //
 // Wake mechanism (load-bearing): a `parked` node is NOT woken by the
 // `/v1/callback` endpoint (that endpoint serves the separate
 // AwaitAsyncCallback terminal, which keeps a node `running`; a Park
 // terminal registers no async_ack_id and the callback handler rejects a
-// parked run). A parked node is woken only by admin/cascade invalidate or
-// the snooze sweep. This test uses the true park + admin-invalidate wake
-// path, modeled on parked_lifecycle_test.go::
+// parked run). A parked node is woken only by a cascade/runtime-synthetic
+// invalidate or the snooze sweep. This test uses the true park +
+// synthetic-invalidate wake path (via the harness's InvalidateNode helper,
+// which drives the same internal helper the retired admin invalidate route
+// used), modeled on parked_lifecycle_test.go::
 // TestParkedLifecycleResumeOnExternalInvalidate. This grounds the spec's
 // scenario-3 wording "awaiting an async callback" to the real parked-node
 // wake path; the spec's intent — "a parked node holds its frame open and
@@ -76,7 +78,6 @@ func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-holds-frame", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -109,17 +110,13 @@ func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 	// Re-script the worker so the resume dispatch resolves to Success.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "after-callback")
 
-	// @deliberate: Wake via admin invalidate (NOT /v1/callback — a parked node is not
-	// woken by the callback endpoint).
-	resp, err := http.Post(
-		h.ControlBase+"/v1/admin/instances/"+worker.InstanceID.String()+"/nodes/"+worker.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{}`)),
-	)
-	require.NoError(t, err)
-	resp.Body.Close()
+	// @deliberate: Wake via the runtime-synthetic invalidate envelope (NOT
+	// /v1/callback — a parked node is not woken by the callback endpoint).
+	// The retired admin invalidate route used the same internal helper.
+	h.InvalidateNode(worker.InstanceID, worker.ID)
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 10*time.Second),
-		"admin invalidate should wake the parked node")
+		"synthetic invalidate should wake the parked node")
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should resolve to Success after the wake dispatch")
 

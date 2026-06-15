@@ -96,7 +96,7 @@ func TestSensorCronStateDSN_SurvivesRestartAndFiresOnScheduledWindow(t *testing.
 	raw, _ := json.Marshal(cfg)
 	if _, err := s1.Subscribe(ctx, &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "cron-1", InstanceId: "inst-1", Kind: "cron",
-		ResolvedConfig: raw, TargetNode: "tick", MessageKind: "invalidate",
+		ResolvedConfig: raw, TargetNode: "tick", MessageType: "invalidate",
 	}); err != nil {
 		t.Fatalf("Subscribe (first): %v", err)
 	}
@@ -221,7 +221,7 @@ func TestSensorCronStateDSN_UnsetLosesSubscriptionOnRestart(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s1.Subscribe(ctx, &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "cron-1", InstanceId: "inst-1", Kind: "cron",
-		ResolvedConfig: raw, TargetNode: "tick", MessageKind: "invalidate",
+		ResolvedConfig: raw, TargetNode: "tick", MessageType: "invalidate",
 	}); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}

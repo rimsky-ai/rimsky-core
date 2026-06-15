@@ -54,7 +54,6 @@ func TestConcurrentFrameCorrectness(t *testing.T) {
 		// dispatches can be in-flight concurrently. Under serial_queue
 		// each root gets its own frame and frames are dispatched one at
 		// a time, which would serialize worker_a (paused) and worker_b.
-		FrameResolutionMode: node.FrameResolutionCoalesce,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker_a", Executor: "stub"},

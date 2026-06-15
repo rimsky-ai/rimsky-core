@@ -120,10 +120,11 @@ func StartPublisherSubscriptionsForInstance(
 			// below.
 			resolvedConfig = p.Config
 		}
-		messageKind := p.MessageKind
-		if messageKind == "" {
-			messageKind = "invalidate"
-		}
+		// MessageType has no default — the legacy "invalidate" fallback
+		// retired with the envelope's kind→type rename. The template
+		// validator rejects PublisherSpec entries with an empty
+		// message_type at registration, so by the time we mount a
+		// publisher-subscription the value is non-empty by construction.
 		row := persistence.PublisherSubscriptionRow{
 			ID:             subID,
 			InstanceID:     instanceID,
@@ -131,7 +132,7 @@ func StartPublisherSubscriptionsForInstance(
 			Kind:           p.Kind,
 			ResolvedConfig: resolvedConfig,
 			TargetNode:     p.TargetNode,
-			MessageKind:    messageKind,
+			MessageType:    p.MessageType,
 			State:          persistence.PublisherSubscriptionStateMounting,
 			StartedAt:      now,
 		}
@@ -316,7 +317,7 @@ func reconcileMountingSubscriptionsOnce(ctx context.Context, deps PublisherLifec
 			Kind:                    s.Kind,
 			ResolvedConfig:          s.ResolvedConfig,
 			TargetNode:              s.TargetNode,
-			MessageKind:             s.MessageKind,
+			MessageType:             s.MessageType,
 		}
 		// @constraint: one attempt per tick — the tick interval is the
 		// backoff; the row stays in observable `mounting` between
@@ -660,7 +661,7 @@ func ResyncPublisherSubscriptions(ctx context.Context, deps PublisherLifecycleDe
 				Kind:                    fresh.Kind,
 				ResolvedConfig:          fresh.ResolvedConfig,
 				TargetNode:              fresh.TargetNode,
-				MessageKind:             fresh.MessageKind,
+				MessageType:             fresh.MessageType,
 			}
 			if err := callSubscribeWithRetry(ctx, client, req, deps.Logger); err != nil {
 				deps.Logger.Warn("publisher.resync.subscribe_failed",

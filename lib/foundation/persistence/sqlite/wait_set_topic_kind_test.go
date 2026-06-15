@@ -14,12 +14,11 @@ import (
 )
 
 // TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy inserts a
-// rimsky_wait_set row for each of the three signal classes the legacy
-// CHECK rejects — 'transient', 'message', 'terminal' — against a
-// freshly-migrated SQLite and asserts every insert succeeds. RED until
-// 006-waitset-topic-kind-taxonomy rebuilds the table with the broadened
-// CHECK; today each insert is rejected by
-// CHECK (topic_kind IN ('state','attribute','event')).
+// rimsky_wait_set row for each of the two signal classes the legacy
+// CHECK rejects but the new CHECK admits — 'transient' and 'terminal' —
+// against a freshly-migrated SQLite and asserts every insert succeeds.
+// Also asserts that 'message' is rejected by the post-011 CHECK: the
+// virtual-node-settle model has no wait-set rows under that bucket.
 func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	d := openSQLite(t)
 	ctx := context.Background()
@@ -61,12 +60,21 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
+	// @constraint: rimsky_frames.triggering_message_id is NOT NULL FK into rimsky_messages (post-010 schema), so a triggering message must be seeded before the frame row.
+	msgID := uuid.New().String()
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+		msgID, instanceID,
+	); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
 	// @constraint: rimsky_frames CHECK enforces frame_timeout_ms >= 60000, so the seed value must clear the floor.
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at)
-		 VALUES (?, ?, 'serial_queue', 'running', '[]', 60000, datetime('now'))`,
-		frameID, instanceID,
+		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms, started_at)
+		 VALUES (?, ?, ?, 'running', 60000, datetime('now'))`,
+		frameID, instanceID, msgID,
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
@@ -94,8 +102,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 		}
 	}
 
-	// @deliberate: each of the three broadened topic_kind values must be admitted by the rebuilt CHECK; the legacy CHECK rejects all three, which is what migration 006 fixes.
-	for _, topicKind := range []string{"transient", "message", "terminal"} {
+	// @deliberate: each of the two broadened topic_kind values must be admitted by the post-006 / post-011 CHECK; the legacy CHECK (001-schema.sql) rejects both, and 'message' is no longer admitted post-011, so it is asserted separately below as a REJECTION.
+	for _, topicKind := range []string{"transient", "terminal"} {
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_wait_set
 			   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
@@ -103,20 +111,31 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 			frameID, receiverRunID, senderRunID, topicKind,
 		); err != nil {
 			t.Fatalf("insert wait_set row topic_kind=%q: %v; "+
-				"the topic_kind CHECK must admit the full 5-value signal taxonomy", topicKind, err)
+				"the topic_kind CHECK must admit 'transient' and 'terminal'", topicKind, err)
 		}
 	}
 
 	var count int
 	if err := rawDB.QueryRowContext(ctx,
 		`SELECT count(*) FROM rimsky_wait_set
-		 WHERE frame_id = ? AND topic_kind IN ('transient','message','terminal')`,
+		 WHERE frame_id = ? AND topic_kind IN ('transient','terminal')`,
 		frameID,
 	).Scan(&count); err != nil {
 		t.Fatalf("count wait_set rows: %v", err)
 	}
-	if count != 3 {
-		t.Fatalf("expected 3 wait-set rows with broadened topic_kind values, got %d; "+
-			"the topic_kind CHECK must admit 'transient','message','terminal'", count)
+	if count != 2 {
+		t.Fatalf("expected 2 wait-set rows with broadened topic_kind values, got %d; "+
+			"the topic_kind CHECK must admit 'transient','terminal'", count)
+	}
+
+	// @blessed-invariant: wait-set-topic-kind-rejects-message — post-011 the rimsky_wait_set.topic_kind CHECK MUST reject 'message'; the virtual-node-settle model carries no wait-set rows under that bucket, so any INSERT with topic_kind='message' must fail through the CHECK rejection path.
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_wait_set
+		   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
+		 VALUES (?, ?, ?, ?, 'direct')`,
+		frameID, receiverRunID, senderRunID, "message",
+	); err == nil {
+		t.Fatalf("insert wait_set row topic_kind='message' returned nil error; " +
+			"the topic_kind CHECK must REJECT 'message' (post-011 retirement)")
 	}
 }

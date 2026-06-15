@@ -73,7 +73,6 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 
 	spec := node.TemplateSpec{
 		Name: "lifecycle-e2e", Version: "v1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{{
 			Type:     "n1",
 			Executor: "stub",

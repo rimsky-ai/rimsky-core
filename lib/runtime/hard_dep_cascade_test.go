@@ -312,7 +312,6 @@ func makeHardDepTemplate() nodepkg.TemplateSpec {
 	}
 	return nodepkg.TemplateSpec{
 		Name: "hard-dep-parked-" + uuid.NewString(), Version: "1",
-		FrameResolutionMode: nodepkg.FrameResolutionSerialQueue,
 		Nodes: []nodepkg.TemplateNodeDef{
 			{Type: "a", Executor: "stub", Attributes: &nodepkg.NodeAttributesDef{Schema: mkSchema("a_value")}},
 			{Type: "b", Executor: "stub", Attributes: &nodepkg.NodeAttributesDef{Schema: mkSchema("b_value")}},

@@ -1,6 +1,5 @@
 name: atomic-staging-example
 version: "1.0"
-frame_resolution_mode: serial_queue
 nodes:
   - type: stage-data
     executor: http-node

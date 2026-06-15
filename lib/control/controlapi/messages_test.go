@@ -51,21 +51,21 @@ func TestMessages_PostListGet(t *testing.T) {
 	// @constraint: post a message targeting `root`. Idempotency-Key is mandatory on
 	// every emit, so a successful 201 path must carry one.
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind":    "invalidate",
-		"target":  "root",
+		"type":    "system/invalidate",
 		"payload": map[string]any{"reason": "manual"},
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
 	require.Equal(t, http.StatusCreated, resp.status, resp.body)
 	msgID, _ := resp.body["message_id"].(string)
 	require.NotEmpty(t, msgID)
 
-	// @constraint: list with kind filter.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?kind=invalidate", instID), nil)
+	// @constraint: list with type filter (kind → type rename under the
+	// message-schema-layer redesign).
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?type=system/invalidate", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ := out["messages"].([]any)
 	require.GreaterOrEqual(t, len(msgs), 1)
 	first := msgs[0].(map[string]any)
-	require.Equal(t, "invalidate", first["kind"])
+	require.Equal(t, "system/invalidate", first["type"])
 	require.Equal(t, "operator", first["sender"])
 	require.Equal(t, "operator", first["sender_kind"])
 
@@ -80,14 +80,13 @@ func TestMessages_PostListGet(t *testing.T) {
 	row, err := h.persist.Messages().Get(ctx, shared.UUID(mid))
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	require.Equal(t, "invalidate", row.Kind)
+	require.Equal(t, "system/invalidate", row.Type)
 	require.Equal(t, "operator", row.SenderKind)
-	require.Nil(t, row.BackfillOperationID)
 }
 
 // TestMessages_ListByFrameID pins the ?frame_id= filter on GET
 // /instances/{id}/messages — the "what landed in frame X" forensic query
-// for backfill / fan-out debugging. It returns exactly the messages
+// for fan-out debugging. It returns exactly the messages
 // delivered into the named frame, excludes other frames and still-pending
 // messages, and 400s on a malformed frame id. The driver-level frame_id
 // predicate is conformance-tested on both engines; this pins that the HTTP
@@ -104,8 +103,7 @@ func TestMessages_ListByFrameID(t *testing.T) {
 		// @constraint: each emit needs a distinct Idempotency-Key (mandatory header)
 		// so the two posts are independent inserts, not a dedup replay.
 		resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-			"kind":   "invalidate",
-			"target": "root",
+			"type": "system/invalidate",
 		}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
 		require.Equal(t, http.StatusCreated, resp.status, resp.body)
 		id, _ := resp.body["message_id"].(string)
@@ -117,12 +115,25 @@ func TestMessages_ListByFrameID(t *testing.T) {
 	// frame filter.
 	_ = post()
 
-	// @constraint: deliver the first message into a synthetic frame.
-	// rimsky_messages.frame_id carries no FK, so the frame id needs no row.
-	frameID := shared.UUID(uuid.New())
+	// @constraint: deliver the first message into a real frame row. Post
+	// migration 010 the rimsky_messages.frame_id column carries a FK to
+	// rimsky_frames(frame_id) ON DELETE SET NULL on BOTH backends (the
+	// sqlite migration's column declaration mirrors the postgres
+	// ADD CONSTRAINT), so the frame id MUST resolve to a real row or
+	// MarkDelivered fails the FK check. Reuse the in-flight message id
+	// as the frame's triggering_message_id — InsertFrame requires a
+	// real message reference, and the just-posted `deliveredID`
+	// satisfies it.
 	mid, err := uuid.Parse(deliveredID)
 	require.NoError(t, err)
+	var frameID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		fid, err := h.persist.Frames().InsertFrame(ctx,
+			shared.UUID(mustParseUUID(t, instID)), shared.UUID(mid), 600000, tx)
+		if err != nil {
+			return err
+		}
+		frameID = fid
 		ok, err := h.persist.Messages().MarkDelivered(ctx, tx, shared.UUID(mid), frameID, time.Now().UTC())
 		if err != nil {
 			return err
@@ -154,10 +165,15 @@ func TestMessages_ListByFrameID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, status)
 }
 
-// TestMessages_PostInvalidKind rejects non-invalidate kinds at the
-// boundary so operators see an explicit error instead of a silent
-// dead-letter.
-func TestMessages_PostInvalidKind(t *testing.T) {
+// TestMessages_PostRejectsMissingIdempotencyKey verifies that a POST
+// without the mandatory Idempotency-Key header is refused at the
+// boundary so an operator sees an explicit error rather than the
+// request silently being treated as un-deduped. The message-type
+// registry-gate rejection (the "undeclared type" path) belongs to a
+// later pass that lands the `messages:` registry; this test deliberately
+// targets only the idempotency-key precondition, because without it the
+// handler short-circuits before any registry lookup would run.
+func TestMessages_PostRejectsMissingIdempotencyKey(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
@@ -174,8 +190,9 @@ func TestMessages_PostInvalidKind(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status, out)
 	instID, _ := out["instance_id"].(string)
 
+	// @constraint: no Idempotency-Key header → 400, regardless of `type`.
 	status, _ = h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind": "some-other-kind",
+		"type": "some-other-kind",
 	})
 	require.Equal(t, http.StatusBadRequest, status)
 }
@@ -211,7 +228,7 @@ func TestMessages_TargetTerminatedInstanceConflict(t *testing.T) {
 	// request-level Idempotency-Key guard — so carry a key, otherwise the
 	// guard would pre-empt with a 400 and mask the intended conflict.
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind": "invalidate",
+		"type": "system/invalidate",
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
 	require.Equal(t, http.StatusConflict, resp.status)
 }
@@ -251,7 +268,7 @@ func insertPublisherSubscription(t *testing.T, h *harness, instanceID string, pu
 			Kind:           "http",
 			ResolvedConfig: []byte(`{"url":"https://example.invalid"}`),
 			TargetNode:     "root",
-			MessageKind:    "invalidate",
+			MessageType:    "system/invalidate",
 			State:          state,
 		})
 	}))
@@ -273,8 +290,7 @@ func TestCreateMessage_SenderKindPublisherActiveSubscriptionSucceeds(t *testing.
 	subID := insertPublisherSubscription(t, h, instID, "sensor-http", persistence.PublisherSubscriptionStateActive)
 
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind":                      "invalidate",
-		"target":                    "root",
+		"type":                      "system/invalidate",
 		"sender_kind":               "publisher",
 		"publisher_subscription_id": subID,
 		// @constraint: body sender is overridden by the publisher
@@ -308,8 +324,7 @@ func TestCreateMessage_SenderKindPublisherStoppedSubscriptionForbidden(t *testin
 	// @constraint: 403 fires inside the tx (capability check), after the request-level
 	// Idempotency-Key guard — carry a key so the guard doesn't pre-empt.
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind":                      "invalidate",
-		"target":                    "root",
+		"type":                      "system/invalidate",
 		"sender_kind":               "publisher",
 		"publisher_subscription_id": subID,
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
@@ -329,8 +344,7 @@ func TestCreateMessage_SenderKindPublisherUnknownSubscriptionForbidden(t *testin
 	// @constraint: 403 fires inside the tx (capability check), after the request-level
 	// Idempotency-Key guard — carry a key so the guard doesn't pre-empt.
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind":                      "invalidate",
-		"target":                    "root",
+		"type":                      "system/invalidate",
 		"sender_kind":               "publisher",
 		"publisher_subscription_id": uuid.NewString(),
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
@@ -353,8 +367,7 @@ func TestCreateMessage_SenderKindPublisherWrongInstanceForbidden(t *testing.T) {
 	// A, not B), after the request-level Idempotency-Key guard — carry a
 	// key so the guard doesn't pre-empt.
 	resp := h.httpJSONWithHeaders(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instB), map[string]any{
-		"kind":                      "invalidate",
-		"target":                    "root",
+		"type":                      "system/invalidate",
 		"sender_kind":               "publisher",
 		"publisher_subscription_id": subForA,
 	}, map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
@@ -371,8 +384,7 @@ func TestCreateMessage_SenderKindPublisherMissingSubscriptionIDBadRequest(t *tes
 
 	instID := newInstanceForMessages(t, h, "missing-sub")
 	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind":        "invalidate",
-		"target":      "root",
+		"type":        "system/invalidate",
 		"sender_kind": "publisher",
 	})
 	require.Equal(t, http.StatusBadRequest, status)
@@ -387,8 +399,7 @@ func TestCreateMessage_SenderKindInvalidBadRequest(t *testing.T) {
 
 	instID := newInstanceForMessages(t, h, "invalid-kind")
 	status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind":   "invalidate",
-		"target": "root",
+		"type": "system/invalidate",
 		// @constraint: "sensor" is legacy / unsupported sender_kind.
 		"sender_kind": "sensor",
 	})
@@ -415,22 +426,23 @@ func TestCreateMessage_MissingIdempotencyKeyRejected(t *testing.T) {
 
 	// @constraint: httpJSON sets no Idempotency-Key header.
 	status, out := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/messages", instID), map[string]any{
-		"kind":   "invalidate",
-		"target": "root",
+		"type": "system/invalidate",
 	})
 	require.Equal(t, http.StatusBadRequest, status, out)
 	errMsg, _ := out["error"].(string)
 	require.Contains(t, strings.ToLower(errMsg), "idempotency-key",
 		"the rejection diagnostic must name the required header")
 
-	// @constraint: no envelope persisted. The envelope insert is gated in the same
-	// tx as the (would-be) idempotency-row insert, so an empty messages
-	// list proves neither side effect occurred — the rejection happens
-	// before any write.
-	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages", instID), nil)
+	// @constraint: no envelope persisted by the rejected POST. The envelope
+	// insert is gated in the same tx as the (would-be) idempotency-row
+	// insert, so the only messages on the instance are the instance-
+	// factory's synthetic `instance/root` envelopes seeded at create (one
+	// per root node) — never an `invalidate` envelope from the rejected
+	// emit. Filter by type so the factory rows don't mask the assertion.
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?type=system/invalidate", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ := out["messages"].([]any)
-	require.Empty(t, msgs, "a rejected keyless emit must persist no message envelope")
+	require.Empty(t, msgs, "a rejected keyless emit must persist no invalidate envelope")
 }
 
 // TestCreateMessage_IdempotencyKeyDuplicateReturnsExisting — second
@@ -444,8 +456,7 @@ func TestCreateMessage_IdempotencyKeyDuplicateReturnsExisting(t *testing.T) {
 	instID := newInstanceForMessages(t, h, "idem-dup")
 	idemKey := "idem-key-" + uuid.NewString()
 	body := map[string]any{
-		"kind":   "invalidate",
-		"target": "root",
+		"type": "system/invalidate",
 	}
 	first := h.httpJSONWithHeaders(t, "POST",
 		fmt.Sprintf("/v1/instances/%s/messages", instID),
@@ -460,6 +471,63 @@ func TestCreateMessage_IdempotencyKeyDuplicateReturnsExisting(t *testing.T) {
 	require.Equal(t, http.StatusOK, second.status, "replay returns 200 OK")
 	secondID, _ := second.body["message_id"].(string)
 	require.Equal(t, firstID, secondID, "replay returns the original message_id")
+}
+
+// TestCreateMessage_DeclaredTypeAccepted exercises the happy path of
+// the Pass 5 receipt-time registry gate: a POST whose `type:` matches
+// a declared entry in the instance's template's `messages:` registry is
+// accepted (201) and persists an envelope. `validTemplateBody` declares
+// `invalidate` in its registry, so this test confirms the gate lets the
+// declared type through end-to-end.
+func TestCreateMessage_DeclaredTypeAccepted(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "declared-ok")
+	resp := h.httpJSONWithHeaders(t, "POST",
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
+		map[string]any{"type": "system/invalidate"},
+		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusCreated, resp.status, resp.body)
+	msgID, _ := resp.body["message_id"].(string)
+	require.NotEmpty(t, msgID)
+}
+
+// TestCreateMessage_UndeclaredTypeRefused pins the load-bearing leg of
+// the Pass 5 receipt-time registry gate: a POST whose `type:` is not in
+// the instance's template's `messages:` registry is rejected with HTTP
+// 400, the response body names both the rejected type and the declared
+// set, AND no envelope is persisted. This is the message-schema story's
+// falsifier — refusing loudly at receipt is what the cheaper "accept
+// and silently dead-letter" shape fails to do.
+func TestCreateMessage_UndeclaredTypeRefused(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "undeclared")
+
+	resp := h.httpJSONWithHeaders(t, "POST",
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
+		map[string]any{"type": "ping/recheck"},
+		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusBadRequest, resp.status, resp.body)
+	require.Equal(t, "unknown message type", resp.body["error"])
+	require.Equal(t, "ping/recheck", resp.body["type"])
+	declared, ok := resp.body["declared_types"].([]any)
+	require.True(t, ok, "declared_types must be a JSON array, got %+v", resp.body)
+	// @constraint: the fixture template declares exactly `system/invalidate`
+	// in its registry.
+	require.ElementsMatch(t, []any{"system/invalidate"}, declared)
+
+	// @constraint: no envelope persisted — the rejection runs in the same
+	// tx as the envelope insert, so a 400 leaves zero `ping/recheck` rows.
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?type=ping/recheck", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Empty(t, msgs, "rejected receipt must persist no envelope")
 }
 
 // TestCreateMessage_IdempotencyKeyDistinctSendersDoNotCollide — same
@@ -478,7 +546,7 @@ func TestCreateMessage_IdempotencyKeyDistinctSendersDoNotCollide(t *testing.T) {
 	// @constraint: operator-side send.
 	first := h.httpJSONWithHeaders(t, "POST",
 		fmt.Sprintf("/v1/instances/%s/messages", instID),
-		map[string]any{"kind": "invalidate", "target": "root"},
+		map[string]any{"type": "system/invalidate"},
 		map[string]string{"Idempotency-Key": idemKey})
 	require.Equal(t, http.StatusCreated, first.status)
 	firstID, _ := first.body["message_id"].(string)
@@ -488,8 +556,7 @@ func TestCreateMessage_IdempotencyKeyDistinctSendersDoNotCollide(t *testing.T) {
 	second := h.httpJSONWithHeaders(t, "POST",
 		fmt.Sprintf("/v1/instances/%s/messages", instID),
 		map[string]any{
-			"kind":                      "invalidate",
-			"target":                    "root",
+			"type":                      "system/invalidate",
 			"sender_kind":               "publisher",
 			"publisher_subscription_id": subID,
 		},
@@ -498,4 +565,148 @@ func TestCreateMessage_IdempotencyKeyDistinctSendersDoNotCollide(t *testing.T) {
 		"different sender → no dedup collision")
 	secondID, _ := second.body["message_id"].(string)
 	require.NotEqual(t, firstID, secondID, "different sender → distinct message ids")
+}
+
+// templateBodyWithMessageSchema builds a wrapped template body whose
+// `messages:` registry declares a `ping/recheck` type with a
+// strict body_schema. Used by the payload-validation tests to exercise
+// the receipt-time body shape check.
+func templateBodyWithMessageSchema(name string) map[string]any {
+	return map[string]any{
+		"spec": map[string]any{
+			"name":    name,
+			"version": "v1",
+			"messages": []map[string]any{
+				{
+					"type": "ping/recheck",
+					"body_schema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"pong_status": map[string]any{"type": "string"},
+						},
+						"required":             []string{"pong_status"},
+						"additionalProperties": false,
+					},
+				},
+			},
+			"nodes": []map[string]any{
+				{"type": "root", "executor": "worker"},
+			},
+		},
+	}
+}
+
+// newInstanceWithMessageSchema seeds a template carrying the
+// body_schema fixture, deploys it, and creates one instance. Returns
+// instance id.
+func newInstanceWithMessageSchema(t *testing.T, h *harness, tag string) string {
+	t.Helper()
+	tplBody := templateBodyWithMessageSchema("msg-schema-" + tag + "-" + uuid.NewString())
+	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
+	tplID, _ := out["template_id"].(string)
+	require.NotEmpty(t, tplID)
+	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
+	require.Equal(t, http.StatusOK, deployStatus)
+	status, out := h.httpJSON(t, "POST", "/v1/instances", map[string]any{
+		"template":     tplID,
+		"instance_key": "msg-schema-ck-" + tag + "-" + uuid.NewString(),
+	})
+	require.Equal(t, http.StatusCreated, status, out)
+	id, _ := out["instance_id"].(string)
+	require.NotEmpty(t, id)
+	return id
+}
+
+// TestCreateMessage_RejectsReservedWakeNodeIDsPayloadField pins the
+// privilege-escalation guard: an operator with `message:send` permission
+// MUST NOT be able to smuggle the runtime-internal `wake_node_ids`
+// field through an author-declared message type. Without this gate,
+// the frame-promotion path at advanceOneFrame would read the operator-
+// supplied array verbatim and stale-mark every named node UUID —
+// effectively a backdoor unconditional stale-mark against any UUID an
+// operator can name.
+//
+// Asserts HTTP 400 with the reserved_field diagnostic AND no envelope
+// persisted (the rejection runs BEFORE the idempotency insert + envelope
+// insert).
+func TestCreateMessage_RejectsReservedWakeNodeIDsPayloadField(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceWithMessageSchema(t, h, "no-wake-smuggle")
+
+	resp := h.httpJSONWithHeaders(t, "POST",
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
+		map[string]any{
+			"type": "ping/recheck",
+			"payload": map[string]any{
+				"pong_status":   "needs_work",
+				"wake_node_ids": []string{"00000000-0000-0000-0000-000000000001"},
+			},
+		},
+		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusBadRequest, resp.status, resp.body)
+	require.Equal(t, "reserved payload field", resp.body["error"])
+	require.Equal(t, "wake_node_ids", resp.body["reserved_field"])
+
+	// @constraint: no envelope persisted — the rejection runs in the same
+	// tx as the envelope insert, so a 400 leaves zero `ping/recheck` rows.
+	status, out := h.httpJSON(t, "GET",
+		fmt.Sprintf("/v1/instances/%s/messages?type=ping/recheck", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Empty(t, msgs, "rejected receipt must persist no envelope")
+}
+
+// TestCreateMessage_AdmitsPayloadFailingBodySchema pins the spec's
+// "body bytes are read only at the sanctioned substitution leaf and the
+// persistence-layer fetch" rule (`@blessed-invariant: 21` + `concept:
+// message-schema`'s "the body remains inert at receipt"): a payload that
+// does NOT satisfy the declared body_schema is admitted at receipt with
+// HTTP 201. Receivers reading `{{messages.<type>.<field>}}` would fail
+// substitution at dispatch via the existing attribute-validation gate;
+// the receipt path stays inert.
+func TestCreateMessage_AdmitsPayloadFailingBodySchema(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceWithMessageSchema(t, h, "schema-fail")
+
+	// @constraint: pong_status is required by the fixture body_schema; an
+	// empty payload omits it. Receipt admits the envelope; dispatch-time
+	// substitution is where missing required fields surface.
+	resp := h.httpJSONWithHeaders(t, "POST",
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
+		map[string]any{
+			"type":    "ping/recheck",
+			"payload": map[string]any{},
+		},
+		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusCreated, resp.status, resp.body)
+	msgID, _ := resp.body["message_id"].(string)
+	require.NotEmpty(t, msgID)
+}
+
+// TestCreateMessage_AcceptsPayloadMatchingBodySchema is the happy path
+// complement: a payload satisfying the body_schema is accepted and the
+// envelope is persisted intact.
+func TestCreateMessage_AcceptsPayloadMatchingBodySchema(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceWithMessageSchema(t, h, "schema-ok")
+
+	resp := h.httpJSONWithHeaders(t, "POST",
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
+		map[string]any{
+			"type":    "ping/recheck",
+			"payload": map[string]any{"pong_status": "needs_work"},
+		},
+		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusCreated, resp.status, resp.body)
+	msgID, _ := resp.body["message_id"].(string)
+	require.NotEmpty(t, msgID)
 }

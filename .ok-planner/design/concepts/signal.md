@@ -23,7 +23,7 @@ Make "what just happened to a node-run" one vocabulary across cascade-fire, audi
 
 ## Signal type-path taxonomy
 
-Five top-level kinds. Type-paths are canonical and validator-enforced.
+Four top-level kinds. Type-paths are canonical and validator-enforced.
 
 ### `terminal/*` — dispatch finished, run row settled
 
@@ -62,7 +62,6 @@ The signal envelope's outer field is `payload`. To avoid a bare-`payload` collis
 | executor error payload | `error_payload` |
 | named-event payload | `event_payload` |
 | park payload | `park_payload` |
-| message envelope payload | `message_payload` |
 
 This is a rimsky-side rename only; wire field names do not change. CEL predicates against the signal payload see the renamed fields (`when: payload.error_payload.foo > 5`).
 
@@ -78,7 +77,7 @@ Subscription `when:` predicates compile at registration time and evaluate at cas
 ## Boundaries
 
 Owns:
-- The canonical type-path taxonomy (five top-level kinds + leaf rules).
+- The canonical type-path taxonomy (four top-level kinds + leaf rules).
 - The per-type payload schema.
 - The CEL filter language: env construction, predicate compilation, evaluation.
 - The audit-emit pathway that writes each signal to the persisted audit-event ledger.

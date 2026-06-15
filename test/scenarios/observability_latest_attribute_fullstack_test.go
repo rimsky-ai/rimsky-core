@@ -50,7 +50,6 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "latest-attr-bag", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
@@ -79,7 +78,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	// DIFFERENT delta value — satisfies the "most-recent of two runs"
 	// clause: the latest bag must differ from the first.
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "second"}, true, "rerun")
-	adminInvalidateLatestAttr(t, h, iid, w.ID)
+	h.InvalidateNode(iid, w.ID)
 
 	// @deliberate: Wait until the live primitive reports the SECOND run's bag (new run
 	// id + new value). This is the canonical value both surfaces must echo.
@@ -145,17 +144,6 @@ func latestAttrRow(h *scenario.Harness, nodeID, runScopeID shared.UUID) *persist
 		return err
 	}))
 	return row
-}
-
-// adminInvalidateLatestAttr POSTs an admin invalidate to drive a re-run.
-func adminInvalidateLatestAttr(t *testing.T, h *scenario.Harness, instanceID, nodeID shared.UUID) {
-	t.Helper()
-	resp, err := http.Post(
-		h.ControlBase+"/v1/admin/instances/"+instanceID.String()+"/nodes/"+nodeID.String()+"/invalidate",
-		"application/json", nil,
-	)
-	require.NoError(t, err)
-	resp.Body.Close()
 }
 
 // createPausedInstanceLatestAttr POSTs /instances with paused:true so the

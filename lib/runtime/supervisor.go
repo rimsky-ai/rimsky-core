@@ -296,23 +296,6 @@ func Start(cfg Config) (*Handle, error) {
 	lockHolders := cfg.Persist.ClaimHandles()
 
 	callbackReg := NewCallbackRegistry()
-	// @constraint: the unified-invalidate adapter must be shared between
-	// the sync path (per-tryClaim RunArgs below) and the async-callback
-	// path (CallbackServer). Without this, handler-emitted invalidates
-	// that arrive via async callback fall back to bare InvalidateNode
-	// and cannot wake parked targets through the H2 unified path.
-	//
-	// @constraint: Metrics threaded through so InvalidateNode's
-	// `rimsky_invalidates_total` counter increments at every async-
-	// callback-driven invalidate. Callers that already populated
-	// ia.Metrics (e.g. handler emits that built their own InvalidateArgs)
-	// keep their value; otherwise we fall back to cfg.Metrics.
-	invalidateAdapter := func(ctx context.Context, ia InvalidateArgs) error {
-		if ia.Metrics == nil {
-			ia.Metrics = cfg.Metrics
-		}
-		return UnifiedInvalidate(ctx, ia, cfg.SupervisorID, WakeExternalInvalidate)
-	}
 	// @constraint: shadow ExpectedAttributesSchemaFor so the inproc
 	// executor's advertised schema is visible to BOTH the dispatch-time
 	// effective-attribute-schema merge (RunArgs) AND the async-callback
@@ -341,7 +324,6 @@ func Start(cfg Config) (*Handle, error) {
 		SupervisorID:                     cfg.SupervisorID,
 		Blob:                             cfg.Blob,
 		BlobSpillThreshold:               cfg.BlobSpillThreshold,
-		InvalidateHandler:                invalidateAdapter,
 		MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
 		ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
 		Metrics:                          cfg.Metrics,
@@ -438,6 +420,19 @@ func Start(cfg Config) (*Handle, error) {
 	// whose executor_name resolves to an inproc alias.
 	host, port := effectiveCallbackHostPort(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	accepted := cfg.Resolver.AcceptedNames()
+	// @deliberate: auto-inject the cascade-emit sentinel executor name so
+	// the supervisor's SelectCandidates predicate admits message-emitter
+	// node dispatch rows. The runner's dispatch path short-circuits the
+	// executor resolver for emit-nodes (acq.NodeDef.EmitsMessage != ""),
+	// so the sentinel name is wire-routing only; no real executor
+	// endpoint is required to be registered under this name. Injecting
+	// here (rather than asking operators to add it in rimsky.yml) keeps
+	// emit-message dispatch zero-config — the same shape every other
+	// supervisor primitive uses.
+	//
+	// @story: cascade-emit
+	// @concept: message-emitter-node
+	accepted = append(accepted, EmitMessageDispatchName)
 	acceptedStores := storeRegistryNames(cfg.StoreRegistry)
 	if err := cfg.Persist.Transaction(context.Background(), func(ctx context.Context, tx persistence.Tx) error {
 		return cfg.Persist.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{
@@ -675,18 +670,6 @@ func runLoop(
 		go func() {
 			defer h.wg.Done()
 			defer cancel()
-			// @constraint: build the unified-invalidate adapter on the
-			// supervisor's own persistence handle so handler-emitted
-			// invalidates (H2 on_event) wake parked targets through the
-			// same path as the admin endpoint (G3) and the parked-node
-			// sweep (E3). Metrics fallback matches the async-callback
-			// adapter above.
-			invalidateAdapter := func(ctx context.Context, ia InvalidateArgs) error {
-				if ia.Metrics == nil {
-					ia.Metrics = cfg.Metrics
-				}
-				return UnifiedInvalidate(ctx, ia, cfg.SupervisorID, WakeExternalInvalidate)
-			}
 			result, runErr := RunNode(ctx, RunArgs{
 				Persist:                          cfg.Persist,
 				Queue:                            cfg.Queue,
@@ -705,7 +688,6 @@ func runLoop(
 				HeartbeatInterval:                cfg.HeartbeatInterval,
 				Blob:                             cfg.Blob,
 				BlobSpillThreshold:               cfg.BlobSpillThreshold,
-				InvalidateHandler:                invalidateAdapter,
 				MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
 				ExpectedAttributesSchemaFor:      cfg.ExpectedAttributesSchemaFor,
 				Metrics:                          cfg.Metrics,

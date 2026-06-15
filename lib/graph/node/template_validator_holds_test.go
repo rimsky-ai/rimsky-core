@@ -14,9 +14,8 @@ import (
 
 func TestValidateHolds_FromNotDependency(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "consumer",
@@ -34,9 +33,8 @@ func TestValidateHolds_FromNotDependency(t *testing.T) {
 
 func TestValidateHolds_UnknownClaimAlias(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "producer",
@@ -61,9 +59,8 @@ func TestValidateHolds_UnknownClaimAlias(t *testing.T) {
 
 func TestValidateHolds_Ok(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "producer",
@@ -93,9 +90,8 @@ func TestValidateHolds_Ok(t *testing.T) {
 // recognized-alias set.
 func TestValidateHolds_ClaimReadFromHeldAliasOk(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "producer",
@@ -133,9 +129,8 @@ func TestValidateHolds_ClaimReadFromHeldAliasOk(t *testing.T) {
 // rejected — the holds: fix must not blanket-accept any claim alias.
 func TestValidateAttributes_ClaimReadUndeclaredAliasRejected(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "consumer",
@@ -161,9 +156,8 @@ func TestValidateAttributes_ClaimReadUndeclaredAliasRejected(t *testing.T) {
 
 func TestValidateFanOut_RejectsUnknownClaim(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "fan",
@@ -182,9 +176,8 @@ func TestValidateFanOut_RejectsUnknownClaim(t *testing.T) {
 
 func TestValidateFanOut_RejectsThresholdWithoutMaxFailures(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "fan",
@@ -209,9 +202,8 @@ func TestValidateFanOut_RejectsThresholdWithoutMaxFailures(t *testing.T) {
 
 func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "fan",
@@ -243,9 +235,8 @@ func TestValidateFanOut_RejectsCancelSiblingsOutsideStrict(t *testing.T) {
 // `carry_verbatim_requires_single_child`, naming the node.
 func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "fan",
@@ -287,9 +278,8 @@ func TestValidateFanOut_RejectsCarryVerbatimPolicy(t *testing.T) {
 // runtime.
 func TestValidateFanOut_RejectsDelegateCombo(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "caller",
@@ -308,9 +298,8 @@ func TestValidateFanOut_RejectsDelegateCombo(t *testing.T) {
 
 func TestValidateFanOut_Ok(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "fan",
@@ -336,9 +325,8 @@ func TestValidateFanOut_Ok(t *testing.T) {
 
 func TestValidateStores_RejectsInvalidLifetime(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "a",
@@ -356,9 +344,8 @@ func TestValidateStores_RejectsInvalidLifetime(t *testing.T) {
 
 func TestValidateStores_DurableRequiresDataProcessing(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "a",
@@ -381,9 +368,8 @@ func TestValidateStores_DurableRequiresDataProcessing(t *testing.T) {
 
 func TestValidateExecutor_DelegateAndExecutorMutuallyExclusive(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "a",
@@ -399,9 +385,8 @@ func TestValidateExecutor_DelegateAndExecutorMutuallyExclusive(t *testing.T) {
 
 func TestValidateExecutor_DelegateOk(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "a",
@@ -418,9 +403,8 @@ func TestValidateExecutor_DelegateOk(t *testing.T) {
 
 func TestValidateStores_DurableOkWhenDataProcessingAdvertised(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{
 				Type:     "a",

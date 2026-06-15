@@ -72,7 +72,6 @@ target node:
 ```yaml
 name: my-publisher-driven-workflow
 version: "1"
-frame_resolution_mode: serial_queue
 nodes:
   - type: reactor
     executor: my-executor

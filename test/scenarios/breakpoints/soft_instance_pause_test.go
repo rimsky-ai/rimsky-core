@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
-	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -73,7 +72,7 @@ func TestSoftInstancePause(t *testing.T) {
 	// node-level invalidate is the simplest way to force the supervisor
 	// to enqueue another dispatch). The new dispatch should NOT fire
 	// because the candidate-selection filter excludes paused instances.
-	invalidateNode(t, h, n.ID)
+	h.InvalidateNode(iid, n.ID)
 
 	// @constraint: Give the supervisor a few ticks to (not) pick the row up.
 	time.Sleep(1 * time.Second)
@@ -90,14 +89,4 @@ func TestSoftInstancePause(t *testing.T) {
 		"second dispatch should fire after instance resume")
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"second dispatch should reach Fresh post-resume")
-}
-
-// invalidateNode POSTs to /nodes/{id}/invalidate to force a re-dispatch.
-// Mirrors the helper shape used by parked_lifecycle_test.go and
-// cascade_invalidate_test.go.
-func invalidateNode(t *testing.T, h *scenario.Harness, nodeID foundationshared.UUID) {
-	t.Helper()
-	url := h.ControlBase + "/v1/nodes/" + nodeID.String() + "/invalidate"
-	status, body := postJSON(t, url, map[string]any{"reason": "scenario:soft-pause-probe"})
-	require.Equal(t, http.StatusOK, status, "invalidate should succeed: %v", body)
 }

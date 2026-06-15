@@ -45,7 +45,6 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "retry-frame-end-predicate", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -70,14 +69,23 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 
 	// @deliberate: Manually create a running frame; mark the worker stale via an
 	// in-flight pending run row pinned to the frame (simulating what
-	// advanceOneFrame does at frame-start).
+	// advanceOneFrame does at frame-start). Pass 1 of the message-
+	// schema-layer plan added the rimsky_frames.triggering_message_id
+	// NOT NULL FK; seed a typed envelope first so the frame's FK
+	// resolves.
+	messageID := uuid.New()
+	_, err = h.Pool.Exec(h.Ctx, `
+		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		VALUES ($1, $2, 'fixture/retry-preserves-frame-id', 'operator', 'operator')
+	`, messageID, uuid.UUID(iid))
+	require.NoError(t, err)
 	var frameID uuid.UUID
 	require.NoError(t, h.Pool.QueryRow(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids,
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state,
 			queued_at, started_at, frame_timeout_ms)
-		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
+		VALUES ($1, $2, 'running', now(), now(), 600000)
 		RETURNING frame_id
-	`, uuid.UUID(iid), uuid.UUID(worker.ID)).Scan(&frameID))
+	`, uuid.UUID(iid), messageID).Scan(&frameID))
 	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id=$1 WHERE id=$2`,
 		frameID, uuid.UUID(worker.ID))
 	require.NoError(t, err)

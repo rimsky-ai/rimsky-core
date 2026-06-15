@@ -257,7 +257,6 @@ func testClaimHandoffMultiCoHolderCommit(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-multi", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
@@ -436,7 +435,6 @@ func startHandoffHarness(t *testing.T, opts handoffOpts) (*scenario.Harness, *pe
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-" + opts.coHolderType, Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},

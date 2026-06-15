@@ -20,9 +20,6 @@
 package scenarios
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +48,6 @@ func TestAlwaysPropagateResolution_NewShape(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "always-propagate", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",
@@ -121,7 +117,6 @@ func TestNeverPropagateResolution_NewShape(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "changed-gate", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",
@@ -134,8 +129,8 @@ func TestNeverPropagateResolution_NewShape(t *testing.T) {
 				Node:                 "a",
 				Type:                 "terminal/success",
 				When:                 "payload.changed",
-				WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-				ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+				WakeOnChange:         node.BoolPtr(true),
+				ForceUpstreamRefresh: node.BoolPtr(false),
 			})),
 		},
 	})
@@ -179,7 +174,6 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "fresh-unchanged-no-cascade", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{
@@ -187,8 +181,8 @@ func TestFreshUnchangedDoesNotCascade(t *testing.T) {
 				Executor: "stub",
 			}, scenario.WithSubscribes(node.SubscriptionEntry{
 				Node: "a", Type: "terminal/*", When: "payload.changed",
-				WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-				ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+				WakeOnChange:         node.BoolPtr(true),
+				ForceUpstreamRefresh: node.BoolPtr(false),
 			})),
 		},
 	})
@@ -247,7 +241,6 @@ func TestFailedUpstreamFreezesDownstream(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "failed-freezes", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",
@@ -315,7 +308,6 @@ func TestExecutorBlockedPassResolution_NewShape(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "blocked-pass", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -354,7 +346,6 @@ func TestExecutorErroredPassResolution_NewShape(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "errored-pass", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -401,20 +392,19 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "operator-invalidate-target", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "a", Type: "terminal/*", When: "payload.changed",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				})),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "c", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "b", Type: "terminal/*", When: "payload.changed",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				})),
 		},
 	})
@@ -443,10 +433,11 @@ func TestOperatorInvalidateTargetOnly(t *testing.T) {
 	}
 	bEventsBefore, cEventsBefore := dispatchEvents(bID), dispatchEvents(cID)
 
-	body, _ := json.Marshal(map[string]any{})
-	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate", "application/json", bytes.NewReader(body))
-	require.NoError(t, err)
-	resp.Body.Close()
+	// @deliberate: Operator invalidate against A. The retired
+	// `POST /v1/nodes/{id}/invalidate` route is replaced by the harness
+	// helper, which drives the same internal synthetic envelope the
+	// route used to seed — exercises the same frame / cascade path.
+	h.InvalidateNode(iid, a.ID)
 
 	// @deliberate: A should re-run and reach fresh with settling_signal_type=terminal/success
 	// (the changed=false detail is no longer encoded in last_outcome; the
@@ -531,7 +522,6 @@ func TestPureCascadeOutcomeColumn(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "pure-cascade", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{

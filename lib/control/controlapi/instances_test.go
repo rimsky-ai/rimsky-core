@@ -125,9 +125,8 @@ func TestTerminateInstance_NotFound(t *testing.T) {
 func refModeTemplateProvisionedValid(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    name,
+			"version": "v1",
 			"nodes": []map[string]any{
 				{
 					"type":     "root",

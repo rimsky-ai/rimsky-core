@@ -72,10 +72,9 @@ func TestFSCrossQueueConcurrency(t *testing.T) {
 
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "fs-cross-queue",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "fs-cross-queue",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "worker-r1",

@@ -202,7 +202,7 @@ func TestLineageExploration(t *testing.T) {
 				// fires at consumer-terminal-emit time.
 				scenario.WithSubscribes(
 					tmplspec.SubscriptionEntry{Node: "producer", Type: "terminal/*", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
-					// Cover the {{nodes.producer.attribute.ok}} read.
+					// @deliberate: Cover the {{nodes.producer.attribute.ok}} read.
 					tmplspec.SubscriptionEntry{Node: "producer", Type: "attribute/ok/changed", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{

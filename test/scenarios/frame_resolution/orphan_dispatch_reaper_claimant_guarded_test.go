@@ -92,7 +92,7 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	templateHash := "sha256-" + suffix
 	h.ExecSQL(`
 		INSERT INTO rimsky_templates (id, spec, state)
-		VALUES ($1, '{"frame_resolution_mode":"serial_queue"}'::jsonb, 'deployed')
+		VALUES ($1, '{}'::jsonb, 'deployed')
 	`, templateHash)
 	instanceID := shared.UUID(uuid.New())
 	mainScopeID := shared.UUID(uuid.New())
@@ -124,11 +124,19 @@ func seedTerminalFrameAndDispatch(t *testing.T, h *scenario.Harness, claimedBy s
 	`, nodeID, instanceID)
 	frameID := uuid.New()
 	now := time.Now()
+	// Pass 1 of the message-schema-layer plan added the
+	// rimsky_frames.triggering_message_id NOT NULL FK; seed a typed
+	// envelope first so the frame's FK resolves.
+	messageID := uuid.New()
 	h.ExecSQL(`
-		INSERT INTO rimsky_frames (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		VALUES ($1, $2, 'fixture/orphan-reaper', 'operator', 'operator')
+	`, messageID, instanceID)
+	h.ExecSQL(`
+		INSERT INTO rimsky_frames (frame_id, instance_id, triggering_message_id, state,
 			queued_at, started_at, ended_at, frame_timeout_ms)
-		VALUES ($1, $2, 'serial_queue', 'completed', ARRAY[$3]::UUID[], $4, $4, $4, 600000)
-	`, frameID, instanceID, nodeID, now)
+		VALUES ($1, $2, $3, 'completed', $4, $4, $4, 600000)
+	`, frameID, instanceID, messageID, now)
 	dispatchID := uuid.New()
 	h.ExecSQL(`
 		INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, claimed_by, frame_id, run_scope_id)

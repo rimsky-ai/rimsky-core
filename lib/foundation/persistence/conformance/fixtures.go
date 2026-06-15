@@ -45,23 +45,26 @@ func seedMainRunScopeForInstance(
 
 // fixtureSet holds the IDs returned by seedFixtureSet for tests to
 // reference across subsequent enqueue / claim / lookup operations.
+// MessageID is the seeded triggering message that opened the fixture
+// frame; tests that enqueue further frames re-use it as the
+// triggering-message satisfaction of the
+// rimsky_frames.triggering_message_id NOT NULL FK (every frame carries
+// an originating message under the typed-message schema layer).
 type fixtureSet struct {
 	TemplateHash   string
 	InstanceID     shared.UUID
 	NodeID         shared.UUID
 	FrameID        shared.UUID
 	MainRunScopeID shared.UUID
+	MessageID      shared.UUID
 }
 
 // seedFixtureSet creates the minimum chain of rows needed to satisfy
 // the FK chain rimsky_node_runs -> rimsky_nodes -> rimsky_instances ->
 // rimsky_templates AND rimsky_node_runs -> rimsky_frames. Returns the
-// (nodeID, frameID) pair for tests to enqueue against.
-//
-// The template carries frame_resolution = "serial_queue" + a node-typed
-// definition that matches the inserted node row's node_type. Tests
-// can call this once per Driver instance and reuse the returned IDs
-// across enqueue/claim operations.
+// fixtureSet ids for tests to enqueue against. Tests can call this
+// once per Driver instance and reuse the returned IDs across
+// enqueue/claim operations.
 func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) fixtureSet {
 	t.Helper()
 	store := d.Tables()
@@ -76,10 +79,9 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 	mainRunScopeID := uuid.New()
 
 	tmplSpec := spec.TemplateSpec{
-		Name:                "conformance-fixture",
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "conformance-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},
@@ -123,12 +125,24 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		t.Fatalf("seedFixtureSet: template/instance/node create: %v", err)
 	}
 
-	// @deliberate: production code lets the frame engine produce frames;
-	// fixtures bypass that and call Frames() directly to enqueue then
+	// @deliberate: production code lets the frame engine produce frames
+	// from delivered messages; fixtures bypass that and call Messages() +
+	// Frames() directly to seed a typed-message envelope (satisfying the
+	// rimsky_frames.triggering_message_id NOT NULL FK), enqueue, then
 	// promote, so dispatch rows can FK against a 'running' frame without
 	// scheduling a real engine pass.
+	messageID := uuid.New()
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		fid, err := store.Frames().EnqueueSerialFrame(ctx, instanceID, nodeID, 600000, tx)
+		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         shared.UUID(messageID),
+			InstanceID: shared.UUID(instanceID),
+			Type:       "fixture/message",
+			Sender:     "operator",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := store.Frames().InsertFrame(ctx, instanceID, shared.UUID(messageID), 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -149,6 +163,7 @@ func seedFixtureSet(ctx context.Context, t *testing.T, d persistence.Database) f
 		NodeID:         nodeID,
 		FrameID:        frameID,
 		MainRunScopeID: mainRunScopeID,
+		MessageID:      shared.UUID(messageID),
 	}
 }
 

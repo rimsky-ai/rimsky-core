@@ -1,0 +1,129 @@
+# frame-origin-audit-demo-template.yaml — STORY-frame-origin-audit
+# proof template.
+#
+# An operator sees that every frame in a representative end-to-end run
+# (including a back-edge) has an originating message visible via the
+# cascade-graph observability endpoint. The demo script
+# (frame-origin-audit-demo.sh) deploys this template, drives an initial
+# wake message, then polls the frames-read endpoint and prints
+# `triggering_message_id` for each frame — exhibiting the spec's
+# acceptance property: "every frame, its triggering message" through
+# the user-observable surface.
+#
+# The shape is the same two-frame bounded back-edge the cross-frame-
+# coupling demo uses:
+#
+#   frame 1 (trigger=audit/kick, sender_kind=operator):
+#     A (verifier-shape-checks) runs → emit-node E fires → audit/loop
+#     envelope lands in rimsky_messages.
+#
+#   frame 2 (trigger=audit/loop, sender_kind=instance):
+#     R (verifier-shape-checks) wakes via typed-message subscription,
+#     runs, settles.
+#
+# Both frames carry triggering_message_id; the demo proves the
+# observability surface answers "why did this frame open" for both
+# operator-posted and cascade-emitted origins.
+name: frame-origin-audit-demo
+version: "1"
+description: |
+  STORY-frame-origin-audit proof template. A two-frame bounded cascade
+  (operator-posted kick → A → emit → cascade-emitted audit/loop → R)
+  so the frames-read endpoint exhibits both operator-posted and
+  cascade-emitted frame origins in one run.
+
+messages:
+  - type: audit/kick
+    body_schema:
+      type: object
+      properties:
+        kick: { type: string }
+
+  - type: audit/loop
+    body_schema:
+      type: object
+      properties:
+        checks:
+          type: array
+        rows:
+          type: array
+        step:
+          type: integer
+      required: [checks, rows]
+
+nodes:
+  - type: a
+    executor: verifier-shape-checks
+    description: |
+      A subscribes to the kick message and runs the bundled
+      verifier-shape-checks executor against a real inline dataset.
+      Real dispatch — no stub. A's terminal/success drives the emit-
+      node E.
+    subscribes:
+      - node: audit/kick
+        type: terminal/success
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            default:
+              - kind: no_nulls
+                config: { field: id }
+              - kind: pk_unique
+                config: { field: id }
+          rows:
+            type: array
+            default:
+              - { id: row1, value: 1 }
+              - { id: row2, value: 2 }
+        required: [checks, rows]
+
+  - type: emitter
+    emits_message: audit/loop
+    description: |
+      The cascade-emit origin: emitter subscribes to A's terminal/
+      success and emits an audit/loop message whose body carries the
+      `checks` array and the `rows` array forwarded from A's
+      attribute set, plus a step counter. R subscribes to audit/loop
+      and reads its inputs via the typed-message substitution grammar.
+    subscribes:
+      - node: a
+        type: terminal/success
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            source: "{{nodes.a.attribute.checks}}"
+          rows:
+            type: array
+            source: "{{nodes.a.attribute.rows}}"
+          step:
+            type: integer
+            default: 1
+        required: [checks, rows]
+
+  - type: r
+    executor: verifier-shape-checks
+    description: |
+      R is the cascade-emit receiver: it subscribes to audit/loop (a
+      message type, addressed as a virtual node) and pulls its
+      verification inputs from the typed-message body. This is the
+      cascade-emitted frame's load-bearing dispatch.
+    subscribes:
+      - node: audit/loop
+        type: terminal/success
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            source: "{{messages.audit/loop.checks}}"
+          rows:
+            type: array
+            source: "{{messages.audit/loop.rows}}"
+        required: [checks, rows]

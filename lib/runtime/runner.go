@@ -177,13 +177,6 @@ type RunArgs struct {
 	// row disables the cap entirely).
 	MaxRetriesWithoutProgressDefault int
 
-	// InvalidateHandler is the unified entry point for invalidate
-	// requests originating from the supervisor's own handlers (E3
-	// SweepParkedNodes wake, H2 on_event-handler-emitted invalidates).
-	// Optional; when nil the runtime falls back to InvalidateNode
-	// directly.
-	InvalidateHandler func(ctx context.Context, args InvalidateArgs) error
-
 	// ExpectedAttributesSchemaFor returns the executor's advertised
 	// expected_attributes_schema bytes (JSON Schema) plus an ok flag
 	// (false for unknown executors). Used by
@@ -289,8 +282,11 @@ type MetricsHook interface {
 	IncDispatch(executor, terminalClass string)
 	// @agent-contract: records a resolved terminal verdict.
 	IncTerminal(terminalClass, errorClass string)
-	// @agent-contract: records an invalidate fired by source
-	// ("admin" | "scheduler" | "handler" | "policy").
+	// @agent-contract: records an invalidate fired by source. The only
+	// live caller is the parked-resume sweep ("scheduler"); the
+	// "admin" / "handler" / "policy" sources retired with the
+	// message-schema-layer reshape that removed the operator-invalidate
+	// route and handler-emitted invalidate paths.
 	IncInvalidate(sourceKind string)
 	// @agent-contract: records a claim acquisition (producer name +
 	// intent: "acquired" | "unavailable" | "abandon").

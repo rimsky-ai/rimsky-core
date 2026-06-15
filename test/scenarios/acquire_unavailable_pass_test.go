@@ -62,7 +62,6 @@ func TestAcquireUnavailablePass(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-pass", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

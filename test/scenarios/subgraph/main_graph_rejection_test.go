@@ -27,9 +27,8 @@ import (
 func TestMainGraphWithEntryRejected(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
-		Name:                "main-has-entry",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "main-has-entry",
+		Version: "1",
 		Graphs: []tmplspec.GraphSpec{
 			{
 				// @constraint: main MUST NOT declare entry or exit; the validator
@@ -57,9 +56,8 @@ func TestMainGraphWithEntryRejected(t *testing.T) {
 func TestMainGraphWithExitRejected(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
-		Name:                "main-has-exit",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "main-has-exit",
+		Version: "1",
 		Graphs: []tmplspec.GraphSpec{
 			{
 				Name:  tmplspec.MainGraphName,

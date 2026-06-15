@@ -39,10 +39,9 @@ import (
 // register is content-addressed to the same hash.
 func scopeLifecycleSpec(name string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               "1",
-		"frame_resolution_mode": "serial_queue",
-		"nodes":                 []map[string]any{{"type": "n1"}},
+		"name":    name,
+		"version": "1",
+		"nodes":   []map[string]any{{"type": "n1"}},
 	}
 }
 

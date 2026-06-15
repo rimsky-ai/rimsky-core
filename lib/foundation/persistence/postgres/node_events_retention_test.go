@@ -27,11 +27,10 @@ func TestPGNodeEventDeleteOlderThanQueuesSpilledBlobOrphans(t *testing.T) {
 	nodeID := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:                "node-event-retention-fixture",
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
-		Nodes:               []spec.TemplateNodeDef{{Type: "fixture-node-type", Executor: "test-executor"}},
+		Name:           "node-event-retention-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
+		Nodes:          []spec.TemplateNodeDef{{Type: "fixture-node-type", Executor: "test-executor"}},
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if err := store.Templates().Insert(ctx, persistence.TemplateInsertInput{

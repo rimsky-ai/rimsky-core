@@ -40,15 +40,19 @@ import (
 // SubscriptionEdge is one entry in the inverse map: a (receiver,
 // signal type-pattern, when-predicate) coupling that the cascade walk
 // matches against an emitted signal.
+//
+// The pre-message-schema-layer per-subscription `frame: in | next`
+// modifier retired alongside the SubscriptionEntry's `Frame:` field —
+// the cascade walker has one path now (in-tx, in-frame). Cross-frame
+// coupling is expressed by message-emitter nodes.
 type SubscriptionEdge struct {
 	ReceiverNodeType string
 	// @constraint: TypePattern is either an exact path or a trailing-`*`
 	// prefix; WhenExpr is nil when no `when:` predicate is declared;
-	// SubscriptionScope is "direct" | "instance"; Frame is "in" | "next".
+	// SubscriptionScope is "direct" | "instance".
 	TypePattern       signal.TypePath
 	WhenExpr          *signal.CompiledPredicate
 	SubscriptionScope string
-	Frame             string
 
 	// WakeOnChange is unwrapped from spec.SubscriptionEntry.WakeOnChange
 	// at edge construction. When true, the cascade walker stale-marks
@@ -210,16 +214,12 @@ func (m *SubscriptionEdgeMap) ReceiverNodeTypesForSender(senderNodeType string) 
 }
 
 // SenderNodeTypesForReceiver returns the distinct named sender-node-
-// type keys carrying at least one same-frame edge whose
-// ReceiverNodeType equals receiverNodeType. The cross-cutting bucket
-// (empty sender key, `instance: true` subscriptions) is deliberately
-// EXCLUDED: it names no upstream node-type, and treating it as
-// "subscribes to every node in the instance" would let two
-// instance-wide subscribers gate each other into a standstill.
-// `frame: next` edges are EXCLUDED too: they deliver into the next
-// frame, so a sender in-flight in the receiver's CURRENT frame cannot
-// produce a signal the receiver would consume this frame — counting it
-// would over-gate. Used by the supervisor's upstream-gating
+// type keys carrying at least one edge whose ReceiverNodeType equals
+// receiverNodeType. The cross-cutting bucket (empty sender key,
+// `instance: true` subscriptions) is deliberately EXCLUDED: it names no
+// upstream node-type, and treating it as "subscribes to every node in
+// the instance" would let two instance-wide subscribers gate each other
+// into a standstill. Used by the supervisor's upstream-gating
 // eligibility condition to derive the candidate's subscribed-sender
 // set from the template.
 //
@@ -241,7 +241,7 @@ func (m *SubscriptionEdgeMap) SenderNodeTypesForReceiver(receiverNodeType string
 		}
 		found := false
 		walkAllEdges(root, func(e SubscriptionEdge) {
-			if e.ReceiverNodeType == receiverNodeType && e.Frame != "next" {
+			if e.ReceiverNodeType == receiverNodeType {
 				found = true
 			}
 		})
@@ -394,11 +394,11 @@ func splitSegments(s string) []string {
 //
 // Full edge equality includes the cascade-shape flags WakeOnChange and
 // ForceUpstreamRefresh: two entries that match on (receiver, type, when,
-// scope, frame) but differ in either flag are NOT content-equal and
-// must land as two distinct edges so the cascade walker honors both
-// flag values. The matching-pair-with-conflicting-flags case is caught
-// at the validator (validateSubscribes) and rejected at registration —
-// see decision:cascade-flags-required-no-defaults. By the time the edge
+// scope) but differ in either flag are NOT content-equal and must land
+// as two distinct edges so the cascade walker honors both flag values.
+// The matching-pair-with-conflicting-flags case is caught at the
+// validator (validateSubscribes) and rejected at registration — see
+// decision:cascade-flags-required-no-defaults. By the time the edge
 // builder runs, only flag-coherent entries remain; exact-duplicate
 // entries (same flags) collapse here, distinct-flag entries land as
 // distinct edges.
@@ -408,7 +408,6 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 			existing.TypePattern == e.TypePattern &&
 			existing.WhenExpr == e.WhenExpr &&
 			existing.SubscriptionScope == e.SubscriptionScope &&
-			existing.Frame == e.Frame &&
 			existing.WakeOnChange == e.WakeOnChange &&
 			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh {
 			return true
@@ -425,10 +424,23 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 // as registration-time errors so a malformed predicate cannot reach
 // the cascade walker.
 //
+// `messageRefs` carries the per-receiver `{{messages.<type>.<field>}}`
+// directives parsed from the same substitution sites: each one becomes
+// an implicit `(node: <type>, type: terminal/success)` subscription
+// against the message-virtual-node key. Parallel to substitutionRefs
+// but routed against the message-type space rather than the node-type
+// space — uniform with the explicit-subscription leg in
+// `validateSubscribes` (which also admits message-type-shaped
+// `node:` values). Per the spec §Auto-subscribe rule extension.
+//
 //	@concept: node-subscription
 //	@concept: signal
-//	@decision: subscription-edges-only-from-explicit-block
-func BuildSubscriptionEdges(tmpl spec.TemplateSpec) (*SubscriptionEdgeMap, error) {
+//	@concept: message-schema
+func BuildSubscriptionEdges(
+	tmpl spec.TemplateSpec,
+	substitutionRefs map[string][]substitutionRef,
+	messageRefs map[string][]messageRef,
+) (*SubscriptionEdgeMap, error) {
 	out := NewSubscriptionEdgeMap()
 	for _, n := range tmpl.Nodes {
 		receiverType := n.Type
@@ -440,8 +452,46 @@ func BuildSubscriptionEdges(tmpl spec.TemplateSpec) (*SubscriptionEdgeMap, error
 			}
 			out.Insert(s.Node, edge)
 		}
+		// @deliberate: per decision:subscription-edges-only-from-explicit-block,
+		// substitution refs do NOT contribute to the subscription-edge
+		// map; the map is fed by the explicit `subscribes:` block only.
+		// The substitutionRefs parameter is retained on the signature for
+		// the validator's coverage check (registration rejects templates
+		// with uncovered refs) but ignored here.
+		_ = substitutionRefs
+		// @deliberate: implicit subscriptions from
+		// `{{messages.<type>.<field>}}` refs. Each ref auto-subscribes
+		// the receiver to the message-virtual-node `<type>`'s
+		// `terminal/success` — the signal a delivered message of that
+		// type emits into the frame. Parallels the `subscribes:` leg's
+		// `(node: <message-type>, type: terminal/success)` shape and
+		// carries the same cascade defaults as substitution-ref auto-
+		// edges.
+		for _, ref := range messageRefs[receiverType] {
+			edge := edgeFromMessageRef(receiverType)
+			out.Insert(ref.MessageType, edge)
+		}
 	}
 	return out, nil
+}
+
+// edgeFromMessageRef synthesizes the implicit subscription edge for a
+// `{{messages.<type>.<field>}}` directive: the receiver auto-subscribes
+// to the message-virtual-node's `terminal/success`. Symmetric with
+// `edgeFromSubscription` for an explicit `{ node: <type>, type:
+// terminal/success }` subscribes entry — no `when:`, direct scope.
+//
+// @concept: message-schema
+// @concept: node-subscription
+func edgeFromMessageRef(receiverType string) SubscriptionEdge {
+	return SubscriptionEdge{
+		ReceiverNodeType:     receiverType,
+		TypePattern:          signal.TypePath("terminal/success"),
+		WhenExpr:             nil,
+		SubscriptionScope:    spec.SubscriptionScopeDirect,
+		WakeOnChange:         true,
+		ForceUpstreamRefresh: false,
+	}
 }
 
 // substitutionRef is one parsed `{{nodes.X.attribute.Y}}` or
@@ -470,6 +520,28 @@ type substitutionRef struct {
 	AttributeProperty string
 }
 
+// messageRef is one parsed `{{messages.<type>.<field>}}` directive in a
+// node's attribute schema (or other substitution site). The receiver
+// implicitly subscribes to the message-virtual-node `<type>`'s
+// `terminal/success`; the substitution engine resolves `<field>` against
+// the triggering message body when the frame's triggering type matches.
+//
+// Distinct from substitutionRef so the BuildSubscriptionEdges loop can
+// route the implicit auto-subscription against the message-virtual-node
+// key rather than the regular node-type key, and so the validator can
+// cross-check `<type>` against the template's `messages:` registry
+// rather than against the declared node set.
+//
+// @concept: message-schema
+// @concept: node-subscription
+type messageRef struct {
+	// @constraint: MessageType is the declared `messages:` entry type
+	// the directive names; Field is the body field at the top of the
+	// path (empty for the whole-body bare form).
+	MessageType string
+	Field       string
+}
+
 // substitutionDirectiveRe is the same shape as
 // graph/attribute/substitution.go::directivePattern. Duplicated here so
 // the validator does not import the attribute package (cyclic).
@@ -495,6 +567,142 @@ func ExtractSubstitutionRefsFromTemplate(tmpl spec.TemplateSpec) map[string][]su
 		}
 	}
 	return out
+}
+
+// ExtractMessageRefsFromTemplate scans every node's Attributes schema
+// (and acquisition-time substitution sites: stores selectors, lock
+// names) for `{{messages.<type>.<field>}}` directives and returns a map
+// keyed by receiver node-type. Bare-form `{{messages.<type>}}` is
+// admitted with an empty Field.
+//
+// Used by the template validator to drive two things:
+//
+//  1. The auto-subscribe rule extension: each ref produces an implicit
+//     `(node: <type>, type: terminal/success)` subscription edge against
+//     the message-virtual-node, indexed by BuildSubscriptionEdges.
+//  2. The registration-time cross-check: `<type>` must be declared in
+//     `messages:`, and `<field>` (if non-empty) must be a property in
+//     that entry's body_schema.
+//
+// Exported alongside ExtractSubstitutionRefsFromTemplate; the two
+// extractors share `walkSchemaForSourcesWithPath` and parse the same
+// source strings with different per-directive parsers.
+//
+// @concept: message-schema
+// @concept: node-subscription
+func ExtractMessageRefsFromTemplate(tmpl spec.TemplateSpec) map[string][]messageRef {
+	out := map[string][]messageRef{}
+	for _, n := range tmpl.Nodes {
+		refs := parseMessageRefsFromAttributes(n)
+		if len(refs) > 0 {
+			out[n.Type] = refs
+		}
+	}
+	return out
+}
+
+// MessageRefSpec is the exported per-directive message-ref shape:
+// message-type + field-name (top-of-path; empty for whole-body bare
+// form). Symmetric with SubstitutionRefSpec; consumers outside the
+// graph package consume the exported form.
+//
+// @concept: message-schema
+type MessageRefSpec struct {
+	MessageType string
+	Field       string
+}
+
+// MessageRefsFromAttributes returns the per-directive message refs
+// parsed from the receiver's attribute schema and acquisition-time
+// substitution sites. Symmetric with SubstitutionRefsFromAttributes.
+//
+// @concept: message-schema
+func MessageRefsFromAttributes(n TemplateNodeDef) []MessageRefSpec {
+	refs := parseMessageRefsFromAttributes(n)
+	out := make([]MessageRefSpec, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, MessageRefSpec(r))
+	}
+	return out
+}
+
+// parseMessageRefsFromAttributes scans every site on the node where a
+// `{{messages.<type>.<field>}}` directive can appear — the same set
+// parseSubstitutionRefsFromAttributes scans for the `nodes.*` family
+// (attribute-schema `source:` strings, stores selectors, lock names) —
+// and returns the parsed refs in declaration order, deduplicated.
+//
+// One substitution engine, two surfaces: the validator's cross-check
+// path (this extractor) and the runtime resolver (the `messages` arm in
+// resolveDirectiveValueRaw) must agree on which directives produce
+// auto-subscriptions and which fields a receiver can read.
+func parseMessageRefsFromAttributes(n TemplateNodeDef) []messageRef {
+	var out []messageRef
+	seen := map[messageRef]struct{}{}
+	scanSrc := func(src string) {
+		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
+			body := strings.TrimSpace(m[1])
+			if body == "" {
+				continue
+			}
+			if idx := strings.Index(body, "|"); idx >= 0 {
+				body = strings.TrimSpace(body[:idx])
+			}
+			body = strings.TrimSpace(strings.TrimSuffix(body, "?"))
+			ref, ok := parseMessageDirective(body)
+			if !ok {
+				continue
+			}
+			if _, dup := seen[ref]; dup {
+				continue
+			}
+			seen[ref] = struct{}{}
+			out = append(out, ref)
+		}
+	}
+	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
+		// @deliberate: the schema-path arg is irrelevant for the
+		// message-ref extractor — message refs feed the auto-subscribe
+		// surface, not the schema-location-aware coverage check —
+		// so wrap the path-threading walker and discard the path.
+		walkSchemaForSourcesWithPath(n.Attributes.Schema, "", func(src, _ string) {
+			scanSrc(src)
+		})
+	}
+	for _, s := range n.Stores {
+		scanSrc(s.Selector)
+	}
+	for _, l := range n.Locks {
+		scanSrc(l.Name)
+	}
+	return out
+}
+
+// parseMessageDirective parses one directive body (the text between
+// `{{...}}`) and returns a messageRef when the form is
+// `messages.<type>(.<field>?…)`. Returns ok=false for any other shape.
+//
+// The directive grammar treats the second dot-separated segment as the
+// message-type and the third (if present) as the top-of-path field.
+// Bare form `messages.<type>` (no field path) produces Field="" for the
+// whole-body pull, mirroring the runtime resolver's bare-form behaviour.
+// Mirrors the validator's checkAttributeDirectiveBody "messages" arm so
+// every directive accepted at registration also produces an inverse-edge
+// entry.
+func parseMessageDirective(body string) (messageRef, bool) {
+	parts := strings.Split(body, ".")
+	if len(parts) < 2 || parts[0] != "messages" {
+		return messageRef{}, false
+	}
+	mtype := parts[1]
+	if mtype == "" {
+		return messageRef{}, false
+	}
+	field := ""
+	if len(parts) >= 3 {
+		field = parts[2]
+	}
+	return messageRef{MessageType: mtype, Field: field}, true
 }
 
 // SubstitutionRefSpec is the exported per-directive substitution-ref
@@ -775,14 +983,6 @@ func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) (Subscr
 	if s.Instance {
 		scope = spec.SubscriptionScopeInstance
 	}
-	frame := s.Frame
-	if frame == "" {
-		if s.Instance {
-			frame = "next"
-		} else {
-			frame = "in"
-		}
-	}
 	pattern := signal.TypePath(s.Type)
 	when, err := signal.CompileWhen(pattern, s.When)
 	if err != nil {
@@ -803,8 +1003,8 @@ func edgeFromSubscription(s spec.SubscriptionEntry, receiverType string) (Subscr
 		TypePattern:          pattern,
 		WhenExpr:             when,
 		SubscriptionScope:    scope,
-		Frame:                frame,
 		WakeOnChange:         *s.WakeOnChange,
 		ForceUpstreamRefresh: *s.ForceUpstreamRefresh,
 	}, nil
 }
+

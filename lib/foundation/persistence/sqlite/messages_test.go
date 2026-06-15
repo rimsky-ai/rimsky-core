@@ -10,11 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	sqlitepersistdrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
@@ -31,10 +33,9 @@ func seedMessageInstance(t *testing.T, ctx context.Context, d persistence.Databa
 	mainRunScopeID := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:                "messages-null-payload-fixture",
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "messages-null-payload-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "n", Executor: "test-executor"},
 		},
@@ -96,7 +97,7 @@ func TestMessagesScan_NullPayload(t *testing.T) {
 		return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
-			Kind:       "invalidate",
+			Type:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
 			// @deliberate: Payload omitted → json.RawMessage(nil) → NULL row;
@@ -175,7 +176,7 @@ func TestMessagesScan_NonNullPayload(t *testing.T) {
 		return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
-			Kind:       "invalidate",
+			Type:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
 			Payload:    payload,
@@ -192,5 +193,99 @@ func TestMessagesScan_NonNullPayload(t *testing.T) {
 	}
 	if string(row.Payload) != string(payload) {
 		t.Fatalf("payload round-trip: got %q, want %q", string(row.Payload), string(payload))
+	}
+}
+
+// TestMessagesList_DeliveredAfterBefore pins the persistence-side
+// predicates for the `delivered_after` / `delivered_before` filters
+// surfaced through the GET /v1/instances/{id}/messages query params.
+// The control-API handler advertises and accepts these filters; this
+// test fails if a future refactor regresses the persistence layer to
+// the silent-drop shape (where the filter is accepted at the HTTP
+// boundary but the WHERE clause ignores it).
+func TestMessagesList_DeliveredAfterBefore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := openSQLiteDriver(t)
+	instanceID := seedMessageInstance(t, ctx, d)
+	messages := d.Tables().Messages()
+	rawDB := sqlitepersistdrv.DBFromDatabase(d)
+
+	// Seed three rows: one with delivered_at = t1, one with t2, one
+	// with t3, frame_id NULL so the rimsky_frames FK is not exercised.
+	t1 := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 6, 14, 11, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	ids := make([]shared.UUID, 3)
+	for i, tt := range []time.Time{t1, t2, t3} {
+		ids[i] = shared.UUID(uuid.New())
+		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+				ID:         ids[i],
+				InstanceID: instanceID,
+				Type:       "ping/recheck",
+				Sender:     "operator",
+				SenderKind: "operator",
+				ReceivedAt: tt.Add(-time.Hour),
+			})
+		}); err != nil {
+			t.Fatalf("Messages.Insert[%d]: %v", i, err)
+		}
+		// Stamp delivered_at directly — MarkDelivered requires a real
+		// frame row, which would mean threading the rimsky_frames FK
+		// just for this filter test. The persistence layer's WHERE
+		// clause is the unit under test; the column write itself goes
+		// through the same fixed-width format formatTime emits.
+		if _, err := rawDB.ExecContext(ctx,
+			`UPDATE rimsky_messages SET delivered_at = ? WHERE id = ?`,
+			tt.Format("2006-01-02T15:04:05.000000000Z07:00"), ids[i].String(),
+		); err != nil {
+			t.Fatalf("stamp delivered_at[%d]: %v", i, err)
+		}
+	}
+
+	instUUID := shared.UUID(instanceID)
+
+	// delivered_after = t1 → returns rows with delivered_at strictly
+	// greater than t1 (so the t2 and t3 rows, NOT the t1 row).
+	after := t1
+	page, err := messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:     &instUUID,
+		DeliveredAfter: &after,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_after=t1): %v", err)
+	}
+	if len(page.Rows) != 2 {
+		t.Fatalf("delivered_after filter: got %d rows, want 2 (t2, t3)", len(page.Rows))
+	}
+
+	// delivered_before = t3 → returns rows with delivered_at strictly
+	// less than t3 (so the t1 and t2 rows, NOT the t3 row).
+	before := t3
+	page, err = messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:      &instUUID,
+		DeliveredBefore: &before,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_before=t3): %v", err)
+	}
+	if len(page.Rows) != 2 {
+		t.Fatalf("delivered_before filter: got %d rows, want 2 (t1, t2)", len(page.Rows))
+	}
+
+	// Both bounds in combination → returns rows strictly between them
+	// (so only the t2 row).
+	page, err = messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:      &instUUID,
+		DeliveredAfter:  &after,
+		DeliveredBefore: &before,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_after=t1, delivered_before=t3): %v", err)
+	}
+	if len(page.Rows) != 1 || page.Rows[0].ID != ids[1] {
+		t.Fatalf("delivered_after+before window: got %+v, want exactly t2 row %s",
+			page.Rows, ids[1])
 	}
 }

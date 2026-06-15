@@ -829,12 +829,12 @@ func tryAcquire(
 	}
 
 	loadResumeMetadataIfParked(ctx, args, tx, &out, cand)
-	// Load the dispatch row's executor-attached scratch (inline or
-	// spilled-handle materialized via Blob) so buildExecuteRequest can
-	// populate ExecuteRequest.scratch on the wire. Per
-	// STORY-opaque-executor-scratch, scratch round-trips across every
-	// prior-dispatch disposition; the enqueue-side carry already
-	// stamps the row, this is the read-side surfacing.
+	// @constraint: load the dispatch row's executor-attached scratch
+	// (inline or spilled-handle materialized via Blob) so
+	// buildExecuteRequest can populate ExecuteRequest.scratch on the
+	// wire. Scratch round-trips across every prior-dispatch disposition;
+	// the enqueue-side carry already stamps the row, this is the
+	// read-side surfacing.
 	//
 	// @concept: executor
 	loadScratchIntoAcquisition(ctx, args, tx, &out, cand)

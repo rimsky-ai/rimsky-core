@@ -84,12 +84,23 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 		frameID := uuid.New().String()
 		nodeID := uuid.New().String()
 		runID := uuid.New().String()
+		// Pass 1 of the message-schema-layer plan added the
+		// rimsky_frames.triggering_message_id NOT NULL FK; seed the
+		// triggering message per frame.
+		msgID := uuid.New().String()
+		if _, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+			 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+			msgID, instanceID,
+		); err != nil {
+			t.Fatalf("seed message: %v", err)
+		}
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_frames
-			   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+			   (frame_id, instance_id, triggering_message_id, state,
 			    queued_at, started_at, ended_at, frame_timeout_ms)
-			 VALUES (?, ?, 'serial_queue', 'completed', '[]', ?, ?, ?, 600000)`,
-			frameID, instanceID, rfc(endedAt), rfc(endedAt), rfc(endedAt),
+			 VALUES (?, ?, ?, 'completed', ?, ?, ?, 600000)`,
+			frameID, instanceID, msgID, rfc(endedAt), rfc(endedAt), rfc(endedAt),
 		); err != nil {
 			t.Fatalf("seed terminal frame: %v", err)
 		}
@@ -122,12 +133,20 @@ func TestTraceRetentionReapsWholeTrace(t *testing.T) {
 	heldFrame := uuid.New().String()
 	heldNode := uuid.New().String()
 	heldRun := uuid.New().String()
+	heldMsgID := uuid.New().String()
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+		heldMsgID, instanceID,
+	); err != nil {
+		t.Fatalf("seed held message: %v", err)
+	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		   (frame_id, instance_id, triggering_message_id, state,
 		    queued_at, started_at, frame_timeout_ms)
-		 VALUES (?, ?, 'serial_queue', 'running', '[]', ?, ?, 600000)`,
-		heldFrame, instanceID, rfc(oldTime), rfc(oldTime),
+		 VALUES (?, ?, ?, 'running', ?, ?, 600000)`,
+		heldFrame, instanceID, heldMsgID, rfc(oldTime), rfc(oldTime),
 	); err != nil {
 		t.Fatalf("seed held frame: %v", err)
 	}

@@ -174,10 +174,9 @@ func buildSeverityPartitionTemplate(name string, rows []map[string]any) map[stri
 	}
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             name,
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "verifier",

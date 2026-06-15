@@ -114,7 +114,6 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-abandon-injection", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

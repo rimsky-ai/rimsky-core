@@ -63,7 +63,19 @@ func testSelectCandidatesSkipsPausedInstances(t *testing.T, d persistence.Databa
 		}, tx); err != nil {
 			return err
 		}
-		fid, err := store.Frames().EnqueueSerialFrame(ctx, pausedInstanceID, pausedNodeID, 600000, tx)
+		// Seed a synthetic message envelope to satisfy the
+		// rimsky_frames.triggering_message_id FK.
+		pausedMessageID := shared.UUID(uuid.New())
+		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         pausedMessageID,
+			InstanceID: pausedInstanceID,
+			Type:       "fixture/message",
+			Sender:     "operator",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := store.Frames().InsertFrame(ctx, pausedInstanceID, pausedMessageID, 600000, tx)
 		if err != nil {
 			return err
 		}

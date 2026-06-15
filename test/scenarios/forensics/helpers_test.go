@@ -51,12 +51,25 @@ func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence
 	return *row
 }
 
-// seedFrameRow enqueues a running frame for the instance + source node.
+// seedFrameRow enqueues a running frame for the instance, seeding a
+// synthetic typed-message envelope first so the
+// rimsky_frames.triggering_message_id FK is satisfied.
 func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
+	_ = sourceNodeID
 	var frameID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		fid, err := backend.Frames().EnqueueSerialFrame(ctx, instanceID, sourceNodeID, 600000, tx)
+		msgID := shared.UUID(uuid.New())
+		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := backend.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

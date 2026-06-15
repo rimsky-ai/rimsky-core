@@ -188,7 +188,6 @@ TEMPLATE_BODY='{
   "spec": {
     "name": "producer-error-demo",
     "version": "1",
-    "frame_resolution_mode": "serial_queue",
     "nodes": [
       {
         "type": "produce-report",

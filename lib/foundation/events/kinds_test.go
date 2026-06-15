@@ -115,7 +115,6 @@ func TestSignalKindRoundTrip(t *testing.T) {
 		"transient/await_async",
 		"attribute/budget_cents/changed",
 		"event/discovered",
-		"message/invalidate/operator/self",
 	}
 	for _, path := range cases {
 		path := path

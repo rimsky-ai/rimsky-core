@@ -36,7 +36,6 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-downstream-read", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "upstream", Executor: "stub"},
@@ -86,7 +85,10 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	h.Stub.WhenType("upstream").Success(map[string]any{"value": "fire-2"}, true, "ok")
 	h.Stub.WhenType("downstream").Success(map[string]any{}, true, "ok")
 
-	adminInvalidate(t, h, iid, upN.ID)
+	// @deliberate: Invalidate upstream so cascade refires downstream; the
+	// operator-invalidate HTTP route was retired with messaging, so the
+	// scenario harness drives the same replay path through InvalidateNode.
+	h.InvalidateNode(iid, upN.ID)
 
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {

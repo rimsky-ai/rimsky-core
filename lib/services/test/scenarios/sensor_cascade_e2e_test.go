@@ -45,8 +45,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -56,10 +54,18 @@ import (
 
 // reactorTargetNode is both the publisher's target_node and the node
 // that subscribes to the sensor's message topic. The publisher's
-// message envelope carries target=<this>; the reactor subscribes to
-// `message/invalidate/publisher/<this>` so the delivered envelope's
-// signal type matches it.
+// message envelope carries type=<reactorMessageType>; the reactor
+// subscribes to `{node: <reactorMessageType>, type: terminal/success}`
+// — the post-2026-06-14 message-schema-layer DSL where the message-type
+// is a virtual node-type declared in the template's `messages:`
+// registry.
 const reactorTargetNode = "reactor"
+
+// reactorMessageType is the message type the sensor publisher emits
+// for the reactor's subscription path; bystanderMessageType is the
+// non-matching twin used as the negative control.
+const reactorMessageType = "invalidate/reactor"
+const bystanderMessageType = "refresh/reactor"
 
 // TestSensorHTTP_RealExternalChangeFiresDownstreamNode drives a real
 // sensor image observing a real external change into rimsky's real
@@ -324,19 +330,41 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "sensor-cascade",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "sensor-cascade",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			"messages": []map[string]any{
+				{
+					// @deliberate: matching message-type — the sensor publisher emits envelopes of
+					// this `type`, and the reactor subscribes to it as a virtual node-type per the
+					// post-2026-06-14 message-schema-layer DSL.
+					"type": reactorMessageType,
+					"body_schema": map[string]any{
+						"type":                 "object",
+						"properties":           map[string]any{},
+						"additionalProperties": true,
+					},
+				},
+				{
+					// @deliberate: non-matching twin — declared so the bystander's subscription
+					// validates at registration, but the sensor never emits this type, so the
+					// bystander never fires (negative control).
+					"type": bystanderMessageType,
+					"body_schema": map[string]any{
+						"type":                 "object",
+						"properties":           map[string]any{},
+						"additionalProperties": true,
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{
 					"type":     reactorTargetNode,
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance":               true,
-							"type":                   "message/invalidate/publisher/" + reactorTargetNode,
-							"frame":                  "in",
+							"node":                   reactorMessageType,
+							"type":                   "terminal/success",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
@@ -347,12 +375,12 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance": true,
-							// @deliberate: different message kind — the invalidate envelope
-							// never produces this signal type, so this node must never go
-							// stale on the sensor fire (negative control).
-							"type":                   "message/refresh/publisher/" + reactorTargetNode,
-							"frame":                  "in",
+							// @deliberate: non-matching message-type — the sensor only
+							// emits envelopes of type=<reactorMessageType>, so the
+							// bystander's subscription to <bystanderMessageType>'s
+							// terminal/success signal never fires (negative control).
+							"node":                   bystanderMessageType,
+							"type":                   "terminal/success",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
@@ -365,7 +393,7 @@ func deploySensorCascadeTemplate(t *testing.T, ep harness.RimskyEndpoint, watche
 					"kind":         "http",
 					"config":       json.RawMessage(configBytes),
 					"target_node":  reactorTargetNode,
-					"message_kind": "invalidate",
+					"message_type": reactorMessageType,
 				},
 			},
 		},
@@ -513,14 +541,14 @@ func requirePublisherMessagePersisted(t *testing.T, ep harness.RimskyEndpoint, i
 		if status == http.StatusOK {
 			var resp struct {
 				Messages []struct {
-					Kind       string `json:"kind"`
+					Type       string `json:"type"`
 					Sender     string `json:"sender"`
 					SenderKind string `json:"sender_kind"`
 				} `json:"messages"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
 				for _, m := range resp.Messages {
-					lastSeen = fmt.Sprintf("kind=%s sender=%s sender_kind=%s", m.Kind, m.Sender, m.SenderKind)
+					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s", m.Type, m.Sender, m.SenderKind)
 					if m.SenderKind != "publisher" {
 						continue
 					}
@@ -585,19 +613,4 @@ func requireBystanderDidNotReRun(t *testing.T, ep harness.RimskyEndpoint, instan
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-}
-
-// hostPortOf parses the integer host port out of an httptest.Server URL
-// (e.g. "http://127.0.0.1:54321").
-func hostPortOf(t *testing.T, rawURL string) int {
-	t.Helper()
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		t.Fatalf("parse httptest URL %q: %v", rawURL, err)
-	}
-	p, err := strconv.Atoi(u.Port())
-	if err != nil {
-		t.Fatalf("parse port from %q: %v", rawURL, err)
-	}
-	return p
 }

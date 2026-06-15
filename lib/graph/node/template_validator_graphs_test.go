@@ -34,9 +34,8 @@ func hasErrorContaining(msgs []string, needle string) bool {
 // with one node validates clean.
 func TestCanonicalizeGraphs_HappyPathSingleMain(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl-1",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl-1",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name: MainGraphName,
@@ -59,10 +58,9 @@ func TestCanonicalizeGraphs_HappyPathSingleMain(t *testing.T) {
 // flat Nodes and Graphs.
 func TestCanonicalizeGraphs_RejectGraphsAndNodesBothSet(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
-		Nodes:               []TemplateNodeDef{{Type: "x"}},
+		Name:    "tmpl",
+		Version: "1",
+		Nodes:   []TemplateNodeDef{{Type: "x"}},
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "y"}}},
 		},
@@ -77,9 +75,8 @@ func TestCanonicalizeGraphs_RejectGraphsAndNodesBothSet(t *testing.T) {
 // graph is present.
 func TestCanonicalizeGraphs_RejectMissingMain(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name:  "sub",
@@ -98,9 +95,8 @@ func TestCanonicalizeGraphs_RejectMissingMain(t *testing.T) {
 // TestCanonicalizeGraphs_RejectMainHasEntryExit `main` having entry/exit.
 func TestCanonicalizeGraphs_RejectMainHasEntryExit(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name:  MainGraphName,
@@ -119,9 +115,8 @@ func TestCanonicalizeGraphs_RejectMainHasEntryExit(t *testing.T) {
 // sub-graph missing entry/exit.
 func TestCanonicalizeGraphs_RejectSubGraphMissingEntry(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m"}}},
 			{
@@ -139,9 +134,8 @@ func TestCanonicalizeGraphs_RejectSubGraphMissingEntry(t *testing.T) {
 
 func TestCanonicalizeGraphs_RejectSubGraphMissingExit(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m"}}},
 			{
@@ -160,9 +154,8 @@ func TestCanonicalizeGraphs_RejectSubGraphMissingExit(t *testing.T) {
 // TestCanonicalizeGraphs_RejectEntryEqualsExit — rejects entry == exit.
 func TestCanonicalizeGraphs_RejectEntryEqualsExit(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m"}}},
 			{
@@ -183,9 +176,8 @@ func TestCanonicalizeGraphs_RejectEntryEqualsExit(t *testing.T) {
 // unknown node.
 func TestCanonicalizeGraphs_RejectUnknownEntry(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m"}}},
 			{
@@ -206,9 +198,8 @@ func TestCanonicalizeGraphs_RejectUnknownEntry(t *testing.T) {
 // disconnected internal node via the reachability check.
 func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m"}}},
 			{
@@ -235,9 +226,8 @@ func TestCanonicalizeGraphs_RejectDisconnectedInternalNode(t *testing.T) {
 // reachability check when every internal node is reachable from entry.
 func TestCanonicalizeGraphs_ReachabilityHappyPath(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "m"}}},
 			{
@@ -264,9 +254,8 @@ func TestCanonicalizeGraphs_ReachabilityHappyPath(t *testing.T) {
 // delegate edges.
 func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name: MainGraphName,
@@ -305,9 +294,8 @@ func TestCanonicalizeGraphs_RejectDelegateCycle(t *testing.T) {
 // internal node that references an outer node.
 func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name: MainGraphName,
@@ -336,9 +324,8 @@ func TestCanonicalizeGraphs_RejectInternalReferencesOuter(t *testing.T) {
 // node-type duplication across graphs.
 func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{Name: MainGraphName, Nodes: []TemplateNodeDef{{Type: "shared"}}},
 			{
@@ -363,9 +350,8 @@ func TestCanonicalizeGraphs_RejectDuplicateNodeTypeAcrossGraphs(t *testing.T) {
 // internal-cascade fire without a per-template lookup.
 func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name: MainGraphName,
@@ -412,9 +398,8 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphEntryAbsorbed(t *testing.T) {
 // lookup.
 func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name: MainGraphName,
@@ -465,9 +450,8 @@ func TestCanonicalizeGraphs_EmitsIsSubgraphExit(t *testing.T) {
 // silently enable IsSubgraphExit on flat-shape inputs.
 func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl-flat",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl-flat",
+		Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "alpha", Executor: "stub"},
 			{Type: "beta", Executor: "stub", Subscribes: []SubscriptionEntry{{Node: "alpha", Type: "terminal/*", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)}}},
@@ -493,9 +477,8 @@ func TestCanonicalizeGraphs_FlatShape_NoIsSubgraphExit(t *testing.T) {
 // non-entry internal nodes that reference the sub-graph's entry alias.
 func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name: MainGraphName,
@@ -549,9 +532,8 @@ func TestCanonicalizeGraphs_EmitsResolvesViaCallingNode(t *testing.T) {
 // original declaration.
 func TestCanonicalizeGraphs_RejectCallerExecutorAndDelegate_EntryHasNoExecutor(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "tmpl",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionCoalesce,
+		Name:    "tmpl",
+		Version: "1",
 		Graphs: []GraphSpec{
 			{
 				Name: MainGraphName,

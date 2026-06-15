@@ -30,7 +30,6 @@ description: |
   verifier-shape-checks executor and embeds a real inline dataset; the
   dispatch runs real verification work and settles to a terminal
   Success.
-frame_resolution_mode: serial_queue
 nodes:
   - type: verifier
     executor: verifier-shape-checks

@@ -52,7 +52,7 @@ func TestSubscribe_RegistersInMemory(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
-		TargetNode: "ingest", MessageKind: "invalidate",
+		TargetNode: "ingest", MessageType: "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestSubscribe_RegistersInMemory(t *testing.T) {
 	if !ok || w.Bucket != "test-bucket" || w.WatermarkField != "name" {
 		t.Errorf("subscription: %+v", w)
 	}
-	if w.TargetNode != "ingest" || w.MessageKind != "invalidate" {
+	if w.TargetNode != "ingest" || w.MessageType != "invalidate" {
 		t.Errorf("routing: %+v", w)
 	}
 }
@@ -175,7 +175,7 @@ func TestTick_EmitsOneMessagePerNewObject(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "object-store", ResolvedConfig: raw,
-		TargetNode: "ingest", MessageKind: "invalidate",
+		TargetNode: "ingest", MessageType: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}

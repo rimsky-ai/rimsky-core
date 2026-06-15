@@ -79,11 +79,10 @@ func makeGateFixture(t *testing.T, nodes []tmplspec.TemplateNodeDef) gateFixture
 	mainScopeID := shared.UUID(uuid.New())
 
 	tmpl := tmplspec.TemplateSpec{
-		Name:                "upstream-gate-fixture",
-		Version:             "1",
-		FrameResolutionMode: tmplspec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
-		Nodes:               nodes,
+		Name:           "upstream-gate-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
+		Nodes:          nodes,
 	}
 
 	fx := gateFixture{
@@ -128,7 +127,17 @@ func makeGateFixture(t *testing.T, nodes []tmplspec.TemplateNodeDef) gateFixture
 			}
 			fx.nodes[def.Type] = row
 		}
-		frameID, err := tables.Frames().EnqueueSerialFrame(ctx, instanceID, fx.nodes[nodes[0].Type].ID, 600000, tx)
+		msgID := shared.UUID(uuid.New())
+		if err := tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		frameID, err := tables.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

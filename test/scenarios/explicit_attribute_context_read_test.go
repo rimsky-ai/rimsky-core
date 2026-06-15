@@ -93,7 +93,6 @@ func TestStoryReadWithoutWaking(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name:                "explicit-attribute-context-read",
 		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			// trigger is a root. When invalidated, its terminal/success
 			// fan-outs to both senders in ONE frame via the subscriptions

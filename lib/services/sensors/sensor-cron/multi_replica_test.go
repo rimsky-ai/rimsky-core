@@ -63,7 +63,7 @@ func TestSingleReplica_FiresOnceWhenSubscriptionTickFires(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-		TargetNode: "tick", MessageKind: "invalidate",
+		TargetNode: "tick", MessageType: "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestMultiReplica_TwoInProcessInstancesEachFireIndependently(t *testing.T) {
 		raw, _ := json.Marshal(cfg)
 		_, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 			PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-			TargetNode: "tick", MessageKind: "invalidate",
+			TargetNode: "tick", MessageType: "invalidate",
 		})
 		if err != nil {
 			t.Fatal(err)

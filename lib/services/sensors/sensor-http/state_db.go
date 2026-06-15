@@ -79,7 +79,7 @@ func (s *stateDB) bootstrap(ctx context.Context) error {
 		    match_json_key            TEXT,
 		    match_json_val            TEXT,
 		    target_node               TEXT NOT NULL,
-		    message_kind              TEXT NOT NULL,
+		    message_type              TEXT NOT NULL,
 		    last_poll_at              TIMESTAMPTZ,
 		    last_hash                 TEXT,
 		    started_at                TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -107,7 +107,7 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 		INSERT INTO sensor_http_state (
 		    publisher_subscription_id, instance_id, url, poll_interval,
 		    match_status, match_json_key, match_json_val,
-		    target_node, message_kind
+		    target_node, message_type
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (publisher_subscription_id) DO UPDATE SET
 		    instance_id     = EXCLUDED.instance_id,
@@ -117,7 +117,7 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 		    match_json_key  = EXCLUDED.match_json_key,
 		    match_json_val  = EXCLUDED.match_json_val,
 		    target_node     = EXCLUDED.target_node,
-		    message_kind    = EXCLUDED.message_kind
+		    message_type    = EXCLUDED.message_type
 	`
 	matchStatus := ""
 	for i, c := range w.MatchStatus {
@@ -129,7 +129,7 @@ func (s *stateDB) UpsertSubscription(ctx context.Context, w *Watch) error {
 	_, err := s.db.ExecContext(ctx, q,
 		w.SubscriptionID, w.InstanceID, w.URL, w.PollInterval.String(),
 		matchStatus, w.MatchJSONKey, w.MatchJSONVal,
-		w.TargetNode, w.MessageKind)
+		w.TargetNode, w.MessageType)
 	return err
 }
 
@@ -174,7 +174,7 @@ type SubscriptionState struct {
 	MatchJSONKey string
 	MatchJSONVal string
 	TargetNode   string
-	MessageKind  string
+	MessageType  string
 	LastHash     string
 }
 
@@ -192,7 +192,7 @@ func (s *stateDB) ListAll(ctx context.Context) ([]SubscriptionState, error) {
 		        COALESCE(match_status, ''),
 		        COALESCE(match_json_key, ''),
 		        COALESCE(match_json_val, ''),
-		        target_node, message_kind, COALESCE(last_hash, '')
+		        target_node, message_type, COALESCE(last_hash, '')
 		   FROM sensor_http_state`)
 	if err != nil {
 		return nil, err
@@ -221,7 +221,7 @@ func (s *stateDB) GetSubscription(ctx context.Context, subscriptionID string) (*
 		        COALESCE(match_status, ''),
 		        COALESCE(match_json_key, ''),
 		        COALESCE(match_json_val, ''),
-		        target_node, message_kind, COALESCE(last_hash, '')
+		        target_node, message_type, COALESCE(last_hash, '')
 		   FROM sensor_http_state
 		  WHERE publisher_subscription_id = $1`,
 		subscriptionID)
@@ -256,7 +256,7 @@ func scanSubscriptionState(scan func(...any) error) (SubscriptionState, error) {
 	)
 	if err := scan(&w.SubscriptionID, &w.InstanceID, &w.URL, &pollInterval,
 		&matchStatus, &w.MatchJSONKey, &w.MatchJSONVal,
-		&w.TargetNode, &w.MessageKind, &w.LastHash); err != nil {
+		&w.TargetNode, &w.MessageType, &w.LastHash); err != nil {
 		return SubscriptionState{}, err
 	}
 	if pollInterval != "" {

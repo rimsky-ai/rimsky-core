@@ -129,7 +129,6 @@ func (s *Server) registerRoutes(r chi.Router) {
 	r.Get("/v1/instances/{idOrKey}/breakpoint-hits", s.handleListBreakpointHits)
 
 	r.Get("/v1/nodes/{id}", s.handleGetNode)
-	r.Post("/v1/nodes/{id}/invalidate", s.handleInvalidateNode)
 	r.Post("/v1/nodes/{id}/reset", s.handleResetNode)
 
 	r.Get("/v1/events", s.handleListEvents)
@@ -673,18 +672,6 @@ func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, n)
-}
-
-func (s *Server) handleInvalidateNode(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if s.maybeFail(w, r, "/v1/nodes/"+id+"/invalidate") {
-		return
-	}
-	if _, ok := s.State.GetNode(id); !ok {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "node not found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleResetNode(w http.ResponseWriter, r *http.Request) {

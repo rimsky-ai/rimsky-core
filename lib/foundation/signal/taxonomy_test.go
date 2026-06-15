@@ -20,7 +20,6 @@ func TestValidateTypePath_AcceptsCanonical(t *testing.T) {
 		"transient/await_async",
 		"attribute/budget_cents/changed",
 		"event/discovered",
-		"message/invalidate/operator/self",
 	}
 	for _, c := range cases {
 		c := c
@@ -42,6 +41,8 @@ func TestValidateTypePath_RejectsUnknown(t *testing.T) {
 		"attribute/changed",
 		"attribute/foo/bar/changed",
 		"transient/retry",
+		"message/invalidate/operator/foo",
+		"message/anything",
 	}
 	for _, c := range cases {
 		c := c
@@ -61,7 +62,6 @@ func TestValidateSubscriptionType_AcceptsTrailingWildcard(t *testing.T) {
 		"transient/*",
 		"transient/retry/*",
 		"attribute/*",
-		"message/*",
 		"terminal/park/snooze",
 	}
 	for _, c := range cases {
@@ -85,6 +85,31 @@ func TestValidateSubscriptionType_RejectsPositionalWildcard(t *testing.T) {
 		t.Run(string(c), func(t *testing.T) {
 			if err := ValidateSubscriptionType(c); err == nil {
 				t.Fatalf("ValidateSubscriptionType(%q) returned nil; expected error", c)
+			}
+		})
+	}
+}
+
+// TestValidateSubscriptionType_RejectsMessageTypePath pins the
+// 2026-06-14 message-schema-layer retirement of the `message/*`
+// top-level kind. Message arrival is now a virtual-node settle —
+// receivers subscribe with `node: <message-type>, type: terminal/success`,
+// NOT with `type: message/...`. A subscription that names `message/...`
+// as the signal type-path must fail through the canonical-taxonomy
+// validator.
+func TestValidateSubscriptionType_RejectsMessageTypePath(t *testing.T) {
+	cases := []TypePath{
+		"message/*",
+		"message/invalidate/*",
+		"message/invalidate/operator/self",
+		"message/invalidate/operator/foo",
+		"message/refresh/publisher/bar",
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(string(c), func(t *testing.T) {
+			if err := ValidateSubscriptionType(c); err == nil {
+				t.Fatalf("ValidateSubscriptionType(%q) returned nil; expected error (message/* taxonomy retired)", c)
 			}
 		})
 	}

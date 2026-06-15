@@ -42,7 +42,6 @@ func specToMap(t *testing.T, spec node.TemplateSpec) map[string]any {
 
 const planSpec = `name: x
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: http-node
@@ -121,7 +120,7 @@ func TestComputePlan_TagMv(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	oldHash, _ := srv.State.RegisterTemplate(map[string]any{"name": "old", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "compose:p:a@1.0", "")
+	oldHash, _ := srv.State.RegisterTemplate(map[string]any{"name": "old", "version": "1.0", "nodes": []any{}}, "compose:p:a@1.0", "")
 	srv.State.SetTemplateState(oldHash, "deployed")
 	dir, m := makeManifest(t, `project: p
 templates:
@@ -153,7 +152,7 @@ func TestComputePlan_RemoveFromManifest(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "compose:p:legacy@0.9", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:legacy@0.9", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	_, m := makeManifest(t, "project: p\n")
 	state, _ := compose.QueryState(context.Background(), c, m.Project)
@@ -220,7 +219,7 @@ func TestComputePlan_NonTerminalOrphan(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
 	c := cli.NewClient(srv.URL)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "compose:p:a@1.0", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:a@1.0", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	key := "compose:p:orphan"
 	if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {

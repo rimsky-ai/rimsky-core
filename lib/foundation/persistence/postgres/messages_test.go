@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -30,10 +31,9 @@ func seedMessageInstanceForNullTest(t *testing.T, ctx context.Context, d persist
 	mainRunScopeID := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:                "messages-null-payload-fixture",
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "messages-null-payload-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "n", Executor: "test-executor"},
 		},
@@ -84,7 +84,7 @@ func TestMessagesScan_NullPayload_Postgres(t *testing.T) {
 		return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
-			Kind:       "invalidate",
+			Type:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
 			// @deliberate: Payload omitted → nil → NULL on the wire; this test exercises the NULL-payload scan path.
@@ -132,6 +132,86 @@ func TestMessagesScan_NullPayload_Postgres(t *testing.T) {
 	}
 }
 
+// TestMessagesList_DeliveredAfterBefore_Postgres pins the persistence
+// predicates for the `delivered_after` / `delivered_before` filters
+// surfaced through GET /v1/instances/{id}/messages. The control-API
+// handler advertises and accepts these filters; this test fails if a
+// future refactor regresses the persistence layer to silently drop
+// them. Symmetric to the sqlite-side coverage so the conformance suite
+// catches cross-backend drift.
+func TestMessagesList_DeliveredAfterBefore_Postgres(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := pgtest.OpenDriver(ctx, t)
+	instanceID := seedMessageInstanceForNullTest(t, ctx, d)
+	messages := d.Tables().Messages()
+
+	t1 := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
+	t2 := time.Date(2026, 6, 14, 11, 0, 0, 0, time.UTC)
+	t3 := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	ids := make([]shared.UUID, 3)
+	for i, tt := range []time.Time{t1, t2, t3} {
+		ids[i] = shared.UUID(uuid.New())
+		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
+				ID:         ids[i],
+				InstanceID: instanceID,
+				Type:       "ping/recheck",
+				Sender:     "operator",
+				SenderKind: "operator",
+				ReceivedAt: tt.Add(-time.Hour),
+			})
+		}); err != nil {
+			t.Fatalf("Messages.Insert[%d]: %v", i, err)
+		}
+		// Stamp delivered_at directly — MarkDelivered requires a real
+		// rimsky_frames row, which would mean threading the FK just for
+		// this filter test. The persistence-layer WHERE clause is the
+		// unit under test.
+		pgtest.ExecForTest(ctx, t, d,
+			`UPDATE rimsky_messages SET delivered_at = $1 WHERE id = $2`, tt, ids[i])
+	}
+
+	instUUID := shared.UUID(instanceID)
+
+	after := t1
+	page, err := messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:     &instUUID,
+		DeliveredAfter: &after,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_after=t1): %v", err)
+	}
+	if len(page.Rows) != 2 {
+		t.Fatalf("delivered_after: got %d rows, want 2 (t2, t3)", len(page.Rows))
+	}
+
+	before := t3
+	page, err = messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:      &instUUID,
+		DeliveredBefore: &before,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_before=t3): %v", err)
+	}
+	if len(page.Rows) != 2 {
+		t.Fatalf("delivered_before: got %d rows, want 2 (t1, t2)", len(page.Rows))
+	}
+
+	page, err = messages.List(ctx, persistence.MessageListFilter{
+		InstanceID:      &instUUID,
+		DeliveredAfter:  &after,
+		DeliveredBefore: &before,
+	}, persistence.ListPagination{Limit: 10})
+	if err != nil {
+		t.Fatalf("List(delivered_after+before): %v", err)
+	}
+	if len(page.Rows) != 1 || page.Rows[0].ID != ids[1] {
+		t.Fatalf("delivered_after+before window: got %+v, want exactly t2 row %s",
+			page.Rows, ids[1])
+	}
+}
+
 // TestMessagesScan_NonNullPayload_Postgres is the green-path sanity
 // check: payload bytes round-trip through Insert → scanMessages
 // unchanged on postgres.
@@ -148,7 +228,7 @@ func TestMessagesScan_NonNullPayload_Postgres(t *testing.T) {
 		return messages.Insert(ctx, tx, persistence.EnqueueMessageRequest{
 			ID:         msgID,
 			InstanceID: instanceID,
-			Kind:       "invalidate",
+			Type:       "invalidate",
 			Sender:     "operator",
 			SenderKind: "operator",
 			Payload:    payload,

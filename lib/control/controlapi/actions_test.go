@@ -228,20 +228,19 @@ func TestV1Registry(t *testing.T) {
 		"template:read", "template:register", "template:deploy",
 		"template:undeploy", "template:deregister",
 		"tag:read", "tag:create", "tag:set", "tag:delete",
-		"node:read", "node:invalidate", "node:reset",
+		"node:read", "node:reset",
 		"message:send", "message:read",
 		"event:read",
 		"lineage:read", "lineage:prune",
 		"parked-node:read",
 		"waitset:read",
 		"claim-holders:read",
-		"backfill:create", "backfill:read", "backfill:cancel",
 		"asset:read", "asset:materialize", "asset:delete",
 		"diagnostics:read",
 		"auth:read", "auth:create", "auth:revoke", "auth:rotate",
 	}
-	if len(specTableActions) != 34 {
-		t.Fatalf("specTableActions length drifted from spec (got %d, want 34)", len(specTableActions))
+	if len(specTableActions) != 30 {
+		t.Fatalf("specTableActions length drifted from spec (got %d, want 30)", len(specTableActions))
 	}
 
 	got := r.AllActions()
@@ -293,6 +292,17 @@ func TestV1Registry(t *testing.T) {
 		// header is stamped. Only the compose-CLI's privileged key
 		// carries it.
 		"compose:origin": true,
+		// Cascade-graph frames-read surface (spec
+		// 2026-06-14-message-schema-layer-design). The read endpoints
+		// expose the rimsky_frames.triggering_message_id wiring the
+		// frame-origin-audit story consumes.
+		"instance:list-frames": true,
+		"instance:read-frame":  true,
+		// Debug channel (spec 2026-06-14-message-schema-layer-design,
+		// Pass 9 / STORY-debug-channel). Ad-hoc operator override on a
+		// paused or pause-mode-breakpoint-hit instance; gated to the
+		// debuggable lifecycle states only.
+		"instance:debug-override": true,
 	}
 	for _, a := range surplus {
 		if !allowed[a] {
@@ -373,7 +383,6 @@ func TestRegistryCoversRouter(t *testing.T) {
 		registerAuditRoutes(v1, deps)
 		registerClaimsRoutes(v1, deps)
 		registerMessagesRoutes(v1, deps)
-		registerBackfillsRoutes(v1, deps)
 		registerAssetsRoutes(v1, deps)
 		registerLineageRoutes(v1, deps)
 		registerAdminDiagnosticsRoutes(v1, deps)

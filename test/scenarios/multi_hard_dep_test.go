@@ -34,9 +34,6 @@
 package scenarios
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -63,7 +60,6 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "multi-hard-dep-rendezvous", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "trigger", Executor: "stub"},
@@ -99,11 +95,11 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 				node.TemplateNodeDef{Type: "c", Executor: "stub"},
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{Node: "trigger", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					// Migrated from attribute-field hard_dep: true on a_val
+					// @deliberate: Migrated from attribute-field hard_dep: true on a_val
 					// (sender a). Carries force_upstream_refresh: true so the
 					// receiver's invalidation drags a into the same frame.
 					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
-					// Migrated from attribute-field hard_dep: true on b_val
+					// @deliberate: Migrated from attribute-field hard_dep: true on b_val
 					// (sender b). Same rationale as a above.
 					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
 				),
@@ -163,7 +159,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-2"}, true, "ok").Delay(300 * time.Millisecond)
 	h.Stub.WhenType("c").Success(map[string]any{}, true, "ok")
 
-	adminInvalidateMultiHardDep(t, h, iid, trigN.ID)
+	h.InvalidateNode(iid, trigN.ID)
 
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
@@ -260,18 +256,4 @@ func latestAttrRowMultiHardDep(t *testing.T, h *scenario.Harness, instanceID, no
 		return e
 	}))
 	return row
-}
-
-// adminInvalidateMultiHardDep POSTs an admin invalidate against the node.
-//
-// @source: test/scenarios/per_run_attributes/sequential_runs_test.go:adminInvalidate
-func adminInvalidateMultiHardDep(t *testing.T, h *scenario.Harness, instanceID, nodeID interface{ String() string }) {
-	t.Helper()
-	body, _ := json.Marshal(map[string]any{})
-	resp, err := http.Post(
-		h.ControlBase+"/v1/admin/instances/"+instanceID.String()+"/nodes/"+nodeID.String()+"/invalidate",
-		"application/json", bytes.NewReader(body),
-	)
-	require.NoError(t, err)
-	resp.Body.Close()
 }

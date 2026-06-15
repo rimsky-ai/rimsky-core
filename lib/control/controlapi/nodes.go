@@ -2,19 +2,22 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// nodes.go — GET /nodes/:id, POST /nodes/:id/invalidate,
-// POST /nodes/:id/reset, GET /instances/:id_or_key/nodes.
+// nodes.go — GET /nodes/:id, POST /nodes/:id/reset,
+// GET /instances/:id_or_key/nodes.
 //
-// Operator overrides (invalidate / reset) emit an `operator_override`
-// event so audits can see who drove the state change. The kill route was
-// removed by the frame-resolution redesign (spec §5.4): operator
-// invalidates enqueue/coalesce a frame; in-flight work is never preempted.
+// The reset override emits an `operator_override` event so audits can
+// see who drove the state change. The kill route was removed by the
+// frame-resolution redesign (spec §5.4); the operator-invalidate route
+// retired with the 2026-06-14 message-schema-layer reshape (operators
+// who want to invalidate post a typed message via
+// `POST /instances/{id}/messages` with a template-declared
+// `messages:` type; ad-hoc force-stale lives at the gated
+// `POST /debug/override` endpoint).
 // Handlers return 404 when the node does not exist.
 package controlapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -25,7 +28,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
@@ -40,7 +42,7 @@ type nodeResponse struct {
 	// settling resolution (concept:signal), projected from the persisted
 	// rimsky_node_runs.settling_signal_type column via NodeRow. Empty (and
 	// dropped by omitempty) while the node is unsettled / in-flight, where
-	// the projected column is NULL. Mirrors backfills.go::backfillPartitionRow.
+	// the projected column is NULL.
 	SettlingSignalType   string     `json:"settling_signal_type,omitempty"`
 	CurrentErrorClass    string     `json:"current_error_class,omitempty"`
 	RetryCounter         int        `json:"retry_counter"`
@@ -74,8 +76,7 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 		tags = []string{}
 	}
 	// @constraint: deref the *string settling signal type, leaving "" when nil so
-	// omitempty drops the key for an unsettled node. Mirrors the
-	// projection in backfills.go::backfillPartitionRow.
+	// omitempty drops the key for an unsettled node.
 	settlingSig := ""
 	if n.SettlingSignalType != nil {
 		settlingSig = *n.SettlingSignalType
@@ -99,23 +100,9 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 	}
 }
 
-// invalidateNodeRequest carries the optional human-readable reason an
-// operator supplies on POST /nodes/:id/invalidate.
-//
-// Frame controls whether the invalidate joins the current cascade
-// ("in") or buffers through frame.EnqueueOrCoalesce as a new frame
-// ("next"; default). See the reactive-loops + lifecycle-handlers
-// spec §5.
-type invalidateNodeRequest struct {
-	Reason string `json:"reason,omitempty"`
-	// @constraint: frame is "" | "in" | "next"; default "next".
-	Frame string `json:"frame,omitempty"`
-}
-
 // registerNodesRoutes wires the /nodes and /instances/:id_or_key/nodes groups.
 func registerNodesRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/nodes/{id}", gate(deps, "node:read", handleGetNode(deps)))
-	r.Post("/nodes/{id}/invalidate", gate(deps, "node:invalidate", handleInvalidateNode(deps)))
 	r.Post("/nodes/{id}/reset", gate(deps, "node:reset", handleResetNode(deps)))
 	r.Get("/instances/{idOrKey}/nodes", gate(deps, "node:read", handleListInstanceNodes(deps)))
 }
@@ -174,110 +161,8 @@ func handleGetNode(deps AppDeps) http.HandlerFunc {
 	}
 }
 
-func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		id, err := uuid.Parse(chi.URLParam(req, "id"))
-		if err != nil {
-			badRequest(w, "invalid id")
-			return
-		}
-		var body invalidateNodeRequest
-		// @constraint: body is optional; ignore decode error when body is empty.
-		_ = json.NewDecoder(req.Body).Decode(&body)
-		// @constraint: validate Frame; reject anything other than "" | "in" | "next".
-		switch body.Frame {
-		case "", "in", "next":
-		default:
-			badRequest(w, "frame must be \"in\" or \"next\"")
-			return
-		}
-
-		var row *persistence.NodeRow
-		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			r, err := deps.Persist.Nodes().Get(ctx, id, tx)
-			row = r
-			return err
-		}); err != nil {
-			writeError(w, err)
-			return
-		}
-		if row == nil {
-			notFoundResp(w, shared.ErrNodeNotFound.Error())
-			return
-		}
-		if WriteDryRunResponse(w, req, "would_have_invalidated", map[string]any{
-			"node_id": id.String(),
-			"reason":  body.Reason,
-			"frame":   body.Frame,
-		}) {
-			return
-		}
-		// @constraint: record the operator action in the audit log. The event row
-		// carries the owning instance_id (resolved from the loaded node
-		// row above) so the operator's instance-scoped /v1/events query
-		// surfaces this audit row on the unified feed — without
-		// InstanceID set, the row would be dropped by the events read
-		// path's instance filter, silently hiding a real audit trail
-		// behind the node-only filter dimension.
-		instanceID := row.InstanceID
-		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{
-				InstanceID: &instanceID,
-				NodeID:     &id,
-				Kind:       events.KindOperatorOverride(),
-				Payload: map[string]any{
-					"action": "invalidate",
-					"reason": body.Reason,
-				},
-			}, tx)
-		}); err != nil && deps.Logger != nil {
-			deps.Logger.Warn("handleInvalidateNode: append operator_override audit event failed",
-				"node_id", id.String(),
-				"reason", body.Reason,
-				"error", err.Error())
-		}
-		// @deliberate: operator-sourced `frame: in` resolves the target
-		// instance's currently-running cascade frame and threads it as
-		// SourceFrameID so invalidateInFrame joins THAT frame (the open
-		// drain) rather than falling back to next-frame. The operator
-		// invalidate has no source node, so SourceFrameID is the
-		// authoritative input — invalidateInFrame's resolution order
-		// prefers it and skips the source-node re-read when the caller
-		// supplies the frame. When no frame is currently running,
-		// sourceFrameID stays nil and invalidateInFrame takes its
-		// deterministic next-frame fallback (the required behavior for an
-		// idle instance). @concept: cascade, invalidate.
-		var sourceFrameID *shared.UUID
-		if body.Frame == "in" {
-			if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-				fid, err := deps.Persist.Frames().GetRunningFrameID(ctx, row.InstanceID, tx)
-				sourceFrameID = fid
-				return err
-			}); err != nil {
-				writeError(w, err)
-				return
-			}
-		}
-		if err := runtime.InvalidateNode(req.Context(), runtime.InvalidateArgs{
-			Persist:       deps.Persist,
-			Queue:         deps.Queue,
-			Clock:         deps.Clock,
-			Logger:        deps.Logger,
-			TargetNodeID:  id,
-			SourceFrameID: sourceFrameID,
-			Reason:        "operator_override",
-			Frame:         body.Frame,
-			Metrics:       deps.Metrics,
-		}); err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	}
-}
-
 // handleResetNode drives a failed node back into the engine via
-// frame.EnqueueOrCoalesce. Direct UpdateState(failed → stale) bypassing
+// frame.EnqueueFrame. Direct UpdateState(failed → stale) bypassing
 // the frame model would strand the node with no frame_id (blessed-
 // invariant 19) — the scheduler's ready sweeps and recalculate.go
 // explicitly skip nodes with nil frame_id, and the node would never run.
@@ -285,7 +170,7 @@ func handleInvalidateNode(deps AppDeps) http.HandlerFunc {
 // The handler:
 //  1. Clears error bookkeeping (action_index/retry_counter/error_class).
 //  2. Defensively clears the stale frame_id pointing at the failed frame.
-//  3. Calls frame.EnqueueOrCoalesce so the next scheduler tick advances
+//  3. Calls frame.EnqueueFrame so the next scheduler tick advances
 //     the queued frame and writes the source node stale + new frame_id.
 func handleResetNode(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
@@ -351,23 +236,39 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// @constraint: drive the reset through the frame engine. EnqueueOrCoalesce in
-		// 'serial_queue' mode creates a new queued frame; in 'coalesce'
-		// mode it appends this node to the pending coalesce row (or
-		// creates a new one). The source-eligibility predicate at
-		// frame-start (advanceOneFrame) accepts state=failed.
+		// @constraint: drive the reset through the frame engine. Every frame carries a
+		// triggering message (col:rimsky_frames.triggering_message_id is NOT NULL
+		// post-migration-010); the reset has no external triggering envelope,
+		// so it seeds a synthetic reset message and uses that as the frame's
+		// origin — atomic in one tx so a crash mid-flow cannot leave a frame
+		// with no envelope nor an envelope with no frame. The source-
+		// eligibility predicate at frame-start (advanceOneFrame) accepts
+		// state=failed.
+		//
+		// @constraint: the synthetic payload carries `wake_node_ids` (the typed-
+		// message replacement for the retired source_node_ids column); the
+		// frame engine reads this list at promotion and stale-marks each in
+		// the promotion tx, preserving the ordering the supervisor relies on.
+		//
+		// @deliberate: `sender_kind: "instance"` matches the runtime-synthetic-
+		// envelope convention even though the reset was operator-INITIATED —
+		// the envelope body is runtime-synthesized (the operator did not
+		// author the wake_node_ids list), so the discriminator marks it as
+		// instance-side per runner_emit_message.go::emitCascadeMessageInTx.
+		shouldID := shared.UUID(id)
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			_, err := frame.EnqueueOrCoalesce(ctx, deps.Persist, tx, row.InstanceID, row.ID)
+			_, _, err := runtime.EnqueueSyntheticWakeFrame(ctx, tx, deps.Persist,
+				row.InstanceID, "node/reset", "",
+				[]shared.UUID{shouldID}, nil)
 			return err
 		}); err != nil {
 			writeError(w, err)
 			return
 		}
 		// @constraint: the reset audit event carries the owning instance_id so it
-		// surfaces on the instance-scoped /v1/events feed (parity with
-		// handleInvalidateNode above); without it, the row is dropped
-		// by the events read filter and the operator's instance-scoped
-		// audit trail loses the reset action.
+		// surfaces on the instance-scoped /v1/events feed; without it, the
+		// row is dropped by the events read filter and the operator's
+		// instance-scoped audit trail loses the reset action.
 		resetInstanceID := row.InstanceID
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{

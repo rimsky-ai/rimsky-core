@@ -17,13 +17,14 @@ import (
 )
 
 // seedWaitSetParentsPG creates the FK parents a rimsky_wait_set row needs:
-// template → main run scope → instance, then a running frame, two nodes,
-// and one in-flight node_run per node (one for receiver_run_id, one for
-// sender_run_id, since the wait-set PK distinguishes them). Two distinct
-// nodes are required because uq_node_runs_in_flight_per_run_scope forbids
-// two in-flight runs sharing (node_id, run_scope_id). Returns (frameID,
-// receiverRunID, senderRunID) — all real, FK-satisfying ids so the only
-// thing under test is the topic_kind CHECK.
+// template → main run scope → instance, then a typed triggering message,
+// a running frame, two nodes, and one in-flight node_run per node (one for
+// receiver_run_id, one for sender_run_id, since the wait-set PK distinguishes
+// them). Two distinct nodes are required because
+// uq_node_runs_in_flight_per_run_scope forbids two in-flight runs sharing
+// (node_id, run_scope_id). Returns (frameID, receiverRunID, senderRunID) —
+// all real, FK-satisfying ids so the only thing under test is the
+// topic_kind CHECK.
 func seedWaitSetParentsPG(
 	t *testing.T, ctx context.Context, d persistence.Database,
 ) (frameID, receiverRunID, senderRunID shared.UUID) {
@@ -39,10 +40,9 @@ func seedWaitSetParentsPG(
 	sender := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:                "wait-set-topic-kind-fixture",
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "wait-set-topic-kind-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},
@@ -68,12 +68,21 @@ func seedWaitSetParentsPG(
 		t.Fatalf("seedWaitSetParentsPG: %v", err)
 	}
 
+	// @constraint: rimsky_frames.triggering_message_id is NOT NULL FK
+	// (migration 010/011 message-schema-layer reshape) — every frame insert
+	// must reference a pre-existing rimsky_messages row.
+	messageID := uuid.New()
+	pgtest.ExecForTest(ctx, t, d,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES ($1, $2, 'fixture/message', 'operator', 'operator')`,
+		messageID, instanceID,
+	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		   (frame_id, instance_id, triggering_message_id, state,
 		    frame_timeout_ms, started_at)
-		 VALUES ($1, $2, 'serial_queue', 'running', ARRAY[$3]::uuid[], 60000, now())`,
-		frame, instanceID, receiverNodeID,
+		 VALUES ($1, $2, $3, 'running', 60000, now())`,
+		frame, instanceID, messageID,
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
@@ -91,11 +100,11 @@ func seedWaitSetParentsPG(
 }
 
 // TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy inserts a rimsky_wait_set
-// row for each of the three signal classes that the legacy CHECK rejects —
-// 'transient', 'message', 'terminal' — against a freshly-migrated Postgres
-// and asserts every insert succeeds. RED until 006-waitset-topic-kind-taxonomy
-// broadens the CHECK; today each insert is rejected by
-// CHECK (topic_kind IN ('state','attribute','event')).
+// row for each of the two signal classes that the legacy CHECK rejects but
+// the post-006 CHECK admits — 'transient' and 'terminal' — against a
+// freshly-migrated Postgres and asserts every insert succeeds. Also asserts
+// that 'message' is rejected by the post-011 CHECK: the virtual-node-settle
+// model has no wait-set rows under that bucket.
 func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenDriver(ctx, t)
@@ -103,8 +112,8 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 
 	// @constraint: wait-set PK is (frame_id, receiver_run_id, sender_run_id,
 	// topic_kind, subscription_scope) — topic_kind varies across the loop, so
-	// all three rows coexist under one (frame, receiver, sender) triple.
-	for _, topicKind := range []string{"transient", "message", "terminal"} {
+	// both rows coexist under one (frame, receiver, sender) triple.
+	for _, topicKind := range []string{"transient", "terminal"} {
 		pgtest.ExecForTest(ctx, t, d,
 			`INSERT INTO rimsky_wait_set
 			   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
@@ -119,12 +128,24 @@ func TestWaitSetTopicKindCheckAdmitsBroadenedTaxonomy(t *testing.T) {
 	var count int
 	pgtest.QueryRowForTest(ctx, t, d,
 		`SELECT count(*) FROM rimsky_wait_set
-		 WHERE frame_id = $1 AND topic_kind IN ('transient','message','terminal')`,
+		 WHERE frame_id = $1 AND topic_kind IN ('transient','terminal')`,
 		[]any{uuid.UUID(frameID)}, &count,
 	)
-	if count != 3 {
-		t.Fatalf("expected 3 wait-set rows with broadened topic_kind values, got %d; "+
-			"the topic_kind CHECK must admit the full 5-value signal taxonomy "+
-			"('transient','message','terminal' included)", count)
+	if count != 2 {
+		t.Fatalf("expected 2 wait-set rows with broadened topic_kind values, got %d; "+
+			"the topic_kind CHECK must admit ('transient','terminal')", count)
+	}
+
+	// @constraint: 'message' must NOT be admitted by the post-011 CHECK.
+	// The virtual-node-settle model has no wait-set rows under that bucket;
+	// an INSERT must fail through the CHECK rejection path.
+	if err := pgtest.TryExecForTest(ctx, t, d,
+		`INSERT INTO rimsky_wait_set
+		   (frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)
+		 VALUES ($1, $2, $3, 'message', 'direct')`,
+		uuid.UUID(frameID), uuid.UUID(receiverRunID), uuid.UUID(senderRunID),
+	); err == nil {
+		t.Fatalf("insert wait_set row topic_kind='message' returned nil error; " +
+			"the topic_kind CHECK must REJECT 'message' (post-011 retirement)")
 	}
 }

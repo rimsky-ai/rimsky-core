@@ -3,19 +3,19 @@ story: node-admin
 status: as-is
 ---
 
-# Operator inspects and admin-invalidates nodes
+# Operator inspects and resets nodes
 
 ## Role
 
-As an operator, I can inspect a node's full state on a running instance, force it stale to re-fire it, target the invalidate at either a freshly-enqueued frame or the cascade frame currently running, and reset a failed node's error counter, so that I drive a stalled or errored node back into the cascade without re-instantiating.
+As an operator, I can inspect a node's full state on a running instance and reset a failed node's error counter, so that I drive an errored node back into the cascade without re-instantiating the whole instance.
 
 ## Capability
 
-Operator-driven node administration: inspect state, force-invalidate (next frame or in-cascade), reset error counter, all through the control-api or CLI.
+Operator-driven node administration: inspect state, reset error counter, both through the control-api or CLI.
 
 ## Business value
 
-Operators drive a stalled or errored node back into the cascade without re-instantiating the whole instance, and observe what state the node is in to inform that decision.
+Operators drive an errored node back into the cascade without re-instantiating, and observe what state the node is in to inform that decision. Driving a healthy-but-stalled node back through the cascade is a different operator workflow — sending a typed message the template declares for that purpose, via the universal message-emit surface (`story:message-schema`, `story:message-bus`). Force-stale on a paused or breakpointed instance lives at the debug-override surface (`story:debug-channel`).
 
 ## Acceptance
 
@@ -23,7 +23,7 @@ Through the control-api or the node-admin CLI surface, an operator retrieves a n
 
 ## Falsifier
 
-Invalidate flips state but the supervisor never picks the node up, OR the in-cascade option produces a separate frame rather than joining the running one, OR reset clears the visible counter but the supervisor still treats the node as exhausted.
+Reset clears the visible counter but the supervisor still treats the node as exhausted.
 
 ## Proof
 

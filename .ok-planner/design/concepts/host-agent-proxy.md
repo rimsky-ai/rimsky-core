@@ -8,7 +8,7 @@ aliases: []
 
 ## What it is
 
-A rimsky-stack `concept:service` implementing the multi-protocol composition pattern (per `concept:service` invariants: distinct handler types per protocol, separately registered on one gRPC server). Presents the rimsky gRPC service protocols (`concept:executor`, `concept:claim-producer`) on the supervisor-facing side. Maintains agent connections on the dev-facing side via a new long-lived bidi-stream protocol (the agent-connection protocol). Routes dispatches to whichever agent is connected for the instance's owner. Declared in the rimsky config (`concept:rimsky-yml`) once per protocol it serves — an entry under the executor block, one under the claim-producer block, and so on, all pointing at the same binary.
+A rimsky-stack `concept:service` implementing the multi-protocol composition pattern (per `concept:service` invariants: distinct handler types per protocol, separately registered on one gRPC server). Presents the rimsky gRPC service protocols (`concept:executor`, `concept:claim-producer`) on the supervisor-facing side. Maintains agent connections on the dev-facing side via a long-lived bidi-stream protocol (the agent-connection protocol). Routes dispatches to whichever agent is connected for the instance's owner. Declared in the rimsky config (`concept:rimsky-yml`) once per protocol it serves — an entry under the executor block, one under the claim-producer block, and so on, all pointing at the same binary.
 
 ## Purpose
 

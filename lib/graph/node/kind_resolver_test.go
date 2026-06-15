@@ -56,7 +56,6 @@ func TestValidateKindDeclaration_HappyPath(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "t",
 		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
 			Type: "lc",
 			Kind: "loop_counter",
@@ -73,7 +72,6 @@ func TestValidateKindDeclaration_RejectsMixedKindAndExecutor(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "t",
 		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
 			Type:     "n",
 			Kind:     "loop_counter",
@@ -94,7 +92,6 @@ func TestValidateKindDeclaration_RejectsUnknownKind(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "t",
 		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
 			Type: "n",
 			Kind: "unknown_kind",
@@ -113,7 +110,6 @@ func TestValidateKindDeclaration_NilAliasesRejectsAnyKind(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "t",
 		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
 			Type: "n",
 			Kind: "loop_counter",
@@ -135,7 +131,6 @@ func TestValidateKindDeclaration_NoKindNoExecutorIsLegal(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "t",
 		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
 			Type: "pure",
 		}},

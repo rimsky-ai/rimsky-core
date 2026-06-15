@@ -41,7 +41,6 @@ func TestConformanceEvents(t *testing.T) {
 	// the F4 source kind `nodes.a.event.ready.value`.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "conformance-events", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",

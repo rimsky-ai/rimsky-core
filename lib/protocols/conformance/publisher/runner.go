@@ -52,9 +52,12 @@ type RunOpts struct {
 	// TargetNode is the routing target_node passed inline on Subscribe.
 	// Defaults to a stable conformance value when empty.
 	TargetNode string
-	// MessageKind is the routing message_kind passed inline on
-	// Subscribe. Defaults to "invalidate" when empty.
-	MessageKind string
+	// MessageType is the routing message_type passed inline on
+	// Subscribe. Defaults to "system/conformance" when empty (the legacy
+	// "invalidate" default retired in the 2026-06-14 message-schema-
+	// layer reshape; a real publisher's message_type is now validated
+	// against the target instance's template registry).
+	MessageType string
 	// MessageTimeout bounds the wait for the message-push check.
 	// Defaults to 5s.
 	MessageTimeout time.Duration
@@ -72,8 +75,8 @@ func Run(ctx context.Context, c genv1.PublisherClient, opts RunOpts) []CheckResu
 	if opts.TargetNode == "" {
 		opts.TargetNode = "tick"
 	}
-	if opts.MessageKind == "" {
-		opts.MessageKind = "invalidate"
+	if opts.MessageType == "" {
+		opts.MessageType = "system/conformance"
 	}
 	if opts.MessageTimeout == 0 {
 		opts.MessageTimeout = 5 * time.Second
@@ -125,7 +128,7 @@ func checkSubscribe(ctx context.Context, c genv1.PublisherClient, opts RunOpts) 
 		Kind:                    opts.Kind,
 		ResolvedConfig:          opts.ResolvedConfig,
 		TargetNode:              opts.TargetNode,
-		MessageKind:             opts.MessageKind,
+		MessageType:             opts.MessageType,
 	}); err != nil {
 		return CheckResult{Name: "Subscribe", Err: err}
 	}
@@ -172,7 +175,7 @@ func checkSubscribeIdempotent(ctx context.Context, c genv1.PublisherClient, opts
 		Kind:                    opts.Kind,
 		ResolvedConfig:          opts.ResolvedConfig,
 		TargetNode:              opts.TargetNode,
-		MessageKind:             opts.MessageKind,
+		MessageType:             opts.MessageType,
 	}); err != nil {
 		return CheckResult{Name: "SubscribeIdempotent", Err: err}
 	}

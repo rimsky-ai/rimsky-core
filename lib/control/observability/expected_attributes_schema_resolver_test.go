@@ -82,9 +82,8 @@ func TestExpectedAttributesSchemaResolver_BehavioralValidation(t *testing.T) {
 
 	validSpec := func(modelType string) *node.TemplateSpec {
 		return &node.TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: node.FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []node.TemplateNodeDef{{
 				Type:     "a",
 				Executor: executorName,

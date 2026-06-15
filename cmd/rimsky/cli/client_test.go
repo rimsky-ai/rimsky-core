@@ -283,19 +283,6 @@ func TestClient_GetNode(t *testing.T) {
 	}
 }
 
-func TestClient_InvalidateNode(t *testing.T) {
-	srv := helperServer(t, http.MethodPost, "/v1/nodes/n1/invalidate",
-		map[string]any{"reason": "manual"},
-		http.StatusOK,
-		map[string]any{"ok": true},
-	)
-	defer srv.Close()
-	c := NewClient(srv.URL)
-	if err := c.InvalidateNode(context.Background(), "n1", InvalidateNodeRequest{Reason: "manual"}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestClient_ResetNode(t *testing.T) {
 	srv := helperServer(t, http.MethodPost, "/v1/nodes/n1/reset", nil, http.StatusOK,
 		map[string]any{"ok": true},

@@ -79,10 +79,9 @@ func fanOutLateBindTemplateSpec(name string, partitionKeys []string) map[string]
 	partitionRequest += `]}`
 
 	return map[string]any{
-		"name":                  name,
-		"version":               "1",
-		"frame_resolution_mode": "serial_queue",
-		"late_bind_services":    []string{lateBindServiceName},
+		"name":               name,
+		"version":            "1",
+		"late_bind_services": []string{lateBindServiceName},
 		"nodes": []map[string]any{
 			{
 				"type":     "worker",

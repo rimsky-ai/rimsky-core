@@ -33,7 +33,6 @@ func TestFrameEndAfterAsyncCallback(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "async-frame", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "agent", Executor: "stub"},

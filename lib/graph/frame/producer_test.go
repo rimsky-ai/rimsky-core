@@ -14,48 +14,29 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// enqueueAgainstDriver runs frame.EnqueueOrCoalesce inside a fresh tx
-// owned by the persistence driver. The tx commits when fn returns nil
-// and rolls back on a non-nil return.
-func enqueueAgainstDriver(ctx context.Context, d persistence.Database,
-	instanceID, sourceNodeID uuid.UUID) (uuid.UUID, error) {
-	var fid uuid.UUID
-	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		got, err := frame.EnqueueOrCoalesce(ctx, d.Tables(), tx, instanceID, sourceNodeID)
-		if err != nil {
-			return err
-		}
-		fid = got
-		return nil
-	})
-	return fid, err
-}
-
-// seedTemplateAndInstance inserts a minimal rimsky_templates row carrying
-// a frame_resolution mode in spec, and a child rimsky_instances row.
-// Returns (templateHash, instanceID). Goes through ExecForTest because
-// the test fixture pins state='deployed' directly.
-func seedTemplateAndInstance(t *testing.T, ctx context.Context, d persistence.Database, mode string) (templateHash string, instanceID uuid.UUID) {
+// seedTemplateInstanceAndMessage inserts a minimal rimsky_templates row
+// (state='deployed'), a rimsky_instances row with its main run-scope, and
+// a synthetic rimsky_messages row whose id can be threaded as the frame's
+// triggering message. Returns (instanceID, triggeringMessageID).
+func seedTemplateInstanceAndMessage(t *testing.T, ctx context.Context, d persistence.Database) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	suffix := uuid.NewString()
 	suffix = strings.ReplaceAll(suffix, "-", "")
 	suffix = (suffix + suffix)[:64]
-	templateHash = "sha256-" + suffix
-	spec := `{}`
-	if mode != "" {
-		spec = `{"frame_resolution_mode":"` + mode + `"}`
-	}
+	templateHash := "sha256-" + suffix
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_templates (id, spec, state)
         VALUES ($1, $2::jsonb, 'deployed')
-    `, templateHash, spec)
+    `, templateHash, `{}`)
 
-	instanceID = uuid.New()
+	instanceID := uuid.New()
 	mainScopeID := uuid.New()
+	messageID := uuid.New()
 	// @deliberate: rimsky_instances.main_run_scope_id ↔
 	// rimsky_run_scopes.instance_id are mutually FK'd DEFERRABLE
 	// INITIALLY DEFERRED; both inserts must land in one tx.
@@ -69,153 +50,90 @@ func seedTemplateAndInstance(t *testing.T, ctx context.Context, d persistence.Da
 			return err
 		}
 		ck := "ck-" + instanceID.String()[:8]
-		_, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
 			ID:             instanceID,
 			TemplateHash:   templateHash,
 			InstanceKey:    &ck,
 			MainRunScopeID: mainScopeID,
-		}, tx)
-		return err
+		}, tx); err != nil {
+			return err
+		}
+		return tables.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         foundationshared.UUID(messageID),
+			InstanceID: foundationshared.UUID(instanceID),
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+			ReceivedAt: time.Now().UTC(),
+		})
 	}); err != nil {
-		t.Fatalf("seed instance + run_scope: %v", err)
+		t.Fatalf("seed template+instance+message: %v", err)
 	}
-	return templateHash, instanceID
+	return instanceID, messageID
 }
 
-func TestEnqueueOrCoalesce_SerialQueue(t *testing.T) {
+// TestEnqueueFrame exercises the single-path producer: each call inserts a
+// distinct queued frame row carrying the supplied triggering_message_id.
+// There is no upsert, no coalesce, no append-to-pending semantic — pure
+// INSERT. The frame→message FK is honored.
+func TestEnqueueFrame(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 
+	// @deliberate: Three calls produce three distinct frames carrying the
+	// same triggering_message_id; each stays in 'queued' state.
+	var got []uuid.UUID
 	for i := 0; i < 3; i++ {
-		fid, err := enqueueAgainstDriver(ctx, d, instanceID, uuid.New())
+		err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			fid, err := frame.EnqueueFrame(ctx, d.Tables(), tx, instanceID, msgID)
+			if err != nil {
+				return err
+			}
+			got = append(got, fid)
+			return nil
+		})
 		require.NoError(t, err)
-		require.NotEqual(t, uuid.Nil, fid)
+	}
+	require.Equal(t, 3, len(got))
+	for i := range got {
+		require.NotEqual(t, uuid.Nil, got[i])
+		for j := i + 1; j < len(got); j++ {
+			require.NotEqual(t, got[i], got[j], "EnqueueFrame must mint a fresh frame_id per call")
+		}
 	}
 
 	var (
-		count      int
-		modeMatch  int
-		stateMatch int
-		singletons int
+		count        int
+		queuedCount  int
+		matchTrigger int
 	)
 	pgtest.QueryRowForTest(ctx, t, d, `
         SELECT COUNT(*),
-               COUNT(*) FILTER (WHERE frame_resolution_mode = 'serial_queue'),
                COUNT(*) FILTER (WHERE state = 'queued'),
-               COUNT(*) FILTER (WHERE array_length(source_node_ids, 1) = 1)
+               COUNT(*) FILTER (WHERE triggering_message_id = $2)
         FROM rimsky_frames WHERE instance_id = $1
-    `, []any{instanceID}, &count, &modeMatch, &stateMatch, &singletons)
+    `, []any{instanceID, msgID}, &count, &queuedCount, &matchTrigger)
 	require.Equal(t, 3, count)
-	require.Equal(t, 3, modeMatch)
-	require.Equal(t, 3, stateMatch)
-	require.Equal(t, 3, singletons)
+	require.Equal(t, 3, queuedCount)
+	require.Equal(t, 3, matchTrigger)
 }
 
-func TestEnqueueOrCoalesce_CoalesceFirstInsert(t *testing.T) {
+// TestEnqueueFrame_InstanceNotFound surfaces the missing-instance error
+// from the template lookup.
+func TestEnqueueFrame_InstanceNotFound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "coalesce")
-
-	fid, err := enqueueAgainstDriver(ctx, d, instanceID, uuid.New())
-	require.NoError(t, err)
-	require.NotEqual(t, uuid.Nil, fid)
-
-	var (
-		count int
-		mode  string
-		state string
-	)
-	pgtest.QueryRowForTest(ctx, t, d, `
-        SELECT COUNT(*), MAX(frame_resolution_mode), MAX(state) FROM rimsky_frames WHERE instance_id = $1
-    `, []any{instanceID}, &count, &mode, &state)
-	require.Equal(t, 1, count)
-	require.Equal(t, "coalesce", mode)
-	require.Equal(t, "queued", state)
-}
-
-func TestEnqueueOrCoalesce_CoalesceAppendsSources(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	d := pgtest.OpenDriver(ctx, t)
-
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "coalesce")
-
-	src1 := uuid.New()
-	src2 := uuid.New()
-
-	fid1, err := enqueueAgainstDriver(ctx, d, instanceID, src1)
-	require.NoError(t, err)
-
-	fid2, err := enqueueAgainstDriver(ctx, d, instanceID, src2)
-	require.NoError(t, err)
-
-	require.Equal(t, fid1, fid2, "second call should return same frame id (coalesced)")
-
-	var (
-		count    int
-		srcCount int
-	)
-	pgtest.QueryRowForTest(ctx, t, d, `
-        SELECT COUNT(*), COALESCE(MAX(array_length(source_node_ids, 1)), 0)
-        FROM rimsky_frames WHERE instance_id = $1
-    `, []any{instanceID}, &count, &srcCount)
-	require.Equal(t, 1, count)
-	require.Equal(t, 2, srcCount)
-}
-
-func TestEnqueueOrCoalesce_CoalesceDedupesSameSource(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	d := pgtest.OpenDriver(ctx, t)
-
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "coalesce")
-
-	src := uuid.New()
-
-	_, err := enqueueAgainstDriver(ctx, d, instanceID, src)
-	require.NoError(t, err)
-
-	_, err = enqueueAgainstDriver(ctx, d, instanceID, src)
-	require.NoError(t, err)
-
-	var srcCount int
-	pgtest.QueryRowForTest(ctx, t, d, `
-        SELECT COALESCE(MAX(array_length(source_node_ids, 1)), 0)
-        FROM rimsky_frames WHERE instance_id = $1
-    `, []any{instanceID}, &srcCount)
-	require.Equal(t, 1, srcCount)
-}
-
-func TestEnqueueOrCoalesce_InvalidMode(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	d := pgtest.OpenDriver(ctx, t)
-
-	// @deliberate: Empty string mode — template has no frame_resolution set.
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "")
-
-	_, err := enqueueAgainstDriver(ctx, d, instanceID, uuid.New())
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported mode")
-}
-
-func TestEnqueueOrCoalesce_InstanceNotFound(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	d := pgtest.OpenDriver(ctx, t)
-
-	_, err := enqueueAgainstDriver(ctx, d, uuid.New(), uuid.New())
+	err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, e := frame.EnqueueFrame(ctx, d.Tables(), tx, uuid.New(), uuid.New())
+		return e
+	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
 }

@@ -1,9 +1,8 @@
 {
   "name": "agent-supervisor",
-  "description": "Read access across the platform plus the writes a supervisor agent realistically needs: invalidate (covers wake-parked), reset (recover failed nodes), and message-send (backfills and other coordination kinds).",
+  "description": "Read access across the platform plus the writes a supervisor agent realistically needs: reset (recover failed nodes) and message-send (typed messages, including invalidate via a template-declared messages: type, plus other coordination kinds).",
   "permissions": [
     { "action": "*:read" },
-    { "action": "node:invalidate" },
     { "action": "node:reset" },
     { "action": "message:send" }
   ]

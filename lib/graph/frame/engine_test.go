@@ -79,8 +79,12 @@ func seedNode(t *testing.T, ctx context.Context, d persistence.Database,
 // stuck time — the per-test contract is that a "stuck-since-X" frame
 // has had no progress since X. Per the reactive-loops + lifecycle-handlers
 // spec §7, frame_timeout_ms compares against last_progress_at.
+//
+// triggeringMessageID must reference an existing rimsky_messages row
+// (the FK is ON DELETE RESTRICT). Callers usually pass the message id
+// returned by seedTemplateInstanceAndMessage.
 func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
-	instanceID uuid.UUID, mode, state string, sources []uuid.UUID,
+	instanceID uuid.UUID, triggeringMessageID uuid.UUID, state string,
 	startedAt *time.Time, timeoutMs int64) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
@@ -95,9 +99,9 @@ func seedFrameRow(t *testing.T, ctx context.Context, d persistence.Database,
 	}
 	pgtest.ExecForTest(ctx, t, d, `
         INSERT INTO rimsky_frames
-            (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, ended_at, frame_timeout_ms, last_progress_at)
-        VALUES ($1, $2, $3, $4, $5::UUID[], now(), $6, $7, $8, $9)
-    `, id, instanceID, mode, state, sources, startedAt, endedAt, timeoutMs, progressAt)
+            (frame_id, instance_id, triggering_message_id, state, queued_at, started_at, ended_at, frame_timeout_ms, last_progress_at)
+        VALUES ($1, $2, $3, $4, now(), $5, $6, $7, $8)
+    `, id, instanceID, triggeringMessageID, state, startedAt, endedAt, timeoutMs, progressAt)
 	return id
 }
 
@@ -130,11 +134,10 @@ func TestRunTick_FrameEndDetection_AllFresh_Completed(t *testing.T) {
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
 	now := time.Now()
-	frameID := seedFrameRow(t, ctx, d, instanceID, "serial_queue", "running",
-		[]uuid.UUID{src}, &now, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now, 600000)
 	seedNode(t, ctx, d, instanceID, src, "fresh", &frameID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
@@ -151,11 +154,10 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
 	now := time.Now()
-	frameID := seedFrameRow(t, ctx, d, instanceID, "serial_queue", "running",
-		[]uuid.UUID{src}, &now, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &now, 600000)
 	seedNode(t, ctx, d, instanceID, src, "failed", &frameID)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
@@ -166,13 +168,13 @@ func TestRunTick_FrameEndDetection_OneFailed_Failed(t *testing.T) {
 	require.Equal(t, "failed", state)
 }
 
-func TestRunTick_AdvanceQueued_SerialQueue(t *testing.T) {
+func TestRunTick_AdvanceQueued_Oldest(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	srcA := uuid.New()
 	srcB := uuid.New()
 	seedNode(t, ctx, d, instanceID, srcA, "fresh", nil)
@@ -180,12 +182,10 @@ func TestRunTick_AdvanceQueued_SerialQueue(t *testing.T) {
 
 	// @deliberate: two queued frames; spacing queued_at makes ordering
 	// deterministic.
-	id1 := seedFrameRow(t, ctx, d, instanceID, "serial_queue", "queued",
-		[]uuid.UUID{srcA}, nil, 600000)
+	id1 := seedFrameRow(t, ctx, d, instanceID, msgID, "queued", nil, 600000)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_frames SET queued_at = now() - interval '1 second' WHERE frame_id = $1`, id1)
-	id2 := seedFrameRow(t, ctx, d, instanceID, "serial_queue", "queued",
-		[]uuid.UUID{srcB}, nil, 600000)
+	id2 := seedFrameRow(t, ctx, d, instanceID, msgID, "queued", nil, 600000)
 
 	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
 
@@ -196,51 +196,6 @@ func TestRunTick_AdvanceQueued_SerialQueue(t *testing.T) {
 		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{id2}, &s2)
 	require.Equal(t, "running", s1)
 	require.Equal(t, "queued", s2)
-
-	// @deliberate: First frame's source must now be stale with frame_id = id1.
-	// Post-stage-3: state lives on the in-flight run row.
-	var nodeState string
-	var nodeFrameID uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT COALESCE(r.state, 'fresh'), n.frame_id
-		   FROM rimsky_nodes n
-		   LEFT JOIN rimsky_node_runs r
-		          ON r.node_id = n.id
-		         AND r.phase IN ('pending','active','held','parked')
-		  WHERE n.id = $1`, []any{srcA}, &nodeState, &nodeFrameID)
-	require.Equal(t, "stale", nodeState)
-	require.Equal(t, id1, nodeFrameID)
-}
-
-func TestRunTick_AdvanceTrailing_Coalesce(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	d := pgtest.OpenDriver(ctx, t)
-
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "coalesce")
-	srcA := uuid.New()
-	srcB := uuid.New()
-	now := time.Now()
-	// @deliberate: currently-running frame on srcA, all nodes fresh
-	// (frame-end candidate).
-	runID := seedFrameRow(t, ctx, d, instanceID, "coalesce", "running",
-		[]uuid.UUID{srcA}, &now, 600000)
-	seedNode(t, ctx, d, instanceID, srcA, "fresh", &runID)
-	seedNode(t, ctx, d, instanceID, srcB, "fresh", nil)
-	queuedID := seedFrameRow(t, ctx, d, instanceID, "coalesce", "queued",
-		[]uuid.UUID{srcB}, nil, 600000)
-
-	// @deliberate: First tick: ends running, advances queued.
-	require.NoError(t, runTickAgainstDriver(ctx, d, quietLogger()))
-
-	var runState, queuedState string
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{runID}, &runState)
-	pgtest.QueryRowForTest(ctx, t, d,
-		`SELECT state FROM rimsky_frames WHERE frame_id = $1`, []any{queuedID}, &queuedState)
-	require.Equal(t, "completed", runState)
-	require.Equal(t, "running", queuedState)
 }
 
 // TestRunTick_WarnStuckFrame asserts the stuck-frame path is purely
@@ -253,11 +208,10 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
 	stuckStart := time.Now().Add(-11 * time.Minute)
-	frameID := seedFrameRow(t, ctx, d, instanceID, "serial_queue", "running",
-		[]uuid.UUID{src}, &stuckStart, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "running", &stuckStart, 600000)
 	seedNode(t, ctx, d, instanceID, src, "stale", &frameID)
 	// @deliberate: No claimed dispatches => stuck (predicate matches).
 
@@ -302,34 +256,26 @@ func TestRunTick_WarnStuckFrame(t *testing.T) {
 // instance created with terminate_after_run=true self-terminates. A
 // durable instance (the default) survives its own drain — terminated_at
 // stays NULL after its frame ends.
-//
-// Both instances run a single fresh-node frame to terminal via one
-// RunTick (frame-end detection flips the running frame to completed and
-// evaluates the terminal predicate in the same tx). Instance B's
-// terminate_after_run flag is set by a direct UPDATE after seeding (the
-// seed helper goes through InstanceCreateInput, which now carries the
-// flag, but the column is also settable here so the test reads as a
-// targeted lifecycle assertion).
 func TestDurableByDefaultVsTerminateAfterRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceA := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	// @deliberate: instance A — durable by default (no flag).
+	instanceA, msgA := seedTemplateInstanceAndMessage(t, ctx, d)
 	srcA := uuid.New()
 	nowA := time.Now()
-	frameA := seedFrameRow(t, ctx, d, instanceA, "serial_queue", "running",
-		[]uuid.UUID{srcA}, &nowA, 600000)
+	frameA := seedFrameRow(t, ctx, d, instanceA, msgA, "running", &nowA, 600000)
 	seedNode(t, ctx, d, instanceA, srcA, "fresh", &frameA)
 
-	_, instanceB := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	// @deliberate: instance B — opt-in terminate_after_run.
+	instanceB, msgB := seedTemplateInstanceAndMessage(t, ctx, d)
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_instances SET terminate_after_run = true WHERE id = $1`, instanceB)
 	srcB := uuid.New()
 	nowB := time.Now()
-	frameB := seedFrameRow(t, ctx, d, instanceB, "serial_queue", "running",
-		[]uuid.UUID{srcB}, &nowB, 600000)
+	frameB := seedFrameRow(t, ctx, d, instanceB, msgB, "running", &nowB, 600000)
 	seedNode(t, ctx, d, instanceB, srcB, "fresh", &frameB)
 
 	// @deliberate: One tick: both frames end (all-fresh → completed) and
@@ -363,11 +309,10 @@ func TestRunTick_ReapOrphanDispatch(t *testing.T) {
 
 	d := pgtest.OpenDriver(ctx, t)
 
-	_, instanceID := seedTemplateAndInstance(t, ctx, d, "serial_queue")
+	instanceID, msgID := seedTemplateInstanceAndMessage(t, ctx, d)
 	src := uuid.New()
 	now := time.Now()
-	frameID := seedFrameRow(t, ctx, d, instanceID, "serial_queue", "completed",
-		[]uuid.UUID{src}, &now, 600000)
+	frameID := seedFrameRow(t, ctx, d, instanceID, msgID, "completed", &now, 600000)
 	// @deliberate: stamp ended_at — the 'completed' constraint requires it.
 	pgtest.ExecForTest(ctx, t, d,
 		`UPDATE rimsky_frames SET ended_at = now() WHERE frame_id = $1`, frameID)

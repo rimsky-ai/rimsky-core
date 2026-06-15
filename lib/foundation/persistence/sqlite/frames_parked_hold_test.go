@@ -67,13 +67,23 @@ func TestParkedNodeRunHoldsFrameOpen(t *testing.T) {
 	if err := stx.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
+	// @constraint: rimsky_frames.triggering_message_id is NOT NULL FK;
+	// seed the message that opened the frame before inserting the frame.
 	// @constraint: rimsky_frames CHECK requires frame_timeout_ms >= 60000;
 	// use the minimum permitted value, the test never trips the timeout.
+	msgID := uuid.New().String()
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+		msgID, instanceID,
+	); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at)
-		 VALUES (?, ?, 'serial_queue', 'running', '[]', 60000, datetime('now'))`,
-		frameID.String(), instanceID,
+		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms, started_at)
+		 VALUES (?, ?, ?, 'running', 60000, datetime('now'))`,
+		frameID.String(), instanceID, msgID,
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}

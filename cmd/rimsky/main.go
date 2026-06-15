@@ -46,8 +46,6 @@ func main() {
 		os.Exit(dispatchParked(os.Args[2:]))
 	case "messages":
 		os.Exit(dispatchMessages(os.Args[2:]))
-	case "backfill":
-		os.Exit(dispatchBackfill(os.Args[2:]))
 	case "asset":
 		os.Exit(dispatchAsset(os.Args[2:]))
 	case "lineage":
@@ -221,18 +219,16 @@ func dispatchParked(args []string) int {
 
 func dispatchAdmin(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky admin <invalidate|reset> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky admin <reset> ...")
 		return 2
 	}
 	ctx := context.Background()
 	rest := args[1:]
 	switch args[0] {
-	case "invalidate":
-		return cli.RunAdminInvalidate(ctx, rest)
 	case "reset":
 		return cli.RunAdminReset(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky admin <invalidate|reset> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky admin <reset> ...")
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "rimsky admin: unknown subcommand %q\n", args[0])
@@ -256,30 +252,6 @@ func dispatchMessages(args []string) int {
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "rimsky messages: unknown subcommand %q\n", args[0])
-	return 2
-}
-
-func dispatchBackfill(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky backfill <create|list|show|cancel> ...")
-		return 2
-	}
-	ctx := context.Background()
-	rest := args[1:]
-	switch args[0] {
-	case "create":
-		return cli.RunBackfillCreate(ctx, rest)
-	case "list":
-		return cli.RunBackfillList(ctx, rest)
-	case "show":
-		return cli.RunBackfillShow(ctx, rest)
-	case "cancel":
-		return cli.RunBackfillCancel(ctx, rest)
-	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky backfill <create|list|show|cancel> ...")
-		return 0
-	}
-	fmt.Fprintf(os.Stderr, "rimsky backfill: unknown subcommand %q\n", args[0])
 	return 2
 }
 
@@ -379,9 +351,8 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  tag create | list | get | mv | rm")
 	fmt.Fprintln(w, "  instance create | list | get | status | delete | kill | nodes | events")
 	fmt.Fprintln(w, "  node get")
-	fmt.Fprintln(w, "  admin invalidate | reset")
+	fmt.Fprintln(w, "  admin reset")
 	fmt.Fprintln(w, "  messages tail | show")
-	fmt.Fprintln(w, "  backfill create | list | show | cancel")
 	fmt.Fprintln(w, "  asset list | show | materialize | versions | delete | lineage")
 	fmt.Fprintln(w, "  lineage prune")
 	fmt.Fprintln(w, "  parked list")

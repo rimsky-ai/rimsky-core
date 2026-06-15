@@ -39,7 +39,6 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "frame-timeout-progressing", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -55,14 +54,21 @@ func TestFrameTimeoutProgressingLoop(t *testing.T) {
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 
 	// @deliberate: Seed a running frame with timeout = 60000ms (schema floor). The
-	// node is stale within the frame; no claimed dispatches.
+	// node is stale within the frame; no claimed dispatches. The
+	// rimsky_frames.triggering_message_id NOT NULL FK requires a typed
+	// envelope to exist first so the frame's FK resolves.
 	const timeoutMs = 60000
+	messageID := uuid.New()
+	h.ExecSQL(`INSERT INTO rimsky_messages
+	    (id, instance_id, type, sender, sender_kind)
+	    VALUES ($1, $2, 'fixture/frame-progressing-loop', 'operator', 'operator')`,
+		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
-		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now() - interval '5 minutes', now() - interval '5 minutes', now(), $3)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms)
+		VALUES ($1, $2, 'running', now() - interval '5 minutes', now() - interval '5 minutes', now(), $3)
 		RETURNING frame_id
-	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID), int64(timeoutMs)}, &frameID)
+	`, []any{uuid.UUID(iid), messageID, int64(timeoutMs)}, &frameID)
 	h.ExecSQL(`UPDATE rimsky_nodes SET frame_id = $1, updated_at = now() WHERE id = $2`,
 		frameID, uuid.UUID(worker.ID))
 	mainScopeID := h.GetMainRunScopeID(iid)

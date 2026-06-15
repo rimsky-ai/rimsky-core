@@ -226,7 +226,6 @@ func TestReadSpecFile_HashStability_IdenticalContent(t *testing.T) {
 	specB := filepath.Join(dirB, "spec.yml")
 	yamlA := `name: demo
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: claude-agent
@@ -240,7 +239,6 @@ nodes:
 `
 	yamlB := `name: demo
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: claude-agent
@@ -283,7 +281,6 @@ func TestReadSpecFile_HashStability_DifferentContent_ChangesHash(t *testing.T) {
 	specPath := filepath.Join(dir, "spec.yml")
 	yaml := `name: demo
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: claude-agent
@@ -332,7 +329,6 @@ func TestReadSpecFile_SourceFileResolved(t *testing.T) {
 	specPath := filepath.Join(dir, "spec.yml")
 	yaml := `name: demo
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: claude-agent

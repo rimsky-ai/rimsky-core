@@ -23,7 +23,7 @@ A sender (operator or publisher) emits a message through the control-api's insta
 
 ## Falsifier
 
-A second emission with the same key produces a second envelope, OR the no-key request is silently accepted, OR a publisher named the same as an operator-sender replays the operator's emit.
+A second emission with the same key produces a second envelope, OR the no-key request is silently accepted, OR an undeclared `type` request lands in the ledger, OR a publisher named the same as an operator-sender replays the operator's emit.
 
 ## Proof
 

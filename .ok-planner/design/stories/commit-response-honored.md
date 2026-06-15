@@ -15,7 +15,7 @@ The producer client returns the base Commit response body; the unified claim-han
 
 ## Business value
 
-The wire contract is honest for the base protocol: producers that stamp version and metadata on Commit see them land without having to adopt the data-processing mix-in just to make documented fields real.
+The wire contract is honest for the base protocol: producers that stamp version and metadata on Commit see them land without having to adopt the data-processing mix-in just to make the base-protocol fields take effect.
 
 ## Acceptance
 

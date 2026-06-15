@@ -36,7 +36,6 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "failed-node-marks-frame-failed", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},

@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -41,7 +42,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/protocols/claimproducer"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
@@ -511,10 +511,47 @@ func handleAssetMaterializationHistory(deps AppDeps) http.HandlerFunc {
 
 // materializeRequest carries the operator-supplied invalidate-message
 // shape. Mirrors `postMessageRequest` but with explicit field naming
-// since the materialize endpoint always synthesises kind=invalidate.
+// since the materialize endpoint always synthesises the
+// runtime-synthetic `asset/materialize` envelope.
 type materializeRequest struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 	Reason  string          `json:"reason,omitempty"`
+}
+
+// errAssetMaterializeUnknownNode is returned from inside the
+// materialize tx when the operator-supplied alias does not resolve to a
+// declared node-type on the target instance. Refusing loudly is
+// load-bearing: the materialize envelope addresses its receiver by
+// concrete node uuid via `payload.wake_node_ids`, and that list is
+// populated from the resolved row. An empty list (or one pointing at a
+// nonexistent node) would let the frame promote and stale-mark
+// nothing — a silent no-op. Mapped to HTTP 400 by the outer handler.
+type errAssetMaterializeUnknownNode struct {
+	nodeType string
+}
+
+func (e errAssetMaterializeUnknownNode) Error() string {
+	return fmt.Sprintf("alias %q does not reference a declared node type on this instance", e.nodeType)
+}
+
+// findNodeByType is a small helper that finds the rimsky_nodes row for
+// a (instance, node_type) pair. The NodeTable does not surface this
+// query directly; we walk ListByInstance and match by type. Acceptable
+// because the per-instance node count is small (template-defined).
+func findNodeByType(
+	ctx context.Context, deps AppDeps, tx persistence.Tx,
+	instanceID shared.UUID, nodeType string,
+) (*persistence.NodeRow, error) {
+	nodes, err := deps.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range nodes {
+		if nodes[i].NodeType == nodeType {
+			return &nodes[i], nil
+		}
+	}
+	return nil, nil
 }
 
 func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
@@ -539,7 +576,10 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 			}
 		}
 		isDryRun := ModeFromContext(req.Context()) == authModeDryRun
-		msgID := shared.UUID(uuid.New())
+		// @constraint: msgID is assigned by EnqueueSyntheticWakeFrame inside the
+		// tx below; it carries the seeded envelope's id back to the operator
+		// in the response.
+		var msgID shared.UUID
 		// @constraint: fold `reason` into the payload as a named field so the
 		// receiver's `{{trigger.message.payload.reason}}` substitution
 		// resolves. Empty when not provided.
@@ -552,15 +592,28 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 			}
 			payload, _ = json.Marshal(merged)
 		}
-		enqueueReq := persistence.EnqueueMessageRequest{
-			ID:         msgID,
-			InstanceID: shared.UUID(instanceID),
-			Kind:       "invalidate",
-			Sender:     "operator",
-			SenderKind: "operator",
-			Target:     nodeType,
-			Payload:    payload,
+		// @constraint: the per-row routing `target` field is retired by the
+		// message-schema-layer reshape; receivers are addressed by the
+		// cascade walker via subscription edges. The target node alias is
+		// preserved in the payload so the legacy operator surface keeps
+		// matching.
+		//
+		// @deliberate: runtime-synthetic-only — `asset/materialize` is a
+		// runtime-internal type that never flows through the receipt
+		// handler; it is constructed directly via
+		// `EnqueueSyntheticWakeFrame` and so bypasses both the receipt-time
+		// registry gate and the reserved-field guard. The auto-injected
+		// `target_node` field is therefore not subject to author-declared
+		// `body_schema` constraints (which apply only to types in the
+		// template's `messages:` registry). A future hypothetical
+		// publish-through-asset path that routes through the receipt
+		// handler would need to model `target_node` as a top-level envelope
+		// field or declare it in the body_schema.
+		mergedPayload := map[string]any{}
+		if len(payload) > 0 {
+			_ = json.Unmarshal(payload, &mergedPayload)
 		}
+		mergedPayload["target_node"] = nodeType
 		err = deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			inst, err := deps.Persist.Instances().Get(ctx, shared.UUID(instanceID), tx)
 			if err != nil {
@@ -572,43 +625,59 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
 			}
-			// @constraint: dry-run gate: validation (instance exists + not terminated)
-			// has succeeded. Signal the outer code to write the synthetic
-			// envelope; the tx rolls back without enqueuing the message.
+			// @constraint: resolve the target alias to its concrete node uuid so
+			// the synthetic envelope's `wake_node_ids` list can stale-mark
+			// the right row at frame promotion. Under the message-schema-
+			// layer reshape, `advanceOneFrame` reads `wake_node_ids` (NOT
+			// the retired source_node_ids list) and template authors cannot
+			// subscribe to runtime-synthetic types like `asset/materialize`;
+			// without this list the frame would promote, stale-mark
+			// nothing, and silently no-op the materialize trigger.
+			node, err := findNodeByType(ctx, deps, tx, shared.UUID(instanceID), nodeType)
+			if err != nil {
+				return err
+			}
+			if node == nil {
+				// @constraint: target alias is not declared as a node-type in the
+				// template — refuse loudly rather than enqueue a no-op.
+				return errAssetMaterializeUnknownNode{nodeType: nodeType}
+			}
+			// @constraint: dry-run gate — validation (instance exists + not
+			// terminated + target alias resolved) has succeeded. Signal the
+			// outer code to write the synthetic envelope; the tx rolls back
+			// without enqueuing the message.
 			if isDryRun {
 				return errDryRunOK
 			}
-			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq); err != nil {
+			// @constraint: runtime-synthetic envelope — the slash-bearing
+			// `asset/materialize` type-path follows the same
+			// runtime-synthetic pattern as `node/invalidate` /
+			// `instance/root` / `node/reset`; receivers are addressed by
+			// UUID via the `wake_node_ids` payload field read at frame
+			// promotion (`graph/frame/engine.go::advanceOneFrame`), not by
+			// template subscription. The type is NOT in the template's
+			// `messages:` registry; this endpoint bypasses the receipt-time
+			// gate by going through the in-process EnqueueSyntheticWakeFrame
+			// helper.
+			//
+			// @deliberate: `sender_kind: "instance"` matches the runtime-
+			// synthetic-envelope convention even though the materialize was
+			// operator-INITIATED — the envelope body is runtime-synthesized
+			// (the operator did not author the `wake_node_ids` list), so
+			// the discriminator marks it as instance-side per
+			// `runner_emit_message.go::emitCascadeMessageInTx`.
+			//
+			// @constraint: the frame is enqueued in the same tx so a crash
+			// mid-flow cannot leave a pending message with no frame to
+			// carry it, nor a frame with no message.
+			seededID, _, err := runtime.EnqueueSyntheticWakeFrame(ctx, tx, deps.Persist,
+				shared.UUID(instanceID), "asset/materialize", "",
+				[]shared.UUID{node.ID}, mergedPayload)
+			if err != nil {
 				return err
 			}
-			// @constraint: seed a delivery frame so the just-enqueued invalidate is
-			// actually delivered. Messages are delivered ONLY into a
-			// running frame (`SweepDeliverMessagesForRunningFrames`); a
-			// quiescent instance (e.g. one whose producer node already
-			// committed its durable claim and has nothing else to run)
-			// has no running frame, so without this seed the materialize
-			// trigger would silently stall — the row would sit pending,
-			// no producing dispatch would ever fire, and the operator
-			// would never see the re-materialization. Mirrors the
-			// `POST /instances/{id}/messages` path's same in-tx seed at
-			// `code:messages.go::handleCreateMessage`. Atomic with the
-			// message insert: a crash mid-flow can't leave a pending
-			// message with no frame to carry it, nor a frame with no
-			// message. Falsifier guarded: the spec story's load-bearing
-			// property is that the materialize trigger causes a real
-			// producing dispatch; without this seed it does not.
-			sourceNodeID, ok, srcErr := resolveMessageFrameSource(ctx, deps.Persist, tx, shared.UUID(instanceID), nodeType)
-			if srcErr != nil {
-				return srcErr
-			}
-			if !ok {
-				// @constraint: degenerate: no nodes in the instance — nothing to
-				// source a frame on. Leave the message pending; mirrors
-				// the `POST /instances/{id}/messages` path.
-				return nil
-			}
-			_, frErr := frame.EnqueueOrCoalesce(ctx, deps.Persist, tx, shared.UUID(instanceID), sourceNodeID)
-			return frErr
+			msgID = seededID
+			return nil
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_materialized", map[string]any{
@@ -625,6 +694,11 @@ func handleAssetMaterialize(deps AppDeps) http.HandlerFunc {
 			}
 			if errors.Is(err, errInstanceTerminated) {
 				writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+				return
+			}
+			var unknownNode errAssetMaterializeUnknownNode
+			if errors.As(err, &unknownNode) {
+				badRequest(w, unknownNode.Error())
 				return
 			}
 			writeError(w, err)

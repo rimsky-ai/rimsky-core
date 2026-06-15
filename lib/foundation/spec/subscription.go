@@ -6,12 +6,15 @@ package spec
 
 // SubscriptionEntry declares one impactee-side reactive coupling.
 //
-// Under the 2026-05-23 signal-taxonomy reshape, a subscription is
-// expressed as (sender-selector, signal-type-path, optional CEL
-// predicate, frame) — replacing the per-dimension structured filter set
-// (`on`/`when`/`outcome`/`error_class`/`reason`/`name`/`kind`/`sender`/
-// `sender_kind`/`target`) used pre-2026-05-23. See concept:signal for
-// the taxonomy and concept:node-subscription for the matching rules.
+// A subscription is expressed as (sender-selector, signal-type-path,
+// optional CEL predicate). See concept:signal for the taxonomy and
+// concept:node-subscription for the matching rules.
+//
+// The cascade walker has one path: in-tx, in-frame. Every match
+// stale-marks the receiver inside the sender's frame in the sender's
+// settlement tx. Cross-frame coupling is expressed by message-emitter
+// nodes (concept:message-emitter-node), not by a per-subscription
+// modifier.
 //
 //	@concept: node-subscription
 type SubscriptionEntry struct {
@@ -36,10 +39,6 @@ type SubscriptionEntry struct {
 	// exact-type subscriptions and binds payload as dyn for prefix-type
 	// subscriptions.
 	When string `yaml:"when,omitempty" json:"when,omitempty"`
-
-	// Frame is "in" | "next". Empty defaults to "in" for per-node
-	// subscriptions and "next" for cross-cutting (Instance=true).
-	Frame string `yaml:"frame,omitempty" json:"frame,omitempty"`
 
 	// WakeOnChange governs whether a matching emission from the sender
 	// dispatches the receiver. true: the cascade walker inserts a wait-
@@ -77,9 +76,7 @@ type SubscriptionEntry struct {
 	// resolves such edges to the calling node per-invocation, not to
 	// the (absorbed-away) entry alias. Persisted alongside the
 	// subscription so the resolution is robust under template
-	// re-canonicalization. Per spec
-	// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Sub-graphs / Identity and absorption + §Multiple invocations.
+	// re-canonicalization.
 	ResolvesViaCallingNode bool `yaml:"resolves_via_calling_node,omitempty" json:"resolves_via_calling_node,omitempty"`
 }
 

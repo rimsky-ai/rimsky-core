@@ -83,7 +83,20 @@ func ProcessPureCascade(ctx context.Context, args PureCascadeArgs) (int, error) 
 	count := 0
 	for _, n := range ready {
 		def := lookupTemplateNodeDef(ctx, sb, n)
-		if hasClaimStore(def) {
+		// @deliberate: Message-emitter nodes have `executor == ""` like
+		// a pure-cascade node but they DO have work: build the envelope
+		// from resolved attributes and insert it into the message ledger
+		// inside the dispatch path's terminal-resolution tx. Routing
+		// them through the pure-cascade transition would settle them
+		// with `change_summary: "pure_cascade"` and emit no message,
+		// silently dropping every cascade-emit. They must follow the
+		// same enqueue → dispatch route as native-claim-only nodes so
+		// `applyTerminalComplete` runs and `emitCascadeMessageInTx`
+		// lands the envelope + next-frame.
+		//
+		// @story: cascade-emit
+		// @concept: message-emitter-node
+		if hasClaimStore(def) || isEmitMessage(def) {
 			if err := enqueueNativeClaimOnly(ctx, args, n, def); err != nil {
 				// @deliberate: defensive — a closed RunScope means the
 				// rendezvous fired before the sweep could enqueue.
@@ -193,7 +206,9 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 		if err != nil || row == nil {
 			return err
 		}
-		edges, err := nodepkg.BuildSubscriptionEdges(row.Spec)
+		subs := nodepkg.ExtractSubstitutionRefsFromTemplate(row.Spec)
+		msgs := nodepkg.ExtractMessageRefsFromTemplate(row.Spec)
+		edges, err := nodepkg.BuildSubscriptionEdges(row.Spec, subs, msgs)
 		if err != nil {
 			return err
 		}
@@ -201,16 +216,16 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 			return nil
 		}
 		// @concept: cascade
-		// @blessed-invariant: wake-up effects (affirm + propagate-
-		// frame-id + recalculate) gate on wake_on_change. A receiver
+		// @deliberate: wake-up effects (affirm + propagate-frame-id +
+		// recalculate) gate on wake_on_change here for parity with the
+		// terminal-driven cascade walker
+		// (runner_terminal.go::cascadeSubscribersStaleInTx). A receiver
 		// reachable only via subscription edges with wake_on_change:
-		// false is NOT woken by the pure-cascade source's settle —
-		// matches the wake-up-gating property the terminal-driven
-		// cascade walker enforces (runner_terminal.go::cascadeSubscribers-
-		// StaleInTx). Pure-cascade has no wait-set surface (the
-		// scheduler-flip is a settled-fresh transition, not a sender
-		// settle through the wait-set), so there is no analogous
-		// wait-set insert to preserve outside the gate.
+		// false is NOT woken by the pure-cascade source's settle.
+		// Pure-cascade has no wait-set surface (the scheduler-flip is a
+		// settled-fresh transition, not a sender settle through the
+		// wait-set), so there is no analogous wait-set insert to
+		// preserve outside the gate.
 		//
 		// @decision: wake-on-change-wait-set-only
 		allEdges := edges.ReceiverEdgesForSender(n.NodeType)
@@ -312,6 +327,17 @@ func transitionPureCascade(ctx context.Context, args PureCascadeArgs, n persiste
 // accepted_stores`, spec §6.2) routes the row correctly. The node row
 // stays `stale` until the supervisor's omnibus runner claims it and
 // synthesises the §7.3 step 4b Complete.
+//
+// Emit-message variant: a message-emitter node (concept:message-emitter-
+// node) has `executor == ""` and typically no stores, so the standard
+// "NULL executor + non-empty required_stores" admission predicate would
+// skip it. The runtime stamps the sentinel executor name
+// `runtime.EmitMessageDispatchName` on the dispatch row so SelectCandidates
+// admits the row through the executor-accepted branch; the supervisor's
+// startup wiring auto-injects the sentinel into its `accepted_executors`
+// list. The runner's dispatch path (`runner_dispatch.go::dispatch`)
+// short-circuits the executor resolver for emit-nodes, so the sentinel is
+// wire-routing only — no real executor endpoint is dialed.
 func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persistence.NodeRow, def *nodepkg.TemplateNodeDef) error {
 	required := nodepkg.RequiredStores(*def)
 	if required == nil {
@@ -327,9 +353,13 @@ func enqueueNativeClaimOnly(ctx context.Context, args PureCascadeArgs, n persist
 		// materialized a RunScope for this node yet.
 		return nil
 	}
+	executorName := ""
+	if isEmitMessage(def) {
+		executorName = runtime.EmitMessageDispatchName
+	}
 	return args.Queue.Enqueue(ctx, persistence.DispatchRequest{
 		NodeID:         n.ID,
-		ExecutorName:   "",
+		ExecutorName:   executorName,
 		RequiredStores: required,
 		EnqueuedAt:     args.Clock.Now(),
 		FrameID:        *n.FrameID,
@@ -370,6 +400,24 @@ func hasClaimStore(def *nodepkg.TemplateNodeDef) bool {
 		return false
 	}
 	return len(def.Stores) > 0
+}
+
+// isEmitMessage reports whether the node-def declares a message-emitter
+// dispatch (`emits_message: <type>`). An emit-node has `executor == ""`
+// so the pure-cascade SQL filter pulls it in, but its dispatch path is
+// "build envelope from attributes, insert into message ledger inside
+// applyTerminalComplete's tx" — the same dispatch path executor-backed
+// nodes use, NOT the pure-cascade inline state-transition. Routing
+// these as pure-cascade would silently drop every cascade-emit (no
+// envelope, no next frame). Mirrors hasClaimStore's "the row needs a
+// supervisor pickup" predicate.
+//
+// @concept: message-emitter-node
+func isEmitMessage(def *nodepkg.TemplateNodeDef) bool {
+	if def == nil {
+		return false
+	}
+	return def.EmitsMessage != ""
 }
 
 // cascadePropagateFrameID marks a child node stale + frame_id when it's

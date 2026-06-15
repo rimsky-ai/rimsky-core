@@ -7,9 +7,8 @@
 // max_park_duration_seconds. Called from the conductor tick at
 // ~30-second cadence. Per the 2026-05-08 platform-extensions plan E3.
 //
-// For deadline-elapsed rows: routes through wakeParkedNode (the same
-// shared helper used by G3's admin endpoint and H2's handler-emitted
-// invalidates) so a single code path handles every parked-node wake.
+// For deadline-elapsed rows: routes through `WakeParkedNode` (the
+// parked-resume wake helper).
 //
 // For overdue rows: emits an Error{error_class:"park_timeout"} verdict,
 // which routes through the standard `error_types:` policy chain via
@@ -87,23 +86,25 @@ func SweepParkedNodes(ctx context.Context, args ParkedSweepArgs) error {
 		limit = 100
 	}
 
+	// @constraint: deadline-elapsed parked rows route through the shared
+	// parked-resume helper WakeParkedNode; the per-tick batch is bounded
+	// by limit and individual-row failures are logged without aborting.
 	ready, err := args.Queue.ListParkedReadyForResume(ctx, now, limit)
 	if err != nil {
 		log.Warn("SweepParkedNodes: ListParkedReadyForResume failed", "error", err.Error())
 	}
 	for _, row := range ready {
-		ia := InvalidateArgs{
+		wakeArgs := WakeParkedArgs{
 			Persist:      args.Persist,
 			Queue:        args.Queue,
-			Clock:        args.Clock,
 			Logger:       log,
 			TargetNodeID: row.NodeID,
-			Reason:       "parked_resume_deadline_elapsed",
 			SupervisorID: args.SupervisorID,
-			Frame:        "next",
-			Metrics:      args.Metrics,
 		}
-		if err := UnifiedInvalidate(ctx, ia, args.SupervisorID, WakeDeadlineElapsed); err != nil {
+		if args.Metrics != nil {
+			args.Metrics.IncInvalidate("scheduler")
+		}
+		if err := WakeParkedNode(ctx, wakeArgs, WakeDeadlineElapsed); err != nil {
 			log.Warn("SweepParkedNodes: wake failed",
 				"node_id", row.NodeID.String(), "error", err.Error())
 		}

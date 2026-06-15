@@ -73,13 +73,62 @@ func subscriptionEdgesForTemplate(
 	if row == nil {
 		return nil, fmt.Errorf("subscriptionEdgesForTemplate: template %s not found", templateHash)
 	}
-	edges, err := node.BuildSubscriptionEdges(row.Spec)
+	subs := node.ExtractSubstitutionRefsFromTemplate(row.Spec)
+	msgs := node.ExtractMessageRefsFromTemplate(row.Spec)
+	edges, err := node.BuildSubscriptionEdges(row.Spec, subs, msgs)
 	if err != nil {
 		return nil, fmt.Errorf("subscriptionEdgesForTemplate: build edges for %s: %w", templateHash, err)
 	}
 	// @constraint: LoadOrStore wins races; both maps are content-equal when two goroutines compute concurrently, so the first stored value is the canonical one.
 	actual, _ := templateSubscriptionEdges.LoadOrStore(templateHash, edges)
 	return actual.(*node.SubscriptionEdgeMap), nil
+}
+
+// templateDeclaredMessageTypes caches the per-template set of message
+// type-paths declared in the template's `messages:` registry. Keyed by
+// template_hash. Threaded into `attributes.ResolveContext.RegistryDeclaredTypes`
+// at every runtime dispatch-time ResolveContext build site so the
+// `{{messages.<type>.<field>}}` resolver's dynamic floor — a directive
+// naming an undeclared type returns ErrMissingSource — is actually
+// armed at runtime, not just in unit tests. Defense-in-depth against
+// runtime-interpolated directives that bypass the registration-time
+// validator. Lifetime + cache discipline mirror
+// `templateSubscriptionEdges` above.
+//
+//	@concept: message-schema
+var templateDeclaredMessageTypes sync.Map
+
+// declaredMessageTypesForTemplate returns the cached or freshly-built
+// set of declared message type-paths for the given template_hash.
+// Returns nil on a missing template or persistence error — callers
+// thread the nil through into ResolveContext.RegistryDeclaredTypes
+// (which treats nil as "no floor", same as if the field were absent).
+// This keeps the dispatch-time ResolveContext build cheap (no error
+// propagation) while still arming the floor on the happy path; a
+// template-missing condition is already surfaced loudly by every other
+// dispatch-time helper.
+func declaredMessageTypesForTemplate(
+	ctx context.Context, args RunArgs, templateHash string, tx persistence.Tx,
+) map[string]struct{} {
+	if templateHash == "" {
+		return nil
+	}
+	if v, ok := templateDeclaredMessageTypes.Load(templateHash); ok {
+		return v.(map[string]struct{})
+	}
+	if args.Persist == nil || args.Persist.Templates() == nil {
+		return nil
+	}
+	row, err := args.Persist.Templates().GetByHash(ctx, templateHash, tx)
+	if err != nil || row == nil {
+		return nil
+	}
+	set := make(map[string]struct{}, len(row.Spec.Messages))
+	for _, m := range row.Spec.Messages {
+		set[m.Type] = struct{}{}
+	}
+	actual, _ := templateDeclaredMessageTypes.LoadOrStore(templateHash, set)
+	return actual.(map[string]struct{})
 }
 
 // templateHardDepEdges caches the per-template upstream-refresh edge

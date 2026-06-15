@@ -74,7 +74,6 @@ func TestHeldClaimCheckAndFire_FiresExactlyOnceUnderRacingFinals(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "held-check-and-fire-race", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},

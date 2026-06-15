@@ -216,7 +216,6 @@ func writeComposeManifest(t *testing.T) string {
 	templateA := `# compose e2e template A — one stub-executor worker node.
 name: compose-e2e-a
 version: "1"
-frame_resolution_mode: serial_queue
 nodes:
   - type: worker
     executor: stub
@@ -224,7 +223,6 @@ nodes:
 	templateB := `# compose e2e template B — one stub-executor worker node.
 name: compose-e2e-b
 version: "1"
-frame_resolution_mode: serial_queue
 nodes:
   - type: worker
     executor: stub
@@ -284,9 +282,8 @@ func registerAndDeployManualTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 	t.Helper()
 	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "manual-keepsake-template",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    "manual-keepsake-template",
+			"version": "1",
 			"nodes": []map[string]any{
 				{"type": "keeper", "executor": "stub"},
 			},

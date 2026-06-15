@@ -159,7 +159,7 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 			Kind:           "object_store",
 			ResolvedConfig: json.RawMessage(`{"bucket":"b"}`),
 			TargetNode:     "ingest",
-			MessageKind:    "invalidate",
+			MessageType:    "fixture/ping",
 			State:          persistence.PublisherSubscriptionStateActive,
 			StartedAt:      time.Now().UTC(),
 		})
@@ -177,7 +177,7 @@ func TestPublisherResyncOnStartup(t *testing.T) {
 				InstanceID:              orphanInstanceID,
 				Kind:                    "object_store",
 				TargetNode:              "ingest",
-				MessageKind:             "invalidate",
+				MessageType:             "fixture/ping",
 			},
 		},
 	}

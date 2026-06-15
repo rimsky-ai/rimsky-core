@@ -7,7 +7,6 @@
 # + deployed by `rimsky compose up` (see ./rimsky-compose.yml).
 name: template-b
 version: "1"
-frame_resolution_mode: serial_queue
 nodes:
   - type: worker
     executor: stub

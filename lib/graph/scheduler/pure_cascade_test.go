@@ -164,9 +164,8 @@ func pcDeployTemplate(ctx context.Context, t *testing.T, b persistence.Tables, n
 	t.Helper()
 	return insertDeployedTemplate(ctx, t, b, nodepkg.TemplateSpec{
 		Name: name, Version: "v1", Description: "test",
-		FrameResolutionMode: nodepkg.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      nodepkg.FrameTimeoutDefaultMs,
-		Nodes:               []nodepkg.TemplateNodeDef{},
+		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
+		Nodes:          []nodepkg.TemplateNodeDef{},
 	})
 }
 
@@ -302,12 +301,21 @@ func pcSeedFrame(ctx context.Context, t *testing.T, f *pcFixture, instanceID, no
 		[]any{instanceID}, &count)
 	var frameID shared.UUID
 	if count == 0 {
+		// @deliberate: Seed a synthetic typed-message envelope so the
+		// frame's triggering_message_id FK is satisfied.
+		msgID := uuid.New()
+		pgtest.ExecForTest(ctx, t, f.driver, `
+            INSERT INTO rimsky_messages
+                (id, instance_id, type, sender, sender_kind, received_at)
+            VALUES ($1, $2, 'test/seed', 'test', 'operator', now())
+        `, msgID, instanceID)
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
-                (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
-            VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
+                (instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
+            VALUES ($1, $2, 'running', now(), now(), 600000)
             RETURNING frame_id
-        `, []any{instanceID, nodeID}, &frameID)
+        `, []any{instanceID, msgID}, &frameID)
+		_ = nodeID
 	} else {
 		pgtest.QueryRowForTest(ctx, t, f.driver,
 			`SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 AND state = 'running' LIMIT 1`,
@@ -438,8 +446,7 @@ func TestProcessPureCascade_NativeClaimOnly_Enqueues(t *testing.T) {
 	// claim-true entry.
 	sum := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
 		Name: "claim-only", Version: "v1", Description: "test",
-		FrameResolutionMode: nodepkg.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      nodepkg.FrameTimeoutDefaultMs,
+		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
 		Nodes: []nodepkg.TemplateNodeDef{{
 			Type:     "t",
 			Executor: "",
@@ -500,8 +507,7 @@ func TestProcessPureCascade_CascadesToDependents(t *testing.T) {
 	// pure-cascade sweep computes receivers from that inverse map.
 	tpl := insertDeployedTemplate(ctx, t, f.persist, nodepkg.TemplateSpec{
 		Name: "alpha-cascade", Version: "v1",
-		FrameResolutionMode: nodepkg.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      nodepkg.FrameTimeoutDefaultMs,
+		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
 		Nodes: []nodepkg.TemplateNodeDef{
 			{Type: "pure-a"},
 			{Type: "worker-b", Executor: "worker",

@@ -38,7 +38,7 @@ type PublisherSubscriptionRow struct {
 	Kind           string
 	ResolvedConfig json.RawMessage
 	TargetNode     string
-	MessageKind    string
+	MessageType    string
 	StartedAt      time.Time
 	State          string
 	// FailureReason is the operator-readable explanation for a

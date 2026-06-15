@@ -11,22 +11,21 @@ import (
 )
 
 // TestWaitSetTopicKindFor_FullTaxonomy pins waitSetTopicKindFor to the
-// full 5-value signal taxonomy (terminal | transient | attribute | event
-// | message), one bucket per top-level kind, with NO two distinct signal
-// classes collapsed onto the same value.
+// 4-value signal taxonomy (terminal | transient | attribute | event),
+// one bucket per top-level kind, with NO two distinct signal classes
+// collapsed onto the same value.
 //
-// This is the RED proof for S-cascade-waitset-topic-taxonomy: today the
-// mapper folds terminal/transient/message all onto the legacy "state"
-// bucket, so the topic_kind ledger cannot tell a terminal-gated edge from
-// a transient-gated one from a message-gated one. The wait-set ledger is
-// supposed to record the actual signal class an edge gates on; a lossy
-// 3-into-5 collapse defeats that. A later GREEN pass widens the mapper
-// (and the DB CHECK) so each kind reads its own value.
+// The 'message' bucket retired with the 2026-06-14 message-schema-layer
+// reshape (Pass 4): the `message/*` top-level kind is gone from the
+// canonical taxonomy. Message arrival is now a virtual-node settle
+// whose subscribers wake via stale-marking, NOT via wait-set rows
+// keyed on a virtual sender run — so no signal that flows through this
+// mapper carries a `message/*` type-path.
 //
 // The assertion that guards against re-collapse is the no-two-classes-on-
-// the-same-bucket check at the end: terminal, transient, and message must
-// land on three distinct, kind-named values — not be silently re-merged
-// onto a shared "state" bucket by a future refactor.
+// the-same-bucket check at the end: terminal, transient, attribute, and
+// event must land on four distinct, kind-named values — not be silently
+// re-merged onto a shared "state" bucket by a future refactor.
 func TestWaitSetTopicKindFor_FullTaxonomy(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -37,7 +36,6 @@ func TestWaitSetTopicKindFor_FullTaxonomy(t *testing.T) {
 		{"transient/await_async", signalpkg.TypePath("transient/await_async"), "transient"},
 		{"attribute/x/changed", signalpkg.TypePath("attribute/x/changed"), "attribute"},
 		{"event/foo", signalpkg.TypePath("event/foo"), "event"},
-		{"message/invalidate/operator/n", signalpkg.TypePath("message/invalidate/operator/n"), "message"},
 	}
 
 	got := make(map[string]string, len(cases))
@@ -52,9 +50,8 @@ func TestWaitSetTopicKindFor_FullTaxonomy(t *testing.T) {
 	}
 
 	// @deliberate: No two DISTINCT signal classes may collapse onto the same bucket —
-	// the legacy mapper folded terminal/transient/message all onto
-	// "state", which is exactly the lossiness this taxonomy widening
-	// exists to remove.
+	// the legacy mapper folded terminal/transient onto "state", which is
+	// exactly the lossiness this taxonomy widening exists to remove.
 	seen := make(map[string]string, len(got)) // bucket → first class that claimed it
 	for class, bucket := range got {
 		if prior, dup := seen[bucket]; dup {
@@ -64,5 +61,20 @@ func TestWaitSetTopicKindFor_FullTaxonomy(t *testing.T) {
 			continue
 		}
 		seen[bucket] = class
+	}
+}
+
+// TestWaitSetTopicKindFor_MessageRetired pins the 2026-06-14
+// retirement of the `message/*` top-level kind from the wait-set
+// topic_kind mapper. A type-path with a `message/` prefix is no longer
+// a canonical signal — TopLevel() returns the empty kind for it, so
+// the mapper falls through to the `state` defensive fallback. No
+// wait-set row should ever carry a `message` topic_kind under the
+// virtual-node-settle model (subscribers stale-mark; they do not
+// wait-set-gate on a virtual sender run that doesn't exist).
+func TestWaitSetTopicKindFor_MessageRetired(t *testing.T) {
+	bucket := waitSetTopicKindFor(signalpkg.TypePath("message/invalidate/operator/n"))
+	if bucket == "message" {
+		t.Fatalf("waitSetTopicKindFor(message/...) = %q, but `message` topic_kind retired", bucket)
 	}
 }

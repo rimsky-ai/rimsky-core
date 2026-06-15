@@ -8,13 +8,14 @@
 // resolveDirectiveValueRaw dispatches on (the retired `deps` form below is
 // a rejected migration-pointer arm, not a live kind).
 //
-// Five recognized source kinds:
+// Six recognized source kinds:
 //
 //   - {{nodes.<node>.attribute.<field>}} — upstream node's persisted attributes (also `{{nodes.<node>.event.<event_name>.<field>}}` for a named-event payload)
 //   - {{claim.<alias>.claim_scope}} — live claim's claim-scope bytes (also `.address` and `.payload.<field>`)
 //   - {{params.<key>}} — instance-level config params
 //   - {{trigger.message.payload.<field>}} — the bound trigger message's payload at named path
 //   - {{child.partition_key}} — the per-child-run partition key (fan-out leaf dispatch context only)
+//   - {{messages.<type>.<field>}} — the frame's triggering message body, addressed by declared message-type
 //
 // Substitution refs do not generate edges in the subscription map. The
 // receiver must declare an explicit `subscribes:` entry whose sender
@@ -108,12 +109,47 @@ type ResolveContext struct {
 	// (claim opacity + structural-inertness).
 	TriggerMessagePayload json.RawMessage
 
+	// TriggerMessageType is the declared message-type-path of the
+	// triggering message bound to this frame (the `type` column on the
+	// rimsky_messages row whose frame_id matches the dispatch). Empty
+	// → no trigger bound; any `{{messages.<type>.<field>}}` directive
+	// returns ErrMissingSource.
+	//
+	// The substitution engine routes `{{messages.<type>.<field>}}`
+	// through the same walkPath introspection site as
+	// `{{trigger.message.payload.<field>}}` (and per-node attribute
+	// reads), preserving @blessed-invariant 21. The discriminator
+	// difference is who the receiver names: by message-type
+	// (`{{messages.<type>.<field>}}`) or by trigger-position
+	// (`{{trigger.message.payload.<field>}}`). The resolver rejects a
+	// `{{messages.X.<field>}}` directive when the frame's actual
+	// triggering message type is not `X` — receivers can only address
+	// the type that opened the frame they are dispatched in (the
+	// auto-subscribe rule guarantees this statically at registration;
+	// the runtime check is the dynamic defense).
+	//
+	// @concept: message-schema
+	TriggerMessageType string
+
 	// ChildPartitionKey is the per-child-run partition key value bound
 	// for fan-out leaf dispatches. Empty string → no binding; any
 	// `{{child.partition_key}}` directive returns ErrMissingSource.
 	// Bound by the runtime fan-out dispatcher (E7) at child dispatch.
 	// Per spec §Substitution-layer extensions.
 	ChildPartitionKey string
+
+	// RegistryDeclaredTypes is the set of message type-paths declared in
+	// the template's `messages:` registry. Optional; when non-nil, the
+	// `{{messages.<type>.<field>}}` resolver requires `<type>` to be a
+	// key in this set even if the frame's actual triggering message type
+	// matches. Defense-in-depth against runtime-interpolated directives
+	// (a substitution path that bypasses the registration-time validator).
+	// The static auto-subscribe rule prevents this in the common case;
+	// the validator catches the static error at registration. This is
+	// the dynamic floor.
+	//
+	// @concept: message-schema
+	RegistryDeclaredTypes map[string]struct{}
 }
 
 // ErrMissingSource is returned by Substitute when a directive cannot
@@ -157,49 +193,6 @@ func (e *ErrFallbackChain) Error() string {
 
 // directivePattern captures the inside of a single `{{...}}` directive.
 var directivePattern = regexp.MustCompile(`\{\{([^}]*)\}\}`)
-
-// ReferencesTriggerMessage reports whether rawValue carries at least one
-// `{{trigger.message.payload(.field?)}}` directive — i.e. whether the
-// value is wired to pull a binding from the frame's trigger message.
-//
-// Used by the control-api backfill-target validator to confirm a
-// fan-out node's `partition_request` can actually consume a backfill's
-// `partition_request_override` (the override rides the invalidate
-// message's payload and is read back through the trigger source kind).
-// A `partition_request` that does not reference the trigger message
-// silently degrades to its template default — rimsky rejects the
-// backfill at submit rather than accept-and-ignore the override.
-//
-// The check mirrors the resolver's notion of a trigger directive
-// exactly: a directive is a trigger ref iff, after stripping the
-// `| <literal>` fallback and `?` lenient markers, its source kind is
-// `trigger` and the shape is `trigger.message.payload[.<field>…]`
-// (the only form resolveTriggerValue accepts). This keeps the
-// validator's "is it wired?" judgment in lock-step with the runtime's
-// "can it resolve?" judgment.
-func ReferencesTriggerMessage(rawValue string) bool {
-	if !strings.Contains(rawValue, "{{") {
-		return false
-	}
-	for _, match := range directivePattern.FindAllString(rawValue, -1) {
-		inside := strings.TrimSpace(match[2 : len(match)-2])
-		if inside == "" {
-			continue
-		}
-		// @deliberate: only the left-hand directive determines the source
-		// kind, so the `| <literal>` fallback tail must be stripped before
-		// the source-kind check.
-		if idx := strings.Index(inside, "|"); idx >= 0 {
-			inside = strings.TrimSpace(inside[:idx])
-		}
-		inside = strings.TrimSpace(strings.TrimSuffix(inside, "?"))
-		parts := strings.Split(inside, ".")
-		if len(parts) >= 3 && parts[0] == "trigger" && parts[1] == "message" && parts[2] == "payload" {
-			return true
-		}
-	}
-	return false
-}
 
 // Substitute performs a single-pass replacement of `{{...}}` directives
 // in rawValue against ctx. Per spec §16.3:
@@ -408,6 +401,8 @@ func resolveDirectiveValueRaw(directive string, ctx ResolveContext) (any, error)
 		return resolveTriggerValue(directive, parts[1:], ctx)
 	case "child":
 		return resolveChildValue(directive, parts[1:], ctx)
+	case "messages":
+		return resolveMessagesValue(directive, parts[1:], ctx)
 	default:
 		return nil, &ErrMissingSource{Directive: directive, Reason: "unknown source kind " + parts[0]}
 	}
@@ -483,14 +478,30 @@ func stringifyAny(v any) string {
 // the whole payload as a JSON-decoded value (per spec §Item 3 — bare-
 // form pull).
 //
-// @blessed-invariant: message-inertness — messages are inert in rimsky. Message payload
-// bytes are read by rimsky only here (via `walkPath` substitution
-// against the trigger message) and at the persistence-layer fetch in
-// `GET /messages/{id}` (control/controlapi/messages.go). Rimsky never
-// logs, formats with `%v`, validates beyond schema gates, transforms,
-// or includes payload bytes in error messages. Same opacity discipline
-// as `@blessed-invariant 20/21` (claim content, blob content /
-// named-event payloads).
+// @blessed-invariant: message-inertness — messages are inert in rimsky.
+// Message payload bytes are read by rimsky at a small fixed set of sites:
+//   - here (via `walkPath` substitution against the trigger message);
+//   - the parallel `messages.<type>.<field>` arm in
+//     `resolveMessagesValue` (this file);
+//   - the cascade walker's `messagePayloadAsMap` decode used to populate
+//     the message-virtual-node settle signal's `attributes_delta` so
+//     subscriber CEL `when:` predicates can match against body fields
+//     (`code:runtime/message_delivery.go::messagePayloadAsMap`);
+//   - the persistence-layer fetch in `GET /messages/{id}`
+//     (control/controlapi/messages.go); and
+//   - the scheduler's `advanceOneFrame` runtime-internal wake-field
+//     extraction, which decodes the triggering message's payload solely
+//     to pull the rimsky-synthesized `wake_node_ids` array used to
+//     stale-mark cascade-driven receivers in the promotion tx
+//     (`code:graph/frame/engine.go::advanceOneFrame`). Distinct from the
+//     four body-reading sites above: the read targets a rimsky-owned
+//     runtime-synthetic field, not a user-authored body shape, and the
+//     bytes are never echoed into logs / errors.
+//
+// Rimsky never logs, formats with `%v`, validates beyond schema gates,
+// transforms, or includes payload bytes in error messages. Same opacity
+// discipline as `@blessed-invariant 20/21` (claim content, blob content
+// / named-event payloads).
 func resolveTriggerValue(directive string, rest []string, ctx ResolveContext) (any, error) {
 	if len(rest) < 2 {
 		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive needs trigger.message.payload[.<field>]"}
@@ -507,6 +518,95 @@ func resolveTriggerValue(directive string, rest []string, ctx ResolveContext) (a
 	val, ok := walkPath(ctx.TriggerMessagePayload, rest[2:])
 	if !ok {
 		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger payload field path not found"}
+	}
+	return val, nil
+}
+
+// resolveMessagesValue handles `{{messages.<type>.<field>}}` directives —
+// the spec §Message-schema-layer form that names the frame's triggering
+// message by declared message-type and walks the named body field. The
+// receiver author writes the message type they intend to read (e.g.
+// `messages.ping/recheck.pong_status`); the auto-subscribe rule
+// guarantees the receiver is only dispatched in a frame whose triggering
+// message is the named type, so the resolver's type-check is a dynamic
+// defense for edge cases the static rule cannot catch (e.g. runtime-
+// interpolated directives that bypass the validator).
+//
+// Bare form `{{messages.<type>}}` (no trailing field path) resolves to
+// the whole body as a JSON-decoded value, mirroring the bare-form
+// behaviour of the trigger / nodes-attribute / claim-payload kinds.
+//
+// Reads the message body via the SAME `walkPath` helper that
+// resolveTriggerValue / resolveNodesValue / resolveClaimValue use — one
+// substitution engine, two surfaces (per spec §Load-bearing property
+// "one substitution engine, two surfaces"). The `messages` arm and the
+// `trigger.message.payload` arm both pull bytes from the frame's
+// triggering message; they differ only in the discriminator the receiver
+// uses to name the source (by message-type, or by trigger-position).
+//
+// @blessed-invariant 21: messages are inert in rimsky. Message body
+// bytes are read by rimsky at a small fixed set of sites: here (via
+// `walkPath`), at the trigger arm (resolveTriggerValue), at the cascade
+// walker's `messagePayloadAsMap` decode used to populate the
+// message-virtual-node settle signal's `attributes_delta`
+// (`code:runtime/message_delivery.go::messagePayloadAsMap`), at the
+// persistence-layer fetch in `GET /messages/{id}`, and at the
+// scheduler's `advanceOneFrame` runtime-internal wake-field extraction
+// (`code:graph/frame/engine.go::advanceOneFrame`) — the last is distinct
+// from the four body-reading sites in that it reads the
+// rimsky-synthesized `wake_node_ids` array, not user-authored body
+// fields. Rimsky never logs, formats with `%v`, validates beyond schema
+// gates, transforms, or includes payload bytes in error messages.
+//
+// @concept: message-schema
+func resolveMessagesValue(directive string, rest []string, ctx ResolveContext) (any, error) {
+	// @agent-contract: expected form is messages.<type>(.<field-path…>)?
+	if len(rest) < 1 {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "messages directive needs messages.<type>[.<field>]"}
+	}
+	declaredType := rest[0]
+	if declaredType == "" {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "messages directive has an empty <type>"}
+	}
+	// @deliberate: defense-in-depth registry check. If the caller supplied
+	// the template's declared-types set, reject a directive that names a
+	// type not in the registry — even if the frame's triggering message
+	// type happens to match. Runtime-interpolated directives are the gap
+	// the registration-time validator cannot cover; this is the dynamic
+	// floor.
+	if ctx.RegistryDeclaredTypes != nil {
+		if _, ok := ctx.RegistryDeclaredTypes[declaredType]; !ok {
+			return nil, &ErrMissingSource{
+				Directive: directive,
+				Reason:    "messages directive names a type not in the template's messages registry",
+			}
+		}
+	}
+	if ctx.TriggerMessageType == "" {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "no trigger message bound to this frame"}
+	}
+	if ctx.TriggerMessageType != declaredType {
+		// @constraint: path-token only per invariant 20 — do NOT include
+		// the actual TriggerMessageType in the reason (the body is inert;
+		// the type-path is an identifier but the safer floor is to not
+		// echo runtime trigger state into receiver-side error surfaces).
+		// The static auto-subscribe rule prevents the mismatch in the
+		// common case; the validator catches the static error at
+		// registration. This arm is the dynamic defense.
+		return nil, &ErrMissingSource{
+			Directive: directive,
+			Reason:    "frame's triggering message type does not match directive <type>",
+		}
+	}
+	if len(ctx.TriggerMessagePayload) == 0 {
+		// @deliberate: type matches but payload is empty — treat as
+		// missing per the trigger arm's symmetric behaviour.
+		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger message body is empty"}
+	}
+	fieldPath := rest[1:]
+	val, ok := walkPath(ctx.TriggerMessagePayload, fieldPath)
+	if !ok {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "message body field path not found"}
 	}
 	return val, nil
 }

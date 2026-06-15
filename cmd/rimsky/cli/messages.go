@@ -24,20 +24,19 @@ import (
 //
 // Usage:
 //
-//	rimsky messages tail --instance <id> [--kind invalidate] \
-//	    [--sender-kind operator] [--target node] \
+//	rimsky messages tail --instance <id> [--type ping/recheck] \
+//	    [--sender-kind operator] \
 //	    [--follow] [--poll-interval 1s]
 func RunMessagesTail(ctx context.Context, args []string) int {
 	var (
-		instance, kind, senderKind, target string
-		follow                             bool
-		pollInterval                       time.Duration
+		instance, msgType, senderKind string
+		follow                        bool
+		pollInterval                  time.Duration
 	)
 	fs, common, endpoint, code := runWithCommon("messages tail", args, func(fs *flag.FlagSet) {
 		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
-		fs.StringVar(&kind, "kind", "", "filter by message kind (e.g. invalidate)")
+		fs.StringVar(&msgType, "type", "", "filter by message type (e.g. ping/recheck)")
 		fs.StringVar(&senderKind, "sender-kind", "", "filter by sender_kind (operator|publisher|instance)")
-		fs.StringVar(&target, "target", "", "filter by target node type")
 		fs.BoolVar(&follow, "follow", false, "long-poll for new messages")
 		fs.DurationVar(&pollInterval, "poll-interval", time.Second, "poll interval when --follow")
 	})
@@ -69,9 +68,8 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 	var lastSeen time.Time
 	for {
 		page, err := c.ListInstanceMessages(signalCtx, id, ListMessagesQuery{
-			Kind:           kind,
+			Type:           msgType,
 			SenderKind:     senderKind,
-			Target:         target,
 			DeliveredAfter: "", // @deliberate: empty — local `received_at` watermark gates re-emit.
 			Limit:          100,
 		})
@@ -95,7 +93,7 @@ func RunMessagesTail(ctx context.Context, args []string) int {
 				delivered = m.DeliveredAt.UTC().Format(time.RFC3339)
 			}
 			fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n",
-				m.ID, m.Kind, m.SenderKind, m.Sender, m.ReceivedAt.UTC().Format(time.RFC3339), delivered)
+				m.ID, m.Type, m.SenderKind, m.Sender, m.ReceivedAt.UTC().Format(time.RFC3339), delivered)
 		}
 		if !follow {
 			return 0
@@ -132,10 +130,9 @@ func RunMessagesShow(ctx context.Context, args []string) int {
 	pairs := [][2]string{
 		{"id", m.ID},
 		{"instance_id", m.InstanceID},
-		{"kind", m.Kind},
+		{"type", m.Type},
 		{"sender", m.Sender},
 		{"sender_kind", m.SenderKind},
-		{"target", m.Target},
 		{"received_at", m.ReceivedAt.UTC().Format(time.RFC3339)},
 	}
 	if m.DeliveredAt != nil {
@@ -143,9 +140,6 @@ func RunMessagesShow(ctx context.Context, args []string) int {
 	}
 	if m.FrameID != "" {
 		pairs = append(pairs, [2]string{"frame_id", m.FrameID})
-	}
-	if m.BackfillOperationID != "" {
-		pairs = append(pairs, [2]string{"backfill_operation_id", m.BackfillOperationID})
 	}
 	if m.Cancelled {
 		pairs = append(pairs, [2]string{"cancelled", "true"})

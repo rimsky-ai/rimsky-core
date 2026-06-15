@@ -73,9 +73,16 @@ const httpPublisherName = "watcher"
 
 // httpReactorNode is the template's reactor node — the
 // publisher_subscription's target_node. The sensor's emitted envelope
-// carries target=<this>, and the persisted message rows surface it as
-// `target_node` we can filter on through GET /v1/instances/{id}/messages.
+// carries type=<httpMessageType>, declared in the template's `messages:`
+// registry as a virtual node-type the reactor subscribes to via
+// `node: <httpMessageType>, type: terminal/success`.
 const httpReactorNode = "reactor"
+
+// httpMessageType is the message type the http publisher emits,
+// declared in the template's `messages:` registry. The reactor
+// subscribes to it as a virtual node-type with terminal/success per
+// the post-2026-06-14 message-schema-layer DSL.
+const httpMessageType = "refresh/reactor"
 
 // httpPollIntervalConfig is the resolved_config.poll_interval the
 // template declares. The test's bounded waits are sized as multiples of
@@ -381,7 +388,7 @@ func publisherMessageCount(t *testing.T, ep harness.RimskyEndpoint, instanceID s
 	}
 	var resp struct {
 		Messages []struct {
-			Kind       string `json:"kind"`
+			Type       string `json:"type"`
 			Sender     string `json:"sender"`
 			SenderKind string `json:"sender_kind"`
 		} `json:"messages"`
@@ -469,15 +476,15 @@ func requirePublisherMessagePersistedHTTP(t *testing.T, ep harness.RimskyEndpoin
 		if status == http.StatusOK {
 			var resp struct {
 				Messages []struct {
-					Kind       string `json:"kind"`
+					Type       string `json:"type"`
 					Sender     string `json:"sender"`
 					SenderKind string `json:"sender_kind"`
 				} `json:"messages"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
 				for _, m := range resp.Messages {
-					lastSeen = fmt.Sprintf("kind=%s sender=%s sender_kind=%s",
-						m.Kind, m.Sender, m.SenderKind)
+					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s",
+						m.Type, m.Sender, m.SenderKind)
 					if m.SenderKind != "publisher" {
 						continue
 					}
@@ -528,19 +535,31 @@ func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedUR
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "sensor-http-e2e",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "sensor-http-e2e",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			"messages": []map[string]any{
+				{
+					// @deliberate: sensor-http emits payload with {observed_at, url,
+					// status, body_hash, body}. Loose body_schema:
+					// additionalProperties allowed because `body:` is the
+					// upstream's decoded JSON shape, opaque here.
+					"type": httpMessageType,
+					"body_schema": map[string]any{
+						"type":                 "object",
+						"properties":           map[string]any{},
+						"additionalProperties": true,
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{
 					"type":     httpReactorNode,
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance":               true,
-							"type":                   "message/invalidate/publisher/" + httpReactorNode,
-							"frame":                  "in",
+							"node":                   httpMessageType,
+							"type":                   "terminal/success",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
@@ -553,7 +572,7 @@ func deploySensorHttpTemplate(t *testing.T, ep harness.RimskyEndpoint, watchedUR
 					"kind":         "http",
 					"config":       json.RawMessage(configBytes),
 					"target_node":  httpReactorNode,
-					"message_kind": "invalidate",
+					"message_type": httpMessageType,
 				},
 			},
 		},

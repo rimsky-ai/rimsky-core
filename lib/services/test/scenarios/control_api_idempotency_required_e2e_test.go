@@ -74,12 +74,24 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 
 	// @constraint: a single worker node gives the message-emit path a real
 	// node to source a delivery frame on (resolveMessageFrameSource needs at
-	// least one node) and a real target for the invalidate envelope.
+	// least one node); the declared `messages:` block lets the test POST a
+	// well-formed envelope of a recognized type — the post-message-schema-layer
+	// control-api rejects undeclared types at the route.
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "idempotency-required-e2e",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    "idempotency-required-e2e",
+			"version": "1",
+			"messages": []map[string]any{
+				{
+					"type": "idem/probe",
+					"body_schema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"reason": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{"type": "worker", "executor": "stub"},
 			},
@@ -89,13 +101,22 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 
 	messagesPath := "/v1/instances/" + instanceID + "/messages"
 
+	// @constraint: instance creation enqueues an `instance/root` synthetic
+	// envelope through the runtime-synthetic-envelope helper, so the ledger
+	// is NOT empty before the test's emits. Capture the baseline count once
+	// so each assertion checks the delta the test caused rather than an
+	// absolute count that drifts with future seeds.
+	baseline := countInstanceMessagesAtLeast(t, ep, messagesPath, 1, 5*time.Second)
+
 	// @deliberate: the body is held constant across all three POSTs below so
 	// the ONLY variable under test is the presence/absence of the
 	// Idempotency-Key header — any other delta would muddy what the wire
 	// response is asserting about.
 	invalidateBody := map[string]any{
-		"kind":   "invalidate",
-		"target": "worker",
+		"type": "idem/probe",
+		"payload": map[string]any{
+			"reason": "idempotency-required-e2e",
+		},
 	}
 
 	// @constraint: control-api MCP requires Idempotency-Key on emit — a
@@ -113,12 +134,12 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 
 	// @constraint: the rejected keyless emit must leave NO trace — the dedup
 	// INSERT and the envelope insert share one tx and both run only AFTER the
-	// key guard, so a rejected keyless POST inserts neither and GET shows zero
-	// messages (no envelope ⇒ no idempotency row, since the row is written in
-	// the same tx as the envelope it points at).
-	if n := countInstanceMessages(t, ep, messagesPath); n != 0 {
-		t.Fatalf("after a rejected keyless POST, GET %s shows %d messages, want 0 — the rejected emit must leave no envelope (and thus no idempotency row)",
-			messagesPath, n)
+	// key guard, so a rejected keyless POST inserts neither (no envelope ⇒ no
+	// idempotency row, since the row is written in the same tx as the envelope
+	// it points at) and the count stays at baseline.
+	if n := countInstanceMessages(t, ep, messagesPath); n != baseline {
+		t.Fatalf("after a rejected keyless POST, GET %s shows %d messages, want baseline %d — the rejected emit must leave no envelope (and thus no idempotency row)",
+			messagesPath, n, baseline)
 	}
 
 	// @constraint: a keyed emit must return 201 Created with a message_id.
@@ -133,8 +154,10 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 		t.Fatalf("first keyed POST returned no message_id; body: %s", string(raw))
 	}
 
-	if n := countInstanceMessages(t, ep, messagesPath); n != 1 {
-		t.Fatalf("after the first keyed POST, GET %s shows %d messages, want exactly 1", messagesPath, n)
+	// @constraint: exactly one new envelope must exist now (baseline + 1) —
+	// the accepted keyed emit inserts a single envelope, no more.
+	if n := countInstanceMessages(t, ep, messagesPath); n != baseline+1 {
+		t.Fatalf("after the first keyed POST, GET %s shows %d messages, want exactly baseline+1=%d", messagesPath, n, baseline+1)
 	}
 
 	// @constraint: a replay POST carrying the SAME key must return 200 OK
@@ -147,9 +170,30 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 	if replayMsgID != firstMsgID {
 		t.Fatalf("replay returned message_id %q, want the original %q — a replayed key must dedup to the original message", replayMsgID, firstMsgID)
 	}
-	if n := countInstanceMessages(t, ep, messagesPath); n != 1 {
-		t.Fatalf("after replaying the same key, GET %s shows %d messages, want still exactly 1 — the replay must not insert a second envelope",
-			messagesPath, n)
+	if n := countInstanceMessages(t, ep, messagesPath); n != baseline+1 {
+		t.Fatalf("after replaying the same key, GET %s shows %d messages, want still exactly baseline+1=%d — the replay must not insert a second envelope",
+			messagesPath, n, baseline+1)
+	}
+}
+
+// countInstanceMessagesAtLeast polls the messages-list route until the
+// count reaches at least `want` (or the deadline passes, in which case
+// the test fails). Used to baseline a count when the seed flow
+// asynchronously enqueues envelopes (e.g. the `instance/root` synthetic
+// envelope that instance-create writes through the runtime-synthetic-
+// envelope helper).
+func countInstanceMessagesAtLeast(t *testing.T, ep harness.RimskyEndpoint, path string, want int, deadline time.Duration) int {
+	t.Helper()
+	end := time.Now().Add(deadline)
+	for {
+		n := countInstanceMessages(t, ep, path)
+		if n >= want {
+			return n
+		}
+		if !time.Now().Before(end) {
+			t.Fatalf("baseline count for %s never reached %d within %v (last seen=%d)", path, want, deadline, n)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 

@@ -23,8 +23,6 @@
 package scenarios
 
 import (
-	"bytes"
-	"net/http"
 	"testing"
 	"time"
 
@@ -116,14 +114,11 @@ func TestNoOpCommit(t *testing.T) {
 	priorCount := len(priorCommitted.Events)
 
 	// @deliberate: Under frame resolution, operator-driven invalidation goes through
-	// the controlapi → InvalidateNode → frame.EnqueueOrCoalesce path.
-	// A direct UpdateState bypasses the frame engine and leaves the
+	// the runtime-synthetic `node/invalidate` envelope + frame path
+	// (the same one the retired operator route used internally). A
+	// direct UpdateState bypasses the frame engine and leaves the
 	// node stale-with-nil-frame_id.
-	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+producer.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	h.InvalidateNode(iid, producer.ID)
 
 	require.Eventually(t,
 		func() bool {

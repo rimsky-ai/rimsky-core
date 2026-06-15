@@ -152,20 +152,6 @@ func TestPayloads_RoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("MessagePayload", func(t *testing.T) {
-		in := MessagePayload{
-			Kind:           "invalidate",
-			SenderKind:     "operator",
-			Sender:         "alice",
-			Target:         "self",
-			MessagePayload: map[string]any{"k": "v"},
-		}
-		var out MessagePayload
-		roundTrip(t, in, &out)
-		if !reflect.DeepEqual(in, out) {
-			t.Fatalf("round-trip mismatch: in=%+v out=%+v", in, out)
-		}
-	})
 }
 
 func roundTrip(t *testing.T, in any, out any) {
@@ -196,7 +182,15 @@ func TestPayloadSchemaForType(t *testing.T) {
 		{"transient/await_async", reflect.TypeOf(TransientAwaitAsyncPayload{}), true},
 		{"attribute/budget_cents/changed", reflect.TypeOf(AttributeChangedPayload{}), true},
 		{"event/discovered", reflect.TypeOf(EventPayload{}), true},
-		{"message/invalidate/operator/self", reflect.TypeOf(MessagePayload{}), true},
+		// @deliberate: message/* is a retired top-level taxonomy kind —
+		// the operator-invalidate retirement removed MessagePayload, so
+		// PayloadSchemaForType must return (nil, false) for any
+		// message/* path. Kept here as a regression guard against the
+		// kind sneaking back in.
+		{"message/invalidate/operator/self", nil, false},
+		// @deliberate: prefix paths (terminal/*, attribute/*, etc.)
+		// return (nil, false) — the resolver matches concrete leaves
+		// only, never glob-style prefixes.
 		{"terminal/*", nil, false},
 		{"terminal/error/*", nil, false},
 		{"attribute/*", nil, false},

@@ -113,7 +113,6 @@ func driveProducerClassifiedRetry(
 	// to surface the producer vocabulary the runtime routes.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: templateName, Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

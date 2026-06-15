@@ -2,24 +2,27 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// admin_diagnostics.go implements three diagnostic endpoints (plan G1,
-// G2, G3):
+// admin_diagnostics.go implements the read-only admin diagnostics
+// endpoints (plan G1, G2):
 //
-//   - GET  /admin/diagnostics/held-frames  — frames with at least one
+//   - GET /admin/diagnostics/held-frames  — frames with at least one
 //     parked node (the platform-level "held" notion: a frame's
 //     downstream work is awaiting external action).
-//   - GET  /admin/diagnostics/parked-nodes  — every currently-parked
+//   - GET /admin/diagnostics/parked-nodes  — every currently-parked
 //     node, optional filter ?reason=<name>.
-//   - POST /admin/instances/{instance}/nodes/{node_id}/invalidate
-//     — admin-triggered invalidate / parked-resume.
+//
+// The admin-invalidate POST retired with the 2026-06-14
+// message-schema-layer reshape (operators who want to invalidate post
+// a typed message via `POST /instances/{id}/messages` with a
+// template-declared `messages:` type; ad-hoc force-stale lives at the
+// gated `POST /debug/override` endpoint).
 //
 // Auth: standard admin perimeter (deps.Auth middleware applies). The
-// endpoints are read-only except the explicit invalidate POST.
+// endpoints are read-only.
 package controlapi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -27,7 +30,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
@@ -69,7 +71,6 @@ func registerAdminDiagnosticsRoutes(r chi.Router, deps AppDeps) {
 	r.Get("/admin/diagnostics/parked-nodes", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
 	r.Get("/diagnostics/parked", gate(deps, "parked-node:read", handleAdminParkedNodes(deps)))
 	r.Get("/admin/diagnostics/wait-sets", gate(deps, "waitset:read", handleAdminWaitSets(deps)))
-	r.Post("/admin/instances/{instance}/nodes/{node_id}/invalidate", gate(deps, "node:invalidate", handleAdminInvalidateNode(deps)))
 }
 
 // HeldFramesResponse is the body of GET /admin/diagnostics/held-frames.
@@ -242,98 +243,3 @@ func listParkedDiagnostic(ctx context.Context, tx persistence.Tx, deps AppDeps, 
 	}
 	return deps.Queue.ListParkedDiagnostic(ctx, tx, reasonFilter)
 }
-
-// handleAdminInvalidateNode is POST /admin/instances/{instance}/nodes/{node_id}/invalidate.
-//
-// Dispatches by node state (per foundation/runtime.UnifiedInvalidate):
-//   - parked        → wake (node_run returns to phase='pending';
-//     the next supervisor tick re-dispatches with
-//     resume_reason='external_invalidate').
-//   - running       → 409 Conflict (cannot preempt in-flight work).
-//   - fresh / stale / failed → frame-engine invalidate (state → stale;
-//     cascade engine handles propagation).
-//
-// The unified-handler shape (per plan G3) is delegated to the wired
-// InvalidateHandler on AppDeps. When unset, returns 503.
-func handleAdminInvalidateNode(deps AppDeps) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		instanceID, err := uuid.Parse(chi.URLParam(req, "instance"))
-		if err != nil {
-			badRequest(w, "invalid instance")
-			return
-		}
-		nodeID, err := uuid.Parse(chi.URLParam(req, "node_id"))
-		if err != nil {
-			badRequest(w, "invalid node_id")
-			return
-		}
-		if deps.InvalidateHandler == nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"error": "no invalidate handler wired on this control-api process",
-			})
-			return
-		}
-		// @deliberate: validate node existence + state BEFORE the dry-run gate so a
-		// dry-run against a non-existent node or a running node surfaces the same
-		// 404 / 409 a real call would.
-		// @reason: spec section "Dry-run mode" — "Errors from validation surface as in normal flow."
-		var (
-			nodeFound bool
-			nodeState string
-		)
-		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			n, err := deps.Persist.Nodes().Get(ctx, nodeID, tx)
-			if err != nil {
-				return err
-			}
-			if n == nil {
-				return nil
-			}
-			nodeFound = true
-			nodeState = string(n.State)
-			return nil
-		}); err != nil {
-			writeError(w, err)
-			return
-		}
-		if !nodeFound {
-			notFoundResp(w, "node not found")
-			return
-		}
-		if nodeState == "running" {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": ErrInvalidateConflict.Error()})
-			return
-		}
-		if WriteDryRunResponse(w, req, "would_have_invalidated", map[string]any{
-			"instance_id": instanceID.String(),
-			"node_id":     nodeID.String(),
-		}) {
-			return
-		}
-		result, err := deps.InvalidateHandler.InvalidateNode(req.Context(), instanceID.String(), nodeID.String())
-		if err != nil {
-			if errors.Is(err, ErrInvalidateConflict) {
-				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
-				return
-			}
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, result)
-	}
-}
-
-// InvalidateHandler is the unified surface used by admin invalidates,
-// on_event handler-emitted invalidates, and (forward-compat) any other
-// invalidate source. The control-api layer holds an interface so it
-// doesn't need to import the foundation runner.
-type InvalidateHandler interface {
-	InvalidateNode(ctx context.Context, instanceID, nodeID string) (any, error)
-}
-
-// ErrInvalidateConflict is the sentinel returned by InvalidateHandler
-// implementations when the node is `running` — the only state that does
-// not accept an invalidate (the in-flight work cannot be preempted).
-// parked / fresh / stale / failed nodes all accept the invalidate. The
-// HTTP layer maps this to 409.
-var ErrInvalidateConflict = errors.New("admin invalidate is rejected only for a running node; the work cannot be preempted")

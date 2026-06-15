@@ -90,7 +90,6 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "tmpl-error-policy-pass", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -108,8 +107,8 @@ func testTemplateErrorPolicyPass(t *testing.T) {
 			scenario.MakeNode(node.TemplateNodeDef{Type: "downstream"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "worker", Type: "terminal/*",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				})),
 		},
 	})
@@ -177,7 +176,6 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "tmpl-error-policy-giveup", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -194,8 +192,8 @@ func testTemplateErrorPolicyGiveUp(t *testing.T) {
 			},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "worker", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				})),
 		},
 	})
@@ -279,7 +277,6 @@ func testTemplateErrorPolicyRetry(t *testing.T) {
 	const retryCount = 3
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "tmpl-error-policy-retry", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -423,7 +420,6 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 	const retryCount = 2
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "tmpl-error-policy-discard", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -450,8 +446,8 @@ func testTemplateErrorPolicyDiscardClaimsThenRetry(t *testing.T) {
 				},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "acquirer", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},

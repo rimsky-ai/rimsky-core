@@ -697,15 +697,6 @@ type Node struct {
 	UpdatedAt            string  `json:"updated_at"`
 }
 
-// InvalidateNodeRequest is the POST /nodes/{id}/invalidate body.
-type InvalidateNodeRequest struct {
-	Reason string `json:"reason,omitempty"`
-	// Frame controls the per-emit frame discipline ("" | "in" | "next").
-	// Default "" → "next". See the reactive-loops + lifecycle-handlers
-	// spec §5.
-	Frame string `json:"frame,omitempty"`
-}
-
 // ParkedNodeEntry mirrors controlapi.ParkedNodeEntry on the wire.
 //
 //	@concept: parked-state
@@ -751,15 +742,6 @@ func (c *Client) GetNode(ctx context.Context, id string) (*Node, error) {
 		return nil, err
 	}
 	return &out, nil
-}
-
-// InvalidateNode calls POST /nodes/{id}/invalidate.
-func (c *Client) InvalidateNode(ctx context.Context, id string, body InvalidateNodeRequest) error {
-	req, err := c.request(ctx, http.MethodPost, "/v1/nodes/"+url.PathEscape(id)+"/invalidate", body)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
 }
 
 // ResetNode calls POST /nodes/{id}/reset.
@@ -869,32 +851,36 @@ func (c *Client) Health(ctx context.Context) (*HealthResponse, error) {
 // MessageItem mirrors the JSON projection of `persistence.MessageRow`
 // returned by GET /instances/{id}/messages and GET /messages/{id}.
 // Payload bytes are forwarded verbatim per `@blessed-invariant 21`.
+//
+// The envelope's discriminator is `type` (the typed-message type-path
+// declared in the template's `messages:` registry); the prior `kind`
+// field and the `target` node-alias routing field retired with the
+// message-schema-layer reshape and are no longer surfaced in the
+// server response.
 type MessageItem struct {
-	ID                  string          `json:"id"`
-	InstanceID          string          `json:"instance_id"`
-	Kind                string          `json:"kind"`
-	Sender              string          `json:"sender"`
-	SenderKind          string          `json:"sender_kind"`
-	Target              string          `json:"target,omitempty"`
-	Payload             json.RawMessage `json:"payload,omitempty"`
-	BackfillOperationID string          `json:"backfill_operation_id,omitempty"`
-	ReceivedAt          time.Time       `json:"received_at"`
-	DeliveredAt         *time.Time      `json:"delivered_at,omitempty"`
-	FrameID             string          `json:"frame_id,omitempty"`
-	Cancelled           bool            `json:"cancelled,omitempty"`
+	ID          string          `json:"id"`
+	InstanceID  string          `json:"instance_id"`
+	Type        string          `json:"type"`
+	Sender      string          `json:"sender"`
+	SenderKind  string          `json:"sender_kind"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	ReceivedAt  time.Time       `json:"received_at"`
+	DeliveredAt *time.Time      `json:"delivered_at,omitempty"`
+	FrameID     string          `json:"frame_id,omitempty"`
+	Cancelled   bool            `json:"cancelled,omitempty"`
 }
 
 // ListMessagesQuery is the GET /instances/{id}/messages filter shape.
 // Mirrors `persistence.MessageListFilter` plus the pagination knobs.
+// The retired `kind` and `target` filters have no column on the
+// server side and are no longer accepted.
 type ListMessagesQuery struct {
-	Kind                string
-	SenderKind          string
-	Target              string
-	BackfillOperationID string
-	DeliveredAfter      string
-	DeliveredBefore     string
-	Cursor              string
-	Limit               int
+	Type            string
+	SenderKind      string
+	DeliveredAfter  string
+	DeliveredBefore string
+	Cursor          string
+	Limit           int
 }
 
 // ListMessagesResponse is the GET /instances/{id}/messages body shape.
@@ -906,17 +892,11 @@ type ListMessagesResponse struct {
 // ListInstanceMessages calls GET /instances/{id}/messages.
 func (c *Client) ListInstanceMessages(ctx context.Context, instanceID string, q ListMessagesQuery) (*ListMessagesResponse, error) {
 	v := url.Values{}
-	if q.Kind != "" {
-		v.Set("kind", q.Kind)
+	if q.Type != "" {
+		v.Set("type", q.Type)
 	}
 	if q.SenderKind != "" {
 		v.Set("sender_kind", q.SenderKind)
-	}
-	if q.Target != "" {
-		v.Set("target", q.Target)
-	}
-	if q.BackfillOperationID != "" {
-		v.Set("backfill_operation_id", q.BackfillOperationID)
 	}
 	if q.DeliveredAfter != "" {
 		v.Set("delivered_after", q.DeliveredAfter)
@@ -956,116 +936,6 @@ func (c *Client) GetMessage(ctx context.Context, id string) (*MessageItem, error
 		return nil, err
 	}
 	return &out, nil
-}
-
-// CreateBackfillRequest is the POST /instances/{id}/backfills body.
-type CreateBackfillRequest struct {
-	TargetNode               string          `json:"target_node"`
-	PartitionRequestOverride json.RawMessage `json:"partition_request_override,omitempty"`
-	Reason                   string          `json:"reason,omitempty"`
-}
-
-// CreateBackfillResponse is the POST response.
-type CreateBackfillResponse struct {
-	MessageID           string `json:"message_id"`
-	BackfillOperationID string `json:"backfill_operation_id"`
-}
-
-// BackfillItem is the projection of a backfill-class message.
-type BackfillItem struct {
-	OperationID string     `json:"operation_id"`
-	MessageID   string     `json:"message_id"`
-	TargetNode  string     `json:"target_node"`
-	Reason      string     `json:"reason,omitempty"`
-	ReceivedAt  time.Time  `json:"received_at"`
-	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
-	FrameID     string     `json:"frame_id,omitempty"`
-	Cancelled   bool       `json:"cancelled,omitempty"`
-}
-
-// ListBackfillsResponse is the GET /instances/{id}/backfills body.
-type ListBackfillsResponse struct {
-	Backfills  []BackfillItem `json:"backfills"`
-	NextCursor string         `json:"next_cursor,omitempty"`
-}
-
-// BackfillPartitionRow is one element of GET /backfills/{op}/partitions.
-type BackfillPartitionRow struct {
-	RunID              string `json:"run_id"`
-	NodeID             string `json:"node_id"`
-	ChildKey           string `json:"child_key,omitempty"`
-	State              string `json:"state"`
-	SettlingSignalType string `json:"settling_signal_type,omitempty"`
-}
-
-// BackfillPartitionsResponse is the GET /backfills/{op}/partitions body.
-type BackfillPartitionsResponse struct {
-	Partitions []BackfillPartitionRow `json:"partitions"`
-}
-
-// CreateBackfill calls POST /instances/{id}/backfills.
-func (c *Client) CreateBackfill(ctx context.Context, instanceID string, body CreateBackfillRequest) (*CreateBackfillResponse, error) {
-	req, err := c.request(ctx, http.MethodPost, "/v1/instances/"+url.PathEscape(instanceID)+"/backfills", body)
-	if err != nil {
-		return nil, err
-	}
-	var out CreateBackfillResponse
-	if err := c.do(req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// ListBackfills calls GET /instances/{id}/backfills.
-func (c *Client) ListBackfills(ctx context.Context, instanceID string) (*ListBackfillsResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/v1/instances/"+url.PathEscape(instanceID)+"/backfills", nil)
-	if err != nil {
-		return nil, err
-	}
-	var out ListBackfillsResponse
-	if err := c.do(req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// GetBackfill calls GET /backfills/{op_id}.
-func (c *Client) GetBackfill(ctx context.Context, opID string) (*BackfillItem, error) {
-	req, err := c.request(ctx, http.MethodGet, "/v1/backfills/"+url.PathEscape(opID), nil)
-	if err != nil {
-		return nil, err
-	}
-	var out BackfillItem
-	if err := c.do(req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// GetBackfillPartitions calls GET /backfills/{op_id}/partitions.
-func (c *Client) GetBackfillPartitions(ctx context.Context, opID string) (*BackfillPartitionsResponse, error) {
-	req, err := c.request(ctx, http.MethodGet, "/v1/backfills/"+url.PathEscape(opID)+"/partitions", nil)
-	if err != nil {
-		return nil, err
-	}
-	var out BackfillPartitionsResponse
-	if err := c.do(req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-// CancelBackfill calls POST /backfills/{op_id}/cancel.
-func (c *Client) CancelBackfill(ctx context.Context, opID string) (map[string]any, error) {
-	req, err := c.request(ctx, http.MethodPost, "/v1/backfills/"+url.PathEscape(opID)+"/cancel", nil)
-	if err != nil {
-		return nil, err
-	}
-	var out map[string]any
-	if err := c.do(req, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // AssetItem is one element of GET /instances/{id}/assets. Mirrors the

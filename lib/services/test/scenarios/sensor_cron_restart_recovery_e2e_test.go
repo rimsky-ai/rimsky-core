@@ -72,9 +72,16 @@ const cronPublisherName = "tick"
 
 // cronReactorNode is the template's reactor node — the
 // publisher_subscription's target_node. The sensor's emitted envelope
-// carries target=<this>, and the persisted message rows surface it as
-// `target_node` we can filter on through GET /v1/instances/{id}/messages.
+// carries type=<cronMessageType>, declared in the template's `messages:`
+// registry as a virtual node-type the reactor subscribes to via
+// `node: <cronMessageType>, type: terminal/success`.
 const cronReactorNode = "reactor"
+
+// cronMessageType is the message type the cron publisher emits,
+// declared in the template's `messages:` registry. The reactor
+// subscribes to it as a virtual node-type with terminal/success per
+// the post-2026-06-14 message-schema-layer DSL.
+const cronMessageType = "tick/reactor"
 
 // TestSensorCronRestartRecovery is the cross-stack restart-recovery
 // proof for STORY-sensor-cron. See the file doc for the falsifier
@@ -288,7 +295,7 @@ func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, i
 		if status == http.StatusOK {
 			var resp struct {
 				Messages []struct {
-					Kind        string     `json:"kind"`
+					Type        string     `json:"type"`
 					Sender      string     `json:"sender"`
 					SenderKind  string     `json:"sender_kind"`
 					ReceivedAt  time.Time  `json:"received_at"`
@@ -297,8 +304,8 @@ func requireRecoveredPublisherMessage(t *testing.T, ep harness.RimskyEndpoint, i
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
 				for _, m := range resp.Messages {
-					lastSeen = fmt.Sprintf("kind=%s sender=%s sender_kind=%s received=%s delivered=%v",
-						m.Kind, m.Sender, m.SenderKind,
+					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s received=%s delivered=%v",
+						m.Type, m.Sender, m.SenderKind,
 						m.ReceivedAt.UTC().Format(time.RFC3339Nano), m.DeliveredAt)
 					if m.SenderKind != "publisher" {
 						continue
@@ -382,18 +389,31 @@ func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "sensor-cron-restart",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "sensor-cron-restart",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			"messages": []map[string]any{
+				{
+					// @deliberate: sensor-cron emits payload with
+					// {observed_at, cron, fire_at}. Loose schema since the
+					// test does not introspect body fields, only the
+					// persisted envelope's sender_kind / sender /
+					// received_at.
+					"type": cronMessageType,
+					"body_schema": map[string]any{
+						"type":                 "object",
+						"properties":           map[string]any{},
+						"additionalProperties": true,
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{
 					"type": cronReactorNode,
 					"subscribes": []map[string]any{
 						{
-							"instance":               true,
-							"type":                   "message/invalidate/publisher/" + cronReactorNode,
-							"frame":                  "in",
+							"node":                   cronMessageType,
+							"type":                   "terminal/success",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
@@ -406,7 +426,7 @@ func deployCronSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 					"kind":         "cron",
 					"config":       json.RawMessage(cronBytes),
 					"target_node":  cronReactorNode,
-					"message_kind": "invalidate",
+					"message_type": cronMessageType,
 				},
 			},
 		},

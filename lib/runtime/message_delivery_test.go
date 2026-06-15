@@ -2,8 +2,6 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @blessed-invariant: no-silent-override-coalesce — exercised here: coalesce delivery preserves the latest payload without silent override.
-
 package runtime
 
 import (
@@ -31,15 +29,13 @@ func newFakeMessages() *fakeMessagesTable {
 
 func (f *fakeMessagesTable) Insert(_ context.Context, _ persistence.Tx, req persistence.EnqueueMessageRequest) error {
 	f.rows[req.ID] = &persistence.MessageRow{
-		ID:                  req.ID,
-		InstanceID:          req.InstanceID,
-		Kind:                req.Kind,
-		Sender:              req.Sender,
-		SenderKind:          req.SenderKind,
-		Target:              req.Target,
-		Payload:             req.Payload,
-		BackfillOperationID: req.BackfillOperationID,
-		ReceivedAt:          req.ReceivedAt,
+		ID:         req.ID,
+		InstanceID: req.InstanceID,
+		Type:       req.Type,
+		Sender:     req.Sender,
+		SenderKind: req.SenderKind,
+		Payload:    req.Payload,
+		ReceivedAt: req.ReceivedAt,
 	}
 	return nil
 }
@@ -53,19 +49,6 @@ func (f *fakeMessagesTable) MarkDelivered(_ context.Context, _ persistence.Tx, i
 	fid := frame
 	row.FrameID = &fid
 	return true, nil
-}
-
-func (f *fakeMessagesTable) MarkCancelled(_ context.Context, _ persistence.Tx, op shared.UUID, at time.Time) (int, error) {
-	n := 0
-	for _, r := range f.rows {
-		if r.BackfillOperationID != nil && *r.BackfillOperationID == op && r.DeliveredAt == nil {
-			r.Cancelled = true
-			t := at
-			r.DeliveredAt = &t
-			n++
-		}
-	}
-	return n, nil
 }
 
 func (f *fakeMessagesTable) ListPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
@@ -101,6 +84,10 @@ func (f *fakeMessagesTable) Get(_ context.Context, id shared.UUID) (*persistence
 	return &cp, nil
 }
 
+func (f *fakeMessagesTable) GetInTx(ctx context.Context, _ persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
+	return f.Get(ctx, id)
+}
+
 func (f *fakeMessagesTable) List(_ context.Context, filter persistence.MessageListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	var out []persistence.MessageRow
 	for _, r := range f.rows {
@@ -109,11 +96,6 @@ func (f *fakeMessagesTable) List(_ context.Context, filter persistence.MessageLi
 		}
 		if filter.FrameID != nil {
 			if r.FrameID == nil || *r.FrameID != *filter.FrameID {
-				continue
-			}
-		}
-		if filter.BackfillOperationID != nil {
-			if r.BackfillOperationID == nil || *r.BackfillOperationID != *filter.BackfillOperationID {
 				continue
 			}
 		}
@@ -132,7 +114,7 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	ctx := context.Background()
 	good := persistence.EnqueueMessageRequest{
 		ID: shared.UUID(uuid.New()), InstanceID: shared.UUID(uuid.New()),
-		Kind: "invalidate", Sender: "op-A", SenderKind: "operator",
+		Type: "invalidate", Sender: "op-A", SenderKind: "operator",
 	}
 	if err := EnqueueMessage(ctx, nil, m, good); err != nil {
 		t.Fatalf("EnqueueMessage(good): %v", err)
@@ -152,214 +134,104 @@ func TestEnqueueMessage_ValidatesShape(t *testing.T) {
 	}
 }
 
-// TestDeliverPendingMessages_Coalesce verifies coalesce mode delivers
-// every pending message into the frame.
-func TestDeliverPendingMessages_Coalesce(t *testing.T) {
+// TestDeliverPendingMessages_OneMessagePerCall is the load-bearing
+// regression guard for the one-message-per-frame invariant. Seed ≥10
+// pending messages; assert DeliverPendingMessages returns exactly one
+// per invocation, in received-order, and the rest stay pending.
+//
+// The cheaper shape "deliver everything pending and let downstream sort it
+// out" silently collapses distinct override envelopes into one rerun and
+// is the falsifier this test exists to catch.
+func TestDeliverPendingMessages_OneMessagePerCall(t *testing.T) {
 	m := newFakeMessages()
 	ctx := context.Background()
 	inst := shared.UUID(uuid.New())
 	frame := shared.UUID(uuid.New())
 	now := time.Now().UTC()
 
-	for i := 0; i < 3; i++ {
+	const total = 10
+	ids := make([]shared.UUID, total)
+	for i := 0; i < total; i++ {
+		ids[i] = shared.UUID(uuid.New())
 		_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-			ID: shared.UUID(uuid.New()), InstanceID: inst, Kind: "invalidate",
+			ID: ids[i], InstanceID: inst, Type: "invalidate",
 			Sender: "op-A", SenderKind: "operator",
 			ReceivedAt: now.Add(time.Duration(i) * time.Second),
 		})
 	}
 
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, FrameDeliveryCoalesce, now, nil)
-	if err != nil {
-		t.Fatalf("DeliverPendingMessages: %v", err)
-	}
-	if len(res.Messages) != 3 {
-		t.Fatalf("expected 3 delivered messages, got %d", len(res.Messages))
-	}
-	for _, msg := range res.Messages {
-		if msg.DeliveredAt == nil || msg.FrameID == nil || *msg.FrameID != frame {
-			t.Fatalf("message %s missing delivery fields: %+v", msg.ID, msg)
+	for i := 0; i < total; i++ {
+		res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, now)
+		if err != nil {
+			t.Fatalf("DeliverPendingMessages[%d]: %v", i, err)
+		}
+		if len(res.Messages) != 1 {
+			t.Fatalf("DeliverPendingMessages[%d] returned %d messages, want 1 (one-message-per-frame)",
+				i, len(res.Messages))
+		}
+		if res.Messages[0].ID != ids[i] {
+			t.Fatalf("DeliverPendingMessages[%d] returned id=%s, want oldest pending %s",
+				i, res.Messages[0].ID, ids[i])
+		}
+		remaining, _ := m.ListPendingForInstance(ctx, nil, inst)
+		if want := total - (i + 1); len(remaining) != want {
+			t.Fatalf("after delivery %d: pending=%d, want %d", i, len(remaining), want)
 		}
 	}
-}
 
-// TestDeliverPendingMessages_SerialQueue picks only the oldest.
-func TestDeliverPendingMessages_SerialQueue(t *testing.T) {
-	m := newFakeMessages()
-	ctx := context.Background()
-	inst := shared.UUID(uuid.New())
-	frame := shared.UUID(uuid.New())
-	now := time.Now().UTC()
-
-	first := shared.UUID(uuid.New())
-	second := shared.UUID(uuid.New())
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-		ID: first, InstanceID: inst, Kind: "invalidate",
-		Sender: "op-A", SenderKind: "operator",
-		ReceivedAt: now,
-	})
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-		ID: second, InstanceID: inst, Kind: "invalidate",
-		Sender: "op-A", SenderKind: "operator",
-		ReceivedAt: now.Add(time.Second),
-	})
-
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, FrameDeliverySerialQueue, now, nil)
+	// @deliberate: One more call yields zero — the queue is drained.
+	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, now)
 	if err != nil {
-		t.Fatalf("DeliverPendingMessages: %v", err)
-	}
-	if len(res.Messages) != 1 || res.Messages[0].ID != first {
-		t.Fatalf("expected only %s delivered, got %+v", first, res.Messages)
-	}
-	// @deliberate: Second remains pending.
-	if pending, _ := m.ListPendingForInstance(ctx, nil, inst); len(pending) != 1 || pending[0].ID != second {
-		t.Fatalf("expected second message pending, got %+v", pending)
-	}
-}
-
-// TestDeliverPendingMessages_SkipsCancelled — pre-cancelled rows are
-// already delivered_at-stamped and never re-delivered.
-func TestDeliverPendingMessages_SkipsCancelled(t *testing.T) {
-	m := newFakeMessages()
-	ctx := context.Background()
-	inst := shared.UUID(uuid.New())
-	frame := shared.UUID(uuid.New())
-	now := time.Now().UTC()
-	op := shared.UUID(uuid.New())
-
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-		ID: shared.UUID(uuid.New()), InstanceID: inst, Kind: "invalidate",
-		Sender: "op-A", SenderKind: "operator", BackfillOperationID: &op,
-		ReceivedAt: now,
-	})
-	if _, err := m.MarkCancelled(ctx, nil, op, now); err != nil {
-		t.Fatalf("MarkCancelled: %v", err)
-	}
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, FrameDeliveryCoalesce, now, nil)
-	if err != nil {
-		t.Fatalf("DeliverPendingMessages: %v", err)
+		t.Fatalf("DeliverPendingMessages(drained): %v", err)
 	}
 	if len(res.Messages) != 0 {
-		t.Fatalf("expected no delivered messages (only cancelled), got %d", len(res.Messages))
+		t.Fatalf("expected empty deliver-set after drain, got %d", len(res.Messages))
 	}
 }
 
-// sharedReceiverResolver maps every message to one receiver node type, so
-// the coalesce conflict decision reduces to payload equality — exactly
-// the no-silent-override-loss property the conflict-aware mode protects.
-func sharedReceiverResolver(persistence.MessageRow) []string { return []string{"fan_out"} }
-
-// TestDeliverPendingMessages_CoalesceSameValueCoalesces — under coalesce,
-// two messages that bind the same payload-reading node to the SAME value
-// coalesce into one frame (idempotent bindings are not a conflict).
-func TestDeliverPendingMessages_CoalesceSameValueCoalesces(t *testing.T) {
+// TestDeliverPendingMessages_DeliveredMatchesTrigger pins the invariant
+// behind the reworded blessed-invariant comment on
+// cascadeMessageVirtualNodeSettleInTx: the message
+// `Messages().ListDeliveredForFrame(frameID)` returns is the same row
+// the frame's `triggering_message_id` column points at. The two queries
+// hit different SQL paths and the equality is by construction; this
+// test pins it so a refactor that splits the two row identities (e.g. a
+// future delivery sweep that stamps `frame_id` on a different envelope
+// than the frame's triggering message) fails loudly. The fake exercises
+// the contract: one pending message + a frame the caller pairs with it
+// → after delivery the listed row IS that message id, NOT some other.
+func TestDeliverPendingMessages_DeliveredMatchesTrigger(t *testing.T) {
 	m := newFakeMessages()
 	ctx := context.Background()
 	inst := shared.UUID(uuid.New())
 	frame := shared.UUID(uuid.New())
 	now := time.Now().UTC()
 
-	same := []byte(`{"partition_request_override":{"key":"A"}}`)
-	for i := 0; i < 2; i++ {
-		_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-			ID: shared.UUID(uuid.New()), InstanceID: inst, Kind: "invalidate",
-			Sender: "op-A", SenderKind: "operator", Payload: same,
-			ReceivedAt: now.Add(time.Duration(i) * time.Second),
-		})
-	}
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, FrameDeliveryCoalesce, now, sharedReceiverResolver)
+	msgID := shared.UUID(uuid.New())
+	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
+		ID: msgID, InstanceID: inst, Type: "ping/recheck",
+		Sender: "op-A", SenderKind: "operator", ReceivedAt: now,
+	})
+
+	// @deliberate: Deliver stamps delivered_at + frame_id = `frame` on the row.
+	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, now)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}
-	if len(res.Messages) != 2 {
-		t.Fatalf("same-value coalesce: expected both delivered into one frame, got %d", len(res.Messages))
+	if len(res.Messages) != 1 || res.Messages[0].ID != msgID {
+		t.Fatalf("DeliverPendingMessages: got %+v, want one row with id=%s", res.Messages, msgID)
 	}
-	if pending, _ := m.ListPendingForInstance(ctx, nil, inst); len(pending) != 0 {
-		t.Fatalf("same-value coalesce: expected 0 pending, got %d", len(pending))
-	}
-}
 
-// TestDeliverPendingMessages_CoalesceDifferentValuesSplit — under coalesce,
-// two backfills with DIFFERENT overrides targeting the same payload-reading
-// node split into consecutive frames (received-order), neither lost. The
-// regression guard for silent override loss.
-func TestDeliverPendingMessages_CoalesceDifferentValuesSplit(t *testing.T) {
-	m := newFakeMessages()
-	ctx := context.Background()
-	inst := shared.UUID(uuid.New())
-	frame1 := shared.UUID(uuid.New())
-	frame2 := shared.UUID(uuid.New())
-	now := time.Now().UTC()
-
-	overrideA := []byte(`{"partition_request_override":{"key":"A"}}`)
-	overrideB := []byte(`{"partition_request_override":{"key":"B"}}`)
-	first := shared.UUID(uuid.New())
-	second := shared.UUID(uuid.New())
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-		ID: first, InstanceID: inst, Kind: "invalidate",
-		Sender: "op-A", SenderKind: "operator", Payload: overrideA,
-		ReceivedAt: now,
-	})
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-		ID: second, InstanceID: inst, Kind: "invalidate",
-		Sender: "op-A", SenderKind: "operator", Payload: overrideB,
-		ReceivedAt: now.Add(time.Second),
-	})
-
-	// @deliberate: Frame 1: only the first (older, override A); B conflicts and stays pending.
-	res1, err := DeliverPendingMessages(ctx, nil, m, inst, frame1, FrameDeliveryCoalesce, now, sharedReceiverResolver)
+	// @deliberate: ListDeliveredForFrame must return the exact same id — substitution reads through this path; the frame's triggering_message_id (in real deployments) points at the same row.
+	delivered, err := m.ListDeliveredForFrame(ctx, nil, frame)
 	if err != nil {
-		t.Fatalf("DeliverPendingMessages frame1: %v", err)
+		t.Fatalf("ListDeliveredForFrame: %v", err)
 	}
-	if len(res1.Messages) != 1 || res1.Messages[0].ID != first {
-		t.Fatalf("frame1: expected only the first (override A), got %+v", res1.Messages)
+	if len(delivered) != 1 {
+		t.Fatalf("ListDeliveredForFrame: got %d rows, want exactly 1", len(delivered))
 	}
-	pending, _ := m.ListPendingForInstance(ctx, nil, inst)
-	if len(pending) != 1 || pending[0].ID != second {
-		t.Fatalf("frame1: expected the second (override B) still pending, got %+v", pending)
-	}
-
-	// @deliberate: Frame 2: the second (override B) delivers next, in order. Nothing lost.
-	res2, err := DeliverPendingMessages(ctx, nil, m, inst, frame2, FrameDeliveryCoalesce, now, sharedReceiverResolver)
-	if err != nil {
-		t.Fatalf("DeliverPendingMessages frame2: %v", err)
-	}
-	if len(res2.Messages) != 1 || res2.Messages[0].ID != second {
-		t.Fatalf("frame2: expected the second (override B), got %+v", res2.Messages)
-	}
-	if pending, _ := m.ListPendingForInstance(ctx, nil, inst); len(pending) != 0 {
-		t.Fatalf("frame2: expected 0 pending after both delivered, got %d", len(pending))
-	}
-}
-
-// TestDeliverPendingMessages_CoalesceDistinctNodesCoalesce — two messages
-// that bind DIFFERENT payload-reading nodes do not conflict (no shared
-// receiver), so they coalesce into one frame even with distinct payloads.
-func TestDeliverPendingMessages_CoalesceDistinctNodesCoalesce(t *testing.T) {
-	m := newFakeMessages()
-	ctx := context.Background()
-	inst := shared.UUID(uuid.New())
-	frame := shared.UUID(uuid.New())
-	now := time.Now().UTC()
-
-	// @deliberate: Resolver routes each message to a distinct receiver keyed off Target.
-	resolve := func(msg persistence.MessageRow) []string { return []string{"recv_" + msg.Target} }
-
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-		ID: shared.UUID(uuid.New()), InstanceID: inst, Kind: "invalidate",
-		Sender: "op-A", SenderKind: "operator", Target: "alpha",
-		Payload: []byte(`{"x":1}`), ReceivedAt: now,
-	})
-	_ = m.Insert(ctx, nil, persistence.EnqueueMessageRequest{
-		ID: shared.UUID(uuid.New()), InstanceID: inst, Kind: "invalidate",
-		Sender: "op-A", SenderKind: "operator", Target: "beta",
-		Payload: []byte(`{"x":2}`), ReceivedAt: now.Add(time.Second),
-	})
-	res, err := DeliverPendingMessages(ctx, nil, m, inst, frame, FrameDeliveryCoalesce, now, resolve)
-	if err != nil {
-		t.Fatalf("DeliverPendingMessages: %v", err)
-	}
-	if len(res.Messages) != 2 {
-		t.Fatalf("distinct-node coalesce: expected both delivered into one frame, got %d", len(res.Messages))
+	if delivered[0].ID != msgID {
+		t.Fatalf("ListDeliveredForFrame row id = %s; want the delivered message id %s — substitution and frame-origin audit must read the same envelope",
+			delivered[0].ID, msgID)
 	}
 }

@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Verifies that POST /nodes/{id}/reset on a failed node drives through
-// the frame engine (frame.EnqueueOrCoalesce) rather than calling
+// the frame engine (frame.EnqueueFrame) rather than calling
 // UpdateState(failed → stale) directly. Direct UpdateState would strand
 // the node with no frame_id (blessed-invariant 19), and sweepReady /
 // RecalculateNode skip nil-frame_id nodes — the node would never run.
@@ -36,7 +36,6 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "reset-via-frame-engine", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},

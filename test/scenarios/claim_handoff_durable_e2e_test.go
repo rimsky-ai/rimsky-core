@@ -200,14 +200,14 @@ func testClaimHandoffDurable_CrossDispatchHolds(t *testing.T) {
 	// will appear after invalidate.
 	d1RunID := latestRunIDForNode(t, h, coHolder.ID)
 
-	// @deliberate: D2: re-invalidate the co-holder. The control-api's invalidate
-	// route moves the node back to stale; the scheduler re-dispatches.
+	// @deliberate: D2: re-invalidate the co-holder. The runtime-synthetic envelope
+	// moves the node back to stale; the scheduler re-dispatches.
 	// On D2 acquire-tx, loadInheritedClaimsForNode walks holds:asset
 	// → acquirer's durable claim_handle row (still present at
 	// state=committed) → fills acq.HeldClaims; buildResolveContext-
 	// ForDispatch (post Pass-1) merges acq.HeldClaims into the
 	// substitution context so `{{claim.asset.address}}` resolves.
-	invalidateNode(t, h, coHolder.ID)
+	h.InvalidateNode(coHolder.InstanceID, coHolder.ID)
 
 	// @deliberate: Wait until the co-holder has a NEW run row distinct from the
 	// D1 run id, then wait for it to settle fresh.
@@ -269,7 +269,6 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 	// contested scope. Drive to committed-durable.
 	durableTid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-C-owner", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "durable-acquirer", Executor: "stub"},
@@ -296,7 +295,6 @@ func testClaimHandoffDurable_ConflictDetection(t *testing.T) {
 	// failed-color settlement we can assert.
 	competingTid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-C-competitor", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -413,7 +411,6 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	// @deliberate: Durable owner template — single durable-acquirer node.
 	durableTid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-D-owner", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "durable-acquirer", Executor: "stub"},
@@ -437,7 +434,6 @@ func testClaimHandoffDurable_AssetRelease(t *testing.T) {
 	// it via /invalidate after the durable row releases.
 	competingTid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-D-competitor", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -611,7 +607,6 @@ func startDurableHarness(t *testing.T, opts durableOpts) (*scenario.Harness, *pe
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-" + opts.instanceKey, Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
@@ -670,7 +665,6 @@ func startDurableHandoffHarness(t *testing.T, opts durableHandoffOpts) (*scenari
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-" + opts.coHolderType, Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
@@ -805,19 +799,6 @@ func requireInstanceGone(t *testing.T, h *scenario.Harness, instanceID shared.UU
 		require.Nil(t, row, "expected the instance row to be deleted after DELETE")
 		return nil
 	}))
-}
-
-// invalidateNode POSTs /v1/nodes/{id}/invalidate. The node moves back
-// to stale; the scheduler re-dispatches.
-func invalidateNode(t *testing.T, h *scenario.Harness, nodeID shared.UUID) {
-	t.Helper()
-	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+nodeID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode,
-		"POST /invalidate must return 200: %s", string(body))
 }
 
 // requireSecondRun polls until a rimsky_node_runs row distinct from

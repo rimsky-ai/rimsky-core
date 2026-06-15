@@ -42,14 +42,40 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 	fix := seedFixtureSet(ctx, t, d)
 	store := d.Tables()
 
-	// @constraint: frameB is a synthetic UUID, not a second concurrent
-	// frame row — rimsky_messages.frame_id carries no FK and an instance
-	// holds at most one live frame row (uq on rimsky_frames.instance_id,
-	// the serial-queue model). The filter under test reads
-	// rimsky_messages.frame_id, not rimsky_frames, so a synthetic id is
-	// sufficient to drive a cross-frame negative.
+	// @constraint: frameA is the fixture's running frame; frameB is a
+	// second distinct frame id so a FrameID filter has a genuine
+	// cross-frame negative to exclude. The message-schema-layer change
+	// put a real FK on rimsky_messages.frame_id → rimsky_frames(frame_id)
+	// on both backends (postgres + sqlite), so frameB must be a real row
+	// to satisfy the FK at MarkDelivered time. The instance can hold at
+	// most ONE running frame (uq on (instance_id) WHERE state =
+	// 'running'), so we seed frameB in 'queued' state with its own
+	// triggering message; that satisfies the FK without colliding with
+	// the existing running frame. The filter under test still reads
+	// rimsky_messages.frame_id directly, not via a join through
+	// rimsky_frames.
 	frameA := fix.FrameID
-	frameB := shared.UUID(uuid.New())
+	frameBMsgID := shared.UUID(uuid.New())
+	var frameB shared.UUID
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         frameBMsgID,
+			InstanceID: fix.InstanceID,
+			Type:       "fixture/message",
+			Sender:     "operator",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := store.Frames().InsertFrame(ctx, fix.InstanceID, frameBMsgID, 600000, tx)
+		if err != nil {
+			return err
+		}
+		frameB = fid
+		return nil
+	}); err != nil {
+		t.Fatalf("seed frameB: %v", err)
+	}
 
 	enqueueAndDeliver := func(t *testing.T, frame shared.UUID, payload map[string]any) shared.UUID {
 		t.Helper()
@@ -62,7 +88,7 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 			return store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
 				ID:         msgID,
 				InstanceID: fix.InstanceID,
-				Kind:       "invalidate",
+				Type:       "fixture/message",
 				Sender:     "operator",
 				SenderKind: "operator",
 				Payload:    body,
@@ -103,8 +129,11 @@ func testMessagesListByFrameID(t *testing.T, d persistence.Database) {
 		return res.Rows
 	}
 
-	if got := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID}); len(got) != 3 {
-		t.Fatalf("no FrameID filter = %d rows, want 3", len(got))
+	// @constraint: nil FrameID is a no-op — every message for the instance,
+	// including the fixture-seeded triggering message AND the frameB-seeding
+	// message (so the count is 1 fixture + 1 frameB-seed + 3 test = 5).
+	if got := list(persistence.MessageListFilter{InstanceID: &fix.InstanceID}); len(got) != 5 {
+		t.Fatalf("no FrameID filter = %d rows, want 5", len(got))
 	}
 
 	gotA := list(persistence.MessageListFilter{FrameID: &frameA})

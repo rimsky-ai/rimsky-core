@@ -30,9 +30,8 @@ import (
 func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
-		Name:                "delegate-template",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "delegate-template",
+		Version: "1",
 		Graphs: []tmplspec.GraphSpec{
 			{
 				Name:  tmplspec.MainGraphName,
@@ -106,9 +105,8 @@ func TestInternalCascade_FiresNonEntryNodes(t *testing.T) {
 func TestInternalCascade_RejectsMissingGraph(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
-		Name:                "delegate-template",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "delegate-template",
+		Version: "1",
 		Graphs: []tmplspec.GraphSpec{
 			{
 				Name:  tmplspec.MainGraphName,

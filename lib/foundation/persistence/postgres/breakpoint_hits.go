@@ -291,6 +291,44 @@ func (b *breakpointHitsImpl) UnresumedCount(ctx context.Context, bpID shared.UUI
 	return n, nil
 }
 
+// HasUnresumedPauseHitForInstance reports whether the instance has at
+// least one pause-mode breakpoint hit that is currently BLOCKING a
+// runner — i.e. an unresumed hit whose `node_run_id` points at a
+// node-run row still in a non-terminal phase
+// (pending/active/held/parked). Drives the debug-channel gate; runs
+// inside the request tx so the gate-check and the override mutation
+// share one snapshot.
+//
+// The phase-non-terminal join is what makes the predicate match the
+// `concept:breakpoint` and STORY-debug-channel language ("blocking a
+// runner"). A stale hit row whose runner died and whose node-run
+// transitioned to phase=completed or phase=failed before heartbeat
+// reclamation cleaned the hit up is NOT a blocker — admitting it
+// would let the override fire while there is no actual debugger
+// session to overlay onto. A hit with node_run_id IS NULL (defensive;
+// the supervisor populates it when the hit fires) is similarly
+// excluded — without a target node-run we cannot establish that a
+// runner is parked.
+//
+// @concept: breakpoint
+func (b *breakpointHitsImpl) HasUnresumedPauseHitForInstance(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (bool, error) {
+	ex := b.q(tx)
+	var exists bool
+	if err := ex.QueryRow(ctx,
+		`SELECT EXISTS (
+		   SELECT 1 FROM rimsky_breakpoint_hits AS h
+		     JOIN rimsky_node_runs AS r ON r.id = h.node_run_id
+		    WHERE h.instance_id = $1
+		      AND h.mode = $2
+		      AND h.resumed_at IS NULL
+		      AND h.node_run_id IS NOT NULL
+		      AND r.phase IN ('pending','active','held','parked')
+		 )`, instanceID, string(persistence.BreakpointModePause)).Scan(&exists); err != nil {
+		return false, fmt.Errorf("breakpointHits.hasUnresumedPauseHitForInstance: %w", err)
+	}
+	return exists, nil
+}
+
 func scanBreakpointHits(rows pgx.Rows) ([]persistence.BreakpointHitRow, error) {
 	defer rows.Close()
 	out := []persistence.BreakpointHitRow{}

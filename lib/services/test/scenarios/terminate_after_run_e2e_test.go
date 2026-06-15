@@ -84,10 +84,24 @@ func deployTerminateAfterRunTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 	t.Helper()
 	return deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "terminate-after-run",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "terminate-after-run",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			// A declared message type so the follow-up rejection path runs
+			// the test's POST against a recognized envelope shape (the
+			// post-message-schema-layer route rejects undeclared types
+			// before the terminal-state predicate fires).
+			"messages": []map[string]any{
+				{
+					"type": "term/probe",
+					"body_schema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"target": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",
@@ -178,8 +192,10 @@ func requireMessageRejectedTerminated(t *testing.T, ep harness.RimskyEndpoint, i
 	t.Helper()
 	path := "/v1/instances/" + instanceID + "/messages"
 	body := map[string]any{
-		"kind":   "invalidate",
-		"target": target,
+		"type": "term/probe",
+		"payload": map[string]any{
+			"target": target,
+		},
 	}
 	status, raw := postJSONWithIdempotencyKey(t, ep, path, body, "terminate-after-run-followup-"+uuid.NewString())
 	if status != http.StatusConflict {

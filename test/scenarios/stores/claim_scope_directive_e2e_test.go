@@ -153,7 +153,6 @@ func TestAcceptance_ClaimScopeEndToEnd(t *testing.T) {
 func claimScopeTemplate(name, directive string) node.TemplateSpec {
 	return node.TemplateSpec{
 		Name: name, Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
@@ -179,9 +178,8 @@ func claimScopeTemplate(name, directive string) node.TemplateSpec {
 // serializer the harness uses for the canonical-spelling path.
 func claimScopeTemplateJSON(name, directive string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               "1",
-		"frame_resolution_mode": string(node.FrameResolutionSerialQueue),
+		"name":    name,
+		"version": "1",
 		"nodes": []any{
 			map[string]any{
 				"type":     "worker",

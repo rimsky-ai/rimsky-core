@@ -49,7 +49,6 @@ func TestSubstitutionCoverage_PerFieldAttributeRefUncovered(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "demo",
 		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{
 			{Type: "foo", Executor: "h"},
 			{
@@ -92,7 +91,6 @@ func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "demo",
 		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{
 			{Type: "foo", Executor: "h"},
 			{
@@ -141,7 +139,6 @@ func TestSubstitutionCoverage_EventRefUncovered(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "demo",
 		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{
 			{Type: "foo", Executor: "h"},
 			{

@@ -110,7 +110,7 @@ func (p *Publisher) Subscribe(_ context.Context, req *genv1.SubscribeRequest) (*
 		Kind:                    req.GetKind(),
 		ResolvedConfig:          req.GetResolvedConfig(),
 		TargetNode:              req.GetTargetNode(),
-		MessageKind:             req.GetMessageKind(),
+		MessageType:             req.GetMessageType(),
 	}
 	return &genv1.SubscribeResponse{}, nil
 }

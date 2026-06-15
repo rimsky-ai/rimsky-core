@@ -149,10 +149,9 @@ func testClaimUnavailableDelivered(t *testing.T) {
 	// subscriber reacts to.
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "pg-claim-unavailable",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "pg-claim-unavailable",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",
@@ -173,7 +172,6 @@ func testClaimUnavailableDelivered(t *testing.T) {
 						{
 							"instance":               true,
 							"type":                   "terminal/error/*",
-							"frame":                  "in",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
@@ -256,10 +254,9 @@ func testSwapFailedDelivered(t *testing.T) {
 	// assertion below reads `GET /events` directly.
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "pg-swap-failed",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "pg-swap-failed",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "acquirer",
@@ -290,7 +287,6 @@ func testSwapFailedDelivered(t *testing.T) {
 						{
 							"instance":               true,
 							"type":                   "terminal/error/*",
-							"frame":                  "in",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},

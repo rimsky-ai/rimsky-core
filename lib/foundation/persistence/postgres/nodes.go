@@ -82,7 +82,7 @@ LEFT JOIN LATERAL (
 // cascade message-pass during a running frame). Pre-frame-resolution
 // the default was 'stale' because the scheduler's ready sweep was the
 // initial-run trigger; under frames the trigger is the
-// frame.EnqueueOrCoalesce + scheduler-tick frame engine pair.
+// frame.EnqueueFrame + scheduler-tick frame engine pair.
 // Create inserts a new rimsky_nodes identity row. State no longer lives
 // here (post-stage-3 column drop); the implicit "no run row → fresh"
 // rule means a freshly-created node defaults to state='fresh' without
@@ -798,10 +798,37 @@ func (s *nodesImpl) MarkStaleForCascade(ctx context.Context, runID foundationsha
 // @concept: run-scope
 func (s *nodesImpl) AffirmNodeRunRow(ctx context.Context, nodeID foundationshared.UUID, runScopeID foundationshared.UUID, frameID foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
+	// @constraint: cascade-emit (concept:message-emitter-node) routes through
+	// the supervisor's dispatch path but has `n.executor == ''` (the node is
+	// not executor-backed; the runtime synthesises the terminal at
+	// `runner_dispatch.go` after consulting `NodeDef.EmitsMessage`). To
+	// admit such rows through SelectCandidates' executor-accepted branch,
+	// AffirmNodeRunRow stamps the sentinel `@emit-message` on the
+	// dispatch row's `executor_name` when the template node declares an
+	// `emits_message:` field. The supervisor auto-injects `@emit-message`
+	// into its `accepted_executors` list, so the row passes the SQL gate
+	// and reaches the dispatch path; that path branches on
+	// `NodeDef.EmitsMessage`, not on `acq.Executor`, so the rest of the
+	// runner sees an empty executor as before. Mirrors the sentinel
+	// constant declared as `runtime.EmitMessageDispatchName`.
+	//
+	// @story: cascade-emit
+	// @concept: message-emitter-node
 	tag, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_node_runs
 		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)
-		 SELECT gen_random_uuid(), n.id, n.executor,
+		 SELECT gen_random_uuid(), n.id,
+		        COALESCE(
+		          NULLIF(n.executor, ''),
+		          (SELECT CASE WHEN nd->>'emits_message' IS NOT NULL AND nd->>'emits_message' <> ''
+		                       THEN '@emit-message' END
+		             FROM rimsky_instances i
+		             JOIN rimsky_templates t ON t.id = i.template_hash
+		             CROSS JOIN LATERAL jsonb_array_elements(t.spec->'nodes') AS nd
+		            WHERE i.id = n.instance_id
+		              AND nd->>'type' = n.node_type
+		            LIMIT 1)
+		        ) AS executor_name,
 		        COALESCE((
 		          SELECT array_agg(store->>'name')
 		            FROM rimsky_instances i

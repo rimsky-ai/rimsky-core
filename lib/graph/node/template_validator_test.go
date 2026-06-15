@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,9 +44,8 @@ func hasErrorAt(t *testing.T, res ValidationResult, prefix string) {
 
 func TestValidateTemplate_Ok_MinimalExecutorNode(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "handler.a",
@@ -57,9 +57,8 @@ func TestValidateTemplate_Ok_MinimalExecutorNode(t *testing.T) {
 
 func TestValidateTemplate_Error_SubscribeToUnknownNode(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "handler.a",
@@ -73,22 +72,130 @@ func TestValidateTemplate_Error_SubscribeToUnknownNode(t *testing.T) {
 	hasErrorAt(t, res, "nodes[0].subscribes[0].node")
 }
 
-func TestValidateTemplate_Error_FrameResolutionMissing(t *testing.T) {
+// TestValidateTemplate_Ok_SubscribeToMessageTypeShapedNode pins the
+// Pass 5 tightening: a subscription whose `node:` value is slash-bearing
+// (the syntactic shape of a message-type-path) is accepted iff the value
+// matches a declared `messages:` entry. The template here declares
+// `ping/recheck` in `messages:`, so the subscribe leg accepts it.
+func TestValidateTemplate_Ok_SubscribeToMessageTypeShapedNode(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1.0.0",
+		Messages: []MessageSchema{{Type: "ping/recheck"}},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{Node: "ping/recheck", Type: "terminal/success", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// TestValidateTemplate_Error_SubscribeToUndeclaredMessageType pins the
+// rejection leg of the Pass 5 tightening: a subscription whose `node:`
+// is shaped like a message-type-path (slash-bearing) but is NOT declared
+// in `messages:` is rejected with a diagnostic that names the registry.
+func TestValidateTemplate_Error_SubscribeToUndeclaredMessageType(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
-		Nodes:   []TemplateNodeDef{{Type: "a", Executor: "h"}},
+		// @deliberate: No `messages:` block declared.
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{Node: "ping/recheck", Type: "terminal/success"},
+			},
+		}},
 	}
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
-	hasErrorAt(t, res, "frame_resolution_mode")
+	hasErrorAt(t, res, "nodes[0].subscribes[0].node")
+}
+
+// TestValidateSubscribes_Ok_MessageVirtualNodeWhenBodyField pins the
+// happy path on the new CEL `when:` body-field cross-check: a receiver
+// subscribed to a declared message-type whose `when:` reads
+// `payload.attributes_delta.<field>` compiles when `<field>` is declared
+// in the message-type's body_schema.
+func TestValidateSubscribes_Ok_MessageVirtualNodeWhenBodyField(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{{
+			Type:       "ping/recheck",
+			BodySchema: []byte(`{"type":"object","properties":{"pong_status":{"type":"string"}}}`),
+		}},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.pong_status == "ok"`, WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// TestValidateSubscribes_Error_MessageVirtualNodeWhenUnknownBodyField
+// pins the rejection leg: a CEL `when:` predicate that reads
+// `payload.attributes_delta.<typo>` against a declared message-type
+// whose `body_schema` does NOT declare `<typo>` fails registration.
+// Without the body-field cross-check the typo would compile silently
+// and evaluate as no-match at runtime — the falsifier
+// STORY-typed-message-substitution rules out.
+func TestValidateSubscribes_Error_MessageVirtualNodeWhenUnknownBodyField(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{{
+			Type:       "ping/recheck",
+			BodySchema: []byte(`{"type":"object","properties":{"pong_status":{"type":"string"}}}`),
+		}},
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.pongStatus == "ok"`},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].subscribes[0].when")
+}
+
+// TestValidateSubscribes_Error_MessageVirtualNodeWhenEmptyBodySchema
+// pins the corner case: a `when:` reading
+// `payload.attributes_delta.<field>` against a declared message-type
+// that has NO `body_schema` (empty body) is rejected — an empty-body
+// message-type cannot legally drive a CEL body-field read.
+func TestValidateSubscribes_Error_MessageVirtualNodeWhenEmptyBodySchema(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1.0.0",
+		Messages: []MessageSchema{{Type: "ping/recheck"}}, // @deliberate: no body_schema
+		Nodes: []TemplateNodeDef{{
+			Type:     "a",
+			Executor: "handler.a",
+			Subscribes: []SubscriptionEntry{
+				{Node: "ping/recheck", Type: "terminal/success", When: `payload.attributes_delta.anything == "ok"`},
+			},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].subscribes[0].when")
 }
 
 func TestValidateStores_Ok_RegionClaimWithIntent(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -103,9 +210,8 @@ func TestValidateStores_Ok_RegionClaimWithIntent(t *testing.T) {
 
 func TestValidateStores_Error_MissingIntent(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -119,9 +225,8 @@ func TestValidateStores_Error_MissingIntent(t *testing.T) {
 
 func TestValidateStores_Error_DuplicateAlias(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -138,9 +243,8 @@ func TestValidateStores_Error_DuplicateAlias(t *testing.T) {
 
 func TestValidateStores_Error_UnknownStoreKind(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -201,9 +305,8 @@ func TestHoldingSubgraphsForTemplate_NotHeld(t *testing.T) {
 
 func TestValidateTemplate_ExecutorDeclared_OK(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "handler.a",
@@ -219,9 +322,8 @@ func TestValidateTemplate_ExecutorDeclared_OK(t *testing.T) {
 
 func TestValidateTemplate_ExecutorDeclared_Missing(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "claude-agent",
@@ -267,9 +369,8 @@ func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
 	// the second segment.
 	makeSpec := func(directive string) *TemplateSpec {
 		return &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "worker",
 				Executor: "handler.worker",
@@ -343,7 +444,7 @@ func TestValidateTemplate_ClaimScopeSpelling(t *testing.T) {
 func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 	t.Run("stores_no_policy_warns", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+			Name: "demo", Version: "1",
 			Nodes: []TemplateNodeDef{{
 				Type: "a",
 				Stores: []NodeStoreRef{
@@ -368,7 +469,7 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 
 	t.Run("stores_with_policy_no_warning", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+			Name: "demo", Version: "1",
 			Nodes: []TemplateNodeDef{{
 				Type: "a",
 				Stores: []NodeStoreRef{
@@ -393,7 +494,7 @@ func TestValidator_WarnsOnMissingAcquireUnavailablePolicy(t *testing.T) {
 
 	t.Run("no_stores_no_warning", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+			Name: "demo", Version: "1",
 			Nodes: []TemplateNodeDef{{Type: "a"}},
 		}
 		res := ValidateTemplate(spec, RegistryHooks{})
@@ -428,7 +529,7 @@ func TestValidateErrorTypes_RejectsUnknown(t *testing.T) {
 	for _, action := range retiredNames {
 		t.Run(action, func(t *testing.T) {
 			spec := &TemplateSpec{
-				Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+				Name: "demo", Version: "1",
 				Nodes: []TemplateNodeDef{
 					{Type: "a", Executor: "h"},
 					{Type: "b", Executor: "h", ErrorTypes: map[string]ErrorTypePolicy{
@@ -452,7 +553,7 @@ func TestValidateErrorTypes_AcceptsCanonical(t *testing.T) {
 	for _, action := range []string{"pass", "give_up", "retry", "discard_claims_then_retry"} {
 		t.Run(action, func(t *testing.T) {
 			spec := &TemplateSpec{
-				Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+				Name: "demo", Version: "1",
 				Nodes: []TemplateNodeDef{
 					{Type: "a", Executor: "h"},
 					{Type: "b", Executor: "h", ErrorTypes: map[string]ErrorTypePolicy{
@@ -481,7 +582,7 @@ func TestValidateErrorTypes_AcceptsCanonical(t *testing.T) {
 // `proto:executor_observability.proto::ObservabilityCapabilities.declared_error_classes`.
 func TestValidateErrorTypes_AcceptsDeclaredHttpClass(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
@@ -507,7 +608,7 @@ func TestValidateErrorTypes_AcceptsDeclaredHttpClass(t *testing.T) {
 // pattern `http/server_error/*`.
 func TestValidateErrorTypes_AcceptsDeclaredWildcardClass(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
@@ -533,7 +634,7 @@ func TestValidateErrorTypes_AcceptsDeclaredWildcardClass(t *testing.T) {
 // `error_types:` keys.
 func TestValidateErrorTypes_AcceptsUndeclaredWhenHookUnavailable(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
@@ -561,7 +662,7 @@ func TestValidateErrorTypes_AcceptsUndeclaredWhenHookUnavailable(t *testing.T) {
 // unattributable keys from errors to warnings.
 func TestValidateErrorTypes_WarnsUndeclaredWhenHookAvailable(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
@@ -599,7 +700,7 @@ func TestValidateErrorTypes_WarnsUndeclaredWhenHookAvailable(t *testing.T) {
 // routes.
 func TestValidateErrorTypes_AcceptsProducerDeclaredClass(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http",
@@ -636,7 +737,7 @@ func TestValidateErrorTypes_AcceptsProducerDeclaredClass(t *testing.T) {
 // produce it).
 func TestValidateErrorTypes_ProducerClassUnreachableFromNode(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "http"},
 			{Type: "b", Executor: "http", ErrorTypes: map[string]ErrorTypePolicy{
@@ -671,7 +772,7 @@ func TestValidateErrorTypes_ProducerClassUnreachableFromNode(t *testing.T) {
 // subscription against a declared node.
 func TestValidateSubscribes_Ok(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -689,7 +790,7 @@ func TestValidateSubscribes_Ok(t *testing.T) {
 // mutually exclusive.
 func TestValidateSubscribes_MutexNodeAndInstance(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -703,17 +804,20 @@ func TestValidateSubscribes_MutexNodeAndInstance(t *testing.T) {
 	require.False(t, res.Ok())
 }
 
-// TestValidateSubscribes_SelfWithFrameNextOK: self-subscription is the
-// "drain my own queue" idiom; the `frame: next` spelling opens a fresh
-// frame for the same node-instance on every fresh_changed commit, with
-// clean frame.start / frame.end markers per queue item.
-func TestValidateSubscribes_SelfWithFrameNextOK(t *testing.T) {
+// TestValidateSubscribes_SelfOK: self-subscription is the "drain my own
+// queue" idiom — a node subscribing to itself with `when: payload.changed`
+// re-fires after every fresh_changed commit until the predicate gates it
+// off. The cascade walker's insert-then-drain-in-same-tx pattern (the
+// new pending self-run's wait-set blocker drains immediately on the
+// same commit that inserted it) makes this safe; the BFS visited set
+// handles cycle termination.
+func TestValidateSubscribes_SelfOK(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "drainer", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "drainer", Type: "terminal/success", When: "payload.changed", Frame: "next", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "drainer", Type: "terminal/success", When: "payload.changed", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -722,15 +826,12 @@ func TestValidateSubscribes_SelfWithFrameNextOK(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-// TestValidateSubscribes_SelfWithFrameInOK: the `frame: in` spelling
-// of drain-my-own-queue keeps iteration inside the current frame. The
-// cascade walker's insert-then-drain-in-same-tx pattern (the new
-// pending self-run's wait-set blocker drains immediately on the same
-// commit that inserted it) makes this safe; the BFS visited set
-// handles cycle termination. Both spellings are first-class.
-func TestValidateSubscribes_SelfWithFrameInOK(t *testing.T) {
+// TestValidateSubscribes_SelfBareOK: bare self-subscription (no `when:`
+// predicate) also validates — the cascade walker's BFS visited set
+// terminates the loop without an author-supplied gate.
+func TestValidateSubscribes_SelfBareOK(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
@@ -748,11 +849,11 @@ func TestValidateSubscribes_SelfWithFrameInOK(t *testing.T) {
 // with an explicit `frame: in`.
 func TestValidateSubscribes_SelfWithFrameInExplicitOK(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "loopy", Executor: "h",
 				Subscribes: []SubscriptionEntry{
-					{Node: "loopy", Type: "terminal/success", Frame: "in", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
+					{Node: "loopy", Type: "terminal/success", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
 				},
 			},
 		},
@@ -765,7 +866,7 @@ func TestValidateSubscribes_SelfWithFrameInExplicitOK(t *testing.T) {
 // leaf name) violates the canonical taxonomy.
 func TestValidateSubscribes_RejectsBareEvent(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -783,7 +884,7 @@ func TestValidateSubscribes_RejectsBareEvent(t *testing.T) {
 // taxonomy range check.
 func TestValidateSubscribes_RejectsUnknownType(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -800,7 +901,7 @@ func TestValidateSubscribes_RejectsUnknownType(t *testing.T) {
 // TestValidateSubscribes_RejectsMalformedCEL pins the CEL parse-check.
 func TestValidateSubscribes_RejectsMalformedCEL(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -819,7 +920,7 @@ func TestValidateSubscribes_RejectsMalformedCEL(t *testing.T) {
 // applies. Per decision:cascade-flags-required-no-defaults.
 func TestValidateSubscribes_RejectsMissingWakeOnChange(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -850,7 +951,7 @@ func TestValidateSubscribes_RejectsMissingWakeOnChange(t *testing.T) {
 // decision:cascade-flags-required-no-defaults.
 func TestValidateSubscribes_RejectsMissingForceUpstreamRefresh(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -881,7 +982,7 @@ func TestValidateSubscribes_RejectsMissingForceUpstreamRefresh(t *testing.T) {
 // decision:cross-cutting-no-force-upstream-refresh.
 func TestValidateSubscribes_RejectsCrossCuttingWithForceUpstreamRefresh(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -914,7 +1015,7 @@ func TestValidateSubscribes_RejectsCrossCuttingWithForceUpstreamRefresh(t *testi
 // decision:cascade-flags-required-no-defaults.
 func TestValidateSubscribes_RejectsConflictingFlagsOnSameKey(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -949,7 +1050,7 @@ func TestValidateSubscribes_RejectsConflictingFlagsOnSameKey(t *testing.T) {
 // flag-disagreement is the operator-visible footgun.
 func TestValidateSubscribes_AllowsExactDuplicateFlags(t *testing.T) {
 	spec := &TemplateSpec{
-		Name: "demo", Version: "1", FrameResolutionMode: FrameResolutionSerialQueue,
+		Name: "demo", Version: "1",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h",
@@ -971,9 +1072,8 @@ func TestValidateSubscribes_AllowsExactDuplicateFlags(t *testing.T) {
 
 func TestValidateMaxParkDuration_Ok(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type: "a", Executor: "h", MaxParkDuration: "30m",
 		}},
@@ -984,9 +1084,8 @@ func TestValidateMaxParkDuration_Ok(t *testing.T) {
 
 func TestValidateMaxParkDuration_Malformed(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type: "a", Executor: "h", MaxParkDuration: "thirty-minutes",
 		}},
@@ -1002,9 +1101,8 @@ func TestValidateMaxParkDuration_Malformed(t *testing.T) {
 func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 	t.Run("unknown executor name is rejected", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Defaults: &TemplateDefaults{
 				Attributes: &TemplateAttributeDefaults{
 					ByExecutor: map[string]map[string]any{
@@ -1021,9 +1119,8 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 
 	t.Run("matching executor name is accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Defaults: &TemplateDefaults{
 				Attributes: &TemplateAttributeDefaults{
 					ByExecutor: map[string]map[string]any{
@@ -1042,9 +1139,8 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 		// validate — the structural-inertness discipline
 		// (concept:inertness) says we never read fragment values.
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Defaults: &TemplateDefaults{
 				Attributes: &TemplateAttributeDefaults{
 					ByExecutor: map[string]map[string]any{
@@ -1069,9 +1165,8 @@ func TestTemplateValidator_DefaultsByExecutor(t *testing.T) {
 func TestTemplateValidator_Tags(t *testing.T) {
 	t.Run("valid params reference accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			ParamsSchema: map[string]any{
 				"properties": map[string]any{
 					"domain": map[string]any{"type": "string"},
@@ -1089,9 +1184,8 @@ func TestTemplateValidator_Tags(t *testing.T) {
 
 	t.Run("unknown params key rejected", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			ParamsSchema: map[string]any{
 				"properties": map[string]any{
 					"domain": map[string]any{"type": "string"},
@@ -1110,9 +1204,8 @@ func TestTemplateValidator_Tags(t *testing.T) {
 
 	t.Run("unsupported kind in tag rejected", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1126,9 +1219,8 @@ func TestTemplateValidator_Tags(t *testing.T) {
 
 	t.Run("plain string tag accepted (no directives)", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1154,9 +1246,8 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		// unified-surface rules); verify pulls the bare
 		// nodes.stage.attribute form.
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{
 				{
 					Type:     "stage",
@@ -1199,9 +1290,8 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 
 	t.Run("bare claim payload pull accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1225,9 +1315,8 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 
 	t.Run("bare trigger payload pull accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1252,9 +1341,8 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		// against the sender's executor's declared_events is silently
 		// skipped here (no ExecutorDeclaredEvents hook wired).
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{
 				{Type: "emit", Executor: "h"},
 				{
@@ -1286,9 +1374,8 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		// segment) is not the bare form — it's a malformed directive
 		// and must be rejected.
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{
 				{Type: "stage", Executor: "h"},
 				{
@@ -1313,9 +1400,8 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 
 func TestValidator_FallbackOperator_Valid(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{Type: "stage", Executor: "h",
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
@@ -1353,9 +1439,8 @@ func TestValidator_FallbackOperator_Valid(t *testing.T) {
 
 func TestValidator_FallbackOperator_ChainsRejected(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{
 			{Type: "a", Executor: "h"},
 			{Type: "b", Executor: "h"},
@@ -1386,9 +1471,8 @@ func TestValidator_FallbackOperator_ChainsRejected(t *testing.T) {
 func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 	t.Run("literal text + one directive accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1409,9 +1493,8 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 
 	t.Run("multiple directives separated by text accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1432,9 +1515,8 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 
 	t.Run("? marker on a single directive accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{
 				{
 					Type: "verify", Executor: "h",
@@ -1473,9 +1555,8 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 
 	t.Run("? marker on directive in embedded source accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{
 				{
 					Type: "verify", Executor: "h",
@@ -1514,9 +1595,8 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 
 	t.Run("? + | on the same directive rejected", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type: "a", Executor: "h",
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
@@ -1543,9 +1623,8 @@ func TestCheckAttributeSource_RelaxedGrammar(t *testing.T) {
 func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 	t.Run("property with source: and no default: accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1566,9 +1645,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 
 	t.Run("property with default: and no source: accepted", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1589,9 +1667,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 
 	t.Run("property with both source: and default: rejected", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1620,9 +1697,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 
 	t.Run("readOnly property without source/default accepted when executor declares readOnly", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1649,9 +1725,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 
 	t.Run("template readOnly without executor readOnly rejected", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1682,9 +1757,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 
 	t.Run("property with neither source/default/readOnly rejected when executor schema is visible", func(t *testing.T) {
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1720,9 +1794,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		// agent populates) must be admitted without a synthetic
 		// `default:` or `readOnly:` fabrication.
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1756,9 +1829,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		// — the executor has delegated authority over names it does
 		// not enumerate.
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1789,9 +1861,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		// still subject to the full unified-surface check even when the
 		// schema also admits extensions.
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -1830,9 +1901,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		// MergeAttributeDefaults, checkAttributesSchema would reject
 		// the template for declaring both source: and default:.
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			ParamsSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -1881,9 +1951,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		// confirms the drop-then-overwrite shape leaves a single
 		// `default:` set.
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Defaults: &TemplateDefaults{
 				Attributes: &TemplateAttributeDefaults{
 					ByExecutor: map[string]map[string]any{
@@ -1927,9 +1996,8 @@ func TestCheckAttributesSchema_UnifiedSurface(t *testing.T) {
 		// executors which advertise the permissive shape to signal
 		// "open contract; accept any keys."
 		spec := &TemplateSpec{
-			Name:                "demo",
-			Version:             "1.0.0",
-			FrameResolutionMode: FrameResolutionSerialQueue,
+			Name:    "demo",
+			Version: "1.0.0",
 			Nodes: []TemplateNodeDef{{
 				Type:     "a",
 				Executor: "h",
@@ -2016,9 +2084,8 @@ func TestIsPermissiveExecutorSchema(t *testing.T) {
 // is rejected at registration with `template_validation_failed`.
 func TestValidateAttributesSchema_TypeRedeclarationConflict(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -2051,9 +2118,8 @@ func TestValidateAttributesSchema_TypeRedeclarationConflict(t *testing.T) {
 // authoritative.
 func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L2(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -2087,9 +2153,8 @@ func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L2(t *testing.T)
 // the violation originates at L1.
 func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L1(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Defaults: &TemplateDefaults{
 			Attributes: &TemplateAttributeDefaults{
 				ByExecutor: map[string]map[string]any{
@@ -2133,9 +2198,8 @@ func TestValidateAttributesSchema_ClosedSchemaForbiddenProperty_L1(t *testing.T)
 // catches the violation.
 func TestValidateAttributesSchema_NestedDefaultTypeConflict(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -2189,9 +2253,8 @@ func TestValidateAttributesSchema_NestedDefaultTypeConflict(t *testing.T) {
 // continue to fire.
 func TestValidateCompositionAgainstExecutor_RequiredInputWithSource(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -2232,9 +2295,8 @@ func TestValidateCompositionAgainstExecutor_RequiredInputWithSource(t *testing.T
 // template needn't declare a source/default for it.
 func TestValidateAttributesSchema_OpenSchemaAcceptsExtraProperty(t *testing.T) {
 	spec := &TemplateSpec{
-		Name:                "demo",
-		Version:             "1.0.0",
-		FrameResolutionMode: FrameResolutionSerialQueue,
+		Name:    "demo",
+		Version: "1.0.0",
 		Nodes: []TemplateNodeDef{{
 			Type:     "a",
 			Executor: "h",
@@ -2360,10 +2422,9 @@ func TestValidateTemplate_RefMode(t *testing.T) {
 
 	specWith := func(nodes ...TemplateNodeDef) *TemplateSpec {
 		return &TemplateSpec{
-			Name:                "ref-mode-demo",
-			Version:             "1",
-			FrameResolutionMode: FrameResolutionSerialQueue,
-			Nodes:               nodes,
+			Name:    "ref-mode-demo",
+			Version: "1",
+			Nodes:   nodes,
 		}
 	}
 
@@ -2427,4 +2488,581 @@ func TestValidateTemplate_RefMode(t *testing.T) {
 			"default (zero-value) mode must be strict `all`; errors: %+v", res.Errors)
 		hasErrorAt(t, res, "nodes[0].executor")
 	})
+}
+
+// TestValidateMessages_Ok_DeclaredTypeAndBodySchema pins the happy path of
+// the `messages:` registry validator: a non-empty type-path and a JSON
+// Schema object both compile, and the resulting declaredMessages set is
+// populated for downstream cross-checks.
+func TestValidateMessages_Ok_DeclaredTypeAndBodySchema(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{
+				Type: "ping/recheck",
+				BodySchema: []byte(`{
+					"type": "object",
+					"properties": {"reason": {"type": "string"}},
+					"required": ["reason"]
+				}`),
+			},
+			{Type: "alert/fire"},
+		},
+		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// TestValidateMessages_Error_EmptyType rejects an entry whose `type:` is
+// blank — the type is the discriminator the wire and the cascade walker
+// route on, so it cannot be empty.
+func TestValidateMessages_Error_EmptyType(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1.0.0",
+		Messages: []MessageSchema{{Type: ""}},
+		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[0].type")
+}
+
+// TestValidateMessages_Error_DuplicateType pins the duplicate-rejection
+// leg: two entries with the same `type:` produce a structural ambiguity
+// (which body_schema applies?), so the validator rejects at registration.
+func TestValidateMessages_Error_DuplicateType(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck"},
+			{Type: "ping/recheck"},
+		},
+		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[1].type")
+}
+
+// TestValidateMessages_Error_TypeWithWhitespace pins the structural grammar
+// of message type-paths: no whitespace inside the type.
+func TestValidateMessages_Error_TypeWithWhitespace(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1.0.0",
+		Messages: []MessageSchema{{Type: "ping recheck"}},
+		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[0].type")
+}
+
+// TestValidateMessages_Error_TypeTrailingSlash pins the empty-segment
+// rejection: a leading or trailing `/` produces an empty segment, which
+// is structurally not a valid type-path.
+func TestValidateMessages_Error_TypeTrailingSlash(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1.0.0",
+		Messages: []MessageSchema{{Type: "ping/"}},
+		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[0].type")
+}
+
+// TestValidateMessages_Error_TypeMustBeSlashBearing pins the structural
+// partition between message-types and node-types: a message-type lacking
+// a `/` is structurally ambiguous with a real node-type (node-types are
+// identifier-shaped, no slash; message-types are slash-bearing). The
+// subscribes' `node:` resolver routes by slash-presence, so a non-slash
+// message-type would let a single subscription match against both
+// surfaces non-deterministically. Rejected at registration.
+func TestValidateMessages_Error_TypeMustBeSlashBearing(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:     "demo",
+		Version:  "1.0.0",
+		Messages: []MessageSchema{{Type: "invalidate"}},
+		Nodes:    []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[0].type")
+}
+
+// TestValidateMessages_Error_BodySchemaNotJSON rejects a body_schema whose
+// raw bytes are not valid JSON.
+func TestValidateMessages_Error_BodySchemaNotJSON(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{not-json`)},
+		},
+		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[0].body_schema")
+}
+
+// TestValidateMessages_Error_BodySchemaScalar rejects a body_schema that
+// is structurally a scalar / array (not a JSON Schema object).
+func TestValidateMessages_Error_BodySchemaScalar(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`"a-string"`)},
+		},
+		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[0].body_schema")
+}
+
+// TestValidateMessages_Error_BodySchemaDeclaresReservedWakeNodeIDs pins
+// the registration-side half of the structural ban on a body_schema
+// declaring a top-level `wake_node_ids` property. The receipt-side
+// (operator-supplied envelope) ban is exercised by
+// TestPublisher_CannotSmuggleWakeNodeIDs; this test fixes the
+// registration-side floor so a cascade-emit envelope (which bypasses
+// the receipt-time guard) cannot ride on a schema-blessed
+// `wake_node_ids` field to smuggle stale-mark targets.
+func TestValidateMessages_Error_BodySchemaDeclaresReservedWakeNodeIDs(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{
+				Type: "ping/recheck",
+				BodySchema: []byte(`{
+					"type": "object",
+					"properties": {
+						"reason": {"type": "string"},
+						"wake_node_ids": {"type": "array", "items": {"type": "string"}}
+					}
+				}`),
+			},
+		},
+		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[0].body_schema")
+}
+
+// TestValidateMessages_Error_BodySchemaInvalidSchema rejects a body_schema
+// that parses as JSON but does not compile as JSON Schema (e.g., a
+// `type:` value that is not a valid JSON Schema type-name).
+func TestValidateMessages_Error_BodySchemaInvalidSchema(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{"type": "not-a-real-json-schema-type"}`)},
+		},
+		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "messages[0].body_schema")
+}
+
+// TestValidateMessageSubstitutionRef_Ok pins the happy path of the
+// 2026-06-14 message-schema-layer Pass 6 cross-check: a node attribute
+// reading `{{messages.<type>.<field>}}` registers cleanly when both the
+// type is declared in `messages:` and the field is a property in that
+// entry's body_schema.
+func TestValidateMessageSubstitutionRef_Ok(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{
+				Type: "ping/recheck",
+				BodySchema: []byte(`{
+					"type": "object",
+					"properties": {"reason": {"type": "string"}, "pong_status": {"type": "string"}}
+				}`),
+			},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "receiver",
+			Executor: "handler.a",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reason": map[string]any{
+						"type":   "string",
+						"source": "{{messages.ping/recheck.reason}}",
+					},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// TestValidateMessageSubstitutionRef_Error_UnknownType pins the rejection
+// leg: a `{{messages.<type>.<field>}}` ref against a type not declared
+// in the template's `messages:` registry rejects at registration with a
+// diagnostic naming the registry.
+func TestValidateMessageSubstitutionRef_Error_UnknownType(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`)},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "receiver",
+			Executor: "handler.a",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reason": map[string]any{
+						"type":   "string",
+						"source": "{{messages.other/type.reason}}",
+					},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
+}
+
+// TestValidateMessageSubstitutionRef_Error_UnknownField pins the
+// field-side rejection: the type is declared but the field-name is not
+// a property in its body_schema. Typo at registration is caught here.
+func TestValidateMessageSubstitutionRef_Error_UnknownField(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`)},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "receiver",
+			Executor: "handler.a",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reason": map[string]any{
+						"type":   "string",
+						"source": "{{messages.ping/recheck.no_such_field}}",
+					},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
+}
+
+// TestValidateMessageSubstitutionRef_Ok_BareWholeBodyPull pins that the
+// bare-form `{{messages.<type>}}` (no field path) is admitted when the
+// type is declared, regardless of whether body_schema declares
+// properties. Mirrors the resolver's bare-form whole-body pull.
+func TestValidateMessageSubstitutionRef_Ok_BareWholeBodyPull(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`)},
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "receiver",
+			Executor: "handler.a",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"whole_body": map[string]any{
+						"type":   "object",
+						"source": "{{messages.ping/recheck}}",
+					},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+}
+
+// TestValidateMessageSubstitutionRef_Error_NamedFieldAgainstEmptyBody
+// pins the empty-body rejection: a directive that names a field against
+// a declared message type whose body_schema is empty (no shape declared)
+// cannot resolve and is rejected at registration with a clear
+// empty-body diagnostic.
+func TestValidateMessageSubstitutionRef_Error_NamedFieldAgainstEmptyBody(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck"}, // @deliberate: no body_schema → empty body
+		},
+		Nodes: []TemplateNodeDef{{
+			Type:     "receiver",
+			Executor: "handler.a",
+			Attributes: &NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reason": map[string]any{
+						"type":   "string",
+						"source": "{{messages.ping/recheck.reason}}",
+					},
+				},
+			}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[receiver].attributes.schema (substitution ref)")
+}
+
+// TestBuildSubscriptionEdges_ImplicitFromMessageRef pins the auto-
+// subscribe extension: a node reading `{{messages.<type>.<field>}}` in
+// its attribute schema implicitly subscribes to the message-virtual-node
+// `<type>`'s `terminal/success`. Matches the implicit-edge behaviour of
+// `{{nodes.X.attribute.Y}}` reads.
+func TestBuildSubscriptionEdges_ImplicitFromMessageRef(t *testing.T) {
+	tmpl := TemplateSpec{
+		Messages: []MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{"type":"object","properties":{"reason":{"type":"string"}}}`)},
+		},
+		Nodes: []TemplateNodeDef{
+			{Type: "receiver", Executor: "stub",
+				Attributes: &NodeAttributesDef{Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"reason": map[string]any{
+							"type":   "string",
+							"source": "{{messages.ping/recheck.reason}}",
+						},
+					},
+				}}},
+		},
+	}
+	subRefs := ExtractSubstitutionRefsFromTemplate(tmpl)
+	msgRefs := ExtractMessageRefsFromTemplate(tmpl)
+	edges, err := BuildSubscriptionEdges(tmpl, subRefs, msgRefs)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := edges.Match("ping/recheck", signal.TypePath("terminal/success"))
+	if len(matched) != 1 {
+		t.Fatalf("want 1 implicit message-virtual-node edge, got %d", len(matched))
+	}
+	if matched[0].ReceiverNodeType != "receiver" {
+		t.Errorf("ReceiverNodeType: got %q want receiver", matched[0].ReceiverNodeType)
+	}
+	if matched[0].TypePattern != signal.TypePath("terminal/success") {
+		t.Errorf("TypePattern: got %q want terminal/success", matched[0].TypePattern)
+	}
+}
+
+// @deliberate: section banner — Pass 7 / Task 31 emits_message: validator.
+// Mutual exclusion across executor/delegate/emits_message + the
+// exact-shape-match registration check (@concept:message-emitter-node).
+
+// emitsMessageOKSpec returns a baseline spec exercising the happy
+// path: a `messages:` entry plus an emit-node whose attribute schema
+// matches the destination body_schema exactly. Each test mutates this
+// baseline rather than rewriting the whole DSL.
+func emitsMessageOKSpec(t *testing.T) *TemplateSpec {
+	t.Helper()
+	return &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{{
+			Type: "ping/recheck",
+			BodySchema: []byte(`{
+				"type": "object",
+				"properties": {
+					"pong_status": {"type": "string"}
+				},
+				"required": ["pong_status"]
+			}`),
+		}},
+		Nodes: []TemplateNodeDef{{
+			Type:         "ping-recheck-emitter",
+			EmitsMessage: "ping/recheck",
+			Attributes: &NodeAttributesDef{
+				Schema: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"pong_status": map[string]any{"type": "string"},
+					},
+					"required": []any{"pong_status"},
+				},
+			},
+		}},
+	}
+}
+
+func TestValidateTemplate_Ok_EmitsMessage_ExactShape(t *testing.T) {
+	spec := emitsMessageOKSpec(t)
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	if !res.Ok() {
+		t.Fatalf("expected ok, got errors: %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Error_EmitsMessage_UnknownType(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Nodes: []TemplateNodeDef{{
+			Type:         "bad-emitter",
+			EmitsMessage: "unknown/type",
+			Attributes:   &NodeAttributesDef{Schema: map[string]any{}},
+		}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	hasErrorAt(t, res, "nodes[0].emits_message")
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "unknown message type") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected an 'unknown message type' diagnostic, got %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Error_EmitsMessage_MutexWithExecutor(t *testing.T) {
+	spec := emitsMessageOKSpec(t)
+	spec.Nodes[0].Executor = "handler.a"
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "emits_message and executor are mutually exclusive") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutual-exclusion error executor vs emits_message, got %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Error_EmitsMessage_MutexWithDelegate(t *testing.T) {
+	spec := emitsMessageOKSpec(t)
+	spec.Nodes[0].Delegate = "sub"
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "emits_message and delegate are mutually exclusive") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutual-exclusion error delegate vs emits_message, got %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Error_EmitsMessage_AttributeSuperset(t *testing.T) {
+	spec := emitsMessageOKSpec(t)
+	// @deliberate: The body declares only `pong_status`; the emit-node
+	// adds an extra field. Superset is rejected — hidden state is not
+	// allowed because the attribute set IS the body.
+	spec.Nodes[0].Attributes.Schema = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"pong_status": map[string]any{"type": "string"},
+			"extra_field": map[string]any{"type": "string"},
+		},
+		"required": []any{"pong_status"},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "extra_field") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected diagnostic naming the superset field 'extra_field', got %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Error_EmitsMessage_AttributeSubset_MissingField(t *testing.T) {
+	spec := emitsMessageOKSpec(t)
+	// @deliberate: The body declares `pong_status` but the emit-node omits it.
+	spec.Nodes[0].Attributes.Schema = map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "is missing field") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected diagnostic about missing destination field, got %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Error_EmitsMessage_AttributeTypeMismatch(t *testing.T) {
+	spec := emitsMessageOKSpec(t)
+	// @deliberate: Body declares pong_status: string; emit-node declares integer.
+	spec.Nodes[0].Attributes.Schema = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"pong_status": map[string]any{"type": "integer"},
+		},
+		"required": []any{"pong_status"},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "types must match exactly") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected per-property type-mismatch diagnostic, got %+v", res.Errors)
+	}
+}
+
+func TestValidateTemplate_Error_EmitsMessage_RequiredMismatch(t *testing.T) {
+	spec := emitsMessageOKSpec(t)
+	// @deliberate: Body requires pong_status; emit-node drops the requirement.
+	spec.Nodes[0].Attributes.Schema = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"pong_status": map[string]any{"type": "string"},
+		},
+		// @deliberate: no required: field
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.False(t, res.Ok())
+	found := false
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "required: sets must match exactly") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected required-set mismatch diagnostic, got %+v", res.Errors)
+	}
 }

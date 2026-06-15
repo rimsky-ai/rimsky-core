@@ -3,10 +3,10 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // HTTP-level round-trip coverage for the per-instance terminate_after_run
-// flag on POST /instances. Mirrors the existing paused / frame_delivery_mode
-// flag coverage: the create request decodes the flag, persistence stores it,
-// and the GET/list projection surfaces it. No termination-behavior assertion
-// here — that lands in a later pass; this pass only proves the flag threads
+// flag on POST /instances. Mirrors the existing paused flag coverage: the
+// create request decodes the flag, persistence stores it, and the GET/list
+// projection surfaces it. No termination-behavior assertion here — that
+// lands in a later pass; this pass only proves the flag threads
 // create-request → persistence column → projection end to end.
 //
 // Exercised against the pgtest harness (real Postgres via testcontainers).

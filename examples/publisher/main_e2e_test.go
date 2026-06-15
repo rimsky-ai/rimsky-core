@@ -251,12 +251,13 @@ func exerciseSubscribeLeg(t *testing.T, ep harness.RimskyEndpoint, pub *Publishe
 // messages to the rimsky message endpoint; the messages reach the
 // targeted instance and downstream nodes consume them".
 func exerciseMessageDeliveryLeg(t *testing.T, ep harness.RimskyEndpoint, state *exampleState) {
-	// @deliberate: quiesce the reactor's initial-frame activity first
-	// — the reactor node runs once on instance create (its initial
-	// frame), then settles. Subsequent work_started growth must be
-	// attributable to the published message alone.
-	waitForNodeDispatched(t, ep, state.instanceID, reactorNodeType, 60*time.Second)
-	waitForDispatchQuiescent(t, ep, state.instanceID, reactorNodeType, 30*time.Second)
+	// @deliberate: no initial-frame drain. Under the message-schema-
+	// layer DSL the reactor subscribes ONLY to the message-virtual-
+	// node (`{node: invalidate/reactor, type: terminal/success}`) —
+	// there is no upstream source-node edge, so the reactor does NOT
+	// dispatch on instance create. Any growth from this baseline after
+	// the publisher's emit unambiguously proves the message-virtual-
+	// node cascade fired.
 	baseline := workStartedCount(t, ep, state.instanceID, reactorNodeType)
 
 	// @deliberate: emit a publisher message — exactly what the bundled
@@ -265,8 +266,7 @@ func exerciseMessageDeliveryLeg(t *testing.T, ep harness.RimskyEndpoint, state *
 	// `postMessage` so the example tracks the production publisher wire
 	// format.
 	envelope := map[string]any{
-		"kind":                      exampleMessageKind,
-		"target":                    reactorNodeType,
+		"type":                      exampleMessageType,
 		"payload":                   map[string]any{"hello": "world"},
 		"sender":                    "example-publisher",
 		"sender_kind":               "publisher",
@@ -304,8 +304,7 @@ func exerciseMessageDeliveryLeg(t *testing.T, ep harness.RimskyEndpoint, state *
 // platform-enforced, not a publisher convention.
 func exerciseMissingDedupHeaderLeg(t *testing.T, ep harness.RimskyEndpoint, state *exampleState) {
 	envelope := map[string]any{
-		"kind":                      exampleMessageKind,
-		"target":                    reactorNodeType,
+		"type":                      exampleMessageType,
 		"payload":                   map[string]any{"missing": "header"},
 		"sender":                    "example-publisher",
 		"sender_kind":               "publisher",
@@ -400,52 +399,59 @@ func exerciseRestartReconcileLeg(ctx context.Context, t *testing.T, h *harness.R
 	}
 }
 
-// reactorNodeType is both the publisher's `target_node` and the subscribing
-// node's type. The publisher's envelope carries target=<this>; the reactor
-// node subscribes to `message/<message_kind>/publisher/<target>` so the
-// delivered signal type matches it.
+// reactorNodeType is the subscribing node's type. The publisher's envelope
+// carries type=<exampleMessageType>, declared in the template's
+// `messages:` registry as a virtual node-type the reactor subscribes to
+// via `node: <exampleMessageType>, type: terminal/success`.
 const reactorNodeType = "reactor"
 
-// exampleMessageKind is the publisher's `message_kind` — the wire-level
-// invalidate-class kind. V1 only supports `invalidate`; the example tracks
-// that contract.
-const exampleMessageKind = "invalidate"
+// exampleMessageType is the template-declared message type the publisher
+// emits; the reactor subscribes to it through the message-schema-layer
+// DSL (post 2026-06-14).
+const exampleMessageType = "invalidate/reactor"
 
 // deployExampleTemplate POSTs a template referencing the example publisher
 // and deploys it. The template wires:
-//   - a publisher `example-pub` (kind: example — what the publisher's
-//     Capabilities advertises) targeting the reactor node, message_kind
-//     invalidate.
-//   - a `reactor` node subscribing to
-//     `message/invalidate/publisher/reactor` (the canonical signal type
-//     for a publisher-emitted invalidate to the reactor target), running
-//     the example executor's role-stand-in via the all-in-one's default
-//     stub executor.
+//   - a `messages:` registry entry declaring exampleMessageType as a
+//     typed message — the schema-layer DSL the publisher emits through.
+//   - a publisher `example` (kind: example — what the publisher's
+//     Capabilities advertises) targeting the reactor node, message_type
+//     exampleMessageType.
+//   - a `reactor` node subscribing to the message-virtual-node
+//     `{node: <exampleMessageType>, type: terminal/success}` — every
+//     publisher emit of that type drives a new dispatch on the reactor
+//     via the message-schema-layer cascade.
 //
-// The reactor node's executor is intentionally an unconfigured executor
-// reference — rimsky's reference-validation defaults to `available` for
-// the all-in-one image, so a missing executor doesn't refuse registration.
-// We rely on the node still entering its initial fresh frame and growing
-// work_started on every dispatch attempt; the cascade-fired re-dispatch
-// is what we measure across the publisher emit.
+// The reactor node's executor is the inline `stub` peer, which returns
+// a single terminal Success per dispatch — enough for the supervisor to
+// emit `work_started`, which is the load-bearing observable proving the
+// cascade fired across the publisher emit.
 func deployExampleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	t.Helper()
 
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "example-publisher-cascade",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "example-publisher-cascade",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			"messages": []map[string]any{
+				{
+					"type": exampleMessageType,
+					"body_schema": map[string]any{
+						"type":                 "object",
+						"properties":           map[string]any{},
+						"additionalProperties": true,
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{
 					"type":     reactorNodeType,
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance":               true,
-							"type":                   "message/" + exampleMessageKind + "/publisher/" + reactorNodeType,
-							"frame":                  "in",
+							"node":                   exampleMessageType,
+							"type":                   "terminal/success",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
@@ -464,7 +470,7 @@ func deployExampleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 					"kind":         exampleKind,
 					"config":       json.RawMessage(`{}`),
 					"target_node":  reactorNodeType,
-					"message_kind": exampleMessageKind,
+					"message_type": exampleMessageType,
 				},
 			},
 		},
@@ -535,53 +541,6 @@ type nodeStateResponse struct {
 	} `json:"events"`
 }
 
-// waitForNodeDispatched polls the node-state observability route until
-// the node has been dispatched at least once (work_started count > 0).
-// Used as the precondition for waitForDispatchQuiescent so the quiescent
-// window starts from a meaningful dispatch state.
-func waitForNodeDispatched(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		if workStartedCount(t, ep, instanceID, nodeType) > 0 {
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %q on instance %s did not receive a dispatch within %v — initial-frame processing must complete before the publisher-emit measurement begins",
-		nodeType, instanceID, deadline)
-}
-
-// waitForDispatchQuiescent polls a node's work_started count until it
-// stops growing for a stability window. Mirrors sensor_cascade_e2e_test.go's
-// shape: draining initial-frame activity before measuring later growth is
-// what makes the publisher-emit re-dispatch unambiguous.
-func waitForDispatchQuiescent(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string, deadline time.Duration) {
-	t.Helper()
-	const stableWindow = 4 * time.Second
-	end := time.Now().Add(deadline)
-	last := workStartedCount(t, ep, instanceID, nodeType)
-	stableSince := time.Now()
-	for time.Now().Before(end) {
-		time.Sleep(500 * time.Millisecond)
-		cur := workStartedCount(t, ep, instanceID, nodeType)
-		if cur != last {
-			last = cur
-			stableSince = time.Now()
-			continue
-		}
-		if time.Since(stableSince) >= stableWindow {
-			return
-		}
-	}
-	// @deliberate: non-fatal at this stage — an undispatched-executor
-	// configuration means the reactor may keep retrying. The follow-up
-	// requireWorkStartedGrew still discriminates publisher-emit-caused
-	// growth from baseline.
-	t.Logf("warning: node %q never went fully quiescent within %v (work_started kept moving, last=%d); proceeding with baseline=%d",
-		nodeType, deadline, last, last)
-}
-
 // workStartedCount returns the number of `work_started` events the node
 // has emitted — one per real supervisor dispatch attempt. Mirrors the
 // sensor cascade test's observable.
@@ -637,14 +596,14 @@ func requirePublisherMessage(t *testing.T, ep harness.RimskyEndpoint, instanceID
 		if status == http.StatusOK {
 			var resp struct {
 				Messages []struct {
-					Kind       string `json:"kind"`
+					Type       string `json:"type"`
 					Sender     string `json:"sender"`
 					SenderKind string `json:"sender_kind"`
 				} `json:"messages"`
 			}
 			if err := json.Unmarshal(raw, &resp); err == nil {
 				for _, m := range resp.Messages {
-					lastSeen = fmt.Sprintf("kind=%s sender=%s sender_kind=%s", m.Kind, m.Sender, m.SenderKind)
+					lastSeen = fmt.Sprintf("type=%s sender=%s sender_kind=%s", m.Type, m.Sender, m.SenderKind)
 					if m.SenderKind != "publisher" {
 						continue
 					}

@@ -117,10 +117,29 @@ func buildLockSpecs(
 	if err != nil {
 		return nil, err
 	}
+	// Bind the frame's triggering message so the lock-name substitution
+	// path admits `{{trigger.message.payload.X}}` and the new
+	// `{{messages.<type>.<field>}}` arm uniformly with dispatch-time
+	// substitution. One resolver function services both directive
+	// shapes (per spec §Load-bearing property "one substitution engine,
+	// two surfaces").
+	triggerPayload, triggerType := triggerMessageForFrame(ctx, args, tx, frameID)
+	// Defense-in-depth: thread the template's declared message-type set
+	// so `{{messages.<type>.<field>}}` references against undeclared
+	// types fail with ErrMissingSource even on lock-name substitution.
+	// Mirrors `buildResolveContextForDispatch` in runner_dispatch.go.
+	var templateHash string
+	if inst != nil {
+		templateHash = inst.TemplateHash
+	}
+	registryTypes := declaredMessageTypesForTemplate(ctx, args, templateHash, tx)
 	resolveCtx := attributes.ResolveContext{
-		Params: paramsRaw,
-		Deps:   deps,
-		Claim:  loadInheritedClaimsForNode(ctx, args, tx, nd),
+		Params:                paramsRaw,
+		Deps:                  deps,
+		Claim:                 loadInheritedClaimsForNode(ctx, args, tx, nd),
+		TriggerMessagePayload: triggerPayload,
+		TriggerMessageType:    triggerType,
+		RegistryDeclaredTypes: registryTypes,
 	}
 
 	out := make([]any, 0, len(def.Locks)+len(def.Stores))

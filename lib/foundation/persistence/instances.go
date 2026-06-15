@@ -22,12 +22,6 @@ import (
 // structural-inertness discipline). Empty map = no overrides; the
 // column has NOT NULL DEFAULT '{}' so dispatch-time reads are
 // unconditional.
-//
-// FrameDeliveryMode selects per-instance message-delivery semantics for
-// `DeliverPendingMessages` at frame creation
-// (col:rimsky_instances.frame_delivery_mode). One of "serial_queue" or
-// "coalesce"; an omitted mode defaults to "serial_queue" (decided by the
-// driver INSERT literal, not the column DEFAULT).
 type InstanceRow struct {
 	ID                 shared.UUID    `json:"id"`
 	TemplateHash       string         `json:"template_hash"` // @constraint: FK to rimsky_templates.id
@@ -44,7 +38,6 @@ type InstanceRow struct {
 	//
 	// @concept: attribute (L5 matcher overlay)
 	AttributeOverridesMatchCounts []int64 `json:"attribute_overrides_match_counts,omitempty"`
-	FrameDeliveryMode             string  `json:"frame_delivery_mode"`
 	// MainRunScopeID projects rimsky_instances.main_run_scope_id — the
 	// instance's main RunScope (FK to rimsky_run_scopes.id). Every
 	// instance has exactly one main RunScope, allocated by the create
@@ -129,11 +122,6 @@ type InstanceTable interface {
 // AttributeOverrides is the validated overrides blob. Persistence does
 // not re-validate; it serialises and stores. nil/empty are equivalent
 // and persisted as `{}`.
-//
-// FrameDeliveryMode, when empty, is defaulted to "serial_queue" by the
-// driver INSERT literal (COALESCE(?, 'serial_queue')) — not the column
-// DEFAULT. Otherwise the value is written verbatim — the column's CHECK
-// constraint enforces the discriminator vocabulary.
 type InstanceCreateInput struct {
 	ID                 shared.UUID
 	TemplateHash       string
@@ -145,7 +133,6 @@ type InstanceCreateInput struct {
 	// API handler initialises this from the request body's by_match
 	// length; the persistence layer persists it verbatim.
 	AttributeOverridesMatchCounts []int64
-	FrameDeliveryMode             string
 	// MainRunScopeID is the main RunScope's id, allocated by the
 	// create handler before Create is called. Required (non-nullable;
 	// every instance has exactly one main RunScope). The column

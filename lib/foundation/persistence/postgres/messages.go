@@ -29,25 +29,16 @@ func (b *messagesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(
 
 const insertMessageSQL = `
 INSERT INTO rimsky_messages (
-    id, instance_id, kind, sender, sender_kind, target, payload,
-    backfill_operation_id, received_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+    id, instance_id, type, sender, sender_kind, payload, received_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
 func (b *messagesImpl) Insert(ctx context.Context, tx persistence.Tx, req persistence.EnqueueMessageRequest) error {
 	if req.ReceivedAt.IsZero() {
 		req.ReceivedAt = time.Now().UTC()
 	}
-	var target any
-	if req.Target != "" {
-		target = req.Target
-	}
-	var backfill any
-	if req.BackfillOperationID != nil {
-		backfill = *req.BackfillOperationID
-	}
 	_, err := b.q(tx).Exec(ctx, insertMessageSQL,
-		req.ID, req.InstanceID, req.Kind, req.Sender, req.SenderKind,
-		target, req.Payload, backfill, req.ReceivedAt)
+		req.ID, req.InstanceID, req.Type, req.Sender, req.SenderKind,
+		req.Payload, req.ReceivedAt)
 	if err != nil {
 		return fmt.Errorf("postgres.Messages.Insert: %w", err)
 	}
@@ -67,25 +58,19 @@ func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id 
 	return tag.RowsAffected() == 1, nil
 }
 
-const markCancelledSQL = `
-UPDATE rimsky_messages
-   SET cancelled = TRUE, delivered_at = $1, frame_id = NULL
- WHERE backfill_operation_id = $2 AND delivered_at IS NULL`
-
-func (b *messagesImpl) MarkCancelled(ctx context.Context, tx persistence.Tx, backfillOperationID shared.UUID, at time.Time) (int, error) {
-	tag, err := b.q(tx).Exec(ctx, markCancelledSQL, at, backfillOperationID)
-	if err != nil {
-		return 0, fmt.Errorf("postgres.Messages.MarkCancelled: %w", err)
-	}
-	return int(tag.RowsAffected()), nil
-}
-
+// listPendingForInstanceSQL returns the OLDEST pending undelivered
+// message for the instance. LIMIT 1 is load-bearing: the one-message-
+// per-frame property in `code:lib/runtime/message_delivery.go::DeliverPendingMessages`
+// names this SELECT as the structural single-row gate. Removing the
+// LIMIT would let bursty operator traffic materialize N rows per tick
+// just to pick one.
 const listPendingForInstanceSQL = `
-SELECT id, instance_id, kind, sender, sender_kind, target, payload,
-       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+SELECT id, instance_id, type, sender, sender_kind, payload,
+       received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE instance_id = $1 AND delivered_at IS NULL AND cancelled = FALSE
- ORDER BY received_at ASC, id ASC`
+ ORDER BY received_at ASC, id ASC
+ LIMIT 1`
 
 func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
 	rows, err := b.q(tx).Query(ctx, listPendingForInstanceSQL, instanceID)
@@ -97,8 +82,8 @@ func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistenc
 }
 
 const listDeliveredForFrameSQL = `
-SELECT id, instance_id, kind, sender, sender_kind, target, payload,
-       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+SELECT id, instance_id, type, sender, sender_kind, payload,
+       received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE frame_id = $1
  ORDER BY received_at ASC, id ASC`
@@ -113,8 +98,8 @@ func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, tx persistence
 }
 
 const getMessageSQL = `
-SELECT id, instance_id, kind, sender, sender_kind, target, payload,
-       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+SELECT id, instance_id, type, sender, sender_kind, payload,
+       received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE id = $1`
 
@@ -134,9 +119,31 @@ func (b *messagesImpl) Get(ctx context.Context, id shared.UUID) (*persistence.Me
 	return &out[0], nil
 }
 
+// GetInTx mirrors Get but reads through the caller's open tx. The
+// postgres pool can satisfy a fresh-connection read concurrent with
+// an open tx, so the deadlock GetInTx exists to defeat is SQLite-
+// specific; the postgres impl provides this variant for interface
+// symmetry, and so the frame-engine's promotion path participates in
+// the same tx (avoiding a read-before-commit visibility hazard).
+func (b *messagesImpl) GetInTx(ctx context.Context, tx persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
+	rows, err := b.q(tx).Query(ctx, getMessageSQL, id)
+	if err != nil {
+		return nil, fmt.Errorf("postgres.Messages.GetInTx: %w", err)
+	}
+	defer rows.Close()
+	out, err := collectMessages(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return &out[0], nil
+}
+
 // List is a paginated list with filter. V1 implementation supports
-// instance_id + kind + sender_kind + target + backfill_operation_id +
-// frame_id filters; cursor pagination follows received_at DESC.
+// instance_id + type + sender_kind + frame_id filters; cursor pagination
+// follows received_at DESC.
 func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	args := []any{}
 	where := "WHERE TRUE"
@@ -144,33 +151,33 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		args = append(args, *filter.InstanceID)
 		where += fmt.Sprintf(" AND instance_id = $%d", len(args))
 	}
-	if filter.Kind != "" {
-		args = append(args, filter.Kind)
-		where += fmt.Sprintf(" AND kind = $%d", len(args))
+	if filter.Type != "" {
+		args = append(args, filter.Type)
+		where += fmt.Sprintf(" AND type = $%d", len(args))
 	}
 	if filter.SenderKind != "" {
 		args = append(args, filter.SenderKind)
 		where += fmt.Sprintf(" AND sender_kind = $%d", len(args))
 	}
-	if filter.Target != "" {
-		args = append(args, filter.Target)
-		where += fmt.Sprintf(" AND target = $%d", len(args))
-	}
-	if filter.BackfillOperationID != nil {
-		args = append(args, *filter.BackfillOperationID)
-		where += fmt.Sprintf(" AND backfill_operation_id = $%d", len(args))
-	}
 	if filter.FrameID != nil {
 		args = append(args, *filter.FrameID)
 		where += fmt.Sprintf(" AND frame_id = $%d", len(args))
+	}
+	if filter.DeliveredAfter != nil {
+		args = append(args, *filter.DeliveredAfter)
+		where += fmt.Sprintf(" AND delivered_at > $%d", len(args))
+	}
+	if filter.DeliveredBefore != nil {
+		args = append(args, *filter.DeliveredBefore)
+		where += fmt.Sprintf(" AND delivered_at < $%d", len(args))
 	}
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 	args = append(args, limit)
-	sql := fmt.Sprintf(`SELECT id, instance_id, kind, sender, sender_kind, target, payload,
-       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+	sql := fmt.Sprintf(`SELECT id, instance_id, type, sender, sender_kind, payload,
+       received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages %s
  ORDER BY received_at DESC, id DESC
  LIMIT $%d`, where, len(args))
@@ -190,23 +197,17 @@ func collectMessages(rows pgx.Rows) ([]persistence.MessageRow, error) {
 	out := []persistence.MessageRow{}
 	for rows.Next() {
 		var m persistence.MessageRow
-		var target *string
 		var deliveredAt *time.Time
 		var frameID *shared.UUID
-		var backfill *shared.UUID
 		if err := rows.Scan(
-			&m.ID, &m.InstanceID, &m.Kind, &m.Sender, &m.SenderKind,
-			&target, &m.Payload, &backfill, &m.ReceivedAt, &deliveredAt,
+			&m.ID, &m.InstanceID, &m.Type, &m.Sender, &m.SenderKind,
+			&m.Payload, &m.ReceivedAt, &deliveredAt,
 			&frameID, &m.Cancelled,
 		); err != nil {
 			return nil, err
 		}
-		if target != nil {
-			m.Target = *target
-		}
 		m.DeliveredAt = deliveredAt
 		m.FrameID = frameID
-		m.BackfillOperationID = backfill
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {

@@ -87,8 +87,7 @@ func TestMessageRouting_PublisherPostsEnvelopeToInstanceMessages(t *testing.T) {
 	defer srv.Close()
 
 	envelope := map[string]any{
-		"kind":                      "invalidate",
-		"target":                    "tick",
+		"type":                      "sensor/observation",
 		"payload":                   map[string]any{"observed_at": "2026-05-17T12:00:00Z"},
 		"sender":                    "sensor-cron",
 		"sender_kind":               "publisher",
@@ -126,10 +125,15 @@ func TestMessageRouting_PublisherPostsEnvelopeToInstanceMessages(t *testing.T) {
 	if rec.Body["publisher_subscription_id"] != "scenario-subscription" {
 		t.Errorf("body.publisher_subscription_id: %v", rec.Body["publisher_subscription_id"])
 	}
-	if rec.Body["kind"] != "invalidate" {
-		t.Errorf("body.kind: %v", rec.Body["kind"])
+	if rec.Body["type"] != "sensor/observation" {
+		t.Errorf("body.type: %v", rec.Body["type"])
 	}
-	if rec.Body["target"] != "tick" {
-		t.Errorf("body.target: %v", rec.Body["target"])
+	// `target` is no longer on the envelope: the
+	// `rimsky_messages.target` column was retired in migration 010 of
+	// the 2026-06-14 message-schema-layer reshape; routing happens via
+	// the subscription's target_node on rimsky's side, not via a wire
+	// envelope field.
+	if _, present := rec.Body["target"]; present {
+		t.Errorf("body.target unexpectedly present: %v", rec.Body["target"])
 	}
 }

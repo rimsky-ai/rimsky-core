@@ -141,7 +141,7 @@ func TestStartPublisherSubscriptions_InsertsMountingNoInlineRPC(t *testing.T) {
 	}
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.StartPublisherSubscriptionsForInstance(ctx, deps, tx, instanceID, nil, []spec.PublisherSpec{
-			{Name: "pub-a", Kind: "object_store", Config: json.RawMessage(`{"bucket":"b"}`), TargetNode: "ingest"},
+			{Name: "pub-a", Kind: "object_store", Config: json.RawMessage(`{"bucket":"b"}`), TargetNode: "ingest", MessageType: "fixture/ping"},
 		})
 	})
 	if err != nil {
@@ -186,7 +186,7 @@ func TestStartPublisherSubscriptions_UnknownPublisherFailsWithReason(t *testing.
 	}
 	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return runtime.StartPublisherSubscriptionsForInstance(ctx, deps, tx, instanceID, nil, []spec.PublisherSpec{
-			{Name: "no-such-publisher", Kind: "object_store", Config: json.RawMessage(`{}`), TargetNode: "ingest"},
+			{Name: "no-such-publisher", Kind: "object_store", Config: json.RawMessage(`{}`), TargetNode: "ingest", MessageType: "fixture/ping"},
 		})
 	})
 	if err != nil {

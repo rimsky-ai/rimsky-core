@@ -92,9 +92,8 @@ func TestTemplateRegister_RejectsDelegateCycleOverRoute(t *testing.T) {
 	// entry on terminal/*.
 	reqBody := map[string]any{
 		"spec": map[string]any{
-			"name":                  "delegate-cycle-" + uuid.NewString(),
-			"version":               "1",
-			"frame_resolution_mode": "coalesce",
+			"name":    "delegate-cycle-" + uuid.NewString(),
+			"version": "1",
 			"graphs": []map[string]any{
 				{
 					"name": "main",
@@ -549,9 +548,8 @@ func newRefModeHarness(t *testing.T, mode node.RefValidationMode) (*harness, fun
 func refModeTemplateNotProvisioned(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    name,
+			"version": "v1",
 			"nodes": []map[string]any{
 				{"type": "root", "executor": "ghost-executor"},
 			},
@@ -566,9 +564,8 @@ func refModeTemplateNotProvisioned(name string) map[string]any {
 func refModeTemplateProvisionedInvalid(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    name,
+			"version": "v1",
 			"nodes": []map[string]any{
 				{
 					"type":     "root",
@@ -700,9 +697,8 @@ func warningsContainAdvisory(t *testing.T, out map[string]any) bool {
 func storesTemplateWithoutAcquirePolicy(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    name,
+			"version": "v1",
 			"nodes": []map[string]any{
 				{
 					"type":     "claim-topic",

@@ -60,7 +60,6 @@ func TestAcquireUnavailable_RoutesViaErrorTypes(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-error-types", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{
@@ -148,7 +147,6 @@ func TestAcquireUnavailable_NoPolicyFailsFast(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-no-policy", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

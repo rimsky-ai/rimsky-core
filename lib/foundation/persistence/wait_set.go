@@ -30,8 +30,11 @@ type WaitSetRow struct {
 	FrameID       shared.UUID
 	ReceiverRunID shared.UUID
 	SenderRunID   shared.UUID
-	// @constraint: TopicKind is one of "terminal" | "transient" | "attribute" | "event" | "message"
-	// (the 5-value taxonomy), with "state" tolerated as a legacy/fallback value.
+	// @constraint: TopicKind is one of "terminal" | "transient" | "attribute" | "event"
+	// (the 4-value canonical signal taxonomy), with "state" tolerated as a
+	// legacy/fallback value. The pre-2026-06-14 "message" bucket retired with
+	// the message-schema-layer reshape (migration 011 drops it from the CHECK
+	// admitted set).
 	TopicKind string
 	// @constraint: SubscriptionScope is one of "direct" | "instance".
 	SubscriptionScope string

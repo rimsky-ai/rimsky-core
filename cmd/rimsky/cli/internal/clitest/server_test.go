@@ -16,9 +16,8 @@ import (
 
 func minimalSpecTyped() node.TemplateSpec {
 	return node.TemplateSpec{
-		Name:                "x",
-		Version:             "1.0",
-		FrameResolutionMode: "coalesce",
+		Name:    "x",
+		Version: "1.0",
 		Nodes: []node.TemplateNodeDef{
 			{Type: "a", Executor: "http-node"},
 		},

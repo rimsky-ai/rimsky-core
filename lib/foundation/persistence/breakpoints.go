@@ -114,4 +114,17 @@ type BreakpointHitTable interface {
 	// waiters. Returns the rowcount. Does NOT handle
 	// `auto_resume_after_ttl` overflow — that path is AutoResumeStale.
 	SweepOrphanedUnresumed(ctx context.Context, cutoff time.Time, tx Tx) (int, error)
+
+	// HasUnresumedPauseHitForInstance reports whether the instance has
+	// at least one rimsky_breakpoint_hits row in pause mode with
+	// resumed_at IS NULL. Drives the debug-channel gate
+	// (POST /instances/{id}/debug/override): a pause-mode hit is the
+	// signal that the runner is suspended at a breakpoint and the
+	// debugger surface may safely mutate node-runs / attributes.
+	// Read inside the request tx so the gate-check shares the
+	// snapshot with the mutation step (TOCTOU resistance per the
+	// Pass 9 falsifier).
+	//
+	// @concept: breakpoint
+	HasUnresumedPauseHitForInstance(ctx context.Context, instanceID shared.UUID, tx Tx) (bool, error)
 }

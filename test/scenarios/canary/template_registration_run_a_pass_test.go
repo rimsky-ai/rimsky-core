@@ -75,9 +75,8 @@ func TestCanary_TemplateRegistrationAndRunAPass(t *testing.T) {
 	// about (template_hash content-addressing, deploy verb, instance
 	// creation, cascade-fire via subscribes:).
 	tmpl := node.TemplateSpec{
-		Name:                "canary-template-run-a-pass",
-		Version:             "v1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
+		Name:    "canary-template-run-a-pass",
+		Version: "v1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "root-worker", Executor: "stub"},

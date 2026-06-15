@@ -8,22 +8,9 @@ aliases: []
 
 ## Definition
 
-A boundary-crossing dispatch unit. Pushed envelope matched via subscription. Persisted in a message ledger on receipt; delivered to subscribers at frame boundary per the per-instance `FrameDeliveryMode` (`serial_queue` default; `coalesce` opt-in).
+A typed envelope whose arrival at an instance opens a frame. The envelope's `type` field selects an entry from the instance's template message-schema registry; an undeclared type is refused at receipt with an unknown-type response. Persisted in the message ledger on receipt; delivered to subscribers at the next frame boundary, one message per frame. Cascade-emitted, operator-emitted, and publisher-emitted messages traverse the same delivery path.
 
-`FrameDeliveryMode` (the per-instance message-**delivery** knob, persisted on the instance) is distinct from `FrameResolutionMode` (the template-driven frame-**aggregation** knob owned by `concept:frame`). They share the `serial_queue` / `coalesce` value names but govern different things; this concept owns only the delivery knob.
-
-Envelope shape:
-
-| Field | Required | Notes |
-|---|---|---|
-| `id` | yes | UUID; rimsky-assigned |
-| `instance_id` | yes | target instance |
-| `kind` | yes | V1: `invalidate` only |
-| `sender` | yes | identity of the sender (`operator`; publisher name like `sensor-cron`; `instance:<id>`) |
-| `sender_kind` | yes | `operator | publisher | instance` |
-| `target` | optional | node alias in the receiving instance |
-| `payload` | optional | opaque bytes; inert per discipline (`@blessed-invariant 24`) |
-| `received_at` | yes | rimsky-assigned timestamp |
+Envelope shape: `id`, `instance_id`, `type` (the message type-path), `sender`, `sender_kind` (`operator | publisher | instance`), `payload` (the typed body, inert), `received_at`. Receivers are decided by subscription to the message type as a virtual node-type — there is no envelope-side routing field.
 
 ## Idempotency
 
@@ -33,13 +20,13 @@ The idempotency feature is universal — operator retries, publisher emissions, 
 
 ## Boundaries
 
-Owns: the message envelope shape, the message ledger, the per-instance `FrameDeliveryMode` and its delivery semantics (`serial_queue` default vs `coalesce` opt-in), the subscription-walk at frame boundary, the dead-letter audit, the universal dedup ledger. Does NOT own: cascade walks (in-frame; not messages — see `concept:cascade`), event emissions (executor-internal; see `concept:named-event`), the frame creation mechanics and the template-driven `FrameResolutionMode` (frame aggregation — see `concept:frame`). Adjacent: `concept:frame`, `concept:node-subscription`, `concept:publisher`, `concept:publisher-subscription`, `concept:sensor`, `concept:invalidate` (one `kind` of message), `concept:backfill`.
+Owns: the envelope shape and the message ledger; the one-message-per-frame delivery rule; the subscription-walk-as-virtual-node at frame boundary (each message type is a virtual node-type emitting `terminal/success` on arrival); the dead-letter audit (no-subscriber landings still write a ledger row with a `terminal/success` emission); the universal `Idempotency-Key` dedup ledger; the registry lookup gate on receipt. Does NOT own: the type registry itself (see `concept:message-schema`); cascade walks within a frame (see `concept:cascade`); event emissions from executors (see `concept:named-event`); the frame creation mechanics (see `concept:frame`); the publisher's substrate state (see `concept:publisher` / `concept:publisher-subscription`); the emit-node's dispatch (see `concept:message-emitter-node`). Adjacent: `concept:frame`, `concept:node-subscription`, `concept:publisher`, `concept:publisher-subscription`, `concept:sensor`, `concept:message-schema`, `concept:message-emitter-node`.
 
 ## Invariants
 
-- Two emit sites: operator API (the message-emit endpoint with `sender_kind: "operator"`) and publisher emissions (the same endpoint with `sender_kind: "publisher"` + a publisher-subscription capability token). Cascade walks within a frame are NOT messages — they are direct stale-marks inside the frame.
-- Delivery at frame boundary: pending messages match against the target instance's subscriptions (kind, sender, sender_kind, target); matched subscribers' nodes are stale-marked in the new frame; the message's `delivered_at` and `frame_id` populate. Multiple matching subscribers fire in the same frame.
-- Per-instance `FrameDeliveryMode`: `serial_queue` (**default**) delivers the oldest one message per frame and leaves the rest pending until the next frame — so each message gets its own frame, processed in received-order, which is unambiguous and the intuitive default. `coalesce` (opt-in) delivers pending messages in strict received-order, coalescing until a message would resolve a node's substitution to a **conflicting** (different) value, then breaks into the next frame; same-value bindings are idempotent and coalesce freely. Only a genuine value-disagreement breaks the frame.
-- If no matching subscriber, message dead-lettered (audited in the message ledger with `delivered_at` set, no firings recorded). Visible via the operator message-tail surface.
-- Payload is inert per `@blessed-invariant 24`. Read only at the substitution leaf and the persistence-layer fetch.
-- Publisher requests are capability-checked: rimsky validates that the publisher-subscription is a live, active binding for the target instance before insert; mismatch returns a forbidden response. The request's `sender` field is ignored — rimsky derives `sender` from the publisher-subscription's publisher name.
+- Two external emit sites and one internal: operator API (the message-emit endpoint with `sender_kind: "operator"`), publisher emissions (the same endpoint with `sender_kind: "publisher"` + a publisher-subscription capability token), and cascade-emit (a message-emitter node's dispatch, with `sender_kind: "instance"` + sender `instance:<id>`). All three paths land in the same ledger and follow the same delivery rules.
+- One message per frame. At each frame boundary, exactly one pending message delivers; the rest stay pending until the next frame.
+- Type lookup at receipt: a message whose `type` is not declared in the target template's message-schema registry is refused with an unknown-type response; loud miss, not silent dead-letter.
+- Delivery at frame boundary: the message-virtual-node settles in the new frame and emits `terminal/success`; nodes subscribing to that virtual node-type stale-mark; the message's `delivered_at` and `frame_id` populate.
+- Payload is inert (see `@blessed-invariant: 21`). Read only at the substitution leaf and the persistence-layer fetch.
+- Publisher requests are capability-checked at the existing publisher-subscription validation: rimsky validates that the publisher-subscription is a live, active binding for the target instance.

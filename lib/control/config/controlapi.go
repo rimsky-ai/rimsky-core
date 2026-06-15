@@ -6,7 +6,6 @@ package config
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -26,41 +25,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
 )
-
-// controlapiInvalidateAdapter wraps the runtime
-// InvalidateAdapter so it returns the controlapi.ErrInvalidateConflict
-// sentinel when the foundation runtime reports the target is running.
-// Without this translation the admin handler would 500 instead of 409
-// because errors.Is on the foundation's ErrInvalidateRunning sentinel
-// would fail (the controlapi handler only knows ErrInvalidateConflict).
-type controlapiInvalidateAdapter struct {
-	inner *runtime.InvalidateAdapter
-}
-
-func (a *controlapiInvalidateAdapter) InvalidateNode(ctx context.Context, instanceID, nodeID string) (any, error) {
-	out, err := a.inner.InvalidateNode(ctx, instanceID, nodeID)
-	if err != nil {
-		if errors.Is(err, runtime.ErrInvalidateRunning) {
-			return nil, fmt.Errorf("%w: %v", controlapi.ErrInvalidateConflict, err)
-		}
-		return nil, err
-	}
-	return out, nil
-}
-
-// controlapiSupervisorID returns the supervisor id stamped on
-// audit-log rows for control-api-originated wakes. Defaults to a
-// hostname-derived value so multi-replica deployments don't collide.
-// Override with RIMSKY_CONTROLAPI_ID.
-func controlapiSupervisorID() string {
-	if v := os.Getenv("RIMSKY_CONTROLAPI_ID"); v != "" {
-		return v
-	}
-	if h, err := os.Hostname(); err == nil && h != "" {
-		return "control-api-" + h
-	}
-	return "control-api"
-}
 
 // ControlAPIConfig wires the control-api HTTP server. The store config
 // follows the same name → endpoint + capabilities shape as the
@@ -286,21 +250,6 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		LifecycleSubs: lifecycleReg,
 		NamedLocks:    cfg.NamedLocks,
 		Executors:     executorsByName,
-		// @deliberate: control-api delegates admin invalidates to the
-		// foundation runtime's UnifiedInvalidate via this adapter — same
-		// code path that the parked-nodes sweep and the on_event handler
-		// dispatch use, so handler-emitted invalidates correctly resume
-		// parked targets.
-		InvalidateHandler: &controlapiInvalidateAdapter{
-			inner: &runtime.InvalidateAdapter{
-				Persist:      persistStore,
-				Queue:        persistQueue,
-				Clock:        cfg.Clock,
-				Logger:       cfg.Logger,
-				SupervisorID: controlapiSupervisorID(),
-				Metrics:      cfg.Metrics,
-			},
-		},
 		// @deliberate: ExecutorCapabilities exposes the observability
 		// discovery cache's per-executor (declared_events,
 		// declared_error_classes, expected_attributes_schema) to the
@@ -355,11 +304,11 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		// onto the validator hooks so registration + POST
 		// /templates/validate share one strictness.
 		RefValidationMode: cfg.RefValidationMode,
-		// Kind sugar map: seeded with the same package constants the
-		// supervisor uses so `kind: loop_counter` resolves on the
-		// control-API validation path. The map is process-local; in a
-		// split-process deploy the supervisor maintains its own copy
-		// from the same constants.
+		// @deliberate: Kind sugar map seeded with the same package
+		// constants the supervisor uses so `kind: loop_counter`
+		// resolves on the control-API validation path. The map is
+		// process-local; in a split-process deploy the supervisor
+		// maintains its own copy from the same constants.
 		KindAliases: buildKindAliases(),
 	}
 	app := controlapi.NewApp(deps)

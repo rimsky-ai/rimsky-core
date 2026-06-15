@@ -45,10 +45,9 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true, NoSupervisor: true})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name:                "timeout-warning",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      60000,
+		Name:           "timeout-warning",
+		Version:        "1",
+		FrameTimeoutMs: 60000,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -70,12 +69,20 @@ func TestFrameTimeoutWarning(t *testing.T) {
 	//
 	// Per the reactive-loops + lifecycle-handlers spec §7, frame_timeout_ms
 	// is now compared against last_progress_at (not started_at).
+	// Pass 1 of the message-schema-layer plan added the
+	// rimsky_frames.triggering_message_id NOT NULL FK; seed a typed
+	// envelope first so the frame's FK resolves.
+	messageID := uuid.New()
+	h.ExecSQL(`INSERT INTO rimsky_messages
+	    (id, instance_id, type, sender, sender_kind)
+	    VALUES ($1, $2, 'fixture/frame-timeout-warning', 'operator', 'operator')`,
+		messageID, uuid.UUID(iid))
 	var frameID uuid.UUID
 	h.QueryRowSQL(`
-		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
-		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now() - interval '3 minutes', now() - interval '2 minutes', now() - interval '2 minutes', 60000)
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms)
+		VALUES ($1, $2, 'running', now() - interval '3 minutes', now() - interval '2 minutes', now() - interval '2 minutes', 60000)
 		RETURNING frame_id
-	`, []any{uuid.UUID(iid), uuid.UUID(worker.ID)}, &frameID)
+	`, []any{uuid.UUID(iid), messageID}, &frameID)
 
 	// @deliberate: Mark the source node stale by binding rimsky_nodes.frame_id + an
 	// in-flight pending stale run row (post-stage-3: state lives on

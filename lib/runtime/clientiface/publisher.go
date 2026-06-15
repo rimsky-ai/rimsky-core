@@ -52,7 +52,7 @@ type PublisherClient interface {
 
 // SubscribeRequest is the rimsky-side payload for PublisherClient.Subscribe.
 // Mirrors the proto SubscribeRequest 1:1 with inline routing fields
-// (target_node + message_kind) and `[]byte` config bytes per
+// (target_node + message_type) and `[]byte` config bytes per
 // `@blessed-invariant 21` (config is opaque to rimsky once resolved).
 type SubscribeRequest struct {
 	PublisherSubscriptionID shared.UUID
@@ -60,7 +60,7 @@ type SubscribeRequest struct {
 	Kind                    string
 	ResolvedConfig          []byte
 	TargetNode              string
-	MessageKind             string
+	MessageType             string
 }
 
 // ListedPublisherSubscription is the rimsky-side projection of the
@@ -71,7 +71,7 @@ type ListedPublisherSubscription struct {
 	InstanceID              shared.UUID
 	Kind                    string
 	TargetNode              string
-	MessageKind             string
+	MessageType             string
 }
 
 // PublisherRegistry resolves a publisher name (as declared in

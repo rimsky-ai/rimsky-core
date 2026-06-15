@@ -33,16 +33,15 @@ func TestSensorInvalidateToCascade(t *testing.T) {
 	if err := runtime.EnqueueMessage(ctx, nil, m, persistence.EnqueueMessageRequest{
 		ID:         shared.UUID(uuid.New()),
 		InstanceID: instanceID,
-		Kind:       "invalidate",
+		Type:       "invalidate",
 		Sender:     "sensor-cron",
 		SenderKind: "publisher",
-		Target:     "*",
 		Payload:    []byte(`{"observed_at":"2026-05-15T12:00:00Z"}`),
 		ReceivedAt: now,
 	}); err != nil {
 		t.Fatalf("EnqueueMessage: %v", err)
 	}
-	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, runtime.FrameDeliveryCoalesce, now, nil)
+	delivered, err := runtime.DeliverPendingMessages(ctx, nil, m, instanceID, frameID, now)
 	if err != nil {
 		t.Fatalf("DeliverPendingMessages: %v", err)
 	}

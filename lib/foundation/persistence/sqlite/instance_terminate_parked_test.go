@@ -72,11 +72,21 @@ func TestMarkInstanceTerminatedIfDoneHoldsForParkedRun(t *testing.T) {
 	}
 	// @constraint: frame seeded terminal (completed) so the frames-in-flight
 	// guard does NOT block termination — only the node-run predicate can.
+	// @constraint: triggering message seeded so the
+	// rimsky_frames.triggering_message_id NOT NULL FK is satisfied.
+	msgID := uuid.New().String()
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+		msgID, instanceID.String(),
+	); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at, ended_at)
-		 VALUES (?, ?, 'serial_queue', 'completed', '[]', 60000, datetime('now'), datetime('now'))`,
-		frameID.String(), instanceID.String(),
+		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms, started_at, ended_at)
+		 VALUES (?, ?, ?, 'completed', 60000, datetime('now'), datetime('now'))`,
+		frameID.String(), instanceID.String(), msgID,
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}
@@ -171,11 +181,21 @@ func seedResolvedFrameInstance(t *testing.T, ctx context.Context, d persistence.
 	// @constraint: frame seeded terminal so the (former) frames-in-flight
 	// clause is irrelevant; the node is fresh (no in-flight run row), so
 	// the only thing deciding the predicate is the terminate_after_run gate.
+	// @constraint: triggering message seeded so the
+	// rimsky_frames.triggering_message_id NOT NULL FK is satisfied.
+	msgID := uuid.New().String()
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+		msgID, instanceID.String(),
+	); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms, started_at, ended_at)
-		 VALUES (?, ?, 'serial_queue', 'completed', '[]', 60000, datetime('now'), datetime('now'))`,
-		frameID.String(), instanceID.String(),
+		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms, started_at, ended_at)
+		 VALUES (?, ?, ?, 'completed', 60000, datetime('now'), datetime('now'))`,
+		frameID.String(), instanceID.String(), msgID,
 	); err != nil {
 		t.Fatalf("seed frame: %v", err)
 	}

@@ -30,9 +30,8 @@ import (
 func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
-		Name:                "delegate-template",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "delegate-template",
+		Version: "1",
 		Graphs: []tmplspec.GraphSpec{
 			{
 				Name: tmplspec.MainGraphName,
@@ -96,9 +95,8 @@ func TestEntryAbsorption_MarkerEmittedOnCallingNode(t *testing.T) {
 func TestEntryAbsorption_ExitNodeIdentified(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
-		Name:                "delegate-template",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "delegate-template",
+		Version: "1",
 		Graphs: []tmplspec.GraphSpec{
 			{
 				Name:  tmplspec.MainGraphName,

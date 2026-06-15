@@ -25,7 +25,6 @@ func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "serial-queue-each-invalidate", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -54,9 +53,15 @@ func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {
 
 	frames := listFrames(t, h, iid)
 	require.Len(t, frames, totalFrames, "expected exactly %d frames", totalFrames)
+	seenTriggers := make(map[string]struct{}, totalFrames)
 	for i, f := range frames {
-		require.Equal(t, "serial_queue", f.Mode, "frame %d wrong mode", i)
 		require.Equal(t, "completed", f.State, "frame %d not completed", i)
-		require.Len(t, f.SourceNodeIDs, 1, "frame %d should have 1 source", i)
+		require.NotEqual(t, (frameRow{}).TriggeringMessageID, f.TriggeringMessageID,
+			"frame %d missing triggering_message_id", i)
+		// Each frame carries a distinct triggering message: each invalidate
+		// produces its own envelope (one-message-per-frame).
+		seenTriggers[f.TriggeringMessageID.String()] = struct{}{}
 	}
+	require.Equal(t, totalFrames, len(seenTriggers),
+		"expected %d distinct triggering_message_id values; got %d", totalFrames, len(seenTriggers))
 }

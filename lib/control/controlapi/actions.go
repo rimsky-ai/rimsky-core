@@ -322,6 +322,27 @@ var v1Actions = []ActionEntry{
 		Routes:      []Route{{"POST", "/v1/instances/{idOrKey}/terminate"}},
 		MCPTools:    []string{"instance_kill"},
 		Description: "Force-terminate an instance: mark it terminal and abandon in-flight node-runs."},
+	// @constraint: debug channel — gated to paused or
+	// pause-mode-breakpoint-hit instances. Distinct from `node:reset`
+	// (the always-on operator surface for recovering a failed node);
+	// this action authorizes ad-hoc debug-time overrides on an instance
+	// the operator has explicitly quiesced via the debugger surface.
+	// @concept: debug-channel
+	{Action: "instance:debug-override", IsWrite: true,
+		Routes:      []Route{{"POST", "/v1/instances/{id}/debug/override"}},
+		MCPTools:    []string{"instance_debug_override"},
+		Description: "Apply an ad-hoc debug override (invalidate_node or set_attribute) on a paused or breakpoint-held instance."},
+
+	// @concept: cascade-graph — frames-read surface. The
+	// triggering_message_id filter on the list endpoint surfaces the
+	// message → frames reverse join the frame-origin-audit story
+	// consumes.
+	{Action: "instance:list-frames", IsWrite: false,
+		Routes:      []Route{{"GET", "/v1/instances/{id}/frames"}},
+		Description: "List frames for an instance; supports filter by triggering_message_id."},
+	{Action: "instance:read-frame", IsWrite: false,
+		Routes:      []Route{{"GET", "/v1/instances/{id}/frames/{frame_id}"}},
+		Description: "Fetch one frame joined with its triggering message envelope."},
 
 	// @concept: breakpoint — instance-debugger surface.
 	{Action: "breakpoint:read", IsWrite: false,
@@ -402,13 +423,6 @@ var v1Actions = []ActionEntry{
 		Routes:      []Route{{"GET", "/v1/instances/{idOrKey}/nodes"}, {"GET", "/v1/nodes/{id}"}},
 		MCPTools:    []string{"node_list", "node_get"},
 		Description: "Read nodes; list per instance or get by id."},
-	{Action: "node:invalidate", IsWrite: true,
-		Routes: []Route{
-			{"POST", "/v1/nodes/{id}/invalidate"},
-			{"POST", "/v1/admin/instances/{instance}/nodes/{node_id}/invalidate"},
-		},
-		MCPTools:    []string{"node_invalidate"},
-		Description: "Invalidate a node (resumes if parked; otherwise marks stale + re-fires)."},
 	{Action: "node:reset", IsWrite: true,
 		Routes:      []Route{{"POST", "/v1/nodes/{id}/reset"}},
 		MCPTools:    []string{"node_reset"},
@@ -481,25 +495,6 @@ var v1Actions = []ActionEntry{
 		Routes:      []Route{{"GET", "/v1/lock-holders/{claim_handle_id}/claim-holders"}},
 		MCPTools:    []string{"claim_holders_list"},
 		Description: "List claim-holder rows for a claim handle."},
-
-	// @constraint: backfills subsystem — backfill operation lifecycle
-	// (create / read / cancel).
-	{Action: "backfill:create", IsWrite: true,
-		Routes:      []Route{{"POST", "/v1/instances/{id}/backfills"}},
-		MCPTools:    []string{"backfill_create"},
-		Description: "Start a backfill operation on an instance."},
-	{Action: "backfill:read", IsWrite: false,
-		Routes: []Route{
-			{"GET", "/v1/instances/{id}/backfills"},
-			{"GET", "/v1/backfills/{op_id}"},
-			{"GET", "/v1/backfills/{op_id}/partitions"},
-		},
-		MCPTools:    []string{"backfill_list", "backfill_get", "backfill_partitions"},
-		Description: "Read backfills; list per instance or get by op_id."},
-	{Action: "backfill:cancel", IsWrite: true,
-		Routes:      []Route{{"POST", "/v1/backfills/{op_id}/cancel"}},
-		MCPTools:    []string{"backfill_cancel"},
-		Description: "Cancel a running backfill operation."},
 
 	// @constraint: assets subsystem — per-instance asset lifecycle
 	// (read / materialize / delete).

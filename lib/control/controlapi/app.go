@@ -106,19 +106,10 @@ type AppDeps struct {
 	// S-template-validation-ref-validation-mode.
 	RefValidationMode node.RefValidationMode
 
-	// InvalidateHandler is the operator-supplied unified invalidate
-	// dispatch. Used by POST /admin/instances/{i}/nodes/{n}/invalidate
-	// (plan G3) and forward-compat for handler-emitted invalidates
-	// (H2). nil → endpoint returns 503.
-	InvalidateHandler InvalidateHandler
-
 	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
-	// hook. Threaded through to the operator-invalidate handler in
-	// nodes.go so admin-fired invalidates increment
-	// `rimsky_invalidates_total{source="admin"}`. Type is
-	// `runtime.MetricsHook` from runtime; importing
-	// from here is fine because controlapi already imports integration.
-	// Nil → no-op.
+	// hook. Type is `runtime.MetricsHook` from runtime; importing from
+	// here is fine because controlapi already imports integration. Nil
+	// → no-op.
 	Metrics runtime.MetricsHook
 
 	// Publishers is the per-process publisher-client registry. The
@@ -269,12 +260,13 @@ func NewApp(deps AppDeps) http.Handler {
 				registerTagsRoutes(rrr, deps)
 				registerInstancesRoutes(rrr, deps)
 				registerBreakpointsRoutes(rrr, deps)
+				registerDebugOverrideRoutes(rrr, deps)
 				registerNodesRoutes(rrr, deps)
 				registerEventsRoutes(rrr, deps)
 				registerAuditRoutes(rrr, deps)
 				registerClaimsRoutes(rrr, deps)
 				registerMessagesRoutes(rrr, deps)
-				registerBackfillsRoutes(rrr, deps)
+				registerFramesRoutes(rrr, deps)
 				registerAssetsRoutes(rrr, deps)
 				registerLineageRoutes(rrr, deps)
 				registerAdminDiagnosticsRoutes(rrr, deps)

@@ -225,10 +225,10 @@ func testFrameSettlementHasFailedNode(t *testing.T, d persistence.Database) {
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		otherFrame, err = frames.EnqueueSerialFrame(ctx, fix.InstanceID, fix.NodeID, 600000, tx)
+		otherFrame, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, 600000, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("EnqueueSerialFrame: %v", err)
+		t.Fatalf("InsertFrame: %v", err)
 	}
 	if hasFailed(otherFrame) {
 		t.Fatalf("HasFailedNode leaked across frames: frame %s has no runs", otherFrame)
@@ -265,7 +265,20 @@ func seedTerminateAfterRunInstance(ctx context.Context, t *testing.T, d persiste
 		}, tx); err != nil {
 			return err
 		}
-		frameID, err := store.Frames().EnqueueSerialFrame(ctx, instanceID, nodeID, 600000, tx)
+		// Seed a synthetic typed-message envelope to satisfy the
+		// rimsky_frames.triggering_message_id FK introduced by Pass 1.
+		messageID := shared.UUID(uuid.New())
+		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         messageID,
+			InstanceID: instanceID,
+			Type:       "fixture/message",
+			Sender:     "operator",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		out.MessageID = messageID
+		frameID, err := store.Frames().InsertFrame(ctx, instanceID, messageID, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -349,10 +362,10 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 	var queuedFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		queuedFrame, err = frames.EnqueueSerialFrame(ctx, tfr.InstanceID, tfr.NodeID, 600000, tx)
+		queuedFrame, err = frames.InsertFrame(ctx, tfr.InstanceID, tfr.MessageID, 600000, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("EnqueueSerialFrame(queued): %v", err)
+		t.Fatalf("InsertFrame(queued): %v", err)
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		_, err := q.ResumeParkedInTx(ctx, tx, runID, "deadline_elapsed")
@@ -458,10 +471,10 @@ func testFrameSettlementMarkSourceNodeStale(t *testing.T, d persistence.Database
 	var otherFrame shared.UUID
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		var err error
-		otherFrame, err = frames.EnqueueSerialFrame(ctx, fix.InstanceID, fix.NodeID, 600000, tx)
+		otherFrame, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, 600000, tx)
 		return err
 	}); err != nil {
-		t.Fatalf("EnqueueSerialFrame: %v", err)
+		t.Fatalf("InsertFrame: %v", err)
 	}
 	if mark(nodeS, otherFrame) {
 		t.Fatalf("MarkSourceNodeStale matched a source already in-flight under another frame")

@@ -94,10 +94,9 @@ func TestScopesConflict_OverlapHeldOff(t *testing.T) {
 func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEndpoint, pool *pgxpool.Pool) {
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "scopes-conflict-top-level",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "scopes-conflict-top-level",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				// @deliberate: acquirer durably holds the PARENT-prefix scope `tenant/a`.
 				{
@@ -196,10 +195,9 @@ func runTopLevelOverlapCase(ctx context.Context, t *testing.T, ep harness.Rimsky
 func runFanOutOverlapCase(ctx context.Context, t *testing.T, ep harness.RimskyEndpoint, pool *pgxpool.Pool) {
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "scopes-conflict-fanout",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "scopes-conflict-fanout",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "fan-parent",

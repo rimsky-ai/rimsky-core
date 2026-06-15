@@ -180,7 +180,7 @@ func (s *framesImpl) MarkInstanceTerminatedIfDone(ctx context.Context, instanceI
 func (s *framesImpl) ListQueuedFramesReadyToStart(ctx context.Context, tx persistence.Tx) ([]persistence.FrameQueuedReady, error) {
 	rows, err := s.q(tx).Query(ctx, `
         SELECT DISTINCT ON (f.instance_id)
-            f.frame_id, f.instance_id, f.source_node_ids
+            f.frame_id, f.instance_id, f.triggering_message_id
         FROM rimsky_frames f
         JOIN rimsky_instances i ON i.id = f.instance_id
         WHERE f.state = 'queued'
@@ -198,7 +198,7 @@ func (s *framesImpl) ListQueuedFramesReadyToStart(ctx context.Context, tx persis
 	var out []persistence.FrameQueuedReady
 	for rows.Next() {
 		var r persistence.FrameQueuedReady
-		if err := rows.Scan(&r.FrameID, &r.InstanceID, &r.SourceNodeIDs); err != nil {
+		if err := rows.Scan(&r.FrameID, &r.InstanceID, &r.TriggeringMessageID); err != nil {
 			return nil, fmt.Errorf("frames.ListQueuedFramesReadyToStart: scan: %w", err)
 		}
 		out = append(out, r)
@@ -412,127 +412,57 @@ func (s *framesImpl) ListOrphanFrameDispatches(ctx context.Context, tx persisten
 	return out, rows.Err()
 }
 
-// LookupFrameResolutionMode reads (frame_resolution_mode, frame_timeout_ms) for the
-// instance's template. Returns (mode, timeoutMs, nil) on success;
-// ("", 0, sql.ErrNoRows) when the instance is missing.
-func (s *framesImpl) LookupFrameResolutionMode(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (persistence.FrameResolutionMode, int64, error) {
-	var (
-		mode           string
-		frameTimeoutMs int64
-	)
+// LookupFrameTimeoutMs reads the instance's per-template frame_timeout_ms
+// override, defaulting to 600000 ms (10 minutes) when the template spec
+// carries no value. Returns an error wrapping "instance %s not found" when
+// the instance row is missing.
+//
+// Coalesce retires under the message-schema-layer redesign — one message
+// per frame is the only delivery shape — so the producer no longer needs a
+// resolution-mode discriminator alongside the timeout.
+func (s *framesImpl) LookupFrameTimeoutMs(ctx context.Context, instanceID shared.UUID, tx persistence.Tx) (int64, error) {
+	var frameTimeoutMs int64
 	err := s.q(tx).QueryRow(ctx, `
-        SELECT COALESCE(t.spec->>'frame_resolution_mode', '') AS mode,
-               COALESCE(NULLIF((t.spec->>'frame_timeout_ms'),'')::bigint, 600000) AS frame_timeout_ms
+        SELECT COALESCE(NULLIF((t.spec->>'frame_timeout_ms'),'')::bigint, 600000) AS frame_timeout_ms
         FROM rimsky_instances i
         JOIN rimsky_templates  t ON t.id = i.template_hash
         WHERE i.id = $1
-    `, instanceID).Scan(&mode, &frameTimeoutMs)
+    `, instanceID).Scan(&frameTimeoutMs)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", 0, fmt.Errorf("frames.LookupFrameResolutionMode: instance %s not found", instanceID)
+			return 0, fmt.Errorf("frames.LookupFrameTimeoutMs: instance %s not found", instanceID)
 		}
-		return "", 0, fmt.Errorf("frames.LookupFrameResolutionMode: %w", err)
+		return 0, fmt.Errorf("frames.LookupFrameTimeoutMs: %w", err)
 	}
 	if frameTimeoutMs <= 0 {
 		frameTimeoutMs = 600000
 	}
-	return persistence.FrameResolutionMode(mode), frameTimeoutMs, nil
+	return frameTimeoutMs, nil
 }
 
-// EnqueueSerialFrame inserts a queued serial_queue frame.
-func (s *framesImpl) EnqueueSerialFrame(
-	ctx context.Context, instanceID, sourceNodeID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
-) (shared.UUID, error) {
-	var frameID shared.UUID
-	err := s.q(tx).QueryRow(ctx, `
-        INSERT INTO rimsky_frames
-            (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, frame_timeout_ms)
-        VALUES ($1, 'serial_queue', 'queued', ARRAY[$2]::UUID[], now(), $3)
-        RETURNING frame_id
-    `, instanceID, sourceNodeID, frameTimeoutMs).Scan(&frameID)
-	if err != nil {
-		return shared.UUID{}, fmt.Errorf("frames.EnqueueSerialFrame: %w", err)
-	}
-	return frameID, nil
-}
-
-// EnqueueCoalesceFrame inserts a queued coalesce frame, or appends the
-// source node to an existing pending coalesce row for the instance.
+// InsertFrame inserts a queued frame triggered by the given message.
+// The frame→message FK is enforced by the schema
+// (rimsky_frames.triggering_message_id → rimsky_messages(id) ON DELETE
+// RESTRICT, declared in the 010 migration), so the message row must already
+// exist in the same tx and cannot be deleted while any frame still points
+// at it.
 //
-// Spec §7.3 step 1: keyed on the partial unique index
-// uq_rimsky_frames_coalesce_queued (instance_id) WHERE state='queued'
-// AND mode='coalesce'. Two concurrent producers (each in their own tx)
-// must not deadlock or 5xx — exactly one wins the INSERT, all others
-// fall through DO UPDATE and append source_node_ids.
-func (s *framesImpl) EnqueueCoalesceFrame(
-	ctx context.Context, instanceID, sourceNodeID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
+// One-message-per-frame: each call mints a fresh frame row; no upsert / no
+// coalesce / no append-to-pending path remains.
+func (s *framesImpl) InsertFrame(
+	ctx context.Context, instanceID, triggeringMessageID shared.UUID, frameTimeoutMs int64, tx persistence.Tx,
 ) (shared.UUID, error) {
 	var frameID shared.UUID
 	err := s.q(tx).QueryRow(ctx, `
         INSERT INTO rimsky_frames
-            (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, frame_timeout_ms)
-        VALUES ($1, 'coalesce', 'queued', ARRAY[$2]::UUID[], now(), $3)
-        ON CONFLICT (instance_id) WHERE state = 'queued' AND frame_resolution_mode = 'coalesce'
-        DO UPDATE SET source_node_ids = (
-            CASE WHEN $2 = ANY(rimsky_frames.source_node_ids) THEN rimsky_frames.source_node_ids
-                 ELSE array_append(rimsky_frames.source_node_ids, $2)
-            END
-        )
+            (instance_id, triggering_message_id, state, queued_at, frame_timeout_ms)
+        VALUES ($1, $2, 'queued', now(), $3)
         RETURNING frame_id
-    `, instanceID, sourceNodeID, frameTimeoutMs).Scan(&frameID)
+    `, instanceID, triggeringMessageID, frameTimeoutMs).Scan(&frameID)
 	if err != nil {
-		return shared.UUID{}, fmt.Errorf("frames.EnqueueCoalesceFrame: %w", err)
+		return shared.UUID{}, fmt.Errorf("frames.InsertFrame: %w", err)
 	}
 	return frameID, nil
-}
-
-// ListRunningFramesWithSources returns running frames along with their
-// source_node_ids. Used by the runtime upstream-refresh pre-stage sweep.
-func (s *framesImpl) ListRunningFramesWithSources(
-	ctx context.Context, tx persistence.Tx,
-) ([]persistence.FrameRunningSources, error) {
-	rows, err := s.q(tx).Query(ctx, `
-        SELECT frame_id, instance_id, source_node_ids
-          FROM rimsky_frames
-         WHERE state = 'running'
-    `)
-	if err != nil {
-		return nil, fmt.Errorf("frames.ListRunningFramesWithSources: %w", err)
-	}
-	defer rows.Close()
-	var out []persistence.FrameRunningSources
-	for rows.Next() {
-		var r persistence.FrameRunningSources
-		if err := rows.Scan(&r.FrameID, &r.InstanceID, &r.SourceNodeIDs); err != nil {
-			return nil, fmt.Errorf("frames.ListRunningFramesWithSources: scan: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, nil
-}
-
-// AppendSourceToQueuedFrame appends a node id to a queued frame's
-// source_node_ids array (idempotent — no-op if the id is already
-// present). The WHERE clause restricts the update to queued frames
-// only, so a frame that has since been promoted to running or marked
-// terminal silently no-ops. Used by invalidateNextFrame to attach
-// upstream-refresh upstreams to the same frame as the receiver.
-func (s *framesImpl) AppendSourceToQueuedFrame(
-	ctx context.Context, frameID, nodeID shared.UUID, tx persistence.Tx,
-) error {
-	_, err := s.q(tx).Exec(ctx, `
-        UPDATE rimsky_frames
-        SET source_node_ids = (
-            CASE WHEN $2 = ANY(source_node_ids) THEN source_node_ids
-                 ELSE array_append(source_node_ids, $2)
-            END
-        )
-        WHERE frame_id = $1 AND state = 'queued'
-    `, frameID, nodeID)
-	if err != nil {
-		return fmt.Errorf("frames.AppendSourceToQueuedFrame: %w", err)
-	}
-	return nil
 }
 
 // ListForObservability returns frames matching filter for the
@@ -552,6 +482,10 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 	if filter.State != "" {
 		stateArg = string(filter.State)
 	}
+	var triggerArg any
+	if filter.TriggeringMessageID != nil {
+		triggerArg = *filter.TriggeringMessageID
+	}
 	var cursorQueued *time.Time
 	var cursorFrameID *shared.UUID
 	if pag.Cursor != "" {
@@ -568,15 +502,16 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		fArg = *cursorFrameID
 	}
 	rows, err := s.q(tx).Query(ctx,
-		`SELECT frame_id, instance_id, state, frame_resolution_mode, started_at, ended_at,
-		        frame_timeout_ms, queued_at
+		`SELECT frame_id, instance_id, state, triggering_message_id, started_at, ended_at,
+		        last_progress_at, frame_timeout_ms, queued_at
 		   FROM rimsky_frames
 		  WHERE ($1::uuid IS NULL OR instance_id = $1)
 		    AND ($2::text IS NULL OR state = $2)
 		    AND ($3::timestamptz IS NULL OR (queued_at, frame_id) < ($3, $4))
+		    AND ($6::uuid IS NULL OR triggering_message_id = $6)
 		  ORDER BY queued_at DESC, frame_id DESC
 		  LIMIT $5`,
-		instArg, stateArg, qArg, fArg, limit,
+		instArg, stateArg, qArg, fArg, limit, triggerArg,
 	)
 	if err != nil {
 		return persistence.PaginatedListResult[persistence.FrameRow]{}, err
@@ -588,14 +523,13 @@ func (s *framesImpl) ListForObservability(ctx context.Context, filter persistenc
 		var (
 			r     persistence.FrameRow
 			state string
-			mode  string
 			qAt   time.Time
 		)
-		if err := rows.Scan(&r.FrameID, &r.InstanceID, &state, &mode, &r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs, &qAt); err != nil {
+		if err := rows.Scan(&r.FrameID, &r.InstanceID, &state, &r.TriggeringMessageID,
+			&r.StartedAt, &r.EndedAt, &r.LastProgressAt, &r.FrameTimeoutMs, &qAt); err != nil {
 			return persistence.PaginatedListResult[persistence.FrameRow]{}, err
 		}
 		r.State = persistence.FrameState(state)
-		r.Mode = persistence.FrameResolutionMode(mode)
 		lastQueued = qAt
 		out = append(out, r)
 	}
@@ -740,13 +674,12 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 	var (
 		r     persistence.FrameRow
 		state string
-		mode  string
 	)
 	err := s.q(tx).QueryRow(ctx,
-		`SELECT frame_id, instance_id, state, frame_resolution_mode, started_at, ended_at, frame_timeout_ms
+		`SELECT frame_id, instance_id, state, triggering_message_id, started_at, ended_at, last_progress_at, frame_timeout_ms
 		   FROM rimsky_frames WHERE frame_id = $1`,
 		frameID,
-	).Scan(&r.FrameID, &r.InstanceID, &state, &mode, &r.StartedAt, &r.EndedAt, &r.FrameTimeoutMs)
+	).Scan(&r.FrameID, &r.InstanceID, &state, &r.TriggeringMessageID, &r.StartedAt, &r.EndedAt, &r.LastProgressAt, &r.FrameTimeoutMs)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -754,6 +687,141 @@ func (s *framesImpl) GetForObservability(ctx context.Context, frameID shared.UUI
 		return nil, err
 	}
 	r.State = persistence.FrameState(state)
-	r.Mode = persistence.FrameResolutionMode(mode)
 	return &r, nil
+}
+
+// GetForObservabilityWithMessage returns one frame joined with its
+// triggering-message envelope in a single SQL inside the caller's tx.
+// The frame→message FK is RESTRICT, so the envelope is non-null for any
+// live frame; a LEFT JOIN is still used defensively so a (hypothetical)
+// mid-migration row missing its envelope surfaces as empty-string
+// envelope fields rather than a query error.
+func (s *framesImpl) GetForObservabilityWithMessage(ctx context.Context, frameID shared.UUID, tx persistence.Tx) (*persistence.FrameRowWithMessage, error) {
+	var (
+		r       persistence.FrameRowWithMessage
+		state   string
+		mType   *string
+		mSender *string
+		mKind   *string
+	)
+	err := s.q(tx).QueryRow(ctx,
+		`SELECT f.frame_id, f.instance_id, f.state, f.triggering_message_id,
+		        f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms,
+		        m.type, m.sender, m.sender_kind
+		   FROM rimsky_frames f
+		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
+		  WHERE f.frame_id = $1`,
+		frameID,
+	).Scan(&r.FrameID, &r.InstanceID, &state, &r.TriggeringMessageID,
+		&r.StartedAt, &r.EndedAt, &r.LastProgressAt, &r.FrameTimeoutMs,
+		&mType, &mSender, &mKind)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r.State = persistence.FrameState(state)
+	if mType != nil {
+		r.MessageType = *mType
+	}
+	if mSender != nil {
+		r.MessageSender = *mSender
+	}
+	if mKind != nil {
+		r.MessageSenderKind = *mKind
+	}
+	return &r, nil
+}
+
+// ListForObservabilityWithMessage is ListForObservability joined with
+// the triggering-message envelope in one SQL — same pagination shape,
+// same filter binds, single tx, single round-trip per page.
+func (s *framesImpl) ListForObservabilityWithMessage(ctx context.Context, filter persistence.FrameListFilter, pag persistence.ListPagination, tx persistence.Tx) (persistence.PaginatedListResult[persistence.FrameRowWithMessage], error) {
+	limit := pag.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	var instArg any
+	if filter.InstanceID != nil {
+		instArg = *filter.InstanceID
+	}
+	var stateArg any
+	if filter.State != "" {
+		stateArg = string(filter.State)
+	}
+	var triggerArg any
+	if filter.TriggeringMessageID != nil {
+		triggerArg = *filter.TriggeringMessageID
+	}
+	var cursorQueued *time.Time
+	var cursorFrameID *shared.UUID
+	if pag.Cursor != "" {
+		q, fid, err := decodeFrameCursor(pag.Cursor)
+		if err != nil {
+			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, fmt.Errorf("frames.list: bad cursor: %w", err)
+		}
+		cursorQueued = &q
+		cursorFrameID = &fid
+	}
+	var qArg, fArg any
+	if cursorQueued != nil {
+		qArg = *cursorQueued
+		fArg = *cursorFrameID
+	}
+	rows, err := s.q(tx).Query(ctx,
+		`SELECT f.frame_id, f.instance_id, f.state, f.triggering_message_id,
+		        f.started_at, f.ended_at, f.last_progress_at, f.frame_timeout_ms, f.queued_at,
+		        m.type, m.sender, m.sender_kind
+		   FROM rimsky_frames f
+		   LEFT JOIN rimsky_messages m ON m.id = f.triggering_message_id
+		  WHERE ($1::uuid IS NULL OR f.instance_id = $1)
+		    AND ($2::text IS NULL OR f.state = $2)
+		    AND ($3::timestamptz IS NULL OR (f.queued_at, f.frame_id) < ($3, $4))
+		    AND ($6::uuid IS NULL OR f.triggering_message_id = $6)
+		  ORDER BY f.queued_at DESC, f.frame_id DESC
+		  LIMIT $5`,
+		instArg, stateArg, qArg, fArg, limit, triggerArg,
+	)
+	if err != nil {
+		return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
+	}
+	defer rows.Close()
+	var out []persistence.FrameRowWithMessage
+	var lastQueued time.Time
+	for rows.Next() {
+		var (
+			r       persistence.FrameRowWithMessage
+			state   string
+			qAt     time.Time
+			mType   *string
+			mSender *string
+			mKind   *string
+		)
+		if err := rows.Scan(&r.FrameID, &r.InstanceID, &state, &r.TriggeringMessageID,
+			&r.StartedAt, &r.EndedAt, &r.LastProgressAt, &r.FrameTimeoutMs, &qAt,
+			&mType, &mSender, &mKind); err != nil {
+			return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
+		}
+		r.State = persistence.FrameState(state)
+		if mType != nil {
+			r.MessageType = *mType
+		}
+		if mSender != nil {
+			r.MessageSender = *mSender
+		}
+		if mKind != nil {
+			r.MessageSenderKind = *mKind
+		}
+		lastQueued = qAt
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{}, err
+	}
+	var nextCursor string
+	if len(out) == limit && len(out) > 0 {
+		nextCursor = encodeFrameCursor(lastQueued, out[len(out)-1].FrameID)
+	}
+	return persistence.PaginatedListResult[persistence.FrameRowWithMessage]{Rows: out, NextCursor: nextCursor}, nil
 }

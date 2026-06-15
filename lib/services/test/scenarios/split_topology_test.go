@@ -45,10 +45,9 @@ func TestSplitTopology_DriveNodeToTerminal(t *testing.T) {
 	// container served every observation, all against the shared Postgres.
 	templateID := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "split-topology",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "split-topology",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

@@ -38,7 +38,6 @@ import "strings"
 //	"transient/retry/3/agent/rate_limited"
 //	"attribute/budget_cents/changed"
 //	"event/discovered"
-//	"message/invalidate/operator/self"
 //
 // Validated against the canonical taxonomy by ValidateTypePath. The
 // first slash-delimited segment is the TopLevelKind.
@@ -53,7 +52,7 @@ type Signal struct {
 	Payload map[string]any
 }
 
-// TopLevelKind names one of the five canonical top-level kinds in the
+// TopLevelKind names one of the four canonical top-level kinds in the
 // signal taxonomy. The TypePath's first slash-delimited segment must
 // be one of these values; anything else is rejected by
 // ValidateTypePath.
@@ -78,15 +77,11 @@ const (
 	// KindEvent is emitted when an executor produces a non-terminal
 	// named event. Leaf: <name>.
 	KindEvent TopLevelKind = "event"
-
-	// KindMessage is emitted when a boundary-crossing message arrives
-	// at an instance. Leaf: <kind>/<sender_kind>/<target>.
-	KindMessage TopLevelKind = "message"
 )
 
 // TopLevel returns the first slash-delimited segment of the TypePath
 // as a TopLevelKind. Returns the empty TopLevelKind if the leading
-// segment is not one of the five canonical values — callers can treat
+// segment is not one of the four canonical values — callers can treat
 // empty as "not a recognized top-level kind."
 func (t TypePath) TopLevel() TopLevelKind {
 	s := string(t)
@@ -98,7 +93,7 @@ func (t TypePath) TopLevel() TopLevelKind {
 	}
 	k := TopLevelKind(s)
 	switch k {
-	case KindTerminal, KindTransient, KindAttribute, KindEvent, KindMessage:
+	case KindTerminal, KindTransient, KindAttribute, KindEvent:
 		return k
 	}
 	return ""

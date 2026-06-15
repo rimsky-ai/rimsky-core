@@ -36,6 +36,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	stubexec "github.com/rimsky-ai/rimsky-core/test/support/executors/stub"
 	stubtest "github.com/rimsky-ai/rimsky-core/test/support/executors/stub/stubtest"
@@ -385,9 +386,6 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 // state to 'deployed'. Returns the template content hash.
 func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 	h.T.Helper()
-	if spec.FrameResolutionMode == "" {
-		spec.FrameResolutionMode = node.FrameResolutionSerialQueue
-	}
 	body, err := json.Marshal(map[string]any{
 		"spec": templateSpecToJSON(spec),
 	})
@@ -453,9 +451,6 @@ func (h *Harness) DeployTemplate(spec node.TemplateSpec) string {
 // the late_bind_services field and run against an authenticated control-api.
 func (h *Harness) DeployTemplateSpecMap(specMap map[string]any, bearerKey string) string {
 	h.T.Helper()
-	if _, ok := specMap["frame_resolution_mode"]; !ok {
-		specMap["frame_resolution_mode"] = string(node.FrameResolutionSerialQueue)
-	}
 	body, err := json.Marshal(map[string]any{"spec": specMap})
 	if err != nil {
 		h.T.Fatal(err)
@@ -876,6 +871,63 @@ func (h *Harness) FindNode(instanceID shared.UUID, nodeType string) *persistence
 	return nil
 }
 
+// InvalidateNode drives a re-dispatch of the target node, replicating
+// what the retired operator route (`POST /v1/nodes/{id}/invalidate`)
+// used to do internally. The route's dispatch was state-aware: a
+// parked target was woken via the parked-resume helper (`wakeParkedNode`),
+// any other state queued a synthetic-envelope frame. This helper mirrors
+// that split so scenario tests covering parked-state corner cases stay
+// expressible without the retired HTTP surface.
+//
+// For non-parked targets the helper enqueues a synthetic
+// `node/invalidate` envelope + frame; the frame engine reads
+// `wake_node_ids` at promotion and stale-marks the target. For parked
+// targets the synthetic-envelope path stalls behind the running
+// parked-held frame, so the helper calls `runtime.WakeParkedNode`
+// directly — the same path the parked-resume sweep uses when the
+// resume_at deadline elapses.
+func (h *Harness) InvalidateNode(instanceID, nodeID shared.UUID) {
+	h.T.Helper()
+	// @deliberate: Probe the target's current state so we route to the right wake
+	// path (parked → wakeParkedNode; everything else → synthetic envelope).
+	var state cascade.NodeState
+	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := h.Persist.Nodes().Get(ctx, nodeID, tx)
+		if err != nil || row == nil {
+			return err
+		}
+		state = row.State
+		return nil
+	}); err != nil {
+		h.T.Fatalf("Harness.InvalidateNode: load target: %v", err)
+	}
+	if state == cascade.NodeStateParked {
+		// @constraint: Parked node holds the running frame open — a queued synthetic
+		// envelope's frame won't promote until the parked work resolves,
+		// so we wake the parked row directly via the same helper the
+		// parked-resume deadline sweep uses.
+		wakeArgs := runtime.WakeParkedArgs{
+			Persist:      h.Persist,
+			Queue:        h.Queue,
+			Logger:       shared.SilentLogger{},
+			TargetNodeID: nodeID,
+			SupervisorID: "scenario:test-helper",
+		}
+		if err := runtime.WakeParkedNode(h.Ctx, wakeArgs, runtime.WakeExternalInvalidate); err != nil {
+			h.T.Fatalf("Harness.InvalidateNode: wake parked: %v", err)
+		}
+		return
+	}
+	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		_, _, err := runtime.EnqueueSyntheticWakeFrame(ctx, tx, h.Persist,
+			instanceID, "node/invalidate", "scenario:test-helper",
+			[]shared.UUID{nodeID}, map[string]any{"reason": "scenario:invalidate-node"})
+		return err
+	}); err != nil {
+		h.T.Fatalf("Harness.InvalidateNode: %v", err)
+	}
+}
+
 // templateSpecToJSON converts a node.TemplateSpec into the snake_case
 // JSON shape expected by POST /templates.
 //
@@ -885,9 +937,8 @@ func (h *Harness) FindNode(instanceID shared.UUID, nodeType string) *persistence
 // is empty, the legacy flat form is emitted unchanged.
 func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 	out := map[string]any{
-		"name":                  spec.Name,
-		"version":               spec.Version,
-		"frame_resolution_mode": spec.FrameResolutionMode,
+		"name":    spec.Name,
+		"version": spec.Version,
 	}
 	if len(spec.Graphs) > 0 {
 		graphs := make([]map[string]any, 0, len(spec.Graphs))
@@ -920,6 +971,31 @@ func templateSpecToJSON(spec node.TemplateSpec) map[string]any {
 				"by_executor": spec.Defaults.Attributes.ByExecutor,
 			},
 		}
+	}
+	// @constraint: The typed `messages:` registry must be threaded through
+	// every author surface. The scenario harness's JSON projection
+	// must carry it (and `emits_message:` on node-defs) — without
+	// these, the acceptance proofs would deploy templates that fail
+	// registration on unknown-type substitution refs OR fall through
+	// the mutual-exclusion validator when an emit-node has no
+	// `executor:` AND no `emits_message:` declared on the wire. The
+	// harness JSON IS the wire shape the control-api decoder consumes.
+	if len(spec.Messages) > 0 {
+		msgs := make([]map[string]any, 0, len(spec.Messages))
+		for _, m := range spec.Messages {
+			item := map[string]any{"type": m.Type}
+			if len(m.BodySchema) > 0 {
+				// @deliberate: BodySchema is raw JSON bytes; embed as a JSON value so
+				// json.Marshal nests it correctly. A nil schema is
+				// admitted by the validator (the schema is optional).
+				var schema any
+				if err := json.Unmarshal(m.BodySchema, &schema); err == nil {
+					item["body_schema"] = schema
+				}
+			}
+			msgs = append(msgs, item)
+		}
+		out["messages"] = msgs
 	}
 	return out
 }
@@ -954,7 +1030,7 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	if n.Description != "" {
 		nd["description"] = n.Description
 	}
-	// Kind sugar (`kind: loop_counter` etc.) — the control-API resolves
+	// @constraint: Kind sugar (`kind: loop_counter` etc.) — the control-API resolves
 	// this to an executor alias via the static kind-alias map at
 	// registration. Tests that exercise the kind-sugar path (e.g.
 	// STORY-inproc-utility-executor) set Kind on the spec; tests that
@@ -979,10 +1055,7 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 			if s.When != "" {
 				item["when"] = s.When
 			}
-			if s.Frame != "" {
-				item["frame"] = s.Frame
-			}
-			// wake_on_change and force_upstream_refresh are required
+			// @constraint: wake_on_change and force_upstream_refresh are required
 			// per decision:cascade-flags-required-no-defaults; emit
 			// them whenever the test constructor populated them. A nil
 			// pointer means the test omitted the field, which is a
@@ -1061,6 +1134,13 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	}
 	if n.Delegate != "" {
 		nd["delegate"] = n.Delegate
+	}
+	// @constraint: Message-emitter node-kind. Mutually exclusive with `executor:` and
+	// `delegate:`; the template validator enforces exactly-one. Carries
+	// the declared message-type the node emits at terminal-resolution
+	// (see `code:lib/runtime/runner_emit_message.go`).
+	if n.EmitsMessage != "" {
+		nd["emits_message"] = n.EmitsMessage
 	}
 	if len(n.Holds) > 0 {
 		holds := map[string]any{}

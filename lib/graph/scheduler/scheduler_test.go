@@ -52,9 +52,8 @@ func newSchedFixture(t *testing.T) *schedFixture {
 
 	tpl := insertDeployedTemplate(ctx, t, d.Tables(), nodepkg.TemplateSpec{
 		Name: "sched-loop-" + uuid.NewString(), Version: "v1",
-		FrameResolutionMode: nodepkg.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      nodepkg.FrameTimeoutDefaultMs,
-		Nodes:               []nodepkg.TemplateNodeDef{},
+		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
+		Nodes:          []nodepkg.TemplateNodeDef{},
 	})
 	ck := "ck-" + uuid.NewString()
 	var inst persistence.InstanceRow
@@ -165,16 +164,25 @@ func lookupRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 }
 
 // insertRunningFrame inserts a new running rimsky_frames row anchored to
-// (instanceID, sourceNodeID) and returns its frame_id.
+// instanceID (the sourceNodeID arg is retained for call-site clarity but
+// no longer threaded into the frame row — every frame carries a
+// triggering_message_id instead, which the helper seeds synthetically).
 func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
+	_ = sourceNodeID
+	msgID := uuid.New()
+	pgtest.ExecForTest(ctx, t, f.driver, `
+        INSERT INTO rimsky_messages
+            (id, instance_id, type, sender, sender_kind, received_at)
+        VALUES ($1, $2, 'test/seed', 'test', 'operator', now())
+    `, msgID, instanceID)
 	var frameID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, f.driver, `
         INSERT INTO rimsky_frames
-            (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
-        VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
+            (instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
+        VALUES ($1, $2, 'running', now(), now(), 600000)
         RETURNING frame_id
-    `, []any{instanceID, sourceNodeID}, &frameID)
+    `, []any{instanceID, msgID}, &frameID)
 	return frameID
 }
 

@@ -180,8 +180,7 @@ func Suite(
 		t.Run("HeldFrameCount", func(t *testing.T) { testParkResumeHeldFrameCount(t, factory(t)) })
 	})
 	t.Run("FrameLifecycle", func(t *testing.T) {
-		t.Run("SerialQueue", func(t *testing.T) { testFrameLifecycleSerialQueue(t, factory(t)) })
-		t.Run("Coalesce", func(t *testing.T) { testFrameLifecycleCoalesce(t, factory(t)) })
+		t.Run("Default", func(t *testing.T) { testFrameLifecycleSerialQueue(t, factory(t)) })
 	})
 	// @constraint: FrameSettlement is the frame engine's settlement core
 	// (frame-end detection, instance termination, source-node binding,

@@ -55,10 +55,9 @@ func TestFSPickVsScopeConcurrency(t *testing.T) {
 
 	templateID := deployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "fs-pick-vs-scope",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "fs-pick-vs-scope",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "pick-worker",

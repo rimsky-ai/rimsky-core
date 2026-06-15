@@ -67,7 +67,7 @@ func TestSubscribe_MountsRouteAndForwards(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "webhook", ResolvedConfig: raw,
-		TargetNode: "ingest", MessageKind: "invalidate",
+		TargetNode: "ingest", MessageType: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,8 +91,13 @@ func TestSubscribe_MountsRouteAndForwards(t *testing.T) {
 	if body["sender_kind"] != "publisher" {
 		t.Errorf("sender_kind: %v", body["sender_kind"])
 	}
-	if body["target"] != "ingest" {
-		t.Errorf("target: %v", body["target"])
+	// `target` is no longer on the envelope: the
+	// `rimsky_messages.target` column was retired in migration 010 of
+	// the 2026-06-14 message-schema-layer reshape, and the sensor no
+	// longer sends it. Routing happens via the subscription's
+	// target_node on rimsky's side, not via a wire envelope field.
+	if _, present := body["target"]; present {
+		t.Errorf("target unexpectedly present: %v", body["target"])
 	}
 	payload, ok := body["payload"].(map[string]any)
 	if !ok {

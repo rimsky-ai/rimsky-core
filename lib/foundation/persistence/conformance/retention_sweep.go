@@ -144,7 +144,7 @@ func testRetentionFrameTracePrune(t *testing.T, d persistence.Database) {
 		var fid shared.UUID
 		frameOp(ctx, t, d, "mint "+label, func(tx persistence.Tx) error {
 			var err error
-			fid, err = frames.EnqueueSerialFrame(ctx, fix.InstanceID, fix.NodeID, 600000, tx)
+			fid, err = frames.InsertFrame(ctx, fix.InstanceID, fix.MessageID, 600000, tx)
 			if err != nil {
 				return err
 			}

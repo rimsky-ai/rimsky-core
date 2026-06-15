@@ -21,14 +21,6 @@ const (
 	FrameStateFailed    FrameState = "failed"
 )
 
-// FrameResolutionMode mirrors the per-template `frame_resolution` setting.
-type FrameResolutionMode string
-
-const (
-	FrameResolutionModeCoalesce    FrameResolutionMode = "coalesce"
-	FrameResolutionModeSerialQueue FrameResolutionMode = "serial_queue"
-)
-
 // FramePending identifies a running frame whose nodes have all left
 // stale/running, returned by ListRunningFramesNoPendingNodes.
 type FramePending struct {
@@ -37,12 +29,12 @@ type FramePending struct {
 }
 
 // FrameQueuedReady identifies a queued frame ready to be promoted to
-// running, returned by ListQueuedFramesReadyToStart. SourceNodeIDs is the
-// list of node IDs that originated the frame.
+// running, returned by ListQueuedFramesReadyToStart. TriggeringMessageID
+// is the message envelope whose delivery opened the frame.
 type FrameQueuedReady struct {
-	FrameID       shared.UUID
-	InstanceID    shared.UUID
-	SourceNodeIDs []shared.UUID
+	FrameID             shared.UUID
+	InstanceID          shared.UUID
+	TriggeringMessageID shared.UUID
 }
 
 // FrameStuck identifies a running frame past its timeout with no claimed
@@ -65,28 +57,41 @@ type OrphanFrameDispatch struct {
 // FrameRow is the observability projection of one rimsky_frames row.
 // Used by the observability frames endpoint.
 type FrameRow struct {
-	FrameID        shared.UUID         `json:"frame_id"`
-	InstanceID     shared.UUID         `json:"instance_id"`
-	State          FrameState          `json:"state"`
-	Mode           FrameResolutionMode `json:"mode"`
-	StartedAt      *time.Time          `json:"started_at,omitempty"`
-	EndedAt        *time.Time          `json:"ended_at,omitempty"`
-	FrameTimeoutMs int64               `json:"frame_timeout_ms"`
+	FrameID             shared.UUID `json:"frame_id"`
+	InstanceID          shared.UUID `json:"instance_id"`
+	State               FrameState  `json:"state"`
+	TriggeringMessageID shared.UUID `json:"triggering_message_id"`
+	StartedAt           *time.Time  `json:"started_at,omitempty"`
+	EndedAt             *time.Time  `json:"ended_at,omitempty"`
+	// LastProgressAt is set by RefreshProgress on every node-state
+	// transition inside the frame; it powers the frame-stuck advisory
+	// (concept:frame) and the frame-origin-audit story's "is this
+	// frame still making progress?" surface.
+	LastProgressAt *time.Time `json:"last_progress_at,omitempty"`
+	FrameTimeoutMs int64      `json:"frame_timeout_ms"`
 }
 
-// FrameRunningSources is the running-frames-with-sources row returned by
-// ListRunningFramesWithSources. Used by the runtime upstream-refresh
-// pre-stage sweep.
-type FrameRunningSources struct {
-	FrameID       shared.UUID
-	InstanceID    shared.UUID
-	SourceNodeIDs []shared.UUID
+// FrameRowWithMessage is FrameRow plus the joined triggering-message
+// envelope fields (type, sender, sender_kind). Returned by the
+// "...WithMessage" accessor variants so the frame-origin-audit
+// observability endpoints can serve "every frame, its triggering
+// message" in one SQL — no N+1 round-trip per frame, no across-tx read
+// window between the frame row and its message row.
+type FrameRowWithMessage struct {
+	FrameRow
+	MessageType       string `json:"message_type"`
+	MessageSender     string `json:"message_sender"`
+	MessageSenderKind string `json:"message_sender_kind"`
 }
 
-// FrameListFilter is the observability browse filter.
+// FrameListFilter is the observability browse filter. TriggeringMessageID
+// narrows to frames whose origin envelope matches a given message id —
+// the reverse-join (message → frames it triggered) the cascade-graph
+// observability endpoint exposes for the frame-origin-audit story.
 type FrameListFilter struct {
-	InstanceID *shared.UUID
-	State      FrameState
+	InstanceID          *shared.UUID
+	State               FrameState
+	TriggeringMessageID *shared.UUID
 }
 
 // FrameTable is the rimsky_frames accessor.
@@ -137,8 +142,7 @@ type FrameTable interface {
 	// guarantees at most one running frame per instance
 	// (ListQueuedFramesReadyToStart will not promote a queued frame while
 	// a running one exists), so a deterministic single running row is
-	// returned. Used by the operator-sourced `frame: in` invalidate to
-	// resolve the open cascade frame to join.
+	// returned.
 	//
 	// @deliberate: defensive ordering — should two running rows ever
 	// coexist (they must not under the invariant), the most-recently-
@@ -165,36 +169,42 @@ type FrameTable interface {
 	// state. Does NOT release the claim.
 	ListOrphanFrameDispatches(ctx context.Context, tx Tx) ([]OrphanFrameDispatch, error)
 
-	// @agent-contract LookupFrameResolutionMode: reads
-	// (frame_resolution, frame_timeout_ms) for the instance's template.
-	// Returns ("", 0, sql.ErrNoRows) when the instance is missing. Empty
-	// mode surfaces as a validation error in the caller.
-	LookupFrameResolutionMode(ctx context.Context, instanceID shared.UUID, tx Tx) (mode FrameResolutionMode, frameTimeoutMs int64, err error)
+	// @agent-contract LookupFrameTimeoutMs: reads the instance's
+	// per-template frame_timeout_ms override. Returns the template default
+	// (FrameTimeoutDefaultMs) when the template spec carries no explicit
+	// value. Returns an error wrapping "instance %s not found" when the
+	// instance row is missing.
+	//
+	// @deliberate: coalesce retires under the message-schema-layer
+	// redesign — one message per frame is the only delivery shape, so the
+	// producer no longer needs a resolution-mode discriminator alongside
+	// the timeout.
+	LookupFrameTimeoutMs(ctx context.Context, instanceID shared.UUID, tx Tx) (frameTimeoutMs int64, err error)
 
-	// @agent-contract EnqueueSerialFrame: inserts a queued serial_queue
-	// frame with one source node and returns the new frame_id. Does NOT
-	// coalesce.
-	EnqueueSerialFrame(ctx context.Context, instanceID, sourceNodeID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
+	// @agent-contract InsertFrame: inserts a queued frame for the instance
+	// whose origin is the given typed-message envelope and returns the new
+	// frame_id. The frame→message FK is enforced by the schema (ON DELETE
+	// RESTRICT, per the 010 migration), so the message row must already
+	// exist in the same tx and cannot be deleted while any frame still
+	// points at it.
+	//
+	// @constraint: one-message-per-frame — each call inserts a new frame
+	// row; there is no upsert / coalesce / append-to-pending semantic.
+	InsertFrame(ctx context.Context, instanceID, triggeringMessageID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
 
-	// @agent-contract EnqueueCoalesceFrame: inserts a queued coalesce
-	// frame, or appends the source node to an existing pending coalesce
-	// row for the instance. Returns the frame_id of the row that received
-	// the source.
-	EnqueueCoalesceFrame(ctx context.Context, instanceID, sourceNodeID shared.UUID, frameTimeoutMs int64, tx Tx) (shared.UUID, error)
+	// @agent-contract ListForObservabilityWithMessage:
+	// ListForObservability joined with the triggering-message envelope
+	// (type, sender, sender_kind) in one SQL — used by the cascade-graph
+	// frames-read endpoint so a 50-row page doesn't fan out to 51
+	// round-trips and so the frame row and its message row both read
+	// inside the caller's tx (no across-tx window during which a message
+	// reaper could leave the page seeing frame-then-no-message).
+	ListForObservabilityWithMessage(ctx context.Context, filter FrameListFilter, pag ListPagination, tx Tx) (PaginatedListResult[FrameRowWithMessage], error)
 
-	// @agent-contract AppendSourceToQueuedFrame: adds nodeID to the
-	// queued frame's source_node_ids array if not already present. No-op
-	// when the frame is not in 'queued' state or the node id is already
-	// a source. Used by invalidateNextFrame to attach upstream-refresh
-	// upstreams to the same frame as the receiver
-	// (`@concept: upstream-pull-on-invalidate`).
-	AppendSourceToQueuedFrame(ctx context.Context, frameID, nodeID shared.UUID, tx Tx) error
-
-	// @agent-contract ListRunningFramesWithSources: returns running
-	// frames along with their source_node_ids list. Used by the runtime
-	// upstream-refresh pre-stage sweep which iterates multi-source
-	// running frames to install wait-set rows between sources.
-	ListRunningFramesWithSources(ctx context.Context, tx Tx) ([]FrameRunningSources, error)
+	// @agent-contract GetForObservabilityWithMessage: GetForObservability
+	// joined with the triggering-message envelope in one SQL. Same
+	// rationale as the list variant — single round-trip, single tx.
+	GetForObservabilityWithMessage(ctx context.Context, frameID shared.UUID, tx Tx) (*FrameRowWithMessage, error)
 
 	// @agent-contract ListForObservability: returns frames matching
 	// filter, cursor-paginated by created_at DESC. Backs the

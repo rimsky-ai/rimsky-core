@@ -75,10 +75,9 @@ func seedFallbackNodeWithErrorTypes(
 	mainRunScopeID := shared.UUID(uuid.New())
 
 	tmplSpec := spec.TemplateSpec{
-		Name:                "on-error-fallback-test-" + suffix,
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "on-error-fallback-test-" + suffix,
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []spec.TemplateNodeDef{
 			{
 				Type:       "worker",
@@ -119,7 +118,19 @@ func seedFallbackNodeWithErrorTypes(
 		}, tx); err != nil {
 			return err
 		}
-		frameID, err := store.Frames().EnqueueSerialFrame(ctx, instanceID, nodeID, 600000, tx)
+		// Seed a synthetic typed-message envelope so the
+		// rimsky_frames.triggering_message_id FK is satisfied.
+		msgID := shared.UUID(uuid.New())
+		if err := store.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		frameID, err := store.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

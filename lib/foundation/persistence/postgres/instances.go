@@ -24,7 +24,7 @@ import (
 // identity is established by the caller, not silently filled in by persistence.
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id`
 
 // Create inserts a new rimsky_instances row. The caller supplies a
 // pre-generated UUID. Returns ErrInstanceKeyConflict when (template_hash,
@@ -56,15 +56,6 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 	id := in.ID
-	// @constraint: empty FrameDeliveryMode passes nil so the INSERT's
-	// COALESCE($6, 'serial_queue') applies — the literal here decides
-	// the default, NOT the column DEFAULT. Non-empty values are sent
-	// verbatim; the CHECK constraint enforces the {serial_queue,
-	// coalesce} vocabulary so a bad value surfaces as Postgres 23514.
-	var deliveryMode any
-	if in.FrameDeliveryMode != "" {
-		deliveryMode = in.FrameDeliveryMode
-	}
 	// @constraint: empty json.RawMessage must encode as SQL NULL for the
 	// service_bindings JSONB column — pgx encodes a nil []byte as NULL
 	// (a non-nil empty slice would write JSONB 'null', which differs).
@@ -75,10 +66,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		serviceBindings = in.ServiceBindings
 	}
 	row := ex.QueryRow(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id)
-		 VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'serial_queue'), $7, $8, $9, $10, $11, $12)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING `+instanceCols,
-		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, deliveryMode, matchCountsBytes, in.MainRunScopeID, in.Paused, in.TerminateAfterRun, serviceBindings, in.CreatedByAPIKeyID,
+		id, in.TemplateHash, in.InstanceKey, paramsBytes, overridesBytes, matchCountsBytes, in.MainRunScopeID, in.Paused, in.TerminateAfterRun, serviceBindings, in.CreatedByAPIKeyID,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -487,7 +478,6 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		instanceKey         *string
 		params              []byte
 		overrides           []byte
-		deliveryMode        string
 		createdAt           time.Time
 		terminatedAt        *time.Time
 		matchCounts         []byte
@@ -497,7 +487,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		serviceBindingsByte []byte
 		createdByAPIKeyID   *foundationshared.UUID
 	)
-	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &deliveryMode, &createdAt, &terminatedAt, &matchCounts, &mainRunScopeID, &paused, &terminateAfterRun, &serviceBindingsByte, &createdByAPIKeyID); err != nil {
+	if err := sc.Scan(&id, &templateHash, &instanceKey, &params, &overrides, &createdAt, &terminatedAt, &matchCounts, &mainRunScopeID, &paused, &terminateAfterRun, &serviceBindingsByte, &createdByAPIKeyID); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	m := map[string]any{}
@@ -529,7 +519,6 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		Params:                        m,
 		AttributeOverrides:            ov,
 		AttributeOverridesMatchCounts: mc,
-		FrameDeliveryMode:             deliveryMode,
 		MainRunScopeID:                mainRunScopeID,
 		CreatedAt:                     createdAt,
 		TerminatedAt:                  terminatedAt,

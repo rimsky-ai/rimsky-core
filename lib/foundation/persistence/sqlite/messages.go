@@ -33,28 +33,19 @@ func (b *messagesImpl) q(tx persistence.Tx) querier { return (*tablesImpl)(b).q(
 
 const sqliteInsertMessageSQL = `
 INSERT INTO rimsky_messages (
-    id, instance_id, kind, sender, sender_kind, target, payload,
-    backfill_operation_id, received_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    id, instance_id, type, sender, sender_kind, payload, received_at
+) VALUES (?, ?, ?, ?, ?, ?, ?)`
 
 func (b *messagesImpl) Insert(ctx context.Context, tx persistence.Tx, req persistence.EnqueueMessageRequest) error {
 	if req.ReceivedAt.IsZero() {
 		req.ReceivedAt = time.Now().UTC()
 	}
-	var target any
-	if req.Target != "" {
-		target = req.Target
-	}
-	var backfill any
-	if req.BackfillOperationID != nil {
-		backfill = req.BackfillOperationID.String()
-	}
 	// @constraint: received_at goes through formatTime (fixed-width UTC text) — a raw
 	// time.Time bind would store modernc's zone-embedded t.String() form,
 	// which breaks ORDER BY / range comparisons on non-UTC hosts.
 	_, err := b.q(tx).ExecContext(ctx, sqliteInsertMessageSQL,
-		req.ID.String(), req.InstanceID.String(), req.Kind, req.Sender,
-		req.SenderKind, target, req.Payload, backfill, formatTime(req.ReceivedAt))
+		req.ID.String(), req.InstanceID.String(), req.Type, req.Sender,
+		req.SenderKind, req.Payload, formatTime(req.ReceivedAt))
 	if err != nil {
 		return fmt.Errorf("sqlite.Messages.Insert: %w", err)
 	}
@@ -75,26 +66,19 @@ func (b *messagesImpl) MarkDelivered(ctx context.Context, tx persistence.Tx, id 
 	return n == 1, nil
 }
 
-const sqliteMarkCancelledSQL = `
-UPDATE rimsky_messages
-   SET cancelled = 1, delivered_at = ?, frame_id = NULL
- WHERE backfill_operation_id = ? AND delivered_at IS NULL`
-
-func (b *messagesImpl) MarkCancelled(ctx context.Context, tx persistence.Tx, backfillOperationID shared.UUID, at time.Time) (int, error) {
-	res, err := b.q(tx).ExecContext(ctx, sqliteMarkCancelledSQL, formatTime(at), backfillOperationID.String())
-	if err != nil {
-		return 0, fmt.Errorf("sqlite.Messages.MarkCancelled: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
-}
-
+// sqliteListPendingMessagesSQL returns the OLDEST pending undelivered
+// message for the instance. LIMIT 1 is load-bearing: the one-message-
+// per-frame property in `code:lib/runtime/message_delivery.go::DeliverPendingMessages`
+// names this SELECT as the structural single-row gate. Removing the
+// LIMIT would let bursty operator traffic materialize N rows per tick
+// just to pick one.
 const sqliteListPendingMessagesSQL = `
-SELECT id, instance_id, kind, sender, sender_kind, target, payload,
-       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+SELECT id, instance_id, type, sender, sender_kind, payload,
+       received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE instance_id = ? AND delivered_at IS NULL AND cancelled = 0
- ORDER BY received_at ASC, id ASC`
+ ORDER BY received_at ASC, id ASC
+ LIMIT 1`
 
 func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
 	rows, err := b.q(tx).QueryContext(ctx, sqliteListPendingMessagesSQL, instanceID.String())
@@ -106,8 +90,8 @@ func (b *messagesImpl) ListPendingForInstance(ctx context.Context, tx persistenc
 }
 
 const sqliteListDeliveredForFrameSQL = `
-SELECT id, instance_id, kind, sender, sender_kind, target, payload,
-       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+SELECT id, instance_id, type, sender, sender_kind, payload,
+       received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE frame_id = ?
  ORDER BY received_at ASC, id ASC`
@@ -122,8 +106,8 @@ func (b *messagesImpl) ListDeliveredForFrame(ctx context.Context, tx persistence
 }
 
 const sqliteGetMessageSQL = `
-SELECT id, instance_id, kind, sender, sender_kind, target, payload,
-       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+SELECT id, instance_id, type, sender, sender_kind, payload,
+       received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE id = ?`
 
@@ -143,6 +127,25 @@ func (b *messagesImpl) Get(ctx context.Context, id shared.UUID) (*persistence.Me
 	return &out[0], nil
 }
 
+// GetInTx mirrors Get but reads through the caller's open tx so
+// inside-transaction callers do not deadlock the SQLite single-conn
+// pool. See persistence.MessagesTable.GetInTx for the rationale.
+func (b *messagesImpl) GetInTx(ctx context.Context, tx persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
+	rows, err := b.q(tx).QueryContext(ctx, sqliteGetMessageSQL, id.String())
+	if err != nil {
+		return nil, fmt.Errorf("sqlite.Messages.GetInTx: %w", err)
+	}
+	defer rows.Close()
+	out, err := scanMessages(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return &out[0], nil
+}
+
 func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListFilter, pag persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {
 	args := []any{}
 	conds := []string{"1 = 1"}
@@ -150,33 +153,33 @@ func (b *messagesImpl) List(ctx context.Context, filter persistence.MessageListF
 		args = append(args, filter.InstanceID.String())
 		conds = append(conds, "instance_id = ?")
 	}
-	if filter.Kind != "" {
-		args = append(args, filter.Kind)
-		conds = append(conds, "kind = ?")
+	if filter.Type != "" {
+		args = append(args, filter.Type)
+		conds = append(conds, "type = ?")
 	}
 	if filter.SenderKind != "" {
 		args = append(args, filter.SenderKind)
 		conds = append(conds, "sender_kind = ?")
 	}
-	if filter.Target != "" {
-		args = append(args, filter.Target)
-		conds = append(conds, "target = ?")
-	}
-	if filter.BackfillOperationID != nil {
-		args = append(args, filter.BackfillOperationID.String())
-		conds = append(conds, "backfill_operation_id = ?")
-	}
 	if filter.FrameID != nil {
 		args = append(args, filter.FrameID.String())
 		conds = append(conds, "frame_id = ?")
+	}
+	if filter.DeliveredAfter != nil {
+		args = append(args, formatTime(*filter.DeliveredAfter))
+		conds = append(conds, "delivered_at > ?")
+	}
+	if filter.DeliveredBefore != nil {
+		args = append(args, formatTime(*filter.DeliveredBefore))
+		conds = append(conds, "delivered_at < ?")
 	}
 	limit := pag.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 	args = append(args, limit)
-	sql := fmt.Sprintf(`SELECT id, instance_id, kind, sender, sender_kind, target, payload,
-       backfill_operation_id, received_at, delivered_at, frame_id, cancelled
+	sql := fmt.Sprintf(`SELECT id, instance_id, type, sender, sender_kind, payload,
+       received_at, delivered_at, frame_id, cancelled
   FROM rimsky_messages
  WHERE %s
  ORDER BY received_at DESC, id DESC
@@ -198,8 +201,6 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 	for rows.Next() {
 		var m persistence.MessageRow
 		var idStr, instanceStr string
-		var target sql.NullString
-		var backfillStr sql.NullString
 		var frameStr sql.NullString
 		// @constraint: Timestamp columns are fixed-width UTC TEXT; scan as strings and
 		// run through parseTime (per queue_park.go::LoadResumeMetadataInTx)
@@ -207,7 +208,7 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		var receivedAtStr string
 		var deliveredAtStr sql.NullString
 		var cancelled int
-		// @constraint: payload may be NULL (e.g. an invalidate envelope with no body).
+		// @constraint: payload may be NULL (e.g. an envelope with no body).
 		// The database/sql driver cannot store a NULL driver.Value into a
 		// *json.RawMessage directly, so scan through a nullable []byte and
 		// leave m.Payload nil when the column is NULL. (pgx tolerates NULL
@@ -215,8 +216,8 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		// analogue of the postgres collectMessages nullable-payload handling.)
 		var payload []byte
 		if err := rows.Scan(
-			&idStr, &instanceStr, &m.Kind, &m.Sender, &m.SenderKind,
-			&target, &payload, &backfillStr, &receivedAtStr, &deliveredAtStr,
+			&idStr, &instanceStr, &m.Type, &m.Sender, &m.SenderKind,
+			&payload, &receivedAtStr, &deliveredAtStr,
 			&frameStr, &cancelled,
 		); err != nil {
 			return nil, err
@@ -234,14 +235,6 @@ func scanMessages(rows *sql.Rows) ([]persistence.MessageRow, error) {
 		}
 		if u, err := uuid.Parse(instanceStr); err == nil {
 			m.InstanceID = u
-		}
-		if target.Valid {
-			m.Target = target.String
-		}
-		if backfillStr.Valid {
-			if u, err := uuid.Parse(backfillStr.String); err == nil {
-				m.BackfillOperationID = &u
-			}
 		}
 		if frameStr.Valid {
 			if u, err := uuid.Parse(frameStr.String); err == nil {

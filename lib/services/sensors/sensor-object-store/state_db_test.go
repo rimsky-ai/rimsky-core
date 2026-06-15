@@ -41,7 +41,7 @@ func TestSubscribe_RestartReplay_PreloadsWatermark(t *testing.T) {
 		PollInterval:   30 * time.Second,
 		WatermarkField: "name",
 		TargetNode:     "ingest",
-		MessageKind:    "invalidate",
+		MessageType:    "invalidate",
 	}
 	if err := s1.UpsertSubscription(ctx, w); err != nil {
 		t.Fatalf("UpsertSubscription: %v", err)
@@ -92,7 +92,7 @@ func TestStateDB_PersistsAcrossRestart(t *testing.T) {
 		PollInterval:   30 * time.Second,
 		WatermarkField: "name",
 		TargetNode:     "ingest",
-		MessageKind:    "invalidate",
+		MessageType:    "invalidate",
 	}
 	if err := s1.UpsertSubscription(ctx, w); err != nil {
 		t.Fatalf("UpsertSubscription: %v", err)

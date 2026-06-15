@@ -6,6 +6,8 @@ package frame
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -39,7 +41,7 @@ type MetricsHook interface {
 //
 // Steps per §4.1 of the spec:
 //  1. Detect frame-end (transition running → completed|failed).
-//  2. Advance queued (serial_queue and coalesce) — promote oldest queued to running.
+//  2. Advance queued — promote oldest queued to running.
 //  3. Warn on stuck frames (timeout exceeded with no claimed dispatches) — observation only, not destructive.
 //  4. Reap orphan dispatches (frame in terminal state but dispatch still claimed).
 //
@@ -54,7 +56,7 @@ func RunTick(ctx context.Context, store persistence.Tables, queue persistence.Qu
 	if err := runFrameEndDetection(ctx, store, logger, m); err != nil {
 		return fmt.Errorf("frame.RunTick: frame-end: %w", err)
 	}
-	if err := runAdvanceQueued(ctx, store, logger); err != nil {
+	if err := runAdvanceQueued(ctx, store, queue, logger); err != nil {
 		return fmt.Errorf("frame.RunTick: advance: %w", err)
 	}
 	if err := runWarnStuckFrames(ctx, store, logger); err != nil {
@@ -149,7 +151,7 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 	return nil
 }
 
-func runAdvanceQueued(ctx context.Context, store persistence.Tables, logger Logger) error {
+func runAdvanceQueued(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger) error {
 	var advances []persistence.FrameQueuedReady
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		as, err := store.Frames().ListQueuedFramesReadyToStart(ctx, tx)
@@ -163,7 +165,7 @@ func runAdvanceQueued(ctx context.Context, store persistence.Tables, logger Logg
 	}
 
 	for _, a := range advances {
-		if err := advanceOneFrame(ctx, store, a.FrameID, a.InstanceID, a.SourceNodeIDs, logger); err != nil {
+		if err := advanceOneFrame(ctx, store, queue, a.FrameID, a.InstanceID, a.TriggeringMessageID, logger); err != nil {
 			logger.Warn("frame.start.advance_failed",
 				"frame_id", a.FrameID,
 				"instance_id", a.InstanceID,
@@ -174,12 +176,71 @@ func runAdvanceQueued(ctx context.Context, store persistence.Tables, logger Logg
 	return nil
 }
 
-// advanceOneFrame promotes one queued frame to running and writes its
-// source nodes stale-with-frame_id. Runs in its own tx so failures are
-// isolated to this frame; a wedged source node logs a warning and
-// returns nil so the queued frame remains and the next tick can retry.
+// advanceOneFrame promotes one queued frame to running and stale-marks
+// every wake-target named in the triggering message's payload.
+//
+// Pass 4 of the 2026-06-14 message-schema-layer reshape: the legacy
+// rimsky_frames.source_node_ids column retired (Pass 1) and with it the
+// frame-engine path that stale-marked source nodes at promotion. The
+// replacement is `payload.wake_node_ids` on the triggering message — an
+// array of node-UUIDs the runtime-side (instance-factory for roots,
+// invalidate / reset handlers for ad-hoc invalidates) embeds when it
+// seeds the synthetic envelope. Reading the array at promotion preserves
+// the promote+stale-mark atomicity the supervisor's `ListReadyForDispatch`
+// relies on: the supervisor never sees a stale row whose frame is still
+// queued (the cheaper shape "stale-mark at instance-factory time" admits
+// dispatch against a queued frame, breaking the frame-end invariant).
+//
+// Two wake mechanisms by design (the divide is structural, not transitional):
+//
+//   - Runtime-synthetic envelopes (the ones THIS function looks at) wake
+//     receivers by enumerating node-UUIDs in `payload.wake_node_ids`. Emit
+//     sites construct these envelopes via `runtime.EnqueueSyntheticWakeFrame`
+//     — the instance-factory's initial-frame seed
+//     (`code:control/controlapi/instances.go::createInstance`, type
+//     `"instance/root"`), the reset handler's next-frame seed
+//     (`code:control/controlapi/nodes.go::handleResetNode`, type
+//     `"node/reset"`), and the asset-materialize handler
+//     (`code:control/controlapi/assets.go`, type `"asset/materialize"`).
+//     None of these types is declared in any template's `messages:`
+//     registry — they bypass the registry gate by going through
+//     `runtime.EnqueueMessage` directly. Receivers are addressed by UUID,
+//     not by subscription.
+//
+//   - Author-declared envelopes (operator-posted, publisher-emitted,
+//     cascade-emitted from a message-emitter node) carry NO
+//     `wake_node_ids`. Receivers wake through the subscriber-side cascade
+//     in `runtime.cascadeMessageVirtualNodeSettleInTx`: the message's
+//     `type` is the virtual-node sender key, subscribers declared via
+//     `subscribes: [{node: <type>, type: terminal/success}]` match through
+//     the standard edge map and stale-mark in the new frame.
+//
+// Template authors do NOT subscribe to the synthetic types — those
+// envelopes ship without `wake_node_ids` only by accident; a template
+// author who writes `subscribes: [{node: instance/root, type: terminal/
+// success}]` would discover the synthetic surface, but the registry
+// validator would reject `instance/root` as undeclared. The divide is
+// stable as long as runtime-synthetic types are confined to runtime-
+// internal call sites.
+//
+// @deliberate: runtime-synthetic envelopes wake via
+// payload.wake_node_ids; author-declared envelopes wake via the
+// subscriber-side cascade. Both surfaces converge on the same stale-
+// mark + dispatch path; only the wake-target selection differs.
+//
+// @blessed-invariant 21: messages are inert. The `json.Unmarshal`
+// below is the fifth sanctioned site that reads payload bytes — see
+// the enumeration in
+// `code:graph/attribute/substitution.go::resolveTriggerValue` and
+// `code:graph/attribute/substitution.go::resolveMessagesValue`. The
+// read is runtime-internal wake-field extraction (the rimsky-synthesized
+// `wake_node_ids` array) and a different surface than user-authored
+// body reads. The bytes are never logged, formatted with `%v`, or
+// echoed into error messages; an unparseable payload only emits a
+// warn with the frame_id + triggering_message_id + the decode error
+// string (never payload contents).
 func advanceOneFrame(
-	ctx context.Context, store persistence.Tables, frameID, instanceID uuid.UUID, sources []uuid.UUID, logger Logger,
+	ctx context.Context, store persistence.Tables, queue persistence.Queue, frameID, instanceID, triggeringMessageID uuid.UUID, logger Logger,
 ) error {
 	var promoted bool
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -191,43 +252,95 @@ func advanceOneFrame(
 			// @deliberate: Another replica won; nothing to do.
 			return nil
 		}
-		// @deliberate: set source nodes stale with frame_id. In-bounds
-		// states: fresh, failed, OR stale-with-nil-frame_id. Out-of-bounds
-		// rolls back the promotion so the queued row remains; next tick
-		// retries.
-		for _, src := range sources {
-			matched, err := store.Frames().MarkSourceNodeStale(ctx, instanceID, src, frameID, tx)
-			if err != nil {
-				return err
-			}
-			if !matched {
-				logger.Warn("frame.start.source_not_in_bounds",
-					"frame_id", frameID,
-					"instance_id", instanceID,
-					"source_node_id", src)
-				return errSourceOutOfBounds
-			}
-		}
 		promoted = true
-		return nil
-	}); err != nil {
-		if err == errSourceOutOfBounds {
+		// @deliberate: Read the triggering message and stale-mark every
+		// wake_node_ids target IN THE PROMOTION TX. Co-committing
+		// guarantees the supervisor cannot observe a stale row before
+		// its frame transitions to running. The tx-aware GetInTx is
+		// mandatory here: the tx-less Get goes through the pool
+		// (db.QueryContext), and under SQLite's MaxOpenConns=1 that
+		// blocks forever waiting for the only pool connection — held
+		// by this open promotion tx. See @blessed-invariant: tx-aware
+		// reads from inside an open tx.
+		msg, err := store.Messages().GetInTx(ctx, tx, shared.UUID(triggeringMessageID))
+		if err != nil {
+			return fmt.Errorf("advanceOneFrame: get triggering message: %w", err)
+		}
+		if msg == nil || len(msg.Payload) == 0 {
 			return nil
 		}
+		var payloadMap map[string]any
+		if err := json.Unmarshal(msg.Payload, &payloadMap); err != nil {
+			// @deliberate: malformed payload — log and proceed. The frame is
+			// running; subscriber-side cascade is still available for
+			// other wake mechanisms.
+			logger.Warn("advanceOneFrame: malformed message payload",
+				"frame_id", frameID,
+				"triggering_message_id", triggeringMessageID,
+				"error", err.Error())
+			return nil
+		}
+		ids, _ := payloadMap["wake_node_ids"].([]any)
+		if len(ids) == 0 {
+			return nil
+		}
+		inst, err := store.Instances().Get(ctx, shared.UUID(instanceID), tx)
+		if err != nil {
+			return fmt.Errorf("advanceOneFrame: get instance: %w", err)
+		}
+		if inst == nil {
+			return nil
+		}
+		for _, raw := range ids {
+			s, ok := raw.(string)
+			if !ok {
+				continue
+			}
+			parsed, perr := uuid.Parse(s)
+			if perr != nil {
+				continue
+			}
+			nodeID := shared.UUID(parsed)
+			node, gerr := store.Nodes().Get(ctx, nodeID, tx)
+			if gerr != nil {
+				return fmt.Errorf("advanceOneFrame: get wake node: %w", gerr)
+			}
+			if node == nil {
+				continue
+			}
+			scope := inst.MainRunScopeID
+			if node.RunScopeID != nil {
+				scope = *node.RunScopeID
+			}
+			if err := store.Nodes().AffirmNodeRunRow(ctx, nodeID, scope, shared.UUID(frameID), tx); err != nil {
+				if errors.Is(err, persistence.ErrRunScopeClosed) {
+					continue
+				}
+				return fmt.Errorf("advanceOneFrame: affirm wake node: %w", err)
+			}
+			runID, hasInFlight, err := queue.GetInFlightRunForNode(ctx, tx, nodeID, scope)
+			if err != nil {
+				return fmt.Errorf("advanceOneFrame: resolve wake run: %w", err)
+			}
+			if !hasInFlight {
+				continue
+			}
+			if err := store.Nodes().MarkStaleForCascade(ctx, runID, shared.UUID(frameID), tx); err != nil {
+				return fmt.Errorf("advanceOneFrame: stale-mark wake node: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	if promoted {
 		logger.Info("frame.start",
 			"frame_id", frameID,
 			"instance_id", instanceID,
-			"source_node_ids", sources)
+			"triggering_message_id", triggeringMessageID)
 	}
 	return nil
 }
-
-// errSourceOutOfBounds is a sentinel that triggers a tx rollback in
-// advanceOneFrame without surfacing as a failure to the caller.
-var errSourceOutOfBounds = fmt.Errorf("frame.advance: source node out of bounds")
 
 // runWarnStuckFrames observes frames that have made no progress within
 // their `frame_timeout_ms` window and emits a single `frame.stuck.observed`

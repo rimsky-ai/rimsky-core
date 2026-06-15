@@ -14,7 +14,7 @@ A CLI-bundled JSON resource that expands into a `concept:permission` grant at ke
 - `admin` — full access (a single `*` action grant)
 - `operator` — operational verbs across the platform; can read auth state but cannot mutate keys
 - `read-only` — a single `*:read` grant
-- `agent-supervisor` — read across the platform + `node:invalidate`, `node:reset`, `message:send` — the writes a supervisor agent realistically needs
+- `agent-supervisor` — read across the platform + `node:reset`, `message:send` — the writes a supervisor agent realistically needs
 - `publisher-service` — a single `message:send` grant; minimal grant for bundled publisher services
 - `debug-operator` — `*:read` + `instance:pause`, `instance:resume`, `breakpoint:create`, `breakpoint:resume`, `breakpoint:delete` — debugger authority for pausing instances and managing runtime breakpoints
 

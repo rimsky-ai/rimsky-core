@@ -92,7 +92,6 @@ func TestVerifyBeforeRun_BailResolvesThroughEngine(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "bail-engine-route", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},

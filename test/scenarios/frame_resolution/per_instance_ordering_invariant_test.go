@@ -8,7 +8,7 @@
 // Two checks:
 //  1. Direct SQL: insert two running rows for the same instance; second insert
 //     must fail with a unique-violation.
-//  2. Concurrent fires through frame.EnqueueOrCoalesce + RunTick advancement
+//  2. Concurrent fires through frame.EnqueueFrame + RunTick advancement
 //     do not produce more than one running frame at a time over the test's
 //     observation window.
 package frame_resolution
@@ -35,7 +35,6 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-instance-ordering", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -54,17 +53,34 @@ func TestPerInstanceOrderingInvariant_DirectSQL(t *testing.T) {
 	_, err = h.Pool.Exec(h.Ctx, `UPDATE rimsky_nodes SET frame_id = NULL WHERE id = $1`, uuid.UUID(worker.ID))
 	require.NoError(t, err)
 
+	// @constraint: rimsky_frames.triggering_message_id is NOT NULL FK after migration 010/011;
+	// seed two typed envelopes (one per attempted frame insert) so the FK resolves on the row
+	// that succeeds and on the row that races the unique-index violation.
+	messageIDFirst := uuid.New()
 	_, err = h.Pool.Exec(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
-		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
-	`, uuid.UUID(iid), uuid.UUID(worker.ID))
+		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		VALUES ($1, $2, 'fixture/per-instance-ordering-1', 'operator', 'operator')
+	`, messageIDFirst, uuid.UUID(iid))
+	require.NoError(t, err)
+	messageIDSecond := uuid.New()
+	_, err = h.Pool.Exec(h.Ctx, `
+		INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		VALUES ($1, $2, 'fixture/per-instance-ordering-2', 'operator', 'operator')
+	`, messageIDSecond, uuid.UUID(iid))
+	require.NoError(t, err)
+
+	// @constraint: First running insert: should succeed.
+	_, err = h.Pool.Exec(h.Ctx, `
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
+		VALUES ($1, $2, 'running', now(), now(), 600000)
+	`, uuid.UUID(iid), messageIDFirst)
 	require.NoError(t, err, "first running insert should succeed")
 
 	// @constraint: Second running insert: must fail (uq_rimsky_frames_running).
 	_, err = h.Pool.Exec(h.Ctx, `
-		INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
-		VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
-	`, uuid.UUID(iid), uuid.UUID(worker.ID))
+		INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
+		VALUES ($1, $2, 'running', now(), now(), 600000)
+	`, uuid.UUID(iid), messageIDSecond)
 	require.Error(t, err, "second running insert must fail")
 	require.Contains(t, strings.ToLower(err.Error()), "uq_rimsky_frames_running",
 		"expected unique-violation on uq_rimsky_frames_running; got %v", err)
@@ -77,7 +93,6 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-instance-ordering-concurrent", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},

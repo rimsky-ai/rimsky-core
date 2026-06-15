@@ -2,22 +2,21 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Unified invalidate path: wakeParkedNode shared by E3 (SweepParkedNodes
-// time-based wake), G3 (admin endpoint POST
-// /admin/instances/{instance}/nodes/{node_id}/invalidate), and H2
-// (on_event-handler-emitted invalidates). The single helper dispatches
-// by node state:
+// Parked-resume wake: `wakeParkedNode` transitions a parked node back to
+// stale, runs the cascade walk so downstream subscribers gate on it, and
+// emits the parked-resume audit event. Called by the deadline-elapsed
+// sweep (E3, `code:sweep_parked.go::SweepParkedNodes`) when `resume_at`
+// elapses.
 //
-//   - parked: re-queues for resume dispatch via wakeParkedNode (transitions
-//     phase parked→pending so any eligible supervisor can pick the row up,
-//     and transitions node state parked→stale so the standard ready sweep
-//     re-dispatches it).
-//   - fresh:  standard invalidate via InvalidateNode (frame engine).
-//   - running: rejected — caller decides to surface the conflict.
-//   - failed/stale: standard invalidate (a stale row that's been re-run
-//     races; today's behavior is preserved by routing to InvalidateNode).
+// The operator-API `node:invalidate` route retired with the 2026-06-14
+// message-schema-layer reshape — there is no longer a "unified
+// invalidate" dispatch surface that fans out by node state, because the
+// operator-side path goes through typed messages now. The parked-resume
+// wake is the only remaining caller of this helper.
 //
-// Per the 2026-05-08 platform-extensions plan E3/E4/G3/H2.
+// `wakeParkedReceiverInTx` (further below) is the in-tx variant used by
+// the cascade walker when it visits a parked downstream receiver during
+// a sender's terminal cascade.
 
 package runtime
 
@@ -26,51 +25,58 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
-
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// ErrInvalidateRunning is returned by the unified invalidate handler
-// when the target is in `running` state. Callers (admin G3) translate
-// this to HTTP 409.
-var ErrInvalidateRunning = errors.New("invalidate: target node is running")
-
 // WakeReason captures the invalidate's source for the resume_reason
-// field of ResumeContext (per plan E4). Distinct values let the executor
-// log / tune behavior on resume.
+// field of ResumeContext. Distinct values let the executor log / tune
+// behavior on resume.
 type WakeReason string
 
 const (
 	// WakeDeadlineElapsed is set by SweepParkedNodes when resume_at
 	// elapses.
 	WakeDeadlineElapsed WakeReason = "deadline_elapsed"
-	// WakeExternalInvalidate is set by the admin invalidate endpoint
-	// and by handler-emitted invalidates (H2).
+	// WakeExternalInvalidate identifies a wake driven by an external
+	// signal rather than the parked-resume deadline. Used today by
+	// scenario harness helpers exercising the parked-resume path
+	// without ticking the deadline; distinct from WakeDeadlineElapsed
+	// so resume-time bookkeeping can tell a deadline-driven wake apart
+	// from an external-driven one.
 	WakeExternalInvalidate WakeReason = "external_invalidate"
 )
 
-// UnifiedInvalidate is the entry point shared by all sources of an
-// invalidate request. The function:
+// WakeParkedArgs bundles the persistence + bookkeeping inputs for
+// `WakeParkedNode`. The parked-resume sweep is the only caller today
+// (`code:sweep_parked.go::SweepParkedNodes`); future internal callers
+// pass the same handle set.
+type WakeParkedArgs struct {
+	Persist      persistence.Tables
+	Queue        persistence.Queue
+	Logger       shared.Logger
+	TargetNodeID shared.UUID
+	SupervisorID string
+}
+
+// WakeParkedNode wakes the parked node identified by `TargetNodeID`.
+// Loads the target row to verify it is parked + resolve its scope, then
+// hands off to the in-tx wake helper. Returns nil silently when the
+// target is not found, is not parked, or has no projected RunScope (the
+// only states the parked-resume sweep encounters).
 //
-//  1. Loads the target's current state via Nodes().Get.
-//  2. If parked: dispatches the wakeParkedNode path.
-//  3. If running: returns ErrInvalidateRunning so the caller can
-//     surface a 409 (admin) or log-and-skip (handler).
-//  4. Otherwise: routes to InvalidateNode (the standard frame engine).
-//
-// The supervisorID is required for the parked branch (claims the row);
-// the standard InvalidateNode path leaves the SupervisorID empty
-// (existing behavior).
-func UnifiedInvalidate(ctx context.Context, args InvalidateArgs, supervisorID string, reason WakeReason) error {
+//	@concept: parked-state
+func WakeParkedNode(ctx context.Context, args WakeParkedArgs, reason WakeReason) error {
 	if args.Persist == nil {
-		return errors.New("UnifiedInvalidate: Persist required")
+		return errors.New("WakeParkedNode: Persist required")
 	}
 	if args.Queue == nil {
-		return errors.New("UnifiedInvalidate: Queue required")
+		return errors.New("WakeParkedNode: Queue required")
+	}
+	if args.SupervisorID == "" {
+		return errors.New("WakeParkedNode: SupervisorID required")
 	}
 	target, err := loadTargetNode(ctx, args.Persist, args.TargetNodeID)
 	if err != nil {
@@ -78,22 +84,19 @@ func UnifiedInvalidate(ctx context.Context, args InvalidateArgs, supervisorID st
 	}
 	if target == nil {
 		if args.Logger != nil {
-			args.Logger.Debug("UnifiedInvalidate: target not found",
+			args.Logger.Debug("WakeParkedNode: target not found",
 				"node_id", args.TargetNodeID.String())
 		}
 		return nil
 	}
-	switch target.State {
-	case cascade.NodeStateParked:
-		if supervisorID == "" {
-			return errors.New("UnifiedInvalidate: supervisorID required for parked branch")
-		}
-		return wakeParkedNode(ctx, args, target, supervisorID, reason)
-	case cascade.NodeStateRunning:
-		return ErrInvalidateRunning
-	default:
-		return InvalidateNode(ctx, args)
+	if target.State != cascade.NodeStateParked {
+		// @constraint: target has already moved out of parked (raced
+		// with another caller). Silent no-op: the parked-resume sweep
+		// iterates over a snapshot of parked rows and tolerates such
+		// races.
+		return nil
 	}
+	return wakeParkedNode(ctx, args, target, reason)
 }
 
 // wakeParkedNode runs the parked-node wake. Transitions phase
@@ -105,7 +108,7 @@ func UnifiedInvalidate(ctx context.Context, args InvalidateArgs, supervisorID st
 // The actual re-dispatch happens on the next supervisor tick — the
 // runner's SelectCandidates picks up phase='pending' rows and the
 // standard ready sweep re-enqueues stale nodes.
-func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistence.NodeRow, supervisorID string, reason WakeReason) error {
+func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistence.NodeRow, reason WakeReason) error {
 	// @constraint: target.RunScopeID (when set) addresses the specific
 	// parked run row via its RunScope. Without one, no in-flight row
 	// exists for this node — nothing to wake.
@@ -146,7 +149,7 @@ func wakeParkedNode(ctx context.Context, args InvalidateArgs, target *persistenc
 			Kind: events.KindParkedResumeStarted(),
 			Payload: map[string]any{
 				"resume_reason": string(reason),
-				"supervisor_id": supervisorID,
+				"supervisor_id": args.SupervisorID,
 				"prior_reason":  parked.Reason,
 				"had_session":   parked.SessionToken != "",
 				"payload_bytes": len(parked.PayloadInline) + len(parked.PayloadHandle),
@@ -205,6 +208,22 @@ func wakeParkedReceiverInTx(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	receiver persistence.NodeRow, frameID shared.UUID,
 ) error {
+	return wakeParkedReceiverWithDepsInTx(ctx, args.Persist, args.Queue, tx, receiver, frameID)
+}
+
+// wakeParkedReceiverWithDepsInTx is the persist+queue-direct variant of
+// wakeParkedReceiverInTx. Both the standard runner_terminal.go cascade
+// walk (via wakeParkedReceiverInTx) and the message-virtual-node settle
+// in message_delivery.go (which runs from a scheduler-tick context that
+// has no RunArgs to thread) call this directly so the parked-wake
+// branch cannot drift between the two cascade walkers.
+//
+//	@concept: parked-state
+//	@concept: cascade
+func wakeParkedReceiverWithDepsInTx(
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue, tx persistence.Tx,
+	receiver persistence.NodeRow, frameID shared.UUID,
+) error {
 	// @constraint: under RunScope-first the parked-row resolver keys on
 	// (node_id, run_scope_id). Without a projected RunScope on the
 	// receiver, no parked row can exist for this node — return early.
@@ -212,7 +231,7 @@ func wakeParkedReceiverInTx(
 		return nil
 	}
 	receiverRunScopeID := *receiver.RunScopeID
-	parked, err := args.Queue.GetParkedByNode(ctx, receiver.ID, receiverRunScopeID)
+	parked, err := queue.GetParkedByNode(ctx, receiver.ID, receiverRunScopeID)
 	if err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: GetParkedByNode: %w", err)
 	}
@@ -222,7 +241,7 @@ func wakeParkedReceiverInTx(
 		// is the Phase B recovery surface; bail out cleanly here.
 		return nil
 	}
-	resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, "cascade_wake")
+	resumed, err := queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, "cascade_wake")
 	if err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: ResumeParkedInTx: %w", err)
 	}
@@ -235,7 +254,7 @@ func wakeParkedReceiverInTx(
 	// wait-set blocker the cascade walker inserts at the new frame is
 	// invisible to ListReadyForDispatch and the woken receiver dispatches
 	// without waiting.
-	if err := args.Persist.Nodes().SetFrameID(ctx, receiver.ID, &frameID, tx); err != nil {
+	if err := persist.Nodes().SetFrameID(ctx, receiver.ID, &frameID, tx); err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: stamp node.frame_id: %w", err)
 	}
 	// @constraint: rebind the resumed run row's frame_id so receiver-side
@@ -244,7 +263,7 @@ func wakeParkedReceiverInTx(
 	// (deadline sweep concurrently transitioned parked → pending) also
 	// gets the rebind — that scenario leaves an in-flight pending row
 	// at the prior parked frame that still needs migration.
-	if err := args.Queue.RebindRunFrameInTx(ctx, tx, parked.DispatchID, frameID); err != nil {
+	if err := queue.RebindRunFrameInTx(ctx, tx, parked.DispatchID, frameID); err != nil {
 		// @constraint: tolerate ErrRunRowMissing on the !resumed branch
 		// — the row may have been hard-deleted by orphan-reaper between
 		// our GetParkedByNode read and now. The MarkStaleForCascade call
@@ -262,11 +281,11 @@ func wakeParkedReceiverInTx(
 	}
 	// @constraint: thread receiverRunScopeID so the parked → stale
 	// transition disambiguates fan-out siblings.
-	if err := args.Persist.Nodes().UpdateState(ctx, receiver.ID, receiverRunScopeID,
+	if err := persist.Nodes().UpdateState(ctx, receiver.ID, receiverRunScopeID,
 		cascade.NodeStateStale, cascade.ReasonHandlerResume, nil, tx); err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: UpdateState: %w", err)
 	}
-	return args.Persist.Events().Append(ctx, persistence.EventAppendInput{
+	return persist.Events().Append(ctx, persistence.EventAppendInput{
 		NodeID: &receiver.ID, InstanceID: &receiver.InstanceID,
 		Kind: events.KindParkedResumeStarted(),
 		Payload: map[string]any{
@@ -288,64 +307,4 @@ func loadTargetNode(ctx context.Context, persist persistence.Tables, id shared.U
 		return err
 	})
 	return out, err
-}
-
-// InvalidateAdapter is a thin adapter that wraps UnifiedInvalidate
-// in the {InvalidateNode(ctx, instanceID, nodeID) (any, error)} shape
-// the control-api admin handler (G3) uses. Returned values are
-// human-readable result objects; on a parked-state invalidate, the
-// returned shape lists the wake reason and the resumed dispatch row.
-//
-// Wiring: the control-api process constructs one of these at startup
-// with its persistence + queue handles and the operator-id, then sets
-// it as AppDeps.InvalidateHandler before mounting routes. Renamed from
-// InvalidateHandler so it doesn't collide with the
-// RunArgs.InvalidateHandler function field of the same package.
-type InvalidateAdapter struct {
-	Persist      persistence.Tables
-	Queue        persistence.Queue
-	Clock        shared.Clock
-	Logger       shared.Logger
-	SupervisorID string
-	// Metrics threads the dispatch/invalidate instrumentation hook
-	// through to InvalidateNode so admin-endpoint invalidates increment
-	// `rimsky_invalidates_total{source="admin"}`. Nil → no-op.
-	Metrics MetricsHook
-}
-
-// InvalidateNode implements the control/controlapi.InvalidateHandler
-// interface (without taking the import — the structural type-match
-// shape kicks in at the control-layer wire site).
-func (h *InvalidateAdapter) InvalidateNode(ctx context.Context, instanceID, nodeID string) (any, error) {
-	id, err := parseNodeUUID(nodeID)
-	if err != nil {
-		return nil, fmt.Errorf("invalidate: parse node_id: %w", err)
-	}
-	ia := InvalidateArgs{
-		Persist:      h.Persist,
-		Queue:        h.Queue,
-		Clock:        h.Clock,
-		Logger:       h.Logger,
-		TargetNodeID: id,
-		Reason:       "admin_invalidate",
-		SupervisorID: h.SupervisorID,
-		Frame:        "next",
-		Metrics:      h.Metrics,
-	}
-	if err := UnifiedInvalidate(ctx, ia, h.SupervisorID, WakeExternalInvalidate); err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"status":      "accepted",
-		"instance_id": instanceID,
-		"node_id":     nodeID,
-	}, nil
-}
-
-// parseNodeUUID is a small helper for the admin-handler adapter.
-func parseNodeUUID(s string) (shared.UUID, error) {
-	if s == "" {
-		return shared.UUID{}, errors.New("empty node_id")
-	}
-	return uuid.Parse(s)
 }

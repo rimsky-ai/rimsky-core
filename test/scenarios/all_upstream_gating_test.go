@@ -24,8 +24,6 @@
 package scenarios
 
 import (
-	"bytes"
-	"net/http"
 	"testing"
 	"time"
 
@@ -56,7 +54,6 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	// detectable as a missing-source failure, not just a count drift.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "all-upstream-gating-diamond", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
@@ -95,7 +92,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{Node: "b", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 					node.SubscriptionEntry{Node: "c", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
-					// Cover the substitution reads explicitly (today-equivalent flags).
+					// @deliberate: Cover the substitution reads explicitly (today-equivalent flags).
 					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 					node.SubscriptionEntry{Node: "c", Type: "attribute/c_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
@@ -153,11 +150,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	// @deliberate: One invalidation of A, one frame. A re-runs; B's and C's staleness
 	// arrives via A's SETTLEMENT walk — the propagation path that seeds
 	// no next-tier wait-set gates for D.
-	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	_ = resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	h.InvalidateNode(iid, a.ID)
 
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should re-reach fresh")

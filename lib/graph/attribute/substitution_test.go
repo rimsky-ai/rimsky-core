@@ -278,7 +278,7 @@ func TestSubstitute_TriggerMessage(t *testing.T) {
 				"end":   "2024-09-30",
 			},
 		},
-		"reason": "backfill-q3-2024",
+		"reason": "refresh-q3-2024",
 	})
 
 	ctx := ResolveContext{TriggerMessagePayload: payload}
@@ -288,7 +288,7 @@ func TestSubstitute_TriggerMessage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Substitute: %v", err)
 		}
-		if got != "backfill-q3-2024" {
+		if got != "refresh-q3-2024" {
 			t.Fatalf("got %q, want backfill-q3-2024", got)
 		}
 	})
@@ -321,6 +321,322 @@ func TestSubstitute_TriggerMessage(t *testing.T) {
 		_, err := Substitute("{{trigger.message.reason}}", ctx)
 		if !IsMissingSource(err) {
 			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+}
+
+// TestSubstitute_OneEngineTwoSurfaces — load-bearing property of the
+// 2026-06-14 message-schema-layer Pass 6: the substitution engine
+// services `{{nodes.X.attribute.Y}}` and `{{messages.X.Y}}` through the
+// SAME resolver function (`resolveDirectiveValueRaw`). One substitution
+// engine, two surfaces — the cheaper shape "fork a parallel resolver
+// for messages" is what STORY-typed-message-substitution falsifier
+// argues against.
+//
+// Strategy: invoke both directive shapes against a shared
+// `ResolveContext`. Both resolve through the single dispatch arm in
+// `resolveDirectiveValueRaw` (the `nodes` arm reads ctx.Deps; the
+// `messages` arm reads ctx.TriggerMessageType +
+// ctx.TriggerMessagePayload). The test confirms both succeed against
+// the same context value AND probes the dispatch arm directly via
+// `resolveDirectiveValueRaw` so a refactor that splits the resolver
+// into two parallel functions (one per source kind) would fail this
+// test.
+//
+// Belt-and-braces: a property test confirms typo'd field names in
+// either directive shape surface as the same `*ErrMissingSource` error
+// type. A separate resolver type would be free to surface a different
+// error path; the shared-resolver invariant guarantees they don't.
+//
+// @concept: message-schema
+// @story: typed-message-substitution
+func TestSubstitute_OneEngineTwoSurfaces(t *testing.T) {
+	t.Parallel()
+
+	ctx := ResolveContext{
+		Deps: map[string]json.RawMessage{
+			"upstream": mustJSON(t, map[string]any{"reason": "from-attribute"}),
+		},
+		TriggerMessagePayload: mustJSON(t, map[string]any{"reason": "from-message"}),
+		TriggerMessageType:    "ping/recheck",
+	}
+
+	// @deliberate: both directive shapes dispatch through
+	// `resolveDirectiveValueRaw` — the same internal function — and both
+	// succeed against the same shared context value. Calling them at the
+	// test surface (Substitute) does not by itself prove the internal
+	// function is the same; the resolveDirectiveValueRaw probes below
+	// exercise the internal dispatch directly so the test fails if the
+	// resolver is forked.
+	gotNodes, err := Substitute("{{nodes.upstream.attribute.reason}}", ctx)
+	if err != nil {
+		t.Fatalf("Substitute(nodes.*): %v", err)
+	}
+	if gotNodes != "from-attribute" {
+		t.Fatalf("nodes.*: got %q, want from-attribute", gotNodes)
+	}
+	gotMessages, err := Substitute("{{messages.ping/recheck.reason}}", ctx)
+	if err != nil {
+		t.Fatalf("Substitute(messages.*): %v", err)
+	}
+	if gotMessages != "from-message" {
+		t.Fatalf("messages.*: got %q, want from-message", gotMessages)
+	}
+
+	// @deliberate: direct dispatch probe — confirms both source kinds
+	// are routed by the same single function `resolveDirectiveValueRaw`.
+	// A refactor that splits the resolver into separate per-kind public
+	// entry points would force this call site to change shape, surfacing
+	// the regression.
+	nodesVal, err := resolveDirectiveValueRaw("nodes.upstream.attribute.reason", ctx)
+	if err != nil {
+		t.Fatalf("resolveDirectiveValueRaw(nodes.*): %v", err)
+	}
+	if nodesVal != "from-attribute" {
+		t.Fatalf("resolveDirectiveValueRaw(nodes.*): got %v, want from-attribute", nodesVal)
+	}
+	messagesVal, err := resolveDirectiveValueRaw("messages.ping/recheck.reason", ctx)
+	if err != nil {
+		t.Fatalf("resolveDirectiveValueRaw(messages.*): %v", err)
+	}
+	if messagesVal != "from-message" {
+		t.Fatalf("resolveDirectiveValueRaw(messages.*): got %v, want from-message", messagesVal)
+	}
+
+	// @deliberate: property — typo'd fields in either surface produce
+	// the same error TYPE (*ErrMissingSource). A separate parallel
+	// resolver would be free to surface a different error type for one
+	// kind; the shared engine guarantees they don't.
+	for _, directive := range []string{
+		"nodes.upstream.attribute.no_such_field",
+		"messages.ping/recheck.no_such_field",
+	} {
+		_, err := resolveDirectiveValueRaw(directive, ctx)
+		if err == nil {
+			t.Fatalf("%s: want ErrMissingSource, got nil", directive)
+		}
+		var missing *ErrMissingSource
+		if !errors.As(err, &missing) {
+			t.Fatalf("%s: want *ErrMissingSource, got %T: %v", directive, err, err)
+		}
+	}
+
+	// @deliberate: property — bare-form whole-object pulls succeed for
+	// both surfaces via SubstituteValue (the value-returning sibling,
+	// also routed through the same engine).
+	for _, c := range []struct {
+		name      string
+		directive string
+		want      string // @deliberate: key the resulting map[string]any must contain
+	}{
+		{"nodes bare", "{{nodes.upstream.attribute}}", "reason"},
+		{"messages bare", "{{messages.ping/recheck}}", "reason"},
+	} {
+		val, err := SubstituteValue(c.directive, ctx)
+		if err != nil {
+			t.Fatalf("%s: SubstituteValue: %v", c.name, err)
+		}
+		m, ok := val.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: want map[string]any, got %T", c.name, val)
+		}
+		if _, ok := m[c.want]; !ok {
+			t.Fatalf("%s: result missing key %q: %v", c.name, c.want, m)
+		}
+	}
+}
+
+// TestSubstitution_SharedResolverServicesNodesAndMessages is the
+// STORY-typed-message-substitution Task 53 acceptance-pass test. The
+// existing `TestSubstitute_OneEngineTwoSurfaces` already pins the
+// "same resolver function" property at the dispatch surface; this test
+// extends the coverage at the COMBINED-DIRECTIVE level: a single
+// attribute schema's `source:` directive concatenates a `{{nodes.X.
+// attribute.Y}}` reference with a `{{messages.T.F}}` reference, and
+// the engine resolves BOTH within one call. A forked resolver would
+// either fail to resolve one side or produce inconsistent string-
+// stringification — the combined-source property would fail.
+//
+// @story: typed-message-substitution
+// @concept: message-schema
+func TestSubstitution_SharedResolverServicesNodesAndMessages(t *testing.T) {
+	t.Parallel()
+
+	ctx := ResolveContext{
+		Deps: map[string]json.RawMessage{
+			"upstream": mustJSON(t, map[string]any{"label": "alpha"}),
+		},
+		TriggerMessagePayload: mustJSON(t, map[string]any{
+			"reason": "operator-triggered",
+		}),
+		TriggerMessageType: "ping/recheck",
+	}
+
+	// @deliberate: combined-directive — a single source string
+	// concatenates both surfaces. If they were resolved through different
+	// functions the engine would have to thread two separate contexts;
+	// the SAME `resolveDirectiveValueRaw` invocation handles both inline.
+	got, err := Substitute(
+		"label={{nodes.upstream.attribute.label}}+reason={{messages.ping/recheck.reason}}",
+		ctx)
+	if err != nil {
+		t.Fatalf("Substitute combined: %v", err)
+	}
+	want := "label=alpha+reason=operator-triggered"
+	if got != want {
+		t.Fatalf("combined substitution: got %q, want %q", got, want)
+	}
+
+	// @deliberate: bare-form pulls for both surfaces, asserting both
+	// routed through SubstituteValue (the value-returning sibling)
+	// without any surface-specific helper getting in the way. A separate
+	// resolver for `messages.*` would necessarily live behind a separate
+	// SubstituteValue branch; the shared engine guarantees both ride
+	// through `resolveDirectiveValueRaw`.
+	nodesBare, err := SubstituteValue("{{nodes.upstream.attribute}}", ctx)
+	if err != nil {
+		t.Fatalf("SubstituteValue(nodes bare): %v", err)
+	}
+	nodesMap, ok := nodesBare.(map[string]any)
+	if !ok {
+		t.Fatalf("nodes bare: want map, got %T", nodesBare)
+	}
+	if nodesMap["label"] != "alpha" {
+		t.Fatalf("nodes bare: got %v, want label=alpha", nodesMap)
+	}
+	messagesBare, err := SubstituteValue("{{messages.ping/recheck}}", ctx)
+	if err != nil {
+		t.Fatalf("SubstituteValue(messages bare): %v", err)
+	}
+	messagesMap, ok := messagesBare.(map[string]any)
+	if !ok {
+		t.Fatalf("messages bare: want map, got %T", messagesBare)
+	}
+	if messagesMap["reason"] != "operator-triggered" {
+		t.Fatalf("messages bare: got %v, want reason=operator-triggered", messagesMap)
+	}
+}
+
+// TestSubstitute_Messages exercises the `{{messages.<type>.<field>}}`
+// directive form added by the 2026-06-14 message-schema-layer plan. The
+// arm reads the frame's triggering message body addressed by the
+// receiver's declared message-type — the same payload bytes the
+// `{{trigger.message.payload.X}}` arm reads, but routed through the
+// type-discriminator so a receiver's attribute schema names what it
+// expects to read rather than relying on positional binding.
+//
+// One substitution engine, two surfaces (per the pass's load-bearing
+// property): both arms walk `ctx.TriggerMessagePayload` via the same
+// `walkPath` helper. The discriminator difference is the receiver-side
+// directive shape; the resolver routing converges at walkPath.
+func TestSubstitute_Messages(t *testing.T) {
+	t.Parallel()
+
+	payload := mustJSON(t, map[string]any{
+		"pong_status": "ok",
+		"depth": map[string]any{
+			"sequence": float64(42),
+			"nested":   map[string]any{"deep": "leaf"},
+		},
+	})
+
+	ctx := ResolveContext{
+		TriggerMessagePayload: payload,
+		TriggerMessageType:    "ping/recheck",
+	}
+
+	t.Run("ok-shallow-leaf", func(t *testing.T) {
+		got, err := Substitute("{{messages.ping/recheck.pong_status}}", ctx)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "ok" {
+			t.Fatalf("got %q, want ok", got)
+		}
+	})
+
+	t.Run("ok-deep-leaf", func(t *testing.T) {
+		got, err := Substitute("{{messages.ping/recheck.depth.nested.deep}}", ctx)
+		if err != nil {
+			t.Fatalf("Substitute: %v", err)
+		}
+		if got != "leaf" {
+			t.Fatalf("got %q, want leaf", got)
+		}
+	})
+
+	t.Run("ok-bare-form-whole-body", func(t *testing.T) {
+		val, err := SubstituteValue("{{messages.ping/recheck}}", ctx)
+		if err != nil {
+			t.Fatalf("SubstituteValue: %v", err)
+		}
+		obj, ok := val.(map[string]any)
+		if !ok {
+			t.Fatalf("want map[string]any, got %T", val)
+		}
+		if obj["pong_status"] != "ok" {
+			t.Fatalf("want pong_status=ok, got %v", obj["pong_status"])
+		}
+	})
+
+	t.Run("missing-field", func(t *testing.T) {
+		_, err := Substitute("{{messages.ping/recheck.no_such_field}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("type-mismatch-rejects", func(t *testing.T) {
+		// @deliberate: the receiver names a type that is not the frame's
+		// triggering type. Static auto-subscribe prevents this in the
+		// common case; the runtime check is the dynamic defense.
+		_, err := Substitute("{{messages.other-type.pong_status}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("no-trigger-type-bound", func(t *testing.T) {
+		_, err := Substitute("{{messages.ping/recheck.pong_status}}", ResolveContext{})
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("empty-payload-with-type-bound", func(t *testing.T) {
+		// @deliberate: type matches but the payload is empty (e.g. a
+		// typed message with no body) — surfaces as ErrMissingSource
+		// symmetrically with the trigger arm.
+		emptyCtx := ResolveContext{TriggerMessageType: "ping/recheck"}
+		_, err := Substitute("{{messages.ping/recheck.pong_status}}", emptyCtx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("malformed-empty-type", func(t *testing.T) {
+		_, err := Substitute("{{messages..pong_status}}", ctx)
+		if !IsMissingSource(err) {
+			t.Fatalf("want ErrMissingSource, got %v", err)
+		}
+	})
+
+	t.Run("error-message-does-not-leak-payload", func(t *testing.T) {
+		// @blessed-invariant: message-inertness — error messages must
+		// not include the triggering payload bytes. We plant a sentinel
+		// in the body and confirm the missing-field reason does not
+		// echo it.
+		sentinel := "SENTINEL-DO-NOT-LEAK"
+		sentinelCtx := ResolveContext{
+			TriggerMessagePayload: mustJSON(t, map[string]any{"value": sentinel}),
+			TriggerMessageType:    "ping/recheck",
+		}
+		_, err := Substitute("{{messages.ping/recheck.no_such_field}}", sentinelCtx)
+		if err == nil {
+			t.Fatalf("want error, got nil")
+		}
+		if strings.Contains(err.Error(), sentinel) {
+			t.Fatalf("error message leaked payload sentinel: %q", err.Error())
 		}
 	})
 }
@@ -628,43 +944,6 @@ func TestSubstitute_EmbeddedSourceWithMarkers(t *testing.T) {
 	}
 }
 
-// TestReferencesTriggerMessage pins the backfill-target detector: a
-// `partition_request` is "wired for the override" iff it carries a
-// `{{trigger.message.payload…}}` directive, regardless of the
-// `| <fallback>` / `?` markers. A fixed literal or a non-trigger source
-// kind is NOT wired.
-func TestReferencesTriggerMessage(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want bool
-	}{
-		{"bare trigger payload", "{{trigger.message.payload}}", true},
-		{"trigger payload field", "{{trigger.message.payload.partition_request_override}}", true},
-		{"trigger with fallback literal", `{{trigger.message.payload.partition_request_override | {"partition_keys":["default"]}}}`, true},
-		{"trigger with lenient marker", "{{trigger.message.payload.x ?}}", true},
-		{"trigger with surrounding whitespace", "{{  trigger.message.payload.x  }}", true},
-		{"embedded among literal text", `prefix-{{trigger.message.payload.k}}-suffix`, true},
-		{"second directive is trigger", "{{params.region}}/{{trigger.message.payload.k}}", true},
-		{"fixed literal — no directive", `{"partition_keys":["a","b","c"]}`, false},
-		{"params source kind", "{{params.partition_request}}", false},
-		{"node attribute source kind", "{{nodes.upstream.attribute.x}}", false},
-		{"claim source kind", "{{claim.data.payload.x}}", false},
-		{"child partition key", "{{child.partition_key}}", false},
-		{"trigger but wrong second segment", "{{trigger.event.payload}}", false},
-		{"trigger but wrong third segment", "{{trigger.message.address}}", false},
-		{"empty string", "", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ReferencesTriggerMessage(tc.in)
-			if got != tc.want {
-				t.Fatalf("ReferencesTriggerMessage(%q) = %v, want %v", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
 // TestSubstitute_ClaimScope pins the runtime resolver boundary of the
 // scope→claim_scope rename to a single canonical spelling (story
 // S-template-validation-claim-scope-end-to-end). The resolver MUST
@@ -737,7 +1016,7 @@ var headerBulletPattern = regexp.MustCompile(`^//\s*-\s*\{\{([a-z_]+)\.`)
 // a real resolver arm (not the unknown-kind default arm) and that `deps`
 // is the rejected/retired form, so this list cannot silently drift from
 // the resolver's switch.
-var liveResolverKinds = []string{"claim", "params", "nodes", "trigger", "child"}
+var liveResolverKinds = []string{"claim", "params", "nodes", "trigger", "child", "messages"}
 
 // TestSubstitutionDocstringMatchesResolver guards against doc-drift in the
 // substitution module header (substitution.go#7-14): the header's
@@ -806,11 +1085,12 @@ func assertResolverArms(t *testing.T) {
 	// the error Reason is the arm's own missing-source reason, not the
 	// default arm's "unknown source kind" reason.
 	probes := map[string]string{
-		"claim":   "claim.a.payload",
-		"params":  "params.k",
-		"nodes":   "nodes.n.attribute.f",
-		"trigger": "trigger.message.payload",
-		"child":   "child.partition_key",
+		"claim":    "claim.a.payload",
+		"params":   "params.k",
+		"nodes":    "nodes.n.attribute.f",
+		"trigger":  "trigger.message.payload",
+		"child":    "child.partition_key",
+		"messages": "messages.some-type.f",
 	}
 	for _, kind := range liveResolverKinds {
 		probe, ok := probes[kind]

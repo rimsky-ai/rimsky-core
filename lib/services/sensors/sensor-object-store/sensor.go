@@ -89,7 +89,7 @@ type Watch struct {
 	PollInterval   time.Duration
 	WatermarkField string // @constraint: one of "name" | "last_modified"
 	TargetNode     string
-	MessageKind    string
+	MessageType    string
 
 	LastPollAt    time.Time
 	WatermarkName string    // @constraint: populated only when WatermarkField == "name"
@@ -158,7 +158,7 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			PollInterval:   interval,
 			WatermarkField: r.WatermarkField,
 			TargetNode:     r.TargetNode,
-			MessageKind:    r.MessageKind,
+			MessageType:    r.MessageType,
 			WatermarkName:  r.WatermarkName,
 		}
 		if r.WatermarkTime != nil {
@@ -310,10 +310,12 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		}
 		interval = d
 	}
-	messageKind := req.GetMessageKind()
-	if messageKind == "" {
-		messageKind = "invalidate"
-	}
+	// The legacy "invalidate" default retired with the 2026-06-14
+	// message-schema-layer reshape: the runtime side rejects an empty
+	// message_type at publisher-subscription mount time, so by the
+	// time Subscribe is called here the value is non-empty by
+	// construction. Pass through verbatim.
+	messageType := req.GetMessageType()
 	w := &Watch{
 		SubscriptionID: req.GetPublisherSubscriptionId(),
 		InstanceID:     req.GetInstanceId(),
@@ -323,7 +325,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		PollInterval:   interval,
 		WatermarkField: cfg.WatermarkField,
 		TargetNode:     req.GetTargetNode(),
-		MessageKind:    messageKind,
+		MessageType:    messageType,
 	}
 	// @constraint: load the persisted watermark cursor BEFORE registering
 	// the Watch so the first post-restart poll skips already-emitted
@@ -396,7 +398,7 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			InstanceId:              w.InstanceID,
 			Kind:                    "object-store",
 			TargetNode:              w.TargetNode,
-			MessageKind:             w.MessageKind,
+			MessageType:             w.MessageType,
 			StartedAt:               timestamppb.New(s.clock()),
 		})
 	}
@@ -522,9 +524,13 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
+	// `target_node` from the subscription registers routing on the
+	// rimsky side; the envelope wire body carries no `target` (the
+	// receipt handler has no `target` column to land it on, and the
+	// `rimsky_messages.target` column was retired in migration 010 of
+	// the 2026-06-14 message-schema-layer reshape).
 	envelope := map[string]any{
-		"kind":                      w.MessageKind,
-		"target":                    w.TargetNode,
+		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),
 		"sender":                    "sensor-object-store",
 		"sender_kind":               "publisher",

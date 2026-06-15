@@ -65,7 +65,6 @@ func TestHeldClaimMixedUpstream(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "held-mixed-upstream", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

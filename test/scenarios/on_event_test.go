@@ -40,7 +40,6 @@ func TestOnEventGRPCStreamPath(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "on-event-stream", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "a",
@@ -98,7 +97,6 @@ func TestOnEventMultipleEmissionsLatestWins(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "on-event-latest", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 		},
@@ -133,9 +131,8 @@ func TestOnEventUndeclaredEventNameRejectedAtRegistration(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	body := map[string]any{
 		"template": map[string]any{
-			"name":                  "on-event-undeclared",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    "on-event-undeclared",
+			"version": "1",
 			"nodes": []map[string]any{
 				{"type": "emitter", "executor": "stub"},
 				{

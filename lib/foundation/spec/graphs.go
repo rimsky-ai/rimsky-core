@@ -77,12 +77,12 @@ const (
 // Publisher.Subscribe on the addressed publisher service; the
 // subscription lives in table:rimsky_publisher_subscriptions.
 //
-// Routing fields (`target_node`, `message_kind`) are inline; there is
-// no `on_observation:` substruct (deleted in the 2026-05-17 rename).
+// Routing fields (`target_node`, `message_type`) are inline; there is
+// no `on_observation:` substruct.
 type PublisherSpec struct {
 	Name        string          `yaml:"name" json:"name"`
 	Kind        string          `yaml:"kind" json:"kind"`
 	Config      json.RawMessage `yaml:"config" json:"config"`
 	TargetNode  string          `yaml:"target_node" json:"target_node"`
-	MessageKind string          `yaml:"message_kind,omitempty" json:"message_kind,omitempty"`
+	MessageType string          `yaml:"message_type,omitempty" json:"message_type,omitempty"`
 }

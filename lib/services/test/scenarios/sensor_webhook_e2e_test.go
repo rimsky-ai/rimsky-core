@@ -69,9 +69,16 @@ const webhookPublisherName = "intake"
 
 // webhookReactorNode is the template's reactor node — the
 // publisher_subscription's target_node. The sensor's emitted envelope
-// carries target=<this>, and the persisted message rows surface it as
-// `target_node` we can filter on through GET /v1/instances/{id}/messages.
+// carries type=<webhookMessageType>, which is declared in the template's
+// `messages:` registry as a virtual node-type the reactor subscribes to
+// via `node: <webhookMessageType>, type: terminal/success`.
 const webhookReactorNode = "reactor"
+
+// webhookMessageType is the message type the webhook publisher emits,
+// declared in the template's `messages:` registry. The reactor
+// subscribes to it as a virtual node-type with terminal/success per
+// the post-2026-06-14 message-schema-layer DSL.
+const webhookMessageType = "invalidate/reactor"
 
 // webhookPathPrefix is the per-subscription path the sensor mounts on
 // its inbound HTTP server. POSTs UNDER this path translate to messages;
@@ -438,19 +445,33 @@ func deploySensorWebhookTemplate(t *testing.T, ep harness.RimskyEndpoint) string
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "sensor-webhook-e2e",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "sensor-webhook-e2e",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			"messages": []map[string]any{
+				{
+					// @constraint: the webhook sensor emits payload with
+					// {observed_at, path, method, body, [idempotency_key]};
+					// the schema is loose (additionalProperties allowed)
+					// because the `body:` subfield is whatever the inbound
+					// POST sent and the test asserts equality on real
+					// bytes, not a strict shape.
+					"type": webhookMessageType,
+					"body_schema": map[string]any{
+						"type":                 "object",
+						"properties":           map[string]any{},
+						"additionalProperties": true,
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{
 					"type":     webhookReactorNode,
 					"executor": "stub",
 					"subscribes": []map[string]any{
 						{
-							"instance":               true,
-							"type":                   "message/invalidate/publisher/" + webhookReactorNode,
-							"frame":                  "in",
+							"node":                   webhookMessageType,
+							"type":                   "terminal/success",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
@@ -463,7 +484,7 @@ func deploySensorWebhookTemplate(t *testing.T, ep harness.RimskyEndpoint) string
 					"kind":         "webhook",
 					"config":       json.RawMessage(configBytes),
 					"target_node":  webhookReactorNode,
-					"message_kind": "invalidate",
+					"message_type": webhookMessageType,
 				},
 			},
 		},

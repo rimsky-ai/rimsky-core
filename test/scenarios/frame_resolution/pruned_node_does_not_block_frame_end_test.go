@@ -31,7 +31,6 @@ func TestPrunedNodeDoesNotBlockFrameEnd(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "pruned-node", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "source", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "middle", Executor: "stub"},

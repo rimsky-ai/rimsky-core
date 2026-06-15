@@ -145,9 +145,8 @@ func newAssetHarness(t *testing.T, versions []runtime.DataProcessingVersion) (*a
 func assetTemplateBody(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    name,
+			"version": "v1",
 			"nodes": []map[string]any{
 				{
 					"type":     "producer",
@@ -203,8 +202,22 @@ func (ah *assetHarness) seedAsset(t *testing.T, namePrefix string) (instID uuid.
 			}
 		}
 		producerNodeID = uuid.UUID(prodNodeUUID)
+		// @constraint: seed a synthetic typed-message envelope to satisfy the
+		// rimsky_frames.triggering_message_id FK; the asset surface does not
+		// dispatch the message, it just needs a frame row with a satisfiable FK.
+		msgID := shared.UUID(uuid.New())
+		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: shared.UUID(instID),
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
 		// @constraint: re-use a seeded frame so the node-run + lineage FKs are satisfiable.
-		fid, err := h.persist.Frames().EnqueueSerialFrame(ctx, shared.UUID(instID), prodNodeUUID, 600000, tx)
+		_ = prodNodeUUID
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instID), msgID, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -429,10 +442,17 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	}
 }
 
-// TestAssetEndpoints_MaterializeEnqueuesInvalidate exercises the
-// materialize endpoint (POST /materialize) which is an alias for an
-// operator invalidate message, and its 409-if-terminated gate.
-func TestAssetEndpoints_MaterializeEnqueuesInvalidate(t *testing.T) {
+// TestAssetEndpoints_MaterializeEnqueuesAssetMaterialize exercises the
+// materialize endpoint (POST /materialize) and its 409-if-terminated
+// gate. The endpoint enqueues a runtime-synthetic envelope of type
+// `asset/materialize` carrying both `target_node` and `wake_node_ids`
+// — the latter is what `advanceOneFrame` reads at frame promotion to
+// stale-mark the resolved producer node. Without `wake_node_ids` the
+// frame promotes silently and the materialize call is a no-op success;
+// without the slash-bearing `asset/materialize` type the receipt-time
+// registry gate (or a future template's `messages:` typo) is the only
+// rejection path. Both are surfaced as part of this regression guard.
+func TestAssetEndpoints_MaterializeEnqueuesAssetMaterialize(t *testing.T) {
 	t.Parallel()
 	ah, teardown := newAssetHarness(t, nil)
 	t.Cleanup(teardown)
@@ -448,9 +468,15 @@ func TestAssetEndpoints_MaterializeEnqueuesInvalidate(t *testing.T) {
 
 	var msgCount int
 	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
-		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND kind = 'invalidate' AND target = 'producer'`,
+		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'asset/materialize' AND convert_from(payload, 'UTF8')::jsonb->>'target_node' = 'producer'`,
 		[]any{instID}, &msgCount)
-	require.Equal(t, 1, msgCount)
+	require.Equal(t, 1, msgCount, "synthetic envelope must carry the asset/materialize type and resolved target_node")
+
+	var wakeCount int
+	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
+		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'asset/materialize' AND jsonb_array_length(convert_from(payload, 'UTF8')::jsonb->'wake_node_ids') = 1`,
+		[]any{instID}, &wakeCount)
+	require.Equal(t, 1, wakeCount, "wake_node_ids must carry exactly one resolved node uuid so advanceOneFrame stale-marks the producer")
 
 	// @constraint: drive the instance terminal — materialize must then refuse with 409.
 	pgtest.ExecForTest(ctx, t, ah.harness.driver,

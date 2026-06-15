@@ -88,7 +88,6 @@ A template node references the producer by the name above:
 ```yaml
 name: my-pipeline
 version: "1"
-frame_resolution_mode: serial_queue
 nodes:
   - type: worker
     executor: my-executor

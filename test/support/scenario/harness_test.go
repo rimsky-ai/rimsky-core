@@ -25,9 +25,8 @@ func TestHarnessSmoke(t *testing.T) {
 	h.Stub.WhenType("greet").Success(map[string]any{"ok": true}, true, "hello")
 
 	tmpl := node.TemplateSpec{
-		Name:                "smoke",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
+		Name:    "smoke",
+		Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			{Type: "greet", Executor: "stub"},
 		},
@@ -63,9 +62,8 @@ func TestHarnessClockInjection(t *testing.T) {
 func TestTemplateSpecToJSONNewGrammar(t *testing.T) {
 	t.Parallel()
 	spec := node.TemplateSpec{
-		Name:                "grammar-check",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
+		Name:    "grammar-check",
+		Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			MakeNode(
 				node.TemplateNodeDef{Type: "consume", Executor: "stub"},

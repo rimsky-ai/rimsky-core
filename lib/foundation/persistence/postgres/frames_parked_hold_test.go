@@ -36,10 +36,9 @@ func seedFrameParkedFixture(
 	dispatchID := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:                "parked-hold-fixture",
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "parked-hold-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},
@@ -68,19 +67,26 @@ func seedFrameParkedFixture(
 
 	// @constraint: raw-insert frame/node/parked-run through the test escape hatch
 	// because the persistence interface does not surface a "force a parked run"
-	// seed path; source_node_ids has a CHECK (length >= 1); a terminal frame
-	// requires ended_at, a running frame requires started_at.
+	// seed path; rimsky_frames.triggering_message_id is NOT NULL so a typed
+	// envelope must be seeded first; a terminal frame requires ended_at, a
+	// running frame requires started_at.
 	endedClause := "NULL"
 	startedClause := "now()"
 	if frameState == "completed" || frameState == "failed" {
 		endedClause = "now()"
 	}
+	messageID := uuid.New()
+	pgtest.ExecForTest(ctx, t, d,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES ($1, $2, 'fixture/message', 'operator', 'operator')`,
+		messageID, instanceID,
+	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		   (frame_id, instance_id, triggering_message_id, state,
 		    frame_timeout_ms, started_at, ended_at)
-		 VALUES ($1, $2, 'serial_queue', $3, ARRAY[$4]::uuid[], 60000, `+startedClause+`, `+endedClause+`)`,
-		frameID, instanceID, frameState, nodeID,
+		 VALUES ($1, $2, $3, $4, 60000, `+startedClause+`, `+endedClause+`)`,
+		frameID, instanceID, messageID, frameState,
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
@@ -171,10 +177,9 @@ func seedResolvedFrameInstancePG(
 	nodeID := uuid.New()
 
 	tmpl := spec.TemplateSpec{
-		Name:                "resolved-frame-fixture",
-		Version:             "1",
-		FrameResolutionMode: spec.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      600000,
+		Name:           "resolved-frame-fixture",
+		Version:        "1",
+		FrameTimeoutMs: 600000,
 		Nodes: []spec.TemplateNodeDef{
 			{Type: "fixture-node-type", Executor: "test-executor"},
 		},
@@ -201,13 +206,20 @@ func seedResolvedFrameInstancePG(
 		t.Fatalf("seedResolvedFrameInstancePG: %v", err)
 	}
 
-	// @deliberate: terminal frame + fresh node (no run row) means all work resolved.
+	// @deliberate: terminal frame + fresh node (no run row) means all work resolved;
+	// rimsky_frames.triggering_message_id is NOT NULL so a typed envelope is seeded first.
+	messageID := uuid.New()
+	pgtest.ExecForTest(ctx, t, d,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES ($1, $2, 'fixture/message', 'operator', 'operator')`,
+		messageID, instanceID,
+	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		   (frame_id, instance_id, triggering_message_id, state,
 		    frame_timeout_ms, started_at, ended_at)
-		 VALUES ($1, $2, 'serial_queue', 'completed', ARRAY[$3]::uuid[], 60000, now(), now())`,
-		frameID, instanceID, nodeID,
+		 VALUES ($1, $2, $3, 'completed', 60000, now(), now())`,
+		frameID, instanceID, messageID,
 	)
 	pgtest.ExecForTest(ctx, t, d,
 		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)

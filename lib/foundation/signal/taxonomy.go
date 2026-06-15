@@ -17,6 +17,13 @@ import (
 //
 // Adding a new pattern here must travel alongside a new payload
 // schema in payloads.go and an update to concepts/signal.md.
+//
+// `message/*` is intentionally NOT in this taxonomy. Message arrival is
+// a virtual-node settle: the message's type-path names a virtual node
+// that emits `terminal/success` on delivery, and receivers subscribe to
+// that virtual node via the standard `node: <message-type>, type:
+// terminal/success` shape. A subscription whose `type:` starts with
+// `message/` is rejected here by the unknown-type-path validator.
 var canonicalEmitPatterns = []string{
 	"terminal/success",
 	"terminal/error/*",
@@ -28,7 +35,6 @@ var canonicalEmitPatterns = []string{
 	"transient/await_async",
 	"attribute/*/changed",
 	"event/*",
-	"message/*",
 }
 
 // ValidateTypePath returns nil if t is a legal emit-shape path under

@@ -59,7 +59,7 @@ message PublisherKindCapability {
 
 // SubscribeRequest carries the publisher-subscription routing fields
 // inline (no on-observation substruct). The publisher uses target_node
-// and message_kind to build the message envelope at publish time.
+// and message_type to build the message envelope at publish time.
 message SubscribeRequest {
   string publisher_subscription_id = 1;
   string instance_id               = 2;
@@ -69,13 +69,20 @@ message SubscribeRequest {
   // Substituted by rimsky from the template `publishers:` block before
   // dispatch.
   bytes  resolved_config           = 4;
-  // target_node is the receiver node alias on the instance side; the
-  // publisher copies this onto each message envelope as `target`.
+  // target_node is the receiver node alias on the instance side. It is
+  // used by rimsky for subscription routing only; the publisher does NOT
+  // copy it onto each message envelope as a wire field (the
+  // `rimsky_messages.target` column was retired in the 2026-06-14
+  // message-schema-layer reshape, and the receipt handler has no `target`
+  // field on `postMessageRequest`).
   string target_node               = 5;
-  // message_kind is the wire-level message kind (default "invalidate"
-  // when empty); the publisher copies this onto each message envelope
-  // as `kind`.
-  string message_kind              = 6;
+  // message_type is the wire-level message type-path declared in the
+  // target instance's template `messages:` registry. The publisher
+  // copies this onto each message envelope as `type`. No default —
+  // an empty value is rejected at the receipt-time registry gate. The
+  // legacy `"invalidate"` default retired in the 2026-06-14 message-
+  // schema-layer reshape (templates declare their accepted types).
+  string message_type              = 6;
 }
 
 message SubscribeResponse {}
@@ -96,6 +103,6 @@ message PublisherSubscriptionDescriptor {
   string kind                      = 3;
   bytes  resolved_config           = 4;
   string target_node               = 5;
-  string message_kind              = 6;
+  string message_type              = 6;
   google.protobuf.Timestamp started_at = 7;
 }

@@ -48,7 +48,7 @@ func captureStdout(t *testing.T, fn func()) string {
 
 func deployedTemplate(t *testing.T, srv *clitest.Server, tag string) string {
 	t.Helper()
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, tag, "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, tag, "")
 	srv.State.SetTemplateState(hash, "deployed")
 	return hash
 }

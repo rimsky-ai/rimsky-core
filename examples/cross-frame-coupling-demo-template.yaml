@@ -1,0 +1,130 @@
+# cross-frame-coupling-demo-template.yaml — STORY-cross-frame-coupling
+# proof template.
+#
+# A template author expresses cross-frame coupling — node R reads node
+# A's data through a typed-message body that the emit-node E composed —
+# entirely through the typed-message schema. The demo script
+# (cross-frame-coupling-demo.sh) deploys this template, drives an initial
+# wake message, polls the cascade-graph observability endpoint, and shows
+# both the wake frame (operator-posted) and the iterate frame (cascade-
+# emitted) carrying a triggering_message_id.
+#
+# The shape is deliberately bounded so the demo converges cleanly:
+#
+#   frame 1 (trigger=loop/wake):
+#     A (verifier-shape-checks) runs → terminal/success → emit-node E
+#     dispatches → loop/iterate envelope lands in rimsky_messages.
+#
+#   frame 2 (trigger=loop/iterate):
+#     R (verifier-shape-checks) wakes via the typed-message subscription,
+#     pulls its `checks` array from {{messages.loop/iterate.checks}} (the
+#     body E composed from A's terminal-delta), runs, settles.
+#
+# After R settles there is no further emit (E does NOT subscribe to R),
+# so the cascade converges. Two frames, both with triggering_message_id,
+# both kinds (operator + instance) exhibited.
+#
+# The script's self-checking output greps for both the wake frame and
+# the iterate frame and exits non-zero if either is missing.
+name: cross-frame-coupling-demo
+version: "1"
+description: |
+  STORY-cross-frame-coupling proof template. A two-frame back-edge:
+  wake → A → emit-node E → loop/iterate → R. R reads its inputs from
+  the typed-message body that E composed, exhibiting the cross-frame
+  data coupling the story names.
+
+messages:
+  - type: loop/wake
+    body_schema:
+      type: object
+      properties:
+        trip_counter: { type: integer }
+
+  - type: loop/iterate
+    body_schema:
+      type: object
+      properties:
+        checks:
+          type: array
+        rows:
+          type: array
+      required: [checks, rows]
+
+nodes:
+  - type: a
+    executor: verifier-shape-checks
+    description: |
+      A subscribes to the initial wake message and runs the bundled
+      verifier-shape-checks executor against a real inline dataset.
+      Real dispatch — no stub. A's terminal/success drives the emit-
+      node E.
+    subscribes:
+      - node: loop/wake
+        type: terminal/success
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            default:
+              - kind: no_nulls
+                config: { field: id }
+              - kind: pk_unique
+                config: { field: id }
+          rows:
+            type: array
+            default:
+              - { id: alpha, value: 1 }
+              - { id: beta, value: 2 }
+              - { id: gamma, value: 3 }
+        required: [checks, rows]
+
+  - type: emitter
+    emits_message: loop/iterate
+    description: |
+      The cross-frame back-edge: emitter subscribes to A's terminal/
+      success and emits a loop/iterate message whose body carries the
+      `checks` array and the `rows` array forwarded from A's attribute
+      set. R subscribes to loop/iterate as a virtual node-type and
+      reads its body via the typed-message substitution grammar
+      ({{messages.loop/iterate.checks}}, {{messages.loop/iterate.rows}}).
+    subscribes:
+      - node: a
+        type: terminal/success
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            source: "{{nodes.a.attribute.checks}}"
+          rows:
+            type: array
+            source: "{{nodes.a.attribute.rows}}"
+        required: [checks, rows]
+
+  - type: r
+    executor: verifier-shape-checks
+    description: |
+      R is the back-edge receiver: it subscribes to loop/iterate (a
+      message type, addressed as a virtual node) and pulls its
+      verification inputs from the typed-message body. This is the
+      load-bearing cross-frame coupling the story names — R's dispatch
+      attributes are wholly determined by the body E composed in the
+      prior frame.
+    subscribes:
+      - node: loop/iterate
+        type: terminal/success
+    attributes:
+      schema:
+        type: object
+        properties:
+          checks:
+            type: array
+            source: "{{messages.loop/iterate.checks}}"
+          rows:
+            type: array
+            source: "{{messages.loop/iterate.rows}}"
+        required: [checks, rows]

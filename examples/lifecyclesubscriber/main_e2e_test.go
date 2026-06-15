@@ -378,10 +378,9 @@ func exerciseFailureHonoredSynchronouslyLeg(t *testing.T, ep harness.RimskyEndpo
 	// hash → the idempotency table does NOT short-circuit the fan-out).
 	spec := map[string]any{
 		"spec": map[string]any{
-			"name":                  "lifecycle-subscriber-failure-probe",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "lifecycle-subscriber-failure-probe",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",
@@ -800,10 +799,9 @@ func registerLifecycleTemplate(t *testing.T, ep harness.RimskyEndpoint) string {
 	t.Helper()
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "lifecycle-subscriber-walkthrough",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "lifecycle-subscriber-walkthrough",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "worker",

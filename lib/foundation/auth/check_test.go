@@ -48,8 +48,8 @@ func TestCheckGrantSetMembership_AnyMatchAllows(t *testing.T) {
 	if !CheckGrant(g, "node:read", nil).Allowed {
 		t.Fatalf("wildcard entry should allow node:read")
 	}
-	if CheckGrant(g, "node:invalidate", nil).Allowed {
-		t.Fatalf("no entry matches node:invalidate; must deny")
+	if CheckGrant(g, "node:reset", nil).Allowed {
+		t.Fatalf("no entry matches node:reset; must deny")
 	}
 }
 

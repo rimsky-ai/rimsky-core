@@ -80,9 +80,16 @@ const objectStorePublisherName = "watcher"
 
 // objectStoreReactorNode is the template's reactor node — the
 // publisher_subscription's target_node. The sensor's emitted envelope
-// carries target=<this>, and the persisted message rows surface it as
-// `target_node`.
+// carries type=<objectStoreMessageType>, declared in the template's
+// `messages:` registry as a virtual node-type the reactor subscribes to
+// via `node: <objectStoreMessageType>, type: terminal/success`.
 const objectStoreReactorNode = "reactor"
+
+// objectStoreMessageType is the message type the object-store publisher
+// emits, declared in the template's `messages:` registry. The reactor
+// subscribes to it as a virtual node-type with terminal/success per
+// the post-2026-06-14 message-schema-layer DSL.
+const objectStoreMessageType = "object/discovered"
 
 // objectStoreBucket is the bucket name inside the filesystem backend:
 // resolves at poll time to `<FsRoot>/<bucket>/` on the sensor
@@ -323,7 +330,7 @@ func requireObjectStoreMessagePayload(t *testing.T, ep harness.RimskyEndpoint, i
 		if status == http.StatusOK {
 			var resp struct {
 				Messages []struct {
-					Kind       string          `json:"kind"`
+					Type       string          `json:"type"`
 					Sender     string          `json:"sender"`
 					SenderKind string          `json:"sender_kind"`
 					Payload    json.RawMessage `json:"payload"`
@@ -537,18 +544,32 @@ func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 	}
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "sensor-object-store-e2e",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "sensor-object-store-e2e",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			"messages": []map[string]any{
+				{
+					// @deliberate: sensor-object-store emits payload with
+					// {observed_at, backend, bucket, prefix, object_name,
+					// size, etag, last_modified}. The test reads back
+					// precise metadata; declare the precise shape, but
+					// additionalProperties stays true to admit
+					// observed_at + last_modified without bloat.
+					"type": objectStoreMessageType,
+					"body_schema": map[string]any{
+						"type":                 "object",
+						"properties":           map[string]any{},
+						"additionalProperties": true,
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{
 					"type": objectStoreReactorNode,
 					"subscribes": []map[string]any{
 						{
-							"instance":               true,
-							"type":                   "message/invalidate/publisher/" + objectStoreReactorNode,
-							"frame":                  "in",
+							"node":                   objectStoreMessageType,
+							"type":                   "terminal/success",
 							"wake_on_change":         true,
 							"force_upstream_refresh": false,
 						},
@@ -561,7 +582,7 @@ func deployObjectStoreSensorTemplate(t *testing.T, ep harness.RimskyEndpoint) st
 					"kind":         "object-store",
 					"config":       json.RawMessage(configBytes),
 					"target_node":  objectStoreReactorNode,
-					"message_kind": "invalidate",
+					"message_type": objectStoreMessageType,
 				},
 			},
 		},

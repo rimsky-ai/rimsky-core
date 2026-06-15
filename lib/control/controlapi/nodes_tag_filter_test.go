@@ -25,9 +25,8 @@ func TestListNodes_TagFilter(t *testing.T) {
 	// validator-friendly shape.
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "tag-filter-" + uuid.NewString(),
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    "tag-filter-" + uuid.NewString(),
+			"version": "v1",
 			"nodes": []map[string]any{
 				{
 					"type":     "root",

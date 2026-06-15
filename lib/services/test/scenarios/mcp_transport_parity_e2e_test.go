@@ -18,9 +18,8 @@
 // + supervisor on baked SQLite) plus the in-tree stub executor, stands up
 // an in-test MCP client (the JSON-RPC envelope + tools/call dispatch — no
 // shared MCP client package exists in-tree), and drives parity across the
-// thirteen tool categories the story names: template, tag, instance, node,
-// message, event, audit, breakpoint, asset, backfill, lineage,
-// diagnostics, auth.
+// twelve tool categories the story names: template, tag, instance, node,
+// message, event, audit, breakpoint, asset, lineage, diagnostics, auth.
 //
 // Parity is proven on two axes per category:
 //
@@ -38,10 +37,9 @@
 //     read (proving the handler ran, not a canned response).
 //
 // Categories where mutation is not naturally bounded (asset_materialize
-// requires a real upstream data-processing-capable producer; backfill_create
-// requires a fan-out node; lineage_prune is destructive) are sampled on the
-// read axis only. Auth-parity is asserted for every category — that is the
-// load-bearing falsifier.
+// requires a real upstream data-processing-capable producer; lineage_prune
+// is destructive) are sampled on the read axis only. Auth-parity is
+// asserted for every category — that is the load-bearing falsifier.
 //
 // Falsifier: An MCP tool gate is weaker than the equivalent HTTP route's
 // gate (bypasses auth), OR an MCP tool returns a canned response without
@@ -136,10 +134,26 @@ func TestMcpTransportParity(t *testing.T) {
 	// the supervisor settles it through the real dispatch path.
 	templateID := deployScenarioTemplateAuth(t, ep, adminKey, map[string]any{
 		"spec": map[string]any{
-			"name":                  "mcp-transport-parity",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "mcp-transport-parity",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
+			// @deliberate: a declared `messages:` block is required so the
+			// message_send mutation can post an envelope of a recognized
+			// type. The post-message-schema-layer control-API rejects
+			// undeclared types at the route. The mutation parity assertion
+			// uses this type to drive the round-trip "create-then-list"
+			// parity check.
+			"messages": []map[string]any{
+				{
+					"type": "parity/probe",
+					"body_schema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"reason": map[string]any{"type": "string"},
+						},
+					},
+				},
+			},
 			"nodes": []map[string]any{
 				{"type": "worker", "executor": "stub"},
 			},
@@ -155,10 +169,10 @@ func TestMcpTransportParity(t *testing.T) {
 
 	// @constraint: wait for the scheduler to create the worker node so that
 	// node-category reads have something to surface. The supervisor
-	// dispatches against the stub (returns Success) and the node settles to
-	// `fresh` quickly; node_invalidate works equally on a settled fresh node
-	// (re-fire), so waiting for `fresh` is sufficient.
-	nodeID := waitForFirstNodeID(t, ep, adminKey, instanceID, 60*time.Second)
+	// dispatches the node against the stub which returns Success; the
+	// node settles to `fresh` quickly. Reaching `fresh` is enough for
+	// `node_list` to surface a non-empty result.
+	_ = waitForFirstNodeID(t, ep, adminKey, instanceID, 60*time.Second)
 
 	// @deliberate: MCP client handshake — per spec.MCP-as-skin: initialize
 	// must mint a session id; notifications/initialized must be 202 with
@@ -208,9 +222,8 @@ func TestMcpTransportParity(t *testing.T) {
 			mutationTool: "template_register",
 			mutationArgs: map[string]any{
 				"spec": map[string]any{
-					"name":                  "mcp-transport-parity-mut",
-					"version":               "1",
-					"frame_resolution_mode": "serial_queue",
+					"name":    "mcp-transport-parity-mut",
+					"version": "1",
 					"nodes": []map[string]any{
 						{"type": "worker", "executor": "stub"},
 					},
@@ -250,9 +263,14 @@ func TestMcpTransportParity(t *testing.T) {
 			mutationHTTPVerb: http.MethodPost,
 			mutationHTTPPath: "/v1/instances",
 		},
-		// @deliberate: node category — read = list (by instance); mutation
-		// = invalidate the seed node (observable via the operator_override
-		// audit event).
+		// @deliberate: node category — read = list (by instance). The
+		// mutation leg retired with the operator-invalidate route — the
+		// only mutation tool the catalog used to surface here was
+		// `node_invalidate`. The `node_reset` route remains, but it
+		// requires a failed node, which the parity scaffolding doesn't
+		// seed. Read-side parity coverage is preserved here; write-side
+		// parity for instance-level state mutation is exercised by the
+		// `instance_lifecycle` category below.
 		{
 			name:     "node",
 			readTool: "node_list",
@@ -261,17 +279,37 @@ func TestMcpTransportParity(t *testing.T) {
 			},
 			readHTTPVerb: http.MethodGet,
 			readHTTPPath: "/v1/instances/" + instanceID + "/nodes",
-			mutationTool: "node_invalidate",
+		},
+		// @deliberate: instance_lifecycle category — read = instance_list
+		// (same surface as the `instance` category's read, intentional —
+		// the read leg shares the catalog with `instance` since both
+		// target the same data, but the mutation is a state-changing
+		// toggle (`instance_pause`) distinct from `instance_create`. This
+		// category replaces the write-side parity coverage the retired
+		// `node_invalidate` leg held: the parity test still proves the MCP
+		// transport dispatches a state-changing mutation to the real HTTP
+		// handler rather than returning a canned envelope. `instance_pause`
+		// fits because (a) the seed instance is durable so it can be paused
+		// without breaking other category assertions running later in the
+		// same loop, and (b) the observable post-state (`paused: true` on
+		// the instance read) is a one-bit assertion independent of upstream
+		// cascade state.
+		{
+			name:         "instance_lifecycle",
+			readTool:     "instance_list",
+			readHTTPVerb: http.MethodGet,
+			readHTTPPath: "/v1/instances",
+			mutationTool: "instance_pause",
 			mutationArgs: map[string]any{
-				"id":     nodeID,
-				"reason": "mcp parity test",
+				"idOrKey": instanceID,
 			},
 			mutationHTTPVerb: http.MethodPost,
-			mutationHTTPPath: "/v1/nodes/" + nodeID + "/invalidate",
+			mutationHTTPPath: "/v1/instances/" + instanceID + "/pause",
 		},
-		// @deliberate: message category — read = list (by instance);
-		// mutation = send a real invalidate message (the only V1 kind) into
-		// the seed instance. Observable via /v1/instances/{id}/messages.
+		// @deliberate: message category — read = list (by instance); mutation
+		// = send a real declared-type message (the template's `messages:`
+		// block declares `parity/probe`) into the seed instance. Observable
+		// via /v1/instances/{id}/messages.
 		{
 			name:     "message",
 			readTool: "message_list",
@@ -283,7 +321,10 @@ func TestMcpTransportParity(t *testing.T) {
 			mutationTool: "message_send",
 			mutationArgs: map[string]any{
 				"id":   instanceID,
-				"kind": "invalidate",
+				"type": "parity/probe",
+				"payload": map[string]any{
+					"reason": "mcp parity probe",
+				},
 			},
 			mutationHTTPVerb: http.MethodPost,
 			mutationHTTPPath: "/v1/instances/" + instanceID + "/messages",
@@ -339,19 +380,6 @@ func TestMcpTransportParity(t *testing.T) {
 			},
 			readHTTPVerb: http.MethodGet,
 			readHTTPPath: "/v1/instances/" + instanceID + "/assets",
-		},
-		// @deliberate: backfill category — read-only sampling.
-		// backfill_create requires a target_node that the seed template
-		// would also need to declare as fan-out-capable; the read surface
-		// still exhibits parity.
-		{
-			name:     "backfill",
-			readTool: "backfill_list",
-			readArgs: map[string]any{
-				"id": instanceID,
-			},
-			readHTTPVerb: http.MethodGet,
-			readHTTPPath: "/v1/instances/" + instanceID + "/backfills",
 		},
 		// @deliberate: lineage category — read-only sampling. The surface
 		// returns empty for an instance that hasn't produced lineage records
@@ -427,7 +455,7 @@ func TestMcpTransportParity(t *testing.T) {
 }
 
 // assertToolCatalogCoverage verifies tools/list returns a representative
-// tool for each of the thirteen categories the story names — the
+// tool for each of the twelve categories the story names — the
 // "discovers a tool catalog covering ..." acceptance leg. A category
 // missing from the catalog falsifies the parity claim: the operator's
 // agent has no way to drive that surface through MCP.
@@ -449,7 +477,6 @@ func assertToolCatalogCoverage(t *testing.T, tools []toolEntry) {
 		"audit_list",
 		"breakpoint_list",
 		"asset_list",
-		"backfill_list",
 		"lineage_get",
 		"parked_node_list",
 		"auth_list",
@@ -601,26 +628,58 @@ func assertObservableStateMutationParity(t *testing.T, ep harness.RimskyEndpoint
 			t.Fatalf("instance mutation parity: GET /v1/instances/%s returned %d, want 200 (the instance MCP claimed to create must be readable via HTTP)\nbody: %s", key, status, string(raw))
 		}
 
-	case "node":
-		// @constraint: node_invalidate emits an operator_override audit
-		// event. The audit route surfaces it; the simplest check is that
-		// the invalidate route's response body returns a 200 (the catalog
-		// surfaces non-error responses as a JSON body). The downstream
-		// effect — that the supervisor re-fires the node — is asserted by
-		// checking the unified event log for a recent operator_override
-		// entry.
-		assertOperatorOverrideEvent(t, ep, adminBearer(t, bearer), instanceFromNode(t, ep, bearer, cat.mutationArgs["id"].(string)), 30*time.Second)
+	// @deliberate: the `node` category has no mutation case — the
+	// operator-invalidate route retired and the parity scaffolding does
+	// not seed a failed node for `node_reset`. The category's read-side
+	// parity (the node_list / GET /instances/{id}/nodes pairing) still
+	// runs above.
+
+	case "instance_lifecycle":
+		// @constraint: the pause mutation succeeded if and only if the seed
+		// instance now reads back with paused: true. Reading via the HTTP
+		// route keeps the post-state assertion outside the MCP transport — a
+		// canned MCP success envelope cannot mask the absence of the
+		// pause-bit flip. The read is by instance id (not key) because the
+		// parity catalog only seeds the id for this category.
+		instID := cat.mutationArgs["idOrKey"].(string)
+		status, raw := getJSONAuth(t, ep, "/v1/instances/"+instID, bearer)
+		if status != http.StatusOK {
+			t.Fatalf("instance_lifecycle mutation parity: GET /v1/instances/%s returned %d, want 200\nbody: %s", instID, status, string(raw))
+		}
+		var inst struct {
+			Paused bool `json:"paused"`
+		}
+		if err := json.Unmarshal(raw, &inst); err != nil {
+			t.Fatalf("instance_lifecycle mutation parity: decode instance: %v\nbody: %s", err, string(raw))
+		}
+		if !inst.Paused {
+			t.Fatalf("instance_lifecycle mutation parity: GET /v1/instances/%s shows paused=false after MCP instance_pause — MCP write returned canned success without invoking the handler\nbody: %s", instID, string(raw))
+		}
+		// @deliberate: resume the instance so subsequent category assertions
+		// in this loop (which read against the same seed) see a non-paused
+		// instance. The resume call goes through the HTTP route directly —
+		// this is a fixture-restore, not part of the MCP parity assertion.
+		resumeStatus, resumeRaw := ep.PostJSONWithHeaders(t,
+			"/v1/instances/"+instID+"/resume",
+			map[string]any{},
+			map[string]string{
+				"Authorization":   "Bearer " + bearer,
+				"Idempotency-Key": "mcp-parity-resume-" + uuid.NewString(),
+			})
+		if resumeStatus != http.StatusOK {
+			t.Fatalf("instance_lifecycle mutation parity: HTTP resume after MCP pause returned %d: %s", resumeStatus, string(resumeRaw))
+		}
 
 	case "message":
-		// @constraint: /v1/instances/{id}/messages must now include at
-		// least one invalidate message.
+		// @constraint: /v1/instances/{id}/messages must now include at least
+		// one envelope with the declared type the mutation sent.
 		instID := cat.mutationArgs["id"].(string)
 		status, raw := getJSONAuth(t, ep, "/v1/instances/"+instID+"/messages", bearer)
 		if status != http.StatusOK {
 			t.Fatalf("message mutation parity: GET /v1/instances/%s/messages returned %d, want 200\nbody: %s", instID, status, string(raw))
 		}
-		if !strings.Contains(string(raw), `"kind":"invalidate"`) {
-			t.Fatalf("message mutation parity: GET /v1/instances/%s/messages does not include an invalidate message after MCP message_send\nbody: %s", instID, string(raw))
+		if !strings.Contains(string(raw), `"type":"parity/probe"`) {
+			t.Fatalf("message mutation parity: GET /v1/instances/%s/messages does not include a parity/probe message after MCP message_send\nbody: %s", instID, string(raw))
 		}
 
 	case "breakpoint":
@@ -975,45 +1034,6 @@ func assertBreakpointAppears(t *testing.T, ep harness.RimskyEndpoint, bearer, id
 	status, raw := getJSONAuth(t, ep, "/v1/instances/"+idOrKey+"/breakpoints", bearer)
 	t.Fatalf("breakpoint mutation parity: list missing %s breakpoint after MCP breakpoint_create within %v\nfinal status: %d\nbody: %s",
 		checkpoint, deadline, status, string(raw))
-}
-
-// assertOperatorOverrideEvent polls the instance event log for a
-// recent `message_emitted` event (the runtime's InvalidateNode appends
-// one when an operator override is applied). The mutation parity for
-// the node category requires the MCP-driven invalidate to land a real
-// event — a canned MCP success would leave no event on the log.
-func assertOperatorOverrideEvent(t *testing.T, ep harness.RimskyEndpoint, bearer, instanceID string, deadline time.Duration) {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	for time.Now().Before(end) {
-		status, raw := getJSONAuth(t, ep, "/v1/events?instance_id="+instanceID, bearer)
-		if status == http.StatusOK {
-			if strings.Contains(string(raw), `"operator_override"`) || strings.Contains(string(raw), `"message_emitted"`) {
-				return
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("assertOperatorOverrideEvent: no operator_override / message_emitted event for instance %s within %v — node_invalidate via MCP did not trigger the real handler", instanceID, deadline)
-}
-
-// instanceFromNode reads a node by id (route gated by node:read) and
-// returns its instance id, used by the node-category parity assertion
-// to look up the event log without smuggling state through the
-// category struct.
-func instanceFromNode(t *testing.T, ep harness.RimskyEndpoint, bearer, nodeID string) string {
-	t.Helper()
-	status, raw := getJSONAuth(t, ep, "/v1/nodes/"+nodeID, bearer)
-	if status != http.StatusOK {
-		t.Fatalf("instanceFromNode: GET /v1/nodes/%s returned %d, want 200\nbody: %s", nodeID, status, string(raw))
-	}
-	var resp struct {
-		InstanceID string `json:"instance_id"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		t.Fatalf("instanceFromNode: decode %s: %v", raw, err)
-	}
-	return resp.InstanceID
 }
 
 // adminBearer is an identity-helper for parity assertions that need to

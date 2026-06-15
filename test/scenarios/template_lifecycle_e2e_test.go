@@ -238,9 +238,8 @@ func TestTemplateLifecycle_FullLifecycleEndToEnd(t *testing.T) {
 func buildLifecycleTemplateSpec(t *testing.T, name, version string) map[string]any {
 	t.Helper()
 	return map[string]any{
-		"name":                  name,
-		"version":               version,
-		"frame_resolution_mode": "serial_queue",
+		"name":    name,
+		"version": version,
 		"nodes": []map[string]any{
 			{
 				"type":     "worker",

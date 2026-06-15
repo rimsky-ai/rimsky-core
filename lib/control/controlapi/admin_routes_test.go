@@ -206,12 +206,19 @@ func seedRunForNode(ctx context.Context, t *testing.T, h *adminHarness, nodeID s
 		`SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1`,
 		[]any{instID}, &mainScopeID,
 	)
-	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`INSERT INTO rimsky_frames(instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, last_progress_at, frame_timeout_ms)
-		 VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), now(), 600000)
-		 RETURNING frame_id`,
-		[]any{instID, nodeID}, &frameID,
+	msgID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver,
+		`INSERT INTO rimsky_messages(id, instance_id, type, sender, sender_kind, received_at)
+		 VALUES ($1, $2, 'test/seed', 'test', 'operator', now())`,
+		msgID, instID,
 	)
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`INSERT INTO rimsky_frames(instance_id, triggering_message_id, state, queued_at, started_at, last_progress_at, frame_timeout_ms)
+		 VALUES ($1, $2, 'running', now(), now(), now(), 600000)
+		 RETURNING frame_id`,
+		[]any{instID, msgID}, &frameID,
+	)
+	_ = nodeID
 	var runID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver,
 		`INSERT INTO rimsky_node_runs(id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)

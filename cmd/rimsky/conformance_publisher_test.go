@@ -59,7 +59,7 @@ func TestPublisherConformance_FixtureCron(t *testing.T) {
 		SubscriptionID:  "self-test-subscription",
 		InstanceID:      "self-test-instance",
 		TargetNode:      "tick",
-		MessageKind:     "invalidate",
+		MessageType:     "system/conformance",
 	}
 	results := pubconformance.Run(context.Background(), client, opts)
 	for _, r := range results {
@@ -145,7 +145,7 @@ type fixtureSub struct {
 	instanceID     string
 	kind           string
 	targetNode     string
-	messageKind    string
+	messageType    string
 	startedAt      time.Time
 	cancel         context.CancelFunc
 }
@@ -180,7 +180,7 @@ func (s *fixturePublisher) Subscribe(_ context.Context, req *genv1.SubscribeRequ
 		instanceID:     req.GetInstanceId(),
 		kind:           req.GetKind(),
 		targetNode:     req.GetTargetNode(),
-		messageKind:    req.GetMessageKind(),
+		messageType:    req.GetMessageType(),
 		startedAt:      time.Now(),
 		cancel:         cancel,
 	}
@@ -209,7 +209,7 @@ func (s *fixturePublisher) ListSubscriptions(_ context.Context, _ *emptypb.Empty
 			InstanceId:              sub.instanceID,
 			Kind:                    sub.kind,
 			TargetNode:              sub.targetNode,
-			MessageKind:             sub.messageKind,
+			MessageType:             sub.messageType,
 			StartedAt:               timestamppb.New(sub.startedAt),
 		})
 	}
@@ -226,8 +226,7 @@ func (s *fixturePublisher) tick(ctx context.Context, sub *fixtureSub) {
 		case <-t.C:
 			payload, _ := json.Marshal(map[string]any{"observed_at": time.Now().UTC().Format(time.RFC3339)})
 			envelope := map[string]any{
-				"kind":                      sub.messageKind,
-				"target":                    sub.targetNode,
+				"type":                      sub.messageType,
 				"payload":                   json.RawMessage(payload),
 				"sender":                    "fixture-publisher",
 				"sender_kind":               "publisher",

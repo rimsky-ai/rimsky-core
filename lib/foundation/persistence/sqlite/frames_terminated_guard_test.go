@@ -65,12 +65,22 @@ func TestQueuedFrameNotPromotedForTerminatedInstance(t *testing.T) {
 	// @deliberate: seed one queued frame and no running frame so the row is
 	// eligible-to-start in every dimension except the terminated-instance
 	// guard under test; otherwise a guard regression could hide behind a
-	// different eligibility miss.
+	// different eligibility miss. The triggering message is seeded first to
+	// satisfy the rimsky_frames.triggering_message_id NOT NULL FK introduced
+	// by the typed-message schema layer.
+	msgID := uuid.New().String()
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+		msgID, instanceID.String(),
+	); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
 	if _, err := rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids, frame_timeout_ms)
-		 VALUES (?, ?, 'serial_queue', 'queued', '[]', 60000)`,
-		frameID.String(), instanceID.String(),
+		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms)
+		 VALUES (?, ?, ?, 'queued', 60000)`,
+		frameID.String(), instanceID.String(), msgID,
 	); err != nil {
 		t.Fatalf("seed queued frame: %v", err)
 	}

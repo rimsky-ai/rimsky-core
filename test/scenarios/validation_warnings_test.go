@@ -137,9 +137,8 @@ func TestValidationWarnings_StaticAdvisorySurfacedAndPromotable(t *testing.T) {
 // (`project-alpha-*`) per decision:project-agnostic.
 func advisoryTrippingSpec(name, version string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               version,
-		"frame_resolution_mode": "serial_queue",
+		"name":    name,
+		"version": version,
 		"nodes": []map[string]any{
 			{
 				"type":     "worker",

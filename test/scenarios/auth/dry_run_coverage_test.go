@@ -135,8 +135,8 @@ func TestDryRunCoverage_AllWriteActions(t *testing.T) {
 // reach its dry-run gate and returns a descriptor per write action.
 //
 // Most prerequisites are seeded over the real HTTP API (template
-// register/deploy, instance create, breakpoint create, backfill create);
-// the two actions whose gate needs deep internal state the fixture can't
+// register/deploy, instance create, breakpoint create); the two
+// actions whose gate needs deep internal state the fixture can't
 // reach happy-path (no executor, no real store backend) are seeded via
 // the persistence layer:
 //
@@ -153,23 +153,13 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	dr := "?dry_run=true"
 
 	// @deliberate: A deployed template + instance, reused by the instance/message/
-	// backfill/breakpoint/node:invalidate/asset:materialize cases.
+	// breakpoint/asset:materialize cases.
 	tplHash := seedDeployedTemplate(t, f, adminKey, "dryrun-coverage")
 	code, instResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{"template": tplHash})
 	if code != 201 && code != 200 {
 		t.Fatalf("seed instance: %d %+v", code, instResp)
 	}
 	instanceID := instResp["instance_id"].(string)
-
-	code, nodesResp := f.request(t, "GET", "/v1/instances/"+instanceID+"/nodes", adminKey, nil)
-	if code != 200 {
-		t.Fatalf("seed list nodes: %d %+v", code, nodesResp)
-	}
-	nodes := nodesResp["nodes"].([]any)
-	if len(nodes) == 0 {
-		t.Fatalf("seed instance has no nodes")
-	}
-	invalidateNodeID := nodes[0].(map[string]any)["id"].(string)
 
 	// @deliberate: A second template for tag:set / template:deploy / template:undeploy
 	// / template:deregister (so deregister-dry-run doesn't trample the
@@ -183,24 +173,9 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 		t.Fatalf("seed tag: %d %+v", code, tagResp)
 	}
 
-	// @deliberate: A dedicated instance whose root node `n1` is a fan-out node wired
-	// for the backfill override (its partition_request pulls from the
-	// trigger message). `backfill:create` rejects (400) a target that is
-	// not such a node, so the backfill cases need a wired fan-out target
-	// distinct from the plain-node `dryrun-coverage` instance reused by
-	// the node/asset/message cases.
-	backfillTplHash := seedDeployedFanOutTemplate(t, f, adminKey, "dryrun-backfill-fanout")
-	code, bfInstResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{"template": backfillTplHash})
-	if code != 201 && code != 200 {
-		t.Fatalf("seed backfill instance: %d %+v", code, bfInstResp)
-	}
-	backfillInstanceID := bfInstResp["instance_id"].(string)
-
-	// @deliberate: A breakpoint (for breakpoint:delete) + a backfill (for
-	// backfill:cancel). Both created for real so their dry-run-delete /
-	// dry-run-cancel reach their gates.
+	// @deliberate: A breakpoint (for breakpoint:delete), created for real so its
+	// dry-run-delete reaches the gate.
 	bpID := seedBreakpoint(t, f, adminKey, instanceID)
-	backfillOpID := seedBackfill(t, f, adminKey, backfillInstanceID)
 
 	// @constraint: A breakpoint hit (for breakpoint:resume) — seeded via persistence
 	// (a real hit requires the engine to actually pause a dispatch).
@@ -230,6 +205,14 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	// @deliberate: asset:delete target — a committed durable claim on a node with a
 	// matching template `stores:` entry, all seeded directly.
 	assetInstanceID, assetAlias := seedDurableAsset(ctx, t, f)
+
+	// @constraint: instance:debug-override target — a SEPARATE paused instance so its
+	// dry-run can pass the paused-or-breakpoint gate inside the handler tx
+	// (the gate check runs BEFORE the dry-run short-circuit). Pausing the
+	// shared `instanceID` would conflict with instance:pause /
+	// instance:resume's no-mutation assertions (they require paused=false
+	// before AND after the dry-run).
+	debugOverrideInstanceID := seedPausedInstanceForDebugOverride(t, f, tplHash, adminKey)
 
 	keyStillActive := func(name string, key string) func(t *testing.T) {
 		return func(t *testing.T) {
@@ -304,20 +287,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 				}
 			}
 			t.Fatalf("breakpoint %q deleted under dry-run", bp)
-		}
-	}
-	backfillNotCancelled := func(op string) func(t *testing.T) {
-		return func(t *testing.T) {
-			code, resp := f.request(t, "GET", "/v1/backfills/"+op, adminKey, nil)
-			if code != 200 {
-				t.Fatalf("backfill re-fetch: %d %+v", code, resp)
-			}
-			// @deliberate: A cancelled backfill voids its messages; we assert the
-			// status object still reports a non-cancelled shape by
-			// checking the response did not error. The fine-grained
-			// cancellation flag is internal; absence of a 404/void is
-			// sufficient here (the would_have_cancelled envelope is the
-			// primary signal).
 		}
 	}
 	messageCountUnchanged := func(id string) func(t *testing.T) {
@@ -413,8 +382,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			method: "POST", path: "/v1/templates" + dr,
 			body: map[string]any{"spec": map[string]any{
 				"name": "dryrun-register", "version": "1",
-				"frame_resolution_mode": "serial_queue",
-				"nodes":                 []map[string]any{{"type": "n1"}},
+				"nodes": []map[string]any{{"type": "n1"}},
 			}},
 			wouldHaveKey: "would_have_registered",
 			// @deliberate: A dry-run register persists nothing; the template list is
@@ -463,11 +431,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			wouldHaveKey: "would_have_deleted_tag", verifyNoMutation: tagUnchanged("dryrun-tag", tplHash2),
 		},
 
-		"node:invalidate": {
-			method: "POST", path: "/v1/nodes/" + invalidateNodeID + "/invalidate" + dr,
-			body:         map[string]any{"reason": "dry-run"},
-			wouldHaveKey: "would_have_invalidated", verifyNoMutation: nodeStateIs(invalidateNodeID, "fresh"),
-		},
 		"node:reset": {
 			method: "POST", path: "/v1/nodes/" + resetNodeID + "/reset" + dr,
 			wouldHaveKey: "would_have_reset", verifyNoMutation: nodeStateIs(resetNodeID, "failed"),
@@ -475,7 +438,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 
 		"message:send": {
 			method: "POST", path: "/v1/instances/" + instanceID + "/messages" + dr,
-			body:      map[string]any{"kind": "invalidate", "target": "n1"},
+			body:      map[string]any{"type": "system/invalidate", "sender": "operator-test", "sender_kind": "operator"},
 			headerKey: "Idempotency-Key", headerVal: "dryrun-msg-key",
 			wouldHaveKey: "would_have_sent", verifyNoMutation: messageCountUnchanged(instanceID),
 		},
@@ -487,16 +450,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			// @deliberate: Nothing to prune in the fixture; the gate is before the delete.
 		},
 
-		"backfill:create": {
-			method: "POST", path: "/v1/instances/" + backfillInstanceID + "/backfills" + dr,
-			body:         map[string]any{"target_node": "n1", "reason": "dry-run"},
-			wouldHaveKey: "would_have_created_backfill", verifyNoMutation: messageCountUnchanged(backfillInstanceID),
-		},
-		"backfill:cancel": {
-			method: "POST", path: "/v1/backfills/" + backfillOpID + "/cancel" + dr,
-			wouldHaveKey: "would_have_cancelled_backfill", verifyNoMutation: backfillNotCancelled(backfillOpID),
-		},
-
 		"asset:materialize": {
 			method: "POST", path: "/v1/instances/" + instanceID + "/assets/n1.main/materialize" + dr,
 			body:         map[string]any{"reason": "dry-run"},
@@ -505,6 +458,20 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 		"asset:delete": {
 			method: "DELETE", path: "/v1/instances/" + assetInstanceID + "/assets/" + assetAlias + dr,
 			wouldHaveKey: "would_have_deleted_asset", verifyNoMutation: assetStillExists(assetInstanceID, assetAlias),
+		},
+
+		"instance:debug-override": {
+			method: "POST", path: "/v1/instances/" + debugOverrideInstanceID + "/debug/override" + dr,
+			body: map[string]any{
+				"action":    "invalidate_node",
+				"node_type": "n1",
+			},
+			wouldHaveKey: "would_have_applied_debug_override",
+			// @deliberate: No further mutation assertion needed — the no-op envelope is
+			// the signal; the dry-run short-circuits before the
+			// applyDebugOverride mutation step and the audit event. Pausing
+			// the instance is a one-shot seed; the dry-run does not flip
+			// it back, so paused remains true (no further assertion).
 		},
 
 		"auth:create": {
@@ -543,71 +510,12 @@ func seedBreakpoint(t *testing.T, f *authFixture, adminKey, instanceID string) s
 	return resp["breakpoint_id"].(string)
 }
 
-func seedBackfill(t *testing.T, f *authFixture, adminKey, instanceID string) string {
-	t.Helper()
-	code, resp := f.request(t, "POST", "/v1/instances/"+instanceID+"/backfills", adminKey, map[string]any{
-		"target_node": "n1", "reason": "seed",
-	})
-	if code != 201 && code != 200 {
-		t.Fatalf("seed backfill: %d %+v", code, resp)
-	}
-	return resp["backfill_operation_id"].(string)
-}
-
-// seedDeployedFanOutTemplate registers + deploys a template whose root
-// node `n1` is a fan-out node wired for the backfill override: its
-// partition_request pulls from the trigger message
-// (`{{trigger.message.payload.partition_request_override | <default>}}`),
-// so a `backfill:create` against it is accepted (the override can reach
-// the node). The fixture has no store backend and the engine never
-// runs; the lifecycle fan-out to the referenced store is skipped
-// silently (the store is not a subscriber), so register + deploy
-// succeed.
-func seedDeployedFanOutTemplate(t *testing.T, f *authFixture, adminKey, name string) string {
-	t.Helper()
-	tplBody := map[string]any{
-		"spec": map[string]any{
-			"name":                  name,
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"nodes": []map[string]any{
-				{
-					"type":     "n1",
-					"executor": "worker",
-					"stores": []map[string]any{
-						{"name": "content", "selector": "items/x", "intent": "rw", "alias": "data"},
-					},
-					"fan_out": map[string]any{
-						"claim":             "data",
-						"partition_request": `{{trigger.message.payload.partition_request_override | {"partition_keys":["default"]}}}`,
-						"error_policy":      map[string]any{"kind": "best_effort"},
-					},
-				},
-			},
-		},
-	}
-	code, regResp := f.request(t, "POST", "/v1/templates", adminKey, tplBody)
-	if code != 201 && code != 200 {
-		t.Fatalf("seedDeployedFanOutTemplate register: %d %+v", code, regResp)
-	}
-	hash, _ := regResp["template_id"].(string)
-	if hash == "" {
-		t.Fatalf("seedDeployedFanOutTemplate register missing template_id: %+v", regResp)
-	}
-	code, depResp := f.request(t, "POST", "/v1/templates/"+hash+"/deploy", adminKey, map[string]any{})
-	if code != 200 {
-		t.Fatalf("seedDeployedFanOutTemplate deploy: %d %+v", code, depResp)
-	}
-	return hash
-}
-
 func seedRegisteredTemplate(t *testing.T, f *authFixture, adminKey, name string) string {
 	t.Helper()
 	code, resp := f.request(t, "POST", "/v1/templates", adminKey, map[string]any{
 		"spec": map[string]any{
 			"name": name, "version": "1",
-			"frame_resolution_mode": "serial_queue",
-			"nodes":                 []map[string]any{{"type": "n1"}},
+			"nodes": []map[string]any{{"type": "n1"}},
 		},
 	})
 	if code != 201 && code != 200 {
@@ -634,6 +542,30 @@ func seedTerminatedInstanceForDelete(ctx context.Context, t *testing.T, f *authF
 		t.Fatalf("mark delete-target terminated: %v", err)
 	}
 	return id.String()
+}
+
+// seedPausedInstanceForDebugOverride creates a fresh instance from
+// tplHash and pauses it via POST /v1/instances/{id}/pause so the
+// debug-channel handler's `paused OR breakpoint` gate evaluates true
+// without depending on engine state the executor-less fixture cannot
+// reach. Returns the instance id. A SEPARATE instance is used (not
+// the shared `instanceID`) so the paused flag does not break the
+// instance:pause / instance:resume dry-run no-mutation assertions
+// (those expect paused=false before AND after the dry-run).
+func seedPausedInstanceForDebugOverride(t *testing.T, f *authFixture, tplHash, adminKey string) string {
+	t.Helper()
+	code, resp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{
+		"template": tplHash, "instance_key": "dryrun-debug-override-target",
+	})
+	if code != 201 && code != 200 {
+		t.Fatalf("seed debug-override instance: %d %+v", code, resp)
+	}
+	id := resp["instance_id"].(string)
+	code, pauseResp := f.request(t, "POST", "/v1/instances/"+id+"/pause", adminKey, nil)
+	if code != 200 {
+		t.Fatalf("pause debug-override instance: %d %+v", code, pauseResp)
+	}
+	return id
 }
 
 // seedBreakpointHit inserts a pending breakpoint hit directly (a real
@@ -702,7 +634,20 @@ func seedFailedNodeOnNewInstance(ctx context.Context, t *testing.T, f *authFixtu
 		if err != nil {
 			return err
 		}
-		frameID, err := frame.EnqueueOrCoalesce(ctx, f.db.Tables(), tx, uuid.UUID(instanceID), uuid.UUID(nodeID))
+		// @constraint: Seed a synthetic envelope to satisfy the
+		// rimsky_frames.triggering_message_id FK.
+		msgID := foundationshared.UUID(uuid.New())
+		if err := f.db.Tables().Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		_ = nodeID
+		frameID, err := frame.EnqueueFrame(ctx, f.db.Tables(), tx, uuid.UUID(instanceID), uuid.UUID(msgID))
 		if err != nil {
 			return err
 		}
@@ -745,9 +690,8 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 	nodeID := foundationshared.UUID(uuid.New())
 
 	templateSpec := spec.TemplateSpec{
-		Name:                "dryrun-asset",
-		Version:             "1",
-		FrameResolutionMode: "serial_queue",
+		Name:    "dryrun-asset",
+		Version: "1",
 		Nodes: []spec.TemplateNodeDef{{
 			Type: nodeType,
 			Stores: []spec.NodeStoreRef{{
@@ -820,8 +764,8 @@ func seedDurableAsset(ctx context.Context, t *testing.T, f *authFixture) (string
 }
 
 // listMessageCount returns the number of messages currently on an
-// instance (used to assert message:send / backfill:create / materialize
-// dry-runs enqueue nothing).
+// instance (used to assert message:send / materialize dry-runs
+// enqueue nothing).
 func listMessageCount(t *testing.T, f *authFixture, adminKey, instanceID string) int {
 	t.Helper()
 	code, resp := f.request(t, "GET", "/v1/instances/"+instanceID+"/messages", adminKey, nil)

@@ -135,14 +135,14 @@ func TestLoopCounterCapE2E(t *testing.T) {
 				// `frame: in` would have the cascade-fire dedupe
 				// against the sink's in-flight or already-fresh row).
 				Subscribes: []tmplspec.SubscriptionEntry{
-					{Node: "counter", Type: "event/loop", Frame: "next", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
+					{Node: "counter", Type: "event/loop", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
 				},
 			},
 			{
 				Type:     "done_sink",
 				Executor: doneSinkURL,
 				Subscribes: []tmplspec.SubscriptionEntry{
-					{Node: "counter", Type: "event/done", Frame: "next", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
+					{Node: "counter", Type: "event/done", WakeOnChange: tmplspec.BoolPtr(true), ForceUpstreamRefresh: tmplspec.BoolPtr(false)},
 				},
 			},
 		},

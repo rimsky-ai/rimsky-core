@@ -90,9 +90,8 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	// ref so rimsky's per-template scope inclusion picks it up for
 	// fan-out at registration time.
 	spec := node.TemplateSpec{
-		Name:                "canary-lifecycle-subscriber",
-		Version:             "v1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
+		Name:    "canary-lifecycle-subscriber",
+		Version: "v1",
 		Nodes: []node.TemplateNodeDef{{
 			Type:     "n1",
 			Executor: "stub",

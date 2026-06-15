@@ -18,9 +18,8 @@ import (
 
 func minimalSpec() node.TemplateSpec {
 	return node.TemplateSpec{
-		Name:                "demo",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "demo",
+		Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			{Type: "noop"},
 		},

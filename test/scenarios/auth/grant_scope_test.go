@@ -41,10 +41,9 @@ import (
 // the underlying content-addressed row already exists.
 func grantScopeSpec() map[string]any {
 	return map[string]any{
-		"name":                  "grant-scope-seed",
-		"version":               "1",
-		"frame_resolution_mode": "serial_queue",
-		"nodes":                 []map[string]any{{"type": "n1"}},
+		"name":    "grant-scope-seed",
+		"version": "1",
+		"nodes":   []map[string]any{{"type": "n1"}},
 	}
 }
 

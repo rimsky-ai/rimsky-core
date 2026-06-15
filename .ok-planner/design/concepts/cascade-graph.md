@@ -9,7 +9,7 @@ aliases:
 
 ## What it is
 
-The operator-dashboard HTTP-route backplane exposed by the control API: a family of read endpoints covering observability summaries, the event feed, frames, per-instance node state, and dispatches. Reads rimsky's own runtime state (frames, nodes, dispatches, events) and serves JSON to dashboards and operator tooling.
+The operator-dashboard HTTP-route backplane exposed by the control API: a family of read endpoints covering observability summaries, the event feed, frames, per-instance node state, and dispatches. Reads rimsky's own runtime state (frames, nodes, dispatches, events) and serves JSON to dashboards and operator tooling. The frames-read surface joins frames to their triggering messages in both directions: given a frame, return its triggering message; given a triggering message, list the frames it produced.
 
 ## Purpose
 

@@ -314,10 +314,9 @@ func exerciseAcceptCaseLeg(t *testing.T, ep harness.RimskyEndpoint) {
 // per leg.
 func validatedTemplate(name, selector string) map[string]any {
 	return map[string]any{
-		"name":                  name,
-		"version":               "1",
-		"frame_resolution_mode": "serial_queue",
-		"frame_timeout_ms":      600000,
+		"name":             name,
+		"version":          "1",
+		"frame_timeout_ms": 600000,
 		"nodes": []map[string]any{
 			{
 				"type":     "worker",

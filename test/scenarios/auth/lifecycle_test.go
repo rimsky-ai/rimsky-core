@@ -100,8 +100,7 @@ func newAuthFixtureOpts(t *testing.T, withObservability bool) *authFixture {
 		Clock:   clock,
 		Logger:  shared.SilentLogger{},
 		// @constraint: An empty (non-nil) lifecycle registry: store-referencing
-		// templates (e.g. the wired fan-out node a backfill target
-		// requires) register/deploy cleanly — the referenced store is
+		// templates register/deploy cleanly — the referenced store is
 		// not subscribed, so the lifecycle fan-out skips it silently
 		// rather than failing on a nil registry. No store backend runs
 		// in this fixture; the engine never dispatches.
@@ -333,17 +332,24 @@ func TestPermissionGrants_DryRunFlagPreviewsWrite(t *testing.T) {
 	}
 }
 
-// seedDeployedTemplate mirrors seedDryRunNode's template flow but
-// stops at the deployed-template step (no instance) and returns the
+// seedDeployedTemplate registers + deploys a minimal template and
+// stops at the deployed-template step (no instance), returning the
 // template hash so callers can target a real /instances POST.
 func seedDeployedTemplate(t *testing.T, f *authFixture, adminKey, name string) string {
 	t.Helper()
 	tplBody := map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"nodes":                 []map[string]any{{"type": "n1"}},
+			"name":    name,
+			"version": "1",
+			// @deliberate: `system/invalidate` is declared in the
+			// messages: registry so message-emit dry-run paths reach
+			// their dry-run gate inside the tx. The slash-bearing
+			// shape is required by validateMessages — a bare
+			// identifier would collide with the node-type namespace.
+			"messages": []map[string]any{
+				{"type": "system/invalidate"},
+			},
+			"nodes": []map[string]any{{"type": "n1"}},
 		},
 	}
 	code, regResp := f.request(t, "POST", "/v1/templates", adminKey, tplBody)
@@ -1201,8 +1207,7 @@ func TestRoleTemplates_MintAndEnforce(t *testing.T) {
 				action: "template:register", method: "POST", path: "/v1/templates?dry_run=true",
 				body: map[string]any{"spec": map[string]any{
 					"name": "gate6-admin-dryrun", "version": "1",
-					"frame_resolution_mode": "serial_queue",
-					"nodes":                 []map[string]any{{"type": "n1"}},
+					"nodes": []map[string]any{{"type": "n1"}},
 				}},
 			},
 			denied: nil,

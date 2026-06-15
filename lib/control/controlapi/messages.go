@@ -23,7 +23,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -99,8 +101,7 @@ func registerMessagesRoutes(r chi.Router, deps AppDeps) {
 // derives `sender` from the publisher-subscription row's
 // publisher_name (operator-supplied `sender` is ignored for trust).
 type postMessageRequest struct {
-	Kind                    string          `json:"kind"`
-	Target                  string          `json:"target,omitempty"`
+	Type                    string          `json:"type"`
 	Payload                 json.RawMessage `json:"payload,omitempty"`
 	Sender                  string          `json:"sender,omitempty"`
 	SenderKind              string          `json:"sender_kind,omitempty"`
@@ -115,35 +116,29 @@ type postMessageResponse struct {
 // is forwarded as-is per @blessed-invariant 21 — the bytes flow from
 // row to JSON without inspection.
 type messageItem struct {
-	ID                  string          `json:"id"`
-	InstanceID          string          `json:"instance_id"`
-	Kind                string          `json:"kind"`
-	Sender              string          `json:"sender"`
-	SenderKind          string          `json:"sender_kind"`
-	Target              string          `json:"target,omitempty"`
-	Payload             json.RawMessage `json:"payload,omitempty"`
-	BackfillOperationID string          `json:"backfill_operation_id,omitempty"`
-	ReceivedAt          time.Time       `json:"received_at"`
-	DeliveredAt         *time.Time      `json:"delivered_at,omitempty"`
-	FrameID             string          `json:"frame_id,omitempty"`
-	Cancelled           bool            `json:"cancelled,omitempty"`
+	ID          string          `json:"id"`
+	InstanceID  string          `json:"instance_id"`
+	Type        string          `json:"type"`
+	Sender      string          `json:"sender"`
+	SenderKind  string          `json:"sender_kind"`
+	Payload     json.RawMessage `json:"payload,omitempty"`
+	ReceivedAt  time.Time       `json:"received_at"`
+	DeliveredAt *time.Time      `json:"delivered_at,omitempty"`
+	FrameID     string          `json:"frame_id,omitempty"`
+	Cancelled   bool            `json:"cancelled,omitempty"`
 }
 
 func toMessageItem(r persistence.MessageRow) messageItem {
 	out := messageItem{
 		ID:          r.ID.String(),
 		InstanceID:  r.InstanceID.String(),
-		Kind:        r.Kind,
+		Type:        r.Type,
 		Sender:      r.Sender,
 		SenderKind:  r.SenderKind,
-		Target:      r.Target,
 		Payload:     r.Payload,
 		ReceivedAt:  r.ReceivedAt,
 		DeliveredAt: r.DeliveredAt,
 		Cancelled:   r.Cancelled,
-	}
-	if r.BackfillOperationID != nil {
-		out.BackfillOperationID = r.BackfillOperationID.String()
 	}
 	if r.FrameID != nil {
 		out.FrameID = r.FrameID.String()
@@ -159,6 +154,91 @@ func toMessageItem(r persistence.MessageRow) messageItem {
 // flip, and rejecting that window would drop a legitimate observation.
 // Mapped to 403 Forbidden.
 var errPublisherSubscriptionNotLive = errors.New("publisher-subscription not live (active or mounting) for this instance")
+
+// unknownMessageTypeError is the sentinel returned when a posted
+// message's `type:` is not declared in the instance's template's
+// `messages:` registry. The handler maps it to HTTP 400 with a body
+// that names both the rejected type and the declared set, so authors
+// see exactly what the template admits. Refusing loudly at receipt is
+// load-bearing for the message-schema story (`concept:message-schema`):
+// the cheaper shape "accept and silently dead-letter" leaves authors
+// guessing why their message never fired anything. Carries the rejected
+// type and the declared set so the handler builds the response body
+// without re-fetching the template.
+//
+// @concept: message-schema
+type unknownMessageTypeError struct {
+	Type     string
+	Declared []string
+}
+
+func (e *unknownMessageTypeError) Error() string {
+	return fmt.Sprintf("unknown message type %q (declared types: %v)", e.Type, e.Declared)
+}
+
+// reservedPayloadFieldWakeNodeIDs is the runtime-internal payload field
+// that runtime-synthetic envelopes (`node/reset`, `instance/root`,
+// `asset/materialize`) use to enumerate the node UUIDs to stale-mark in
+// the promotion tx (see `lib/graph/frame/engine.go::advanceOneFrame`).
+// An author-declared envelope MUST NOT carry this field on its payload
+// — otherwise an operator with `message:send` permission could smuggle
+// stale-mark targets through a declared message type and obtain a
+// backdoor unconditional stale-mark against any node UUID they can
+// name. The structural-divide @blessed-invariant in
+// `lib/graph/frame/engine.go` notes that author-declared envelopes
+// ship without `wake_node_ids` "only by accident"; this gate makes
+// that property structural rather than accidental.
+const reservedPayloadFieldWakeNodeIDs = "wake_node_ids"
+
+// errPayloadCarriesReservedField is the sentinel returned when an
+// author-declared message's payload carries the reserved
+// `wake_node_ids` field. Mapped to HTTP 400.
+var errPayloadCarriesReservedField = errors.New("message payload must not carry reserved field \"wake_node_ids\" (runtime-internal wake mechanism)")
+
+// validateReservedPayloadFields enforces the reserved-field guard on
+// an author-declared message's payload at receipt: the runtime-internal
+// `wake_node_ids` field MUST NOT appear on the wire. This is the
+// privilege-escalation guard — an author-declared envelope cannot
+// smuggle stale-mark targets through the runtime-synthetic wake
+// mechanism.
+//
+// Per the spec `.ok-planner/specs/2026-06-14-message-schema-layer-design.md`
+// (§"Receipt-time body shape is documentation only") and `concept:message-
+// schema`, the body shape itself is documentation plus a registration-
+// time check on substitution refs. The actual body bytes are validated
+// only at the receiver's dispatch via the existing attribute-validation
+// machinery (per `concept:attribute`). Receipt-time body-schema validation
+// would be a third read site for the payload bytes, violating
+// `@blessed-invariant: 21`. This helper therefore restricts itself to
+// the reserved-field guard, whose privilege-escalation rationale is
+// independent of the inertness invariant.
+//
+// An undeclared type never reaches this helper (the caller filters first).
+func validateReservedPayloadFields(payload json.RawMessage) error {
+	// @constraint: decode the payload only enough to test for the
+	// reserved key. An empty payload is admitted; there is nothing to
+	// check.
+	if len(payload) == 0 {
+		return nil
+	}
+	var body map[string]any
+	if err := json.Unmarshal(payload, &body); err != nil {
+		// @constraint: per `@blessed-invariant: message-inertness` we
+		// do not validate body shape at receipt; a non-object payload
+		// (array, scalar, malformed JSON) is admitted here and surfaces
+		// at the substitution leaf if a receiver tries to walk it. The
+		// reserved-field guard cannot see it either way (there is no
+		// top-level key to inspect), which is the correct floor: the
+		// guard exists to keep an operator from smuggling a
+		// `wake_node_ids` *property*; a non-object payload cannot do
+		// that by construction.
+		return nil
+	}
+	if _, ok := body[reservedPayloadFieldWakeNodeIDs]; ok {
+		return errPayloadCarriesReservedField
+	}
+	return nil
+}
 
 // handleCreateMessage is POST /instances/{id}/messages.
 //
@@ -176,21 +256,30 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			return
 		}
 		var body postMessageRequest
-		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		dec := json.NewDecoder(req.Body)
+		// @constraint: `DisallowUnknownFields` makes retired envelope
+		// fields fail loud at receipt rather than silently roundtrip as
+		// dead data. Retired DSL surfaces are removed from the code
+		// entirely; templates and requests using them fail through
+		// normal validator paths. A bare decoder admits unknown keys,
+		// defeating that pledge — a publisher still sending the dropped
+		// `target` field would silently send dead bytes with no
+		// detection signal. The hard rejection is the detection signal.
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
 			badRequest(w, "invalid JSON body: "+err.Error())
 			return
 		}
-		if body.Kind == "" {
-			badRequest(w, "kind is required")
+		if body.Type == "" {
+			badRequest(w, "type is required")
 			return
 		}
-		// @constraint: V1 only supports the `invalidate` kind; cross-instance kinds
-		// are V2. Reject unknown kinds at the boundary so operators get
-		// a precise error instead of a silent dead-letter.
-		if body.Kind != "invalidate" {
-			badRequest(w, "kind must be 'invalidate' in V1")
-			return
-		}
+		// @constraint: the accepted `type:` set is gated on the instance's
+		// template's declared `messages:` registry. The lookup runs INSIDE
+		// the tx below — it needs the instance row to find the template
+		// hash — but BEFORE the idempotency dedup INSERT and BEFORE the
+		// envelope insert so an undeclared type can never silently
+		// dead-letter or pollute the idempotency ledger.
 		// @constraint: sender kind defaults to "operator" for back-compat. Publisher
 		// senders explicitly set "publisher" + publisher_subscription_id.
 		senderKind := body.SenderKind
@@ -253,6 +342,64 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			}
 			if inst.TerminatedAt != nil {
 				return errInstanceTerminated
+			}
+			// @constraint: message-type registry gate. Fetch the instance's
+			// template and confirm body.Type is in the declared
+			// `messages:` registry. This runs BEFORE the publisher
+			// capability check (which could still reject 403), BEFORE
+			// the idempotency dedup INSERT, and BEFORE the envelope
+			// insert — so an undeclared type returns 400 without
+			// polluting the idempotency ledger or persisting an
+			// envelope no subscriber will ever match. A template with no
+			// `messages:` block accepts no message type (the registry is
+			// empty); the response names the empty set explicitly so the
+			// diagnostic is self-evident.
+			//
+			// @concept: message-schema
+			tpl, err := deps.Persist.Templates().GetByHash(ctx, inst.TemplateHash, tx)
+			if err != nil {
+				return err
+			}
+			if tpl == nil {
+				// @constraint: a live instance pointing at a missing
+				// template is a platform-internal invariant violation,
+				// not an author-visible error. Surface as a generic
+				// write error rather than silently passing the gate.
+				return fmt.Errorf("instance %s template %s not found", instUUID, inst.TemplateHash)
+			}
+			declared := make([]string, 0, len(tpl.Spec.Messages))
+			matched := false
+			for _, m := range tpl.Spec.Messages {
+				declared = append(declared, m.Type)
+				if m.Type == body.Type {
+					matched = true
+				}
+			}
+			if !matched {
+				sort.Strings(declared)
+				return &unknownMessageTypeError{Type: body.Type, Declared: declared}
+			}
+			// @constraint: reserved-field guard. Runs INSIDE the tx (read
+			// in lockstep with the matched type) but BEFORE the
+			// idempotency insert + envelope insert so a
+			// runtime-internal-field-smuggling payload can never pollute
+			// the idempotency ledger nor land an envelope no receiver
+			// should ever match. This is the privilege-escalation guard:
+			// the payload must not carry the runtime-internal
+			// `wake_node_ids` field. Otherwise an operator with
+			// `message:send` could obtain a backdoor unconditional
+			// stale-mark against any node UUID. Body-schema validation
+			// does NOT run here — per `@blessed-invariant: message-inertness`
+			// and `concept:message-schema`, the declared body_schema is
+			// documentation plus a registration-time check on
+			// substitution refs; the actual body bytes are validated only
+			// at the receiver's dispatch via the existing
+			// attribute-validation gate. Adding a receipt-time validation
+			// pass would be a third read site for payload bytes.
+			//
+			// @concept: message-schema
+			if err := validateReservedPayloadFields(body.Payload); err != nil {
+				return err
 			}
 			// @constraint: publisher capability check: the publisher-subscription must
 			// be live (active, or still mounting) and bound to THIS
@@ -319,52 +466,36 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 			enqueueReq := persistence.EnqueueMessageRequest{
 				ID:         msgID,
 				InstanceID: instUUID,
-				Kind:       body.Kind,
+				Type:       body.Type,
 				Sender:     sender,
 				SenderKind: senderKind,
-				Target:     body.Target,
 				Payload:    body.Payload,
 			}
 			if err := runtime.EnqueueMessage(ctx, tx, deps.Persist.Messages(), enqueueReq); err != nil {
 				return err
 			}
-			// @constraint: seed a frame so the message is actually delivered. Messages
-			// are delivered ONLY into a running frame
-			// (SweepDeliverMessagesForRunningFrames); a message POSTed to a
-			// quiescent instance (no running frame) would otherwise stay
-			// pending forever and never wake the subscribing node. The
-			// emit path therefore enqueues/coalesces a frame in the SAME tx
-			// as the message insert (atomic: a crash mid-flow can't leave a
-			// pending message with no frame to carry it, nor a frame with no
-			// message). The scheduler's frame engine promotes the queued
-			// frame to running on the next tick and the delivery sweep
-			// delivers the pending message into it, firing the cascade.
-			//
-			// Frame source: the target node (resolved by type). For a
-			// broadcast envelope (empty target) any node in the instance is
-			// a valid source — the frame source only identifies the
-			// triggering node; the delivery sweep delivers every pending
-			// message regardless of which node seeded the frame.
-			sourceNodeID, ok, srcErr := resolveMessageFrameSource(ctx, deps.Persist, tx, instUUID, body.Target)
-			if srcErr != nil {
-				return srcErr
-			}
-			if !ok {
-				// @constraint: no node to source a frame on (instance has no nodes) —
-				// nothing to deliver to; leave the message pending. This
-				// is degenerate (a template with zero nodes) and not worth
-				// failing the emit over.
-				return nil
-			}
-			_, frErr := frame.EnqueueOrCoalesce(ctx, deps.Persist, tx, instUUID, sourceNodeID)
+			// @constraint: seed a frame so the message is actually delivered.
+			// Messages are delivered ONLY into a running frame
+			// (SweepDeliverMessagesForRunningFrames); a message POSTed to
+			// a quiescent instance (no running frame) would otherwise
+			// stay pending forever and never wake the subscribing node.
+			// The emit path therefore enqueues a frame in the SAME tx as
+			// the message insert (atomic: a crash mid-flow cannot leave a
+			// pending message with no frame to carry it, nor a frame with
+			// no message). The typed-message schema layer retires the
+			// per-frame source-node-list; the inserted envelope IS the
+			// frame's triggering message
+			// (`col:rimsky_frames.triggering_message_id` FK), which is
+			// what the cascade-graph observability endpoint and the
+			// frame-origin audit story read.
+			_, frErr := frame.EnqueueFrame(ctx, deps.Persist, tx, instUUID, shared.UUID(msgID))
 			return frErr
 		})
 		if isDryRun && errors.Is(err, errDryRunOK) {
 			WriteDryRunResponseForced(w, "would_have_sent", map[string]any{
 				"instance_id":  instanceID.String(),
-				"message_kind": body.Kind,
+				"message_type": body.Type,
 				"sender_kind":  senderKind,
-				"target":       body.Target,
 			})
 			return
 		}
@@ -381,8 +512,35 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				writeJSON(w, http.StatusForbidden, map[string]any{"error": err.Error()})
 				return
 			}
-			if errors.Is(err, errMessageTargetUnknown) {
-				badRequest(w, err.Error())
+			var unknownType *unknownMessageTypeError
+			if errors.As(err, &unknownType) {
+				// @constraint: HTTP 400 with the rejected type AND the
+				// declared registry set, so the operator can see exactly
+				// what the template admits. The empty `declared_types`
+				// case (a template with no `messages:` block) is
+				// surfaced as an empty JSON array — the slice is
+				// initialized non-nil so json.Marshal emits `[]`, not
+				// `null`, even when zero types are declared.
+				declared := unknownType.Declared
+				if declared == nil {
+					declared = []string{}
+				}
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error":          "unknown message type",
+					"type":           unknownType.Type,
+					"declared_types": declared,
+				})
+				return
+			}
+			if errors.Is(err, errPayloadCarriesReservedField) {
+				// @constraint: HTTP 400. Reserved-field
+				// privilege-escalation guard: payloads on
+				// author-declared types cannot carry `wake_node_ids`
+				// (the runtime-synthetic wake field).
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error":          "reserved payload field",
+					"reserved_field": reservedPayloadFieldWakeNodeIDs,
+				})
 				return
 			}
 			writeError(w, err)
@@ -403,56 +561,12 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 // target instance has already terminated. Mapped to 409 Conflict.
 var errInstanceTerminated = errors.New("instance has terminated; no further messages accepted")
 
-// errMessageTargetUnknown is the sentinel returned when the message's
-// `target` names a node type that doesn't exist in the instance. Mapped
-// to 400 Bad Request: an operator typo MUST surface as a precise error
-// rather than silently fanning out broadcast-style (which would consume
-// frame slots and risk starving other deliveries to nodes that have no
-// subscription to the message). Empty target stays broadcast.
-var errMessageTargetUnknown = errors.New("target names no node type in this instance")
-
-// resolveMessageFrameSource picks the node to source a delivery frame on
-// for a just-enqueued message. When target names a node type, the
-// matching node is the source. For a broadcast envelope (empty target)
-// the first node in the instance is used — the frame source only marks
-// the triggering node; the delivery sweep delivers every pending message
-// into the running frame regardless of which node seeded it. Returns
-// (zero, false, nil) when the instance has no nodes. A non-empty target
-// that names no existing node type returns errMessageTargetUnknown so
-// the handler can surface a 400 — distinguishing "intended broadcast"
-// (empty target) from "typo target" (non-empty but missing).
-func resolveMessageFrameSource(
-	ctx context.Context, persist persistence.Tables, tx persistence.Tx,
-	instanceID shared.UUID, target string,
-) (shared.UUID, bool, error) {
-	nodes, err := persist.Nodes().ListByInstance(ctx, instanceID, tx)
-	if err != nil {
-		return shared.UUID{}, false, err
-	}
-	if len(nodes) == 0 {
-		return shared.UUID{}, false, nil
-	}
-	if target != "" {
-		for _, n := range nodes {
-			if n.NodeType == target {
-				return n.ID, true, nil
-			}
-		}
-		// @constraint: target names a node type that doesn't exist in this instance —
-		// surface as a 400 rather than silently broadcasting. An operator
-		// typo must NOT fan out to nodes that have no subscription to the
-		// message (which would consume frame slots and risk starving other
-		// deliveries). Empty target stays broadcast.
-		return shared.UUID{}, false, errMessageTargetUnknown
-	}
-	return nodes[0].ID, true, nil
-}
-
 // handleListInstanceMessages is GET /instances/{id}/messages.
 //
-// Query params: `kind`, `sender_kind`, `target`,
-// `backfill_operation_id`, `delivered_after`, `delivered_before`,
-// `limit`, `cursor`. Each filter is optional; all share AND semantics.
+// Query params: `type`, `sender_kind`, `frame_id`, `delivered_after`,
+// `delivered_before`, `limit`, `cursor`. Each filter is optional; all
+// share AND semantics. The retired `kind` and `target` params have no
+// column to filter against and are silently ignored by the URL parser.
 func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idStr := chi.URLParam(req, "id")
@@ -465,22 +579,13 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 		instUUID := shared.UUID(instanceID)
 		filter := persistence.MessageListFilter{
 			InstanceID: &instUUID,
-			Kind:       q.Get("kind"),
+			Type:       q.Get("type"),
 			SenderKind: q.Get("sender_kind"),
-			Target:     q.Get("target"),
 		}
-		if s := q.Get("backfill_operation_id"); s != "" {
-			opID, err := uuid.Parse(s)
-			if err != nil {
-				badRequest(w, "invalid backfill_operation_id")
-				return
-			}
-			u := shared.UUID(opID)
-			filter.BackfillOperationID = &u
-		}
-		// @constraint: frame_id narrows to the messages delivered into a given frame —
-		// the "what landed in frame X" forensic query for backfill / fan-out
-		// debugging. Backed by the frame_id predicate in both drivers' List.
+		// @constraint: frame_id narrows to the messages delivered into a
+		// given frame — the "what landed in frame X" forensic query for
+		// fan-out debugging. Backed by the frame_id predicate in both
+		// drivers' List.
 		if s := q.Get("frame_id"); s != "" {
 			frameID, err := uuid.Parse(s)
 			if err != nil {
@@ -528,13 +633,22 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 
 // @constraint: handleGetMessage is GET /messages/{id}.
 //
-// @blessed-invariant: message-inertness — messages are inert in rimsky. The persistence-
-// layer fetch here is one of two sanctioned read sites for message
-// payload bytes (the other is the substitution-leaf walk in
-// graph/attribute/substitution.go::resolveTrigger). Rimsky never logs,
-// formats with `%v`, validates beyond schema gates, transforms, or
-// includes payload bytes in error messages. Same opacity discipline as
-// `@blessed-invariant 20/21`.
+// @blessed-invariant: message-inertness — messages are inert in rimsky.
+// The persistence-layer fetch here is one of a small fixed set of
+// sanctioned read sites for message payload bytes — the others are the
+// substitution-leaf walks in
+// `code:lib/graph/attribute/substitution.go` (`resolveTriggerValue` and
+// `resolveMessagesValue`), the cascade walker's `messagePayloadAsMap`
+// decode used to populate the message-virtual-node settle signal's
+// `attributes_delta` so subscriber CEL `when:` predicates can match
+// against body fields
+// (`code:lib/runtime/message_delivery.go::messagePayloadAsMap`), and the
+// scheduler's `advanceOneFrame` runtime-internal wake-field extraction
+// (`code:lib/graph/frame/engine.go::advanceOneFrame`), which pulls the
+// rimsky-synthesized `wake_node_ids` array from the triggering message's
+// payload inside the promotion tx. Rimsky never logs, formats with
+// `%v`, validates beyond schema gates, transforms, or includes payload
+// bytes in error messages. Same opacity discipline as
 func handleGetMessage(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idStr := chi.URLParam(req, "id")

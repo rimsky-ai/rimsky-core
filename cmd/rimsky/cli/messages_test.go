@@ -18,8 +18,8 @@ func TestClient_ListInstanceMessages(t *testing.T) {
 		if r.URL.Path != "/v1/instances/abc/messages" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
-		if r.URL.Query().Get("kind") != "invalidate" {
-			t.Errorf("kind filter missing: %s", r.URL.RawQuery)
+		if r.URL.Query().Get("type") != "ping/recheck" {
+			t.Errorf("type filter missing: %s", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -27,7 +27,7 @@ func TestClient_ListInstanceMessages(t *testing.T) {
 				{
 					"id":          "m1",
 					"instance_id": "abc",
-					"kind":        "invalidate",
+					"type":        "ping/recheck",
 					"sender":      "operator",
 					"sender_kind": "operator",
 					"received_at": time.Now().UTC().Format(time.RFC3339),
@@ -37,12 +37,15 @@ func TestClient_ListInstanceMessages(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(srv.URL)
-	resp, err := c.ListInstanceMessages(context.Background(), "abc", ListMessagesQuery{Kind: "invalidate"})
+	resp, err := c.ListInstanceMessages(context.Background(), "abc", ListMessagesQuery{Type: "ping/recheck"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(resp.Messages) != 1 || resp.Messages[0].ID != "m1" {
 		t.Errorf("messages: %+v", resp.Messages)
+	}
+	if resp.Messages[0].Type != "ping/recheck" {
+		t.Errorf("decoded type: got %q, want %q", resp.Messages[0].Type, "ping/recheck")
 	}
 }
 
@@ -55,7 +58,7 @@ func TestClient_GetMessage(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":          "m1",
 			"instance_id": "abc",
-			"kind":        "invalidate",
+			"type":        "ping/recheck",
 			"sender":      "operator",
 			"sender_kind": "operator",
 			"received_at": time.Now().UTC().Format(time.RFC3339),
@@ -69,6 +72,9 @@ func TestClient_GetMessage(t *testing.T) {
 	}
 	if m.ID != "m1" {
 		t.Errorf("id: %s", m.ID)
+	}
+	if m.Type != "ping/recheck" {
+		t.Errorf("decoded type: got %q, want %q", m.Type, "ping/recheck")
 	}
 }
 

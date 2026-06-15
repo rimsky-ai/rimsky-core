@@ -240,14 +240,23 @@ func seedFixtureNodeAndRun(t *testing.T, rawDB *sql.DB) (uuid.UUID, uuid.UUID) {
 	if err != nil {
 		t.Fatalf("seed node: %v", err)
 	}
+	// @constraint: rimsky_frames.triggering_message_id is a NOT NULL FK to rimsky_messages(id); seed the triggering message before the frame insert below.
+	msgID := uuid.New().String()
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+		msgID, instanceID,
+	); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
 	// @constraint: rimsky_node_runs.frame_id FK requires a frame row; seed a running frame so the run insert below succeeds.
 	_, err = rawDB.ExecContext(ctx,
 		`INSERT INTO rimsky_frames
-		   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		   (frame_id, instance_id, triggering_message_id, state,
 		    queued_at, started_at, frame_timeout_ms)
-		 VALUES (?, ?, 'serial_queue', 'running', json_array(?),
+		 VALUES (?, ?, ?, 'running',
 		         datetime('now'), datetime('now'), 600000)`,
-		frameID, instanceID, nodeID.String(),
+		frameID, instanceID, msgID,
 	)
 	if err != nil {
 		t.Fatalf("seed frame: %v", err)

@@ -20,7 +20,6 @@ import (
 
 const sampleSpec = `name: x
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: http-node
@@ -128,7 +127,6 @@ func TestRunTemplateRegister_WarningsAsErrors_Rejected(t *testing.T) {
 // so the validate route returns ok:false with a finding.
 const driftSpec = `name: x
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: drift-executor
@@ -167,7 +165,6 @@ func TestRunTemplateLint_Findings(t *testing.T) {
 // validate route returns a warning (and no errors).
 const warnSpec = `name: x
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: warn-executor
@@ -209,7 +206,6 @@ func TestRunTemplateLint_SourceFileResolution(t *testing.T) {
 	}
 	specWithRef := `name: x
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: http-node
@@ -227,7 +223,7 @@ nodes:
 
 func TestRunTemplateList(t *testing.T) {
 	srv := setupClitest(t)
-	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	if got := cli.RunTemplateList(context.Background(), nil); got != 0 {
 		t.Errorf("exit %d", got)
 	}
@@ -242,7 +238,7 @@ func TestRunTemplateGet_NotFound(t *testing.T) {
 
 func TestRunTemplateDeploy_AlreadyDeployed(t *testing.T) {
 	srv := setupClitest(t)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	if got := cli.RunTemplateDeploy(context.Background(), []string{"v1"}); got != 0 {
 		t.Errorf("exit %d", got)
@@ -251,7 +247,7 @@ func TestRunTemplateDeploy_AlreadyDeployed(t *testing.T) {
 
 func TestRunTemplateRm_Conflict(t *testing.T) {
 	srv := setupClitest(t)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "v1", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "v1", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	if got := cli.RunTemplateRm(context.Background(), []string{"v1"}); got != 1 {
 		t.Errorf("exit %d, want 1 (conflict)", got)

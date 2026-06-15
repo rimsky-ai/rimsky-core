@@ -67,8 +67,21 @@ func TestLineageRunDescendants_HandlerWalksChain(t *testing.T) {
 		if err != nil || len(nodes) == 0 {
 			return err
 		}
-		// @constraint: any seeded frame for this instance works.
-		fid, err := h.persist.Frames().EnqueueSerialFrame(ctx, shared.UUID(instUUID), nodes[0].ID, 600000, tx)
+		// @constraint: any seeded frame for this instance works; the trigger
+		// message is a test seed enqueued in the same tx, so the frame's
+		// triggering_message_id FK is satisfied.
+		msgID := shared.UUID(uuid.New())
+		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: shared.UUID(instUUID),
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		_ = nodes
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -174,7 +187,12 @@ func TestLineageRunAncestors_HandlerWalksChain(t *testing.T) {
 		if err != nil || len(nodes) == 0 {
 			return err
 		}
-		fid, err := h.persist.Frames().EnqueueSerialFrame(ctx, shared.UUID(instUUID), nodes[0].ID, 600000, tx)
+		msgID := shared.UUID(uuid.New())
+		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{ID: msgID, InstanceID: shared.UUID(instUUID), Type: "test/seed", Sender: "test", SenderKind: "operator"}); err != nil {
+			return err
+		}
+		_ = nodes
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -290,7 +308,12 @@ func TestLineagePrune_DryRunCountMatchesLiveDelete(t *testing.T) {
 		if err != nil || len(nodes) == 0 {
 			return err
 		}
-		fid, err := h.persist.Frames().EnqueueSerialFrame(ctx, shared.UUID(instUUID), nodes[0].ID, 600000, tx)
+		msgID := shared.UUID(uuid.New())
+		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{ID: msgID, InstanceID: shared.UUID(instUUID), Type: "test/seed", Sender: "test", SenderKind: "operator"}); err != nil {
+			return err
+		}
+		_ = nodes
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instUUID), msgID, 600000, tx)
 		if err != nil {
 			return err
 		}
@@ -410,7 +433,18 @@ func seedLineageInstance(t *testing.T, h *harness, prefix string) (instID uuid.U
 		if err != nil || len(nodes) == 0 {
 			return err
 		}
-		fid, err := h.persist.Frames().EnqueueSerialFrame(ctx, shared.UUID(instID), nodes[0].ID, 600000, tx)
+		_ = nodes
+		msgID := shared.UUID(uuid.New())
+		if err := h.persist.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: shared.UUID(instID),
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := h.persist.Frames().InsertFrame(ctx, shared.UUID(instID), msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

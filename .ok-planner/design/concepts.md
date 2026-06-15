@@ -11,7 +11,6 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `atomic-staging` — Producer-side stage-then-swap pattern: writers stage data into a side area; on `Commit` the producer atomically swaps the staging into the canonical view; on `Abandon` the staging is dropped.
 - `attribute` — Attributes are the typed inputs, outputs, and configuration of a node, declared by a JSON Schema in the template's `attributes:` block.
 - `auto-terminal` (aliases: held-claim resolution) — The mechanism that fires the producer's Commit or Abandon verb exactly once at the end of a held claim's holding-subgraph.
-- `backfill` — A backfill is one invalidate-kind message with a `partition_request_override` payload field, targeting a fan-out node.
 - `blob-backend` — The blob-backend interface is the abstraction that backs spilled byte streams from three surfaces: attribute values, parked-node payloads, and named-event payloads.
 - `breakpoint` — A breakpoint is a runtime-installed pause-point on a live `concept:instance`, identified by UUID and bound to a `(matcher, checkpoint, signal_type?, mode, overflow_policy, ttl_seconds?)` tuple.
 - `cancel-siblings` — A boolean field on the `strict` aggregation policy that turns on proactive sibling cancellation: when one sub-claim resolves to an aggregate-abandon under a parent whose policy is strict with cancel-siblings on, the runtime walks the parent's other in-flight sub-claims and force-Abandons each via recursive claim-handle terminal-resolution calls.
@@ -35,17 +34,18 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `event-log` (aliases: audit log) — Rimsky's internal append-only audit-log ledger.
 - `executor` — An executor is an out-of-process service that implements the gRPC executor's server-streaming execute method plus an optional executor-observability protocol.
 - `fan-out` — Fan-out is an invocation pattern over `concept:child-execution`: a node-level decision to partition a held claim into sub-claims and dispatch one child execution per partition, with an author-specified aggregation policy.
-- `frame` (aliases: cascade-frame) — A frame is one cascade resolution, persisted as a frame row carrying a resolution mode (`coalesce` or `serial_queue`) and a lifecycle state.
+- `frame` (aliases: cascade-frame) — A frame is one cascade resolution, persisted as a frame row carrying a triggering-message reference and a lifecycle state.
 - `graph` — A graph is rimsky's unit of node connectivity.
 - `host-agent` — A long-running daemon on a user's dev machine, bundled into the `rimsky` CLI binary and invoked as the `rimsky agent` subcommand.
 - `host-agent-proxy` — A rimsky-stack `concept:service` implementing the multi-protocol composition pattern, presenting the rimsky gRPC service protocols on the supervisor-facing side and maintaining agent connections on the dev-facing side via a long-lived bidi-stream protocol.
 - `inertness` (aliases: inert bytes) — A uniform discipline applied across two overlapping lists of carrier streams that rimsky neither inspects nor interprets beyond a narrowly defined set of read sites.
 - `instance` — An instance is one live deployment of a template, identified by a rimsky-generated UUID.
-- `invalidate` — `invalidate` is the sole graph-level message that the scheduler / control-api emits to mark a node `stale`.
 - `lifecycle-subscriber` — A service that implements the gRPC lifecycle-subscriber protocol — seven event callbacks: template registered, deployed, undeployed, and deregistered, plus instance created and terminated, plus run-scope terminal (carrying the run-scope id and a terminal reason).
 - `lineage` — A persisted projection of computational + data-promotion records.
 - `lineage-record` — An append-only record in the lineage projection (see `concept:lineage`).
-- `message` — A boundary-crossing dispatch unit.
+- `message` — A typed envelope whose arrival at an instance opens a frame; persisted in the message ledger on receipt and delivered to subscribers at the next frame boundary, one message per frame.
+- `message-emitter-node` — A node-type whose dispatch mode is "build a message envelope from the node's attributes and insert it into the message ledger"; declared by `emits_message: <type>` instead of `executor:` or `delegate:`.
+- `message-schema` — The template-level registry of accepted message types declared in a `messages:` block; each entry pairs a message type-path with a JSON Schema body shape.
 - `module-layout` (aliases: workspace-layout) — The Go workspace ties five modules into one build, with the repo root holding four idiomatic top-level code directories (binaries, shippable library code, out-of-tree tests, and dev tooling).
 - `named-event` — A named event is a non-terminal executor emission tagged with a name (a string drawn from the executor's `declared_events` capability) and an inert payload recorded alongside it.
 - `named-lock` — A named lock is a producer-independent capacity-counter primitive.
@@ -81,6 +81,8 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 
 The slugs below are not live concept entries — each has been replaced by one or more current concepts. The retirement notes live under `concepts/_retired/<slug>.md`.
 
+- See `concepts/_retired/backfill.md` — replaced by typed-message machinery; backfill is now a use case of `concept:message`, `concept:message-schema`, and `concept:fan-out`, not a dedicated primitive.
+- See `concepts/_retired/invalidate.md` — the "sole graph-level message" framing dissolved into typed messages; every message arrival is structurally an invalidate. Replaced by `concept:message`, `concept:message-schema`, and `concept:message-emitter-node`.
 - See `concepts/_retired/last-outcome.md` — per-resolution cascade-gate projection on the node-run, replaced by `concept:signal` (cascade-fire is subscriber-driven via a settling-signal-type field carrying a canonical signal type-path).
 - See `concepts/_retired/lifecycle-handler.md` — the three per-node template slots (acquire-unavailable, executor-complete, executor-errored), replaced by `concept:error-policy` (acquisition failure folds in via synthetic class `acquire/*`, with `pass` an action in the error-policy chain) and `concept:node-subscription` (cascade-fire selectivity expressed as receiver-side CEL predicates).
 - See `concepts/_retired/node-state.md` — the five-state node enum, replaced by `concept:node-run` (the enum lives entirely on the node-run rather than the node row).

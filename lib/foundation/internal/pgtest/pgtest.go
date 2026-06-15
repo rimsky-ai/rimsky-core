@@ -186,6 +186,21 @@ func ExecForTest(ctx context.Context, t *testing.T, d persistence.Database, sql 
 	}
 }
 
+// TryExecForTest runs a raw SQL command and returns the resulting error
+// (nil on success). Test-only escape hatch for tests that need to assert
+// a CHECK / FK constraint REJECTS an INSERT — ExecForTest fatals on any
+// error, which would mask the rejection rather than surface it. Fatals
+// only on driver-mismatch.
+func TryExecForTest(ctx context.Context, t *testing.T, d persistence.Database, sql string, args ...any) error {
+	t.Helper()
+	pool, ok := pgpersist.PoolFromDatabaseForTest(d)
+	if !ok {
+		t.Fatalf("pgtest.TryExecForTest: not a postgres driver")
+	}
+	_, err := pool.Exec(ctx, sql, args...)
+	return err
+}
+
 // QueryRowForTest runs a raw SQL SELECT against the underlying Postgres
 // pool of a persistence.Database and scans into dest. Test-only escape
 // hatch in the same vein as ExecForTest. Fatals on driver-mismatch or

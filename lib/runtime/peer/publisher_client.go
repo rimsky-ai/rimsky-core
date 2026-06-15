@@ -41,7 +41,7 @@ func (c *PublisherClient) Subscribe(ctx context.Context, req clientiface.Subscri
 		Kind:                    req.Kind,
 		ResolvedConfig:          req.ResolvedConfig,
 		TargetNode:              req.TargetNode,
-		MessageKind:             req.MessageKind,
+		MessageType:             req.MessageType,
 	})
 	if err != nil {
 		return fmt.Errorf("remote publisher %q: Subscribe: %w", c.name, err)
@@ -81,7 +81,7 @@ func (c *PublisherClient) ListSubscriptions(ctx context.Context) ([]clientiface.
 			InstanceID:              shared.UUID(iid),
 			Kind:                    w.GetKind(),
 			TargetNode:              w.GetTargetNode(),
-			MessageKind:             w.GetMessageKind(),
+			MessageType:             w.GetMessageType(),
 		})
 	}
 	return out, nil

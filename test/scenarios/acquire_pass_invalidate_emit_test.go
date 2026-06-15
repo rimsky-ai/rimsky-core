@@ -63,7 +63,6 @@ func TestAcquirePassSubscribedMonitorRuns(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acquire-pass-subscribed-monitor", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

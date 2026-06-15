@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,14 +72,16 @@ var anyBraceRe = regexp.MustCompile(`\{[^{}]*\}`)
 // dispatchDirectiveRe matches `{{<inside>}}` directives.
 var dispatchDirectiveRe = regexp.MustCompile(`\{\{([^{}]+)\}\}`)
 
-// @deliberate: dispatchDirectiveRe / directiveBodyRe accept the five substitution
-// kinds: `claim`, `params`, `nodes`, `trigger`, and `child`. The
-// legacy `deps.X.Y` form retired post-2026-05-14. The `trigger` and
-// `child` kinds were added by spec §E14 (data-platform-extensions).
+// @deliberate: dispatchDirectiveRe / directiveBodyRe accept the six substitution
+// kinds: `claim`, `params`, `nodes`, `trigger`, `child`, and `messages`.
+// The legacy `deps.X.Y` form retired post-2026-05-14. The `trigger` and
+// `child` kinds were added by spec §E14 (data-platform-extensions). The
+// `messages` kind was added by the 2026-06-14 message-schema-layer plan
+// (typed-message body addressing).
 //
 // directiveBodyRe further parses the inside of `{{...}}` against the
 // known source kinds.
-var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|trigger|child)\.(.+)$`)
+var directiveBodyRe = regexp.MustCompile(`^(claim|params|nodes|trigger|child|messages)\.(.+)$`)
 
 // RefValidationMode is the operator-set, startup-level mode governing
 // ALL registration-time reference validation across service types
@@ -273,7 +276,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	if strings.TrimSpace(spec.Version) == "" {
 		res.Errors = append(res.Errors, ValidationError{Path: "version", Msg: "version is required"})
 	}
-	validateFrameResolution(spec, &res)
+	validateFrameTimeout(spec, &res)
 
 	// @deliberate: D1 — canonicalize nested `graphs:` shape into flat
 	// Nodes for the downstream per-node validation. Pre-v1 accepts both
@@ -313,13 +316,38 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		declared[n.Type] = i
 	}
 
+	// @deliberate: `messages:` registry validation runs before the
+	// per-node passes so downstream cross-checks (subscribes'
+	// message-type-shape leg, substitution-ref future passes) can consult
+	// the declared set. `declared` (real node-types) is threaded through
+	// so the validator can reject a declared message-type whose value
+	// also exists as a node-type — the slash-bearing rule keeps real
+	// node-types out of the message-type partition, but a defensive
+	// cross-check at the message-side declaration surfaces the collision
+	// even when the grammar happens to be lax.
+	declaredMessages := validateMessages(spec, declared, &res)
+	// @deliberate: body-field set per declared message-type, built once
+	// for the validator run. Threaded into validateSubscribes so the CEL
+	// `when:` cross-check on `payload.attributes_delta.<field>` (the
+	// bridge field the message-virtual-node settle signal populates from
+	// the body) matches the rigor of the `{{messages.T.field}}`
+	// substitution cross-check below.
+	messageBodyFieldsForCEL := buildMessageBodyFieldSet(spec)
+
 	for i, n := range spec.Nodes {
 		base := fmt.Sprintf("nodes[%d]", i)
-		validateSubscribes(n, base, declared, hooks, spec, &res)
+		validateSubscribes(n, base, declared, declaredMessages, messageBodyFieldsForCEL, hooks, spec, &res)
 		validateErrorTypes(n, base, declared, hooks, &res)
 		validateExecutorCoherence(n, base, hooks, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
 		validateKindDeclaration(n, base, hooks, &res)
+		// @deliberate: Message-emitter node-kind (`emits_message:`) —
+		// registration-time validation that the named type is declared in
+		// the template's `messages:` registry and the node's `attributes:`
+		// block matches the destination type's `body_schema` exactly. Per
+		// concept:message-emitter-node: the attribute set IS the body, so
+		// a superset is rejected (hidden state has nowhere to land).
+		validateEmitsMessage(n, base, spec, declaredMessages, &res)
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
@@ -335,8 +363,73 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	// @deliberate: Publishers block validation. The persisted column
 	// is `target_node TEXT NOT NULL` with no empty-string sentinel, so
 	// reject empty entries here rather than surfacing a pgx NOT NULL
-	// violation at instance-create time.
-	validatePublishers(spec, declared, &res)
+	// violation at instance-create time. Per
+	// spec:2026-05-17-sensor-messaging-unification-design §Open items #1.
+	//
+	// `declaredMessages` is threaded through so publishers' `message_type`
+	// references can be cross-checked against the template's `messages:`
+	// registry at registration: a publisher declaring an undeclared
+	// `message_type` would otherwise register and silently fail at every
+	// emit (the receipt-time gate returns 400 for the lifetime of every
+	// instance). Per spec §Components / Message-schema registry: the
+	// registry's whole point is to surface the mismatch at template-author
+	// time, not at runtime.
+	validatePublishers(spec, declared, declaredMessages, &res)
+
+	// @deliberate: Post-pass `{{messages.<type>.<field>}}` cross-check.
+	// For each directive: confirm `<type>` is declared in the template's
+	// `messages:` registry, and (when a field is named) confirm `<field>`
+	// is a property in that entry's body_schema. Bare-form
+	// `messages.<type>` (whole-body pull) is admitted without a field
+	// check. The same extractor feeds the auto-subscribe inverse-edge
+	// builder below — one walk, two consumers.
+	//
+	// Per the spec §Load-bearing property "one substitution engine, two
+	// surfaces" — the validator's cross-check rejects typo'd `<type>` /
+	// `<field>` directives at registration; the runtime resolver is the
+	// dynamic defense for the edge case that the validator cannot catch
+	// (runtime-interpolated directives).
+	//
+	// @concept: message-schema
+	messageRefs := ExtractMessageRefsFromTemplate(*spec)
+	messageBodyFields := buildMessageBodyFieldSet(spec)
+	for receiverType, list := range messageRefs {
+		for _, ref := range list {
+			path := fmt.Sprintf("nodes[%s].attributes.schema (substitution ref)", receiverType)
+			if _, ok := declaredMessages[ref.MessageType]; !ok {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg: fmt.Sprintf("substitution ref `messages.%s.%s` references unknown message type %q (not declared in `messages:`)",
+						ref.MessageType, ref.Field, ref.MessageType),
+				})
+				continue
+			}
+			if ref.Field == "" {
+				// @deliberate: bare-form pull — whole body, no field to cross-check.
+				continue
+			}
+			fields, ok := messageBodyFields[ref.MessageType]
+			if !ok {
+				// @deliberate: the message-type is declared but has no
+				// body_schema (empty body is admitted by validateMessages).
+				// A directive that names a field against an empty-body type
+				// cannot resolve and is rejected at registration.
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg: fmt.Sprintf("substitution ref `messages.%s.%s` reads a field but message type %q declares no body_schema (empty body)",
+						ref.MessageType, ref.Field, ref.MessageType),
+				})
+				continue
+			}
+			if _, ok := fields[ref.Field]; !ok {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: path,
+					Msg: fmt.Sprintf("substitution ref `messages.%s.%s` reads a field %q not declared in message type %q's body_schema",
+						ref.MessageType, ref.Field, ref.Field, ref.MessageType),
+				})
+			}
+		}
+	}
 
 	// @deliberate: post-pass substitution-ref cross-checks. Both checks
 	// consume the same parsed `{{nodes.<X>.<kind>.<name>}}` directives
@@ -380,26 +473,11 @@ func attributeKeyDeclared(sender TemplateNodeDef, key string) bool {
 	return declared
 }
 
-// validateFrameResolution enforces the frame-resolution template
-// requirements: frame_resolution required, one of coalesce|serial_queue;
-// frame_timeout_ms ≥ 60000 when set.
-func validateFrameResolution(spec *TemplateSpec, res *ValidationResult) {
-	switch spec.FrameResolutionMode {
-	case FrameResolutionCoalesce, FrameResolutionSerialQueue:
-	case "":
-		res.Errors = append(res.Errors, ValidationError{
-			Path: "frame_resolution_mode",
-			Msg: fmt.Sprintf("frame_resolution is required (one of: %q, %q)",
-				FrameResolutionCoalesce, FrameResolutionSerialQueue),
-		})
-	default:
-		res.Errors = append(res.Errors, ValidationError{
-			Path: "frame_resolution_mode",
-			Msg: fmt.Sprintf("frame_resolution = %q is not a valid value (one of: %q, %q)",
-				spec.FrameResolutionMode, FrameResolutionCoalesce, FrameResolutionSerialQueue),
-		})
-	}
-
+// validateFrameTimeout enforces the surviving frame template requirement:
+// frame_timeout_ms ≥ 60000 when set. The pre-message-schema-layer
+// `frame_resolution_mode:` toggle (coalesce | serial_queue) retires; one
+// message per frame is the only delivery shape.
+func validateFrameTimeout(spec *TemplateSpec, res *ValidationResult) {
 	if spec.FrameTimeoutMs != 0 && spec.FrameTimeoutMs < FrameTimeoutMinMs {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: "frame_timeout_ms",
@@ -667,9 +745,24 @@ func validateAcquireUnavailablePolicyAdvised(n TemplateNodeDef, base string, res
 // dimensions (on/when/outcome/error_class/reason/name/kind/sender/
 // sender_kind/target) are gone.
 //
+// `declaredMessages` is the set of message-type-paths declared in the
+// template's `messages:` registry. A subscription whose `node:` value is
+// of message-type shape (slash-bearing, not a declared node-type) must
+// match a declared `messages:` entry — Pass 5 of the 2026-06-14 message-
+// schema-layer reshape tightens the Pass 4 loosened rule, which admitted
+// any slash-bearing value.
+//
 //	@concept: node-subscription
 //	@concept: signal
-func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
+//	@concept: message-schema
+//
+// `messageBodyFields` carries, per declared message-type, the set of
+// top-level property names in its `body_schema`. Threaded into the
+// CEL `when:` compile for message-virtual-node subscriptions so a
+// `payload.attributes_delta.<field>` reference is cross-checked
+// against the body-schema's field set — the same registration-time
+// rigor the `{{messages.T.field}}` substitution validator applies.
+func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int, declaredMessages map[string]struct{}, messageBodyFields map[string]map[string]struct{}, hooks RegistryHooks, tmpl *TemplateSpec, res *ValidationResult) {
 	for i, s := range n.Subscribes {
 		sbase := fmt.Sprintf("%s.subscribes[%d]", base, i)
 		// @deliberate: cascade-shape flags are required — no defaults
@@ -730,13 +823,34 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
-		// @deliberate: `node:` must reference a declared node-type.
+		// @deliberate: `node:` must reference a declared node-type OR a
+		// declared message-type from the template's `messages:` registry.
+		// Message arrival is a virtual-node settle (per the 2026-06-14
+		// message-schema-layer reshape): receivers subscribe to a
+		// message-type via `node: <message-type>, type: terminal/success`.
+		//
+		// Real node-types are identifier-shaped (no slash, validated
+		// elsewhere); message-type-paths are slash-bearing. The slash
+		// check cleanly partitions the two surfaces. A slash-bearing
+		// `node:` MUST match a declared `messages:` entry, otherwise the
+		// subscription registers but can never fire (the cascade walker
+		// has no virtual-node-type to walk).
 		if s.Node != "" {
-			if _, ok := declared[s.Node]; !ok {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: sbase + ".node",
-					Msg:  fmt.Sprintf("subscription `node: %q` does not reference a declared node", s.Node),
-				})
+			_, isDeclaredNode := declared[s.Node]
+			_, isDeclaredMessage := declaredMessages[s.Node]
+			if !isDeclaredNode && !isDeclaredMessage {
+				if strings.Contains(s.Node, "/") {
+					res.Errors = append(res.Errors, ValidationError{
+						Path: sbase + ".node",
+						Msg: fmt.Sprintf("subscription `node: %q` is shaped like a message-type-path but is not declared in the template's `messages:` registry",
+							s.Node),
+					})
+				} else {
+					res.Errors = append(res.Errors, ValidationError{
+						Path: sbase + ".node",
+						Msg:  fmt.Sprintf("subscription `node: %q` does not reference a declared node", s.Node),
+					})
+				}
 				continue
 			}
 		}
@@ -756,41 +870,62 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			})
 			continue
 		}
-		// @deliberate: `frame:` must be in | next | "".
-		switch s.Frame {
-		case "", FrameIn, FrameNext:
-		default:
-			res.Errors = append(res.Errors, ValidationError{
-				Path: sbase + ".frame",
-				Msg:  fmt.Sprintf("`frame:` must be empty | %q | %q, got %q", FrameIn, FrameNext, s.Frame),
-			})
-		}
 		// @deliberate: `when:` must compile against the resolved payload
-		// schema.
+		// schema. When the subscription is on a message-virtual-node (the
+		// `node:` value is a declared message-type), also cross-check
+		// chained `payload.attributes_delta.<field>` references against
+		// the message-type's body_schema. Without this leg the CEL side
+		// would silently admit body-field typos while the substitution
+		// validator's {{messages.T.field}} leg rejects them — asymmetric
+		// coverage of STORY-typed-message-substitution's falsifier
+		// ("a typo in a `messages:` body field on either side registers
+		// without error"). A real-node subscription falls back to the bare
+		// CompileWhen path, which uses the canonical taxonomy's payload
+		// schema for the top-level field set only.
 		if s.When != "" {
-			if _, err := signal.CompileWhen(signal.TypePath(s.Type), s.When); err != nil {
+			var compileErr error
+			if _, isMessageType := declaredMessages[s.Node]; isMessageType {
+				// @deliberate: body-schema entry may be absent (declared
+				// with no body_schema or an unparseable one — both
+				// surfaced by validateMessages earlier). Treat absent as
+				// empty so a `payload.attributes_delta.<field>` reference
+				// is rejected with the "not in body_schema" diagnostic; an
+				// empty-body message-type cannot legally drive a CEL
+				// body-field read.
+				bodyFields, present := messageBodyFields[s.Node]
+				if !present {
+					bodyFields = map[string]struct{}{}
+				}
+				_, compileErr = signal.CompileWhenWithBodyFields(signal.TypePath(s.Type), s.When, bodyFields)
+			} else {
+				_, compileErr = signal.CompileWhen(signal.TypePath(s.Type), s.When)
+			}
+			if compileErr != nil {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: sbase + ".when",
-					Msg:  err.Error(),
+					Msg:  compileErr.Error(),
 				})
 			}
 		}
 		// @deliberate: cross-check `terminal/error/<class>` exact-path
 		// subscriptions against the union of the sender's declared
-		// vocabularies — its executor's declared_error_classes AND
-		// every producer in its stores: block (producer-classified
-		// acquisition failures land as `terminal/error/<producer
-		// class>`, so the validator must accept what the runtime
-		// routes). Match rule: leaf matches a declared class iff (a)
-		// the class is exact and equals leaf, or (b) the class ends in
-		// `*` and is a prefix of leaf. An unmatched leaf is an
-		// advisory WARNING, never a hard rejection — same semantics as
-		// `validateErrorTypes`: peers MAY declare nothing, and an
-		// incomplete vocabulary must not lock operators out of routing
-		// classes the system emits. Silent-skip when no vocabulary
-		// information is available at all (hooks unwired / every
-		// lookup ok=false).
-		if s.Node != "" && tmpl != nil && strings.HasPrefix(s.Type, "terminal/error/") &&
+		// vocabularies — its executor's declared_error_classes AND every
+		// producer in its stores: block (producer-classified acquisition
+		// failures land as `terminal/error/<producer class>`, so the
+		// validator must accept what the runtime routes). Match rule:
+		// leaf matches a declared class iff (a) the class is exact and
+		// equals leaf, or (b) the class ends in `*` and is a prefix of
+		// leaf. An unmatched leaf is an advisory WARNING, never a hard
+		// rejection — same semantics as `validateErrorTypes`: peers MAY
+		// declare nothing, and an incomplete vocabulary must not lock
+		// operators out of routing classes the system emits. Silent-skip
+		// when no vocabulary information is available at all (hooks
+		// unwired / every lookup ok=false). Skip the cross-check when
+		// the subscription names a message-virtual-node (not a declared
+		// real node-type) — message-virtual-nodes have no executor /
+		// stores vocabulary to consult.
+		_, isRealNode := declared[s.Node]
+		if isRealNode && tmpl != nil && strings.HasPrefix(s.Type, "terminal/error/") &&
 			!strings.HasSuffix(s.Type, "*") {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
@@ -827,10 +962,12 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				}
 			}
 		}
-		// @deliberate: Cross-check `event/<name>` exact-path subscriptions against
-		// subscriptions against the sender's executor declared_events
-		// (carry-forward from the pre-reshape `on: event` check).
-		if s.Node != "" && hooks.ExecutorDeclaredEvents != nil && tmpl != nil {
+		// @deliberate: cross-check `event/<name>` exact-path subscriptions
+		// against the sender's executor declared_events (carry-forward
+		// from the pre-reshape `on: event` check). Skip when the
+		// subscription names a message-virtual-node (not a declared real
+		// node-type) — message-virtual-nodes have no executor to consult.
+		if s.Node != "" && hooks.ExecutorDeclaredEvents != nil && tmpl != nil && isRealNode {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
 			if sender.Executor != "" && strings.HasPrefix(s.Type, "event/") &&
@@ -870,7 +1007,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 		instance bool
 		typ      string
 		when     string
-		frame    string
 	}
 	type subEntry struct {
 		idx     int
@@ -889,7 +1025,6 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 			instance: s.Instance,
 			typ:      s.Type,
 			when:     s.When,
-			frame:    s.Frame,
 		}
 		groups[k] = append(groups[k], subEntry{
 			idx: i, wake: *s.WakeOnChange, refresh: *s.ForceUpstreamRefresh,
@@ -908,11 +1043,11 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				Path: fmt.Sprintf("%s.subscribes[%d]", base, e.idx),
 				Msg: fmt.Sprintf(
 					"conflicting cascade-shape flags for subscription key "+
-						"(node:%q instance:%t type:%q when:%q frame:%q): entry %d has "+
+						"(node:%q instance:%t type:%q when:%q): entry %d has "+
 						"wake_on_change=%t force_upstream_refresh=%t but entry %d has "+
 						"wake_on_change=%t force_upstream_refresh=%t — a single subscription "+
 						"key must declare one coherent cascade contract",
-					k.node, k.instance, k.typ, k.when, k.frame,
+					k.node, k.instance, k.typ, k.when,
 					first.idx, first.wake, first.refresh,
 					e.idx, e.wake, e.refresh),
 			})
@@ -1115,11 +1250,12 @@ func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (sugg
 }
 
 func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
-	// @deliberate: D2 — `delegate:` and `executor:` are mutually
-	// exclusive. A node declares EITHER a leaf executor OR a sub-graph
-	// delegation; both set or neither set is rejected. The "neither
-	// set" rejection is constrained to nodes that have neither claims
-	// nor holds — pure-cascade pseudo-nodes remain legal.
+	// @deliberate: D2 — `executor:`, `delegate:`, and `emits_message:`
+	// are mutually exclusive. Per spec §Sub-graphs / Identity and
+	// absorption + concept:message-emitter-node, a node declares EXACTLY
+	// ONE dispatch mode. Any two set is rejected; all three likewise.
+	// The "none set" path is legal for pure-cascade pseudo-nodes —
+	// pure-cascade is a fourth implicit mode, not a fourth declared one.
 	//
 	// Post-absorption skip: when canonicalizeGraphs has absorbed a
 	// absorbed a sub-graph entry into this calling node, `Executor` is
@@ -1130,6 +1266,11 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHoo
 	// avoids a false positive on every absorbed caller.
 	hasExecutor := n.Executor != ""
 	hasDelegate := n.Delegate != ""
+	hasEmitsMessage := n.EmitsMessage != ""
+	// @deliberate: two-set combinations (the absorbed-caller skip applies
+	// only to the executor/delegate pair — a canonicalizer that ever
+	// absorbs onto an emit-node would be a fresh bug, but the rejection
+	// here surfaces the bad combination either way).
 	if hasExecutor && hasDelegate && !n.IsSubgraphEntryAbsorbed {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: fmt.Sprintf("%s.delegate", base),
@@ -1138,17 +1279,33 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHoo
 				n.Executor, n.Delegate),
 		})
 	}
-	// @deliberate: "Neither set" check honors `kind:` sugar — a
-	// kind-sugar node resolves to an executor via the alias map at
-	// canonicalization, so it has an executor for purposes of the
-	// pure-cascade advisory even though `n.Executor == ""`
-	// pre-canonicalize. Without this, every kind-sugar template that
-	// declares attributes (the typical `loop_counter` shape) emits a
-	// spurious "pure-cascade node declares attributes" warning.
-	if !hasExecutor && !hasDelegate && effectiveExecutor(n, hooks) == "" {
-		// @deliberate: Pure-cascade pseudo-node — legal. Warn only if
-		// an attribute schema is declared (those properties have no
-		// executor to consume them).
+	if hasExecutor && hasEmitsMessage {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fmt.Sprintf("%s.emits_message", base),
+			Msg: fmt.Sprintf(
+				"emits_message and executor are mutually exclusive (executor=%q, emits_message=%q)",
+				n.Executor, n.EmitsMessage),
+		})
+	}
+	if hasDelegate && hasEmitsMessage {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: fmt.Sprintf("%s.emits_message", base),
+			Msg: fmt.Sprintf(
+				"emits_message and delegate are mutually exclusive (delegate=%q, emits_message=%q)",
+				n.Delegate, n.EmitsMessage),
+		})
+	}
+	// @deliberate: "Neither set" check honors `kind:` sugar — a kind-sugar
+	// node resolves to an executor via the alias map at canonicalization,
+	// so it has an executor for purposes of the pure-cascade advisory even
+	// though `n.Executor == ""` pre-canonicalize. Without this, every
+	// kind-sugar template that declares attributes (the typical
+	// `loop_counter` shape) emits a spurious "pure-cascade node declares
+	// attributes" warning.
+	if !hasExecutor && !hasDelegate && !hasEmitsMessage && effectiveExecutor(n, hooks) == "" {
+		// @deliberate: pure-cascade pseudo-node — legal. Warn only if an
+		// attribute schema is declared (those properties have no executor
+		// to consume them).
 		if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 			res.Warnings = append(res.Warnings, ValidationWarning{
 				Path: fmt.Sprintf("%s.attributes", base),
@@ -1237,6 +1394,221 @@ func validateExecutorDeclared(n TemplateNodeDef, base string, hooks RegistryHook
 			fmt.Sprintf("executor %q is not declared in the operator's executors: block", n.Executor),
 			hooks.RefValidationMode),
 	})
+}
+
+// validateEmitsMessage enforces the message-emitter-node registration-
+// time invariants from concept:message-emitter-node:
+//
+//  1. The named message type is declared in the template's `messages:`
+//     registry. A reference to an unknown type rejects loud.
+//  2. The node's `attributes:` schema matches the destination message
+//     type's `body_schema` exactly — same set of property names, same
+//     per-property `type`, same `required:` set. Supersets reject (the
+//     emit-node exists to produce the message; hidden state is rejected
+//     because it has nowhere to land in the envelope body).
+//
+// The structural-equality predicate is `properties` keys identical,
+// each property's declared `type` identical, and `required:` lists
+// identical as sets. It is intentionally a tight equality check, not a
+// JSON Schema subtyping pass — the spec calls for exact-match (per
+// concept:message-emitter-node's "same field set, same types").
+//
+// No-op when EmitsMessage is empty. The hook-style dependency on the
+// declared-messages set is threaded from the top-level pass so the
+// substitution-ref / publisher-ref / emit-ref checks all read the same
+// authoritative source.
+//
+// @concept: message-emitter-node
+func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, declaredMessages map[string]struct{}, res *ValidationResult) {
+	if n.EmitsMessage == "" {
+		return
+	}
+	mt := strings.TrimSpace(n.EmitsMessage)
+	if mt == "" {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".emits_message",
+			Msg:  "emits_message must not be whitespace-only",
+		})
+		return
+	}
+	if _, ok := declaredMessages[mt]; !ok {
+		declaredList := make([]string, 0, len(declaredMessages))
+		for k := range declaredMessages {
+			declaredList = append(declaredList, k)
+		}
+		sort.Strings(declaredList)
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".emits_message",
+			Msg: fmt.Sprintf(
+				"emits_message references unknown message type %q (declared types: %v)",
+				mt, declaredList),
+		})
+		return
+	}
+	// @deliberate: find the destination message-type body_schema. The
+	// receiver-side substitution-ref validator already cross-checks
+	// `{{messages.<type>.<field>}}` refs against this schema; the
+	// emit-node body shape obeys the same authoritative source.
+	var dest *MessageSchema
+	if spec != nil {
+		for i := range spec.Messages {
+			if strings.TrimSpace(spec.Messages[i].Type) == mt {
+				dest = &spec.Messages[i]
+				break
+			}
+		}
+	}
+	if dest == nil {
+		// @deliberate: declaredMessages says the type is declared; if we
+		// cannot also find it on spec.Messages something has gone wrong
+		// above — surface defensively rather than dereference nil.
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".emits_message",
+			Msg: fmt.Sprintf(
+				"emits_message %q is in the declared set but not resolvable in messages: registry (internal validator drift)",
+				mt),
+		})
+		return
+	}
+	var nodeSchema map[string]any
+	if n.Attributes != nil {
+		nodeSchema = n.Attributes.Schema
+	}
+	// @concept: message-emitter-node — the attributes block IS the body.
+	// An empty body_schema on the destination means the body carries no
+	// declared fields; the emit-node's attributes schema must likewise
+	// carry no declared properties.
+	var bodyShape map[string]any
+	if len(dest.BodySchema) > 0 {
+		var raw any
+		if err := json.Unmarshal(dest.BodySchema, &raw); err == nil {
+			if m, ok := raw.(map[string]any); ok {
+				bodyShape = m
+			}
+		}
+	}
+	bodyProps := emitsMessageProperties(bodyShape)
+	nodeProps := emitsMessageProperties(nodeSchema)
+	bodyRequired := emitsMessageRequiredSet(bodyShape)
+	nodeRequired := emitsMessageRequiredSet(nodeSchema)
+
+	// @deliberate: field-set equality. A property declared on one side
+	// but not the other is a mismatch. Each side reports its own
+	// diagnostic so the author sees BOTH missing-on-body AND
+	// missing-on-node, not just the first.
+	for name := range nodeProps {
+		if _, ok := bodyProps[name]; !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.attributes.schema.properties.%s", base, name),
+				Msg: fmt.Sprintf(
+					"emit-node attribute %q is not declared in destination message type %q's body_schema (the attribute set must match the body shape exactly)",
+					name, mt),
+			})
+		}
+	}
+	for name := range bodyProps {
+		if _, ok := nodeProps[name]; !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.attributes.schema.properties", base),
+				Msg: fmt.Sprintf(
+					"emit-node attributes schema is missing field %q declared in destination message type %q's body_schema (the attribute set must match the body shape exactly)",
+					name, mt),
+			})
+		}
+	}
+	// @deliberate: per-property type equality where both declare a
+	// `type:`. The emit-node's resolved attributes get serialized
+	// verbatim into the envelope body; a declared type-disagreement
+	// would produce a body whose shape contradicts the type registry.
+	for name, np := range nodeProps {
+		bp, ok := bodyProps[name]
+		if !ok {
+			continue
+		}
+		npType, npHasType := np["type"]
+		bpType, bpHasType := bp["type"]
+		if npHasType && bpHasType && !jsonValuesEqual(npType, bpType) {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.attributes.schema.properties.%s.type", base, name),
+				Msg: fmt.Sprintf(
+					"emit-node attribute %q declares type %v but destination message type %q's body_schema declares type %v (types must match exactly)",
+					name, npType, mt, bpType),
+			})
+		}
+	}
+	// @deliberate: required-set equality. The two sets must match as
+	// sets — order is irrelevant.
+	for r := range nodeRequired {
+		if _, ok := bodyRequired[r]; !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.attributes.schema.required", base),
+				Msg: fmt.Sprintf(
+					"emit-node requires %q but destination message type %q's body_schema does not require it (required: sets must match exactly)",
+					r, mt),
+			})
+		}
+	}
+	for r := range bodyRequired {
+		if _, ok := nodeRequired[r]; !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: fmt.Sprintf("%s.attributes.schema.required", base),
+				Msg: fmt.Sprintf(
+					"destination message type %q's body_schema requires %q but emit-node attributes schema does not require it (required: sets must match exactly)",
+					mt, r),
+			})
+		}
+	}
+}
+
+// emitsMessageProperties returns the `properties` map from a schema-
+// shaped value, or an empty map if absent / not a map. The schema may
+// itself be nil (the node declared no attributes block at all).
+func emitsMessageProperties(schema map[string]any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	if schema == nil {
+		return out
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		return out
+	}
+	for name, raw := range props {
+		if m, ok := raw.(map[string]any); ok {
+			out[name] = m
+		} else {
+			// @deliberate: a non-object property declaration is
+			// structurally invalid JSON Schema; surface as an empty map
+			// so the caller's field-set comparison still records the
+			// field's presence (the JSON-Schema-validity check elsewhere
+			// — validateMessages and validateAttributesSchema — surfaces
+			// the underlying shape error).
+			out[name] = map[string]any{}
+		}
+	}
+	return out
+}
+
+// emitsMessageRequiredSet returns the `required:` field of a schema as
+// a set. Treats absent / wrong-type values as empty.
+func emitsMessageRequiredSet(schema map[string]any) map[string]struct{} {
+	out := map[string]struct{}{}
+	if schema == nil {
+		return out
+	}
+	raw, ok := schema["required"]
+	if !ok {
+		return out
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return out
+	}
+	for _, v := range list {
+		if s, ok := v.(string); ok {
+			out[s] = struct{}{}
+		}
+	}
+	return out
 }
 
 // validateStores enforces the per-node store-usage rules from spec §18:
@@ -2040,6 +2412,33 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 				Msg:  fmt.Sprintf("child directive %q must be child.partition_key", body),
 			})
 		}
+	case "messages":
+		// @deliberate: messages.<type>(.<field>?). The bare form
+		// `messages.<type>` (no trailing field path) resolves to the
+		// whole triggering-message body per the resolver's bare-form
+		// admission, mirroring trigger.message.payload and
+		// nodes.X.attribute.
+		//
+		// Shape-only check here: confirms the directive parses as
+		// messages.<type>[.<field>]. The cross-check that <type> is
+		// declared in the template's `messages:` registry AND that
+		// <field> is a property in that entry's body_schema runs in
+		// ValidateTemplate's post-pass section, where the declared-set
+		// is in scope alongside the substitution-ref post-pass for
+		// `nodes.*` reads.
+		if len(parts) < 1 || parts[0] == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("messages directive %q must be messages.<type>[.<field>]", body),
+			})
+			return
+		}
+		if len(parts) > 2 && parts[2] == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: path,
+				Msg:  fmt.Sprintf("messages directive %q has an empty trailing segment", body),
+			})
+		}
 	default:
 		res.Errors = append(res.Errors, ValidationError{
 			Path: path,
@@ -2085,7 +2484,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], nodes.<n>.event.<name>[.<path>], trigger.message.payload[.<f>], or child.partition_key)", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], nodes.<n>.event.<name>[.<path>], trigger.message.payload[.<f>], child.partition_key, or messages.<type>[.<field>])", body),
 			})
 		}
 	}
@@ -2549,11 +2948,17 @@ func paramsSchemaProperties(spec *TemplateSpec) map[string]any {
 
 // validatePublishers checks the top-level `publishers:` block. Every
 // entry must declare `name`, `kind`, and `target_node`; `target_node`
-// must reference a declared node type. This catches missing fields at
-// template registration so operators see a clear validation error
-// instead of a pgx NOT NULL violation when the row is inserted into
-// table:rimsky_publisher_subscriptions at instance-create.
-func validatePublishers(spec *TemplateSpec, declared map[string]int, res *ValidationResult) {
+// must reference a declared node type; `message_type` must reference a
+// declared entry in the template's `messages:` registry. This catches
+// missing fields at template registration so operators see a clear
+// validation error instead of a pgx NOT NULL violation when the row is
+// inserted into table:rimsky_publisher_subscriptions at instance-create,
+// AND so a publisher carrying a `message_type` no template entry
+// declares fails loudly at registration rather than silently 400ing at
+// every emit for the lifetime of the instance.
+//
+// @concept: message-schema
+func validatePublishers(spec *TemplateSpec, declared map[string]int, declaredMessages map[string]struct{}, res *ValidationResult) {
 	seenNames := make(map[string]struct{}, len(spec.Publishers))
 	for i, p := range spec.Publishers {
 		base := fmt.Sprintf("publishers[%d]", i)
@@ -2587,5 +2992,334 @@ func validatePublishers(spec *TemplateSpec, declared map[string]int, res *Valida
 				Msg:  fmt.Sprintf("target_node %q does not reference a declared node type", p.TargetNode),
 			})
 		}
+		// @deliberate: message_type is required AND must match the
+		// template's `messages:` registry. The legacy "invalidate"
+		// default retired with the envelope's kind→type rename, so an
+		// omitted message_type must fail at registration rather than
+		// silently taking a stale default at mount time. The registry
+		// cross-check rejects typos (or types the template author meant
+		// to declare but forgot) at registration; without it, the
+		// publisher mounts successfully and every emit fails the
+		// receipt-time gate at
+		// code:control/controlapi/messages.go::handleCreateMessage with
+		// HTTP 400 — invisible until the publisher actually tries to
+		// emit.
+		mt := strings.TrimSpace(p.MessageType)
+		if mt == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".message_type",
+				Msg:  "message_type is required (cannot be empty)",
+			})
+			continue
+		}
+		if _, ok := declaredMessages[mt]; !ok {
+			declaredList := make([]string, 0, len(declaredMessages))
+			for k := range declaredMessages {
+				declaredList = append(declaredList, k)
+			}
+			sort.Strings(declaredList)
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".message_type",
+				Msg: fmt.Sprintf(
+					"message_type %q is not declared in the template's `messages:` registry (declared types: %v)",
+					mt, declaredList),
+			})
+		}
 	}
+}
+
+// buildMessageBodyFieldSet returns a map from declared message-type-path
+// to the set of top-level property names in its body_schema. Empty /
+// missing body_schema produces a missing entry (not an empty set) so
+// the caller can distinguish "declared with no body shape" from
+// "declared with an empty {properties:{}}". Used by the post-pass
+// cross-check for `{{messages.<type>.<field>}}` directives: a directive
+// reading a named field against a missing entry is rejected with a
+// clear empty-body diagnostic; a directive reading an unknown field
+// against a present entry is rejected with a field-not-declared
+// diagnostic.
+//
+// Reads each entry's body_schema as JSON and extracts the top-level
+// `properties` keys. The same jsonschema/v5 path validateMessages uses
+// has already confirmed the schema parses and compiles; this helper
+// reads it as plain JSON for property-key extraction only — no
+// schema-semantic interpretation.
+//
+// @concept: message-schema
+func buildMessageBodyFieldSet(spec *TemplateSpec) map[string]map[string]struct{} {
+	out := map[string]map[string]struct{}{}
+	for _, m := range spec.Messages {
+		if len(m.BodySchema) == 0 {
+			continue
+		}
+		var shape map[string]any
+		if err := json.Unmarshal(m.BodySchema, &shape); err != nil {
+			// @deliberate: validateMessages already surfaces this as a
+			// registration error; the post-pass cross-check skips the
+			// entry rather than produce a duplicate diagnostic. Bare-form
+			// pulls against an unparseable schema also skip; the
+			// underlying schema error is already on the result.
+			continue
+		}
+		props, ok := shape["properties"].(map[string]any)
+		if !ok {
+			// @deliberate: no top-level properties block — admit the
+			// entry with an empty field set so a named-field directive
+			// is rejected with the "field not declared" diagnostic
+			// rather than the empty-body diagnostic. (An object schema
+			// without `properties` has no addressable fields.)
+			out[m.Type] = map[string]struct{}{}
+			continue
+		}
+		fields := make(map[string]struct{}, len(props))
+		for k := range props {
+			fields[k] = struct{}{}
+		}
+		out[m.Type] = fields
+	}
+	return out
+}
+
+// validateMessages walks the template-level `messages:` registry and
+// enforces four rules:
+//
+//  1. Each entry's `type:` is non-empty and matches a sensible type-path
+//     grammar (slash-bearing, non-empty segments, no whitespace) — this
+//     is the syntactic shape receivers subscribe to via
+//     `node: <type>, type: terminal/success`. The taxonomy-validator in
+//     `concept:signal` rejects `message/*` paths from emit-shape vocab;
+//     message types are a *separate* type-path space rooted at the
+//     template registry, not the signal taxonomy, so the grammar here
+//     is structural (a non-empty path with no leading/trailing slash
+//     and no whitespace) rather than taxonomy-membership.
+//  2. Each `type:` is unique across entries — a duplicate registry entry
+//     is structurally ambiguous (which body_schema applies?) and is
+//     rejected at registration.
+//  3. Each `type:` does NOT collide with a declared real node-type. The
+//     slash-bearing rule is the primary partition, but a defensive
+//     cross-check at the message-side declaration catches the case
+//     where a node-type happens to be slash-bearing too — without it,
+//     `validateSubscribes` resolves `node: <name>` against the
+//     node-type set first (line 723) and silently routes the
+//     subscription to the wrong sender; the cascade walker would then
+//     key on the node-type and the message-virtual-node settle path's
+//     edge lookup loses.
+//  4. Each `body_schema:` parses as a valid JSON Schema. The same
+//     compiler the attribute-schema pass uses (jsonschema/v5) is the
+//     authority; failures surface verbatim so authors see the
+//     underlying parse error.
+//
+// Returns the set of declared message-type-paths so downstream passes
+// (subscribes' message-type-shape leg; future substitution-ref checks)
+// can consult registry membership.
+//
+// @concept: message-schema
+func validateMessages(spec *TemplateSpec, declared map[string]int, res *ValidationResult) map[string]struct{} {
+	declaredMessages := make(map[string]struct{}, len(spec.Messages))
+	if len(spec.Messages) == 0 {
+		return declaredMessages
+	}
+	for i, m := range spec.Messages {
+		base := fmt.Sprintf("messages[%d]", i)
+		t := strings.TrimSpace(m.Type)
+		if t == "" {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".type",
+				Msg:  "type is required",
+			})
+			continue
+		}
+		// @deliberate: structural type-path grammar: no whitespace;
+		// non-empty segments only; no leading or trailing slash; AT
+		// LEAST ONE slash (i.e. at least two segments). The
+		// slash-bearing requirement is the first-line partition that
+		// keeps message-types from colliding with real node-types in
+		// subscribes' `node:` field: real node-types are conventionally
+		// identifier-shaped (no slash) and the slash-bearing path is
+		// resolved against the message registry. The collision-
+		// rejection rule below is the defense in depth — a node-type
+		// that happens to be slash-bearing too would otherwise win at
+		// validateSubscribes and silently route the subscription to the
+		// wrong sender.
+		if strings.ContainsAny(t, " \t\n\r") {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".type",
+				Msg:  fmt.Sprintf("type %q must not contain whitespace", t),
+			})
+			continue
+		}
+		if strings.HasPrefix(t, "/") || strings.HasSuffix(t, "/") {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".type",
+				Msg:  fmt.Sprintf("type %q must not start or end with `/`", t),
+			})
+			continue
+		}
+		segmentsValid := true
+		segmentHasDot := false
+		// @deliberate: walk every segment without early-exit: a
+		// type-path containing BOTH an empty segment AND a dot-bearing
+		// segment must surface both diagnostics in one validation pass,
+		// otherwise the author fixes one only to be rejected on the next
+		// attempt for the other (asymmetric — which one wins depends on
+		// segment order).
+		for _, seg := range strings.Split(t, "/") {
+			if seg == "" {
+				segmentsValid = false
+				continue
+			}
+			if strings.Contains(seg, ".") {
+				segmentHasDot = true
+			}
+		}
+		// @deliberate: both diagnostics may fire on the same
+		// `messages[i].type` — the loop above collects them
+		// independently. Emit each one as its own ValidationError so the
+		// author sees both reasons in a single validation pass (the
+		// original early-`break` variant surfaced only whichever
+		// offending segment appeared first, forcing the author to
+		// fix-and-retry to discover the other). After either fires,
+		// skip to the next message: the downstream slash-bearing /
+		// duplicate / collision checks operate on a well-formed
+		// type-path and would otherwise emit spurious follow-on errors
+		// against the same malformed entry.
+		segmentErrored := false
+		if !segmentsValid {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".type",
+				Msg:  fmt.Sprintf("type %q has empty segment(s)", t),
+			})
+			segmentErrored = true
+		}
+		if segmentHasDot {
+			// @deliberate: the substitution-directive parser
+			// (code:graph/attribute/substitution.go::resolveMessagesValue
+			// and code:graph/node/subscription_edges.go::parseMessageDirective)
+			// splits the directive body on `.`. A type-path segment
+			// containing `.` would misparse the directive
+			// `{{messages.<type>.<field>}}` — the parser would treat
+			// the pre-`.` segment as the type and the post-`.` segment
+			// as the field, silently routing to the wrong source.
+			// Reject at registration so authors see the constraint
+			// before it bites at runtime.
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".type",
+				Msg: fmt.Sprintf(
+					"type %q segments must not contain `.` (the substitution-directive parser splits on `.`)",
+					t),
+			})
+			segmentErrored = true
+		}
+		if segmentErrored {
+			continue
+		}
+		if !strings.Contains(t, "/") {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".type",
+				Msg: fmt.Sprintf(
+					"type %q must be a slash-bearing type-path (e.g. `category/action`) so it cannot collide with a node-type",
+					t),
+			})
+			continue
+		}
+		if _, dup := declaredMessages[t]; dup {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".type",
+				Msg:  fmt.Sprintf("duplicate message type %q", t),
+			})
+			continue
+		}
+		// @deliberate: cross-check against the real node-type set: a
+		// message-type that ALSO names a declared node-type is
+		// structurally ambiguous in `subscribes:`'s `node: <name>`
+		// field — validateSubscribes resolves against the node-type set
+		// first, so the subscription would silently bind to the node
+		// rather than the message-virtual-node. Slash-bearing
+		// message-types and identifier-shaped node-types do not
+		// normally collide, but the node-type grammar admits slashes
+		// today; reject the collision at the message declaration so the
+		// author sees the conflict before it bites at runtime.
+		if _, nodeCollision := declared[t]; nodeCollision {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".type",
+				Msg: fmt.Sprintf(
+					"message type %q collides with a declared node type of the same name; pick a distinct type-path so subscriptions can disambiguate",
+					t),
+			})
+			continue
+		}
+		declaredMessages[t] = struct{}{}
+		// @deliberate: JSON Schema validation. An absent / empty
+		// body_schema is admitted (an empty body has no shape to
+		// constrain); a non-empty schema must parse and compile via the
+		// same jsonschema/v5 path the attribute-schema validator uses,
+		// so authors get the underlying parse error verbatim.
+		if len(m.BodySchema) == 0 {
+			continue
+		}
+		// @deliberate: reject body_schema that is not a JSON object (a
+		// bare scalar / array is structurally not a JSON Schema
+		// fragment).
+		var schemaShape any
+		if err := json.Unmarshal(m.BodySchema, &schemaShape); err != nil {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".body_schema",
+				Msg:  fmt.Sprintf("body_schema is not valid JSON: %v", err),
+			})
+			continue
+		}
+		schemaMap, ok := schemaShape.(map[string]any)
+		if !ok {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".body_schema",
+				Msg:  "body_schema must be a JSON Schema object",
+			})
+			continue
+		}
+		// @deliberate: privilege-escalation guard symmetric with the
+		// receipt-time reserved-field check in
+		// code:control/controlapi/messages.go: a body_schema MUST NOT
+		// declare a top-level `wake_node_ids` property. Otherwise a
+		// template-author-controlled cascade-emit (whose envelope
+		// bypasses the receipt-time guard because it goes through
+		// `runtime.EnqueueMessage` directly, not the
+		// POST /instances/{id}/messages handler) could craft an
+		// envelope carrying `wake_node_ids` on its payload, which
+		// code:graph/frame/engine.go::advanceOneFrame would read
+		// verbatim and stale-mark every named UUID — effectively a
+		// backdoor unconditional stale-mark against any node UUID the
+		// template author can name. Rejecting at registration makes the
+		// "wake_node_ids is a runtime-internal field" property
+		// structural across all envelope-creation paths (operator,
+		// publisher, cascade-emit), not only the operator one.
+		if props, ok := schemaMap["properties"].(map[string]any); ok {
+			if _, reserved := props["wake_node_ids"]; reserved {
+				res.Errors = append(res.Errors, ValidationError{
+					Path: base + ".body_schema",
+					Msg: "body_schema must not declare reserved top-level property " +
+						"\"wake_node_ids\" (runtime-internal wake mechanism; a " +
+						"cascade-emit envelope carrying this field would let a " +
+						"template author smuggle stale-mark targets through the " +
+						"runtime-synthetic wake path)",
+				})
+				continue
+			}
+		}
+		compiler := jsonschema.NewCompiler()
+		if err := compiler.AddResource("body-schema.json", bytes.NewReader(m.BodySchema)); err != nil {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".body_schema",
+				Msg:  fmt.Sprintf("body_schema is not valid JSON Schema: %v", err),
+			})
+			continue
+		}
+		if _, err := compiler.Compile("body-schema.json"); err != nil {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + ".body_schema",
+				Msg:  fmt.Sprintf("body_schema does not compile: %v", err),
+			})
+			continue
+		}
+	}
+	return declaredMessages
 }

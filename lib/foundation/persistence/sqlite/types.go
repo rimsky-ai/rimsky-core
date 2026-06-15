@@ -117,40 +117,6 @@ func nodeIDArg(p *shared.UUID) any {
 	return p.String()
 }
 
-// marshalUUIDArray serialises a []shared.UUID as a JSON array of strings.
-// Empty / nil input returns `[]`.
-func marshalUUIDArray(ids []shared.UUID) string {
-	if len(ids) == 0 {
-		return "[]"
-	}
-	out := make([]string, len(ids))
-	for i, id := range ids {
-		out[i] = id.String()
-	}
-	b, _ := json.Marshal(out)
-	return string(b)
-}
-
-// unmarshalUUIDArray parses a JSON array of strings back to []shared.UUID.
-func unmarshalUUIDArray(s string) ([]shared.UUID, error) {
-	if s == "" || s == "[]" {
-		return []shared.UUID{}, nil
-	}
-	var raw []string
-	if err := json.Unmarshal([]byte(s), &raw); err != nil {
-		return nil, fmt.Errorf("unmarshalUUIDArray: %w", err)
-	}
-	out := make([]shared.UUID, len(raw))
-	for i, r := range raw {
-		u, err := uuid.Parse(r)
-		if err != nil {
-			return nil, fmt.Errorf("unmarshalUUIDArray: bad uuid %q: %w", r, err)
-		}
-		out[i] = u
-	}
-	return out, nil
-}
-
 // marshalStringArray serialises a []string as a JSON array.
 func marshalStringArray(s []string) string {
 	if len(s) == 0 {

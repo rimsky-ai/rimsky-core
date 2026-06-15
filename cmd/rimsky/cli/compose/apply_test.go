@@ -91,7 +91,6 @@ func TestRunComposePlan_ParamsDriftExit3(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "spec.yml"), []byte(`name: x
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: a
     executor: http-node
@@ -146,7 +145,7 @@ func TestRunComposeStatus(t *testing.T) {
 func TestRunComposeUp_NonTerminalOrphanFails(t *testing.T) {
 	srv := setupServer(t)
 	mf := writeFullManifest(t)
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "compose:p:other@1", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:other@1", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	key := "compose:p:orphan"
 	if _, _, err := srv.State.CreateInstance(hash, &key, nil); err != nil {

@@ -79,7 +79,7 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 		raw, _ := json.Marshal(cfg)
 		if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 			PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-			TargetNode: "tick", MessageKind: "invalidate",
+			TargetNode: "tick", MessageType: "invalidate",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -125,7 +125,7 @@ func TestSensorCronReplicaPostureAccuracy(t *testing.T) {
 			s.clock = func() time.Time { return registerTime }
 			if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 				PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-				TargetNode: "tick", MessageKind: "invalidate",
+				TargetNode: "tick", MessageType: "invalidate",
 			}); err != nil {
 				t.Fatal(err)
 			}

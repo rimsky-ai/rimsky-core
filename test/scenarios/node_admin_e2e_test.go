@@ -3,22 +3,19 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Acceptance gate for STORY-node-admin (spec
-// 2026-06-08-design-corpus-bootstrap). The sibling file
-// `cascade_operator_frame_in_e2e_test.go` covers the in-cascade
-// invalidate leg (`frame: in` joining the running cascade frame F);
-// THIS file covers the three remaining legs the story names:
+// 2026-06-08-design-corpus-bootstrap). The operator-facing
+// invalidate routes (`POST /v1/nodes/{id}/invalidate` and the admin
+// double) are retired — invalidate is now expressed by posting a
+// typed message via `POST /v1/instances/{instance_id}/messages` (or
+// ad-hoc force-stale via `POST /v1/debug/override`) — so this file's
+// scope shrinks to the two remaining node-admin legs the story
+// names:
 //
 //  1. GET — `GET /v1/nodes/{id}` returns the node's full state +
 //     settling signal type, observable through the real control-api
 //     against the assembled product.
 //
-//  2. Freshly-enqueued-frame invalidate — `POST /v1/nodes/{id}/invalidate`
-//     (default `frame: next`) on an at-rest node enqueues a new frame
-//     and the supervisor genuinely re-fires the node on a REAL
-//     dispatch (the falsifier guards against "invalidate flips state
-//     but the supervisor never picks the node up").
-//
-//  3. Reset — `POST /v1/nodes/{id}/reset` on a node driven to a real
+//  2. Reset — `POST /v1/nodes/{id}/reset` on a node driven to a real
 //     failed terminal via an exhausted retry-then-give_up policy
 //     clears the persisted error counters (current_error_class +
 //     retry_counter) AND the supervisor genuinely re-dispatches the
@@ -29,8 +26,6 @@
 //     story names — not via raw SQL, so the proof exhibits the user
 //     outcome through the real surface.
 //
-// Together with the in-cascade test, these cover the story's
-// Acceptance contract (get / invalidate-next / invalidate-in / reset).
 // The proof drives the real assembled product: real control-api over
 // HTTP, real scheduler + frame engine, real supervisor + stub
 // executor dispatch, testcontainers Postgres. No hand-rolled state —
@@ -70,16 +65,16 @@ type nodeDetailResponse struct {
 	ActionIndex        int    `json:"action_index"`
 }
 
-// TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset drives
-// STORY-node-admin's get / freshly-enqueued-frame invalidate / reset
-// legs through the real assembled product.
-func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
+// TestAcceptance_NodeAdmin_GetAndReset drives STORY-node-admin's
+// get / reset legs through the real assembled product. The retired
+// operator-invalidate route is no longer in scope (invalidate is
+// expressed via typed-message POST or debug-override).
+func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
 	// @deliberate: Two distinct node types so each leg's target is independent:
-	//   `worker` settles fresh on every dispatch (drives the
-	//      get + next-frame invalidate + supervisor-re-fires legs).
+	//   `worker` settles fresh on every dispatch (drives the get leg).
 	//   `flaky` errors with a `give_up`-terminated policy chain
 	//      (drives the reset leg's real-failed-terminal seed).
 	// Re-scripting `flaky` to succeed before reset proves the
@@ -185,48 +180,7 @@ func TestAcceptance_NodeAdmin_GetAndNextFrameInvalidateAndReset(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, notFoundResp.StatusCode,
 		"GET /v1/nodes/{unknown} must 404 — silently returning 200 with a stub response is the falsifier")
 
-	// @deliberate: Leg 2: POST /v1/nodes/{id}/invalidate (frame: next)
-	//
-	// The story's Acceptance: "force-invalidating a node causes the
-	// supervisor to re-fire it on a real dispatch." The worker is
-	// at-rest (settled fresh, no running frame on this single-node
-	// template). The default invalidate path is `frame: next` which
-	// enqueues a freshly-coalesced/queued frame for the node — the
-	// running frame F path is the sibling test's territory.
-	//
-	// Decisive RED-vs-GREEN discriminator (the falsifier names
-	// "invalidate flips state but the supervisor never picks the
-	// node up"): the worker must transition fresh → stale → fresh
-	// AGAIN through the real supervisor's dispatch, not just flip
-	// to stale and stay there. Polling for the SECOND fresh observes
-	// the supervisor re-fired the node (the stub is still scripted
-	// to return Success).
-	preRefireCount := countTerminalSuccess(t, h, worker.ID)
-
-	invalidateResp, err := http.Post(
-		h.ControlBase+"/v1/nodes/"+worker.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{"reason":"operator drove a re-fire"}`)),
-	)
-	require.NoError(t, err)
-	invalidateResp.Body.Close()
-	require.Equal(t, http.StatusOK, invalidateResp.StatusCode,
-		"POST /v1/nodes/{id}/invalidate must return 200 on a real node")
-
-	// @deliberate: The supervisor re-dispatched the worker (a SECOND
-	// `terminal/success` event arrives). The pre-count baseline
-	// keeps this robust against polling races: we observe the count
-	// genuinely growing, which is only possible if a real dispatch
-	// completed end to end (executor + supervisor terminal-
-	// resolution path), not because the row was flipped server-side
-	// without dispatch.
-	require.True(t, waitForTerminalSuccessCountGreaterThan(t, h, worker.ID, preRefireCount, 30*time.Second),
-		"after POST /invalidate, the supervisor must genuinely re-fire the worker on a REAL dispatch — "+
-			"a second `terminal/success` signal must arrive (the falsifier's 'supervisor never picks "+
-			"the node up' shape leaves the count at preRefireCount forever)")
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 10*time.Second),
-		"worker must re-settle to fresh after the operator-invalidate re-fire")
-
-	// @deliberate: Leg 3: POST /v1/nodes/{id}/reset
+	// @deliberate: Leg 2: POST /v1/nodes/{id}/reset
 	//
 	// The story's Acceptance: "resetting a failed node clears its
 	// error count and the next acquisition attempt is not skipped

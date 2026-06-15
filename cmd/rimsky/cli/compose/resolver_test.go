@@ -17,7 +17,6 @@ import (
 
 const exampleSpec = `name: example
 version: "1.0"
-frame_resolution_mode: coalesce
 nodes:
   - type: hello
     executor: http-node

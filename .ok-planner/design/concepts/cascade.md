@@ -14,7 +14,7 @@ Cascade is the engine that turns one node-state transition into the set of downs
 | Word | Meaning |
 |---|---|
 | **walk** | The scheduler-tick-driven traversal of the graph (topology-ordered). The mechanism. |
-| **propagation** | Cascade-of-stale on `fresh_changed`. Mark dependents stale and recurse — the handler for `concept:invalidate`. |
+| **propagation** | Cascade-of-stale on `fresh_changed`. Mark dependents stale and recurse. |
 | **fallthrough** | No-dispatch fresh-roll on `pure_cascade`. Roll fresh state forward without running the node; detected per-node and executed by the scheduler's pure-cascade sweep. |
 
 One walk; two node-level behaviors (propagation, fallthrough).
@@ -25,7 +25,7 @@ A reactive graph orchestrator only earns its keep if a single executor's "I chan
 
 ## Boundaries
 
-Owns: the firing-gate predicate, the downstream walk, the two node-level behaviors (propagation vs fallthrough). Does NOT own: invalidate emission (see `concept:invalidate`), frame scheduling (see `concept:frame`), terminal-handler resolution (see `concept:terminal-resolution`). Adjacent: `concept:invalidate`, `concept:signal`, `concept:transition-reason`, `concept:frame`, `concept:terminal-resolution`.
+Owns: the firing-gate predicate, the downstream walk, the two node-level behaviors (propagation vs fallthrough). Does NOT own: invalidate emission (see `concept:message`), frame creation (see `concept:frame`), terminal-handler resolution (see `concept:terminal-resolution`). Adjacent: `concept:message`, `concept:signal`, `concept:transition-reason`, `concept:frame`, `concept:terminal-resolution`.
 
 The cascade walker consults two edge maps — the subscription-edge map and the upstream-refresh edge map. Both feed the wait-set with the same row shape. Subscription edges are keyed by sender node-type (downstream lookup from a transitioning sender); upstream-refresh edges are keyed by receiver node-type (upstream lookup from a freshly-invalidated receiver), so the walker can proactively invalidate upstreams that a receiver names in a `subscribes:` entry with `force_upstream_refresh: true`.
 
@@ -33,14 +33,14 @@ The cascade walker consults two edge maps — the subscription-edge map and the 
 
 - A cascade walk inserts a wait-set row for the receiver iff a subscription edge matches the emitted signal's type AND the subscriber's CEL `when:` predicate evaluates true. The receiver is additionally stale-marked iff the matching subscription's `wake_on_change` field is `true`.
 - Cascade always happens in a frame.
-- The walk + per-node behaviors are scheduler actions; they are NOT configurable via the per-emit `frame: in | next` discipline.
+- The cascade walker operates entirely within a single frame. It never creates a new frame; cross-frame coupling is expressed by message-emitter nodes whose dispatch lands a message in the ledger, with the next frame opening on the standard delivery path.
 - Settled-color is informational. The functional equivalent of suppressing downstream auto-fire on a failed sender is expressed receiver-side via subscribers' `when:` predicates or via not subscribing to `terminal/error/*` at all.
 - Staleness propagation — whether by invalidation walk or by sender settlement — does not by itself confer dispatch eligibility. Eligibility is the dispatch-time predicate per `concept:wait-set`, and the all-in-flight-upstreams-resolve-first guarantee is propagation-path-independent: a stale receiver does not dispatch while any subscribed upstream has an in-flight run in the same frame, no matter which path made it stale.
 
 ## Common pitfalls
 
-- **Rimsky's cascade is not CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates `invalidate` through the per-template subscription-edge inverse map. The two share a name and nothing else.
-- Treating "recalculate" as a second message. There is one cascade message: `invalidate`. Recalculation is what the scheduler does next, not a service message that travels alongside.
+- **Rimsky's cascade is not CSS cascade.** CSS's cascade resolves competing style rules by specificity and order; Rimsky's cascade propagates staleness through the per-template subscription-edge inverse map. The two share a name and nothing else.
+- Treating "recalculate" as a second message. Staleness propagation is a graph-traversal step, not a service message that travels alongside; recalculation is what the scheduler does next.
 - Expecting cascade to skip nodes whose new value would be byte-identical to the old. Cascade is subscription-driven, not value-diff-driven; the executor commits `changed: false` if it wants downstream subscribers that filter on `payload.changed` to suppress.
 - Confusing cascade reach with executor invocation. Cascade marks nodes stale and inserts wait-set rows; dispatch eligibility is decided at dispatch time by the two-condition predicate per `concept:wait-set` — no undrained wait-set rows for the run in the current frame AND no subscribed upstream with an in-flight run in the same frame — with claims and locks still to be acquired.
 - Treating `terminal/error/*` subscribers as automatically downstream-firing. Under the subscriber-driven cascade model, a subscriber filtering on `terminal/error/*` fires only if it has declared the subscription; the sender's color does not fire downstream nodes by itself. A node that wants to halt propagation on errors simply omits the subscription; a node that wants to act on every error subscribes broadly.

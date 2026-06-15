@@ -93,12 +93,23 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 		frameID := uuid.New().String()
 		nodeID := uuid.New().String()
 		runID := uuid.New().String()
+		// Seed a synthetic typed-message envelope so the frame's
+		// triggering_message_id FK is satisfied.
+		msgID := uuid.New().String()
+		if _, err := rawDB.ExecContext(ctx,
+			`INSERT INTO rimsky_messages
+			   (id, instance_id, type, sender, sender_kind, received_at)
+			 VALUES (?, ?, 'test/seed', 'test', 'operator', ?)`,
+			msgID, instanceID, rfc(endedAt),
+		); err != nil {
+			t.Fatalf("seed message: %v", err)
+		}
 		if _, err := rawDB.ExecContext(ctx,
 			`INSERT INTO rimsky_frames
-			   (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+			   (frame_id, instance_id, triggering_message_id, state,
 			    queued_at, started_at, ended_at, frame_timeout_ms)
-			 VALUES (?, ?, 'serial_queue', 'completed', '[]', ?, ?, ?, 600000)`,
-			frameID, instanceID, rfc(endedAt), rfc(endedAt), rfc(endedAt),
+			 VALUES (?, ?, ?, 'completed', ?, ?, ?, 600000)`,
+			frameID, instanceID, msgID, rfc(endedAt), rfc(endedAt), rfc(endedAt),
 		); err != nil {
 			t.Fatalf("seed frame: %v", err)
 		}

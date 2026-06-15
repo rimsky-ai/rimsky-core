@@ -22,8 +22,6 @@
 package scenarios
 
 import (
-	"bytes"
-	"net/http"
 	"testing"
 	"time"
 
@@ -100,11 +98,12 @@ func TestCascadeInvalidate(t *testing.T) {
 	require.Contains(t, bRow.Data, "a", "b.attributes.data should contain `a` from nodes.a.attribute.a")
 	require.Contains(t, bRow.Data, "b", "b.attributes.data should contain `b` from executor delta")
 
-	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	_ = resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	// @constraint: invalidate A via the harness helper, not the retired
+	// `POST /v1/nodes/{id}/invalidate` operator route — the typed-message
+	// schema layer retired the admin route along with the runtime
+	// InvalidateNode chain wrapper; the harness helper drives the same
+	// synthetic-envelope wake the route used to drive internally.
+	h.InvalidateNode(iid, a.ID)
 
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 20*time.Second),
 		"a did not re-reach fresh")

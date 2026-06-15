@@ -43,9 +43,8 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 	// `outer-caller` delegating to graph `staging`; staging has entry
 	// `validate` (absorbed), interior `transform`, exit `promote`.
 	tmplSpec := node.TemplateSpec{
-		Name:                "subgraph-lineage-emit",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "subgraph-lineage-emit",
+		Version: "1",
 		Graphs: []spec.GraphSpec{
 			{
 				Name: spec.MainGraphName,
@@ -151,7 +150,17 @@ func TestSubgraphCallerLineage_EmitsSubgraphCallRow(t *testing.T) {
 		callerRunID shared.UUID
 	)
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		fid, err := backend.Frames().EnqueueSerialFrame(ctx, inst.ID, callerNode.ID, 600000, tx)
+		msgID := shared.UUID(uuid.New())
+		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: inst.ID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := backend.Frames().InsertFrame(ctx, inst.ID, msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

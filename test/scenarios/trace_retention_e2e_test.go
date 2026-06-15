@@ -61,10 +61,9 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{NoScheduler: true, NoSupervisor: true})
 
 	tplHash := h.DeployTemplate(node.TemplateSpec{
-		Name:                "trace-retention-" + uuid.NewString(),
-		Version:             "v1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      node.FrameTimeoutDefaultMs,
+		Name:           "trace-retention-" + uuid.NewString(),
+		Version:        "v1",
+		FrameTimeoutMs: node.FrameTimeoutDefaultMs,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -74,6 +73,18 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	instanceID := h.CreateInstance(tplHash, "", map[string]any{})
 	scopeID := h.GetMainRunScopeID(instanceID)
 
+	// @deliberate: Clear the instance-factory's auto-created root frames so the test
+	// drives its own seed exclusively. Under the typed-message schema every root
+	// node gets a seeded synthetic message + frame at instance-create; the
+	// harness's CreateInstance helper drives frame.RunTick during
+	// waitForRootDispatch, so by the time we get here the auto-frame has already
+	// advanced to a terminal state and would count toward
+	// PruneTraceForRetention's per-instance ranking. node_runs CASCADE via the
+	// frame FK; the auto-message row stays behind harmlessly (no FK from
+	// messages to anything we touch).
+	h.ExecSQL(`DELETE FROM rimsky_frames WHERE instance_id = $1`, uuid.UUID(instanceID))
+
+	// @deliberate: A node to hang the seeded run/event rows off.
 	nodeID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_nodes (id, instance_id, node_type, executor)
 	           VALUES ($1, $2, 'retention-node', 'worker')`, nodeID, instanceID)
@@ -99,13 +110,21 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	reapedFrameIDs := map[string]bool{}
 
 	seedTerminalFrame := func(endedAt time.Time, survives bool) {
+		// @constraint: rimsky_frames.triggering_message_id is NOT NULL under the
+		// typed-message schema; seed a typed envelope first so the frame's FK
+		// resolves.
+		messageID := uuid.New()
+		h.ExecSQL(`INSERT INTO rimsky_messages
+		    (id, instance_id, type, sender, sender_kind)
+		    VALUES ($1, $2, 'fixture/trace-retention', 'operator', 'operator')`,
+			messageID, instanceID)
 		frameID := uuid.New()
 		h.ExecSQL(`INSERT INTO rimsky_frames
-		    (frame_id, instance_id, frame_resolution_mode, state, source_node_ids,
+		    (frame_id, instance_id, triggering_message_id, state,
 		     queued_at, started_at, ended_at, frame_timeout_ms)
-		    VALUES ($1, $2, 'serial_queue', 'completed', ARRAY[$3]::UUID[],
+		    VALUES ($1, $2, $3, 'completed',
 		            $4, $4, $5, 600000)`,
-			frameID, instanceID, nodeID, endedAt, endedAt)
+			frameID, instanceID, messageID, endedAt, endedAt)
 		runID := uuid.New()
 		h.ExecSQL(`INSERT INTO rimsky_node_runs
 		    (id, node_id, executor_name, enqueued_at, phase, state, frame_id, run_scope_id)
@@ -133,19 +152,25 @@ func TestTraceRetention_EndToEnd(t *testing.T) {
 	require.Len(t, reapedFrameIDs, 3)
 	require.Len(t, survivingFrameIDs, recentKept)
 
-	// @deliberate: Seed an in-flight parked-held frame (must survive)
-	// The instance already carries exactly one real running root frame from
-	// its create (the partial-uniqueness index uq_rimsky_frames_running
-	// permits only one running frame per instance), so we attach the parked
-	// node_run to THAT frame rather than inserting a second running frame.
-	// A node_run in phase='parked', state='parked' makes this the in-flight
-	// parked-held frame: per the Pass-1 frame-end rule a parked node_run
-	// holds its frame open, so the frame stays running/held; retention
-	// exempts all non-terminal frames, so both the frame and its run survive.
-	var inflightFrameID shared.UUID
-	h.QueryRowSQL(`SELECT frame_id FROM rimsky_frames
-	                WHERE instance_id = $1 AND state = 'running'`,
-		[]any{instanceID}, &inflightFrameID)
+	// @deliberate: Seed an in-flight parked-held frame (must survive). Per the
+	// frame-end rule a parked node_run holds its frame open, so the frame stays
+	// running/held; retention exempts all non-terminal frames, so both the
+	// frame and its run survive. We seed a fresh running frame (with its
+	// triggering message) directly rather than reusing the instance-factory's
+	// auto-frame, which under the typed-message schema has already terminated
+	// by the time CreateInstance returns (the harness's waitForRootDispatch
+	// drove frame.RunTick to terminal).
+	inflightMessageID := uuid.New()
+	h.ExecSQL(`INSERT INTO rimsky_messages
+	    (id, instance_id, type, sender, sender_kind)
+	    VALUES ($1, $2, 'fixture/trace-retention-inflight', 'operator', 'operator')`,
+		inflightMessageID, instanceID)
+	inflightFrameID := shared.UUID(uuid.New())
+	h.ExecSQL(`INSERT INTO rimsky_frames
+	    (frame_id, instance_id, triggering_message_id, state,
+	     queued_at, started_at, last_progress_at, frame_timeout_ms)
+	    VALUES ($1, $2, $3, 'running', now(), now(), now(), 600000)`,
+		uuid.UUID(inflightFrameID), instanceID, inflightMessageID)
 	inflightRunID := uuid.New()
 	h.ExecSQL(`INSERT INTO rimsky_node_runs
 	    (id, node_id, executor_name, enqueued_at, phase, state, parked_at,

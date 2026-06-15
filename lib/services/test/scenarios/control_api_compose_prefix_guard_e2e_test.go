@@ -103,9 +103,8 @@ func TestControlAPIComposePrefixGuard_E2E(t *testing.T) {
 	// respect, isolating the prefix guard as the sole cause of the 400.
 	foreignTemplateHash := deployScenarioTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "compose-prefix-guard-foreign",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    "compose-prefix-guard-foreign",
+			"version": "1",
 			"nodes": []map[string]any{
 				{"type": "worker", "executor": "stub"},
 			},
@@ -241,9 +240,8 @@ func TestControlAPIComposePrefixGuard_PermissionGated_E2E(t *testing.T) {
 	// 400 is attributable to the prefix guard, not a missing template.
 	templateHash := deployScenarioTemplateAuth(t, ep, adminKey, map[string]any{
 		"spec": map[string]any{
-			"name":                  "compose-prefix-perm-guard",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    "compose-prefix-perm-guard",
+			"version": "1",
 			"nodes": []map[string]any{
 				{"type": "worker", "executor": "stub"},
 			},
@@ -423,7 +421,6 @@ func writeGuardComposeManifest(t *testing.T) string {
 	template := `# compose prefix-guard e2e template — one stub-executor worker node.
 name: compose-prefix-guard-engine
 version: "1"
-frame_resolution_mode: serial_queue
 nodes:
   - type: worker
     executor: stub

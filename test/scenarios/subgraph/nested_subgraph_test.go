@@ -28,9 +28,8 @@ import (
 func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
-		Name:                "nested",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "nested",
+		Version: "1",
 		Graphs: []tmplspec.GraphSpec{
 			{
 				Name:  tmplspec.MainGraphName,
@@ -83,9 +82,8 @@ func TestNestedSubgraph_AcyclicAccepted(t *testing.T) {
 func TestNestedSubgraph_CycleRejected(t *testing.T) {
 	t.Parallel()
 	tmpl := &node.TemplateSpec{
-		Name:                "cyclic",
-		Version:             "1",
-		FrameResolutionMode: node.FrameResolutionCoalesce,
+		Name:    "cyclic",
+		Version: "1",
 		Graphs: []tmplspec.GraphSpec{
 			{
 				Name:  tmplspec.MainGraphName,

@@ -44,6 +44,31 @@ type CompiledPredicate struct {
 //   - field reference not in the resolved payload schema (exact-type
 //     only).
 func CompileWhen(typeSpec TypePath, when string) (*CompiledPredicate, error) {
+	return CompileWhenWithBodyFields(typeSpec, when, nil)
+}
+
+// CompileWhenWithBodyFields is the extended form of CompileWhen that
+// additionally cross-checks chained `payload.attributes_delta.<field>`
+// references against a caller-supplied body-field allowlist. Used by
+// the template validator on message-virtual-node subscriptions
+// (`node: <message-type>, type: terminal/success`): the message-type's
+// `body_schema` properties are the legal `<field>` set, and a typo
+// silently evaluates as no-match at runtime — the same falsifier the
+// `{{messages.T.field}}` substitution validator catches at
+// registration. Cross-checking here matches the substitution side's
+// rigor.
+//
+// `bodyFields` is nil when no cross-check is wanted (the bare
+// CompileWhen surface above). An empty (non-nil) set means "the
+// message-type declares no body fields", which rejects any
+// `payload.attributes_delta.<field>` reference.
+//
+// Returns the same wrapped errors as CompileWhen, plus:
+//   - `payload.attributes_delta.<field>` references an unknown field
+//     when `bodyFields` is non-nil.
+//
+// @concept: message-schema
+func CompileWhenWithBodyFields(typeSpec TypePath, when string, bodyFields map[string]struct{}) (*CompiledPredicate, error) {
 	if when == "" {
 		return nil, nil
 	}
@@ -69,6 +94,22 @@ func CompileWhen(typeSpec TypePath, when string) (*CompiledPredicate, error) {
 			}
 		}
 	}
+	// Message-virtual-node body-field cross-check. The receiver
+	// subscribes via `node: <message-type>, type: terminal/success`;
+	// `payload.attributes_delta` is the bridge field (populated by
+	// `code:runtime/message_delivery.go::messageVirtualNodeSettleSignal`
+	// from the message body), so a `payload.attributes_delta.<field>`
+	// reference is really a body-field read. Without this check, the
+	// substitution side ({{messages.T.field}}) rejects typos at
+	// registration but the CEL side admits them silently — asymmetric
+	// coverage that STORY-typed-message-substitution's falsifier
+	// rules out. The check is only meaningful when bodyFields is
+	// supplied (the template validator on message-virtual-node subs).
+	if bodyFields != nil {
+		if err := checkAttributesDeltaFields(checked, bodyFields); err != nil {
+			return nil, fmt.Errorf("invalid CEL expression %q: %w", when, err)
+		}
+	}
 	prog, err := env.Program(checked)
 	if err != nil {
 		return nil, fmt.Errorf("signal.CompileWhen: build program: %w", err)
@@ -78,6 +119,58 @@ func CompileWhen(typeSpec TypePath, when string) (*CompiledPredicate, error) {
 		subscriptionType: typeSpec,
 		whenSrc:          when,
 	}, nil
+}
+
+// checkAttributesDeltaFields walks the compiled AST and rejects any
+// `payload.attributes_delta.<field>` chained reference whose `<field>`
+// is not in the allowed set. Mirrors `checkPayloadFields`'s shape but
+// matches a two-step chain instead of one (the operand of the outer
+// select is itself a select on `payload.attributes_delta`).
+//
+// Deeper chains (`payload.attributes_delta.foo.bar`) only check `foo`
+// — the same one-segment-deep policy `checkPayloadFields` uses for the
+// outer `payload.<field>` slot. Author-declared body fields can
+// themselves carry nested shape; rimsky doesn't introspect that
+// nested shape at template-registration time.
+//
+// @concept: message-schema
+func checkAttributesDeltaFields(checked *cel.Ast, allowed map[string]struct{}) error {
+	nav := ast.NavigateAST(checked.NativeRep())
+	selects := ast.MatchDescendants(nav, ast.KindMatcher(ast.SelectKind))
+	var missing []string
+	seen := map[string]struct{}{}
+	for _, sel := range selects {
+		s := sel.AsSelect()
+		operand := s.Operand()
+		if operand.Kind() != ast.SelectKind {
+			continue
+		}
+		inner := operand.AsSelect()
+		innerOp := inner.Operand()
+		if innerOp.Kind() != ast.IdentKind {
+			continue
+		}
+		if innerOp.AsIdent() != "payload" {
+			continue
+		}
+		if inner.FieldName() != "attributes_delta" {
+			continue
+		}
+		field := s.FieldName()
+		if _, ok := allowed[field]; ok {
+			continue
+		}
+		if _, dup := seen[field]; dup {
+			continue
+		}
+		seen[field] = struct{}{}
+		missing = append(missing, field)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("payload.attributes_delta.<field> reference(s) not in message body_schema: %s",
+		strings.Join(missing, ", "))
 }
 
 // Eval evaluates the predicate against a Signal. A nil receiver

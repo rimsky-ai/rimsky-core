@@ -32,7 +32,7 @@ Three `@blessed-invariant`s codify the discipline:
 
 - **§20** — claim payload, address, and claim scope are byte-opaque inert (carried on the claim-result value type).
 - **§21** — blob content (carried by the blob-backend interface) and (by extension) named-event payloads + executor error payloads are structurally inert.
-- **§24** — message payloads are inert. Read only at the substitution leaf (resolving the trigger message) and at the persistence-layer fetch that surfaces a single message row. The message delivery path touches envelope routing fields (kind, sender, sender-kind, target, frame id, delivered-at) but never the payload.
+- **§24** — message payloads are inert. Read only at the substitution leaf (resolving the trigger message) and at the persistence-layer fetch that surfaces a single message row. The message delivery path touches envelope routing fields (type, sender, sender_kind, frame_id, delivered_at, received_at) but never the payload.
 
 Sanctioned read sites (each carries the inertness annotation in code):
 
@@ -45,4 +45,4 @@ Sanctioned read sites (each carries the inertness annotation in code):
 
 ## Auth audit log: verbatim request_params
 
-The `auth.access_attempted` and `auth.access_denied` event rows store the request body verbatim as `request_params` (see `concept:event-log`). Verbatim storage is sanctioned by inertness: rimsky's structural-inertness discipline guarantees no sensitive data flows in request bodies (the only sensitive value in an auth-relevant exchange is the API key itself, which is in the `Authorization` header — never stored). Verbatim params make the audit log materially more useful for forensic queries ("show me everything `agent:supervisor:prod` did with template_hash X") without violating inertness.
+The `auth.access_attempted` and `auth.access_denied` event rows store the request body verbatim as `request_params` (see `concept:event-log`). Verbatim storage is sanctioned by inertness: rimsky's structural-inertness discipline guarantees no sensitive data flows in request bodies (the only sensitive value in an auth-relevant exchange is the API key itself, which is carried in the auth header per `concept:control-api` / `concept:api-key` — never stored). Verbatim params make the audit log materially more useful for forensic queries (filtering by api-key identity and template hash, for example) without violating inertness.

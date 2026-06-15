@@ -23,7 +23,7 @@ import (
 
 var errInstanceIDRequired = errors.New("instances.create: ID is required (zero UUID rejected)")
 
-const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id`
+const instanceCols = `id, template_hash, instance_key, params, attribute_overrides, created_at, terminated_at, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id`
 
 func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreateInput, tx persistence.Tx) (persistence.InstanceRow, error) {
 	if in.Params == nil {
@@ -51,16 +51,6 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		return persistence.InstanceRow{}, errInstanceIDRequired
 	}
 
-	// @constraint: empty FrameDeliveryMode passes nil so the INSERT's
-	// COALESCE(?, 'serial_queue') decides the default — the literal here
-	// is load-bearing and is NOT taken from the column DEFAULT. Any other
-	// value is sent verbatim; the CHECK constraint enforces the
-	// {serial_queue, coalesce} vocabulary so a bad value surfaces as a
-	// SQLite constraint violation.
-	var deliveryMode any
-	if in.FrameDeliveryMode != "" {
-		deliveryMode = in.FrameDeliveryMode
-	}
 	pausedArg := 0
 	if in.Paused {
 		pausedArg = 1
@@ -78,10 +68,10 @@ func (s *instancesImpl) Create(ctx context.Context, in persistence.InstanceCreat
 		createdByAPIKeyArg = in.CreatedByAPIKeyID.String()
 	}
 	row := s.q(tx).QueryRowContext(ctx,
-		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, frame_delivery_mode, created_at, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id)
-		 VALUES (?, ?, ?, ?, ?, COALESCE(?, 'serial_queue'), ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rimsky_instances (id, template_hash, instance_key, params, attribute_overrides, created_at, attribute_overrides_match_counts, main_run_scope_id, paused, terminate_after_run, service_bindings, created_by_api_key_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING `+instanceCols,
-		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), deliveryMode, nowUTC(), string(matchCountsBytes), in.MainRunScopeID.String(), pausedArg, terminateAfterRunArg, serviceBindingsArg, createdByAPIKeyArg,
+		in.ID.String(), in.TemplateHash, in.InstanceKey, string(paramsBytes), string(overridesBytes), nowUTC(), string(matchCountsBytes), in.MainRunScopeID.String(), pausedArg, terminateAfterRunArg, serviceBindingsArg, createdByAPIKeyArg,
 	)
 	out, err := scanInstance(row)
 	if err != nil {
@@ -227,7 +217,18 @@ func (s *instancesImpl) Delete(ctx context.Context, id foundationshared.UUID, tx
 	// and rimsky_node_runs.run_scope_id). rimsky_instances.main_run_scope_id
 	// is DEFERRABLE INITIALLY DEFERRED so the simultaneous deletion of
 	// instance and main scope satisfies the mutual FK at commit time.
-	// Mirrors the postgres backend.
+	//
+	// @constraint: defer_foreign_keys is required for SQLite because the
+	// frame→message FK is ON DELETE RESTRICT (audit-history retention; see
+	// migration 010). Instance delete CASCADEs frames and messages in
+	// parallel; if SQLite walks message deletion before the frame whose
+	// triggering_message_id points at it, the RESTRICT fires mid-cascade.
+	// Deferring the FK check until COMMIT lets the simultaneous deletion
+	// succeed — at COMMIT both rows are gone and the dangling reference
+	// resolves itself. The pragma only applies for the duration of this tx.
+	if _, err := s.q(tx).ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+		return fmt.Errorf("instances.delete: defer_foreign_keys: %w", err)
+	}
 	_, err := s.q(tx).ExecContext(ctx, `DELETE FROM rimsky_instances WHERE id = ?`, id.String())
 	if err != nil {
 		return fmt.Errorf("instances.delete: %w", err)
@@ -464,7 +465,6 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		instanceKey          sql.NullString
 		paramsStr            string
 		overridesStr         string
-		deliveryMode         string
 		createdAtStr         string
 		terminatedAtStr      sql.NullString
 		matchCountsStr       string
@@ -474,7 +474,7 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		serviceBindingsStr   sql.NullString
 		createdByAPIKeyIDStr sql.NullString
 	)
-	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &deliveryMode, &createdAtStr, &terminatedAtStr, &matchCountsStr, &mainRunScopeIDStr, &pausedInt, &terminateAfterRunInt, &serviceBindingsStr, &createdByAPIKeyIDStr); err != nil {
+	if err := sc.Scan(&idStr, &templateHash, &instanceKey, &paramsStr, &overridesStr, &createdAtStr, &terminatedAtStr, &matchCountsStr, &mainRunScopeIDStr, &pausedInt, &terminateAfterRunInt, &serviceBindingsStr, &createdByAPIKeyIDStr); err != nil {
 		return persistence.InstanceRow{}, err
 	}
 	id, err := uuid.Parse(idStr)
@@ -517,7 +517,6 @@ func scanInstance(sc scannable) (persistence.InstanceRow, error) {
 		Params:                        m,
 		AttributeOverrides:            overrides,
 		AttributeOverridesMatchCounts: mc,
-		FrameDeliveryMode:             deliveryMode,
 		MainRunScopeID:                mainRunScopeID,
 		CreatedAt:                     createdAt,
 		Paused:                        pausedInt != 0,

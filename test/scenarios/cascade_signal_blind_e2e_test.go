@@ -96,7 +96,15 @@ func TestCascadeSignalBlind_E2E(t *testing.T) {
 	t.Run("terminal_error_pass__per_sender", testCascadeTerminalErrorPassPerSender)
 	t.Run("terminal_error_pass__cross_cutting", testCascadeTerminalErrorPassCrossCutting)
 
-	t.Run("transient_retry__per_sender", testCascadeTransientRetryPerSender)
+	// @deliberate: The pre-message-schema-layer `transient_retry__per_sender`
+	// variant retired alongside the per-subscription `frame: next`
+	// modifier: it asserted the receiver dispatches DURING the sender's
+	// retry window, which required opening a new frame for the receiver
+	// on each transient/retry emit. With the cascade walker collapsed to
+	// one in-frame path, cross-frame coupling moves to message-emitter
+	// nodes; the equivalent retry-window dispatch becomes a
+	// message-emitter scenario covered later in the message-schema-layer
+	// rollout.
 
 	t.Run("attribute_changed__per_sender", testCascadeAttributeChangedPerSender)
 
@@ -112,15 +120,14 @@ func testCascadeTerminalSuccessPerSender(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-signal-blind-success-per-sender", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "sender", Executor: "stub"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "terminal/success",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -147,15 +154,14 @@ func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-signal-blind-success-cross-cutting", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "sender", Executor: "stub"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance: true, Type: "terminal/success", Frame: "next",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					Instance: true, Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -169,8 +175,8 @@ func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 
 	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFresh, 30*time.Second),
 		"sender should settle terminal/success")
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"cross-cutting (instance:true) terminal/success subscriber must dispatch")
+	require.True(t, h.WaitForEventKind(receiver.ID, "terminal/success", 30*time.Second),
+		"cross-cutting (instance:true) terminal/success subscriber must dispatch and emit terminal/success")
 	require.True(t, h.WaitForEventKind(sender.ID, "terminal/success", 10*time.Second),
 		"audit row for terminal/success must land in rimsky_events")
 }
@@ -193,7 +199,6 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-signal-blind-error-giveup-per-sender", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "sender",
@@ -209,8 +214,8 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 				// signals emitted by the named sender.
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "terminal/error/*",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -239,7 +244,6 @@ func testCascadeTerminalErrorGiveUpCrossCutting(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-signal-blind-error-giveup-cross-cutting", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "sender",
@@ -255,9 +259,8 @@ func testCascadeTerminalErrorGiveUpCrossCutting(t *testing.T) {
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Instance:             true,
 					Type:                 "terminal/error/stub/giveup_class_cc",
-					Frame:                "next",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -286,7 +289,6 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-signal-blind-error-pass-per-sender", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "sender",
@@ -299,8 +301,8 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "terminal/error/*",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -333,7 +335,6 @@ func testCascadeTerminalErrorPassCrossCutting(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-signal-blind-error-pass-cross-cutting", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "sender",
@@ -347,9 +348,8 @@ func testCascadeTerminalErrorPassCrossCutting(t *testing.T) {
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Instance:             true,
 					Type:                 "terminal/error/stub/pass_class_cc",
-					Frame:                "next",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -369,75 +369,6 @@ func testCascadeTerminalErrorPassCrossCutting(t *testing.T) {
 		"audit row for terminal/error/<class> must land in rimsky_events under pass")
 }
 
-// @deliberate: transient/retry/<n>/<class>
-
-func testCascadeTransientRetryPerSender(t *testing.T) {
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: Sender errors persistently; the retry policy fires
-	// transient/retry/<n>/stub/flaky for each retry, then falls through to
-	// give_up so the test ends deterministically.
-	h.Stub.WhenType("sender").Error("flaky", map[string]any{"hint": "transient"})
-	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "cascade-signal-blind-retry-per-sender", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "sender",
-				Executor: "stub",
-				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/flaky": {Policy: []node.PolicyAction{
-						{Action: "retry", Count: 2, BaseDelayMs: 50},
-						{Action: "give_up"},
-					}},
-				},
-			}),
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
-				// @deliberate: Receiver subscribes on transient/retry/* with frame:next
-				// so each retry emit opens a fresh frame for the receiver
-				// and it dispatches in that frame. (frame:in would gate the
-				// receiver on the same frame as the still-retrying sender;
-				// the wait-set drain only fires on terminal settlement, not
-				// on transient/retry, so the receiver would stay gated
-				// throughout the retry window.)
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "sender", Type: "transient/retry/*", Frame: "next",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
-				}),
-			),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-csb-retry-ps", map[string]any{})
-
-	sender := h.FindNode(iid, "sender")
-	receiver := h.FindNode(iid, "receiver")
-	require.NotNil(t, sender)
-	require.NotNil(t, receiver)
-
-	// @constraint: Each retry emits a transient/retry/<n>/<class> signal that fires
-	// the receiver. The receiver reaches fresh on its first dispatch from
-	// any retry emit.
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender transient/retry/* subscriber must dispatch on the sender's retry emit")
-
-	// @constraint: Audit row for at least one transient/retry/<n>/<class> emit must
-	// land. Use the cousin pattern: poll rimsky_events directly because
-	// the kind carries an attempt counter we don't pin numerically.
-	require.Eventually(t, func() bool {
-		var count int
-		h.QueryRowSQL(
-			`SELECT count(*) FROM rimsky_events WHERE node_id = $1 AND kind LIKE 'transient/retry/%'`,
-			[]any{sender.ID},
-			&count,
-		)
-		return count > 0
-	}, 10*time.Second, 50*time.Millisecond,
-		"audit row for transient/retry/<n>/<class> must land in rimsky_events")
-}
-
 // @deliberate: attribute/<key>/changed
 
 func testCascadeAttributeChangedPerSender(t *testing.T) {
@@ -451,7 +382,6 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-signal-blind-attribute-changed-per-sender", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "sender", Executor: "stub"},
@@ -469,8 +399,8 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "attribute/score/changed",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -504,15 +434,14 @@ func testCascadeEventNamedPerSender(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "cascade-signal-blind-event-named-per-sender", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "sender", Executor: "stub"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "event/ready",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},

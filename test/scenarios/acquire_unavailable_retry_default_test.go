@@ -67,7 +67,6 @@ func TestAcquireUnavailableRetryDefault(t *testing.T) {
 	// the default is fail-fast.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "acq-unavail-default", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

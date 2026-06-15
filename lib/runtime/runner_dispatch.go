@@ -167,6 +167,24 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	}()
 	metrics.IncDispatch(acq.Executor, "started")
 
+	if acq.NodeDef != nil && acq.NodeDef.EmitsMessage != "" {
+		// @deliberate: message-emitter-node dispatch (@concept: message-emitter-node).
+		// The runtime does NOT invoke an executor: the resolved
+		// attribute set IS the message body. Synthesize the same
+		// Success{changed: true} terminal that a real executor's
+		// `Complete{changed: true}` would, so `applyTerminalComplete`
+		// routes through its standard release / attribute-upsert /
+		// state-machine / cascade path AND lands the envelope insert
+		// in the same outer tx (the load-bearing atomicity property —
+		// rollback after body composition rolls the emit back too).
+		// The ChangeSummary names the emitted type so the audit row
+		// surfaces what was emitted.
+		return terminalEvent{
+			Kind:          terminalKindComplete,
+			Changed:       true,
+			ChangeSummary: "emits_message:" + acq.NodeDef.EmitsMessage,
+		}, nil, nil
+	}
 	if acq.Executor == "" {
 		// @deliberate: native dispatch (claim-only or pure-cascade) synthesizes a
 		// Success{changed: true} so dependents recalc.
@@ -750,13 +768,69 @@ func buildResolveContextForDispatch(
 	eventLookup := func(emitter, eventName string) (json.RawMessage, bool) {
 		return lookupEventPayload(ctx, args, acq.InstanceID, emitter, eventName)
 	}
+	// @deliberate: bind the frame's triggering message — payload bytes (the
+	// `{{trigger.message.payload.X}}` arm) AND its type (the new
+	// `{{messages.<type>.<field>}}` arm). One SQL fetch, two
+	// substitution surfaces — they share a single resolver function
+	// (per spec §Load-bearing property "one substitution engine, two
+	// surfaces"). When zero or more than one message lives on the
+	// frame, both arms surface ErrMissingSource via the helper's
+	// empty-string sentinel.
+	triggerPayload, triggerType := lookupTriggerMessageForFrame(ctx, args, acq.FrameID)
+	// @deliberate: arm the `{{messages.<type>.<field>}}` resolver's dynamic floor by
+	// threading the template's declared message-type set. A directive
+	// that names an undeclared type returns ErrMissingSource even when
+	// the frame's actual triggering message type happens to match —
+	// defense-in-depth against runtime-interpolated directives that
+	// bypass the registration-time validator. Loaded via the
+	// per-template cache so the per-dispatch overhead is one map lookup
+	// after first use. Nil on a missing template / unwired persistence;
+	// the resolver treats nil as "no floor" (the documented behaviour).
+	registryTypes := declaredMessageTypesForTemplate(ctx, args, acq.TemplateHash, nil)
 	return attributes.ResolveContext{
-		Deps:              deps,
-		Claim:             claims,
-		Params:            paramsRaw,
-		EventLookup:       eventLookup,
-		ChildPartitionKey: partitionKey,
+		Deps:                  deps,
+		Claim:                 claims,
+		Params:                paramsRaw,
+		EventLookup:           eventLookup,
+		ChildPartitionKey:     partitionKey,
+		TriggerMessagePayload: triggerPayload,
+		TriggerMessageType:    triggerType,
+		RegistryDeclaredTypes: registryTypes,
 	}, nil
+}
+
+// lookupTriggerMessageForFrame opens a short read tx and reads the
+// single message delivered into frameID; returns (nil, "") when zero or
+// more than one delivered message exists, when the read fails, or when
+// the messages table is not wired (test contexts may omit it).
+//
+// Mirrors lookupEventPayload's short-tx pattern: the dispatch context is
+// built outside the acquisition tx (which has committed by then), so the
+// helper opens its own read tx rather than reusing a caller-supplied
+// one. Reads through Messages().ListDeliveredForFrame so the same
+// implementation services both the fan-out partition_request path and
+// the dispatch-time substitution context.
+//
+// Per @blessed-invariant 21 the payload bytes are inert — forwarded
+// verbatim into the substitution context. The type-path discriminator is
+// identifier-shaped and safe to log; the payload is not.
+func lookupTriggerMessageForFrame(
+	ctx context.Context, args RunArgs, frameID shared.UUID,
+) (json.RawMessage, string) {
+	if args.Persist == nil || args.Persist.Messages() == nil {
+		return nil, ""
+	}
+	var (
+		payload json.RawMessage
+		mtype   string
+	)
+	_ = args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		p, t := triggerMessageForFrame(ctx, args, tx, frameID)
+		payload = p
+		mtype = t
+		return nil
+	})
+	return payload, mtype
 }
 
 // lookupEventPayload resolves the most recent NamedEvent emission for

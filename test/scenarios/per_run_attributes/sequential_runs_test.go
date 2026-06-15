@@ -16,9 +16,6 @@
 package per_run_attributes
 
 import (
-	"bytes"
-	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -42,7 +39,6 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-two-runs", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
@@ -73,7 +69,10 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "second"}, true, "ok")
 
-	adminInvalidate(t, h, iid, w.ID)
+	// @deliberate: Trigger a fresh run via the runtime-synthetic invalidate
+	// envelope (the same path the retired admin invalidate route used
+	// internally).
+	h.InvalidateNode(iid, w.ID)
 
 	// @deliberate: Wait until the latest attribute row has a different run id and
 	// reflects the second invocation's value.
@@ -109,16 +108,4 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	require.NotNil(t, firstByRun, "first run's attribute row should still be readable by run id")
 	require.Equal(t, "first", firstByRun.Data["value"],
 		"first run's data should be unchanged after the second run")
-}
-
-// adminInvalidate POSTs an admin invalidate against the given node.
-func adminInvalidate(t *testing.T, h *scenario.Harness, instanceID, nodeID interface{ String() string }) {
-	t.Helper()
-	body, _ := json.Marshal(map[string]any{})
-	resp, err := http.Post(
-		h.ControlBase+"/v1/admin/instances/"+instanceID.String()+"/nodes/"+nodeID.String()+"/invalidate",
-		"application/json", bytes.NewReader(body),
-	)
-	require.NoError(t, err)
-	resp.Body.Close()
 }

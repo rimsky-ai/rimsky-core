@@ -15,7 +15,7 @@ func TestGrantRoundTrip(t *testing.T) {
 	cases := []string{
 		`{"action":"instance:read"}`,
 		`{"action":"instance:create"}`,
-		`{"action":"node:invalidate"}`,
+		`{"action":"node:reset"}`,
 	}
 	for _, src := range cases {
 		var e GrantEntry

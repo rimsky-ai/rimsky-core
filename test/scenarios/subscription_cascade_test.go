@@ -10,8 +10,6 @@
 package scenarios
 
 import (
-	"bytes"
-	"net/http"
 	"testing"
 	"time"
 
@@ -37,7 +35,6 @@ func TestSubscriptionCascade_MultipleInvalidatorDrain(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "subscription-cascade-multi", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(node.TemplateNodeDef{Type: "b", Executor: "stub"}),
@@ -96,7 +93,6 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "subscription-cascade-eligibility", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(
@@ -153,11 +149,7 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 
 	// @deliberate: One invalidation, one frame: A re-runs; its settlement marks B
 	// and C stale in the same frame and both dispatch into the holds.
-	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+a.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	_ = resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	h.InvalidateNode(iid, a.ID)
 
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should re-reach fresh")
@@ -229,8 +221,8 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 // TestSubscriptionCascade_CrossCuttingPositive covers cross-cutting
 // (`instance: true`) subscriptions: a monitor node M subscribes to
 // "any node failing with error_class=X" across the instance; a sender
-// node fails with that class, M wakes (frame: next, default for
-// cross-cutting).
+// node fails with that class, M wakes via the cascade walker's
+// in-tx in-frame path.
 func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -239,7 +231,6 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "subscription-cascade-crosscut-positive", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:     "worker",
@@ -253,9 +244,8 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Instance:             true,
 					Type:                 "terminal/error/stub/rate_limited",
-					Frame:                "next",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -267,12 +257,12 @@ func TestSubscriptionCascade_CrossCuttingPositive(t *testing.T) {
 	require.NotNil(t, monitor)
 
 	// @deliberate: Worker reaches failed via give_up; cross-cutting cascade walk
-	// opens a new frame for monitor (frame: next), monitor dispatches
+	// stale-marks the monitor in the worker's frame, monitor dispatches
 	// and reaches fresh.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFailed, 30*time.Second),
 		"worker should reach failed via give_up")
 	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
-		"monitor should reach fresh after cross-cutting cascade fires the next-frame open")
+		"monitor should reach fresh after cross-cutting cascade fires")
 }
 
 // TestSubscriptionCascade_CrossCuttingNegative covers the no-coupling
@@ -294,7 +284,6 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "subscription-cascade-crosscut-negative", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 			// @deliberate: Monitor declares no subscriptions: it's a stand-alone
@@ -332,11 +321,7 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	// @constraint: Invalidate worker; monitor MUST NOT re-fire because no edge
 	// connects them.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "w-ok-2")
-	resp, err := http.Post(h.ControlBase+"/v1/nodes/"+worker.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	_ = resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	h.InvalidateNode(iid, worker.ID)
 
 	// @constraint: Worker re-reaches fresh.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
@@ -386,7 +371,6 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "subscription-cascade-frame-end-clean", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
 			scenario.MakeNode(
@@ -434,54 +418,13 @@ func TestSubscriptionCascade_FrameEndCleansWaitSet(t *testing.T) {
 		"every wait-set row should be drained (drained_at IS NOT NULL) by frame end")
 }
 
-// TestSubscriptionCascade_FrameNextLoopConverges covers the frame:next
-// modifier on per-node subscriptions. A receiver subscribes to A with
-// `frame: next` — A's settlement opens a new frame for the receiver
-// instead of joining A's frame. The chain converges: A settles → next
-// frame opens for R → R dispatches → both reach fresh; no infinite
-// loop because R doesn't re-invalidate A.
-func TestSubscriptionCascade_FrameNextLoopConverges(t *testing.T) {
-	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("a").Success(map[string]any{"a": 1}, true, "a")
-	h.Stub.WhenType("r").Success(map[string]any{"r": 1}, true, "r")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "subscription-cascade-frame-next-converges", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "r", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "a", Type: "terminal/*", Frame: "next",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
-				}),
-			),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-frame-next-converges", map[string]any{})
-	a := h.FindNode(iid, "a")
-	r := h.FindNode(iid, "r")
-	require.NotNil(t, a)
-	require.NotNil(t, r)
-
-	// @deliberate: A reaches fresh in the first frame; R reaches fresh in the
-	// next frame that the cascade walk opened.
-	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
-		"a should reach fresh in the initial frame")
-	require.True(t, h.WaitForNodeState(r.ID, cascade.NodeStateFresh, 30*time.Second),
-		"r should reach fresh in the deferred next frame")
-}
-
-// TestSubscriptionCascade_SelfCycleAdvances covers the post-2026-05-23
+// TestSubscriptionCascade_SelfCycleAdvances covers the
 // "drain my own queue" idiom: a node with
 // `subscribes: { node: <self-type>, type: terminal/success,
-// when: payload.changed, frame: next }` re-fires after every
-// fresh_changed-equivalent commit. This is the receiver-side
-// replacement for the retired send-side
-// `on_executor_complete: { invalidate: { targets: [self] } }`.
+// when: payload.changed }` re-fires after every fresh_changed-equivalent
+// commit. The cascade walker's insert-then-drain-in-same-tx pattern
+// keeps iteration inside the current frame — the supervisor picks up
+// each new pending self-run as it lands.
 //
 // Asserts:
 //   - the node is dispatched at least twice (initial + at least one
@@ -496,16 +439,15 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "subscription-cascade-self-cycle", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "drain", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "drain", Type: "terminal/success",
+					Node:                 "drain",
+					Type:                 "terminal/success",
 					When:                 "payload.changed",
-					Frame:                "next",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
@@ -514,76 +456,11 @@ func TestSubscriptionCascade_SelfCycleAdvances(t *testing.T) {
 	d := h.FindNode(iid, "drain")
 	require.NotNil(t, d)
 
-	// @deliberate: Self-cycle should produce multiple dispatches: initial + at
-	// least one re-fire from the fresh_changed commit's cascade walk.
-	require.Eventually(t, func() bool {
-		return len(h.Stub.Observed()) >= 2
-	}, 10*time.Second, 25*time.Millisecond,
-		"self-subscription with frame:next must re-fire the node after a fresh_changed commit")
-
-	// @deliberate: Flip the stub: subsequent commits report changed=false → the
-	// receiver-side CEL `when: payload.changed` predicate evaluates
-	// false against the `terminal/success` envelope's payload →
-	// subscriber doesn't fire → loop terminates.
-	h.Stub.WhenType("drain").Success(map[string]any{"k": 2}, false, "no_change")
-	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
-		"node should settle at fresh once the stub stops reporting changed=true")
-
-	// @deliberate: Confirm termination: once the stub flips to changed=false the
-	// dispatch count must stabilize. A few in-flight dispatches may
-	// have been queued from prior changed=true commits before the
-	// flip propagated, so use Eventually to wait for the count to
-	// stop growing across consecutive observations.
-	var prev int
-	require.Eventually(t, func() bool {
-		now := len(h.Stub.Observed())
-		stable := now == prev
-		prev = now
-		return stable
-	}, 5*time.Second, 200*time.Millisecond,
-		"dispatch count should stabilize after the changed=false flip; "+
-			"continued growth would mean the receiver-side `when: payload.changed` filter is broken")
-}
-
-// TestSubscriptionCascade_SelfCycleAdvances_FrameIn is the FrameIn
-// spelling of the drain-my-own-queue idiom. Where the FrameNext shape
-// opens a fresh frame per iteration, FrameIn keeps iteration inside
-// the current frame — the supervisor picks up each new pending self-
-// run as it lands. Safe because `MarkStaleForCascade` does not touch
-// `rimsky_nodes.state` (only inserts a new run row + re-stamps
-// frame_id), and the cascade walker's insert-then-drain-in-same-tx
-// pattern drains the new pending run's wait-set blocker (keyed on the
-// just-committed run) before the supervisor sees it.
-func TestSubscriptionCascade_SelfCycleAdvances_FrameIn(t *testing.T) {
-	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("drain").Success(map[string]any{"k": 1}, true, "changed")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "subscription-cascade-self-cycle-in", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "drain", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "drain", Type: "terminal/success",
-					When:                 "payload.changed",
-					Frame:                "in",
-					WakeOnChange:         node.BoolPtr(true),  // today-equivalent
-					ForceUpstreamRefresh: node.BoolPtr(false), // today-equivalent
-				}),
-			),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-self-cycle-in", map[string]any{})
-	d := h.FindNode(iid, "drain")
-	require.NotNil(t, d)
-
 	// @constraint: Self-cycle should produce multiple dispatches in the same frame.
 	require.Eventually(t, func() bool {
 		return len(h.Stub.Observed()) >= 2
 	}, 10*time.Second, 25*time.Millisecond,
-		"self-subscription with frame:in must re-fire the node after a fresh_changed commit")
+		"self-subscription must re-fire the node after a fresh_changed commit")
 
 	// @deliberate: Flip the stub: subsequent commits report changed=false → the
 	// receiver-side CEL `when: payload.changed` predicate evaluates

@@ -87,17 +87,18 @@ func acquireFanOutIfDeclared(
 	frameID := cand.FrameID
 	// @constraint: substitute partition_request with the runtime-resolved trigger
 	// payload before handing it to SplitScope. The fan-out node's
-	// partition_request is authored to pull the backfill's
-	// partition_request_override off the triggering message (canonical
-	// form `{{trigger.message.payload.partition_request_override |
+	// partition_request is authored to pull an operator-supplied
+	// override off the triggering message (canonical form
+	// `{{trigger.message.payload.partition_request_override |
 	// <template-default>}}`); the override rides the delivered
-	// invalidate message's payload keyed to this frame. The bytes that
-	// reach AcquireSubClaims / SplitScope must be the SUBSTITUTED bytes
-	// (the override genuinely binds), not the literal template. Passing
-	// the literal verbatim — the prior behaviour — silently dropped
-	// every backfill override because the `{{trigger…}}` directive was
-	// never resolved and the `|`-fallback to the template default
-	// always fired.
+	// message's payload keyed to this frame.
+	//
+	// Load-bearing property: the bytes that reach AcquireSubClaims /
+	// SplitScope are the SUBSTITUTED bytes (the override genuinely
+	// binds), not the literal template. Passing the literal verbatim
+	// silently drops every override because the `{{trigger…}}`
+	// directive is never resolved and the `|`-fallback to the
+	// template default always fires.
 	partitionRequest, err := substituteFanOutPartitionRequest(ctx, args, tx, frameID, out, nodeDef.FanOut.PartitionRequest)
 	if err != nil {
 		args.Logger.Warn("tryAcquire: fan-out partition_request substitution failed",
@@ -150,8 +151,8 @@ func acquireFanOutIfDeclared(
 //
 // The directive the operator authors is canonically
 // `{{trigger.message.payload.partition_request_override | <default>}}`:
-// it pulls the backfill's `partition_request_override` off the message
-// delivered into this frame. The override is bound through
+// it pulls the operator-supplied `partition_request_override` off the
+// message delivered into this frame. The override is bound through
 // ResolveContext.TriggerMessagePayload — the slot resolveTriggerValue
 // reads — so the substituted bytes carry the operator's override, not
 // the template default.
@@ -176,7 +177,6 @@ func acquireFanOutIfDeclared(
 // structured override expects.
 //
 // @concept: fan-out
-// @concept: backfill
 func substituteFanOutPartitionRequest(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
 	frameID shared.UUID, out *acquisition, partitionRequest string,
@@ -184,9 +184,27 @@ func substituteFanOutPartitionRequest(
 	resolveCtx := attributes.ResolveContext{
 		Params: instanceParamsRaw(out),
 		Claim:  out.HeldClaims,
+		// @constraint: defense-in-depth — thread the template's declared
+		// message-type set so `{{messages.<type>.<field>}}` references
+		// against undeclared types fail with ErrMissingSource even on
+		// fan-out partition_request substitution. Mirrors
+		// `buildResolveContextForDispatch` in runner_dispatch.go.
+		RegistryDeclaredTypes: declaredMessageTypesForTemplate(ctx, args, out.TemplateHash, tx),
 	}
-	if payload := triggerMessagePayloadForFrame(ctx, args, tx, frameID); len(payload) > 0 {
+	// @constraint: bind both payload bytes AND message-type. The fan-out
+	// partition_request path historically reads only
+	// `{{trigger.message.payload.X}}`, but the typed-message arm
+	// (`{{messages.<type>.<field>}}`) shares the same resolver function
+	// and must see the same triggering-message envelope so a fan-out
+	// node whose partition_request reads through the typed-message
+	// grammar resolves the same way (one substitution engine, two
+	// surfaces).
+	payload, mtype := triggerMessageForFrame(ctx, args, tx, frameID)
+	if len(payload) > 0 {
 		resolveCtx.TriggerMessagePayload = payload
+	}
+	if mtype != "" {
+		resolveCtx.TriggerMessageType = mtype
 	}
 	val, err := attributes.SubstituteValue(partitionRequest, resolveCtx)
 	if err != nil {
@@ -217,10 +235,12 @@ func instanceParamsRaw(out *acquisition) json.RawMessage {
 	return b
 }
 
-// triggerMessagePayloadForFrame returns the payload bytes of the single
-// delivered message bound to frameID, or nil when zero or more than one
-// delivered message exists (the directive's fallback / refuse path then
-// governs).
+// triggerMessageForFrame returns the (payload, type) tuple of the
+// single delivered message bound to frameID, or (nil, "") when zero or
+// more than one delivered message exists. The type is the
+// `rimsky_messages.type` discriminator that the substitution engine's
+// `messages.<type>.<field>` arm matches against (see
+// `code:graph/attribute/substitution.go::resolveMessagesValue`).
 //
 // Reuses the caller's open acquisition tx via the tx-aware
 // ListDeliveredForFrame. The tx-less Messages().List would deadlock
@@ -232,21 +252,25 @@ func instanceParamsRaw(out *acquisition) json.RawMessage {
 //
 // Per @blessed-invariant 20/21 the payload bytes are inert — forwarded
 // verbatim into the substitution context, never logged or transformed.
-func triggerMessagePayloadForFrame(ctx context.Context, args RunArgs, tx persistence.Tx, frameID shared.UUID) json.RawMessage {
+// The type-path discriminator is identifier-shaped and safe to log; the
+// payload is not.
+func triggerMessageForFrame(
+	ctx context.Context, args RunArgs, tx persistence.Tx, frameID shared.UUID,
+) (json.RawMessage, string) {
 	if args.Persist == nil || args.Persist.Messages() == nil {
-		return nil
+		return nil, ""
 	}
 	rows, err := args.Persist.Messages().ListDeliveredForFrame(ctx, tx, frameID)
 	if err != nil {
-		args.Logger.Warn("acquireFanOutIfDeclared: trigger-message lookup failed; partition_request falls back to template default",
+		args.Logger.Warn("trigger-message lookup failed; substitution falls back to ErrMissingSource",
 			"frame_id", frameID.String(),
 			"error", err.Error())
-		return nil
+		return nil, ""
 	}
 	if len(rows) != 1 {
-		return nil
+		return nil, ""
 	}
-	return rows[0].Payload
+	return rows[0].Payload, rows[0].Type
 }
 
 // loadResumeMetadataIfParked reads the per-run resume metadata from
@@ -274,10 +298,14 @@ func loadResumeMetadataIfParked(
 	}
 	// @deliberate: resume_reason is read from the persisted wake_reason column,
 	// populated by ResumeParkedInTx at wake time. Empty wake_reason
-	// (NULL) falls back to external_invalidate — covers older rows
+	// (NULL) falls back to deadline_elapsed — covers older rows
 	// upgraded in place pre-v1 and any wake path that forgot to set
-	// it (none today; the fallback is defensive).
-	wakeReason := WakeExternalInvalidate
+	// it (none today; the fallback is defensive). The
+	// operator-invalidate path that used to set
+	// external_invalidate retired with the 2026-06-14
+	// message-schema-layer reshape; the parked-resume sweep is the
+	// only live wake source.
+	wakeReason := WakeDeadlineElapsed
 	if rm.WakeReason != "" {
 		wakeReason = WakeReason(rm.WakeReason)
 	}
@@ -348,11 +376,11 @@ func loadScratchIntoAcquisition(
 		return
 	}
 	if handle == "" {
-		// Either no scratch at all, or inline scratch — pass through.
+		// @deliberate: either no scratch at all, or inline scratch — pass through.
 		out.Scratch = inline
 		return
 	}
-	// Spilled scratch — materialize through the configured BlobBackend.
+	// @deliberate: spilled scratch — materialize through the configured BlobBackend.
 	if args.Blob == nil {
 		args.Logger.Warn("tryAcquire: spilled scratch but no BlobBackend configured; passing empty scratch to executor",
 			"node_id", cand.NodeID.String(),

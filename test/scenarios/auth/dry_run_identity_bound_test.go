@@ -36,18 +36,17 @@ import (
 
 // seedDryRunTemplate registers and deploys the single-node template the
 // identity-bound dry-run scenario instantiates against, returning its
-// template hash. It reuses the seedDryRunNode template shape
-// (name/version/frame_resolution_mode + one {type:"n1"} node) but stops
-// before instance creation — the test drives /instances itself with the
-// mode-bound key so the dry-run gate is exercised on the real path.
+// template hash. The template shape is name/version + one {type:"n1"}
+// node; it stops before instance creation — the test drives /instances
+// itself with the mode-bound key so the dry-run gate is exercised on
+// the real path.
 func seedDryRunTemplate(t *testing.T, f *authFixture, adminKey string) string {
 	t.Helper()
 	tplBody := map[string]any{
 		"spec": map[string]any{
-			"name":                  "dry-run-identity-bound-seed",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"nodes":                 []map[string]any{{"type": "n1"}},
+			"name":    "dry-run-identity-bound-seed",
+			"version": "1",
+			"nodes":   []map[string]any{{"type": "n1"}},
 		},
 	}
 	code, regResp := f.request(t, "POST", "/v1/templates", adminKey, tplBody)

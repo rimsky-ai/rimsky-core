@@ -10,9 +10,7 @@
 package scenarios
 
 import (
-	"bytes"
 	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -62,7 +60,6 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-deadline", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -155,7 +152,6 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-external", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
 		},
@@ -170,13 +166,11 @@ func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
 	// @deliberate: Reschedule the script so the resume completes.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "after-review")
 
-	body, _ := json.Marshal(map[string]any{})
-	resp, err := http.Post(
-		h.ControlBase+"/v1/admin/instances/"+worker.InstanceID.String()+"/nodes/"+worker.ID.String()+"/invalidate",
-		"application/json", bytes.NewReader(body),
-	)
-	require.NoError(t, err)
-	resp.Body.Close()
+	// @deliberate: External invalidate. The retired admin route is replaced by the
+	// runtime-synthetic envelope path (the same shape the route used
+	// internally). The parked-wake handler reads the envelope type and
+	// fires the `external_invalidate` resume reason.
+	h.InvalidateNode(worker.InstanceID, worker.ID)
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 10*time.Second),
 		"admin invalidate should wake the parked node")
@@ -200,7 +194,6 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-overrun", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{
 				Type:            "worker",
@@ -330,7 +323,6 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-held-retention", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
@@ -470,7 +462,6 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-timeout-held", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

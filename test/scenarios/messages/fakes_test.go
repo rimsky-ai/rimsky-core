@@ -30,15 +30,13 @@ func newFakeMessages() *fakeMessages {
 
 func (f *fakeMessages) Insert(_ context.Context, _ persistence.Tx, req persistence.EnqueueMessageRequest) error {
 	f.rows[req.ID] = &persistence.MessageRow{
-		ID:                  req.ID,
-		InstanceID:          req.InstanceID,
-		Kind:                req.Kind,
-		Sender:              req.Sender,
-		SenderKind:          req.SenderKind,
-		Target:              req.Target,
-		Payload:             req.Payload,
-		BackfillOperationID: req.BackfillOperationID,
-		ReceivedAt:          req.ReceivedAt,
+		ID:         req.ID,
+		InstanceID: req.InstanceID,
+		Type:       req.Type,
+		Sender:     req.Sender,
+		SenderKind: req.SenderKind,
+		Payload:    req.Payload,
+		ReceivedAt: req.ReceivedAt,
 	}
 	return nil
 }
@@ -52,19 +50,6 @@ func (f *fakeMessages) MarkDelivered(_ context.Context, _ persistence.Tx, id sha
 	fid := frame
 	row.FrameID = &fid
 	return true, nil
-}
-
-func (f *fakeMessages) MarkCancelled(_ context.Context, _ persistence.Tx, op shared.UUID, at time.Time) (int, error) {
-	n := 0
-	for _, r := range f.rows {
-		if r.BackfillOperationID != nil && *r.BackfillOperationID == op && r.DeliveredAt == nil {
-			r.Cancelled = true
-			t := at
-			r.DeliveredAt = &t
-			n++
-		}
-	}
-	return n, nil
 }
 
 func (f *fakeMessages) ListPendingForInstance(_ context.Context, _ persistence.Tx, instanceID shared.UUID) ([]persistence.MessageRow, error) {
@@ -86,6 +71,10 @@ func (f *fakeMessages) Get(_ context.Context, id shared.UUID) (*persistence.Mess
 	}
 	cp := *r
 	return &cp, nil
+}
+
+func (f *fakeMessages) GetInTx(ctx context.Context, _ persistence.Tx, id shared.UUID) (*persistence.MessageRow, error) {
+	return f.Get(ctx, id)
 }
 
 func (f *fakeMessages) List(_ context.Context, _ persistence.MessageListFilter, _ persistence.ListPagination) (persistence.PaginatedListResult[persistence.MessageRow], error) {

@@ -139,19 +139,15 @@ type CallbackServer struct {
 	// terminal flow. Zero falls back to the runner's 30-minute default
 	// (see `releaseLocksInTx`).
 	ResumeGrace time.Duration
-	// Blob, BlobSpillThreshold, InvalidateHandler, and
-	// MaxRetriesWithoutProgressDefault are threaded into RunArgs at
-	// driveTerminal time so the async-callback path takes the same
-	// spill / unified-invalidate / retry-cap behaviors that the sync
-	// path takes. Without these wired, applyTerminalPark cannot spill
-	// (large parked payloads end up inline), processNamedEvents cannot
-	// spill, and on_event handler invalidates fall through to bare
-	// InvalidateNode and cannot wake parked targets via the H2 unified
-	// path. Zero values mean "use the runtime defaults" (no spill, no
-	// unified invalidate handler, built-in 100-retry cap).
+	// Blob, BlobSpillThreshold, and MaxRetriesWithoutProgressDefault are
+	// threaded into RunArgs at driveTerminal time so the async-callback
+	// path takes the same spill / retry-cap behaviors that the sync path
+	// takes. Without these wired, applyTerminalPark cannot spill (large
+	// parked payloads end up inline) and processNamedEvents cannot spill.
+	// Zero values mean "use the runtime defaults" (no spill, built-in
+	// 100-retry cap).
 	Blob                             persistence.BlobBackend
 	BlobSpillThreshold               int
-	InvalidateHandler                func(ctx context.Context, args InvalidateArgs) error
 	MaxRetriesWithoutProgressDefault int
 	// ExpectedAttributesSchemaFor is the dispatch-time hook that returns
 	// the named executor's advertised expected_attributes_schema bytes,
@@ -603,7 +599,6 @@ func (c *CallbackServer) driveTerminal(ctx context.Context, ac AsyncContext, t t
 		ResumeGrace:                      c.ResumeGrace,
 		Blob:                             c.Blob,
 		BlobSpillThreshold:               c.BlobSpillThreshold,
-		InvalidateHandler:                c.InvalidateHandler,
 		MaxRetriesWithoutProgressDefault: c.MaxRetriesWithoutProgressDefault,
 		ExpectedAttributesSchemaFor:      c.ExpectedAttributesSchemaFor,
 		Metrics:                          c.Metrics,

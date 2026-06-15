@@ -103,16 +103,6 @@ type EventPayload struct {
 	EventPayload map[string]any `json:"event_payload,omitempty"`
 }
 
-// MessagePayload is the payload schema for
-// message/<kind>/<sender_kind>/<target>.
-type MessagePayload struct {
-	Kind           string         `json:"kind"`
-	SenderKind     string         `json:"sender_kind"`
-	Sender         string         `json:"sender"`
-	Target         string         `json:"target"`
-	MessagePayload map[string]any `json:"message_payload,omitempty"`
-}
-
 // PayloadSchemaForType returns the Go reflect.Type of the payload
 // struct that matches the given exact TypePath, or (nil, false) when
 // the path is a prefix pattern (trailing "*") — prefix subscriptions
@@ -146,8 +136,6 @@ func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 		return reflect.TypeOf(AttributeChangedPayload{}), true
 	case strings.HasPrefix(s, "event/"):
 		return reflect.TypeOf(EventPayload{}), true
-	case strings.HasPrefix(s, "message/"):
-		return reflect.TypeOf(MessagePayload{}), true
 	}
 	return nil, false
 }

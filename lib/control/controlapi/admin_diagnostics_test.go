@@ -7,10 +7,8 @@ package controlapi
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,13 +21,8 @@ import (
 // noopStore is a minimal persistence.Tables impl used by admin-diagnostics
 // tests that exercise only the route layer (no real DB read). Every
 // per-feature accessor returns nil; only Transaction is exercised, and
-// it just runs fn with a sentinel Tx.
-//
-// Exception: Nodes() returns a stub NodeTable that always reports the
-// requested node as existing in state='stale'. This is sufficient for
-// the admin-invalidate handler's pre-validate step (which checks the
-// node exists and is not in state='running' before the dry-run gate).
-// Tests that need other Node behavior can construct their own stub.
+// it just runs fn with a sentinel Tx. Nodes() returns a stub NodeTable
+// that always reports the requested node as existing in state='stale'.
 type noopStore struct{}
 
 type noopTx struct{ persistence.TxMarker }
@@ -64,13 +57,8 @@ func (noopStore) Transaction(ctx context.Context, fn func(ctx context.Context, t
 	return fn(ctx, &noopTx{})
 }
 
-// noopNodes stubs persistence.NodeTable so the admin-invalidate
-// handler's pre-validate (Nodes().Get) succeeds for the synthetic
-// test UUIDs. Reports every requested node as existing in
-// state='stale' — sufficient for the routing tests, which want the
-// handler to proceed past the pre-validate and into the
-// InvalidateHandler stub. Per-test fixtures that need richer node
-// behavior can wrap noopStore and override Nodes().
+// noopNodes stubs persistence.NodeTable. Reports every requested node
+// as existing in state='stale' — sufficient for the routing tests.
 type noopNodes struct{}
 
 func (noopNodes) Create(context.Context, persistence.NodeCreateInput, persistence.Tx) (persistence.NodeRow, error) {
@@ -259,16 +247,6 @@ func (f *fakeDiagnosticQueue) WriteScratchInTx(context.Context, persistence.Tx, 
 	return nil
 }
 
-// fakeInvalidateHandler returns the configured shape and / or err.
-type fakeInvalidateHandler struct {
-	result any
-	err    error
-}
-
-func (f *fakeInvalidateHandler) InvalidateNode(_ context.Context, _, _ string) (any, error) {
-	return f.result, f.err
-}
-
 func TestAdminParkedNodes_ReturnsEntries(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -371,53 +349,5 @@ func TestAdminHeldFrames_GroupsByFrame(t *testing.T) {
 	}
 	if len(got.Frames) != 2 {
 		t.Fatalf("want 2 frames, got %d (%+v)", len(got.Frames), got.Frames)
-	}
-}
-
-func TestAdminInvalidateNode_NoHandler503(t *testing.T) {
-	t.Parallel()
-	deps := AppDeps{
-		Persist: noopStore{},
-		Logger:  shared.SilentLogger{},
-		Clock:   shared.SystemClock{},
-	}
-	srv := httptest.NewServer(NewApp(deps))
-	defer srv.Close()
-	resp, err := http.Post(srv.URL+"/v1/admin/instances/11111111-1111-1111-1111-111111111111/nodes/22222222-2222-2222-2222-222222222222/invalidate",
-		"application/json", nil)
-	if err != nil {
-		t.Fatalf("POST invalidate: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status: got %d, want 503", resp.StatusCode)
-	}
-}
-
-func TestAdminInvalidateNode_Conflict409(t *testing.T) {
-	t.Parallel()
-	deps := AppDeps{
-		Persist: noopStore{},
-		Logger:  shared.SilentLogger{},
-		Clock:   shared.SystemClock{},
-	}
-	deps.InvalidateHandler = &fakeInvalidateHandler{err: ErrInvalidateConflict}
-	srv := httptest.NewServer(NewApp(deps))
-	defer srv.Close()
-	resp, err := http.Post(srv.URL+"/v1/admin/instances/11111111-1111-1111-1111-111111111111/nodes/22222222-2222-2222-2222-222222222222/invalidate",
-		"application/json", nil)
-	if err != nil {
-		t.Fatalf("POST invalidate: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("status: got %d, want 409", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	// @constraint: the conflict text describes the running-node rejection (the only
-	// state that refuses an invalidate). Pin a stable substring of the
-	// corrected ErrInvalidateConflict sentinel.
-	if !strings.Contains(string(body), "running node") {
-		t.Fatalf("body should describe conflict: %s", body)
 	}
 }

@@ -54,7 +54,7 @@ func TestSubscribe_ParsesAndRegisters(t *testing.T) {
 		Kind:                    "http",
 		ResolvedConfig:          raw,
 		TargetNode:              "feed",
-		MessageKind:             "invalidate",
+		MessageType:             "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestSubscribe_ParsesAndRegisters(t *testing.T) {
 	if w.PollInterval != 15*time.Second {
 		t.Errorf("interval: %s", w.PollInterval)
 	}
-	if w.TargetNode != "feed" || w.MessageKind != "invalidate" {
+	if w.TargetNode != "feed" || w.MessageType != "invalidate" {
 		t.Errorf("routing fields: %+v", w)
 	}
 }
@@ -151,7 +151,7 @@ func TestTick_PollsAndPushesOnChange(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "http", ResolvedConfig: raw,
-		TargetNode: "feed", MessageKind: "invalidate",
+		TargetNode: "feed", MessageType: "invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}

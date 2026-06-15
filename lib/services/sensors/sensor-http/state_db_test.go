@@ -39,7 +39,7 @@ func TestSubscribe_RestartReplay_PreloadsLastHash(t *testing.T) {
 		PollInterval:   30 * time.Second,
 		MatchStatus:    []int{200},
 		TargetNode:     "feed-tick",
-		MessageKind:    "invalidate",
+		MessageType:    "invalidate",
 	}
 	if err := s1.UpsertSubscription(ctx, w); err != nil {
 		t.Fatalf("UpsertSubscription: %v", err)
@@ -98,7 +98,7 @@ func TestStateDB_PersistsAcrossRestart(t *testing.T) {
 		MatchJSONKey:   "status",
 		MatchJSONVal:   "ready",
 		TargetNode:     "feed-tick",
-		MessageKind:    "invalidate",
+		MessageType:    "invalidate",
 	}
 	if err := s1.UpsertSubscription(ctx, w); err != nil {
 		t.Fatalf("UpsertSubscription: %v", err)

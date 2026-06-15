@@ -51,7 +51,7 @@ func TestSubscribe_ParsesAndComputesNextFire(t *testing.T) {
 		Kind:                    "cron",
 		ResolvedConfig:          raw,
 		TargetNode:              "tick",
-		MessageKind:             "invalidate",
+		MessageType:             "invalidate",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestSubscribe_ParsesAndComputesNextFire(t *testing.T) {
 	if !w.NextFireAt.Equal(time.Date(2026, 1, 1, 0, 5, 0, 0, time.UTC)) {
 		t.Errorf("next_fire_at: %s", w.NextFireAt)
 	}
-	if w.TargetNode != "tick" || w.MessageKind != "invalidate" {
+	if w.TargetNode != "tick" || w.MessageType != "invalidate" {
 		t.Errorf("routing fields: %+v", w)
 	}
 }
@@ -146,11 +146,16 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 		if body["publisher_subscription_id"] != "w1" {
 			t.Errorf("body.publisher_subscription_id: %v", body["publisher_subscription_id"])
 		}
-		if body["kind"] != "invalidate" {
-			t.Errorf("body.kind: %v", body["kind"])
+		if body["type"] != "system/invalidate" {
+			t.Errorf("body.type: %v", body["type"])
 		}
-		if body["target"] != "tick" {
-			t.Errorf("body.target: %v", body["target"])
+		// `target` is no longer on the envelope: the
+		// `rimsky_messages.target` column was retired in migration 010 of
+		// the 2026-06-14 message-schema-layer reshape, and the sensor
+		// no longer sends it. Routing happens via the subscription's
+		// target_node on rimsky's side, not via a wire envelope field.
+		if _, present := body["target"]; present {
+			t.Errorf("body.target unexpectedly present: %v", body["target"])
 		}
 		mu.Lock()
 		observed++
@@ -166,7 +171,7 @@ func TestTick_FiresDueSubscriptionAndAdvances(t *testing.T) {
 	raw, _ := json.Marshal(cfg)
 	if _, err := s.Subscribe(context.Background(), &genv1.SubscribeRequest{
 		PublisherSubscriptionId: "w1", InstanceId: "i1", Kind: "cron", ResolvedConfig: raw,
-		TargetNode: "tick", MessageKind: "invalidate",
+		TargetNode: "tick", MessageType: "system/invalidate",
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -60,6 +60,11 @@ type (
 	// template-author attribute defaults (L1 in the override merge).
 	TemplateDefaults          = spec.TemplateDefaults
 	TemplateAttributeDefaults = spec.TemplateAttributeDefaults
+
+	// @deliberate: message-schema-layer addition — the template-level
+	// `messages:` registry. Each entry declares an accepted message type
+	// and its body shape. See `concept:message-schema`.
+	MessageSchema = spec.MessageSchema
 )
 
 // BoolPtr re-exports spec.BoolPtr so test fixtures importing only the
@@ -68,27 +73,29 @@ type (
 // spec.BoolPtr.
 var BoolPtr = spec.BoolPtr
 
-// @deliberate: Frame-resolution constants re-exported from foundation/spec.
+// @deliberate: Frame-timeout constants re-exported from foundation/spec.
+// The pre-message-schema-layer `FrameResolutionCoalesce` /
+// `FrameResolutionSerialQueue` mode constants retire alongside the
+// `frame_resolution_mode:` template field; one message per frame is the
+// only surviving shape.
 const (
-	FrameResolutionCoalesce    = spec.FrameResolutionCoalesce
-	FrameResolutionSerialQueue = spec.FrameResolutionSerialQueue
-	FrameTimeoutDefaultMs      = spec.FrameTimeoutDefaultMs
-	FrameTimeoutMinMs          = spec.FrameTimeoutMinMs
+	FrameTimeoutDefaultMs = spec.FrameTimeoutDefaultMs
+	FrameTimeoutMinMs     = spec.FrameTimeoutMinMs
 
 	// @deliberate: MainGraphName mirrors the reserved graph name for the
 	// top-level graph in a multi-graph template.
 	MainGraphName = spec.MainGraphName
 )
 
-// @deliberate: Frame + target constants. The lifecycle-handler resolve vocabulary
-// retired 2026-05-23 alongside the handler types; ErrorPolicy's 4-value
-// action vocabulary (`pass | give_up | retry |
-// discard_claims_then_retry`) is the operator-facing replacement and
-// lives on `concept:error-policy`.
+// @deliberate: Self-target constant re-exported from foundation/spec.
+// The lifecycle-handler resolve vocabulary retired 2026-05-23 alongside
+// the handler types; ErrorPolicy's 4-value action vocabulary (`pass |
+// give_up | retry | discard_claims_then_retry`) is the operator-facing
+// replacement and lives on `concept:error-policy`. The
+// pre-message-schema-layer per-subscription `frame:` modifier retired
+// alongside its `"in"` / `"next"` constants; cross-frame coupling is now
+// expressed by message-emitter nodes.
 const (
-	FrameIn   = spec.FrameIn
-	FrameNext = spec.FrameNext
-
 	SelfTarget = spec.SelfTarget
 )
 

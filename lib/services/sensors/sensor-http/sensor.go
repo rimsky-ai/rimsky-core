@@ -57,7 +57,7 @@ type Watch struct {
 	MatchJSONKey   string // @constraint: dotted path within response JSON; empty → no JSON match
 	MatchJSONVal   string // @constraint: expected value at that path (substring match); empty → presence-only
 	TargetNode     string
-	MessageKind    string
+	MessageType    string
 
 	LastPollAt time.Time
 	LastHash   string // @constraint: sha256 hex of last response body that matched
@@ -112,7 +112,7 @@ func (s *SensorService) AttachStateDB(state *stateDB) {
 			MatchJSONKey:   r.MatchJSONKey,
 			MatchJSONVal:   r.MatchJSONVal,
 			TargetNode:     r.TargetNode,
-			MessageKind:    r.MessageKind,
+			MessageType:    r.MessageType,
 			LastHash:       r.LastHash,
 		}
 		s.logger.Info("sensor-http.state_recovered",
@@ -208,10 +208,12 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		}
 		interval = d
 	}
-	messageKind := req.GetMessageKind()
-	if messageKind == "" {
-		messageKind = "invalidate"
-	}
+	// The legacy "invalidate" default retired with the 2026-06-14
+	// message-schema-layer reshape: the runtime side rejects an empty
+	// message_type at publisher-subscription mount time, so by the
+	// time Subscribe is called here the value is non-empty by
+	// construction. Pass through verbatim.
+	messageType := req.GetMessageType()
 	w := &Watch{
 		SubscriptionID: req.GetPublisherSubscriptionId(),
 		InstanceID:     req.GetInstanceId(),
@@ -221,7 +223,7 @@ func (s *SensorService) Subscribe(ctx context.Context, req *genv1.SubscribeReque
 		MatchJSONKey:   cfg.Match.JSONPath.Path,
 		MatchJSONVal:   cfg.Match.JSONPath.Value,
 		TargetNode:     req.GetTargetNode(),
-		MessageKind:    messageKind,
+		MessageType:    messageType,
 	}
 	// @constraint: restart-replay — look up persisted state and pre-populate the
 	// body-hash watermark before publishing the Watch into the in-memory
@@ -289,7 +291,7 @@ func (s *SensorService) ListSubscriptions(_ context.Context, _ *emptypb.Empty) (
 			InstanceId:              w.InstanceID,
 			Kind:                    "http",
 			TargetNode:              w.TargetNode,
-			MessageKind:             w.MessageKind,
+			MessageType:             w.MessageType,
 			StartedAt:               timestamppb.New(s.clock()),
 		})
 	}
@@ -464,9 +466,13 @@ func (s *SensorService) postMessage(ctx context.Context, w *Watch, payload map[s
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
+	// `target_node` from the subscription registers routing on the
+	// rimsky side; the envelope wire body carries no `target` (the
+	// receipt handler has no `target` column to land it on, and the
+	// `rimsky_messages.target` column was retired in migration 010 of
+	// the 2026-06-14 message-schema-layer reshape).
 	envelope := map[string]any{
-		"kind":                      w.MessageKind,
-		"target":                    w.TargetNode,
+		"type":                      w.MessageType,
 		"payload":                   json.RawMessage(payloadBytes),
 		"sender":                    "sensor-http",
 		"sender_kind":               "publisher",

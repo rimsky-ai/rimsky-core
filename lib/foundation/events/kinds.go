@@ -19,10 +19,10 @@
 //     schema migration required.
 //
 //   - Signal-class kinds (terminal/..., transient/..., attribute/...,
-//     event/..., message/...) — carry the parsed signal type-path
-//     under the canonical taxonomy. The signal package owns
-//     type-path validation; this package treats the path as opaque
-//     and exposes it through SignalPath() / String().
+//     event/...) — carry the parsed signal type-path under the
+//     canonical taxonomy. The signal package owns type-path
+//     validation; this package treats the path as opaque and exposes
+//     it through SignalPath() / String().
 //
 // At the persistence boundary, Kind.String() produces the canonical
 // wire form (the snake_case operational name OR the slash-delimited
@@ -230,6 +230,7 @@ var operationalKindWireForm = map[genv1.OperationalKind]string{
 	genv1.OperationalKind_OPERATIONAL_KIND_SUBGRAPH_EXIT_CARRY:             "subgraph.exit_carry",
 	genv1.OperationalKind_OPERATIONAL_KIND_PARK_TIMEOUT:                    "park_timeout",
 	genv1.OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED:           "parked_resume_started",
+	genv1.OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED:          "debug.override.applied",
 }
 
 // operationalKindFromWire is the reverse index of
@@ -394,4 +395,7 @@ func KindParkTimeout() Kind {
 }
 func KindParkedResumeStarted() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_PARKED_RESUME_STARTED)
+}
+func KindDebugOverrideApplied() Kind {
+	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_DEBUG_OVERRIDE_APPLIED)
 }

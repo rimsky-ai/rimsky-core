@@ -54,14 +54,14 @@ func TestLoadRole_File(t *testing.T) {
 
 func TestApplyGrantPatches_AddRemove(t *testing.T) {
 	base := auth.Grant{{Action: "*:read"}}
-	got, err := applyGrantPatches(base, []string{"node:invalidate", "message:send"}, []string{"*:read"})
+	got, err := applyGrantPatches(base, []string{"node:reset", "message:send"}, []string{"*:read"})
 	if err != nil {
 		t.Fatalf("applyGrantPatches: %v", err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("expected 2 entries; got %d: %+v", len(got), got)
 	}
-	if got[0].Action != "node:invalidate" {
+	if got[0].Action != "node:reset" {
 		t.Errorf("entry[0]: %+v", got[0])
 	}
 	if got[1].Action != "message:send" {

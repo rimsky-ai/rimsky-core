@@ -60,9 +60,22 @@ func seedDeployedTemplate(ctx context.Context, t *testing.T, backend persistence
 // @source: lib/runtime/auto_terminal_test.go::seedFrame
 func seedFrameRow(ctx context.Context, t *testing.T, backend persistence.Tables, instanceID, sourceNodeID shared.UUID) shared.UUID {
 	t.Helper()
+	_ = sourceNodeID
 	var frameID shared.UUID
 	require.NoError(t, backend.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		fid, err := backend.Frames().EnqueueSerialFrame(ctx, instanceID, sourceNodeID, 600000, tx)
+		// Seed a synthetic typed-message envelope so the
+		// rimsky_frames.triggering_message_id FK is satisfied.
+		msgID := shared.UUID(uuid.New())
+		if err := backend.Messages().Insert(ctx, tx, persistence.EnqueueMessageRequest{
+			ID:         msgID,
+			InstanceID: instanceID,
+			Type:       "test/seed",
+			Sender:     "test",
+			SenderKind: "operator",
+		}); err != nil {
+			return err
+		}
+		fid, err := backend.Frames().InsertFrame(ctx, instanceID, msgID, 600000, tx)
 		if err != nil {
 			return err
 		}

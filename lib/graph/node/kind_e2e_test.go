@@ -34,7 +34,6 @@ func TestKindE2E_LoopCounterReferenceAcceptsAndCanonicalizes(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "loop-template",
 		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
 			Type: "counter",
 			Kind: e2eLoopCounterKind,
@@ -64,7 +63,6 @@ func TestKindE2E_MixedKindAndExecutorRejected(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:                "bad-template",
 		Version:             "1",
-		FrameResolutionMode: FrameResolutionSerialQueue,
 		Nodes: []TemplateNodeDef{{
 			Type:     "n",
 			Kind:     e2eLoopCounterKind,

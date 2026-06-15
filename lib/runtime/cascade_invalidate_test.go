@@ -2,10 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for InvalidateNode + RecalculateNode. Backed by the real
-// persistence.Database via the pgtest harness; a lightweight in-memory
-// fake satisfies persistence.Queue so the test can assert on dispatch
-// behavior without depending on the Postgres queue implementation.
+// Tests for RecalculateNode. Backed by the real persistence.Database
+// via the pgtest harness; a lightweight in-memory fake satisfies
+// persistence.Queue so the test can assert on dispatch behavior without
+// depending on the Postgres queue implementation.
 package runtime_test
 
 import (
@@ -25,17 +25,16 @@ import (
 	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
-// invTestQueue In-memory fake persistence.Queue ----------------------------------
-// Named invTestQueue to avoid colliding with fakeQueue in pure_cascade_test.go
-// (same package). This variant additionally records RemoveForNode calls.
-
+// invTestQueue is an in-memory fake persistence.Queue. Named to avoid
+// colliding with fakeQueue in pure_cascade_test.go (same package); this
+// variant additionally records RemoveForNode calls.
 type invTestQueue struct {
 	mu           sync.Mutex
 	enqueued     []persistence.DispatchRequest
 	removedNodes []shared.UUID
-	// real, when non-nil, is the underlying postgres queue; the fake
-	// delegates GetInFlightRunForNode to it so the post-stage-5 cascade
-	// walker can resolve receiver / sender run ids without re-
+	// @deliberate: real, when non-nil, is the underlying postgres queue;
+	// the fake delegates GetInFlightRunForNode to it so the post-stage-5
+	// cascade walker can resolve receiver / sender run ids without re-
 	// implementing the SQL here.
 	real persistence.Queue
 }
@@ -122,9 +121,9 @@ func (f *invTestQueue) ListInFlightRunPhases(ctx context.Context, tx persistence
 	return map[shared.UUID][]string{}, nil
 }
 
-// ParkActiveInTx helpers for the 2026-05-08 platform-extensions plan.
-// invTestQueue is the cascade-invalidate test fixture; the parked
-// helpers are no-ops since these tests don't park nodes.
+// ParkActiveInTx and the surrounding parked-lifecycle helpers are no-ops
+// here: invTestQueue is the cascade-invalidate test fixture and these
+// tests never park nodes.
 func (f *invTestQueue) ParkActiveInTx(_ context.Context, _ persistence.Tx, _ persistence.ParkActiveInput) error {
 	return nil
 }
@@ -198,9 +197,8 @@ func newFixture(t *testing.T) *fixture {
 	d := pgtest.OpenDriver(ctx, t)
 	tpl := insertDeployedTemplate(ctx, t, d.Tables(), nodepkg.TemplateSpec{
 		Name: "sched-test-" + uuid.NewString(), Version: "v1",
-		FrameResolutionMode: nodepkg.FrameResolutionSerialQueue,
-		FrameTimeoutMs:      nodepkg.FrameTimeoutDefaultMs,
-		Nodes:               []nodepkg.TemplateNodeDef{},
+		FrameTimeoutMs: nodepkg.FrameTimeoutDefaultMs,
+		Nodes:          []nodepkg.TemplateNodeDef{},
 	})
 
 	ck := "ck-" + uuid.NewString()
@@ -237,16 +235,12 @@ func newFixture(t *testing.T) *fixture {
 	}
 }
 
-// createNodeInState inserts a node, then forces its state via a direct SQL
-// UPDATE so the test can exercise specific state paths without routing
-// through the state machine's legal-transition constraints. Stale/running
 // createNodeInState seeds a node in the requested state. Post-stage-3
 // cutover: state lives on rimsky_node_runs, so 'stale' / 'running' are
 // seeded by inserting an in-flight run row with the desired state. The
-// 'fresh' case requires only the rimsky_nodes row (no run row).
-//
-// nodes get a frame_id so the dispatch enqueue path satisfies blessed-
-// invariant 19.
+// 'fresh' case requires only the rimsky_nodes row (no run row). Stale /
+// running nodes get a frame_id so the dispatch enqueue path satisfies
+// @blessed-invariant:dispatch-row-bound-to-frame.
 func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade.NodeState, deps ...shared.UUID) persistence.NodeRow {
 	t.Helper()
 	ctx := context.Background()
@@ -274,12 +268,20 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 		[]any{f.instance.ID}, &count)
 	var frameID shared.UUID
 	if count == 0 {
+		// @deliberate: Seed a synthetic typed-message envelope so the
+		// rimsky_frames.triggering_message_id FK is satisfied.
+		msgID := uuid.New()
+		pgtest.ExecForTest(ctx, t, f.driver, `
+            INSERT INTO rimsky_messages
+                (id, instance_id, type, sender, sender_kind, received_at)
+            VALUES ($1, $2, 'test/seed', 'test', 'operator', now())
+        `, msgID, f.instance.ID)
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             INSERT INTO rimsky_frames
-                (instance_id, frame_resolution_mode, state, source_node_ids, queued_at, started_at, frame_timeout_ms)
-            VALUES ($1, 'serial_queue', 'running', ARRAY[$2]::UUID[], now(), now(), 600000)
+                (instance_id, triggering_message_id, state, queued_at, started_at, frame_timeout_ms)
+            VALUES ($1, $2, 'running', now(), now(), 600000)
             RETURNING frame_id
-        `, []any{f.instance.ID, n.ID}, &frameID)
+        `, []any{f.instance.ID, msgID}, &frameID)
 	} else {
 		pgtest.QueryRowForTest(ctx, t, f.driver, `
             SELECT frame_id FROM rimsky_frames
@@ -304,86 +306,11 @@ func (f *fixture) createNodeInState(t *testing.T, executor string, state cascade
 	return n
 }
 
-// TestInvalidateNode_EnqueuesFrameAndEmitsEvents InvalidateNode tests ---------------------------------------------
-//
-// Under the frame-resolution model
-// (docs/history/2026-04-26-frame-resolution-design.md), InvalidateNode no
-// longer mutates rimsky_nodes.state. It enqueues a rimsky_frames row
-// (or coalesces into a pending one), and the scheduler tick's frame
-// engine advances the frame to running, marking sources stale at that
-// time.
-
-func TestInvalidateNode_EnqueuesFrameAndEmitsEvents(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f := newFixture(t)
-
-	parent := f.createNodeInState(t, "worker", cascade.NodeStateFresh)
-
-	err := runtime.InvalidateNode(ctx, runtime.InvalidateArgs{
-		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,
-		TargetNodeID: parent.ID,
-		Reason:       "test_kick",
-	})
-	require.NoError(t, err)
-
-	// @deliberate: Source node remains fresh until the frame engine advances the frame.
-	var p *persistence.NodeRow
-	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := f.persist.Nodes().Get(ctx, parent.ID, tx)
-		p = r
-		return err
-	}))
-	require.Equal(t, cascade.NodeStateFresh, p.State)
-
-	// @deliberate: A queued frame row exists with this node as source.
-	var (
-		count   int
-		state   string
-		hasNode bool
-	)
-	pgtest.QueryRowForTest(ctx, t, f.driver, `
-        SELECT COUNT(*), MAX(state), bool_or($2 = ANY(source_node_ids))
-        FROM rimsky_frames WHERE instance_id = $1
-    `, []any{f.instance.ID, parent.ID}, &count, &state, &hasNode)
-	require.Equal(t, 1, count)
-	require.Equal(t, "queued", state)
-	require.True(t, hasNode)
-
-	// @deliberate: Audit events were appended.
-	var events persistence.EventListResult
-	require.NoError(t, f.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := f.persist.Events().List(ctx, persistence.EventListFilter{NodeID: &parent.ID},
-			persistence.ListPagination{Limit: 100}, tx)
-		events = r
-		return err
-	}))
-	kinds := map[string]int{}
-	for _, e := range events.Events {
-		kinds[e.KindRaw]++
-	}
-	require.GreaterOrEqual(t, kinds["message_emitted"], 1)
-	require.GreaterOrEqual(t, kinds["message_received"], 1)
-}
-
-func TestInvalidateNode_TargetMissing_NoOp(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f := newFixture(t)
-
-	missing := uuid.New()
-	err := runtime.InvalidateNode(ctx, runtime.InvalidateArgs{
-		Persist: f.persist, Queue: f.q, Clock: f.clock, Logger: f.log,
-		TargetNodeID: missing, Reason: "ghost",
-	})
-	require.NoError(t, err)
-
-	var count int
-	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_frames WHERE instance_id = $1`,
-		[]any{f.instance.ID}, &count)
-	require.Equal(t, 0, count)
-}
+// @deliberate: TestInvalidateNode_* coverage retired with the
+// operator-invalidate surface (messaging schema-layer reshape).
+// Operator-initiated invalidation now lands as a typed message on the
+// gated debug channel; that surface is exercised by the debug-channel
+// scenario tests, not from this file.
 
 func TestRecalculateNode_FreshTarget_IsNoOp(t *testing.T) {
 	t.Parallel()

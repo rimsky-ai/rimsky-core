@@ -2,8 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Full-stack force-terminate of an await-async-stuck instance
-// (spec S-lifecycle-fullstack-terminate-backfill, facet 1).
+// Full-stack force-terminate of an await-async-stuck instance.
 //
 // An agent node returns AwaitAsyncCallback with an ack and stays running
 // because the callback never arrives. The operator force-terminates the

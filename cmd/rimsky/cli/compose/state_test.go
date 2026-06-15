@@ -16,7 +16,7 @@ import (
 func TestQueryState_FiltersByPrefix(t *testing.T) {
 	srv := clitest.NewServer(t)
 	defer srv.Close()
-	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "frame_resolution_mode": "coalesce", "nodes": []any{}}, "compose:p:foo", "")
+	hash, _ := srv.State.RegisterTemplate(map[string]any{"name": "x", "version": "1.0", "nodes": []any{}}, "compose:p:foo", "")
 	srv.State.SetTemplateState(hash, "deployed")
 	srv.State.SetTagHash("compose:other:foo", hash)
 	srv.State.SetTagHash("manual-foo", hash)

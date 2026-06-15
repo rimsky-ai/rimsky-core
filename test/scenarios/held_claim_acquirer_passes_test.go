@@ -69,7 +69,6 @@ func TestHeldClaimAcquirerPasses(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "held-claim-acquirer-passes", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{

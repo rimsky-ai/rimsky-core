@@ -63,7 +63,6 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-hard-dep", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
@@ -139,7 +138,15 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-2"}, true, "ok")
 	h.Stub.WhenType("c").Success(map[string]any{}, true, "ok")
 
-	adminInvalidate(t, h, iid, aN.ID)
+	// @deliberate: Invalidate a (the trigger, NOT b). The
+	// force_upstream_refresh: true edge from c to b drags b into
+	// the same frame so b's second-fire value is produced before c
+	// dispatches. h.InvalidateNode is the in-process supervisor
+	// invalidation — the admin-route invalidate was retired with
+	// the typed-message schema layer; the debug-channel override
+	// is for paused-instance / breakpoint-hit flows, not the
+	// running-instance invalidation under test here.
+	h.InvalidateNode(iid, aN.ID)
 
 	// @deliberate: Wait until C's latest attribute row reflects both A's and B's second-fire values.
 	deadline := time.Now().Add(15 * time.Second)
@@ -197,7 +204,6 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-hard-dep-direct", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
@@ -276,8 +282,10 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 	// which is the load-bearing site under test (the added
 	// upstream-pull at lib/runtime/cascade_invalidate.go that
 	// drags c's own force_upstream_refresh upstreams into the
-	// frame BEFORE c dispatches).
-	adminInvalidate(t, h, iid, cN.ID)
+	// frame BEFORE c dispatches). h.InvalidateNode is the
+	// in-process supervisor invalidation — the admin-route
+	// invalidate was retired with the typed-message schema layer.
+	h.InvalidateNode(iid, cN.ID)
 
 	// @deliberate: Diagnostic wait for b to re-run and produce its second-fire
 	// value. If this never happens, the upstream-pull failed to

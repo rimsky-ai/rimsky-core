@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/locks/storetest"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
@@ -162,13 +163,21 @@ func (h *harness) httpJSONWithHeaders(t *testing.T, method, path string, body an
 
 // validTemplateBody builds a minimal valid template request matching
 // the wrapped POST /templates body shape (`{spec: {...}}`). Two
-// executor-backed nodes; no stores or locks.
+// executor-backed nodes; no stores or locks. Declares a
+// `system/invalidate` message type in the registry so message-emit
+// tests that POST `type: "system/invalidate"` pass the Pass 5
+// receipt-time registry gate. The slash-bearing type-path is required
+// by validateMessages so message-types cannot collide with node-types
+// (a real node-type is identifier-shaped; a message-type is slash-
+// bearing).
 func validTemplateBody(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    name,
+			"version": "v1",
+			"messages": []map[string]any{
+				{"type": "system/invalidate"},
+			},
 			"nodes": []map[string]any{
 				{"type": "root", "executor": "worker"},
 				{"type": "child", "executor": "worker", "subscribes": []map[string]any{{"node": "root", "type": "terminal/*", "wake_on_change": true, "force_upstream_refresh": false}}},
@@ -191,9 +200,8 @@ func specOf(body map[string]any) map[string]any {
 func templateWithStoresAndLocks(name string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{
-			"name":                  name,
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    name,
+			"version": "v1",
 			"nodes": []map[string]any{
 				{
 					"type":     "claim-topic",
@@ -339,9 +347,8 @@ func TestTemplateDeploy_DependencyCycle_400(t *testing.T) {
 
 	body := map[string]any{
 		"spec": map[string]any{
-			"name":                  "cycle-" + uuid.NewString(),
-			"version":               "v1",
-			"frame_resolution_mode": "serial_queue",
+			"name":    "cycle-" + uuid.NewString(),
+			"version": "v1",
 			// @constraint: post-2026-05-14: the legacy `dependencies:` field retired;
 			// the JSON decoder (`DisallowUnknownFields`) rejects bodies
 			// carrying it. Subscription cycles between two nodes are no
@@ -426,11 +433,18 @@ func TestInstanceCreate_RootEnqueued(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, status, out)
 
+	// @constraint: under the message-schema-layer redesign every frame carries a
+	// triggering_message_id (the instance-factory seeds a synthetic
+	// `instance/root` envelope per root node). The frame → root mapping
+	// rides on the envelope rather than a source-node-ids array, so the
+	// assertion is "exactly one queued frame whose origin envelope is the
+	// synthetic instance/root message" rather than the legacy source-array
+	// join.
 	var frameCount int
 	pgtest.QueryRowForTest(ctx, t, h.driver,
 		`SELECT count(*) FROM rimsky_frames f
-		 JOIN rimsky_nodes n ON n.id = ANY(f.source_node_ids)
-		 WHERE n.node_type = 'root' AND f.state = 'queued'`,
+		 JOIN rimsky_messages m ON m.id = f.triggering_message_id
+		 WHERE m.type = 'instance/root' AND f.state = 'queued'`,
 		nil, &frameCount)
 	require.Equal(t, 1, frameCount, "expected root node to have a queued frame")
 }
@@ -463,38 +477,6 @@ func TestInstanceDuplicateConsumerKey_Idempotent(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, status, secondOut)
 	require.Equal(t, firstID, secondOut["instance_id"], "idempotent re-create must return the existing instance_id")
-}
-
-func TestOperatorInvalidate(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	ctx := context.Background()
-	inst := seedInstance(t, h, "op-inv-"+uuid.NewString())
-	nodeRow := firstNode(t, h, inst)
-	// @constraint: post-stage-3: 'fresh' = no in-flight run row. Delete any.
-	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1 AND phase IN ('pending','active','held','parked')`, nodeRow.ID)
-
-	status, out := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
-		"reason": "manual-poke",
-	})
-	require.Equal(t, http.StatusOK, status, out)
-
-	var loaded *persistence.NodeRow
-	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		r, err := h.persist.Nodes().Get(ctx, nodeRow.ID, tx)
-		loaded = r
-		return err
-	}))
-	require.Equal(t, cascade.NodeStateFresh, loaded.State)
-
-	var frameCount int
-	pgtest.QueryRowForTest(ctx, t, h.driver, `
-        SELECT COUNT(*) FROM rimsky_frames
-        WHERE instance_id = $1 AND state = 'queued' AND $2 = ANY(source_node_ids)
-    `, []any{inst.ID, nodeRow.ID}, &frameCount)
-	require.GreaterOrEqual(t, frameCount, 1)
 }
 
 func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
@@ -539,12 +521,16 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFailed, loaded.State)
 	require.Nil(t, loaded.FrameID)
 
+	// @constraint: reset opens a queued frame triggered by a synthetic node/reset
+	// envelope; the legacy source_node_ids array surface is retired.
 	var sourceCount int
 	pgtest.QueryRowForTest(ctx, t, h.driver, `
-		SELECT count(*) FROM rimsky_frames
-		WHERE instance_id = $1 AND state = 'queued' AND $2 = ANY(source_node_ids)
-	`, []any{inst.ID, nodeRow.ID}, &sourceCount)
+		SELECT count(*) FROM rimsky_frames f
+		JOIN rimsky_messages m ON m.id = f.triggering_message_id
+		WHERE f.instance_id = $1 AND f.state = 'queued' AND m.type = 'node/reset'
+	`, []any{inst.ID}, &sourceCount)
 	require.GreaterOrEqual(t, sourceCount, 1)
+	_ = nodeRow
 }
 
 func TestOperatorKill_RouteRemoved(t *testing.T) {
@@ -567,16 +553,24 @@ func TestEventsList(t *testing.T) {
 
 	inst := seedInstance(t, h, "ev-"+uuid.NewString())
 	nodeRow := firstNode(t, h, inst)
-	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1 AND phase IN ('pending','active','held','parked')`, nodeRow.ID)
-	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/invalidate", map[string]any{
-		"reason": "ev-test",
-	})
-	require.Equal(t, http.StatusOK, status)
+
+	// @constraint: append an audit event directly so the events list has at least one
+	// row for the node — the operator-invalidate route retired with the
+	// 2026-06-14 message-schema-layer reshape, so this test no longer
+	// drives the audit event through that endpoint.
+	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return h.persist.Events().Append(ctx, persistence.EventAppendInput{
+			InstanceID: &inst.ID,
+			NodeID:     &nodeRow.ID,
+			Kind:       events.KindOperatorOverride(),
+			Payload:    map[string]any{"action": "ev-test"},
+		}, tx)
+	}))
 
 	status, out := h.httpJSON(t, "GET", "/v1/events?node_id="+nodeRow.ID.String(), nil)
 	require.Equal(t, http.StatusOK, status, out)
-	events, _ := out["events"].([]any)
-	require.Greater(t, len(events), 0)
+	gotEvents, _ := out["events"].([]any)
+	require.Greater(t, len(gotEvents), 0)
 }
 
 func TestHealth(t *testing.T) {

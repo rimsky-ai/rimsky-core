@@ -70,10 +70,9 @@ func TestStoresRedesignSmoke(t *testing.T) {
 
 	templateID := smokeDeployTemplate(t, ep, map[string]any{
 		"spec": map[string]any{
-			"name":                  "stores-redesign-smoke",
-			"version":               "1",
-			"frame_resolution_mode": "serial_queue",
-			"frame_timeout_ms":      600000,
+			"name":             "stores-redesign-smoke",
+			"version":          "1",
+			"frame_timeout_ms": 600000,
 			"nodes": []map[string]any{
 				{
 					"type":     "claim-acquirer",
@@ -94,14 +93,31 @@ func TestStoresRedesignSmoke(t *testing.T) {
 	const cycles = 5
 	const perCycle = 30 * time.Second
 
-	nodeID := smokeFindNodeID(t, ep, instanceID, "claim-acquirer")
-
+	// @deliberate: the retired admin invalidate route is replaced by a
+	// pause → debug-override (action=invalidate_node) → resume sequence:
+	// debug-override only fires inside a paused/breakpoint gate, so
+	// each cycle pauses the instance, drives the stale-mark, and
+	// resumes so the next dispatch can claim the queued frame.
 	for n := 1; n <= cycles; n++ {
 		smokeWaitForTerminal(t, ep, instanceID, "claim-acquirer", 30*time.Second)
 		status, raw := ep.PostJSON(t,
-			fmt.Sprintf("/v1/admin/instances/%s/nodes/%s/invalidate", instanceID, nodeID), nil)
+			fmt.Sprintf("/v1/instances/%s/pause", instanceID), nil)
 		if status != http.StatusOK {
-			t.Fatalf("invalidate %d: %d %s", n, status, string(raw))
+			t.Fatalf("pause %d: %d %s", n, status, string(raw))
+		}
+		status, raw = ep.PostJSON(t,
+			fmt.Sprintf("/v1/instances/%s/debug/override", instanceID),
+			map[string]any{
+				"action":    "invalidate_node",
+				"node_type": "claim-acquirer",
+			})
+		if status != http.StatusOK {
+			t.Fatalf("debug override %d: %d %s", n, status, string(raw))
+		}
+		status, raw = ep.PostJSON(t,
+			fmt.Sprintf("/v1/instances/%s/resume", instanceID), nil)
+		if status != http.StatusOK {
+			t.Fatalf("resume %d: %d %s", n, status, string(raw))
 		}
 		_ = perCycle
 	}
@@ -151,29 +167,6 @@ func smokeCreateInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, in
 		t.Fatalf("decode instance response: %v: %s", err, string(raw))
 	}
 	return resp.InstanceID
-}
-
-// smokeFindNodeID looks up a node id via the public observability API.
-func smokeFindNodeID(t *testing.T, ep harness.RimskyEndpoint, instanceID, nodeType string) string {
-	t.Helper()
-	end := time.Now().Add(15 * time.Second)
-	for time.Now().Before(end) {
-		status, raw := ep.GetJSON(t,
-			"/v1/observability/nodes/"+instanceID+"/"+nodeType, "")
-		if status == http.StatusOK {
-			var resp struct {
-				Node struct {
-					ID string `json:"id"`
-				} `json:"node"`
-			}
-			if err := json.Unmarshal(raw, &resp); err == nil && resp.Node.ID != "" {
-				return resp.Node.ID
-			}
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("node %q on instance %s never became visible", nodeType, instanceID)
-	return ""
 }
 
 // smokeWaitForTerminal polls the node state until it reaches a

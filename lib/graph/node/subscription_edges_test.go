@@ -12,7 +12,7 @@ import (
 )
 
 func TestBuildSubscriptionEdges_Empty(t *testing.T) {
-	out, err := BuildSubscriptionEdges(spec.TemplateSpec{})
+	out, err := BuildSubscriptionEdges(spec.TemplateSpec{}, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl)
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -43,9 +43,6 @@ func TestBuildSubscriptionEdges_ExplicitDirect(t *testing.T) {
 	}
 	if matched[0].TypePattern != signal.TypePath("terminal/success") {
 		t.Errorf("TypePattern: got %q want terminal/success", matched[0].TypePattern)
-	}
-	if matched[0].Frame != "in" {
-		t.Errorf("Frame: got %q want in", matched[0].Frame)
 	}
 	if !matched[0].WakeOnChange {
 		t.Errorf("WakeOnChange: got false, want true")
@@ -63,7 +60,7 @@ func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl)
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -74,10 +71,7 @@ func TestBuildSubscriptionEdges_CrossCutting(t *testing.T) {
 	if cross[0].SubscriptionScope != "instance" {
 		t.Errorf("want scope=instance, got %q", cross[0].SubscriptionScope)
 	}
-	if cross[0].Frame != "next" {
-		t.Errorf("want default Frame=next for cross-cutting, got %q", cross[0].Frame)
-	}
-	// @deliberate: Cross-cutting edge fires for any sender via the empty-key match
+	// @deliberate: Cross-cutting edge fires for any sender via the
 	// empty-key match path.
 	matched := out.Match("any-sender", signal.TypePath("terminal/error/rate_limited"))
 	if len(matched) != 1 {
@@ -113,7 +107,8 @@ func TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef(t *testing.T) 
 				},
 			}}},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl)
+	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
+	out, err := BuildSubscriptionEdges(tmpl, refs, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -124,9 +119,9 @@ func TestBuildSubscriptionEdges_NoImplicitEdgeFromSubstitutionRef(t *testing.T) 
 }
 
 // TestBuildSubscriptionEdges_Dedup pins that two explicit entries with
-// the same (sender, type, when=nil, scope, frame, flags) tuple dedup to
-// one edge. Both flag values must match for content-equality; entries
-// that differ only in flag values are NOT deduped (see
+// the same (sender, type, when=nil, scope, flags) tuple dedup to one
+// edge. Both flag values must match for content-equality; entries that
+// differ only in flag values are NOT deduped (see
 // TestBuildSubscriptionEdges_FlagsDistinguishEdges below) — the
 // validator rejects flag-conflicting duplicates so by the time this
 // builder runs, only flag-coherent duplicates exist to collapse.
@@ -141,7 +136,8 @@ func TestBuildSubscriptionEdges_Dedup(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl)
+	refs := ExtractSubstitutionRefsFromTemplate(tmpl)
+	out, err := BuildSubscriptionEdges(tmpl, refs, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -152,8 +148,8 @@ func TestBuildSubscriptionEdges_Dedup(t *testing.T) {
 }
 
 // TestBuildSubscriptionEdges_FlagsDistinguishEdges pins that two
-// entries matching on (sender, type, when, scope, frame) but DIFFERING
-// in either cascade-shape flag (WakeOnChange or ForceUpstreamRefresh)
+// entries matching on (sender, type, when, scope) but DIFFERING in
+// either cascade-shape flag (WakeOnChange or ForceUpstreamRefresh)
 // land as two distinct edges rather than silently deduping to the
 // first. Without this, an author-declared flag value would be dropped
 // invisibly — exactly the invisible behavior
@@ -174,7 +170,7 @@ func TestBuildSubscriptionEdges_FlagsDistinguishEdges(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl)
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
@@ -194,39 +190,33 @@ func TestBuildSubscriptionEdges_FlagsDistinguishEdges(t *testing.T) {
 	}
 }
 
-func TestBuildSubscriptionEdges_FrameDefaults(t *testing.T) {
+// TestBuildSubscriptionEdges_CrossCuttingAndPerNodeBothMatch confirms
+// that a sender keyed under the per-node bucket AND the cross-cutting
+// (empty-sender) bucket both surface on a Match — the cascade walker's
+// one in-frame path applies to every matching edge regardless of
+// whether the subscription named the sender explicitly or via
+// `instance: true`.
+func TestBuildSubscriptionEdges_CrossCuttingAndPerNodeBothMatch(t *testing.T) {
 	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
 		{Type: "x", Executor: "stub",
-			// @deliberate: three entries cover the frame defaulting
-			// matrix — per-node defaults to "in", cross-cutting defaults
-			// to "next", and an explicit override stays as written.
 			Subscribes: []spec.SubscriptionEntry{
+				// @deliberate: per-node entry — names the sender explicitly.
 				{Node: "y", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				// @deliberate: cross-cutting entry — `instance: true` lives
+				// under the empty sender-key bucket.
 				{Instance: true, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
-				{Node: "y", Type: "terminal/success", Frame: "next", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
 			},
 		},
 		{Type: "y", Executor: "stub"},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl)
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}
 	yMatches := out.Match("y", signal.TypePath("terminal/success"))
-	// @deliberate: Two y-keyed edges (in + next) + the cross-cutting one (next) =
-	// (next) = three matches total.
-	if len(yMatches) != 3 {
-		t.Fatalf("want 3 edges for sender y (including cross-cutting), got %d", len(yMatches))
-	}
-	frames := map[string]int{}
-	for _, e := range yMatches {
-		frames[e.Frame]++
-	}
-	if frames["in"] != 1 {
-		t.Errorf("want exactly 1 frame=in edge, got %d", frames["in"])
-	}
-	if frames["next"] != 2 {
-		t.Errorf("want exactly 2 frame=next edges (explicit + cross-cutting), got %d", frames["next"])
+	// @deliberate: one y-keyed edge + the cross-cutting one = two matches total.
+	if len(yMatches) != 2 {
+		t.Fatalf("want 2 edges for sender y (per-node + cross-cutting), got %d", len(yMatches))
 	}
 }
 
@@ -266,7 +256,7 @@ func TestSubscriptionEdgeMap_PrefixWildcardMatch(t *testing.T) {
 			},
 		},
 	}}
-	out, err := BuildSubscriptionEdges(tmpl)
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildSubscriptionEdges: %v", err)
 	}

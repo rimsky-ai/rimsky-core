@@ -37,7 +37,6 @@ func TestPerRunAttributes_EmbeddedSource_LiteralAndDirectives(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-embedded-source", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		ParamsSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

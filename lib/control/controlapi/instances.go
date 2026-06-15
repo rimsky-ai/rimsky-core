@@ -51,7 +51,6 @@ import (
 	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	nodepkg "github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
@@ -68,6 +67,22 @@ import (
 //     the resolved Go type.
 //
 // @concept: node
+//
+// `RegistryDeclaredTypes` is intentionally nil here: the
+// `{{messages.<type>.<field>}}` resolver's registry-floor block runs
+// first but is a nil-skip (the block only triggers when the caller
+// supplied a non-nil declared-types set), so resolution falls through
+// to the `TriggerMessageType == ""` check immediately after — and
+// instance-creation tag substitution binds no trigger message, so
+// that check returns ErrMissingSource. Net effect: the directive
+// cannot succeed at this phase, which is the intended floor (tags
+// resolve against params only at materialization time). The runtime
+// ResolveContext build sites
+// (`code:runtime/runner_dispatch.go::buildResolveContextForDispatch`,
+// `code:runtime/runner_locks.go::buildLockSpecs`,
+// `code:runtime/runner_acquire_helpers.go::substituteFanOutPartitionRequest`)
+// do thread the registry so the dynamic floor is armed where it can
+// matter.
 func resolveNodeTags(rawTags []string, paramsBytes json.RawMessage) ([]string, error) {
 	if len(rawTags) == 0 {
 		return nil, nil
@@ -106,13 +121,6 @@ type createInstanceRequest struct {
 	// concept:inertness the fragment values themselves are inert to
 	// rimsky — only the keys are inspected (for routing / validation).
 	AttributeOverrides map[string]any `json:"attribute_overrides,omitempty"`
-	// FrameDeliveryMode selects per-instance message-delivery semantics
-	// for `DeliverPendingMessages` at frame creation
-	// (col:rimsky_instances.frame_delivery_mode). Valid values:
-	// "serial_queue" (deliver oldest pending message; the rest stay
-	// pending) or "coalesce" (deliver all pending). Optional — when
-	// omitted the column's default ("coalesce") is used.
-	FrameDeliveryMode *string `json:"frame_delivery_mode,omitempty"`
 	// Paused is the create-time hold flag. When true, the instance is
 	// created with rimsky_instances.paused = true; the supervisor's
 	// candidate-selection skips it until POST /instances/{id}/resume
@@ -148,7 +156,6 @@ type instanceItem struct {
 	Params                        map[string]any `json:"params"`
 	AttributeOverrides            map[string]any `json:"attribute_overrides,omitempty"`
 	AttributeOverridesMatchCounts []int64        `json:"attribute_overrides_match_counts,omitempty"`
-	FrameDeliveryMode             string         `json:"frame_delivery_mode"`
 	Paused                        bool           `json:"paused"`
 	TerminateAfterRun             bool           `json:"terminate_after_run"`
 	CreatedAt                     time.Time      `json:"created_at"`
@@ -172,9 +179,12 @@ type instanceItem struct {
 // instanceSubscriptionItem is one rimsky_publisher_subscriptions row on
 // the instance-detail response.
 type instanceSubscriptionItem struct {
-	ID            string    `json:"id"`
-	PublisherName string    `json:"publisher_name"`
+	ID            string `json:"id"`
+	PublisherName string `json:"publisher_name"`
+	// Kind is the publisher's protocol discriminator ("http", "grpc",
+	// "cron", ...). Unrelated to the message_type rename.
 	Kind          string    `json:"kind"`
+	MessageType   string    `json:"message_type"`
 	State         string    `json:"state"`
 	StartedAt     time.Time `json:"started_at"`
 	FailureReason string    `json:"failure_reason,omitempty"`
@@ -186,7 +196,6 @@ func toInstanceItem(r persistence.InstanceRow, redact []string) instanceItem {
 		TemplateHash:      r.TemplateHash,
 		InstanceKey:       r.InstanceKey,
 		Params:            ApplyParamsRedact(r.Params, redact),
-		FrameDeliveryMode: r.FrameDeliveryMode,
 		Paused:            r.Paused,
 		TerminateAfterRun: r.TerminateAfterRun,
 		CreatedAt:         r.CreatedAt,
@@ -332,17 +341,6 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 			badRequest(w, "template is required (tag or hash)")
 			return
 		}
-		// @constraint: validate frame_delivery_mode early so a typo
-		// surfaces as 400 rather than a SQL CHECK violation deep in
-		// provisionInstanceTx.
-		if body.FrameDeliveryMode != nil {
-			switch *body.FrameDeliveryMode {
-			case "serial_queue", "coalesce":
-			default:
-				badRequest(w, fmt.Sprintf("frame_delivery_mode %q invalid (want \"serial_queue\" or \"coalesce\")", *body.FrameDeliveryMode))
-				return
-			}
-		}
 		hash, err := resolveTagOrHash(req.Context(), deps, body.Template)
 		if err != nil {
 			writeError(w, err)
@@ -459,10 +457,6 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 					return nil
 				}
 			}
-			deliveryMode := ""
-			if body.FrameDeliveryMode != nil {
-				deliveryMode = *body.FrameDeliveryMode
-			}
 			// @constraint: per-entry by_match counter array initialised at
 			// length matching the request's by_match list so dispatch-time
 			// increments find an indexed slot per entry. Per spec §"Persistence".
@@ -477,7 +471,6 @@ func handleCreateInstance(deps AppDeps) http.HandlerFunc {
 				Params:                        params,
 				AttributeOverrides:            body.AttributeOverrides,
 				AttributeOverridesMatchCounts: initialMatchCounts,
-				FrameDeliveryMode:             deliveryMode,
 				Paused:                        body.Paused,
 				TerminateAfterRun:             body.TerminateAfterRun,
 				ServiceBindings:               body.ServiceBindings,
@@ -741,6 +734,7 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 				ID:            s.ID.String(),
 				PublisherName: s.PublisherName,
 				Kind:          s.Kind,
+				MessageType:   s.MessageType,
 				State:         s.State,
 				StartedAt:     s.StartedAt,
 				FailureReason: s.FailureReason,
@@ -1238,9 +1232,6 @@ type provisionArgs struct {
 	// len(by_match); nil for instances with no by_match entries.
 	// Persisted verbatim on rimsky_instances.attribute_overrides_match_counts.
 	AttributeOverridesMatchCounts []int64
-	// FrameDeliveryMode is one of "serial_queue" / "coalesce". Empty
-	// string falls through to the column DEFAULT 'coalesce'.
-	FrameDeliveryMode string
 	// Paused is the create-time hold flag. Threaded through to the
 	// persistence layer's InstanceCreateInput.Paused. Per concept:breakpoint.
 	Paused bool
@@ -1309,7 +1300,6 @@ func provisionInstanceTx(
 		Params:                        args.Params,
 		AttributeOverrides:            args.AttributeOverrides,
 		AttributeOverridesMatchCounts: args.AttributeOverridesMatchCounts,
-		FrameDeliveryMode:             args.FrameDeliveryMode,
 		MainRunScopeID:                mainRunScopeID,
 		Paused:                        args.Paused,
 		TerminateAfterRun:             args.TerminateAfterRun,
@@ -1327,8 +1317,19 @@ func provisionInstanceTx(
 		nodeIDs[def.Type] = uuid.New()
 	}
 
+	// @concept: message-schema — index the template's declared
+	// message-virtual-node-types so the subscription-validity check below
+	// admits them as legal `node:` targets. The template-time validator
+	// (code:lib/graph/node/template_validator.go) already enforces this;
+	// without this index the factory's instance-time check would reject
+	// every receiver that subscribes to a message-virtual-node.
+	declaredMessageTypes := make(map[string]struct{}, len(tpl.Spec.Messages))
+	for _, m := range tpl.Spec.Messages {
+		declaredMessageTypes[m.Type] = struct{}{}
+	}
+
 	// @constraint: params marshalled once for the materialization-time tag
-	// substitution pass (Item 4) with a params-only ResolveContext — other
+	// substitution pass with a params-only ResolveContext — other
 	// substitution kinds aren't available at instance-creation time. Failures
 	// here surface as 400-class errors to the caller. See `resolveNodeTags`.
 	var paramsBytes json.RawMessage
@@ -1355,9 +1356,17 @@ func provisionInstanceTx(
 			if s.Node == "" {
 				continue
 			}
-			if _, ok := nodeIDs[s.Node]; !ok {
-				return createInstanceResponse{}, fmt.Errorf("instance-factory: subscribe references unknown node %q (on node %q)", s.Node, def.Type)
+			if _, ok := nodeIDs[s.Node]; ok {
+				continue
 			}
+			// @concept: message-schema — a `node:` value naming a declared
+			// message-type IS a virtual node-type the cascade walker resolves
+			// through the messages registry, not a real node-type. The
+			// template validator admits both shapes; the factory must too.
+			if _, ok := declaredMessageTypes[s.Node]; ok {
+				continue
+			}
+			return createInstanceResponse{}, fmt.Errorf("instance-factory: subscribe references unknown node %q (on node %q)", s.Node, def.Type)
 		}
 
 		// @constraint: resolve operator-facing tags against instance
@@ -1384,32 +1393,42 @@ func provisionInstanceTx(
 		}
 	}
 
-	// @constraint: phase 2 enqueues an initial frame for each root node
-	// (no upstream subscriptions), reusing the caller's tx so the frame
-	// inserts are atomic with the instance+node creation above. A "root"
-	// is a node with no `subscribes:` entries naming an upstream node
-	// AND no substitution refs in its attribute schema. Cross-cutting
-	// (`instance:true`) entries don't disqualify a root because they
-	// fire on cascade-walks, not at instance create.
-	// @constraint: sub-graph entry nodes are excluded from the root set
-	// even when they declare no subscribes — the entry's identity is
-	// absorbed into the calling node by the template canonicalizer (per
-	// concept:delegation), so the entry runs at the calling node's
-	// dispatch site, never standalone. Without this exclusion the
-	// entry's row would be enqueued AS WELL AS the calling node, and
-	// the entry's standalone dispatch would fire its downstream (the
-	// sub-graph's internal nodes that subscribe to the entry on
-	// terminal/*) in the parent RunScope — defeating the sub-graph
-	// hydration boundary the calling-node-absorption path enforces.
-	subgraphEntryTypes := make(map[string]struct{}, len(tpl.Spec.Graphs))
+	// @concept: message
+	// @concept: frame
+	// @constraint: phase 2 enqueues an initial frame covering every root
+	// node (no upstream subscriptions), reusing the caller's tx so the
+	// frame inserts are atomic with the instance+node creation above. A
+	// "root" is a node with no `subscribes:` entries naming an upstream
+	// node AND no substitution refs in its attribute schema. Cross-cutting
+	// (`instance:true`) entries don't disqualify a root because they fire
+	// on cascade-walks, not at instance create. Under the message-schema-
+	// layer redesign every frame carries a triggering message
+	// (`col:rimsky_frames.triggering_message_id` NOT NULL); the factory has
+	// no external triggering envelope here, so it seeds a synthetic
+	// instance-sourced message and encodes the wake targets on the message
+	// payload as `wake_node_ids`. The frame engine reads this list at
+	// promotion and stale-marks each in the same tx as the promotion,
+	// preserving the ordering the supervisor's `ListReadyForDispatch`
+	// relies on.
+	// @constraint: sub-graph internal nodes (everything declared inside a
+	// Graph other than `main`) are excluded from the root set — they only
+	// dispatch when the calling node invokes the sub-graph. This also
+	// covers the calling-node-absorption invariant per concept:delegation:
+	// a sub-graph entry's identity is absorbed into the calling node by
+	// the template canonicalizer, so the entry runs at the calling node's
+	// dispatch site rather than standalone.
+	subgraphInternal := make(map[string]struct{})
 	for _, g := range tpl.Spec.Graphs {
-		if g.Name == spec.MainGraphName || strings.TrimSpace(g.Entry) == "" {
+		if g.Name == spec.MainGraphName {
 			continue
 		}
-		subgraphEntryTypes[g.Entry] = struct{}{}
+		for _, n := range g.Nodes {
+			subgraphInternal[n.Type] = struct{}{}
+		}
 	}
+	rootWakeIDs := make([]foundationshared.UUID, 0, len(tpl.Spec.Nodes))
 	for _, def := range tpl.Spec.Nodes {
-		if _, isEntry := subgraphEntryTypes[def.Type]; isEntry {
+		if _, ok := subgraphInternal[def.Type]; ok {
 			continue
 		}
 		hasUpstream := false
@@ -1430,9 +1449,27 @@ func provisionInstanceTx(
 		if hasUpstream {
 			continue
 		}
-		nodeID := nodeIDs[def.Type]
-		if _, err := frame.EnqueueOrCoalesce(ctx, deps.Persist, tx, inst.ID, nodeID); err != nil {
-			return createInstanceResponse{}, fmt.Errorf("instance-factory: enqueue root node %q: %w", def.Type, err)
+		rootWakeIDs = append(rootWakeIDs, foundationshared.UUID(nodeIDs[def.Type]))
+	}
+	if len(rootWakeIDs) > 0 {
+		// @constraint: one initial frame for ALL roots, carrying the union
+		// wake list. Two-or-more separate initial frames would race a root
+		// through the second frame's promotion (re-stale-marking it and
+		// re-dispatching) because the serial-queue's frame promotion cannot
+		// cherry-pick.
+		// @constraint: runtime-synthetic envelope (NOT registry-declared,
+		// NOT subscriber-routed). The `"instance/root"` type bypasses the
+		// receipt-time registry gate by going through the in-process
+		// `EnqueueSyntheticWakeFrame` helper rather than the
+		// `route:POST /instances/{id}/messages` handler. Receivers are
+		// addressed by UUID through `payload.wake_node_ids`, read at frame
+		// promotion in `code:graph/frame/engine.go::advanceOneFrame`.
+		// Template authors cannot declare this type in `messages:` and the
+		// registry validator rejects subscriptions against it.
+		if _, _, err := runtime.EnqueueSyntheticWakeFrame(ctx, tx, deps.Persist,
+			inst.ID, "instance/root", "",
+			rootWakeIDs, nil); err != nil {
+			return createInstanceResponse{}, fmt.Errorf("instance-factory: seed root message: %w", err)
 		}
 	}
 

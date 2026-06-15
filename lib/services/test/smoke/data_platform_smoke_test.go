@@ -118,8 +118,7 @@ func TestDataPlatformSmoke_SensorHTTP(t *testing.T) {
 		t.Fatalf("marshal payload: %v", err)
 	}
 	envelope := map[string]any{
-		"kind":                      "invalidate",
-		"target":                    "smoke-target",
+		"type":                      "sensor/observation",
 		"payload":                   json.RawMessage(payloadBytes),
 		"sender":                    "sensor-http",
 		"sender_kind":               "publisher",

@@ -53,7 +53,6 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "instance-lifecycle", Version: "1",
-		FrameResolutionMode: node.FrameResolutionSerialQueue,
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
@@ -132,10 +131,12 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	// terminal/success. Under pause, the postgres queue's
 	// `i.paused = false` predicate (lib/foundation/persistence/postgres/
 	// queue.go) filters the row out and it sits in `pending`.
-	invResp := doPost(t, h.ControlBase+"/v1/nodes/"+w.ID.String()+"/invalidate", []byte(`{}`))
-	require.Equal(t, http.StatusOK, invResp.status,
-		"invalidate while paused must still be accepted (queues the dispatch): %s",
-		string(invResp.raw))
+	//
+	// The retired operator route `POST /v1/nodes/{id}/invalidate` is
+	// replaced by the same runtime-synthetic envelope it used to seed
+	// internally (`node/invalidate` + `wake_node_ids`), driven via the
+	// scenario harness helper. The frame-engine path is identical.
+	h.InvalidateNode(iid, w.ID)
 
 	// @deliberate: Pause window: wait 2s and assert no new terminal/success event
 	// appears on `GET /v1/events?instance_id=...&kind=terminal/success`.
