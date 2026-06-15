@@ -94,12 +94,29 @@ func (e *grpcEventStream) Close() error { return nil }
 // different `tls:` modes never silently share one client — a
 // `tls: required` entry must never ride a plaintext connection created
 // for a `tls: off` twin (STORY-peer-tls-enforced falsifier).
+//
+// The optional inproc registry + newHctx hook are populated via
+// NewClientPoolWithInProcess; out-of-process-only callers (tests of
+// http/grpc paths, the conformance pool) continue to use NewClientPool.
 type ClientPool struct {
-	mu      sync.Mutex
-	clients map[string]Client
+	mu       sync.Mutex
+	clients  map[string]Client
+	registry *InProcessRegistry
+	newHctx  HandlerContextFactory
 }
 
 func NewClientPool() *ClientPool { return &ClientPool{clients: map[string]Client{}} }
+
+// NewClientPoolWithInProcess returns a pool with the inproc registry
+// wired. Production startup uses this; tests using only out-of-process
+// executors keep NewClientPool().
+func NewClientPoolWithInProcess(registry *InProcessRegistry, newHctx HandlerContextFactory) *ClientPool {
+	return &ClientPool{
+		clients:  map[string]Client{},
+		registry: registry,
+		newHctx:  newHctx,
+	}
+}
 
 func (p *ClientPool) GetOrCreate(ep Endpoint) (Client, error) {
 	// @deliberate: normalize the empty mode to "off" — the two dial
@@ -124,6 +141,11 @@ func (p *ClientPool) GetOrCreate(ep Endpoint) (Client, error) {
 		c, err = NewGRPCClient(ep)
 	case "http":
 		c, err = NewHTTPClient(ep)
+	case "inproc":
+		if p.registry == nil {
+			return nil, fmt.Errorf("ClientPool: inproc transport requested but registry is nil")
+		}
+		c, err = NewInProcessClient(ep, p.registry, p.newHctx)
 	default:
 		return nil, fmt.Errorf("ClientPool: unknown transport %q", ep.Transport)
 	}

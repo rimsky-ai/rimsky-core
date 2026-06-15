@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Stdlib + grpc + protobuf + uuid + yaml.v3 only.
+Stdlib plus the official gRPC and protobuf libraries, the chosen UUID library, and the chosen YAML library only.
 
 ## Rationale
 

@@ -324,3 +324,53 @@ func readResumePayloadBlob(
 	}
 	return b
 }
+
+// loadScratchIntoAcquisition reads the dispatch row's scratch bytes
+// (inline or spilled) and stamps them onto `out.Scratch` so
+// buildExecuteRequest populates `ExecuteRequest.scratch`. Mirrors the
+// resume-payload loader: best-effort blob materialization — a missing
+// backend, backend-name mismatch, or fetch error degrades to empty
+// scratch with a logged warn, NOT a failed acquisition.
+// STORY-opaque-executor-scratch's load-bearing property is round-trip
+// integrity when the read succeeds; a transient backend outage
+// degrading to empty is acceptable because the executor sees
+// `len(scratch) == 0` and handles it the same as a fresh dispatch.
+//
+// @concept: executor
+func loadScratchIntoAcquisition(
+	ctx context.Context, args RunArgs, tx persistence.Tx, out *acquisition,
+	cand persistence.Candidate,
+) {
+	inline, handle, handleBackend, err := args.Queue.LoadScratchInTx(ctx, tx, cand.DispatchID)
+	if err != nil {
+		args.Logger.Warn("tryAcquire: LoadScratchInTx failed; passing empty scratch to executor",
+			"dispatch_id", cand.DispatchID.String(), "error", err.Error())
+		return
+	}
+	if handle == "" {
+		// Either no scratch at all, or inline scratch — pass through.
+		out.Scratch = inline
+		return
+	}
+	// Spilled scratch — materialize through the configured BlobBackend.
+	if args.Blob == nil {
+		args.Logger.Warn("tryAcquire: spilled scratch but no BlobBackend configured; passing empty scratch to executor",
+			"node_id", cand.NodeID.String(),
+			"handle_backend", handleBackend)
+		return
+	}
+	if args.Blob.Name() != handleBackend {
+		args.Logger.Warn("tryAcquire: blob backend mismatch on scratch; passing empty scratch to executor",
+			"node_id", cand.NodeID.String(),
+			"current_backend", args.Blob.Name(),
+			"handle_backend", handleBackend)
+		return
+	}
+	b, berr := args.Blob.Read(ctx, persistence.Handle(handle))
+	if berr != nil {
+		args.Logger.Warn("tryAcquire: blob fetch for scratch failed; passing empty scratch to executor",
+			"node_id", cand.NodeID.String(), "error", berr.Error())
+		return
+	}
+	out.Scratch = b
+}

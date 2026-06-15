@@ -64,6 +64,19 @@ func NewStaticResolver(m map[string]Endpoint) *StaticResolver {
 	return &StaticResolver{m: cp}
 }
 
+// Register adds a name→endpoint mapping after construction. Used by
+// supervisor startup to seed inproc builtin executor aliases (so the
+// dispatch path's Resolver.Resolve(alias) returns the inproc endpoint
+// without operator config). Safe to call concurrently with Resolve /
+// AcceptedNames; later writes overwrite earlier ones.
+//
+// @concept: executor
+func (r *StaticResolver) Register(name string, ep Endpoint) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.m[name] = ep
+}
+
 func (r *StaticResolver) Resolve(name string, _ DispatchContext) (Endpoint, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -146,4 +159,23 @@ func (r *LateBindResolver) Resolve(name string, ctx DispatchContext) (Endpoint, 
 
 func (r *LateBindResolver) AcceptedNames() []string {
 	return r.static.AcceptedNames()
+}
+
+// Unwrap exposes the inner static resolver so callers seeding inproc
+// builtin aliases (e.g. supervisor startup) can reach the underlying
+// `StaticResolver.Register` surface even when the dispatch-side
+// resolver is wrapped by LateBindResolver. Returns the underlying
+// Resolver — typically a *StaticResolver in production; tests may wrap
+// a different shape and the caller does the type assertion.
+//
+// STORY-inproc-utility-executor's "no operator config needed" property
+// holds in late-bind deployments only because this hook lets the
+// supervisor seed the inproc alias on the same static map the
+// resolver consults. Without it the seed would silently no-op against
+// the *LateBindResolver type assertion and `kind: loop_counter`
+// dispatches would resolve to unresolved_executor.
+//
+// @concept: executor
+func (r *LateBindResolver) Unwrap() Resolver {
+	return r.static
 }

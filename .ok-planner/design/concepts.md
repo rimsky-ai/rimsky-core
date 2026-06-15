@@ -25,7 +25,7 @@ Read first. Then either grep for `@concept: <slug>` annotations in the code unde
 - `claim-producer` (aliases: claim-store) — A claim producer is an out-of-process service that implements the gRPC claim-producer protocol — 4 verbs (open / commit / abandon / release) plus the capabilities startup handshake.
 - `claim-scope` — ClaimScope is the opaque byte stream a claim producer's open verb returns to identify "what was acquired."
 - `claim-tree` — The tree-shaped relationship across claim handle rows, formed by the nullable self-referential parent pointer.
-- `conformance` — A `rimsky conformance <protocol>` subcommand family — one subcommand per protocol — over a shared conformance library in the protocols module (one sub-package per protocol).
+- `conformance` — A per-protocol conformance subcommand on the CLI — one subcommand per protocol — over a shared conformance library in the protocols module (one sub-package per protocol).
 - `control-api` — The operator interface exposed by the control-api binary.
 - `data-processing` — Optional mix-in protocol on a claim producer.
 - `delegation` — Delegation is an invocation pattern over `concept:child-execution`: a node carrying `delegate: <graph-name>` instead of `executor:` dispatches the named sub-graph as exactly one child execution — one child, the carry-verbatim aggregation policy, entry absorbed.

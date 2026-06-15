@@ -1,0 +1,32 @@
+name: inproc-loop-counter-demo
+version: 1.0.0
+frame_resolution_mode: coalesce
+nodes:
+  - type: counter
+    kind: loop_counter
+    # Self-subscribe on `event/loop` so the counter re-fires within the
+    # same RunScope on each loop emit. With max=3, the counter dispatches
+    # three times: dispatches 1 and 2 emit `event/loop` (new_count 1, 2 <
+    # max=3); dispatch 3 emits `event/done` (new_count 3 == max). The
+    # `frame: next` spelling opens a fresh frame for each self-emit, so
+    # each re-dispatch sees the prior dispatch's writeback through
+    # attribute carry-forward (count 0 -> 1 -> 2 on the incoming bag).
+    #
+    # Loop termination: only `event/loop` is subscribed. When the counter
+    # emits `event/done` on the final dispatch, no node has a subscription
+    # matching that type-path, so the cascade has nothing to fan out to and
+    # the loop stops. Adding another node with `subscribes: [{node: counter,
+    # type: event/done}]` is how a real template hooks completion handling.
+    subscribes:
+      - node: counter
+        type: event/loop
+        frame: next
+        wake_on_change: true
+        force_upstream_refresh: false
+    attributes:
+      schema:
+        type: object
+        properties:
+          max:
+            type: integer
+            default: 3

@@ -11,11 +11,11 @@ aliases:
 
 A uniform discipline applied across two overlapping lists.
 
-**Carrier streams the discipline governs** (seven): claim scope (per `concept:claim-scope`), claim address, claim payload, blob content, attribute values, named-event payloads, message payloads. Plus executor error payloads. Each stream is "inert" in rimsky — rimsky neither inspects nor interprets the bytes beyond a narrowly defined set of read sites.
+**Carrier streams the discipline governs:** claim scope (per `concept:claim-scope`), claim address, claim payload, blob content, attribute values, named-event payloads, message payloads, scratch (per `concept:executor`), executor error payloads. Each stream is "inert" in rimsky — rimsky neither inspects nor interprets the bytes beyond a narrowly defined set of read sites.
 
 **Read-site sub-disciplines** distinguish how strict the rule is per stream:
 
-- **Byte-opaque inertness** — rimsky never traverses the bytes at all. Applies to: claim scope (per `concept:claim-scope`), claim address, claim payload, blob content. Rimsky reads them only at substitution-leaf extraction or for transport into the executor's wire (per `@blessed-invariant 20` and `21`).
+- **Byte-opaque inertness** — rimsky never traverses the bytes at all. Applies to: claim scope (per `concept:claim-scope`), claim address, claim payload, blob content, scratch. Rimsky reads them only at substitution-leaf extraction or for transport into the executor's wire (per `@blessed-invariant 20` and `21`).
 - **Structural inertness** — rimsky may traverse the bytes for transport mechanics (event-log persistence, JSON-walk substitution) and for the precisely-enumerated sanctioned read sites below, but does NOT inspect values to make routing or validation decisions outside those sites. Applies to: attribute values, named-event payloads, message payloads, executor error payloads. Rimsky reads them only at the sanctioned read sites; never logs, formats with `%v`, validates beyond schema gates, transforms, normalizes, hashes, indexes, pattern-matches, attaches to traces, or includes them in error messages. The "pattern-matches" prohibition still binds for the three streams without a matcher-style sanctioned site (named-event payloads, message payloads, executor error payloads); attribute values gained a sanctioned matcher read site via the shared matcher evaluator described below.
 
 ## Purpose
@@ -41,6 +41,7 @@ Sanctioned read sites (each carries the inertness annotation in code):
 - **Claim-handle wire encoding** — encodes the claim handle into the executor's wire structure at dispatch.
 - **Message persistence fetch** — surfaces a single message row verbatim to the operator.
 - **Attribute matcher evaluation** — applies to attribute values only. Reads the resolved post-L4 attribute bag to evaluate `attrs.<path>` equality predicates from `by_match` attribute-override matchers and from `concept:breakpoint` matchers. The read is primitive-equality only; no traversal beyond the named path; values not logged, not formatted, not included in error messages. Sanctioned by `concept:attribute`'s L5 matcher-overlay invariant.
+- **Scratch wire-attach + row-persist + lineage-copy** — on dispatch, rimsky reads the dispatch row's scratch bytes onto the executor's execute request; on stream-close, rimsky persists the executor-attached scratch bytes onto the dispatch row; on the mid-dispatch scratch callback route, rimsky persists the posted scratch bytes onto the dispatch row; on next-dispatch enqueue for the same node under any prior-dispatch disposition, the enqueue path copies scratch from the prior dispatch row onto the new dispatch row.
 
 ## Auth audit log: verbatim request_params
 

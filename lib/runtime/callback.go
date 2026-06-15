@@ -45,6 +45,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	rimskyattrs "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
+	rimskyscratch "github.com/rimsky-ai/rimsky-core/lib/graph/scratch"
 )
 
 // callbackAckBody is the structured response the supervisor writes for
@@ -250,6 +251,24 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 			Logger: c.Logger,
 		}))
 	}
+	// Incremental executor-scratch writeback — paralleling §12.5
+	// attributes. Mounted on the same listener as the attributes
+	// callback. The cancel_token auth shape is identical (per-run keyed
+	// on dispatch id), so c.attributesAuth is reused verbatim. Requires
+	// the Queue + Blob threading (BlobSpillThreshold > 0 → spill).
+	if c.Persist != nil && c.Queue != nil {
+		r.Method(http.MethodPost, "/v1/runs/{run_id}/scratch", rimskyscratch.Handler(rimskyscratch.HandlerDeps{
+			Writer: scratchStoreAdapter{
+				persist:        c.Persist,
+				queue:          c.Queue,
+				blob:           c.Blob,
+				spillThreshold: c.BlobSpillThreshold,
+				logger:         c.Logger,
+			},
+			Auth:   c.attributesAuth,
+			Logger: c.Logger,
+		}))
+	}
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
@@ -321,11 +340,18 @@ type asyncCallbackSuccess struct {
 	Changed         bool           `json:"changed,omitempty"`
 	ChangeSummary   string         `json:"change_summary,omitempty"`
 	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
+	// Scratch is the executor-attached opaque bytes mirroring the proto
+	// Success.scratch field (base64 on the wire per proto-JSON bytes
+	// projection). Inert in rimsky per @blessed-invariant 21.
+	// @concept: executor
+	Scratch []byte `json:"scratch,omitempty"`
 }
 
 type asyncCallbackError struct {
 	ErrorClass string `json:"error_class,omitempty"`
 	Payload    any    `json:"payload,omitempty"`
+	// Scratch mirrors Error.scratch. @concept: executor
+	Scratch []byte `json:"scratch,omitempty"`
 }
 
 type asyncCallbackPark struct {
@@ -339,6 +365,8 @@ type asyncCallbackPark struct {
 	// @constraint: ResumeAt is RFC3339; empty = absent.
 	ResumeAt     string `json:"resume_at,omitempty"`
 	SessionToken string `json:"session_token,omitempty"`
+	// Scratch mirrors Park.scratch. @concept: executor
+	Scratch []byte `json:"scratch,omitempty"`
 }
 
 func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
@@ -513,12 +541,14 @@ func parseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error) {
 			Changed:       body.Success.Changed,
 			ChangeSummary: body.Success.ChangeSummary,
 			AttributesDel: body.Success.AttributesDelta,
+			Scratch:       body.Success.Scratch,
 		}, events, nil
 	case body.Error != nil:
 		return terminalEvent{
 			Kind:       terminalKindErrored,
 			ErrorClass: body.Error.ErrorClass,
 			Payload:    map[string]any{"payload": body.Error.Payload},
+			Scratch:    body.Error.Scratch,
 		}, events, nil
 	case body.Park != nil:
 		t := terminalEvent{
@@ -528,6 +558,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error) {
 			ParkReasonLabel:  body.Park.ReasonLabel,
 			ParkPayload:      body.Park.Payload,
 			ParkSessionToken: body.Park.SessionToken,
+			Scratch:          body.Park.Scratch,
 		}
 		if body.Park.ResumeAt != "" {
 			if pt, err := time.Parse(time.RFC3339, body.Park.ResumeAt); err == nil {
@@ -851,4 +882,85 @@ func (a attributesStoreAdapter) MergeDelta(ctx context.Context, runID shared.UUI
 	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return a.store.NodeAttributes().MergeDelta(ctx, runID, delta, tx)
 	})
+}
+
+// scratchStoreAdapter bridges the persistence Queue.WriteScratchInTx
+// to the local scratch.ScratchWriter the HTTP callback handler depends
+// on. Picks inline vs. spilled-handle using the supervisor's
+// BlobSpillThreshold, mirroring the parked-payload + terminal-scratch
+// spill decision (see runtime/runner_terminal_park.go::applyTerminalPark
+// and runtime/runner_terminal_scratch.go::applyTerminalScratchInTx).
+//
+// @concept: executor
+type scratchStoreAdapter struct {
+	persist        persistence.Tables
+	queue          persistence.Queue
+	blob           persistence.BlobBackend
+	spillThreshold int
+	logger         shared.Logger
+}
+
+// Write picks inline-vs-spill the same way the stream-close terminal
+// path does. The NodeID hint for the BlobKey is resolved via a
+// non-locking SELECT (`Queue.GetDispatchNode`) — the hint is purely
+// cosmetic for the filesystem backend's path derivation, so the
+// previous `GetRunByDispatchIDForUpdate` FOR-UPDATE row lock was
+// gratuitous and serialized concurrent §scratch callbacks against
+// the same dispatch row. A lookup failure leaves the hint empty;
+// the filesystem backend tolerates that via its path-derivation
+// fallback.
+func (a scratchStoreAdapter) Write(ctx context.Context, runID shared.UUID, b []byte) error {
+	var (
+		inline        []byte
+		handle        string
+		handleBackend string
+	)
+	// Spill decision matches the parked-payload + terminal-scratch sites:
+	// honor BlobSpillThreshold > 0 AND the backend's not-inline gate.
+	if a.blob != nil && persistence.ShouldSpillBlob(a.blob, a.spillThreshold, len(b)) {
+		// Resolve the NodeID for the BlobKey hint via a non-locking
+		// SELECT (no separate Transaction, no FOR UPDATE). The hint is
+		// path-derivation metadata for the filesystem backend; an empty
+		// hint is still valid (the backend has a path-derivation
+		// fallback), so a lookup failure degrades to spill-with-empty-
+		// NodeID — same conservative posture as applyTerminalPark's
+		// spill-failure fallback.
+		var nodeID shared.UUID
+		if id, _, err := a.queue.GetDispatchNode(ctx, runID); err == nil {
+			nodeID = id
+		} else if a.logger != nil {
+			a.logger.Warn("scratchStoreAdapter: node id lookup failed; spill key has empty NodeID hint",
+				"dispatch_id", runID.String(), "error", err.Error())
+		}
+		key := persistence.BlobKey{NodeID: nodeID.String(), Hint: "scratch"}
+		h, err := a.blob.Write(ctx, key, b)
+		if err != nil {
+			// Spill failure → fall back to inline. Mirrors applyTerminalPark.
+			if a.logger != nil {
+				a.logger.Warn("scratchStoreAdapter: blob spill failed; falling back to inline",
+					"dispatch_id", runID.String(), "error", err.Error())
+			}
+			inline = b
+		} else {
+			handle = string(h)
+			handleBackend = a.blob.Name()
+		}
+	} else {
+		inline = b
+	}
+	if err := a.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return a.queue.WriteScratchInTx(ctx, tx, runID, inline, handle, handleBackend)
+	}); err != nil {
+		// Translate the persistence missing-row sentinel into the
+		// scratch-callback sentinel so the HTTP handler maps to 410 Gone
+		// instead of swallowing the failure behind a generic 500. Per
+		// STORY-opaque-executor-scratch the missing-row case must
+		// surface — the executor's mid-dispatch checkpoint was NOT
+		// persisted.
+		if errors.Is(err, persistence.ErrRunRowMissing) {
+			return rimskyscratch.ErrRunRowMissing
+		}
+		return err
+	}
+	return nil
 }

@@ -108,6 +108,12 @@ func (f *invTestQueue) GetInFlightRunForNode(ctx context.Context, tx persistence
 	}
 	return shared.UUID{}, false, nil
 }
+func (f *invTestQueue) GetMostRecentRunForNodeInScope(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+	if f.real != nil {
+		return f.real.GetMostRecentRunForNodeInScope(ctx, tx, nodeID, runScopeID)
+	}
+	return shared.UUID{}, false, nil
+}
 
 func (f *invTestQueue) ListInFlightRunPhases(ctx context.Context, tx persistence.Tx, nodeIDs []shared.UUID, frameID, runScopeID shared.UUID) (map[shared.UUID][]string, error) {
 	if f.real != nil {
@@ -153,6 +159,12 @@ func (f *invTestQueue) CountParkedByReason(_ context.Context) (map[string]int, e
 	return nil, nil
 }
 func (f *invTestQueue) ClearResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
+	return nil
+}
+func (f *invTestQueue) LoadScratchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]byte, string, string, error) {
+	return nil, "", "", nil
+}
+func (f *invTestQueue) WriteScratchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ []byte, _, _ string) error {
 	return nil
 }
 func (f *invTestQueue) ListParkedDiagnostic(_ context.Context, _ persistence.Tx, _ string) ([]persistence.ParkedDiagnosticRow, error) {

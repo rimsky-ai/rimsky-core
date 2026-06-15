@@ -56,6 +56,23 @@ export const expectedAttributesSchema = {
     // appends a fixed metadata footer; the old `user_prompt_template`
     // two-stage substitution is gone).
     user_prompt: { type: "string" },
+    // session_token is the claude-agent-owned CLI session identity that
+    // rides the rimsky attribute carry-forward mechanism. The executor
+    // writes the current dispatch's runId here on every terminal
+    // Success via the §12.5 attributes_set callback; rimsky's
+    // self-state carry-forward (per concept:attribute's carry-forward
+    // step) makes the value visible on the next dispatch of the same
+    // node within the same RunScope. When non-empty on a fresh
+    // ExecuteRequest, the executor launches the CLI with
+    // `--resume <session_token>` so the prior conversation continues.
+    // Sub-graph and fan-out RunScopes start fresh — carry-forward is
+    // RunScope-bounded — so a sub-graph invocation of an agent template
+    // begins a fresh CLI conversation.
+    session_token: {
+      type: "string",
+      readOnly: true,
+      default: "",
+    },
     cli: {
       type: "object",
       // @deliberate: the cli.* fields below are exactly those parseCliConfig

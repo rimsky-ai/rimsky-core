@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`@blessed-invariant` blocks naming the property + its enforcement site; scenario tests exercise them.
+Blessed-invariant blocks naming the property and its enforcement site; scenario tests exercise them.
 
 ## Rationale
 

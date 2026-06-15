@@ -3,7 +3,7 @@ decision: registry-hub-rimskyai-namespace
 status: as-is
 ---
 
-# Docker Hub namespace
+# Container-registry namespace
 
 ## Choice
 

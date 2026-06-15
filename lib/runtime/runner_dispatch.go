@@ -111,6 +111,12 @@ type terminalEvent struct {
 	// async-callback body. Processed in arrival order before the
 	// terminal verdict (per plan H1).
 	NamedEvents []namedEventRecord
+	// Scratch is the executor-attached opaque bytes from a terminal
+	// outcome (Success/Error/Park). Persisted onto the dispatch row by
+	// applyTerminalComplete / applyTerminalError / applyTerminalPark.
+	// Empty when the executor did not attach scratch at terminal.
+	// @concept: executor
+	Scratch []byte
 }
 
 // namedEventRecord captures one NamedEvent emission for ledger persistence.
@@ -363,6 +369,7 @@ func readExecutorStream(
 					Changed:       oc.Success.Changed,
 					ChangeSummary: oc.Success.ChangeSummary,
 					NamedEvents:   pending,
+					Scratch:       oc.Success.Scratch,
 				}
 				if oc.Success.AttributesDelta != nil {
 					t.AttributesDel = oc.Success.AttributesDelta.AsMap()
@@ -378,6 +385,7 @@ func readExecutorStream(
 					ErrorClass:  oc.Error.ErrorClass,
 					Payload:     map[string]any{"payload": payloadGo},
 					NamedEvents: pending,
+					Scratch:     oc.Error.Scratch,
 				}, ""
 			case *genv1.StreamClose_Park:
 				t := terminalEvent{
@@ -388,6 +396,7 @@ func readExecutorStream(
 					ParkPayload:      oc.Park.Payload,
 					ParkSessionToken: oc.Park.SessionToken,
 					NamedEvents:      pending,
+					Scratch:          oc.Park.Scratch,
 				}
 				if oc.Park.ResumeAt != nil {
 					t.ParkResumeAt = oc.Park.ResumeAt.AsTime()
@@ -489,7 +498,46 @@ func resolveAttributes(ctx context.Context, args RunArgs, acq *acquisition) (map
 	if err != nil {
 		return nil, schema, err
 	}
-	resolved, err := substituteAttributesSchema(schema, rctx)
+	// @constraint: self-state carry-forward — hydrate this dispatch's bag with the
+	// most-recent prior writeback for THIS node in THIS RunScope. Under
+	// the 2026-06-14 carry-forward spec, stateful nodes (loop_counter's
+	// `count`, claude-agent's `session_token`, and any executor that
+	// holds state in its own attributes) need their own prior writeback
+	// visible on the next dispatch. The lookup is keyed on (NodeID,
+	// RunScopeID) — the SQL JOIN filter `r.run_scope_id = $2` is the
+	// load-bearing enforcement of sub-graph sealing: a sub-graph's nodes
+	// live in a different RunScope than the calling graph, so a
+	// sub-graph dispatch's bag starts empty (no walk to the parent
+	// scope; that would break the "fresh context per pass" property the
+	// orchestrator depends on). Fan-out children likewise see no
+	// carry-forward — each sibling lives in its own RunScope.
+	//
+	// Persistence failures here are non-fatal: log + proceed with an
+	// empty bag so a transient DB blip turns the dispatch into a "first-
+	// dispatch in scope" rather than a hard dispatch failure. The
+	// substitution overlay below replaces source-bound values
+	// regardless, so source-driven correctness is unaffected.
+	//
+	// @concept: attribute
+	var carryForward map[string]any
+	if args.Persist != nil {
+		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			priorRow, err := args.Persist.NodeAttributes().GetLatestByNode(ctx, acq.NodeID, acq.RunScopeID, tx)
+			if err != nil {
+				return err
+			}
+			if priorRow != nil {
+				carryForward = priorRow.Data
+			}
+			return nil
+		}); err != nil && args.Logger != nil {
+			args.Logger.Warn("resolveAttributes: carry-forward lookup failed; proceeding with empty bag",
+				"node_id", acq.NodeID.String(),
+				"run_scope_id", acq.RunScopeID.String(),
+				"error", err.Error())
+		}
+	}
+	resolved, err := substituteAttributesSchema(schema, rctx, carryForward)
 	if err != nil {
 		return nil, schema, err
 	}
@@ -862,26 +910,74 @@ func extractReadOnlyPropsLocal(schema map[string]any) map[string]bool {
 //     substitution engine. Strict directives (no marker) raise
 //     ErrMissingSource on missing; lenient (`?` marker) and fallback
 //     (`| <literal>`) directives are handled inside the engine and
-//     produce a typed value or null.
-//   - static-default (`default:` value with no source): copied verbatim
-//     from the schema. No substitution is applied to defaults.
+//     produce a typed value or null. Source resolution ALWAYS overwrites
+//     any carry-forward value.
+//   - static-default (`default:` value with no source): the default is a
+//     FLOOR under carry-forward — it lands only when the carry-forward
+//     bag has no value for this property. Once a node has produced a
+//     writeback in this RunScope, subsequent dispatches see the
+//     executor's value rather than the static default.
 //   - executor-written (`readOnly: true` in the executor's expected
-//     schema; the effective schema carries the marker through): absent
-//     from the dispatch-time bag, populated at commit by write-back.
+//     schema; the effective schema carries the marker through): carried
+//     forward unchanged when the carry-forward bag holds a value
+//     (canonical stateful-property pattern per the 2026-06-14 carry-
+//     forward spec); otherwise absent from the dispatch-time bag,
+//     populated at commit by write-back.
 //
-// Per spec
-// .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
-// §"Resolution waterfall".
+// `carryForward` is the most-recent prior writeback for (NodeID,
+// RunScopeID) — the hydration starter map per the carry-forward
+// spec. Nil / empty on first dispatch in scope, on sub-graph entries
+// (sub-graphs live in their own RunScope), and on fan-out children
+// (each child lives in its own RunScope). The function never reaches
+// outside the supplied map; cross-RunScope hydration is the caller's
+// boundary to enforce.
+//
+// Per specs:
+//   - .ok-planner/specs/2026-05-20-userdata-collapse-into-attributes-design.md
+//     §"Resolution waterfall"
+//   - .ok-planner/specs/2026-06-14-attribute-carry-forward-and-inproc-utility-executors-design.md
+//     §"Attribute carry-forward"
 //
 // @concept: attribute
-func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveContext) (map[string]any, error) {
+func substituteAttributesSchema(
+	schema map[string]any, rctx attributes.ResolveContext, carryForward map[string]any,
+) (map[string]any, error) {
 	out := map[string]any{}
 	if schema == nil {
+		// @deliberate: no schema → pure-cascade node with no attributes block. There
+		// is no dispatch attribute bag to build; carry-forward is
+		// always empty here in practice (a node with no executor has no
+		// writeback path) and the per-property loop below has nothing
+		// to iterate.
 		return out, nil
 	}
 	props, _ := schema["properties"].(map[string]any)
 	if props == nil {
+		// @deliberate: schema present but no `properties` block. The validator's
+		// effective-schema construction requires properties whenever
+		// the node has an executor (the executor's expected_attributes_schema
+		// merges in), so this branch is reached only by pure-cascade
+		// nodes whose attributes block declares an object type without
+		// declared fields. Carry-forward is empty in that case for the
+		// same reason as the nil-schema branch.
 		return out, nil
+	}
+	// @constraint: seed the dispatch bag verbatim from carry-forward. The per-
+	// property loop below overlays source-bound resolutions (which
+	// always overwrite carry-forward) and static defaults (which act
+	// as a floor — landing only when carry-forward has no value).
+	// Validation downstream — at the dispatch waterfall (post-
+	// substitution) and at commit (post-writeback) — enforces the
+	// schema's `additionalProperties` stance against the resulting
+	// bag, so a stale or undeclared key cannot reach the executor or
+	// persist under a closed schema. We do not project the seed
+	// through `properties` here: doing so would override an open
+	// schema's stated permissiveness, and would be redundant for a
+	// closed schema (commit-time validation already enforced
+	// `additionalProperties: false` on the prior writeback that
+	// sourced this seed).
+	for k, v := range carryForward {
+		out[k] = v
 	}
 	for name, propAny := range props {
 		prop, _ := propAny.(map[string]any)
@@ -922,17 +1018,31 @@ func substituteAttributesSchema(schema map[string]any, rctx attributes.ResolveCo
 				out[name] = emptyValueForSchemaProperty(prop)
 				continue
 			}
+			// @constraint: source-bound resolution ALWAYS overwrites carry-forward.
+			// Cross-node data flow stays orthogonal to self-state carry-
+			// forward — substitution is the canonical refresh-from-
+			// upstream channel.
 			out[name] = val
 		case hasDefault:
-			// @constraint: static-default property — the default value flows into the
-			// dispatch bag verbatim. No substitution is applied to
-			// defaults; an operator-supplied `"{{X}}"` is a literal
-			// string here.
-			out[name] = defaultVal
+			// @constraint: static-default property — the default is the FLOOR under
+			// carry-forward per the carry-forward spec. Land the default
+			// only when the carry-forward bag had no value for this
+			// property; otherwise the prior writeback wins (executor-
+			// supplied values must beat static defaults once a node has
+			// produced output in this RunScope). No substitution is
+			// applied to defaults; an operator-supplied `"{{X}}"` is a
+			// literal string here.
+			if _, present := out[name]; !present {
+				out[name] = defaultVal
+			}
 		}
-		// @constraint: executor-written (readOnly + no source + no default) properties
-		// stay absent until the executor's commit write-back populates
-		// them; nothing to do at dispatch.
+		// @deliberate: executor-written (readOnly + no source + no default) properties —
+		// when the carry-forward bag carries a value (canonical stateful
+		// pattern: the executor wrote it on a prior dispatch in this scope),
+		// the seeded value survives and feeds the executor on this dispatch.
+		// When the carry-forward bag has no entry, the property stays absent
+		// until the executor's commit write-back populates it. Nothing to do
+		// here in either case.
 	}
 	return out, nil
 }
@@ -1220,6 +1330,14 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		CallbackUrl:      dctx.Args.CallbackURL,
 		CancelToken:      cancelToken,
 		DispatchId:       acq.DispatchID.String(),
+		// @constraint: Scratch is the dispatch row's executor-attached opaque bytes,
+		// materialized from inline or spilled-handle at acquisition time
+		// (see runner_acquire_helpers.go::loadScratchIntoAcquisition).
+		// Empty on a fresh dispatch; carries forward from a prior
+		// dispatch row across heartbeat_stale / retry_after_error /
+		// recalculate transitions. Inert in rimsky per
+		// @blessed-invariant 21. @concept: executor
+		Scratch: acq.Scratch,
 	}
 	// @constraint: recovery-aware fields surface the predecessor dispatch identity +
 	// classifier when this run supersedes a prior dispatch (heartbeat

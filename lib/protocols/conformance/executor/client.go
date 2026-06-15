@@ -132,6 +132,11 @@ func (e *grpcEventStream) Close() error { return nil }
 // for a `tls: off` twin.
 //
 // @source: lib/runtime/executor/client.go::ClientPool
+// @diverged: true
+// @reason: conformance dispatches only over the wire — the runtime pool
+// supports grpc + http + inproc; conformance is intentionally grpc-only
+// because external executor implementations under test never dispatch
+// in-process.
 type ClientPool struct {
 	mu      sync.Mutex
 	clients map[string]Client

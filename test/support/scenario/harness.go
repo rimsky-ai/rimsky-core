@@ -138,6 +138,16 @@ type HarnessOpts struct {
 	// unset keep the strict behavior. Story
 	// S-template-validation-ref-validation-mode.
 	RefValidationMode node.RefValidationMode
+
+	// ExtraInprocHandlers lets a scenario test register additional inproc
+	// executor handlers alongside the rimsky-bundled builtins (the
+	// `loop_counter` utility node and its peers). The key is the inproc
+	// URL (e.g. `inproc://test-scratch-writer`); the supervisor seeds
+	// the resolver so the same key works as an `executor:` alias inside
+	// the test's template. Threaded through SupervisorConfig.ExtraInprocHandlers.
+	// Empty / nil → only the rimsky-bundled builtins are registered.
+	// @concept: executor
+	ExtraInprocHandlers map[string]executor.InProcessHandler
 }
 
 // Start spins up a full-stack harness against a fresh Postgres
@@ -327,6 +337,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			Executors:                   executorsCfg,
 			LateBindServiceProxies:      opts.LateBindServiceProxies,
 			LifecyclePeersForSpec:       peersForSpec,
+			ExtraInprocHandlers:         opts.ExtraInprocHandlers,
 		})
 		if err != nil {
 			t.Fatalf("scenario: start supervisor: %v", err)
@@ -942,6 +953,15 @@ func templateNodeToJSON(n node.TemplateNodeDef) map[string]any {
 	}
 	if n.Description != "" {
 		nd["description"] = n.Description
+	}
+	// Kind sugar (`kind: loop_counter` etc.) — the control-API resolves
+	// this to an executor alias via the static kind-alias map at
+	// registration. Tests that exercise the kind-sugar path (e.g.
+	// STORY-inproc-utility-executor) set Kind on the spec; tests that
+	// resolve to the alias directly set Executor. Mutual exclusion is
+	// enforced at registration by the template validator.
+	if n.Kind != "" {
+		nd["kind"] = n.Kind
 	}
 	if n.Executor != "" {
 		nd["executor"] = n.Executor

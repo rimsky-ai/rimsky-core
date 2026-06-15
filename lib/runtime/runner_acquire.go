@@ -267,6 +267,13 @@ type acquisition struct {
 	// acquisition path normally aborts before reaching emit if the
 	// instance lookup failed).
 	TemplateHash string
+
+	// Scratch carries the dispatch row's scratch bytes for wire-attach
+	// onto the executor's ExecuteRequest. Empty on initial dispatches
+	// and on dispatches whose prior row had no scratch. Spilled handles
+	// are materialized via the configured BlobBackend before this field
+	// populates. @concept: executor
+	Scratch []byte
 }
 
 // openResult discriminates the outcomes of acquiring one lock-or-claim
@@ -822,6 +829,15 @@ func tryAcquire(
 	}
 
 	loadResumeMetadataIfParked(ctx, args, tx, &out, cand)
+	// Load the dispatch row's executor-attached scratch (inline or
+	// spilled-handle materialized via Blob) so buildExecuteRequest can
+	// populate ExecuteRequest.scratch on the wire. Per
+	// STORY-opaque-executor-scratch, scratch round-trips across every
+	// prior-dispatch disposition; the enqueue-side carry already
+	// stamps the row, this is the read-side surfacing.
+	//
+	// @concept: executor
+	loadScratchIntoAcquisition(ctx, args, tx, &out, cand)
 	return out, true, nil
 }
 

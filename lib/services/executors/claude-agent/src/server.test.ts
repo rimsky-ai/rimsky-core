@@ -137,7 +137,12 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     // rather than the legacy `{type: "complete", ...}` discriminator.
     expect(body.success).toBeDefined();
     const success = body.success as Record<string, unknown>;
-    expect(success.attributes_delta).toEqual({ stub: true });
+    // @deliberate: stub mode stamps `session_token: runId` on every terminal Success
+    // (mirroring runAgentReal). Check the marker plus the session_token shape.
+    const delta1 = success.attributes_delta as Record<string, unknown>;
+    expect(delta1.stub).toBe(true);
+    expect(typeof delta1.session_token).toBe("string");
+    expect((delta1.session_token as string).length).toBeGreaterThan(0);
     expect(success.changed).toBe(true);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -382,9 +387,14 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
     // @deliberate: ensure we did NOT use the legacy `kind` or `type` keys.
     expect(received[0]!.body.kind).toBeUndefined();
     expect(received[0]!.body.type).toBeUndefined();
-    // @deliberate: spec §12.2: stub round-trips its synthetic delta.
+    // @deliberate: spec §12.2: stub round-trips its synthetic delta. Stub mode
+    // stamps `session_token: runId` on every terminal Success (mirroring
+    // runAgentReal); the session_token field rides along on the delta.
     const success = received[0]!.body.success as Record<string, unknown>;
-    expect(success.attributes_delta).toEqual({ stub: true });
+    const delta2 = success.attributes_delta as Record<string, unknown>;
+    expect(delta2.stub).toBe(true);
+    expect(typeof delta2.session_token).toBe("string");
+    expect((delta2.session_token as string).length).toBeGreaterThan(0);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).close?.();

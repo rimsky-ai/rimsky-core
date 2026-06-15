@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As an operator wiring a poll-driven message into a workflow, I can use the bundled `sensor-http` to poll a URL at a fixed interval, emit a message when the upstream returns success (optionally filtered by response body), and persist polling state so a restart preserves the schedule, so that I poll an external HTTP source without writing a custom publisher.
+As an operator wiring a poll-driven message into a workflow, I can use the bundled HTTP sensor to poll a URL at a fixed interval, emit a message when the upstream returns success (optionally filtered by response body), and persist polling state so a restart preserves the schedule, so that I poll an external HTTP source without writing a custom publisher.
 
 ## Capability
 
-Bundled `sensor-http` publisher: fixed-interval URL polling; optional response-body filter; durable polling state across restart.
+Bundled HTTP sensor publisher: fixed-interval URL polling; optional response-body filter; durable polling state across restart.
 
 ## Business value
 
@@ -19,7 +19,7 @@ Operators poll an external HTTP source without writing a custom publisher; polli
 
 ## Acceptance
 
-A `sensor-http` instance polling a real upstream at a configured interval emits exactly one message per interval-tick when the upstream returns 200; downstream nodes consume the message; with a body-filter declared, only responses matching the filter produce messages. State persists across restart.
+An HTTP-sensor instance polling a real upstream at a configured interval emits exactly one message per interval-tick when the upstream returns 200; downstream nodes consume the message; with a body-filter declared, only responses matching the filter produce messages. State persists across restart.
 
 ## Falsifier
 

@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As a template author declaring data-quality checks, I can label a check `warning` or `error` and have the verifier honor the partition — failing-warning is non-blocking (the run still succeeds), failing-error blocks the commit — so that I distinguish observed-but-tolerated quality issues from blocking ones.
+As a template author declaring data-quality checks, I can label a check with the warning or error severity and have the verifier honor the partition — failing-warning is non-blocking (the run still succeeds), failing-error blocks the commit — so that I distinguish observed-but-tolerated quality issues from blocking ones.
 
 ## Capability
 
-Severity partition in verifier nodes: `severity: warning` is non-blocking; `severity: error` (and any non-`warning` string) is blocking. Both observable through the runtime surface. Severity is a free-form string; the runtime partitions on exact-string `warning` (non-blocking) and treats every other value, including the documented `error` and any typo, as blocking. The two-string convention `warning`/`error` is the contract this story exercises; `tension:quality-rule-severity-string-footgun` tracks the typo footgun.
+Severity partition in verifier nodes: the warning severity is non-blocking; the error severity (and any non-warning string) is blocking. Both observable through the runtime surface. Severity is a free-form string; the runtime partitions on the exact-string warning value (non-blocking) and treats every other value, including the documented error value and any typo, as blocking. The two-string convention (warning and error) is the contract this story exercises; `tension:quality-rule-severity-string-footgun` tracks the typo footgun.
 
 ## Business value
 
@@ -19,7 +19,7 @@ Template authors distinguish observed-but-tolerated quality issues from blocking
 
 ## Acceptance
 
-With a template whose verifier node carries one `severity: warning` failing check and one `severity: error` passing check against an in-bounds dataset, the dispatch reaches terminal success and the observability surface records the failed check as warning. A second dispatch against an out-of-bounds dataset that flips the `severity: error` check to failing reaches a terminal error and the commit is blocked.
+With a template whose verifier node carries one warning-severity failing check and one error-severity passing check against an in-bounds dataset, the dispatch reaches terminal success and the observability surface records the failed check as warning. A second dispatch against an out-of-bounds dataset that flips the error-severity check to failing reaches a terminal error and the commit is blocked.
 
 ## Falsifier
 

@@ -138,6 +138,14 @@ func applyTerminalPark(
 	if err := args.Queue.ParkActiveInTx(ctx, tx, in); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
+	// @deliberate: scratch is persisted onto the dispatch row inside the park tx so
+	// the column survives across the parked → pending resume transition and the
+	// resume dispatch sees the scratch the park terminal attached. Inline vs.
+	// spilled-handle picked via the same threshold as the parked-payload write above.
+	// @concept: executor
+	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
+		return nil, fmt.Errorf("applyTerminalPark: %w", err)
+	}
 	// @constraint: per-row dispatch tuning is denormalized at park-time so
 	// SweepParkedNodes can find the deadline without joining through templates (F2/F3).
 	if maxParkSec != nil || maxRetries != nil {

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The yaml.v3 YAML parser library.
+A standard YAML parser library.
 
 ## Rationale
 

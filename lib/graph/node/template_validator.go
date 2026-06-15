@@ -241,6 +241,21 @@ type RegistryHooks struct {
 	// `fan_out:` declarations per spec §Fan-out template DSL.
 	// nil → skip the check.
 	StoreAdvertisesSplitScope func(name string) bool
+
+	// KindAliases is the static `kind:` → executor-alias resolver used by
+	// validateKindDeclaration to range-check the optional `kind:` field
+	// on each template node. Populated at supervisor startup alongside
+	// the InProcessRegistry (one entry per inproc handler with a kind
+	// sugar). nil → any node that declares `kind:` is rejected as
+	// unregistered, mirroring the behavior of an unknown executor.
+	//
+	// The validator only READS from the map; the canonicalizer
+	// (`CanonicalizeKindSugar`) performs the kind→executor substitution
+	// after validation succeeds, so the validator itself never mutates
+	// the spec.
+	//
+	// @concept: node
+	KindAliases *KindAliasMap
 }
 
 // ValidateTemplate walks a parsed template and reports errors per spec
@@ -275,8 +290,10 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 	// cross-check each `defaults.attributes.by_executor.<name>` routing
 	// key against the template's actual executor names. Per the
 	// structural-inertness discipline (concept:inertness), only routing
-	// keys are inspected; fragment values are never read.
-	validateDefaults(spec, &res)
+	// keys are inspected; fragment values are never read. Hooks are
+	// threaded so the known-executor set honors `kind:` sugar via the
+	// alias map.
+	validateDefaults(spec, hooks, &res)
 
 	declared := make(map[string]int, len(spec.Nodes))
 	for i, n := range spec.Nodes {
@@ -300,8 +317,9 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		base := fmt.Sprintf("nodes[%d]", i)
 		validateSubscribes(n, base, declared, hooks, spec, &res)
 		validateErrorTypes(n, base, declared, hooks, &res)
-		validateExecutorCoherence(n, base, &res)
+		validateExecutorCoherence(n, base, hooks, &res)
 		validateExecutorDeclared(n, base, hooks, &res)
+		validateKindDeclaration(n, base, hooks, &res)
 		validateStores(n, base, hooks, &res)
 		validateLocks(n, base, hooks, &res)
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
@@ -391,13 +409,50 @@ func validateFrameResolution(spec *TemplateSpec, res *ValidationResult) {
 	}
 }
 
+// effectiveExecutor returns the executor identity a template node
+// resolves to at registration time, honoring the `kind:` sugar. When
+// the node declares `executor:` directly, that wins; otherwise, when
+// the node declares `kind:` and the alias map resolves it, the
+// kind-aliased executor is returned. Returns "" when neither resolves.
+//
+// This helper lets the per-node validation legs that key on the
+// executor identity (executor-schema reference legs, executor-name
+// known-set for defaults, mutual-exclusion against delegate) treat
+// kind-sugar nodes the same as nodes declaring the executor directly.
+// The validator MUST NOT mutate the input spec (CanonicalizeKindSugar
+// runs after validation succeeds; the caller hashes the spec bytes
+// for content-addressed identity), so this helper is read-only.
+//
+// @concept: node
+func effectiveExecutor(n TemplateNodeDef, hooks RegistryHooks) string {
+	if n.Executor != "" {
+		return n.Executor
+	}
+	if n.Kind == "" || hooks.KindAliases == nil {
+		return ""
+	}
+	alias, _ := hooks.KindAliases.Resolve(n.Kind)
+	return alias
+}
+
 // validateDefaults inspects only the routing keys under
 // `spec.Defaults.Attributes.ByExecutor`, rejecting entries whose executor
 // name does not match any node's `Executor`. The fragment values are
 // never inspected (preserves the structural-inertness discipline for
-// attribute values; concept:inertness). Per spec
+// attribute values; concept:inertness).
+//
+// A node declaring `kind: X` resolves through the alias map to the same
+// executor identity its post-canonicalize form would carry, so a
+// template that legitimately combines
+// `defaults.attributes.by_executor[<kind-aliased executor>]` with
+// `kind: X` is accepted. Without this, the L1 template-defaults surface
+// would silently stop working for kind-sugar nodes (the kind-aliased
+// executor never enters the known set, since `n.Executor` is empty
+// pre-canonicalize).
+//
 // @concept: attribute
-func validateDefaults(spec *TemplateSpec, res *ValidationResult) {
+// @concept: node
+func validateDefaults(spec *TemplateSpec, hooks RegistryHooks, res *ValidationResult) {
 	if spec.Defaults == nil || spec.Defaults.Attributes == nil {
 		return
 	}
@@ -406,8 +461,8 @@ func validateDefaults(spec *TemplateSpec, res *ValidationResult) {
 	}
 	known := make(map[string]struct{}, len(spec.Nodes))
 	for _, n := range spec.Nodes {
-		if n.Executor != "" {
-			known[n.Executor] = struct{}{}
+		if ex := effectiveExecutor(n, hooks); ex != "" {
+			known[ex] = struct{}{}
 		}
 	}
 	for execName := range spec.Defaults.Attributes.ByExecutor {
@@ -467,10 +522,19 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 		"retry":                     true,
 		"discard_claims_then_retry": true,
 	}
+	// @deliberate: Resolve the executor identity through
+	// `effectiveExecutor` so the error-class vocabulary check applies
+	// uniformly whether the node was authored with `executor:` directly
+	// or with the `kind:` sugar. Without this, a `kind:`-declared node
+	// would silently skip per-class validation (no `executorClasses`
+	// fetched, `vocabularyKnown=false`, every class accepted), defeating
+	// the spec's "kind is sugar for executor" claim — same fix shape as
+	// `validateAttributesSchema`.
+	executorForClasses := effectiveExecutor(n, hooks)
 	var executorClasses []string
 	vocabularyKnown := false
-	if n.Executor != "" && hooks.ExecutorDeclaredErrorClasses != nil {
-		if classes, ok := hooks.ExecutorDeclaredErrorClasses(n.Executor); ok {
+	if executorForClasses != "" && hooks.ExecutorDeclaredErrorClasses != nil {
+		if classes, ok := hooks.ExecutorDeclaredErrorClasses(executorForClasses); ok {
 			executorClasses = classes
 			vocabularyKnown = true
 		}
@@ -511,7 +575,7 @@ func validateErrorTypes(n TemplateNodeDef, base string, _ map[string]int, hooks 
 			Msg: fmt.Sprintf("error class %q is not in any declared vocabulary — not declared by executor %q (declared: %v), "+
 				"not in the acquire/* synthetic family, and not declared by any producer in this node's stores: block (declared: %v); "+
 				"the policy registers but will only match if a peer emits this exact class",
-				className, n.Executor, executorClasses, producerClasses),
+				className, executorForClasses, executorClasses, producerClasses),
 		})
 	}
 }
@@ -1050,7 +1114,7 @@ func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (sugg
 	return "", true
 }
 
-func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationResult) {
+func validateExecutorCoherence(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
 	// @deliberate: D2 — `delegate:` and `executor:` are mutually
 	// exclusive. A node declares EITHER a leaf executor OR a sub-graph
 	// delegation; both set or neither set is rejected. The "neither
@@ -1074,8 +1138,15 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationRe
 				n.Executor, n.Delegate),
 		})
 	}
-	if !hasExecutor && !hasDelegate {
-		// @deliberate: Pure-cascade pseudo-node — legal. Warn only if an attribute
+	// @deliberate: "Neither set" check honors `kind:` sugar — a
+	// kind-sugar node resolves to an executor via the alias map at
+	// canonicalization, so it has an executor for purposes of the
+	// pure-cascade advisory even though `n.Executor == ""`
+	// pre-canonicalize. Without this, every kind-sugar template that
+	// declares attributes (the typical `loop_counter` shape) emits a
+	// spurious "pure-cascade node declares attributes" warning.
+	if !hasExecutor && !hasDelegate && effectiveExecutor(n, hooks) == "" {
+		// @deliberate: Pure-cascade pseudo-node — legal. Warn only if
 		// an attribute schema is declared (those properties have no
 		// executor to consume them).
 		if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
@@ -1084,6 +1155,58 @@ func validateExecutorCoherence(n TemplateNodeDef, base string, res *ValidationRe
 				Msg:  "pure-cascade node declares attributes; attribute values are only consumed by executors",
 			})
 		}
+	}
+}
+
+// validateKindDeclaration rejects nodes that declare both `kind:` and
+// `executor:` (the two are mutually exclusive) and nodes whose `kind:`
+// value resolves to no registered alias. The kind → executor
+// substitution itself is performed by the canonicalizer
+// (`CanonicalizeKindSugar`) after validation succeeds — the validator
+// MUST NOT mutate the input spec, because the caller may hash the spec
+// bytes for content-addressed identity.
+//
+// @concept: node
+func validateKindDeclaration(n TemplateNodeDef, base string, hooks RegistryHooks, res *ValidationResult) {
+	if n.Kind == "" {
+		return
+	}
+	if n.Executor != "" {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".kind",
+			Msg:  "node declares both kind and executor; pick one",
+		})
+		return
+	}
+	// @deliberate: `kind:` resolves to an executor at canonicalize-time,
+	// which `validateExecutorCoherence`'s mutual-exclusion rule forbids
+	// alongside a sub-graph delegation. The pre-canonicalize executor
+	// field is empty for kind-sugar nodes, so the mutual-exclusion check
+	// there would slip a `kind:` + `delegate:` combination through and
+	// produce a runtime-invalid spec (post-canonicalize: both Executor
+	// and Delegate set). Reject here, where the kind declaration is
+	// known.
+	if n.Delegate != "" {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".kind",
+			Msg: fmt.Sprintf(
+				"node declares both kind and delegate; kind is incompatible with subgraph delegation (kind=%q, delegate=%q)",
+				n.Kind, n.Delegate),
+		})
+		return
+	}
+	if hooks.KindAliases == nil {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".kind",
+			Msg:  fmt.Sprintf("kind %q is not registered (no kind aliases configured)", n.Kind),
+		})
+		return
+	}
+	if _, ok := hooks.KindAliases.Resolve(n.Kind); !ok {
+		res.Errors = append(res.Errors, ValidationError{
+			Path: base + ".kind",
+			Msg:  fmt.Sprintf("kind %q is not registered", n.Kind),
+		})
 	}
 }
 
@@ -1385,15 +1508,29 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 		return
 	}
 
+	// @deliberate: Resolve the executor identity through
+	// `effectiveExecutor` so the schema-cross-check legs apply uniformly
+	// whether the node was authored with `executor:` directly or with
+	// the `kind:` sugar. Without this, a `kind:`-declared node would
+	// silently skip the executor-schema reference legs (readOnly-
+	// fallback gate, executor-schema visibility check, default-value-vs-
+	// executor-type checks), because CanonicalizeKindSugar runs AFTER
+	// validation returns. The asymmetry would defeat the spec's "kind is
+	// sugar for executor" claim (a template authored with `executor:
+	// rimsky.loop_counter` would get the cross-check; the same template
+	// with `kind:
+	// loop_counter` would not).
+	executorForSchema := effectiveExecutor(n, hooks)
+
 	var execSchema map[string]any
 	var execReadOnlyProps map[string]bool
 	execSchemaVisible := false
-	if n.Executor != "" && hooks.ExecutorExpectedAttributesSchema != nil {
-		if execBytes, ok := hooks.ExecutorExpectedAttributesSchema(n.Executor); ok && len(execBytes) > 0 {
+	if executorForSchema != "" && hooks.ExecutorExpectedAttributesSchema != nil {
+		if execBytes, ok := hooks.ExecutorExpectedAttributesSchema(executorForSchema); ok && len(execBytes) > 0 {
 			if err := json.Unmarshal(execBytes, &execSchema); err != nil {
 				res.Errors = append(res.Errors, ValidationError{
 					Path: base + ".attributes",
-					Msg:  fmt.Sprintf("executor %q expected_attributes_schema is not valid JSON: %v", n.Executor, err),
+					Msg:  fmt.Sprintf("executor %q expected_attributes_schema is not valid JSON: %v", executorForSchema, err),
 				})
 				return
 			}
@@ -1412,18 +1549,18 @@ func validateAttributesSchema(n TemplateNodeDef, base string, declared map[strin
 	// below: under `all`, an unvalidatable schema reference is a
 	// missing-reference error rather than a deferral.
 	if !execSchemaVisible && hooks.RefValidationMode == RefValidateAll &&
-		n.Executor != "" && hooks.ExecutorExpectedAttributesSchema != nil {
+		executorForSchema != "" && hooks.ExecutorExpectedAttributesSchema != nil {
 		res.Errors = append(res.Errors, ValidationError{
 			Path: base + ".attributes",
 			Msg: refValidationModeRejection(
-				fmt.Sprintf("executor %q expected_attributes_schema is not visible at registration", n.Executor),
+				fmt.Sprintf("executor %q expected_attributes_schema is not visible at registration", executorForSchema),
 				hooks.RefValidationMode),
 		})
 	}
 
 	var l1Defaults map[string]any
-	if spec != nil && spec.Defaults != nil && spec.Defaults.Attributes != nil && n.Executor != "" {
-		l1Defaults = spec.Defaults.Attributes.ByExecutor[n.Executor]
+	if spec != nil && spec.Defaults != nil && spec.Defaults.Attributes != nil && executorForSchema != "" {
+		l1Defaults = spec.Defaults.Attributes.ByExecutor[executorForSchema]
 	}
 
 	effective := MergeAttributeDefaults(execSchema, l1Defaults, n.Attributes.Schema)

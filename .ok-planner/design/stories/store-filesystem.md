@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As an operator wiring a workflow whose claims persist on a POSIX filesystem, I can use the bundled `store-filesystem` claim-producer to acquire directory-per-scope claims, opt into atomic staging (stage-then-swap at Commit), trigger on-demand queue refresh through an admin sync route when `sync_strategy: explicit`, and partition fan-out via configurable partition keys, so that I have a filesystem-backed store with the same lifecycle and atomicity guarantees the protocol claims.
+As an operator wiring a workflow whose claims persist on a POSIX filesystem, I can use the bundled filesystem store claim-producer to acquire directory-per-scope claims, opt into atomic staging (stage-then-swap at Commit), trigger on-demand queue refresh through an admin sync route when the sync strategy is set to explicit, and partition fan-out via configurable partition keys, so that I have a filesystem-backed store with the same lifecycle and atomicity guarantees the protocol claims.
 
 ## Capability
 
-Bundled `store-filesystem` claim-producer: directory-per-scope claims; atomic stage-then-swap at Commit; explicit-sync admin route; configurable partition keys for `SplitScope`.
+Bundled filesystem store claim-producer: directory-per-scope claims; atomic stage-then-swap at Commit; explicit-sync admin route; configurable partition keys for the scope-split verb.
 
 ## Business value
 
@@ -23,7 +23,7 @@ A template referencing `store-filesystem`: `Open` returns the local directory pa
 
 ## Falsifier
 
-Commit's swap is a copy-then-overwrite, OR the explicit-sync route doesn't actually refresh the queue, OR staging dir survives `Abandon`.
+Commit's swap is a copy-then-overwrite, OR the explicit-sync route doesn't actually refresh the queue, OR staging dir survives Abandon.
 
 ## Proof
 

@@ -547,6 +547,99 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	return &r, nil
 }
 
+// LoadScratchInTx returns the persisted scratch triple for a dispatch
+// row. Spill resolution (materializing the bytes when scratch_handle is
+// set) is the caller's responsibility, via `concept:blob-backend`.
+//
+// Asymmetry with WriteScratchInTx is deliberate. A missing dispatch
+// row is degraded to an empty-scratch result (nil bytes, no handle,
+// no backend, no error) so the recovery-enqueue load sites
+// (conductor.go::SweepStaleHeartbeats, cascade_recalculate.go,
+// on_error.go, runner_error_policy.go) treat a retired or
+// already-GC'd prior row as "no carry-forward state" and the
+// successor dispatch begins with empty scratch — the same view a
+// first-dispatch executor sees. WriteScratchInTx is strict
+// (returns persistence.ErrRunRowMissing on 0 rows affected) because
+// the executor's mid-dispatch checkpoint contract requires the
+// missing-row case to surface to the executor, not be silently
+// swallowed (STORY-opaque-executor-scratch).
+//
+// @concept: executor
+func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) ([]byte, string, string, error) {
+	if tx == nil {
+		return nil, "", "", errors.New("postgres.LoadScratchInTx: tx required")
+	}
+	var (
+		inline  []byte
+		handle  sql.NullString
+		backend sql.NullString
+	)
+	err := q.q(tx).QueryRow(ctx,
+		`SELECT scratch_inline, scratch_handle, scratch_handle_backend
+		   FROM rimsky_node_runs
+		  WHERE id = $1`,
+		dispatchID,
+	).Scan(&inline, &handle, &backend)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", "", nil
+		}
+		return nil, "", "", fmt.Errorf("postgres.LoadScratchInTx: %w", err)
+	}
+	var hStr, bStr string
+	if handle.Valid {
+		hStr = handle.String
+	}
+	if backend.Valid {
+		bStr = backend.String
+	}
+	return inline, hStr, bStr, nil
+}
+
+// WriteScratchInTx persists scratch onto a dispatch row. Sets either
+// inline OR (handle + handleBackend); the opposite triple is cleared in
+// the same UPDATE so a writeback that drops a previously-spilled scratch
+// to small inline bytes does not leave the stale handle dangling.
+//
+// Returns `persistence.ErrRunRowMissing` when no row matches
+// `dispatchID`. The scratch HTTP callback is the only signal an
+// executor has that its mid-dispatch state was persisted; a silent
+// no-op on missing row would let an executor believe it has
+// checkpointed state that will never reach the next dispatch,
+// violating STORY-opaque-executor-scratch's round-trip contract. The
+// HTTP handler maps the sentinel to a 4xx response so the executor
+// surfaces the missing-row case; in-process callers see it directly.
+//
+// Asymmetry with LoadScratchInTx is deliberate (see that function's
+// comment): load degrades a missing row to an empty-scratch result so
+// recovery-enqueue load sites continue cleanly; write surfaces the
+// sentinel so the executor's checkpoint contract is preserved.
+//
+// @concept: executor
+func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error {
+	if tx == nil {
+		return errors.New("postgres.WriteScratchInTx: tx required")
+	}
+	if len(inline) > 0 && handle != "" {
+		return errors.New("postgres.WriteScratchInTx: inline and handle are mutually exclusive")
+	}
+	tag, err := q.q(tx).Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET scratch_inline         = $2,
+		        scratch_handle         = $3,
+		        scratch_handle_backend = $4
+		  WHERE id = $1`,
+		dispatchID, nilIfEmpty(inline), nilIfEmptyStr(handle), nilIfEmptyStr(handleBackend),
+	)
+	if err != nil {
+		return fmt.Errorf("postgres.WriteScratchInTx: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("postgres.WriteScratchInTx: %s: %w", dispatchID, persistence.ErrRunRowMissing)
+	}
+	return nil
+}
+
 // timeOrNullPark returns the time value or nil for an explicit NULL.
 // Used by ParkActiveInTx; named distinctly to avoid colliding with the
 // pre-existing helpers in events.go and supervisors.go.

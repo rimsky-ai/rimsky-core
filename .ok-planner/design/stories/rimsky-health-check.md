@@ -19,7 +19,7 @@ Infrastructure operators gate traffic on a real health signal — a critical-dep
 
 ## Acceptance
 
-Against a running control-api, a request to the health surface returns a successful response while the deployment is healthy and a non-success response when a critical dependency (persistence reachable, etc.) is down. The route requires no authentication (probes don't carry bearer tokens) and is fast (probe-suitable).
+Against a running control-API, a request to the health surface returns a successful response while the deployment is healthy and a non-success response when a critical dependency (persistence reachable, etc.) is down. The surface requires no authentication (probes don't carry bearer tokens) and is fast (probe-suitable).
 
 ## Falsifier
 

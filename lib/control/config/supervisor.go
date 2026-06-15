@@ -103,6 +103,13 @@ type SupervisorConfig struct {
 	// to the supervisor for use in SelectCandidatesRequest construction
 	// and Registry option wiring (protocol name → proxy service name).
 	LateBindServiceProxies map[string]string
+
+	// ExtraInprocHandlers lets a test or embedder register additional
+	// inproc executor handlers alongside the rimsky-bundled builtins.
+	// Threaded into runtime.Config.ExtraInprocHandlers; see that field
+	// for the contract. Production wiring leaves this nil. Per
+	// TD-inproc-registry. @concept: executor
+	ExtraInprocHandlers map[string]executor.InProcessHandler
 }
 
 // SupervisorHandle is the lifecycle handle returned by StartSupervisor.
@@ -219,6 +226,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		LifecyclePeersForSpec:       cfg.LifecyclePeersForSpec,
 		LateBindServiceProxies:      cfg.LateBindServiceProxies,
 		DataProcessors:              dataProcessors,
+		ExtraInprocHandlers:         cfg.ExtraInprocHandlers,
 	})
 	if err != nil {
 		registry.Close()

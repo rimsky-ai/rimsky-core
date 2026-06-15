@@ -1391,7 +1391,27 @@ func provisionInstanceTx(
 	// AND no substitution refs in its attribute schema. Cross-cutting
 	// (`instance:true`) entries don't disqualify a root because they
 	// fire on cascade-walks, not at instance create.
+	// @constraint: sub-graph entry nodes are excluded from the root set
+	// even when they declare no subscribes — the entry's identity is
+	// absorbed into the calling node by the template canonicalizer (per
+	// concept:delegation), so the entry runs at the calling node's
+	// dispatch site, never standalone. Without this exclusion the
+	// entry's row would be enqueued AS WELL AS the calling node, and
+	// the entry's standalone dispatch would fire its downstream (the
+	// sub-graph's internal nodes that subscribe to the entry on
+	// terminal/*) in the parent RunScope — defeating the sub-graph
+	// hydration boundary the calling-node-absorption path enforces.
+	subgraphEntryTypes := make(map[string]struct{}, len(tpl.Spec.Graphs))
+	for _, g := range tpl.Spec.Graphs {
+		if g.Name == spec.MainGraphName || strings.TrimSpace(g.Entry) == "" {
+			continue
+		}
+		subgraphEntryTypes[g.Entry] = struct{}{}
+	}
 	for _, def := range tpl.Spec.Nodes {
+		if _, isEntry := subgraphEntryTypes[def.Type]; isEntry {
+			continue
+		}
 		hasUpstream := false
 		for _, s := range def.Subscribes {
 			if s.Node != "" && s.Node != def.Type {

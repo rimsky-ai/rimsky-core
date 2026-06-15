@@ -11,7 +11,7 @@ As an operator delegating control-plane access to an autonomous agent, I can min
 
 ## Capability
 
-Identity-bound dry-run floor: a key whose grant carries `mode: dry_run` pins every write action to dry-run regardless of request flag.
+Identity-bound dry-run floor: a key whose grant declares dry-run mode pins every write action to dry-run regardless of request flag.
 
 ## Business value
 
@@ -19,7 +19,7 @@ Operators can hand out attempt-only credentials safely — to autonomous agents 
 
 ## Acceptance
 
-An operator mints an api-key whose grant carries `mode: dry_run` on a write action; using that key, an operator or agent issues a write request without the per-request dry-run flag and receives the synthetic envelope back; no row is persisted; the audit log records the attempt with executed-false. A second ordinary write-capable key issued by the same operator performs the same request and creates a real row — proving the floor is carried by key identity, not by the request flag.
+An operator mints an api-key whose grant declares dry-run mode on a write action; using that key, an operator or agent issues a write request without the per-request dry-run flag and receives the synthetic envelope back; no row is persisted; the audit log records the attempt with executed-false. A second ordinary write-capable key issued by the same operator performs the same request and creates a real row — proving the floor is carried by key identity, not by the request flag.
 
 ## Falsifier
 

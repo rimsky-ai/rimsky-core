@@ -213,6 +213,9 @@ func (f *fakeDiagnosticQueue) GetByID(context.Context, shared.UUID) (*persistenc
 func (f *fakeDiagnosticQueue) GetInFlightRunForNode(context.Context, persistence.Tx, shared.UUID, shared.UUID) (shared.UUID, bool, error) {
 	return shared.UUID{}, false, nil
 }
+func (f *fakeDiagnosticQueue) GetMostRecentRunForNodeInScope(context.Context, persistence.Tx, shared.UUID, shared.UUID) (shared.UUID, bool, error) {
+	return shared.UUID{}, false, nil
+}
 func (f *fakeDiagnosticQueue) ListInFlightRunPhases(context.Context, persistence.Tx, []shared.UUID, shared.UUID, shared.UUID) (map[shared.UUID][]string, error) {
 	return map[shared.UUID][]string{}, nil
 }
@@ -247,6 +250,12 @@ func (f *fakeDiagnosticQueue) LoadResumeMetadataInTx(context.Context, persistenc
 	return nil, nil
 }
 func (f *fakeDiagnosticQueue) ClearResumeMetadataInTx(context.Context, persistence.Tx, shared.UUID) error {
+	return nil
+}
+func (f *fakeDiagnosticQueue) LoadScratchInTx(context.Context, persistence.Tx, shared.UUID) ([]byte, string, string, error) {
+	return nil, "", "", nil
+}
+func (f *fakeDiagnosticQueue) WriteScratchInTx(context.Context, persistence.Tx, shared.UUID, []byte, string, string) error {
 	return nil
 }
 

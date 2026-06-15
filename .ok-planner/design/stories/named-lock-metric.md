@@ -7,7 +7,7 @@ status: as-is
 
 ## Role
 
-As an operator, I can see named-lock acquisitions in the Prometheus metrics — alongside producer-claim acquisitions — so lock saturation is something I can graph and alert on rather than reconstruct from events.
+As an operator, I can see named-lock acquisitions in the platform metrics — alongside producer-claim acquisitions — so lock saturation is something I can graph and alert on rather than reconstruct from events.
 
 ## Capability
 

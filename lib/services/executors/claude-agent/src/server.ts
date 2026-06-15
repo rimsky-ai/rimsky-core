@@ -456,7 +456,10 @@ async function runAndCallback(
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
       postAttributes: config.postAttributes,
-      resumeContext: parseResumeContext(req.resume_context),
+      resumeContext: resolveEffectiveResumeContext(
+        parseResumeContext(req.resume_context),
+        attributes,
+      ),
     });
     const body = outcomeToCallbackBody(outcome);
     if (config.observability) {
@@ -934,6 +937,37 @@ function parseResumeContext(v: unknown): {
     out.resumeReason = r.resume_reason;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Resolves the effective resume context for the current dispatch. The
+ * supervisor-provided ResumeContext (req.resume_context) is the Park
+ * path and wins when set. Otherwise, when the carry-forward
+ * `session_token` attribute is non-empty, synthesize an attribute-
+ * driven resume context so the CLI continues the prior conversation.
+ *
+ * Per the 2026-06-14 carry-forward design — the two paths are
+ * independent: the Park path's session_token comes from the prior
+ * Park terminal; the attribute path's session_token comes from the
+ * prior dispatch's attribute writeback. Sub-graph invocations =
+ * empty session_token = fresh CLI conversation.
+ */
+function resolveEffectiveResumeContext(
+  fromParkPath: { payload?: Uint8Array; sessionToken?: string; resumeReason?: string } | undefined,
+  attributes: Record<string, unknown>,
+): { payload?: Uint8Array; sessionToken?: string; resumeReason?: string } | undefined {
+  if (fromParkPath && fromParkPath.sessionToken && fromParkPath.sessionToken.length > 0) {
+    return fromParkPath;
+  }
+  const fromAttribute = stringOr(attributes.session_token, "");
+  if (fromAttribute.length === 0) {
+    return fromParkPath;
+  }
+  return {
+    payload: new Uint8Array(),
+    sessionToken: fromAttribute,
+    resumeReason: "carry_forward",
+  };
 }
 
 function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {

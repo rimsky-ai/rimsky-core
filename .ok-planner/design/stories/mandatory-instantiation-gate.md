@@ -19,7 +19,7 @@ Bad config is caught at create time with a clear naming of the offending attribu
 
 ## Acceptance
 
-With a template referencing an executor whose schema declares value constraints (e.g., a `minimum: 0` on a numeric attribute), creating an instance whose attributes violate the constraint (e.g., a negative value) is refused with a clear validation error naming the offending attribute and the violated constraint; the instance is not persisted and nothing runs. A well-formed instance of the same template succeeds.
+With a template referencing an executor whose schema declares value constraints (e.g., a non-negative-minimum constraint on a numeric attribute), creating an instance whose attributes violate the constraint (e.g., a negative value) is refused with a clear validation error naming the offending attribute and the violated constraint; the instance is not persisted and nothing runs. A well-formed instance of the same template succeeds.
 
 ## Falsifier
 

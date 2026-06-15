@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The official Prometheus Go client library.
+A standard metrics-export client library.
 
 ## Rationale
 

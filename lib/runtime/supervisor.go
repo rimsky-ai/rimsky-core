@@ -60,6 +60,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"sync"
@@ -70,6 +71,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
+	loop_counter "github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/loop_counter"
 )
 
 // Config is the supervisor's construction-time dependency bundle.
@@ -186,6 +189,19 @@ type Config struct {
 	//
 	// @concept: data-processing
 	DataProcessors DataProcessingRegistry
+
+	// ExtraInprocHandlers lets a test or embedder register additional
+	// inproc executor handlers alongside the rimsky-bundled builtins.
+	// Keys are the inproc URL (e.g. `inproc://test-scratch-writer`); the
+	// supervisor calls InProcessRegistry.Register for each entry after
+	// builtin.RegisterAll so duplicate URLs surface as a startup error.
+	// The supervisor also seeds the resolver with the key as both the
+	// executor alias AND the URL — tests reference the handler by that
+	// alias in their template's `executor:` field. Empty / nil → the
+	// supervisor wires only the rimsky-bundled builtins (production
+	// shape). Per TD-inproc-registry: "the registry is constructible in
+	// tests with arbitrary handler sets". @concept: executor
+	ExtraInprocHandlers map[string]executor.InProcessHandler
 }
 
 // Handle is returned by Start. Callers drive lifecycle via Shutdown and
@@ -297,6 +313,23 @@ func Start(cfg Config) (*Handle, error) {
 		}
 		return UnifiedInvalidate(ctx, ia, cfg.SupervisorID, WakeExternalInvalidate)
 	}
+	// @constraint: shadow ExpectedAttributesSchemaFor so the inproc
+	// executor's advertised schema is visible to BOTH the dispatch-time
+	// effective-attribute-schema merge (RunArgs) AND the async-callback
+	// path (CallbackServer). Wrap before callbackSrv construction so
+	// both consumers see the same hook. Wrapping (rather than
+	// replacing) keeps the operator-configured hook live for every
+	// non-inproc executor.
+	baseSchemaHook := cfg.ExpectedAttributesSchemaFor
+	cfg.ExpectedAttributesSchemaFor = func(name string) ([]byte, bool) {
+		if name == loop_counter.ExecutorAlias {
+			return loop_counter.SchemaBytes(), true
+		}
+		if baseSchemaHook != nil {
+			return baseSchemaHook(name)
+		}
+		return nil, false
+	}
 	callbackSrv := &CallbackServer{
 		Registry:                         callbackReg,
 		Persist:                          cfg.Persist,
@@ -321,11 +354,88 @@ func Start(cfg Config) (*Handle, error) {
 		return nil, err
 	}
 
+	// @deliberate: inproc registry + kind-alias map. Every utility
+	// handler in scope ships under lib/runtime/executor/builtin/<name>/.
+	// The single registration site is `builtin.RegisterAll` — both this
+	// supervisor path and the control-API's buildKindAliases route
+	// through that shared helper, so a new utility executor added to the
+	// builtin package surfaces in both processes by editing one file
+	// (lib/runtime/executor/builtin/builtins.go) rather than two. Built
+	// up before NewClientPoolWithInProcess so the inproc transport case
+	// in ClientPool.GetOrCreate has a non-nil registry to consult.
+	//
+	// @constraint: seed the inproc handler registry AND the resolver
+	// FIRST so the accepted_executors snapshot captured below (the row
+	// the §7.3 candidate selector filters dispatches against) includes
+	// every builtin inproc alias. Without that, dispatches keyed on
+	// e.g. `rimsky.loop_counter` would never surface as candidates for
+	// THIS supervisor, silently breaking STORY-inproc-utility-executor's
+	// "no operator config needed" property.
+	//
+	// @concept: executor
+	// @concept: node
+	inprocReg := executor.NewInProcessRegistry()
+	kindAliases := node.NewKindAliasMap()
+	if err := builtin.RegisterAll(inprocReg, kindAliases); err != nil {
+		_ = callbackSrv.Close(context.Background())
+		return nil, fmt.Errorf("supervisor: %w", err)
+	}
+	// @deliberate: dispatch-side does not consult kind aliases — they're
+	// a template-registration surface; constructed alongside the registry
+	// only so the shared helper stays the single registration site.
+	_ = kindAliases
+
+	// @deliberate: extra inproc handlers (tests / embedders) register
+	// after the builtins so a duplicate URL surfaces deterministically.
+	// The same URL is used as the resolver alias — tests reference the
+	// handler via `executor: <url>` in their templates. The duplicate-URL
+	// guard inside InProcessRegistry.Register is the deterministic error
+	// surface; a duplicate alias overwrite at the resolver layer would
+	// silently shadow a builtin, which is the failure mode this guard
+	// protects against.
+	//
+	// @concept: executor
+	for url, h := range cfg.ExtraInprocHandlers {
+		if err := inprocReg.Register(url, h); err != nil {
+			_ = callbackSrv.Close(context.Background())
+			return nil, fmt.Errorf("supervisor: register extra inproc handler %q: %w", url, err)
+		}
+		if !seedInprocExecutorAlias(cfg.Resolver, url, executor.Endpoint{Transport: "inproc", URL: url}) {
+			cfg.Logger.Warn("supervisor: inproc executor alias seed skipped: resolver shape unrecognised",
+				"alias", url,
+				"resolver_type", fmt.Sprintf("%T", cfg.Resolver))
+		}
+	}
+
+	// @deliberate: seed the resolver with inproc executor aliases so the
+	// dispatch path's Resolver.Resolve(alias) returns the inproc endpoint
+	// without operator config. Production resolvers are *StaticResolver
+	// directly, or a *LateBindResolver wrapping a *StaticResolver in
+	// deployments that configure LateBindServiceProxies. Walk through
+	// the LateBindResolver wrapper to reach the inner static map —
+	// without this, late-bind deployments fail to seed the inproc alias
+	// and `kind: loop_counter` resolves to unresolved_executor, silently
+	// breaking STORY-inproc-utility-executor's "no operator config
+	// needed" property in late-bind deployments. Test fakes that wrap a
+	// different shape silently skip seeding — tests that need inproc
+	// dispatch wire their own resolver entry.
+	for alias, endpoint := range builtin.BuiltinExecutorAliases() {
+		if !seedInprocExecutorAlias(cfg.Resolver, alias, endpoint) {
+			cfg.Logger.Warn("supervisor: builtin inproc executor alias seed skipped: resolver shape unrecognised",
+				"alias", alias,
+				"resolver_type", fmt.Sprintf("%T", cfg.Resolver))
+		}
+	}
+
 	// @constraint: register the *advertised* callback host:port — the
 	// address peers use to reach this supervisor — into
 	// rimsky_supervisors, NOT the listener bind address (e.g. 0.0.0.0),
 	// which is not dialable. Falls back to the listener host:port when
-	// no advertise host is configured.
+	// no advertise host is configured. AcceptedNames is read AFTER the
+	// inproc seeding so the supervisor row carries every builtin (and
+	// test-extra) inproc alias on its accepted_executors list — without
+	// that, the §7.3 candidate selector filters out every dispatch row
+	// whose executor_name resolves to an inproc alias.
 	host, port := effectiveCallbackHostPort(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	accepted := cfg.Resolver.AcceptedNames()
 	acceptedStores := storeRegistryNames(cfg.StoreRegistry)
@@ -343,11 +453,70 @@ func Start(cfg Config) (*Handle, error) {
 		return nil, err
 	}
 
-	clientPool := executor.NewClientPool()
+	// @deliberate: the factory matches the typed-UUID
+	// HandlerContextFactory signature — the InProcessClient parses
+	// req.DispatchId and req.NodeId into typed UUIDs at its Execute
+	// entry point and threads them in here. Each closure call binds a
+	// fresh ScratchWriter wired to the current dispatch's row.
+	persistCap := cfg.Persist
+	queueCap := cfg.Queue
+	blobCap := cfg.Blob
+	spillCap := cfg.BlobSpillThreshold
+	loggerCap := cfg.Logger
+	newHctx := executor.HandlerContextFactory(func(dispatchID, nodeID shared.UUID) executor.HandlerContext {
+		return executor.HandlerContext{
+			Scratch: &executor.ScratchWriter{
+				Persist:        persistCap,
+				Queue:          queueCap,
+				Blob:           blobCap,
+				SpillThreshold: spillCap,
+				DispatchID:     dispatchID,
+				NodeID:         nodeID,
+				Logger:         loggerCap,
+			},
+		}
+	})
+	clientPool := executor.NewClientPoolWithInProcess(inprocReg, newHctx)
 	advertised := advertisedCallbackURL(addr, cfg.CallbackAdvertiseHost, cfg.CallbackAdvertisePort)
 	h := &Handle{stop: make(chan struct{}), done: make(chan struct{}), addr: addr, advertisedURL: advertised, callbackReg: callbackReg, callbackServeErr: callbackSrv.ServeErr()}
 	go runLoop(cfg, h, callbackSrv, callbackReg, clientPool, accepted, acceptedStores, lockHolders)
 	return h, nil
+}
+
+// seedInprocExecutorAlias walks the resolver chain to find the inner
+// *StaticResolver and registers (alias, endpoint) on it. Handles both
+// the production-shape configurations: a direct *StaticResolver, and
+// a *LateBindResolver wrapping a *StaticResolver (set when the
+// deployment configures LateBindServiceProxies). Without the
+// LateBindResolver unwrap, late-bind deployments would silently fail
+// the type assertion and the inproc alias would never land — breaking
+// STORY-inproc-utility-executor's "no operator config needed" property
+// in the production-shape configuration.
+//
+// Returns true when the alias was successfully seeded onto a
+// *StaticResolver and false when the resolver chain ended on a shape
+// the walker doesn't recognise (e.g. a third-party wrapping resolver
+// that adds observability or rate-limiting). The caller logs the
+// silent-skip case so an unrecognised resolver shape doesn't quietly
+// break inproc dispatch — `kind: loop_counter` would otherwise resolve
+// to `unresolved_executor` with no diagnostic.
+//
+// @concept: executor
+func seedInprocExecutorAlias(r executor.Resolver, alias string, ep executor.Endpoint) bool {
+	for {
+		switch s := r.(type) {
+		case *executor.StaticResolver:
+			s.Register(alias, ep)
+			return true
+		case *executor.LateBindResolver:
+			r = s.Unwrap()
+			if r == nil {
+				return false
+			}
+		default:
+			return false
+		}
+	}
 }
 
 // storeRegistryNames returns a sorted-stable copy of the registry's

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Grant's `mode: dry_run` pins a key to dry-run regardless of request flag.
+A grant whose mode is dry-run pins the key to dry-run regardless of request flag.
 
 ## Rationale
 

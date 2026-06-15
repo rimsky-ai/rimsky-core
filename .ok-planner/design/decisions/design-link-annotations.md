@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-`@concept:` / `@story:` / `@decision:` annotations at points of enforcement.
+Source-code annotations linking sites to their concept, story, or decision slug at the point of enforcement.
 
 ## Rationale
 

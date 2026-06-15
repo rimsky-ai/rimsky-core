@@ -22,7 +22,7 @@ Data motion stays substrate-direct via the acquired result's address; the protoc
 
 ## Boundaries
 
-Owns: the seven RPCs above, the producer-candidate-handle lifecycle on sub-claim rows, the parent-run terminal flow's parent-claim commit aggregation step. Does NOT own: the substrate (Parquet, GeoParquet, PostGIS, Iceberg — producer-internal), the aggregator vocabulary (producer-internal; rimsky doesn't interpret), the asset presentation surface (see `concept:asset`). Adjacent: `concept:claim-producer`, `concept:asset`, `concept:fan-out`, `concept:validation`.
+Owns: the seven RPCs above, the producer-candidate-handle lifecycle on sub-claim rows, the parent-run terminal flow's parent-claim commit aggregation step. Does NOT own: the substrate (producer-internal; rimsky doesn't interpret it), the aggregator vocabulary (producer-internal; rimsky doesn't interpret), the asset presentation surface (see `concept:asset`). Adjacent: `concept:claim-producer`, `concept:asset`, `concept:fan-out`, `concept:validation`.
 
 ## Invariants
 

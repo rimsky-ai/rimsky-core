@@ -134,10 +134,7 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 		// @constraint: pessimistic-invalidate — the running → stale transition IS this sender's invalidation in this frame; gates downstream subscribers so they don't dispatch with stale upstream data while the re-enqueued sender is re-running.
 		// @concept: cascade
 		// @concept: wait-set
-		if n.RunScopeID == nil {
-			// @constraint: no in-flight RunScope projected means nothing to transition; Phase B's cascade allocation path is responsible for affirming a row before state-machine writes can land.
-			continue
-		}
+		// @deliberate: no outer RunScope guard against the `n` projection — the batch read above is stale relative to concurrent close+reopen, so the authoritative RunScope read is the in-tx re-read below; the read-then-write pair must be atomic to satisfy the state-machine-writes-single-tx invariant.
 		// @constraint: bundle state-mutation (UpdateState + zombie row retirement + cascade walk) AND the recovery Enqueue in a single tx so a crash between them can't strand the node in state=stale with no in-flight dispatch row; mirrors the OnError-retry branch's tx-atomic remove+enqueue pair.
 		// @blessed-invariant: state-machine-writes-single-tx
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -200,15 +197,30 @@ func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
 				idCopy := priorDispatchID
 				priorPtr = &idCopy
 			}
+			// @constraint: scratch carry-forward — copy the prior dispatch row's executor-attached scratch onto the recovery row so the executor's in-flight state survives heartbeat-stale recovery; the opaque-executor-scratch story pins scratch round-trip across EVERY prior-dispatch disposition, and skipping it here would silently lose the executor's scratch on every heartbeat-stale recovery.
+			// @constraint: use EnqueueInTx (not the auto-commit Enqueue wrapper) — the recovery scratch load + the INSERT must share a snapshot; the auto-commit wrapper has a documented closed-scope-race surface (see postgres/queue.go EnqueueInTx) where a concurrent RunScopes().Close() commit between the INSERT and the fallback SELECT can silently drop the recovery enqueue, and the scratch load is also vulnerable to mid-call mutation against the prior row without the shared tx.
+			// @concept: executor
+			var scratchInline []byte
+			var scratchHandle, scratchBackend string
+			if priorPtr != nil && *priorPtr != (shared.UUID{}) {
+				var lerr error
+				scratchInline, scratchHandle, scratchBackend, lerr = args.Queue.LoadScratchInTx(ctx, tx, *priorPtr)
+				if lerr != nil {
+					return fmt.Errorf("load prior scratch: %w", lerr)
+				}
+			}
 			if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-				NodeID:                   cur.ID,
-				ExecutorName:             cur.Executor,
-				RequiredStores:           []string{},
-				EnqueuedAt:               args.Clock.Now(),
-				FrameID:                  *cur.FrameID,
-				RunScopeID:               curScopeID,
-				PriorDispatchID:          priorPtr,
-				PriorDispatchDisposition: "heartbeat_stale",
+				NodeID:                      cur.ID,
+				ExecutorName:                cur.Executor,
+				RequiredStores:              []string{},
+				EnqueuedAt:                  args.Clock.Now(),
+				FrameID:                     *cur.FrameID,
+				RunScopeID:                  curScopeID,
+				PriorDispatchID:             priorPtr,
+				PriorDispatchDisposition:    "heartbeat_stale",
+				InitialScratchInline:        scratchInline,
+				InitialScratchHandle:        scratchHandle,
+				InitialScratchHandleBackend: scratchBackend,
 			}, tx); err != nil {
 				// @constraint: defensive — closed RunScope means the rendezvous fired while the sweep was preparing the retry; walker discipline per concept:run-scope is do not enqueue into a closed scope (the state-machine writes above already committed).
 				// @concept: run-scope

@@ -158,6 +158,16 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
 		return s.executeStub(req, send)
 	}
+	// Conformance-probe escape hatch for the Park-outcome shape: when
+	// the suite flags attributes with `probe_park: true`, return a Park
+	// terminal carrying the named `park_reason` in the closed two-value
+	// set (await_callback | snooze) per the ParkReason collapse. Mirrors
+	// the analogous hatch in claude-agent's runAgentStub so the
+	// per-protocol `park_reason_emission` conformance scenario passes
+	// against any in-rimsky stub executor uniformly.
+	if probePark, _ := ud["probe_park"].(bool); probePark && s.stubMode {
+		return s.executeParkProbe(ud, send)
+	}
 
 	// @constraint: validate attribute shape even in stub mode — the protocol
 	// contract requires executors to reject malformed input consistently, not
@@ -388,6 +398,46 @@ func (s *Server) executeStub(req *genv1.ExecuteRequest, send sendFunc) error {
 			Changed:         true,
 			ChangeSummary:   "stub",
 		}}},
+	}})
+}
+
+// executeParkProbe handles the conformance `park_reason_emission`
+// scenario in stub mode. Reads `attributes.park_reason` (defaulting
+// to `await_callback` when unset), validates it against the closed
+// two-value ParkReason set per the 2026-05-22 ParkReason-collapse
+// spec, and emits a Park terminal carrying the typed reason. Rejects
+// an unrecognized reason with `http/attribute_invalid` so the
+// executor surface enforces the closed set rather than relying on
+// the supervisor.
+//
+// `await_callback` leaves `resume_at` unset (indefinite,
+// callback-driven wake). `snooze` sets a finite `resume_at` so the
+// supervisor's auto-wake sweep would fire if this were a live park.
+func (s *Server) executeParkProbe(ud map[string]any, send sendFunc) error {
+	reasonStr, _ := ud["park_reason"].(string)
+	if reasonStr == "" {
+		reasonStr = "await_callback"
+	}
+	var reason genv1.ParkReason
+	switch reasonStr {
+	case "await_callback":
+		reason = genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
+	case "snooze":
+		reason = genv1.ParkReason_PARK_REASON_SNOOZE
+	default:
+		return sendErrored(send, "http/attribute_invalid",
+			fmt.Sprintf("park_reason %q is not in the closed set {await_callback, snooze}", reasonStr))
+	}
+	note, _ := ud["park_reason_note"].(string)
+	park := &genv1.Park{
+		Reason:     reason,
+		ReasonNote: note,
+	}
+	if reason == genv1.ParkReason_PARK_REASON_SNOOZE {
+		park.ResumeAt = timestamppb.New(time.Now().Add(30 * time.Second))
+	}
+	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
+		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: park}},
 	}})
 }
 

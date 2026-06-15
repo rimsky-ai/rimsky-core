@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The `tls` config field is parse-time validated, accepting exactly `off | required` (empty defaults to `off`); `optional` and any other value are config errors.
+The peer TLS config field is parse-time validated, accepting exactly off-or-required; empty defaults to off; opportunistic and any other value are config errors.
 
 ## Rationale
 

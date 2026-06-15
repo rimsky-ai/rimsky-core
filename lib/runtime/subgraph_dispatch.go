@@ -362,6 +362,17 @@ func applyTerminalCompleteSubgraphCaller(
 	if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
 		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: upsert attributes: %w", err)
 	}
+	// @deliberate: entry-absorbed Success is a real executor terminal — the
+	// executor that just terminated WAS the absorbed entry, so it can attach
+	// scratch in exactly the same way any other Success terminal can. The
+	// dispatch ends here even though the parent run stays running to aggregate
+	// the internal cascade's children, so the scratch-persist mirrors the call
+	// in applyTerminalComplete.
+	//
+	// @concept: executor
+	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
+		return nil, fmt.Errorf("applyTerminalCompleteSubgraphCaller: %w", err)
+	}
 	// @constraint: run stays `running` — only the settling_signal_type moves;
 	// the recorded transition reason lets the observability layer surface the
 	// cascade-fire.

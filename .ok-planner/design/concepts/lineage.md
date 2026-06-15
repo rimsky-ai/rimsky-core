@@ -14,7 +14,7 @@ The `claim_terminal` record carries a per-record `outcome` discriminator describ
 
 ## Boundaries
 
-Owns: the lineage projection storage, the two record kinds, the operator-facing lineage query surface, the projection-rebuild path. Does NOT own: the source-of-truth audit log (lives in `concept:event-log`), the OpenLineage wire format (lives with the OpenLineage subscriber; see `concept:lineage-record`). Adjacent: `concept:lineage-record`, `concept:event-log`, `concept:claim-handle`, `concept:node-run`.
+Owns: the lineage projection storage, the two record kinds, the operator-facing lineage query surface, the projection-rebuild path. Does NOT own: the source-of-truth audit log (lives in `concept:event-log`), the external-receiver wire format (lives with the external-receiver subscriber; see `concept:lineage-record`). Adjacent: `concept:lineage-record`, `concept:event-log`, `concept:claim-handle`, `concept:node-run`.
 
 ## Invariants
 

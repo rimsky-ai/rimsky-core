@@ -67,6 +67,21 @@ type DispatchRequest struct {
 	//
 	// @concept: run-scope
 	PriorDispatchDisposition string
+
+	// InitialScratchInline / InitialScratchHandle / InitialScratchHandleBackend
+	// are the executor-attached scratch bytes copied forward from the prior
+	// dispatch row when this enqueue carries a non-nil PriorDispatchID. All
+	// three are empty on initial dispatches and on enqueues whose prior
+	// dispatch had no scratch. Inert in rimsky per `concept:inertness` /
+	// `@blessed-invariant 21`. The recovery enqueue sites populate these from
+	// the prior dispatch row before calling EnqueueInTx; the persistence layer
+	// writes them onto the new row's scratch_inline / scratch_handle /
+	// scratch_handle_backend columns.
+	//
+	// @concept: executor
+	InitialScratchInline        []byte
+	InitialScratchHandle        string
+	InitialScratchHandleBackend string
 }
 
 // SelectCandidatesRequest is the input to SelectCandidates (spec §7.3
@@ -298,6 +313,25 @@ type Queue interface {
 	// @concept: run-scope
 	GetInFlightRunForNode(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error)
 
+	// @agent-contract: GetMostRecentRunForNodeInScope returns the id of
+	// the most-recent `rimsky_node_runs` row for `(nodeID, runScopeID)`
+	// regardless of phase — including terminal (completed / failed)
+	// rows. "Most recent" orders by `enqueued_at DESC, id DESC`, so a
+	// single committed transaction yields a deterministic answer even
+	// when multiple rows share a timestamp. Returns (zero, false, nil)
+	// when no row matches.
+	//
+	// Distinct from GetInFlightRunForNode, which filters to phases
+	// pending / active / held / parked: the cascade-recalculate path
+	// needs the prior dispatch even after it has retired so its
+	// scratch carries forward across the recalculate disposition. A
+	// node whose only prior run completed (phase='completed') and
+	// later went stale via recalculate would otherwise lose its
+	// scratch because InFlightRunID is nil for retired rows.
+	//
+	// @concept: run-scope
+	GetMostRecentRunForNodeInScope(ctx context.Context, tx Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error)
+
 	// @agent-contract: ParkActiveInTx transitions a node-run row from
 	// phase='active' to phase='parked' under the claimant's id. Persists
 	// the park metadata (parked_at, resume_at, parked_reason,
@@ -411,6 +445,39 @@ type Queue interface {
 	// the runner after a successful resume dispatch so a re-park cycle
 	// starts clean.
 	ClearResumeMetadataInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) error
+
+	// @agent-contract: LoadScratchInTx returns the scratch bytes persisted
+	// on a node-run row for the dispatch path's wire-attach step. Resolves spill via
+	// `concept:blob-backend`: when scratch_handle is non-empty the caller
+	// is expected to materialize the bytes through its configured Blob.
+	// Returns (nil, "", "", nil) when no scratch is set OR when no row
+	// exists for `dispatchID` — the missing-row case is deliberately
+	// degraded to an empty-scratch result so recovery-enqueue load sites
+	// treat a retired prior row as "no carry-forward state" and the
+	// successor dispatch begins with empty scratch. WriteScratchInTx is
+	// strict on the same missing-row case (see below); the asymmetry is
+	// load-bearing.
+	//
+	// @concept: executor
+	LoadScratchInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) (inline []byte, handle, handleBackend string, err error)
+
+	// @agent-contract: WriteScratchInTx persists the executor-attached
+	// scratch bytes onto the dispatch row at stream-close or via the mid-dispatch HTTP
+	// callback route. Either inline OR (handle + handleBackend) is set
+	// per call; setting both is a writer error (returned, not panicked).
+	// The opposite triple is cleared in the same UPDATE so a callback that
+	// overwrites a previously-spilled scratch with smaller inline bytes
+	// does not leave the stale handle dangling.
+	//
+	// Returns ErrRunRowMissing when no row matches `dispatchID`. The
+	// executor's mid-dispatch checkpoint contract requires the
+	// missing-row case to surface (STORY-opaque-executor-scratch); the
+	// HTTP scratch-callback handler maps the sentinel to 410 Gone and
+	// in-process callers see it directly. Asymmetry with
+	// LoadScratchInTx is deliberate (see above).
+	//
+	// @concept: executor
+	WriteScratchInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error
 }
 
 // ResumeMetadataRow is the parked metadata loaded by

@@ -451,7 +451,9 @@ describe("runAgent in stub mode", () => {
     });
     expect(outcome.kind).toBe("complete");
     if (outcome.kind === "complete") {
-      expect(outcome.attributesDelta).toEqual({ stub: true });
+      // Stub mode now stamps `session_token: runId` on every terminal Success
+      // (mirroring runAgentReal); the session_token field rides along.
+      expect(outcome.attributesDelta).toEqual({ stub: true, session_token: "run-1" });
       expect(outcome.changed).toBe(true);
       expect(outcome.changeSummary).toBe("stub");
     }
@@ -611,7 +613,10 @@ describe("runAgent sign-off gate (onComplete layer)", () => {
     });
     expect(outcome.kind).toBe("complete");
     if (outcome.kind === "complete") {
-      expect(outcome.attributesDelta).toEqual(DELTA);
+      // Every terminal Success augments the committed delta with
+      // `session_token: runId` to ride the rimsky attribute carry-
+      // forward mechanism (per the 2026-06-14 carry-forward design).
+      expect(outcome.attributesDelta).toEqual({ ...DELTA, session_token: "gate-b-run" });
     }
   });
 

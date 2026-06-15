@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The pgx Postgres driver, v5 line.
+A native protocol-aware Postgres driver, pinned to a stable major-line.
 
 ## Rationale
 

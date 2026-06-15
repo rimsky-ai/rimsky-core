@@ -55,6 +55,28 @@ func applyErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, tx persistence.Tx,
 ) (postCommitFn, error) {
+	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, payload, nil, tx)
+}
+
+// applyErrorPolicyWithScratch is the scratch-aware entry point. Most
+// callers route through applyErrorPolicy (above, scratch == nil); the
+// stream-close path calls this directly to thread the executor's
+// terminal-attached scratch onto the dispatch row BEFORE the retry
+// branch reads it for carry-forward into the successor's
+// InitialScratch* enqueue.
+//
+// @concept: executor
+func applyErrorPolicyWithScratch(
+	ctx context.Context, args RunArgs, acq *acquisition,
+	errorClass string, payload map[string]any, scratch []byte, tx persistence.Tx,
+) (postCommitFn, error) {
+	// @constraint: persist the executor-attached terminal scratch onto
+	// the row first so the retry branch's LoadScratchInTx pulls the
+	// just-written bytes when stamping the successor's InitialScratch*.
+	// Per STORY-opaque-executor-scratch round-trip integrity.
+	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
+		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
+	}
 	// @constraint: short-circuit retry-loop guard — if this terminal
 	// would route to a retry action AND we'd be over the cap, rewrite
 	// the error_class before resolving the policy. retry_loop_no_progress's
@@ -237,27 +259,52 @@ func applyResolvedAction(
 			resolution.Signal); err != nil {
 			return err
 		}
-		// @constraint: thread `runScopeID` so fan-out children's
-		// retirement lands on this specific run, not every sibling claimed
-		// by this supervisor under the shared `node_id`.
-		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
-			return err
-		}
 		// @constraint: recovery-aware fields — this retry supersedes the
 		// prior dispatch (acq.DispatchID). The executor reads the
 		// predecessor id on
 		// proto:executor.proto::ExecuteRequest.prior_dispatch_id at the
 		// retry dispatch.
 		priorID := acq.DispatchID
+		// @constraint: scratch carry-forward — load the prior dispatch
+		// row's executor-attached scratch BEFORE retiring it so the
+		// retry dispatch carries the executor's in-flight state across
+		// the retry-after-error transition. STORY-opaque-executor-scratch
+		// requires scratch round-trip across every prior-dispatch
+		// disposition; skipping it here would silently lose the
+		// executor's scratch on every policy-driven retry.
+		//
+		// MUST use EnqueueInTx (not the auto-commit Enqueue wrapper):
+		// the scratch load, the RemoveForNodeInTx, and the recovery
+		// INSERT MUST share a snapshot. The auto-commit wrapper has a
+		// documented closed-scope-race surface (see postgres/queue.go
+		// EnqueueInTx comment lines 84-98) where a concurrent
+		// RunScopes().Close() commit between the INSERT and the
+		// fallback SELECT can silently drop the retry-after-error
+		// enqueue.
+		//
+		// @concept: executor
+		scratchInline, scratchHandle, scratchBackend, lerr := args.Queue.LoadScratchInTx(ctx, tx, priorID)
+		if lerr != nil {
+			return fmt.Errorf("load prior scratch: %w", lerr)
+		}
+		// @constraint: thread `runScopeID` so fan-out children's
+		// retirement lands on this specific run, not every sibling
+		// claimed by this supervisor under the shared `node_id`.
+		if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
+			return err
+		}
 		if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-			NodeID:                   acq.NodeID,
-			ExecutorName:             acq.Executor,
-			RequiredStores:           requiredStoresForAcq(acq),
-			EnqueuedAt:               args.Clock.Now().Add(time.Duration(resolution.RetryDelayMs) * time.Millisecond),
-			FrameID:                  acq.FrameID,
-			RunScopeID:               acq.RunScopeID,
-			PriorDispatchID:          &priorID,
-			PriorDispatchDisposition: "retry_after_error",
+			NodeID:                      acq.NodeID,
+			ExecutorName:                acq.Executor,
+			RequiredStores:              requiredStoresForAcq(acq),
+			EnqueuedAt:                  args.Clock.Now().Add(time.Duration(resolution.RetryDelayMs) * time.Millisecond),
+			FrameID:                     acq.FrameID,
+			RunScopeID:                  acq.RunScopeID,
+			PriorDispatchID:             &priorID,
+			PriorDispatchDisposition:    "retry_after_error",
+			InitialScratchInline:        scratchInline,
+			InitialScratchHandle:        scratchHandle,
+			InitialScratchHandleBackend: scratchBackend,
 		}, tx); err != nil {
 			// @constraint: defensive — a closed RunScope means the
 			// rendezvous has fired while this runner was processing the
@@ -345,8 +392,30 @@ func applyResolvedAction(
 // indefinitely because the cap would reset to 0 every infra round-trip.
 func applyTerminalInfraError(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	errorClass string, payload map[string]any, tx persistence.Tx,
+	errorClass string, payload map[string]any, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
+	// @constraint: sub-graph exit short-circuit — an exit row's terminal
+	// scratch is already dropped at the persist site (see
+	// applyTerminalScratchInTx's carve-out), but a load of the same row
+	// would then return whatever prior mid-dispatch HTTP-route scratch
+	// happened to land there — an asymmetric "terminal scratch dropped /
+	// mid-dispatch scratch carried" bug. The exit terminates and
+	// propagates state to the parent; the parent doesn't re-dispatch
+	// the exit, so an infra re-enqueue here would be incorrect
+	// regardless. Skip the entire scratch + re-enqueue chain so the
+	// asymmetry cannot surface.
+	// @concept: executor
+	if isSubgraphExitNode(acq) {
+		return nil, nil
+	}
+	// @constraint: persist executor-attached scratch onto the row BEFORE
+	// the infra re-enqueue reads it for carry-forward. Mirrors the
+	// application retry path; STORY-opaque-executor-scratch's
+	// round-trip integrity is the load-bearing property.
+	// @concept: executor
+	if err := applyTerminalScratchInTx(ctx, args, tx, acq, scratch); err != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
+	}
 	prior, perr := args.Persist.Nodes().Get(ctx, acq.NodeID, tx)
 	if perr != nil && args.Logger != nil {
 		args.Logger.Warn("applyTerminalInfraError: load prior node row failed",
@@ -356,6 +425,35 @@ func applyTerminalInfraError(
 	// @constraint: read the current counter so we can carry it forward
 	// onto the freshly-inserted dispatch row.
 	priorCount, _, _ := args.Queue.GetRetryNoProgress(ctx, acq.DispatchID)
+	// @constraint: scratch carry-forward — load the prior dispatch row's
+	// executor-attached scratch BEFORE the zombie row is retired by
+	// RemoveForNodeInTx below. Without this load, the recovery enqueue
+	// creates a successor with empty scratch and the executor's
+	// in-flight state (written via the §scratch callback before the
+	// stream broke, or attached to the infra terminal itself just above
+	// via applyTerminalScratchInTx) is silently lost.
+	//
+	// STORY-opaque-executor-scratch pins scratch round-trip across
+	// every recovery enqueue disposition; the infra-reenqueue path is
+	// the runtime's recovery for executor stream breaks, dial failures,
+	// and build-request failures — exactly the cases where an executor
+	// that wrote scratch mid-dispatch most needs the carry. Mirrors the
+	// pattern in applyResolvedAction's retry branch.
+	//
+	// MUST use EnqueueInTx (not the auto-commit Enqueue wrapper): the
+	// scratch load, the RemoveForNodeInTx, and the recovery INSERT MUST
+	// share a snapshot. The auto-commit wrapper has a documented
+	// closed-scope-race surface (see postgres/queue.go EnqueueInTx
+	// comment lines 84-98) where a concurrent RunScopes().Close()
+	// commit between the INSERT and the fallback SELECT can silently
+	// drop the infra-reenqueue.
+	//
+	// @concept: executor
+	priorID := acq.DispatchID
+	scratchInline, scratchHandle, scratchBackend, lerr := args.Queue.LoadScratchInTx(ctx, tx, priorID)
+	if lerr != nil {
+		return nil, fmt.Errorf("applyTerminalInfraError: load prior scratch: %w", lerr)
+	}
 	// @constraint: infra-reenqueue re-dispatches into the same RunScope,
 	// so the parent-owned linked sub-claims must be retained — see
 	// releaseLocksInTx's retainLinkedSubClaims contract.
@@ -375,12 +473,17 @@ func applyTerminalInfraError(
 		return nil, fmt.Errorf("applyTerminalInfraError: %w", err)
 	}
 	if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-		NodeID:         acq.NodeID,
-		ExecutorName:   acq.Executor,
-		RequiredStores: requiredStoresForAcq(acq),
-		EnqueuedAt:     args.Clock.Now(),
-		FrameID:        acq.FrameID,
-		RunScopeID:     acq.RunScopeID,
+		NodeID:                      acq.NodeID,
+		ExecutorName:                acq.Executor,
+		RequiredStores:              requiredStoresForAcq(acq),
+		EnqueuedAt:                  args.Clock.Now(),
+		FrameID:                     acq.FrameID,
+		RunScopeID:                  acq.RunScopeID,
+		PriorDispatchID:             &priorID,
+		PriorDispatchDisposition:    "retry_after_error",
+		InitialScratchInline:        scratchInline,
+		InitialScratchHandle:        scratchHandle,
+		InitialScratchHandleBackend: scratchBackend,
 	}, tx); err != nil {
 		// @constraint: defensive — a closed RunScope means the rendezvous
 		// has fired while this runner was processing the infra-error

@@ -160,6 +160,21 @@ type AppDeps struct {
 	// Consumed by LifecyclePeersForSpec to know which proxy peer to add
 	// to the fan-out when a template declares late_bind_services.
 	LateBindServiceProxies map[string]string
+
+	// KindAliases is the static `kind:` → executor-alias map seeded at
+	// startup alongside the supervisor's InProcessRegistry. Threaded
+	// through validatorHooksFor so the per-node `kind:` validator can
+	// range-check the optional `kind:` field, and consumed by
+	// CanonicalizeKindSugar in the template-deploy / validate paths to
+	// rewrite `kind: <name>` → `executor: <alias>` before the spec is
+	// hashed (so post-canonicalization the persisted spec is in normal
+	// form and downstream registration code never has to know about
+	// kind sugar). Nil → templates declaring any `kind:` value are
+	// rejected. Populated by StartControlAPI from the same package
+	// constants the supervisor uses.
+	//
+	// @concept: node
+	KindAliases *node.KindAliasMap
 }
 
 // ObservabilityRouter is the seam controlapi uses to mount the

@@ -15,7 +15,7 @@ Public publisher protocol surface — a capabilities advertisement plus the subs
 
 ## Business value
 
-A custom publisher plugs into a rimsky stack; on rimsky restart, the publisher's already-active subscriptions are not re-issued — `ListSubscriptions` lets rimsky reconcile back to steady state.
+A custom publisher plugs into a rimsky stack; on rimsky restart, the publisher's already-active subscriptions are not re-issued — the list-subscriptions verb lets rimsky reconcile back to steady state.
 
 ## Acceptance
 

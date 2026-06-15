@@ -264,18 +264,48 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 			// proto:executor.proto::ExecuteRequest.prior_dispatch_id must
 			// resolve to the run that errored, not nil after the remove.
 			priorID := cur.InFlightRunID
+			// Scratch carry-forward: load the prior dispatch row's
+			// executor-attached scratch BEFORE the remove so the new
+			// retry dispatch carries the executor's in-flight state
+			// across the retry-after-error transition. Skipping it
+			// here would silently lose the executor's scratch on
+			// every retry — STORY-opaque-executor-scratch requires
+			// round-trip across every prior-dispatch disposition.
+			//
+			// MUST use EnqueueInTx (not the auto-commit Enqueue
+			// wrapper): the scratch load, the RemoveForNodeInTx, and
+			// the recovery INSERT MUST share a snapshot. The auto-
+			// commit wrapper has a documented closed-scope-race
+			// surface (see postgres/queue.go EnqueueInTx comment
+			// lines 84-98) where a concurrent RunScopes().Close()
+			// commit between the INSERT and the fallback SELECT can
+			// silently drop the retry-after-error enqueue.
+			//
+			// @concept: executor
+			var scratchInline []byte
+			var scratchHandle, scratchBackend string
+			if priorID != nil && *priorID != (shared.UUID{}) {
+				var lerr error
+				scratchInline, scratchHandle, scratchBackend, lerr = args.Queue.LoadScratchInTx(ctx, tx, *priorID)
+				if lerr != nil {
+					return fmt.Errorf("load prior scratch: %w", lerr)
+				}
+			}
 			if err := args.Queue.RemoveForNodeInTx(ctx, args.NodeID, args.RunScopeID, args.SupervisorID, tx); err != nil {
 				return err
 			}
 			if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-				NodeID:                   args.NodeID,
-				ExecutorName:             cur.Executor,
-				RequiredStores:           requiredStores,
-				EnqueuedAt:               args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
-				FrameID:                  *cur.FrameID,
-				RunScopeID:               args.RunScopeID,
-				PriorDispatchID:          priorID,
-				PriorDispatchDisposition: "retry_after_error",
+				NodeID:                      args.NodeID,
+				ExecutorName:                cur.Executor,
+				RequiredStores:              requiredStores,
+				EnqueuedAt:                  args.Clock.Now().Add(time.Duration(resolved.DelayMs) * time.Millisecond),
+				FrameID:                     *cur.FrameID,
+				RunScopeID:                  args.RunScopeID,
+				PriorDispatchID:             priorID,
+				PriorDispatchDisposition:    "retry_after_error",
+				InitialScratchInline:        scratchInline,
+				InitialScratchHandle:        scratchHandle,
+				InitialScratchHandleBackend: scratchBackend,
 			}, tx); err != nil {
 				// @constraint: closed RunScope means the rendezvous has fired
 				// before the retry could land. Walker discipline per

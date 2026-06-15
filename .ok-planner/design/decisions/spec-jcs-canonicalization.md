@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-JSON Canonicalization Scheme (RFC 8785) for canonical bytes.
+A standardized JSON canonicalization scheme produces the canonical bytes.
 
 ## Rationale
 

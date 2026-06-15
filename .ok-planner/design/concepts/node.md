@@ -25,3 +25,7 @@ The node owns: its dispatch / terminal lifecycle, its claim spec list, its `erro
 - Eligibility for dispatch reads only `state`. Cascade propagation is subscriber-driven via `concept:signal`: a subscription edge fires iff its signal type-path pattern matches the emitted signal AND its compiled CEL `when:` predicate evaluates true against the signal payload.
 - A non-fresh node row always carries a `frame_id`.
 - Tag values admit `{{params.<key>}}` substitution at materialization time (instance creation); no other substitution source kinds are available at that phase. Tag substitution failures are fatal at instance creation, matching the dispatch-time discipline for required-attribute substitution. Tags do not gate dispatch, cascade, or validation — they are operator-facing metadata.
+
+## Kind sugar
+
+A template node may declare `kind: <name>` as a shorthand for an `executor:` reference. The required `type:` field (the template-author-chosen dispatch routing key) is unchanged and unrelated. At registration, a static kind-alias map resolves `kind:` to a pre-registered executor entry. A node may declare `kind:` or `executor:` but not both; mixing is rejected at registration. Unknown `kind:` values are rejected the same way unknown executors are. The sugar exists so utility nodes (counters, gates, and similar in-process executors) can be referenced without spelling out their executor identity.

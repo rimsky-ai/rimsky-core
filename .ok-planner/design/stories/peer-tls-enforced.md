@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As an operator who configures `tls: required` on a peer service (executor or store), I get a TLS-verified connection to that peer — and a loud failure if the peer cannot present credentials — so that the config key means what it says.
+As an operator who configures TLS as required on a peer service (executor or store), I get a TLS-verified connection to that peer — and a loud failure if the peer cannot present credentials — so that the TLS config key means what it says.
 
 ## Capability
 
-The `tls` config key is writable on executor, store, and publisher peer entries and is a validated enum (`off | required`; empty defaults to `off`). Every peer dial site honors the configured mode: `required` dials with verified TLS against system roots; `off` stays plaintext; failures under `required` name the peer and the mode (see `decision:peer-tls-enforcement`, `decision:tls-mode-validation`).
+The TLS config key is writable on executor, store, and publisher peer entries and is a validated two-value enum (off or required; empty defaults to off). Every peer dial site honors the configured mode: required dials with verified TLS against system roots; off stays plaintext; failures under required name the peer and the mode (see `decision:peer-tls-enforcement`, `decision:tls-mode-validation`).
 
 ## Business value
 
@@ -19,12 +19,12 @@ A security-shaped config key that is accepted and ignored manufactures false con
 
 ## Acceptance
 
-With `tls: required` on a peer entry, rimsky dials that peer with verified TLS; against a TLS-serving peer the connection works end-to-end; against a plaintext peer the dial fails with an error naming the peer and the mode. With `tls: off` (and by default) behavior is plaintext.
+With TLS set to required on a peer entry, rimsky dials that peer with verified TLS; against a TLS-serving peer the connection works end-to-end; against a plaintext peer the dial fails with an error naming the peer and the mode. With TLS set to off (and by default) behavior is plaintext.
 
 ## Falsifier
 
-A `tls: required` peer connection observed on the wire in plaintext; or the key accepted and silently ignored.
+A peer connection configured with TLS required observed on the wire in plaintext; or the TLS config key accepted and silently ignored.
 
 ## Proof
 
-Executable proof — integration test dials a TLS-enabled stub peer under `required` and exchanges a request; companion test dials a plaintext stub under `required` and asserts the loud failure.
+Executable proof — integration test dials a TLS-enabled stub peer under the required mode and exchanges a request; companion test dials a plaintext stub under the required mode and asserts the loud failure.

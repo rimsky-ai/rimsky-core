@@ -10,6 +10,8 @@ aliases: []
 
 The node-run row is the parent row for one execution of one node within a frame. It carries `phase ∈ {pending, active, held, parked, completed}`, `claimed_by` (supervisor id, non-null only while `phase='active'`), a non-null `frame_id`, a last-heartbeat timestamp, the required-stores list, and optional park fields (parked-at, resume-at, parked-payload, session token, parked reason, parked reason label, wake reason).
 
+The row also carries a `prior_dispatch_id` nullable reference to a preceding dispatch row, set whenever a new dispatch is enqueued to follow a prior one (under any of the prior-dispatch dispositions — heartbeat-stale, retry-after-error, recalculate). Optional scratch fields — `scratch_inline`, `scratch_handle`, `scratch_handle_backend` — carry executor-attached opaque bytes per dispatch, with spill following `concept:blob-backend`. The executor sets scratch either at stream-close (by attaching scratch bytes to the outcome) or mid-dispatch (by POSTing to the scratch HTTP callback route, paralleling the executor protocol's existing attributes incremental-writeback HTTP callback); both writes persist on the dispatch row that received them. When a subsequent dispatch row is created for the same node and the new row carries a non-null `prior_dispatch_id`, the enqueue path copies scratch from the prior dispatch row onto the new row at row creation, and the executor reads it from its own row on next dispatch.
+
 The row carries the run-tree extension and all state-bearing fields for the node-run. Per-node attributes are a child record keyed to this row and cascade-deleted with it; modulo derived caches, every state-bearing field for a node-run lives on this row or cascades from it. The parent/child relationship lives on the run-scope record (per `concept:run-scope`), referenced from a non-null run-scope field on the row:
 
 - A non-null run-scope reference (per `concept:run-scope`). All scoping — parent/child relationship for fan-out, sub-graph membership for delegation — is expressed through this reference chain.
@@ -26,7 +28,7 @@ One queryable lifecycle row per node-run means every cross-process question ("is
 
 ## Boundaries
 
-Owns: the node-run lifecycle phase, candidate-selection inputs, heartbeat fields, park fields, the node-run's state, and last-outcome. Does NOT own: per-claim ledger rows (see `claim-handle`), per-holder subgraph state (see `claim-handle`), the parent-child run relationship (lives on the run-scope record per `concept:run-scope`). Adjacent: `claim-handle`, `frame`, `supervisor`, `parked-state`, `run-scope`.
+Owns: the node-run lifecycle phase, candidate-selection inputs, heartbeat fields, park fields, the node-run's state, and last-outcome; executor-attached opaque scratch bytes per dispatch; the prior-dispatch linkage across re-dispatches of the same node. Does NOT own: per-claim ledger rows (see `claim-handle`), per-holder subgraph state (see `claim-handle`), the parent-child run relationship (lives on the run-scope record per `concept:run-scope`). Adjacent: `claim-handle`, `frame`, `supervisor`, `parked-state`, `run-scope`.
 
 ## Invariants
 

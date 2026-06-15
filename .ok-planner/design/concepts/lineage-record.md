@@ -15,7 +15,7 @@ An append-only record in the lineage projection (see `concept:lineage`). Two kin
 
 ## Boundaries
 
-Owns: the per-kind record shape, the projection-write path. Does NOT own: the projection storage or query surface (lives in `concept:lineage`), the OpenLineage emission (lives with the OpenLineage subscriber). Adjacent: `concept:lineage`, `concept:claim-handle`, `concept:node-run`, `concept:auto-terminal`.
+Owns: the per-kind record shape, the projection-write path. Does NOT own: the projection storage or query surface (lives in `concept:lineage`), the external-receiver emission (lives with the external-receiver subscriber). Adjacent: `concept:lineage`, `concept:claim-handle`, `concept:node-run`, `concept:auto-terminal`.
 
 ## Invariants
 
@@ -74,7 +74,7 @@ Sub-graph callers produce **two** `leaf_run` records per dispatch, both keyed to
 1. The first record fires from the sub-graph-caller terminal-complete handler at internal-cascade-fire time. `terminal_kind: "subgraph_call"`, `state: "running"`. Captures the calling node's inputs (held claims, params, userdata) as the absorbed entry terminal — the "what the caller saw" moment.
 2. The second record fires from the terminal-complete handler later, when the parent run's aggregation terminal lands (driven by the last internal child's terminal via state propagation). `terminal_kind: "complete"`, `state: "fresh"`. Captures the post-aggregation outcome.
 
-Downstream consumers pair the two records by `run_id` and discriminate on `terminal_kind`. The OpenLineage subscriber maps every leaf_run record to a `COMPLETE` event, so a sub-graph caller produces TWO `COMPLETE` events at the same `runId` — discriminated by `rimsky.terminal_kind` in the rimsky facet. This is intentional (the calling node's inputs are semantically distinct from the post-aggregation outcome); it is not a duplicate emission. Backends that treat `COMPLETE` as a terminal-state signal should branch on `rimsky.terminal_kind`.
+Downstream consumers pair the two records by `run_id` and discriminate on `terminal_kind`. The external-receiver subscriber maps every leaf_run record to one external completion event, so a sub-graph caller produces TWO completion events at the same external run identifier — discriminated by the rimsky-facet terminal-kind field. This is intentional (the calling node's inputs are semantically distinct from the post-aggregation outcome); it is not a duplicate emission. External receivers that treat the completion event as a terminal-state signal should branch on the rimsky-facet terminal-kind field.
 
 ## Claim-terminal record shape
 

@@ -119,12 +119,20 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		priorID = *req.PriorDispatchID
 	}
 	priorDisposition := nullableText(req.PriorDispatchDisposition)
+	// @constraint: when this enqueue follows a prior dispatch (heartbeat-stale
+	// recovery, retry-after-error, recalculate), the caller has already loaded
+	// the prior row's scratch triple and put it on req.InitialScratch* so the
+	// new dispatch row carries the executor's in-flight state across the
+	// recovery. Inert in rimsky per concept:inertness / @blessed-invariant 21.
+	//
+	// @concept: executor
+	//
 	// @constraint: single-branch NOT EXISTS guard keyed on (node_id, run_scope_id)
 	// is unambiguous per uq_node_runs_in_flight_per_run_scope; the
 	// rimsky_run_scopes JOIN enforces closed_at IS NULL at INSERT time.
 	tag, err := q.q(tx).Exec(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition)
-		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'pending', $5, rs.id, $7, $8
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
+		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'pending', $5, rs.id, $7, $8, $9, $10, $11
 		   FROM rimsky_run_scopes rs
 		  WHERE rs.id = $6
 		    AND rs.closed_at IS NULL
@@ -136,6 +144,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		    )`,
 		req.NodeID, executor, stores, req.EnqueuedAt, req.FrameID, req.RunScopeID,
 		priorID, priorDisposition,
+		nilIfEmpty(req.InitialScratchInline), nilIfEmptyStr(req.InitialScratchHandle), nilIfEmptyStr(req.InitialScratchHandleBackend),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.Enqueue: %w", err)
@@ -728,6 +737,32 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 			return shared.UUID{}, false, nil
 		}
 		return shared.UUID{}, false, fmt.Errorf("postgres.GetInFlightRunForNode: %w", err)
+	}
+	return id, true, nil
+}
+
+// GetMostRecentRunForNodeInScope returns the id of the most-recent
+// rimsky_node_runs row for (node, run scope) regardless of phase —
+// including retired (completed / failed) rows. Used by the cascade-
+// recalculate path so a node whose prior dispatch already completed
+// still has its scratch carry forward across the recalculate
+// disposition (STORY-opaque-executor-scratch).
+//
+// @concept: run-scope
+func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+	ex := q.q(tx)
+	var id shared.UUID
+	err := ex.QueryRow(ctx,
+		`SELECT id FROM rimsky_node_runs
+		  WHERE node_id = $1 AND run_scope_id = $2
+		  ORDER BY enqueued_at DESC, id DESC
+		  LIMIT 1`,
+		nodeID, runScopeID).Scan(&id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return shared.UUID{}, false, nil
+		}
+		return shared.UUID{}, false, fmt.Errorf("postgres.GetMostRecentRunForNodeInScope: %w", err)
 	}
 	return id, true, nil
 }

@@ -106,7 +106,16 @@ const (
 // handler and is only used to express subscription fan-out and/or
 // claim/lock orchestration.
 type TemplateNodeDef struct {
-	Type        string `yaml:"type" json:"type"`
+	Type string `yaml:"type" json:"type"`
+	// Kind, when non-empty, is a shorthand for `executor: <alias>` resolved
+	// at template registration via the static kind-alias map seeded
+	// alongside the supervisor's InProcessRegistry. A node MUST declare
+	// either Kind or Executor (or neither, for pure-cascade nodes), never
+	// both — mixing is rejected at registration with
+	// template_validation_failed. Per `concept:node` §"Kind sugar".
+	//
+	// @concept: node
+	Kind        string `yaml:"kind,omitempty" json:"kind,omitempty"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// Executor names the executor for this node; empty means no executor.
 	Executor string `yaml:"executor,omitempty" json:"executor,omitempty"`

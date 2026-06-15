@@ -363,7 +363,11 @@ describe("sign-off gate acceptance (real HTTP bridge + real signer)", () => {
     expect(signedBody.error).toBeUndefined();
     const success = signedBody.success as Record<string, unknown> | undefined;
     expect(success).toBeDefined();
-    expect(success!.attributes_delta).toEqual(ATTRIBUTES_DELTA);
+    // @deliberate: every terminal Success augments the committed delta with
+    // `session_token: <runId>` (here equal to DISPATCH_ID) to ride the
+    // rimsky attribute carry-forward mechanism (per the 2026-06-14
+    // carry-forward design).
+    expect(success!.attributes_delta).toEqual({ ...ATTRIBUTES_DELTA, session_token: DISPATCH_ID });
     // @deliberate: exactly one outcome key — `success`, never a stray `error`/`park`.
     expect(
       ["success", "error", "park"].filter((k) => k in signedBody),

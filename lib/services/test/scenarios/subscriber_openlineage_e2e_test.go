@@ -53,7 +53,7 @@
 //
 // @concept: lineage
 // @concept: lineage-record
-// @story: subscriber-openlineage
+// @story: subscriber-lineage-receiver
 package scenarios
 
 import (

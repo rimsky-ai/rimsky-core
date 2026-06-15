@@ -287,7 +287,12 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
   // scenarios that exercise malformed-shape rejection deliberately
   // omit the flag so the heuristic fires.
   const attrs = opts.attributes ?? {};
-  const isProbe = attrs.stub_probe === true && stubModeEnabled();
+  // @deliberate: `stub_probe` and `probe_park` are the two conformance-probe escape
+  // hatches; both honored only in stub mode. Either flag suppresses the
+  // malformed-attribute rejection so the per-scenario probe shape is
+  // taken at face value.
+  const isProbe =
+    (attrs.stub_probe === true || attrs.probe_park === true) && stubModeEnabled();
   if (!isProbe) {
     const reason = malformedAttributesReason(attrs);
     if (reason !== null) {
@@ -313,11 +318,67 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
   await new Promise((r) => setTimeout(r, 50));
   const attrs = opts.attributes ?? {};
 
+  // @deliberate: conformance-probe escape hatch for the Park-outcome shape
+  // (paired with `stub_probe` below): when the suite flags attributes
+  // with `probe_park: true`, return a Park terminal carrying the named
+  // park_reason in the closed two-value set (await_callback | snooze)
+  // per the ParkReason collapse. `park_reason_note` rides through as
+  // the free-form note (inert in rimsky). Snooze gets a finite resumeAt
+  // so the supervisor's auto-wake sweep would fire if this were a live
+  // park; await_callback leaves resumeAt null (indefinite, callback-
+  // driven wake).
+  if (attrs.probe_park === true) {
+    // @deliberate: validate park_reason against the closed two-value set
+    // (await_callback | snooze) per `proto:executor.proto::ParkReason`. The
+    // supervisor rejects an invalid reason later, but rejecting here keeps
+    // the executor-side escape hatch predictable: a probe that mistypes the
+    // reason gets a deterministic executor-side rejection (a malformed
+    // `agent/attribute_invalid` Error) rather than a downstream surprise.
+    const rawReason = attrs.park_reason;
+    let parkReason: string;
+    if (rawReason === undefined) {
+      parkReason = "await_callback";
+    } else if (rawReason === "await_callback" || rawReason === "snooze") {
+      parkReason = rawReason;
+    } else {
+      return {
+        kind: "errored",
+        errorClass: "agent/attribute_invalid",
+        payload: {
+          reason: `park_reason must be one of "await_callback" | "snooze", got ${JSON.stringify(rawReason)}`,
+        },
+      };
+    }
+    const reasonNote =
+      typeof attrs.park_reason_note === "string" ? attrs.park_reason_note : "";
+    const resumeAt =
+      parkReason === "snooze" ? new Date(Date.now() + 30_000) : null;
+    return {
+      kind: "park_requested",
+      reason: parkReason,
+      reasonNote,
+      payload: new Uint8Array(0),
+      resumeAt,
+      sessionToken: "",
+    };
+  }
+
+  // @deliberate: conformance-probe escape hatch (mirrors http-node/server.go): when
+  // the suite flags attributes with `stub_probe: true`, return either the
+  // configured stub_response or the canonical {stub: true}. Malformed-
+  // attribute rejection runs in `runAgent` before this function is
+  // reached, so non-probe attributes that arrived here are known good.
   const isProbe = attrs.stub_probe === true;
   if (!isProbe) {
+    // @deliberate: stub-mode fallthrough for non-probe attributes: honor the §14.4
+    // contract by returning the canonical stub response. `session_token:
+    // runId` is stamped on every terminal Success — matching the real-path
+    // contract (`runAgentReal`'s effective-bag merge) so a test exercising
+    // the stub path under a carry-forward template observes the same shape
+    // a real CLI dispatch would commit.
     return {
       kind: "complete",
-      attributesDelta: { stub: true },
+      attributesDelta: { stub: true, session_token: opts.runId },
       changed: true,
       changeSummary: "stub",
     };
@@ -334,14 +395,17 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
     }
     return {
       kind: "complete",
-      attributesDelta: stubResponse as Record<string, unknown>,
+      attributesDelta: {
+        ...(stubResponse as Record<string, unknown>),
+        session_token: opts.runId,
+      },
       changed: true,
       changeSummary: "stub",
     };
   }
   return {
     kind: "complete",
-    attributesDelta: { stub: true },
+    attributesDelta: { stub: true, session_token: opts.runId },
     changed: true,
     changeSummary: "stub",
   };
@@ -761,16 +825,37 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
       // @deliberate: the EFFECTIVE bound bag = the accumulated incremental `attributes_set`
       // writebacks with the terminal-final `report_complete` delta layered on
-      // top (last-write-wins). This is exactly the bag the supervisor will
-      // commit: on the terminal-delta path the accumulator is empty so the merge
-      // is identity (`effectiveBag === attributesDelta`); on the incremental path
-      // `attributesDelta` is null so the bag is the accumulated writeback. The
-      // sign-off gate binds — and the run commits — THIS value, so an unsigned or
-      // stale-signed incremental run cannot pass the gate over the absent
-      // terminal delta (S-executors-signoff-binds-real-output).
+      // top (last-write-wins), THEN the platform-controlled
+      // `session_token: runId` carry-forward field stamped on top. This is
+      // exactly the bag the supervisor will commit: on the terminal-delta path
+      // the accumulator is empty so the merge is identity except for the
+      // session_token stamp; on the incremental path `attributesDelta` is null
+      // so the bag is the accumulated writeback plus the session_token stamp.
+      // The sign-off gate binds — and the run commits — THIS value, so an
+      // unsigned or stale-signed incremental run cannot pass the gate over the
+      // absent terminal delta (S-executors-signoff-binds-real-output).
+      //
+      // session_token rides the attribute carry-forward mechanism so the next
+      // dispatch within the same RunScope can `--resume <runId>` and continue
+      // this CLI conversation. Per the 2026-06-14 carry-forward design.
+      // Always written on terminal Success — overwriting any prior carry-
+      // forward value with the current dispatch's runId is the desired
+      // behavior (the latest dispatch's CLI session is the one the next
+      // dispatch should resume). MUST NOT be gated on "did the conversation
+      // actually start" or similar — every Success commits the session_token
+      // (the Falsifier for the carry-forward story: without an unconditional
+      // write here, a Success that left the bag otherwise empty would
+      // silently launch a fresh CLI on the next dispatch).
+      //
+      // Stamped BEFORE the sign-off gate runs so the value the gate binds
+      // equals the value the supervisor commits. Stamping it after the gate
+      // would let the committed delta differ from the bound bag by the
+      // session_token field — a quiet violation of the bound-bag == committed-
+      // bag invariant the anti-tamper sign-off tests pin down.
       const effectiveBag: Record<string, unknown> = {
         ...accumulatedWriteback,
         ...(attributesDelta ?? {}),
+        session_token: runId,
       };
 
       // @deliberate: sign-off gate (the second sequential layer, after schema validation).
@@ -824,14 +909,17 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
       }
 
       // @deliberate: commit the EFFECTIVE bound bag, not the raw terminal-final delta. The
-      // gate verified its signature over this exact value, so the committed
-      // output is the one bound. On the incremental path the bag is the
-      // accumulated writeback (which the agent omitted from `report_complete`);
-      // re-sending it in the terminal delta is idempotent against the
-      // supervisor's last-write-wins merge of the already-POSTed writebacks, so
-      // the supervisor's committed state equals the bound value. An empty bag
-      // (no writeback, no terminal delta) collapses back to `null` to preserve
-      // the existing "no delta" wire shape.
+      // gate verified its signature over this exact value (including the
+      // platform-stamped session_token), so the committed output is the one
+      // bound. On the incremental path the bag is the accumulated writeback
+      // (which the agent omitted from `report_complete`); re-sending it in the
+      // terminal delta is idempotent against the supervisor's last-write-wins
+      // merge of the already-POSTed writebacks, so the supervisor's committed
+      // state equals the bound value. An empty bag collapses back to `null` to
+      // preserve the existing "no delta" wire shape (session_token is always
+      // present, so the only way this is null is if the spread of an empty
+      // accumulator + empty delta + a session_token whose value is undefined
+      // somehow produced no keys — which cannot happen).
       const committedDelta =
         Object.keys(effectiveBag).length > 0 ? effectiveBag : null;
       scheduleTeardown(async () => {

@@ -24,6 +24,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin"
 )
 
 // controlapiInvalidateAdapter wraps the runtime
@@ -354,6 +355,12 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		// onto the validator hooks so registration + POST
 		// /templates/validate share one strictness.
 		RefValidationMode: cfg.RefValidationMode,
+		// Kind sugar map: seeded with the same package constants the
+		// supervisor uses so `kind: loop_counter` resolves on the
+		// control-API validation path. The map is process-local; in a
+		// split-process deploy the supervisor maintains its own copy
+		// from the same constants.
+		KindAliases: buildKindAliases(),
 	}
 	app := controlapi.NewApp(deps)
 	listener, err := net.Listen("tcp", net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)))
@@ -424,6 +431,32 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 	go runPublisherSubscriptionReconciler(loopCtx, publisherDeps,
 		runtime.DefaultPublisherSubscriptionReconcileInterval)
 	return h, nil
+}
+
+// buildKindAliases seeds the per-process `kind:` → executor-alias map
+// for every rimsky-bundled inproc utility executor via the shared
+// `builtin.RegisterAllKindAliases` helper. The supervisor and the
+// control-API both call into the same helper (supervisor consumes the
+// full `builtin.RegisterAll`, control-API consumes only the alias
+// half), so a new bundled executor lands by editing
+// `lib/runtime/executor/builtin/builtins.go` — both wiring sites pick
+// it up automatically.
+//
+// The control-API process runs validatorHooksFor on every template
+// registration; it consults this map to range-check `kind:` and to
+// drive the kind→executor canonicalization step.
+//
+// Panics on registration failure (a duplicate seed against a freshly-
+// constructed map is a startup invariant violation, not a runtime
+// recovery point).
+//
+// @concept: node
+func buildKindAliases() *node.KindAliasMap {
+	m := node.NewKindAliasMap()
+	if err := builtin.RegisterAllKindAliases(m); err != nil {
+		panic(fmt.Sprintf("controlapi: build kind aliases: %v", err))
+	}
+	return m
 }
 
 // slogLoggerFor coerces the rimsky-style shared.Logger contract into a

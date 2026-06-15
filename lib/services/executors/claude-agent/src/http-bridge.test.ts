@@ -80,8 +80,14 @@ describe("HTTP bridge stub-mode /execute", () => {
     expect(cb0.async_ack_id).toBe(body.async_ack_id);
     const success = cb0.success as Record<string, unknown>;
     expect(success).toBeDefined();
-    // @deliberate: legacy `result` retired in favour of `attributes_delta`.
-    expect(success.attributes_delta).toEqual({ stub: true });
+    // @deliberate: legacy `result` retired in favour of `attributes_delta`. Stub mode
+    // also stamps `session_token: runId` on every terminal Success (mirroring
+    // runAgentReal) so a carry-forward template observes the same shape a real
+    // CLI dispatch would commit.
+    const delta = success.attributes_delta as Record<string, unknown>;
+    expect(delta.stub).toBe(true);
+    expect(typeof delta.session_token).toBe("string");
+    expect((delta.session_token as string).length).toBeGreaterThan(0);
     expect(success.changed).toBe(true);
   });
 });

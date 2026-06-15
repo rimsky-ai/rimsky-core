@@ -35,6 +35,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/template/canonical"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
+	loop_counter "github.com/rimsky-ai/rimsky-core/lib/runtime/executor/builtin/loop_counter"
 )
 
 // readAllBody reads the request body in full.
@@ -134,6 +135,11 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		// validatorHooksFor) share one operator-chosen strictness. The
 		// zero value is node.RefValidateAll — strict by default.
 		RefValidationMode: deps.RefValidationMode,
+		// Plumb the static `kind:` → executor-alias map so the per-node
+		// `kind:` validator can range-check the optional kind field.
+		// Same map drives the canonicalizer's substitution after
+		// validation succeeds.
+		KindAliases: deps.KindAliases,
 	}
 	if deps.Stores != nil {
 		hooks.StoreDeclared = func(name string) bool {
@@ -160,21 +166,56 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		_, ok := deps.NamedLocks.Get(name)
 		return ok
 	}
+	// inprocAlias reports whether `name` matches a rimsky-bundled inproc
+	// executor identity. The inproc executor is always "declared" (it
+	// ships with the binary) and exposes its capabilities via the
+	// builtin handler package so the validator's executor-declared /
+	// declared-events / expected-attributes-schema legs treat it exactly
+	// like an out-of-process executor whose observability handshake
+	// succeeded.
+	inprocAlias := func(name string) bool {
+		return name == loop_counter.ExecutorAlias
+	}
+
 	if deps.Executors != nil {
 		hooks.ExecutorDeclared = func(name string) bool {
 			if isLateBind(name) {
 				return true
 			}
+			if inprocAlias(name) {
+				return true
+			}
 			_, ok := deps.Executors[name]
 			return ok
 		}
+	} else if deps.KindAliases != nil {
+		// Inproc-only deployment (no operator-declared external
+		// executors): the loop_counter alias must still validate as
+		// declared. Without this clause an inproc-only operator would
+		// fail validation under the strict reference-validation mode.
+		hooks.ExecutorDeclared = func(name string) bool {
+			return inprocAlias(name)
+		}
 	}
 	if deps.ExecutorCapabilities != nil {
+		// Wrap the operator-supplied observability hook so the inproc
+		// executor's baked-in capabilities shadow it for the inproc
+		// alias only; every other name still routes through the cache.
 		hooks.ExecutorDeclaredEvents = func(name string) ([]string, bool) {
+			if name == loop_counter.ExecutorAlias {
+				return loop_counter.DeclaredEvents(), true
+			}
 			events, _, _, ok := deps.ExecutorCapabilities(name)
 			return events, ok
 		}
 		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
+			if inprocAlias(name) {
+				// Inproc executors declare no error-class vocabulary;
+				// returning (nil, true) is the "visible, empty"
+				// sentinel — the runtime-synthesized error classes
+				// plus the producer side of the union still apply.
+				return nil, true
+			}
 			_, classes, _, ok := deps.ExecutorCapabilities(name)
 			return classes, ok
 		}
@@ -184,8 +225,36 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 				// Capabilities supplies the schema at dispatch.
 				return nil, true
 			}
+			if name == loop_counter.ExecutorAlias {
+				return loop_counter.SchemaBytes(), true
+			}
 			_, _, schema, ok := deps.ExecutorCapabilities(name)
 			return schema, ok
+		}
+	} else if deps.KindAliases != nil {
+		// No observability cache wired (e.g. inproc-only deployment or
+		// a test harness that didn't run the handshake), but kind sugar
+		// is in use: install minimal hooks that surface the inproc
+		// executor's baked-in capabilities and stay nil-shaped for
+		// every other name so the validator's silent-skip path keeps
+		// its current behavior for non-inproc executors.
+		hooks.ExecutorDeclaredEvents = func(name string) ([]string, bool) {
+			if name == loop_counter.ExecutorAlias {
+				return loop_counter.DeclaredEvents(), true
+			}
+			return nil, false
+		}
+		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
+			if inprocAlias(name) {
+				return nil, true
+			}
+			return nil, false
+		}
+		hooks.ExecutorExpectedAttributesSchema = func(name string) ([]byte, bool) {
+			if name == loop_counter.ExecutorAlias {
+				return loop_counter.SchemaBytes(), true
+			}
+			return nil, false
 		}
 	}
 	return hooks
@@ -257,6 +326,42 @@ func handleDeployTemplate(deps AppDeps) http.HandlerFunc {
 		// applies defaults after validation passes so the persisted spec
 		// carries the resolved value.
 		node.ApplyFrameResolutionDefaults(&spec)
+		// Rewrite any `kind: <name>` sugar to its canonical
+		// `executor: <alias>` form before hashing, so the persisted
+		// spec is in normal form and downstream registration code does
+		// not need to know about kind sugar. Validation has already
+		// confirmed every `kind:` resolves and no node mixes kind +
+		// executor (validateKindDeclaration), so this is a pure
+		// rewrite — nothing to reject.
+		//
+		// Alias-stability assumption (`kind:` → `executor:` map):
+		// canonicalize-then-hash silently couples the persisted hash to
+		// the alias map state at registration time. Two consequences:
+		//
+		//   1. Re-registering the SAME template body with the long
+		//      form (`executor: <alias>`) instead of the sugar form
+		//      (`kind: <alias-key>`) produces the SAME content hash and
+		//      dedups via the idempotent re-register path — by design,
+		//      since the spec's "kind is sugar for executor" claim
+		//      requires the two forms to be observationally equivalent.
+		//   2. Renaming a built-in alias (e.g. retiring
+		//      `rimsky.loop_counter` for a different executor identity)
+		//      would orphan every existing kind-sugar registration: the
+		//      persisted `Executor` would no longer match the new alias,
+		//      and validation would reject the persisted spec at deploy.
+		//      Pre-v1 this is acceptable (no backwards-compat guarantees
+		//      on the wire / YAML / persistence shape per
+		//      `.claude/rules/rules.md`), but a v1+ alias rename will
+		//      need a migration story — either persist the original
+		//      `Kind` alongside the resolved `Executor` as an inert
+		//      annotation and re-canonicalize on deploy, or run a
+		//      one-shot rewrite of every persisted template's
+		//      `Executor` field as part of the alias rename PR.
+		//
+		// The hash is recomputed below from the canonicalized spec; a
+		// future change to that ordering must consider the
+		// alias-stability properties above.
+		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
 
 		tHash := time.Now()
 		hash, err := canonical.CanonicalSpecHash(spec)
@@ -448,6 +553,14 @@ func handleValidateTemplate(deps AppDeps) http.HandlerFunc {
 		// as register does, so the spec the validators see matches what
 		// would be persisted.
 		node.ApplyFrameResolutionDefaults(&spec)
+		// Rewrite any `kind: <name>` sugar to its canonical
+		// `executor: <alias>` form before hashing, so the persisted
+		// spec is in normal form and downstream registration code does
+		// not need to know about kind sugar. Validation has already
+		// confirmed every `kind:` resolves and no node mixes kind +
+		// executor (validateKindDeclaration), so this is a pure
+		// rewrite — nothing to reject.
+		node.CanonicalizeKindSugar(&spec, deps.KindAliases)
 
 		// @constraint: CanonicalSpecHash is computed purely to feed the validation
 		// pipeline (validation input, not persistence). A hash error is a

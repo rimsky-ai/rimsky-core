@@ -11,7 +11,7 @@ As a template author composing larger workflows, I can declare a node that deleg
 
 ## Capability
 
-`delegate: <graph-name>` declaration on a node: the runtime dispatches the named sub-graph as that node's execution unit and propagates the sub-graph's terminal outcome back to the parent on settle.
+A sub-graph delegation declaration on a node binding it to a named sub-graph: the runtime dispatches the named sub-graph as that node's execution unit and propagates the sub-graph's terminal outcome back to the parent on settle.
 
 ## Business value
 
@@ -19,7 +19,7 @@ Template authors compose workflows from reusable units; a complex pipeline can b
 
 ## Acceptance
 
-A template declaring a node with `delegate: <graph-name>` and a separate template providing the named sub-graph; when the parent instance runs, rimsky dispatches the sub-graph (with its own entry/exit nodes) as the delegating node's execution; once the sub-graph settles, the delegating node settles with the sub-graph's terminal outcome propagated back.
+A template declaring a node with a sub-graph delegation referencing a named sub-graph, plus a separate template providing the named sub-graph; when the parent instance runs, rimsky dispatches the sub-graph (with its own entry and exit nodes) as the delegating node's execution; once the sub-graph settles, the delegating node settles with the sub-graph's terminal outcome propagated back.
 
 ## Falsifier
 

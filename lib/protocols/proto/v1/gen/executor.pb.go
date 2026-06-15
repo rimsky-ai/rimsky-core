@@ -218,7 +218,21 @@ type ExecuteRequest struct {
 	// termination). Opaque to in-process executors.
 	//
 	// @concept: run-scope
-	RunScopeId    string `protobuf:"bytes,16,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
+	RunScopeId string `protobuf:"bytes,16,opt,name=run_scope_id,json=runScopeId,proto3" json:"run_scope_id,omitempty"`
+	// scratch carries opaque executor-attached bytes persisted on the
+	// dispatch row (col:rimsky_node_runs.scratch_inline / scratch_handle /
+	// scratch_handle_backend). Empty on the initial dispatch. When this
+	// dispatch supersedes a prior dispatch under any prior-dispatch
+	// disposition (heartbeat_stale | retry_after_error | recalculate), the
+	// enqueue path copies scratch from the prior row onto the new row;
+	// the supervisor materializes spilled scratch via the configured
+	// BlobBackend before populating this field.
+	//
+	// Inert in rimsky per @blessed-invariant 21 / concept:inertness. The
+	// executor writes scratch back via the Success / Error / Park outcome
+	// variants (terminal-final) or via the
+	// POST {callback_url}/v1/runs/{run_id}/scratch callback (mid-dispatch).
+	Scratch       []byte `protobuf:"bytes,17,opt,name=scratch,proto3" json:"scratch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -342,6 +356,13 @@ func (x *ExecuteRequest) GetRunScopeId() string {
 		return x.RunScopeId
 	}
 	return ""
+}
+
+func (x *ExecuteRequest) GetScratch() []byte {
+	if x != nil {
+		return x.Scratch
+	}
+	return nil
 }
 
 // ResumeContext is rimsky's way of handing back to the executor the
@@ -719,8 +740,12 @@ type Success struct {
 	Changed         bool                   `protobuf:"varint,1,opt,name=changed,proto3" json:"changed,omitempty"`
 	ChangeSummary   string                 `protobuf:"bytes,2,opt,name=change_summary,json=changeSummary,proto3" json:"change_summary,omitempty"`
 	AttributesDelta *structpb.Struct       `protobuf:"bytes,3,opt,name=attributes_delta,json=attributesDelta,proto3" json:"attributes_delta,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Executor-attached opaque bytes the supervisor persists onto the
+	// dispatch row at stream-close (analogous to the mid-dispatch scratch
+	// HTTP callback). Inert in rimsky per @blessed-invariant 21.
+	Scratch       []byte `protobuf:"bytes,4,opt,name=scratch,proto3" json:"scratch,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Success) Reset() {
@@ -774,14 +799,25 @@ func (x *Success) GetAttributesDelta() *structpb.Struct {
 	return nil
 }
 
+func (x *Success) GetScratch() []byte {
+	if x != nil {
+		return x.Scratch
+	}
+	return nil
+}
+
 // Error reports an executor error. `error_class` is the discriminator
 // the operator-side `error_types:` policy routes on. Common classes
 // include "executor_blocked" (the Phase-Pre-2026-05-12 Blocked terminal
 // collapsed into this), "rate_limited", "transient_io", etc.
 type Error struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ErrorClass    string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
-	Payload       *structpb.Struct       `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ErrorClass string                 `protobuf:"bytes,1,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
+	Payload    *structpb.Struct       `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	// Executor-attached opaque bytes the supervisor persists onto the
+	// dispatch row at stream-close (analogous to the mid-dispatch scratch
+	// HTTP callback). Inert in rimsky per @blessed-invariant 21.
+	Scratch       []byte `protobuf:"bytes,3,opt,name=scratch,proto3" json:"scratch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -830,6 +866,13 @@ func (x *Error) GetPayload() *structpb.Struct {
 	return nil
 }
 
+func (x *Error) GetScratch() []byte {
+	if x != nil {
+		return x.Scratch
+	}
+	return nil
+}
+
 // Park signals that the executor wants to pause the node and resume
 // later. The held claim handle is retained across the park boundary;
 // on resume, rimsky re-dispatches with ExecuteRequest.resume_context
@@ -858,7 +901,11 @@ type Park struct {
 	// | PARK_REASON_SNOOZE). It is always optional under the post-collapse
 	// enum — there is no "other" variant that mandates it. Persisted on
 	// col:rimsky_node_runs.parked_reason_label.
-	ReasonLabel   string `protobuf:"bytes,6,opt,name=reason_label,json=reasonLabel,proto3" json:"reason_label,omitempty"`
+	ReasonLabel string `protobuf:"bytes,6,opt,name=reason_label,json=reasonLabel,proto3" json:"reason_label,omitempty"`
+	// Executor-attached opaque bytes the supervisor persists onto the
+	// dispatch row at stream-close (analogous to the mid-dispatch scratch
+	// HTTP callback). Inert in rimsky per @blessed-invariant 21.
+	Scratch       []byte `protobuf:"bytes,7,opt,name=scratch,proto3" json:"scratch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -933,6 +980,13 @@ func (x *Park) GetReasonLabel() string {
 		return x.ReasonLabel
 	}
 	return ""
+}
+
+func (x *Park) GetScratch() []byte {
+	if x != nil {
+		return x.Scratch
+	}
+	return nil
 }
 
 // AwaitAsyncCallback (formerly AsyncAccepted) signals that the executor
@@ -1241,7 +1295,7 @@ var File_executor_proto protoreflect.FileDescriptor
 
 const file_executor_proto_rawDesc = "" +
 	"\n" +
-	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc2\x06\n" +
+	"\x0eexecutor.proto\x12\trimsky.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xdc\x06\n" +
 	"\x0eExecuteRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
@@ -1260,7 +1314,8 @@ const file_executor_proto_rawDesc = "" +
 	"\x11prior_dispatch_id\x18\x0e \x01(\tH\x00R\x0fpriorDispatchId\x88\x01\x01\x12f\n" +
 	"\x1aprior_dispatch_disposition\x18\x0f \x01(\x0e2#.rimsky.v1.PriorDispatchDispositionH\x01R\x18priorDispatchDisposition\x88\x01\x01\x12 \n" +
 	"\frun_scope_id\x18\x10 \x01(\tR\n" +
-	"runScopeId\x1aQ\n" +
+	"runScopeId\x12\x18\n" +
+	"\ascratch\x18\x11 \x01(\fR\ascratch\x1aQ\n" +
 	"\vStoresEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
 	"\x05value\x18\x02 \x01(\v2\x16.rimsky.v1.StoreHandleR\x05value:\x028\x01B\x14\n" +
@@ -1287,15 +1342,17 @@ const file_executor_proto_rawDesc = "" +
 	"\x04park\x18\x03 \x01(\v2\x0f.rimsky.v1.ParkH\x00R\x04park\x12@\n" +
 	"\vawait_async\x18\x04 \x01(\v2\x1d.rimsky.v1.AwaitAsyncCallbackH\x00R\n" +
 	"awaitAsyncB\t\n" +
-	"\aoutcome\"\x8e\x01\n" +
+	"\aoutcome\"\xa8\x01\n" +
 	"\aSuccess\x12\x18\n" +
 	"\achanged\x18\x01 \x01(\bR\achanged\x12%\n" +
 	"\x0echange_summary\x18\x02 \x01(\tR\rchangeSummary\x12B\n" +
-	"\x10attributes_delta\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\"[\n" +
+	"\x10attributes_delta\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x0fattributesDelta\x12\x18\n" +
+	"\ascratch\x18\x04 \x01(\fR\ascratch\"u\n" +
 	"\x05Error\x12\x1f\n" +
 	"\verror_class\x18\x01 \x01(\tR\n" +
 	"errorClass\x121\n" +
-	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\"\xf1\x01\n" +
+	"\apayload\x18\x02 \x01(\v2\x17.google.protobuf.StructR\apayload\x12\x18\n" +
+	"\ascratch\x18\x03 \x01(\fR\ascratch\"\x8b\x02\n" +
 	"\x04Park\x12-\n" +
 	"\x06reason\x18\x01 \x01(\x0e2\x15.rimsky.v1.ParkReasonR\x06reason\x12\x18\n" +
 	"\apayload\x18\x02 \x01(\fR\apayload\x127\n" +
@@ -1303,7 +1360,8 @@ const file_executor_proto_rawDesc = "" +
 	"\rsession_token\x18\x04 \x01(\tR\fsessionToken\x12\x1f\n" +
 	"\vreason_note\x18\x05 \x01(\tR\n" +
 	"reasonNote\x12!\n" +
-	"\freason_label\x18\x06 \x01(\tR\vreasonLabel\"l\n" +
+	"\freason_label\x18\x06 \x01(\tR\vreasonLabel\x12\x18\n" +
+	"\ascratch\x18\a \x01(\fR\ascratch\"l\n" +
 	"\x12AwaitAsyncCallback\x12 \n" +
 	"\fasync_ack_id\x18\x01 \x01(\tR\n" +
 	"asyncAckId\x124\n" +

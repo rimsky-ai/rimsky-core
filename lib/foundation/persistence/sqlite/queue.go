@@ -134,12 +134,25 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		priorDispatchID = req.PriorDispatchID.String()
 	}
 	priorDisposition := nullableString(req.PriorDispatchDisposition)
+	// @constraint: scratch carry-forward — when this enqueue follows a
+	// prior dispatch (heartbeat-stale recovery, retry-after-error,
+	// recalculate), the caller has already loaded the prior row's
+	// scratch triple and put it on req.InitialScratch* so the new
+	// dispatch row carries the executor's in-flight state across the
+	// recovery. Inert in rimsky per concept:inertness /
+	// @blessed-invariant 21.
+	//
+	// @concept: executor
+	var scratchInlineArg any
+	if len(req.InitialScratchInline) > 0 {
+		scratchInlineArg = req.InitialScratchInline
+	}
 	// @constraint: single-branch guard keyed on (node_id, run_scope_id)
 	// is unambiguous per uq_node_runs_in_flight_per_run_scope. The
 	// rimsky_run_scopes SELECT enforces closed_at IS NULL at INSERT time.
 	res, err := q.q(tx).ExecContext(ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition)
-		 SELECT ?, ?, ?, ?, ?, 'pending', ?, rs.id, ?, ?
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
+		 SELECT ?, ?, ?, ?, ?, 'pending', ?, rs.id, ?, ?, ?, ?, ?
 		   FROM rimsky_run_scopes rs
 		  WHERE rs.id = ?
 		    AND rs.closed_at IS NULL
@@ -153,6 +166,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		nullableString(req.ExecutorName), marshalStringArray(stores),
 		formatTime(req.EnqueuedAt), req.FrameID.String(),
 		priorDispatchID, priorDisposition,
+		scratchInlineArg, nullableString(req.InitialScratchHandle), nullableString(req.InitialScratchHandleBackend),
 		req.RunScopeID.String(),
 		req.NodeID.String(), req.RunScopeID.String(),
 	)
@@ -821,6 +835,34 @@ func (q *queueImpl) GetInFlightRunForNode(ctx context.Context, tx persistence.Tx
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		return shared.UUID{}, false, fmt.Errorf("sqlite.GetInFlightRunForNode: parse %q: %w", idStr, err)
+	}
+	return id, true, nil
+}
+
+// GetMostRecentRunForNodeInScope returns the id of the most-recent
+// rimsky_node_runs row for (node, run scope) regardless of phase —
+// mirrors the postgres impl. Used by the cascade-recalculate path so
+// scratch carry-forward survives the recalculate disposition when the
+// prior dispatch already retired (phase='completed').
+//
+// @concept: run-scope
+func (q *queueImpl) GetMostRecentRunForNodeInScope(ctx context.Context, tx persistence.Tx, nodeID, runScopeID shared.UUID) (shared.UUID, bool, error) {
+	row := q.q(tx).QueryRowContext(ctx,
+		`SELECT id FROM rimsky_node_runs
+		  WHERE node_id = ? AND run_scope_id = ?
+		  ORDER BY enqueued_at DESC, id DESC
+		  LIMIT 1`,
+		nodeID.String(), runScopeID.String())
+	var idStr string
+	if err := row.Scan(&idStr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return shared.UUID{}, false, nil
+		}
+		return shared.UUID{}, false, fmt.Errorf("sqlite.GetMostRecentRunForNodeInScope: %w", err)
+	}
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return shared.UUID{}, false, fmt.Errorf("sqlite.GetMostRecentRunForNodeInScope: parse %q: %w", idStr, err)
 	}
 	return id, true, nil
 }

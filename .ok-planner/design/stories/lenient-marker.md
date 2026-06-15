@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As a template author, I can mark a substitution directive lenient with `?` so a missing source resolves to empty at runtime instead of failing dispatch, so that I can write templates that gracefully handle optional upstream inputs.
+As a template author, I can mark a substitution directive lenient with the lenient marker so a missing source resolves to empty at runtime instead of failing dispatch, so that I can write templates that gracefully handle optional upstream inputs.
 
 ## Capability
 
-`?` lenient marker on substitution directives: missing source resolves to empty at runtime; absence of the marker keeps the strict (fail-on-missing) behavior.
+Lenient marker on substitution directives: missing source resolves to empty at runtime; absence of the marker keeps the strict (fail-on-missing) behavior.
 
 ## Business value
 
@@ -19,11 +19,11 @@ Template authors gracefully handle optional upstream inputs without writing hand
 
 ## Acceptance
 
-A template node setting an attribute via a `?`-marked directive whose source is absent at dispatch dispatches successfully (the executor receives the resolved-empty attribute) and the node-run reaches terminal. A companion template using the same directive without `?` against the same absent source fails dispatch with a clear missing-source error.
+A template node setting an attribute via a lenient-marked directive whose source is absent at dispatch dispatches successfully (the executor receives the resolved-empty attribute) and the node-run reaches terminal. A companion template using the same directive without the lenient marker against the same absent source fails dispatch with a clear missing-source error.
 
 ## Falsifier
 
-The `?` marker is silently treated like no-marker (lenient dispatch fails when source absent), OR no-marker is silently treated like `?`.
+The lenient marker is silently treated like no-marker (lenient dispatch fails when source absent), OR no-marker is silently treated like the lenient marker.
 
 ## Proof
 

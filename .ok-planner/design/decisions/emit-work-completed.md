@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The terminal-application step appends a `work_completed` event carrying the same identifiers as its `work_started` twin plus the terminal kind (see `story:work-completed-emitted`, `concept:event-log`).
+The terminal-application step appends a work-completed event carrying the same identifiers as its work-started twin plus the terminal kind (see `story:work-completed-emitted`, `concept:event-log`).
 
 ## Rationale
 

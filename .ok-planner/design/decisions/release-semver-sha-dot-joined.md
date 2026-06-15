@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Dot-joined into the SemVer pre-release segment, not `+` build metadata.
+Dot-joined into the SemVer pre-release segment, not appended as build metadata.
 
 ## Rationale
 

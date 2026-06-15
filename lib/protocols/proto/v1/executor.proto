@@ -122,6 +122,21 @@ message ExecuteRequest {
   //
   // @concept: run-scope
   string run_scope_id = 16;
+
+  // scratch carries opaque executor-attached bytes persisted on the
+  // dispatch row (col:rimsky_node_runs.scratch_inline / scratch_handle /
+  // scratch_handle_backend). Empty on the initial dispatch. When this
+  // dispatch supersedes a prior dispatch under any prior-dispatch
+  // disposition (heartbeat_stale | retry_after_error | recalculate), the
+  // enqueue path copies scratch from the prior row onto the new row;
+  // the supervisor materializes spilled scratch via the configured
+  // BlobBackend before populating this field.
+  //
+  // Inert in rimsky per @blessed-invariant 21 / concept:inertness. The
+  // executor writes scratch back via the Success / Error / Park outcome
+  // variants (terminal-final) or via the
+  // POST {callback_url}/v1/runs/{run_id}/scratch callback (mid-dispatch).
+  bytes scratch = 17;
 }
 
 // PriorDispatchDisposition is the classifier accompanying
@@ -221,6 +236,10 @@ message Success {
   bool changed = 1;
   string change_summary = 2;
   google.protobuf.Struct attributes_delta = 3;
+  // Executor-attached opaque bytes the supervisor persists onto the
+  // dispatch row at stream-close (analogous to the mid-dispatch scratch
+  // HTTP callback). Inert in rimsky per @blessed-invariant 21.
+  bytes scratch = 4;
 }
 
 // Error reports an executor error. `error_class` is the discriminator
@@ -230,6 +249,10 @@ message Success {
 message Error {
   string error_class = 1;
   google.protobuf.Struct payload = 2;
+  // Executor-attached opaque bytes the supervisor persists onto the
+  // dispatch row at stream-close (analogous to the mid-dispatch scratch
+  // HTTP callback). Inert in rimsky per @blessed-invariant 21.
+  bytes scratch = 3;
 }
 
 // ParkReason categorizes why an executor parked a node. Storage form
@@ -285,6 +308,10 @@ message Park {
   // enum — there is no "other" variant that mandates it. Persisted on
   // col:rimsky_node_runs.parked_reason_label.
   string reason_label = 6;
+  // Executor-attached opaque bytes the supervisor persists onto the
+  // dispatch row at stream-close (analogous to the mid-dispatch scratch
+  // HTTP callback). Inert in rimsky per @blessed-invariant 21.
+  bytes scratch = 7;
 }
 
 // AwaitAsyncCallback (formerly AsyncAccepted) signals that the executor

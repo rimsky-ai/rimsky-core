@@ -7,11 +7,11 @@ status: as-is
 
 ## Role
 
-As a claim-producer author, I can set `version_id` and `producer_metadata` on my base Commit response and see them land where the protocol says — the claim-handle row's version and the fan-out parent's writeback — so the fields the proto documents are real for the base protocol, not only for the data-processing mix-in.
+As a claim-producer author, I can set the version-id and producer-metadata fields on my base Commit response and see them land where the protocol says — the claim-handle row's version and the fan-out parent's writeback — so the fields the wire contract documents are real for the base protocol, not only for the data-processing mix-in.
 
 ## Capability
 
-The producer client returns the base Commit response body; the unified claim-handle resolution engine persists the response's `version_id` to the claim-handle row; the settle-children settlement path surfaces `producer_metadata` in the fan-out parent's writeback — as the claim-producer protocol's documentation promises (see `decision:wire-commit-response-fields`, `concept:child-execution`).
+The producer client returns the base Commit response body; the unified claim-handle resolution engine persists the response's version-id to the claim-handle row; the settle-children settlement path surfaces the producer-metadata field in the fan-out parent's writeback — as the claim-producer protocol's documentation promises (see `decision:wire-commit-response-fields`, `concept:child-execution`).
 
 ## Business value
 
@@ -19,7 +19,7 @@ The wire contract is honest for the base protocol: producers that stamp version 
 
 ## Acceptance
 
-A producer whose base-protocol Commit response carries a `version_id` sees it persisted on the corresponding claim-handle row; a fan-out whose children's commits carry `producer_metadata` sees it surfaced in the parent's writeback.
+A producer whose base-protocol Commit response carries a version-id sees it persisted on the corresponding claim-handle row; a fan-out whose children's commits carry producer-metadata sees it surfaced in the parent's writeback.
 
 ## Falsifier
 

@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-The official Google gRPC and protobuf libraries for Go.
+The official upstream gRPC and protobuf libraries for Go.
 
 ## Rationale
 
-Official, required for the protocols.
+Upstream reference implementations, required for the protocols.

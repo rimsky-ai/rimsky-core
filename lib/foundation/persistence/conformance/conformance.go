@@ -108,6 +108,7 @@ func Suite(
 		t.Run("NodeAttributesGetLatestByNode", func(t *testing.T) { testRunStateWritesIsolated_NodeAttributesGetLatestByNode(t, factory(t)) })
 	})
 	t.Run("RecoveryAwareDispatch", func(t *testing.T) { testRecoveryAwareDispatch(t, factory(t)) })
+	t.Run("ScratchMissingRowContract", func(t *testing.T) { testScratchMissingRowContract(t, factory(t)) })
 	// @deliberate: spec 2026-05-22-fan-out-safety-scope-first-design retired the
 	// cycle-2/3 fan-out disambiguator-specific conformance tests
 	// (NodesUpdateStateFanoutRunID, NodesClearLastOutcomeFanoutRunID,

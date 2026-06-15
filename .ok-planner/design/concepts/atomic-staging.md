@@ -15,7 +15,7 @@ Producer-side stage-then-swap pattern: writers stage data into a side area; on `
 
 ## Boundaries
 
-Owns: the producer-side discipline, the documented pattern, a filesystem-substrate reference implementation, the per-substrate atomicity caveats. Does NOT own: rimsky-side mechanics (those are subgraph-lifetime + co-holdership + aggregation, each their own concept), the specific substrate (filesystem rename, Postgres tx, Iceberg manifest pointer, etc.). Adjacent: `concept:claim-producer`, `concept:claim-lifetime`, `concept:claim-co-holdership`, `concept:auto-terminal`.
+Owns: the producer-side discipline, the documented pattern, a filesystem-substrate reference implementation, the per-substrate atomicity caveats. Does NOT own: rimsky-side mechanics (those are subgraph-lifetime + co-holdership + aggregation, each their own concept), the specific substrate (producer-internal; rimsky doesn't interpret it). Adjacent: `concept:claim-producer`, `concept:claim-lifetime`, `concept:claim-co-holdership`, `concept:auto-terminal`.
 
 ## Substrate atomicity caveats
 

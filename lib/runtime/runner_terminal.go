@@ -90,9 +90,9 @@ func applyTerminal(
 	case terminalKindComplete:
 		pc, err = applyTerminalComplete(ctx, args, acq, resolvedAttrs, schema, t, tx)
 	case terminalKindErrored:
-		pc, err = applyTerminalError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
+		pc, err = applyTerminalError(ctx, args, acq, t.ErrorClass, t.Payload, t.Scratch, tx)
 	case terminalKindInfra:
-		pc, err = applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, tx)
+		pc, err = applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, t.Scratch, tx)
 	case terminalKindPark:
 		// @deliberate: Park does NOT end the dispatch — the parked run re-enters and
 		// its eventual terminal flows back through this switch, where the
@@ -275,8 +275,17 @@ func applyTerminalComplete(
 					"node_id", acq.NodeID.String(),
 					"error", appendErr.Error())
 			}
-			return applyErrorPolicy(ctx, args, acq, "attributes_schema_failed",
-				map[string]any{"error": err.Error()}, tx)
+			// Route through the scratch-aware policy entry so the
+			// executor's terminal-attached scratch lands on the dispatch
+			// row BEFORE the retry branch reads it for carry-forward into
+			// the successor's InitialScratch* enqueue. Schema-validation
+			// rejection of a Success terminal is a recovery class (the
+			// dispatch is retried with policy intervention); using the
+			// non-scratch entry here would drop the executor's scratch on
+			// every reject, violating STORY-opaque-executor-scratch's
+			// round-trip contract. @concept: executor
+			return applyErrorPolicyWithScratch(ctx, args, acq, "attributes_schema_failed",
+				map[string]any{"error": err.Error()}, t.Scratch, tx)
 		}
 	}
 
@@ -344,6 +353,23 @@ func applyTerminalComplete(
 		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
 			return nil, fmt.Errorf("applyTerminalComplete: upsert attributes: %w", err)
 		}
+	}
+	// Persist executor-attached scratch onto the dispatch row inside the
+	// terminal tx. Inline vs. spilled-handle picked via the same threshold
+	// as the parked-payload site. Empty scratch short-circuits before
+	// the UPDATE — see applyTerminalScratchInTx for the rationale; the
+	// row's existing scratch (none, a mid-dispatch callback write, or
+	// recovery-copied prior bytes) is preserved. Per
+	// STORY-opaque-executor-scratch the scratch round-trips across the
+	// executor's Success terminal under any of the three recovery
+	// dispositions that stamp prior_dispatch_id.
+	//
+	// The sub-graph exit carve-out lives inside applyTerminalScratchInTx
+	// (centralized so Success / Error / Infra terminals stay in sync on
+	// the "exit's row stays empty" rule).
+	// @concept: executor
+	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
+		return nil, fmt.Errorf("applyTerminalComplete: %w", err)
 	}
 	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, node.EvaluatorState{}, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: clear error state: %w", err)

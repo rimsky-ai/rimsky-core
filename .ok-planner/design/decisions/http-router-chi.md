@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The chi HTTP router, v5 line.
+A lightweight net/http-native HTTP router, pinned to a stable major-line.
 
 ## Rationale
 
@@ -15,4 +15,4 @@ Lightweight, net/http-native.
 
 ## Alternatives
 
-Gin, Echo.
+Heavier opinionated web frameworks (rejected: pull in middleware stacks and abstractions the project does not need).

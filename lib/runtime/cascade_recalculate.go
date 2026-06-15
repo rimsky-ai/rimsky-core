@@ -13,6 +13,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
@@ -155,17 +156,74 @@ func RecalculateNode(ctx context.Context, args RecalculateArgs) error {
 	// predecessor whose output is now stale; surface its id on
 	// proto:executor.proto::ExecuteRequest.prior_dispatch_id so executors
 	// maintaining per-dispatch session state can recover or hand off the
-	// recalculate.
-	priorDispatchID := target.InFlightRunID
-	if err := args.Queue.Enqueue(ctx, persistence.DispatchRequest{
-		NodeID:                   target.ID,
-		ExecutorName:             target.Executor,
-		RequiredStores:           []string{},
-		EnqueuedAt:               args.Clock.Now(),
-		FrameID:                  *target.FrameID,
-		RunScopeID:               runScopeID,
-		PriorDispatchID:          priorDispatchID,
-		PriorDispatchDisposition: "recalculate",
+	// recalculate. When the prior dispatch already retired (phase=
+	// 'completed' / 'failed') so InFlightRunID is nil, fall back to the
+	// most-recent row for (node, scope) — including terminal rows — so
+	// scratch carries forward across the recalculate disposition;
+	// STORY-opaque-executor-scratch's load-bearing property is round-trip
+	// integrity across every prior-dispatch-disposition, and recalculate
+	// over a retired prior is by far the most common shape.
+	//
+	// @constraint: MUST use EnqueueInTx (not the auto-commit Enqueue
+	// wrapper): the auto-commit wrapper has a documented zero-rows
+	// fallback race where a concurrent RunScopes().Close() commit between
+	// the INSERT and the fallback SELECT can over-report
+	// ErrRunScopeClosed (see queue.go EnqueueInTx comment lines 84-98).
+	// The recovery scratch load + enqueue MUST share a snapshot via a
+	// single tx, both to avoid that race and so the prior row's scratch
+	// can't be mutated between the load and the INSERT.
+	//
+	// @deliberate: when `priorDispatchID` resolves to an in-flight row
+	// (an in-flight row already exists for `(node_id, run_scope_id)`),
+	// EnqueueInTx's NOT EXISTS guard silently no-ops, so no new dispatch
+	// row is created. The scratch already lives on the existing
+	// in-flight row (the executor's own prior writes survive on its own
+	// dispatch row); the recalculate hint is a no-op rather than an
+	// error because the cascade walker's settle-side seed will fire at
+	// the in-flight row's terminal. The LoadScratchInTx call below is
+	// short-circuited in that case: the EnqueueInTx no-op would discard
+	// whatever LoadScratchInTx returned, and the wasted SELECT sits
+	// inside the recalculate tx that serializes with the
+	// actively-dispatching tx on a row currently being processed — the
+	// recalculate-against-in-flight shape is the documented common case,
+	// so the probe is worth its one branch.
+	//
+	// @concept: executor
+	if err := sb.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		priorDispatchID := target.InFlightRunID
+		inFlightTarget := target.InFlightRunID != nil
+		if priorDispatchID == nil {
+			recentID, ok, err := args.Queue.GetMostRecentRunForNodeInScope(ctx, tx, target.ID, runScopeID)
+			if err != nil {
+				return fmt.Errorf("recalculate prior lookup: %w", err)
+			}
+			if ok && recentID != (shared.UUID{}) {
+				idCopy := recentID
+				priorDispatchID = &idCopy
+			}
+		}
+		var scratchInline []byte
+		var scratchHandle, scratchBackend string
+		if !inFlightTarget && priorDispatchID != nil && *priorDispatchID != (shared.UUID{}) {
+			var lerr error
+			scratchInline, scratchHandle, scratchBackend, lerr = args.Queue.LoadScratchInTx(ctx, tx, *priorDispatchID)
+			if lerr != nil {
+				return fmt.Errorf("load prior scratch: %w", lerr)
+			}
+		}
+		return args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
+			NodeID:                      target.ID,
+			ExecutorName:                target.Executor,
+			RequiredStores:              []string{},
+			EnqueuedAt:                  args.Clock.Now(),
+			FrameID:                     *target.FrameID,
+			RunScopeID:                  runScopeID,
+			PriorDispatchID:             priorDispatchID,
+			PriorDispatchDisposition:    "recalculate",
+			InitialScratchInline:        scratchInline,
+			InitialScratchHandle:        scratchHandle,
+			InitialScratchHandleBackend: scratchBackend,
+		}, tx)
 	}); err != nil {
 		// @constraint: a closed RunScope means the target's scope has
 		// terminated (parent rendezvous has fired). Walker discipline per

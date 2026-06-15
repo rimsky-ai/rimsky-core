@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-Google's UUID library for Go.
+A standard, lightweight UUID library for Go.
 
 ## Rationale
 

@@ -7,7 +7,7 @@ status: as-is
 
 ## Choice
 
-The Robfig cron parser, v3 line.
+A standards-aligned cron expression parser, pinned to a stable major-line.
 
 ## Rationale
 

@@ -19,7 +19,7 @@ The validation mode exists precisely for the register-before-provision workflow;
 
 ## Acceptance
 
-The operator registers a template referencing a not-yet-provisioned service under the strict default mode → the rejection states that reference validation failed, names the active mode, says that mode is what made the unprovisioned reference fatal, and names the config key (with the relaxed settings) for register-first workflows.
+The operator registers a template referencing a not-yet-provisioned service under the strict default mode → the rejection states that reference validation failed, names the active mode, says that mode is what made the unprovisioned reference fatal, and names the reference-validation-mode config key (with the relaxed settings) for register-first workflows.
 
 ## Falsifier
 

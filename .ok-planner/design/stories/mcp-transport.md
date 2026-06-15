@@ -7,7 +7,7 @@ status: as-is
 
 ## Role
 
-As an operator or AI agent using rimsky through an MCP client (e.g., Claude Code), I can perform every read and mutation through the MCP tool surface that the HTTP surface offers, with the same auth and permission semantics, so that an agent can drive rimsky deployments without a custom client.
+As an operator or AI agent using rimsky through an MCP client, I can perform every read and mutation through the MCP tool surface that the HTTP surface offers, with the same auth and permission semantics, so that an agent can drive rimsky deployments without a custom client.
 
 ## Capability
 

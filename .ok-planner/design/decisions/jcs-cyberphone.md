@@ -7,8 +7,8 @@ status: as-is
 
 ## Choice
 
-Cyberphone's JCS canonicalization library.
+A spec-compliant JCS canonicalization library.
 
 ## Rationale
 
-Only Go impl compliant with the spec.
+The only Go implementation compliant with the canonicalization spec.

@@ -11,7 +11,7 @@ As an operator, I can read the audit log of every auth-relevant action against t
 
 ## Capability
 
-Audit-read surface gated on `audit:read` exposing every auth-relevant action with actor identity, action name, outcome, target, and time.
+An audit-read surface gated on an audit-read permission, exposing every auth-relevant action with actor identity, action name, outcome, target, and time.
 
 ## Business value
 

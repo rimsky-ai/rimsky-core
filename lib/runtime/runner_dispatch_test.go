@@ -6,6 +6,13 @@
 // in the 2026-05-21 userdata collapse — `substituteAttributesSchema`
 // gained responsibility for emitting static-default values (the role
 // userdata played pre-collapse). These tests pin the new shape.
+//
+// Also exercises the 2026-06-14 self-state carry-forward step added to
+// resolveAttributes — the pre-substitution hydration of the per-(node,
+// RunScope) attribute bag from the most-recent prior writeback. The
+// load-bearing property is sub-graph sealing: cross-RunScope hydration
+// is forbidden, enforced by GetLatestByNode's JOIN filter (no walk-up
+// to the parent scope).
 
 package runtime
 
@@ -13,10 +20,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	tmplspec "github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	attributes "github.com/rimsky-ai/rimsky-core/lib/graph/attribute"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 )
@@ -33,7 +47,7 @@ func TestSubstituteAttributesSchema_StaticDefaults(t *testing.T) {
 			},
 		},
 	}
-	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{})
+	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -55,7 +69,7 @@ func TestSubstituteAttributesSchema_EmbeddedSource(t *testing.T) {
 		},
 	}
 	ctx := attributes.ResolveContext{Params: json.RawMessage(`{"name": "world"}`)}
-	out, err := substituteAttributesSchema(schema, ctx)
+	out, err := substituteAttributesSchema(schema, ctx, nil)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -82,7 +96,7 @@ func TestSubstituteAttributesSchema_LenientEmptyRecovery(t *testing.T) {
 			},
 		},
 	}
-	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{Deps: map[string]json.RawMessage{}})
+	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{Deps: map[string]json.RawMessage{}}, nil)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -121,7 +135,7 @@ func TestSubstituteAttributesSchema_LenientEmptyRecoveryTyped(t *testing.T) {
 				"type":       "object",
 				"properties": map[string]any{"v": prop},
 			}
-			out, err := substituteAttributesSchema(schema, attributes.ResolveContext{})
+			out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
 			if err != nil {
 				t.Fatalf("lenient miss (%s): want nil error, got %v", tc.name, err)
 			}
@@ -149,7 +163,7 @@ func TestSubstituteAttributesSchema_ExecutorWrittenOmitted(t *testing.T) {
 			},
 		},
 	}
-	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{})
+	out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -177,7 +191,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 			},
 			// @deliberate: `required` deliberately omits "prompt".
 		}
-		_, err := substituteAttributesSchema(schema, attributes.ResolveContext{})
+		_, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
 		if err == nil {
 			t.Fatalf("expected ErrMissingSource for strict-missing non-required property; got nil")
 		}
@@ -197,7 +211,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 			},
 			"required": []any{"prompt"},
 		}
-		_, err := substituteAttributesSchema(schema, attributes.ResolveContext{})
+		_, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
 		if err == nil {
 			t.Fatalf("expected ErrMissingSource for strict-missing required property; got nil")
 		}
@@ -216,7 +230,7 @@ func TestSubstituteAttributesSchema_StrictMissingFailsDispatch(t *testing.T) {
 				},
 			},
 		}
-		out, err := substituteAttributesSchema(schema, attributes.ResolveContext{})
+		out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
 		if err != nil {
 			t.Fatalf("lenient miss: want nil error, got %v", err)
 		}
@@ -251,7 +265,7 @@ func TestSubstituteAttributesSchema_MixedShapes(t *testing.T) {
 		},
 	}
 	ctx := attributes.ResolveContext{Params: json.RawMessage(`{"what": "config"}`)}
-	out, err := substituteAttributesSchema(schema, ctx)
+	out, err := substituteAttributesSchema(schema, ctx, nil)
 	if err != nil {
 		t.Fatalf("substituteAttributesSchema: %v", err)
 	}
@@ -756,4 +770,411 @@ func TestClassifyAttributeFailure_RoutesByErrorType(t *testing.T) {
 			t.Fatalf("class: want template_resolution_failed, got %q", class)
 		}
 	})
+}
+
+// TestSubstituteAttributesSchema_CarryForward_SourceBoundOverwrites pins
+// the spec's "source-bound substitution overlays on top" contract.
+// Carry-forward seeds the bag; a source-bound property's substitution
+// MUST overwrite the carried value. Cross-node data flow (source
+// substitution) and self-state carry-forward are orthogonal channels —
+// source-bound is the refresh-from-upstream channel, carry-forward is
+// the executor-state channel, and substitution always wins for source-
+// bound properties.
+//
+// @story: attribute-carry-forward
+// @concept: attribute
+func TestSubstituteAttributesSchema_CarryForward_SourceBoundOverwrites(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"prompt": map[string]any{
+				"type":   "string",
+				"source": "Generate {{params.what}}",
+			},
+		},
+	}
+	rctx := attributes.ResolveContext{Params: json.RawMessage(`{"what": "config"}`)}
+	// Carry-forward holds a stale value for the same property name; the
+	// source-bound resolution MUST replace it.
+	carryForward := map[string]any{"prompt": "stale carried value"}
+	out, err := substituteAttributesSchema(schema, rctx, carryForward)
+	if err != nil {
+		t.Fatalf("substituteAttributesSchema: %v", err)
+	}
+	if got, want := out["prompt"], "Generate config"; got != want {
+		t.Fatalf("source-bound did not overwrite carry-forward: want %q, got %v", want, got)
+	}
+}
+
+// TestSubstituteAttributesSchema_CarryForward_DefaultIsFloor pins the
+// spec's "static-default is a floor under carry-forward" contract.
+// Once a node has produced output in this RunScope, subsequent
+// dispatches must see the executor's value rather than the static
+// default — otherwise stateful nodes that write to a defaulted property
+// (e.g. loop_counter's `count`) would reset on every dispatch.
+//
+// First dispatch in scope (empty carry-forward) still receives the
+// default.
+//
+// @story: attribute-carry-forward
+// @concept: attribute
+func TestSubstituteAttributesSchema_CarryForward_DefaultIsFloor(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"model": map[string]any{
+				"type":    "string",
+				"default": "claude-sonnet-4-5",
+			},
+		},
+	}
+
+	t.Run("first dispatch in scope sees default", func(t *testing.T) {
+		out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, nil)
+		if err != nil {
+			t.Fatalf("substituteAttributesSchema: %v", err)
+		}
+		if got, want := out["model"], "claude-sonnet-4-5"; got != want {
+			t.Fatalf("first dispatch: want default %q, got %v", want, got)
+		}
+	})
+
+	t.Run("carry-forward beats default on later dispatches", func(t *testing.T) {
+		carryForward := map[string]any{"model": "claude-opus-4-7"}
+		out, err := substituteAttributesSchema(schema, attributes.ResolveContext{}, carryForward)
+		if err != nil {
+			t.Fatalf("substituteAttributesSchema: %v", err)
+		}
+		// The carry-forward value wins; the static default is the floor
+		// under it (only lands when carry-forward has no entry).
+		if got, want := out["model"], "claude-opus-4-7"; got != want {
+			t.Fatalf("carry-forward did not beat default: want %q, got %v", want, got)
+		}
+	})
+
+	t.Run("executor-written carry-forward survives unchanged", func(t *testing.T) {
+		// Canonical stateful pattern: a readOnly+no-source+no-default
+		// property whose carry-forward value must reach the executor
+		// (the loop_counter `count` shape). Substitution does NOT touch
+		// such properties — the seed survives verbatim.
+		schemaRO := map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"count": map[string]any{
+					"type":     "integer",
+					"readOnly": true,
+				},
+			},
+		}
+		carryForward := map[string]any{"count": float64(2)}
+		out, err := substituteAttributesSchema(schemaRO, attributes.ResolveContext{}, carryForward)
+		if err != nil {
+			t.Fatalf("substituteAttributesSchema: %v", err)
+		}
+		if got := out["count"]; got != float64(2) {
+			t.Fatalf("executor-written carry-forward: want 2, got %v", got)
+		}
+	})
+}
+
+// openInMemoryDatabaseForCarryForward opens a fresh SQLite-backed
+// persistence.Database and migrates the schema. The full Database
+// handle is returned (not just Tables) so the test can reach Queue —
+// the carry-forward SameScope test settles intermediate dispatches via
+// Queue.Complete so a fresh run row can be created for the next prior
+// writeback (CreateChildRun is idempotent on `(node_id, run_scope_id)`
+// while ANY in-flight row exists for the pair, so settling is the only
+// way to get two priors). Mirrors openInMemoryTables in
+// breakpoint_resume_test but kept private here to avoid coupling test
+// files (the breakpoint tests live in `runtime_test` external-package;
+// this file is `runtime`).
+func openInMemoryDatabaseForCarryForward(t *testing.T) persistence.Database {
+	t.Helper()
+	ctx := context.Background()
+	d, err := persistence.Open(ctx, persistence.Config{
+		Driver: "sqlite",
+		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(t.TempDir(), "state.db")},
+	})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := d.Migrate(ctx, shared.SilentLogger{}); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	return d
+}
+
+// carryForwardFixture is the persisted shape the carry-forward tests
+// run resolveAttributes against. mainScopeID is the calling RunScope;
+// subScopeID is a sub-graph RunScope whose parent_run_id points at
+// parentRunID in mainScopeID (mirrors the sub-graph sealing topology).
+// nodeID is the stateful node whose carry-forward we exercise; it runs
+// in BOTH scopes (the carry-forward query keys on (nodeID, scopeID), so
+// the same node-id at two scopes is the correct shape). callerNodeID
+// is a separate node that anchors parentRunID — using a distinct
+// node-id keeps the (nodeID, mainScopeID) pair available for the
+// stateful node's prior dispatches (CreateChildRun is idempotent on
+// `(node_id, run_scope_id)`, so the calling-node parent run would
+// collide with the stateful node's writeback runs otherwise).
+type carryForwardFixture struct {
+	db           persistence.Database
+	tables       persistence.Tables
+	instanceID   shared.UUID
+	nodeID       shared.UUID
+	callerNodeID shared.UUID
+	mainScopeID  shared.UUID
+	subScopeID   shared.UUID
+	parentRunID  shared.UUID
+	frameID      shared.UUID
+	templateHash string
+}
+
+func seedCarryForwardFixture(t *testing.T, ctx context.Context) carryForwardFixture {
+	t.Helper()
+	db := openInMemoryDatabaseForCarryForward(t)
+	tables := db.Tables()
+	fx := carryForwardFixture{
+		db:           db,
+		tables:       tables,
+		instanceID:   shared.UUID(uuid.New()),
+		nodeID:       shared.UUID(uuid.New()),
+		callerNodeID: shared.UUID(uuid.New()),
+		mainScopeID:  shared.UUID(uuid.New()),
+		subScopeID:   shared.UUID(uuid.New()),
+		parentRunID:  shared.UUID(uuid.New()),
+		templateHash: "sha256-" + uuid.NewString(),
+	}
+
+	tmpl := tmplspec.TemplateSpec{
+		Name:                "carry-forward-fixture",
+		Version:             "1",
+		FrameResolutionMode: tmplspec.FrameResolutionSerialQueue,
+		FrameTimeoutMs:      600000,
+		Nodes: []tmplspec.TemplateNodeDef{
+			{Type: "stateful-node", Executor: ""},
+			{Type: "caller", Executor: ""},
+		},
+	}
+
+	if err := tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := tables.Templates().Insert(ctx, persistence.TemplateInsertInput{
+			ID:     fx.templateHash,
+			Spec:   tmpl,
+			State:  persistence.TemplateStateRegistered,
+			Source: "direct",
+		}, tx); err != nil {
+			return err
+		}
+		// Main RunScope first, then instance referring to it.
+		if err := tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:         fx.mainScopeID,
+			GraphName:  tmplspec.MainGraphName,
+			InstanceID: fx.instanceID,
+		}); err != nil {
+			return err
+		}
+		if _, err := tables.Instances().Create(ctx, persistence.InstanceCreateInput{
+			ID:             fx.instanceID,
+			TemplateHash:   fx.templateHash,
+			MainRunScopeID: fx.mainScopeID,
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := tables.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: fx.nodeID, InstanceID: fx.instanceID,
+			NodeType: "stateful-node",
+		}, tx); err != nil {
+			return err
+		}
+		if _, err := tables.Nodes().Create(ctx, persistence.NodeCreateInput{
+			ID: fx.callerNodeID, InstanceID: fx.instanceID,
+			NodeType: "caller",
+		}, tx); err != nil {
+			return err
+		}
+		frameID, err := tables.Frames().EnqueueSerialFrame(ctx, fx.instanceID, fx.callerNodeID, 600000, tx)
+		if err != nil {
+			return err
+		}
+		if _, err := tables.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx); err != nil {
+			return err
+		}
+		fx.frameID = frameID
+		// A parent run in the main scope on the caller node, used to
+		// anchor the sub-graph RunScope's parent_run_id. Keyed on
+		// callerNodeID, NOT nodeID, so the (stateful-node, main-scope)
+		// idempotency slot stays free for the writeback rows.
+		if err := tables.RunTree().CreateRootRun(ctx, tx, persistence.CreateRootRunInput{
+			RunID: fx.parentRunID, NodeID: fx.callerNodeID, FrameID: frameID,
+			RunScopeID: fx.mainScopeID,
+		}); err != nil {
+			return err
+		}
+		mainScopeIDCopy := fx.mainScopeID
+		parentRunIDCopy := fx.parentRunID
+		return tables.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
+			ID:               fx.subScopeID,
+			ParentRunScopeID: &mainScopeIDCopy,
+			ParentRunID:      &parentRunIDCopy,
+			GraphName:        "inner",
+			InstanceID:       fx.instanceID,
+		})
+	}); err != nil {
+		t.Fatalf("seedCarryForwardFixture: %v", err)
+	}
+	return fx
+}
+
+// seedPriorWriteback inserts a node_run row in `scopeID` for `nodeID`
+// and writes `data` to its rimsky_node_attributes row. Mirrors what the
+// runtime writes at terminal time, but without dragging the full
+// terminal-handler in.
+func seedPriorWriteback(
+	t *testing.T, ctx context.Context, fx carryForwardFixture,
+	scopeID shared.UUID, data map[string]any,
+) shared.UUID {
+	t.Helper()
+	runID := shared.UUID(uuid.New())
+	if err := fx.tables.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		if err := fx.tables.RunTree().CreateChildRun(ctx, tx, persistence.CreateChildRunInput{
+			RunID: runID, NodeID: fx.nodeID, FrameID: fx.frameID,
+			RunScopeID: scopeID,
+		}); err != nil {
+			return err
+		}
+		return fx.tables.NodeAttributes().Upsert(ctx, runID, fx.nodeID, data, tx)
+	}); err != nil {
+		t.Fatalf("seedPriorWriteback: %v", err)
+	}
+	return runID
+}
+
+// makeStatefulCounterAcq builds an acquisition that mirrors what the
+// runtime would build for a stateful "loop_counter" style node — a
+// `count: integer, default: 0, readOnly: true` property plus a `max`
+// input. Executor is "" so resolveAttributes bypasses the executor-
+// schema-visibility gate and the dispatch context lookup; the carry-
+// forward step still runs unconditionally for any acquisition with a
+// non-nil schema.
+func makeStatefulCounterAcq(fx carryForwardFixture, scopeID shared.UUID) *acquisition {
+	return &acquisition{
+		DispatchID: shared.UUID(uuid.New()),
+		NodeID:     fx.nodeID,
+		InstanceID: fx.instanceID,
+		NodeType:   "stateful-node",
+		Executor:   "",
+		GraphName:  tmplspec.MainGraphName,
+		RunScopeID: scopeID,
+		FrameID:    fx.frameID,
+		NodeDef: &node.TemplateNodeDef{
+			Type:     "stateful-node",
+			Executor: "",
+			Attributes: &node.NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"count": map[string]any{
+						"type":     "integer",
+						"default":  float64(0),
+						"readOnly": true,
+					},
+					"max": map[string]any{
+						"type":    "integer",
+						"default": float64(3),
+					},
+				},
+			}},
+		},
+	}
+}
+
+// TestResolveAttributes_CarryForward_SameScope is the SameScope proof:
+// three dispatches of the same node in the same RunScope, where each
+// prior dispatch wrote a count value. The third dispatch's pre-
+// substitution bag MUST contain the most-recent writeback. This is the
+// loop_counter shape — the count field carries forward and increments
+// across dispatches.
+//
+// @story: attribute-carry-forward
+// @concept: attribute
+func TestResolveAttributes_CarryForward_SameScope(t *testing.T) {
+	ctx := context.Background()
+	fx := seedCarryForwardFixture(t, ctx)
+	// Two prior writebacks in the same RunScope: count=1, then count=2.
+	// updated_at ORDER BY DESC in GetLatestByNode picks the most recent
+	// row (count=2). The intermediate run must be `Complete`d before the
+	// next CreateChildRun so the (node_id, run_scope_id) idempotency
+	// guard (in-flight phase) admits a fresh row — mirrors how a
+	// production retry / recalculate cycle settles the prior dispatch
+	// before the next runs.
+	queue := fx.db.Queue()
+	run1 := seedPriorWriteback(t, ctx, fx, fx.mainScopeID, map[string]any{"count": float64(1)})
+	if err := queue.Complete(ctx, run1, ""); err != nil {
+		t.Fatalf("complete prior run: %v", err)
+	}
+	_ = seedPriorWriteback(t, ctx, fx, fx.mainScopeID, map[string]any{"count": float64(2)})
+
+	args := RunArgs{
+		Persist:      fx.tables,
+		Logger:       shared.SilentLogger{},
+		Clock:        shared.SystemClock{},
+		SupervisorID: "sup-carry-forward",
+	}
+	acq := makeStatefulCounterAcq(fx, fx.mainScopeID)
+	resolved, schema, err := resolveAttributes(ctx, args, acq)
+	if err != nil {
+		t.Fatalf("resolveAttributes: %v", err)
+	}
+	if schema == nil {
+		t.Fatalf("expected non-nil schema, got nil")
+	}
+	// The third dispatch sees count=2 from carry-forward (NOT the schema
+	// default of 0). The `max` property has no carry-forward source — it
+	// lands at the static default of 3.
+	if got := resolved["count"]; got != float64(2) {
+		t.Fatalf("count: want carry-forward 2, got %v", got)
+	}
+	if got := resolved["max"]; got != float64(3) {
+		t.Fatalf("max (no carry-forward): want default 3, got %v", got)
+	}
+}
+
+// TestResolveAttributes_CarryForward_CrossRunScope_Empty is the load-
+// bearing sub-graph-sealing proof. A writeback in the main RunScope
+// MUST NOT leak into a sub-graph RunScope (different RunScopeID), even
+// though the same node_id is at both scopes. The GetLatestByNode JOIN
+// filter `r.run_scope_id = $2` enforces this — no walk-up to the parent
+// scope. The sub-graph dispatch sees the schema default (count=0).
+//
+// This is the "fresh context per pass" property the build/validate
+// orchestrator depends on; collapsing it would mean a sub-graph's first
+// dispatch silently inherited the caller's state.
+//
+// @story: attribute-carry-forward
+// @concept: attribute
+func TestResolveAttributes_CarryForward_CrossRunScope_Empty(t *testing.T) {
+	ctx := context.Background()
+	fx := seedCarryForwardFixture(t, ctx)
+	// Seed a writeback in the MAIN RunScope; the sub-graph dispatch
+	// below must NOT see it (sub-graph sealing).
+	_ = seedPriorWriteback(t, ctx, fx, fx.mainScopeID, map[string]any{"count": float64(5)})
+
+	args := RunArgs{
+		Persist:      fx.tables,
+		Logger:       shared.SilentLogger{},
+		Clock:        shared.SystemClock{},
+		SupervisorID: "sup-carry-forward",
+	}
+	// Dispatch in the SUB-graph RunScope. Carry-forward hydration lookup
+	// keys on (nodeID, subScopeID) and the JOIN filter excludes the
+	// main-scope row written above. The bag falls through to the schema
+	// default.
+	acq := makeStatefulCounterAcq(fx, fx.subScopeID)
+	resolved, _, err := resolveAttributes(ctx, args, acq)
+	if err != nil {
+		t.Fatalf("resolveAttributes: %v", err)
+	}
+	if got := resolved["count"]; got != float64(0) {
+		t.Fatalf("cross-RunScope hydration LEAK: count carried from main scope; want default 0, got %v", got)
+	}
 }
