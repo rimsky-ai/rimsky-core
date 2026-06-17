@@ -351,6 +351,16 @@ func TestExampleExecutorE2E(t *testing.T) {
 		// any retried executor goroutine) dial the new mapped port.
 		t.Setenv("EXAMPLE_EXECUTOR_CALLBACK_HOST_OVERRIDE", ep.CallbackBaseURL)
 
+		// @deliberate: wait for the post-restart supervisor to
+		// re-discover the example executor before driving the
+		// callback. The discovery cache is per-process; the fresh
+		// rimsky-all-in-one process starts cold and only catches up
+		// asynchronously after the startup dial loop reaches the
+		// peer. Without this the callback-driven resume dispatch
+		// races the discovery and the worker fails with
+		// `executor_schema_unavailable` instead of resolving.
+		waitExecutorDiscovered(t, ep, "example", 60*time.Second)
+
 		// @deliberate: POST the AsyncCallbackBody to the
 		// post-restart supervisor. The callback handler's
 		// in-memory CallbackRegistry is empty (fresh process);
@@ -369,15 +379,6 @@ func TestExampleExecutorE2E(t *testing.T) {
 		// restart-survival) or the supervisor failed to commit
 		// the terminal — both falsify the leg.
 		waitExampleNodeState(t, ep, workerID, "fresh", "", 90*time.Second)
-
-		// @deliberate: re-discover the example executor on the
-		// post-restart supervisor before subsequent sub-tests run.
-		// The discovery cache is per-process; the fresh
-		// rimsky-all-in-one process starts cold and only catches up
-		// asynchronously after the startup dial loop reaches the
-		// peer. Without this the next sub-test's dispatch fails
-		// with `executor_schema_unavailable`.
-		waitExecutorDiscovered(t, ep, "example", 60*time.Second)
 	})
 
 	t.Run("declared error class routes through error_types", func(t *testing.T) {

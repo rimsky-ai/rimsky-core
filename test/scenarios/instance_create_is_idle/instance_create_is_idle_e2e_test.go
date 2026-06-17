@@ -69,7 +69,6 @@ func TestStory_InstanceCreateIsIdle(t *testing.T) {
 		// scheduler running guards the strongest form of the falsifier:
 		// "if the supervisor were silently dispatching the create-side
 		// envelope, a node-run row would materialize in our wait window."
-		HeartbeatTimeout: 30 * time.Second,
 		Stores: config.RemoteStoresConfig{
 			Stores: map[string]config.StoreEntry{
 				"idle-create-lifecycle": {

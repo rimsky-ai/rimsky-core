@@ -422,6 +422,15 @@ type RimskyHandle struct {
 	// can replay them verbatim against a fresh container.
 	cb        *configBuilder
 	yamlBytes []byte
+
+	// @constraint: parentT is the bring-up call site's testing.TB — the
+	// scope at which container Terminate cleanup belongs. Restart is
+	// typically invoked from a sub-t inside t.Run; registering the new
+	// container's cleanup against that sub-t would terminate it the
+	// moment the sub-test ends, breaking subsequent sub-tests that
+	// share the handle. parentT keeps cleanup tied to the bring-up
+	// lifetime.
+	parentT testing.TB
 }
 
 // DumpRimskyLogs writes the rimsky/all container's combined
@@ -500,7 +509,11 @@ func (h *RimskyHandle) Restart(ctx context.Context, t testing.TB) {
 		_ = h.container.Terminate(termCtx)
 		cancel()
 	}
-	c, baseURL, callbackBaseURL := runRimskyContainer(ctx, t, h.cb, h.yamlBytes, h.Endpoint.Network)
+	cleanupT := h.parentT
+	if cleanupT == nil {
+		cleanupT = t
+	}
+	c, baseURL, callbackBaseURL := runRimskyContainerWithCleanupT(ctx, t, cleanupT, h.cb, h.yamlBytes, h.Endpoint.Network)
 	h.container = c
 	h.Endpoint.BaseURL = baseURL
 	h.Endpoint.CallbackBaseURL = callbackBaseURL
@@ -584,6 +597,7 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 		container: rimsky,
 		cb:        cb,
 		yamlBytes: yamlBytes,
+		parentT:   t,
 	}
 }
 
@@ -639,6 +653,15 @@ func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName strin
 // place of that executor needs a host-reachable URL — the callback path
 // is part of the public protocol surface, not an internal-only listener.
 func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string, string) {
+	return runRimskyContainerWithCleanupT(ctx, t, t, cb, yamlBytes, networkName)
+}
+
+// runRimskyContainerWithCleanupT is the cleanup-T-split variant of
+// runRimskyContainer. Errors are reported on `t`; the container
+// Terminate cleanup is registered on `cleanupT`. Restart calls this
+// with the original BringUpRimskyHandle caller's t as cleanupT so the
+// new container outlives any sub-t the caller passes to Restart.
+func runRimskyContainerWithCleanupT(ctx context.Context, t testing.TB, cleanupT testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string, string) {
 	t.Helper()
 	env := map[string]string{
 		"RIMSKY_CONFIG":            "/etc/rimsky/rimsky.yml",
@@ -649,6 +672,8 @@ func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, ya
 		// for its callback listener; executors need a service-
 		// reachable hostname to dial back.
 		"RIMSKY_SUPERVISOR_CALLBACK_ADVERTISE_HOST": "rimsky",
+		// @constraint: shorten the observability re-probe interval so a cold-start dial that races the testcontainers reverse-SSH tunnel converges inside per-test discovery waits. The 60s production default ties at the wait boundary; restart-survival paths in particular hit it.
+		"RIMSKY_OBSERVABILITY_REFRESH_INTERVAL": "5s",
 	}
 	for k, v := range cb.extraEnv {
 		env[k] = v
@@ -677,7 +702,7 @@ func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, ya
 	if err != nil {
 		t.Fatalf("harness: start rimsky/all: %v", err)
 	}
-	t.Cleanup(func() {
+	cleanupT.Cleanup(func() {
 		termCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = rimsky.Terminate(termCtx)
