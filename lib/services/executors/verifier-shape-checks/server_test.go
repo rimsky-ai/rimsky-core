@@ -2,6 +2,13 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// server_test.go — verifier-shape-checks executor coverage under the
+// unary RPC shape (TD-execute-rpc-unary). Each test calls Execute(req)
+// directly and asserts on the settling Outcome: Success when all
+// blocking checks pass, Error{verifier/check_failed/<kind>} when at
+// least one error-severity check fails, Error{verifier/attribute_invalid}
+// for malformed input.
+
 package main
 
 import (
@@ -15,26 +22,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-shape-checks/errorclasses"
 )
 
-// fakeStream collects every event the server emits; assertion runs
-// after executeCore returns.
-type fakeStream struct {
-	events []*genv1.ExecuteEvent
-}
-
-func (f *fakeStream) send(ev *genv1.ExecuteEvent) error {
-	f.events = append(f.events, ev)
-	return nil
-}
-
-func (f *fakeStream) terminal() *genv1.StreamClose {
-	for _, ev := range f.events {
-		if sc := ev.GetStreamClose(); sc != nil {
-			return sc
-		}
-	}
-	return nil
-}
-
 func buildReq(t *testing.T, attrs map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
 	st, err := structpb.NewStruct(attrs)
@@ -44,7 +31,7 @@ func buildReq(t *testing.T, attrs map[string]any) *genv1.ExecuteRequest {
 	return &genv1.ExecuteRequest{NodeType: "verifier", Attributes: st}
 }
 
-func TestExecuteCore_PassAllChecks(t *testing.T) {
+func TestExecute_PassAllChecks(t *testing.T) {
 	srv := NewServer(false)
 	req := buildReq(t, map[string]any{
 		"checks": []any{
@@ -56,20 +43,24 @@ func TestExecuteCore_PassAllChecks(t *testing.T) {
 			map[string]any{"id": "b"},
 		},
 	})
-	fs := &fakeStream{}
-	if err := srv.executeCore(req, fs.send); err != nil {
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
-	term := fs.terminal()
-	if term == nil {
-		t.Fatal("no terminal event")
+	success := outcome.GetSuccess()
+	if success == nil {
+		t.Fatalf("expected Success, got %T", outcome.GetOutcome())
 	}
-	if term.GetSuccess() == nil {
-		t.Errorf("expected Success, got %T", term.Outcome)
+	delta := success.GetAttributesDelta().AsMap()
+	if delta["verifier_pass"] != true {
+		t.Errorf("verifier_pass=%v, want true", delta["verifier_pass"])
+	}
+	if delta["verifier_checks"].(float64) != 2 {
+		t.Errorf("verifier_checks=%v, want 2", delta["verifier_checks"])
 	}
 }
 
-func TestExecuteCore_FailureClassifiesAsHierarchicalCheckFailed(t *testing.T) {
+func TestExecute_FailureClassifiesAsHierarchicalCheckFailed(t *testing.T) {
 	srv := NewServer(false)
 	req := buildReq(t, map[string]any{
 		"checks": []any{
@@ -80,43 +71,77 @@ func TestExecuteCore_FailureClassifiesAsHierarchicalCheckFailed(t *testing.T) {
 			map[string]any{"id": "a"},
 		},
 	})
-	fs := &fakeStream{}
-	if err := srv.executeCore(req, fs.send); err != nil {
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
-	term := fs.terminal()
-	if term == nil {
-		t.Fatal("no terminal event")
-	}
-	errOut := term.GetError()
+	errOut := outcome.GetError()
 	if errOut == nil {
-		t.Fatalf("expected Error, got %T", term.Outcome)
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
 	}
-	// @concept: signal — the hierarchical leaf carries the failed check's
-	// kind suffix; validators accept it via the declared
-	// `verifier/check_failed/*` wildcard.
+	// @concept: signal — the hierarchical leaf carries the failed check's kind suffix.
 	if errOut.GetErrorClass() != "verifier/check_failed/pk_unique" {
 		t.Errorf("error_class: got %q, want verifier/check_failed/pk_unique", errOut.GetErrorClass())
 	}
+	payload := errOut.GetPayload().AsMap()
+	if _, ok := payload["failures"]; !ok {
+		t.Errorf("expected `failures` in error payload, got %+v", payload)
+	}
 }
 
-func TestExecuteCore_InvalidAttributesRejected(t *testing.T) {
+func TestExecute_InvalidAttributes_MissingChecks(t *testing.T) {
 	srv := NewServer(false)
 	req := buildReq(t, map[string]any{
 		"rows": []any{map[string]any{"id": "x"}},
 		// @deliberate: `checks` omitted to exercise attribute-validation rejection.
 	})
-	fs := &fakeStream{}
-	if err := srv.executeCore(req, fs.send); err != nil {
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
-	term := fs.terminal()
-	if term == nil {
-		t.Fatal("no terminal event")
-	}
-	errOut := term.GetError()
+	errOut := outcome.GetError()
 	if errOut == nil {
-		t.Fatalf("expected Error, got %T", term.Outcome)
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class: %s", errOut.GetErrorClass())
+	}
+}
+
+func TestExecute_InvalidAttributes_BadCheckKind(t *testing.T) {
+	srv := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"checks": []any{
+			map[string]any{"config": map[string]any{"field": "id"}}, // @deliberate: missing kind
+		},
+		"rows": []any{map[string]any{"id": "x"}},
+	})
+	outcome, _ := srv.Execute(context.Background(), req)
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class: %s", errOut.GetErrorClass())
+	}
+}
+
+func TestExecute_InvalidAttributes_BadSeverity(t *testing.T) {
+	srv := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"checks": []any{
+			map[string]any{
+				"kind":     "pk_unique",
+				"severity": "warn", // @deliberate: not in the closed set {error, warning}
+				"config":   map[string]any{"field": "id"},
+			},
+		},
+		"rows": []any{map[string]any{"id": "x"}},
+	})
+	outcome, _ := srv.Execute(context.Background(), req)
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
 	}
 	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
 		t.Errorf("error_class: %s", errOut.GetErrorClass())
@@ -124,8 +149,7 @@ func TestExecuteCore_InvalidAttributesRejected(t *testing.T) {
 }
 
 // TestCapabilities_AdvertisesHierarchicalErrorClasses confirms the
-// observability surface advertises the canonical verifier/* leaves
-// imported from `pkg:executors/verifier-shape-checks/errorclasses`.
+// observability surface advertises the canonical verifier/* leaves.
 func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 	obs := NewObservabilityServer()
 	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
@@ -149,9 +173,7 @@ func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 
 // TestCapabilities_AdvertisesValidationSupportedRoles confirms the
 // observability handshake advertises the Validation mix-in's supported
-// roles. The verifier's Validate handles role="executor"; rimsky's
-// registry learns roles only from this field, so an empty list would
-// leave the validator dialed but never selected at registration time.
+// roles.
 func TestCapabilities_AdvertisesValidationSupportedRoles(t *testing.T) {
 	obs := NewObservabilityServer()
 	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
@@ -165,23 +187,12 @@ func TestCapabilities_AdvertisesValidationSupportedRoles(t *testing.T) {
 }
 
 // TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks
-// drives the real executeCore dispatch over a real rows payload and
-// asserts the severity partition (`S-executors-verifier-severity-partition`):
-// a failed `severity:warning` check is recorded as a non-blocking finding
-// and does NOT block the dispatch, while a failed `severity:error` check
-// drives the `verifier/check_failed/<kind>` Error terminal.
-//
-// RED today: severity is not yet consumed, so EVERY failed check blocks —
-// Dispatch A's failing warning check produces an Error terminal instead of
-// the expected Success. A later GREEN pass partitions failures by severity.
+// drives the real dispatch and asserts the severity partition: a failed
+// `severity:warning` check is non-blocking, while a failed
+// `severity:error` check drives the `verifier/check_failed/<kind>` Error.
 func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *testing.T) {
 	srv := NewServer(false)
 
-	// @deliberate: dispatch A pairs a failing warning-severity check
-	// (pk_unique over a column with a duplicate) with a passing
-	// error-severity check (no_nulls); because the only failure is
-	// warning-severity, the dispatch must succeed and surface the warning
-	// as a non-blocking finding in the delta/summary.
 	t.Run("warning_fail_is_non_blocking", func(t *testing.T) {
 		req := buildReq(t, map[string]any{
 			"checks": []any{
@@ -201,32 +212,23 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 				map[string]any{"id": "a"}, // @deliberate: duplicate id forces pk_unique (warning) to FAIL.
 			},
 		})
-		fs := &fakeStream{}
-		if err := srv.executeCore(req, fs.send); err != nil {
+		outcome, err := srv.Execute(context.Background(), req)
+		if err != nil {
 			t.Fatal(err)
 		}
-		term := fs.terminal()
-		if term == nil {
-			t.Fatal("no terminal event")
+		success := outcome.GetSuccess()
+		if success == nil {
+			t.Fatalf("expected Success (warning-only failure must not block), got %T", outcome.GetOutcome())
 		}
-		if term.GetSuccess() == nil {
-			t.Fatalf("expected Success terminal (warning-only failure must not block), got %T", term.Outcome)
-		}
-		// @deliberate: the non-blocking warning failure must be observable —
-		// assert the failed warning check's kind is surfaced in the Success
-		// delta's warnings list so operators see soft findings that did not
-		// block.
-		delta := term.GetSuccess().GetAttributesDelta()
+		delta := success.GetAttributesDelta()
 		if delta == nil {
-			t.Fatal("Success terminal carried no attributes_delta")
+			t.Fatal("Success carried no attributes_delta")
 		}
 		if !deltaSurfacesWarning(delta, "pk_unique") {
-			t.Errorf("expected warning finding for pk_unique surfaced in success delta, got %v", delta.AsMap())
+			t.Errorf("expected warning finding for pk_unique surfaced in delta, got %v", delta.AsMap())
 		}
 	})
 
-	// @deliberate: dispatch B asserts a failing error-severity check blocks
-	// with the hierarchical `verifier/check_failed/<kind>` Error terminal.
 	t.Run("error_fail_blocks", func(t *testing.T) {
 		req := buildReq(t, map[string]any{
 			"checks": []any{
@@ -238,20 +240,16 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 			},
 			"rows": []any{
 				map[string]any{"id": "a"},
-				map[string]any{"id": "a"}, // @deliberate: duplicate id forces pk_unique (error) to FAIL.
+				map[string]any{"id": "a"},
 			},
 		})
-		fs := &fakeStream{}
-		if err := srv.executeCore(req, fs.send); err != nil {
+		outcome, err := srv.Execute(context.Background(), req)
+		if err != nil {
 			t.Fatal(err)
 		}
-		term := fs.terminal()
-		if term == nil {
-			t.Fatal("no terminal event")
-		}
-		errOut := term.GetError()
+		errOut := outcome.GetError()
 		if errOut == nil {
-			t.Fatalf("expected Error terminal (error-severity failure must block), got %T", term.Outcome)
+			t.Fatalf("expected Error (error-severity failure must block), got %T", outcome.GetOutcome())
 		}
 		if errOut.GetErrorClass() != "verifier/check_failed/pk_unique" {
 			t.Errorf("error_class: got %q, want verifier/check_failed/pk_unique", errOut.GetErrorClass())
@@ -259,18 +257,14 @@ func TestVerifier_WarningSeverityFailIsNonBlocking_ErrorSeverityFailBlocks(t *te
 	})
 }
 
-// deltaSurfacesWarning reports whether the Success attributes_delta carries
-// a non-blocking-warning finding referencing the named check kind. The
-// GREEN pass populates a `warnings` collection in the delta; this helper
-// scans the delta's structpb values for the kind so the assertion does not
-// over-constrain the exact field shape the implementer chooses.
+// deltaSurfacesWarning reports whether the Success attributes_delta
+// carries a non-blocking-warning finding referencing the named check
+// kind.
 func deltaSurfacesWarning(delta *structpb.Struct, kind string) bool {
 	return structValueMentions(structpb.NewStructValue(delta), "warning", kind)
 }
 
-// structValueMentions walks a structpb.Value tree and reports whether any
-// field whose key contains needleKey carries (anywhere beneath it) a value
-// mentioning the kind string.
+// structValueMentions walks a structpb.Value tree.
 func structValueMentions(v *structpb.Value, needleKey, kind string) bool {
 	switch kv := v.GetKind().(type) {
 	case *structpb.Value_StructValue:
@@ -318,15 +312,14 @@ func containsFold(haystack, needle string) bool {
 	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
 }
 
-func TestExecuteCore_StubProbeShortCircuits(t *testing.T) {
+func TestExecute_StubProbeShortCircuits(t *testing.T) {
 	srv := NewServer(true)
 	req := buildReq(t, map[string]any{"stub_probe": true})
-	fs := &fakeStream{}
-	if err := srv.executeCore(req, fs.send); err != nil {
+	outcome, err := srv.Execute(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
-	term := fs.terminal()
-	if term == nil || term.GetSuccess() == nil {
-		t.Errorf("expected Success terminal in stub mode: %+v", term)
+	if outcome.GetSuccess() == nil {
+		t.Errorf("expected Success terminal in stub mode: %T", outcome.GetOutcome())
 	}
 }

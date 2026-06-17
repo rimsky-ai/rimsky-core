@@ -41,7 +41,6 @@ func (noopStore) Events() persistence.EventTable                                
 func (noopStore) Supervisors() persistence.SupervisorTable                        { return nil }
 func (noopStore) Frames() persistence.FrameTable                                  { return nil }
 func (noopStore) BlobOrphans() persistence.BlobOrphanTable                        { return nil }
-func (noopStore) NodeEvents() persistence.NodeEventTable                          { return nil }
 func (noopStore) WaitSet() persistence.WaitSetTable                               { return nil }
 func (noopStore) Messages() persistence.MessagesTable                             { return nil }
 func (noopStore) MessageIdempotencies() persistence.MessageIdempotencyTable       { return nil }
@@ -173,7 +172,7 @@ func (f *fakeDiagnosticQueue) RemoveForNode(context.Context, shared.UUID, shared
 func (f *fakeDiagnosticQueue) RemoveForNodeInTx(context.Context, shared.UUID, shared.UUID, string, persistence.Tx) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) ListOrphanedClaims(context.Context, time.Time) ([]persistence.DispatchRow, error) {
+func (f *fakeDiagnosticQueue) ListOrphanedClaims(context.Context) ([]persistence.DispatchRow, error) {
 	return nil, nil
 }
 func (f *fakeDiagnosticQueue) ReleaseClaim(context.Context, shared.UUID, string) error {
@@ -219,7 +218,7 @@ func (f *fakeDiagnosticQueue) ListParkedOverdue(context.Context, time.Time, int)
 func (f *fakeDiagnosticQueue) GetParkedByNode(context.Context, shared.UUID, shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID, string) (bool, error) {
+func (f *fakeDiagnosticQueue) ResumeParkedInTx(context.Context, persistence.Tx, shared.UUID) (bool, error) {
 	return false, nil
 }
 func (f *fakeDiagnosticQueue) RebindRunFrameInTx(context.Context, persistence.Tx, shared.UUID, shared.UUID) error {
@@ -234,11 +233,14 @@ func (f *fakeDiagnosticQueue) SetRetryNoProgressForNodeInTx(context.Context, per
 func (f *fakeDiagnosticQueue) UpdateDispatchTuningInTx(context.Context, persistence.Tx, shared.UUID, *int, *int) error {
 	return nil
 }
-func (f *fakeDiagnosticQueue) LoadResumeMetadataInTx(context.Context, persistence.Tx, shared.UUID) (*persistence.ResumeMetadataRow, error) {
-	return nil, nil
+func (f *fakeDiagnosticQueue) BumpLastProgressAt(context.Context, persistence.Tx, shared.UUID, time.Time) (bool, error) {
+	return true, nil
 }
-func (f *fakeDiagnosticQueue) ClearResumeMetadataInTx(context.Context, persistence.Tx, shared.UUID) error {
+func (f *fakeDiagnosticQueue) RegisterAsyncAck(context.Context, persistence.Tx, shared.UUID, string, time.Time, *int, *int) error {
 	return nil
+}
+func (f *fakeDiagnosticQueue) LookupRunByAsyncAckID(context.Context, persistence.Tx, string) (*persistence.DispatchRow, error) {
+	return nil, nil
 }
 func (f *fakeDiagnosticQueue) LoadScratchInTx(context.Context, persistence.Tx, shared.UUID) ([]byte, string, string, error) {
 	return nil, "", "", nil

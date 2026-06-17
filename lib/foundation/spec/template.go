@@ -203,6 +203,43 @@ type TemplateNodeDef struct {
 	// permitted); N>0 = use N. Per plan F3.
 	MaxRetriesWithoutProgress *int `yaml:"max_retries_without_progress,omitempty" json:"max_retries_without_progress,omitempty"`
 
+	// SyncRPCDeadline caps how long the supervisor waits for a unary
+	// Execute RPC to return. Set on the in-flight ctx via
+	// context.WithTimeout; expiry surfaces as an
+	// error_class=executor_sync_timeout terminal. Empty string means
+	// "use deployment default" (30s). Format: any time.ParseDuration
+	// string ("30s", "2m"). A literal "0s" disables the cap (unbounded
+	// RPC). Per TD-three-dispatch-deadlines (spec
+	// 2026-06-16-executor-protocol-coherence-design.md).
+	//
+	// @concept: dispatch-deadlines
+	SyncRPCDeadline string `yaml:"sync_rpc_deadline,omitempty" json:"sync_rpc_deadline,omitempty"`
+
+	// MaxQuietPeriod caps how long an async-mode dispatch (the
+	// executor returned AwaitAsyncCallback) may sit without bumping
+	// col:rimsky_node_runs.last_progress_at before the
+	// SweepExecutorDeadlines sweep releases its claim for re-attempt.
+	// last_progress_at is bumped by §12.5 attribute writebacks, scratch
+	// writebacks, and explicit POST /v1/runs/{id}/keepalive. Empty
+	// string means "use deployment default" (15 minutes). "0s"
+	// disables the cap entirely (a missing async-callback can wedge a
+	// dispatch indefinitely).
+	//
+	// @concept: dispatch-deadlines
+	MaxQuietPeriod string `yaml:"max_quiet_period,omitempty" json:"max_quiet_period,omitempty"`
+
+	// MaxRuntime caps the total wall-clock time from dispatch claim to
+	// terminal settlement, across BOTH sync and async modes. The
+	// SweepExecutorDeadlines sweep produces a synthetic
+	// error_class=max_runtime_exceeded terminal when
+	// now - claimed_at exceeds MaxRuntime. Empty string means "use
+	// deployment default" (0 = disabled). Per
+	// TD-three-dispatch-deadlines: this is the operator's safety net
+	// against runaway dispatches a finer-grained timeout missed.
+	//
+	// @concept: dispatch-deadlines
+	MaxRuntime string `yaml:"max_runtime,omitempty" json:"max_runtime,omitempty"`
+
 	// Delegate names a sub-graph (a GraphSpec.Name other than "main")
 	// the node delegates to. Mutually exclusive with Executor: the
 	// canonicalizer rejects nodes that set both, and absorbs the

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -23,12 +24,11 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// sendFunc is the narrow sender interface used by executeCore so the same
-// logic can drive both the gRPC stream transport and the HTTP+JSON bridge.
-type sendFunc func(*genv1.ExecuteEvent) error
-
-// Server implements genv1.ExecutorServer. It owns the http.Client used
-// for upstream requests and the stub-mode flag.
+// Server implements genv1.ExecutorServer for the http-node bundled
+// executor. It owns the http.Client used for upstream requests, the
+// stub-mode flag, and the optional observability ledger.
+//
+// @concept: executor
 type Server struct {
 	genv1.UnimplementedExecutorServer
 	cfg      Config
@@ -49,59 +49,38 @@ func NewServer(cfg Config) *Server {
 	}
 }
 
-// SetObservability attaches an ObservabilityServer so executeCore can
-// emit per-dispatch trace events. Optional: when nil, dispatch runs
-// without trace emission.
+// SetObservability attaches an ObservabilityServer so Execute can emit
+// per-dispatch trace events. Optional: when nil, dispatch runs without
+// trace emission.
 func (s *Server) SetObservability(obs *ObservabilityServer) { s.obs = obs }
 
-// Execute is the gRPC-facing entrypoint. Adapts the streaming server to the
-// sendFunc-based core logic.
-func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
-	return s.executeCore(stream.Context(), req, stream.Send)
-}
-
-// executeCore is the transport-independent execution body.
+// Execute is the gRPC unary entrypoint. Per TD-execute-rpc-unary the
+// RPC returns exactly one settling Outcome — no stream, no per-event
+// chunking. The HTTP+JSON bridge at code:bridge.go forwards a single
+// request to this same method.
 //
-// @agent-contract executeCore: runs the http-node cell's network
-// request and emits one terminal StreamClose ExecuteEvent via send,
-// with a Success or Error outcome on the wire. Called by the gRPC
-// Execute method and by the HTTP+JSON bridge. Handles stub_mode
-// (short-circuits before network), JSON and non-JSON responses,
-// custom expect_status lists, and user-supplied headers.
-// Post-userdata-collapse, the executor reads its full input from the
+// @agent-contract Execute: runs the http-node cell's network request
+// and returns one settling Outcome — Success, Error, or Park. Handles
+// stub_mode (short-circuits before network), JSON and non-JSON
+// responses, custom expect_status lists, and user-supplied headers.
+// Post-userdata-collapse the executor reads its full input from the
 // unified `attributes` bag. A fixed set of attribute keys (`url`,
 // `method`, `headers`, `body`, `expect_status`, `stub_probe`,
-// `stub_response`, `error_class_field` — see `configAttributeKeys`)
-// drives the transport (`error_class_field` names the JSON field read
-// from an upstream 4xx error body to derive the
-// `http/request_invalid/<token>` leaf, defaulting to `error_class`);
-// every other attribute key is serialised as the implicit JSON request
-// body via `buildRequestBody`'s configAttributeKeys subtraction. An
-// explicit `attributes.body` overrides the implicit body. Rimsky
-// validates the substituted attribute bag against the executor's
-// expected attribute schema; the executor sees the resolved values
-// verbatim. Does NOT paginate, stream response bodies, or honor
-// redirects beyond Go stdlib defaults. Does NOT itself retry; instead
-// an unexpected 429 resolves to a StreamClose Park
-// (PARK_REASON_SNOOZE) with a resume_at computed from Retry-After, so
-// the supervisor's SweepParkedNodes auto-wakes and re-dispatches the
-// node — reusing rimsky's existing parked-node auto-wake mechanism,
-// not new park machinery. Reentrant; the http.Client is safe for
-// concurrent use.
-func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, send sendFunc) error {
-	// @deliberate: emit an opening heartbeat unconditionally so observers see liveness.
-	_ = send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Heartbeat{Heartbeat: &genv1.Heartbeat{
-		TimestampMs: time.Now().UnixMilli(),
-		Note:        "http-node starting",
-	}}})
-
-	// @deliberate: emit a step_started trace event for the dashboard's tree view.
+// `stub_response`, `error_class_field` — see configAttributeKeys)
+// drives the transport; every other attribute key is serialised as
+// the implicit JSON request body via buildRequestBody's
+// configAttributeKeys subtraction. Does NOT paginate, stream response
+// bodies, or honor redirects beyond Go stdlib defaults. Does NOT
+// itself retry; instead an unexpected 429 resolves to a Park
+// (PARK_REASON_SNOOZE) with a resume_at computed from Retry-After.
+// Reentrant; the http.Client is safe for concurrent use.
+func (s *Server) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	dispatchID := req.GetDispatchId()
 	stepID := "http-node:" + req.GetNodeType()
 	if s.obs != nil && dispatchID != "" {
-		// @constraint: register the dispatch with the in-memory ledger so subsequent
-		// AppendEvent / MarkTerminal calls succeed; forged dispatch IDs (issue 13)
-		// cannot create ledger records this way.
+		// @constraint: register the dispatch with the in-memory ledger so
+		// subsequent AppendEvent / MarkTerminal calls succeed; forged
+		// dispatch IDs cannot create ledger records this way.
 		s.obs.RegisterDispatch(dispatchID)
 		s.obs.AppendEvent(dispatchID, MakeEvent(
 			"step-"+stepID, "", "step_started",
@@ -110,77 +89,88 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 			map[string]any{"step_id": stepID, "node_type": req.GetNodeType()},
 		))
 	}
-	// @deliberate: wrap send so executeCore's StreamClose events also update the
-	// trace + mark the dispatch terminal in the same code path.
-	origSend := send
-	send = func(ev *genv1.ExecuteEvent) error {
-		if s.obs != nil && dispatchID != "" {
-			if sc := ev.GetStreamClose(); sc != nil {
-				switch oc := sc.Outcome.(type) {
-				case *genv1.StreamClose_Success:
-					_ = oc
-					s.obs.AppendEvent(dispatchID, MakeEvent(
-						"step-complete-"+stepID, "step-"+stepID, "step_completed",
-						"http-node dispatch completed",
-						genv1.Severity_INFO,
-						map[string]any{"step_id": stepID},
-					))
-					s.obs.MarkTerminal(dispatchID)
-				case *genv1.StreamClose_Error:
-					ec := oc.Error.GetErrorClass()
-					s.obs.AppendEvent(dispatchID, MakeEvent(
-						"step-failed-"+stepID, "step-"+stepID, "step_failed",
-						"http-node dispatch failed",
-						genv1.Severity_ERROR,
-						map[string]any{"step_id": stepID, "error": ec},
-					))
-					s.obs.AppendEvent(dispatchID, MakeEvent(
-						"error-"+stepID, "step-"+stepID, "error",
-						ec,
-						genv1.Severity_ERROR,
-						map[string]any{"error": ec},
-					))
-					s.obs.MarkTerminal(dispatchID)
-				}
-			}
-		}
-		return origSend(ev)
-	}
 
+	outcome, err := s.executeCore(ctx, req)
+	s.recordTerminal(dispatchID, stepID, outcome)
+	return outcome, err
+}
+
+// recordTerminal mirrors the streaming wrapper's per-outcome trace
+// emission onto the unary path. A nil ledger or empty dispatch id
+// skips emission.
+func (s *Server) recordTerminal(dispatchID, stepID string, outcome *genv1.Outcome) {
+	if s.obs == nil || dispatchID == "" || outcome == nil {
+		return
+	}
+	switch oc := outcome.GetOutcome().(type) {
+	case *genv1.Outcome_Success:
+		_ = oc
+		s.obs.AppendEvent(dispatchID, MakeEvent(
+			"step-complete-"+stepID, "step-"+stepID, "step_completed",
+			"http-node dispatch completed",
+			genv1.Severity_INFO,
+			map[string]any{"step_id": stepID},
+		))
+		s.obs.MarkTerminal(dispatchID)
+	case *genv1.Outcome_Error:
+		ec := oc.Error.GetErrorClass()
+		s.obs.AppendEvent(dispatchID, MakeEvent(
+			"step-failed-"+stepID, "step-"+stepID, "step_failed",
+			"http-node dispatch failed",
+			genv1.Severity_ERROR,
+			map[string]any{"step_id": stepID, "error": ec},
+		))
+		s.obs.AppendEvent(dispatchID, MakeEvent(
+			"error-"+stepID, "step-"+stepID, "error",
+			ec,
+			genv1.Severity_ERROR,
+			map[string]any{"error": ec},
+		))
+		s.obs.MarkTerminal(dispatchID)
+	case *genv1.Outcome_Park:
+		s.obs.AppendEvent(dispatchID, MakeEvent(
+			"step-parked-"+stepID, "step-"+stepID, "step_parked",
+			"http-node dispatch parked",
+			genv1.Severity_INFO,
+			map[string]any{"step_id": stepID},
+		))
+		s.obs.MarkTerminal(dispatchID)
+	}
+}
+
+// executeCore runs the dispatch and returns the settling Outcome. The
+// caller (Execute above, or future per-transport adapters) is
+// responsible for any per-dispatch trace-ledger bookkeeping.
+func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	ud := req.GetAttributes().AsMap()
 
-	// @constraint: conformance-probe escape hatch — the conformance harness uses
-	// executor-agnostic attributes flagged `stub_probe: true`. When stub mode is
-	// on, short-circuit before per-executor shape validation so the suite's
-	// basic-happy-path scenarios work regardless of which executor is under test.
-	// Scenarios that intentionally exercise malformed-shape rejection (e.g.
-	// `malformed_attributes`) omit the flag.
+	// @constraint: conformance-probe escape hatch — the conformance
+	// harness uses executor-agnostic attributes flagged `stub_probe:
+	// true`. When stub mode is on, short-circuit before per-executor
+	// shape validation so the suite's basic-happy-path scenarios work
+	// regardless of which executor is under test.
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
-		return s.executeStub(req, send)
+		return s.executeStub(req), nil
 	}
-	// @deliberate: conformance-probe escape hatch for the Park-outcome
+	// @constraint: conformance-probe escape hatch for the Park-outcome
 	// shape — when the suite flags attributes with `probe_park: true`,
 	// return a Park terminal carrying the named `park_reason` in the
-	// closed two-value set (await_callback | snooze) per the ParkReason
-	// collapse. Mirrors the analogous hatch in claude-agent's
-	// runAgentStub so the per-protocol `park_reason_emission`
-	// conformance scenario passes against any in-rimsky stub executor
-	// uniformly.
+	// closed two-value set (await_callback | snooze) per the
+	// ParkReason collapse.
 	if probePark, _ := ud["probe_park"].(bool); probePark && s.stubMode {
-		return s.executeParkProbe(ud, send)
+		return s.executeParkProbe(ud), nil
 	}
 
-	// @constraint: validate attribute shape even in stub mode — the protocol
-	// contract requires executors to reject malformed input consistently, not
-	// only in live mode. Spec §14.4 + conformance `malformed_attributes`
-	// scenario.
+	// @constraint: validate attribute shape even in stub mode — the
+	// protocol contract requires executors to reject malformed input
+	// consistently, not only in live mode.
 	urlStr, _ := ud["url"].(string)
 	if urlStr == "" {
-		return sendErrored(send, "http/attribute_invalid", "attributes.url required")
+		return erroredOutcome("http/attribute_invalid", "attributes.url required"), nil
 	}
 
 	if s.stubMode {
-		return s.executeStub(req, send)
+		return s.executeStub(req), nil
 	}
 
 	method, _ := ud["method"].(string)
@@ -198,19 +188,18 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		}
 	}
 
-	// @constraint: body composition per spec §5.8 — http-node puts the per-run
-	// `attributes` in the request body. `attributes.body` (if present) is an
-	// explicit override useful for fixtures and ad-hoc payloads — when set, it
-	// wins. Otherwise the JSON-serialised `attributes` map becomes the body.
-	// Empty attributes + no override → no body.
+	// @constraint: body composition — http-node puts the per-run
+	// `attributes` in the request body. `attributes.body` (if present)
+	// is an explicit override; otherwise the JSON-serialised
+	// `attributes` map (minus configAttributeKeys) becomes the body.
 	reqBody, ctype, err := buildRequestBody(ud, req.GetAttributes().AsMap())
 	if err != nil {
-		return sendErrored(send, "http/attribute_invalid", err.Error())
+		return erroredOutcome("http/attribute_invalid", err.Error()), nil
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
 	if err != nil {
-		return sendErrored(send, "http/attribute_invalid", err.Error())
+		return erroredOutcome("http/attribute_invalid", err.Error()), nil
 	}
 	if hdrs, ok := ud["headers"].(map[string]any); ok {
 		for k, v := range hdrs {
@@ -228,7 +217,7 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
-		return sendErrored(send, classifyTransportErr(err), err.Error())
+		return erroredOutcome(classifyTransportErr(err), err.Error()), nil
 	}
 	defer resp.Body.Close()
 
@@ -238,31 +227,23 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
-		return sendErrored(send, classifyTransportErr(err), "read body: "+err.Error())
+		return erroredOutcome(classifyTransportErr(err), "read body: "+err.Error()), nil
 	}
 
-	// @constraint: 429 Too Many Requests is a transient rate-limit signal, not a
-	// hard terminal — park (SNOOZE) with a resume_at computed from Retry-After
-	// so the supervisor's existing SweepParkedNodes wakes the node and
-	// re-dispatches, rather than terminating the run. Reuses rimsky's
-	// Park-outcome + resume_at auto-wake mechanism (the same PARK_REASON_SNOOZE
-	// + ResumeAt shape claude-agent's rate-limit path emits) — no new park
-	// machinery. This precedes the generic !statusOK error branch so a 429 is
-	// never collapsed into an http/expectation_mismatch hard Error.
-	//
-	// @deliberate: a 429 that the template's expect_status explicitly accepts is
-	// treated as a normal success per the operator's declared contract — only an
-	// unexpected 429 parks.
+	// @constraint: 429 Too Many Requests is a transient rate-limit
+	// signal, not a hard terminal — park (SNOOZE) with a resume_at
+	// computed from Retry-After so the supervisor's existing
+	// SweepParkedNodes wakes the node and re-dispatches.
 	if resp.StatusCode == http.StatusTooManyRequests && !statusOK(resp.StatusCode, expectStatus) {
 		resumeAt := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now)
-		return sendParked(send, resumeAt,
-			fmt.Sprintf("upstream returned 429; parked until %s (Retry-After=%q)", resumeAt.Format(time.RFC3339), resp.Header.Get("Retry-After")))
+		return parkedOutcome(resumeAt,
+			fmt.Sprintf("upstream returned 429; parked until %s (Retry-After=%q)", resumeAt.Format(time.RFC3339), resp.Header.Get("Retry-After"))), nil
 	}
 
 	if !statusOK(resp.StatusCode, expectStatus) {
-		// @constraint: resolve the upstream error-class field name in priority
-		// order — a per-node `attributes.error_class_field` wins, else the
-		// executor's configured default (`error_class` unless overridden by env).
+		// @constraint: resolve the upstream error-class field name in
+		// priority order — per-node attributes wins, else executor's
+		// configured default.
 		errorClassField := s.cfg.ErrorClassField
 		if ecf, ok := ud["error_class_field"].(string); ok && ecf != "" {
 			errorClassField = ecf
@@ -270,26 +251,25 @@ func (s *Server) executeCore(ctx context.Context, req *genv1.ExecuteRequest, sen
 		if errorClassField == "" {
 			errorClassField = DefaultErrorClassField
 		}
-		return sendErrored(send, classifyUnexpectedStatus(resp.StatusCode, body, errorClassField), fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512)))
+		return erroredOutcome(
+			classifyUnexpectedStatus(resp.StatusCode, body, errorClassField),
+			fmt.Sprintf("status=%d, body=%s", resp.StatusCode, truncate(string(body), 512))), nil
 	}
 
-	// @constraint: response → attributes_delta — the target's response body must
-	// be a JSON object so it can map directly to the spec §12.2
-	// StreamClose-Success `attributes_delta` Struct (which the supervisor merges
-	// into rimsky_node_attributes.data). Non-object JSON is rejected; non-JSON
-	// content types are wrapped in a base64 envelope under known keys.
+	// @constraint: response → attributes_delta — the target's response
+	// body must be a JSON object so it maps directly to
+	// Success.attributes_delta. Non-object JSON is rejected; non-JSON
+	// content types are wrapped in a base64 envelope.
 	delta, err := buildAttributesDelta(body, resp.Header.Get("Content-Type"))
 	if err != nil {
-		return sendErrored(send, "http/response_unparseable", err.Error())
+		return erroredOutcome("http/response_unparseable", err.Error()), nil
 	}
 
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-			AttributesDelta: delta,
-			Changed:         true,
-			ChangeSummary:   fmt.Sprintf("HTTP %d from %s", resp.StatusCode, urlStr),
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		AttributesDelta: delta,
+		Changed:         true,
+		ChangeSummary:   fmt.Sprintf("HTTP %d from %s", resp.StatusCode, urlStr),
+	}}}, nil
 }
 
 // configAttributeKeys is the set of attribute keys the http-node
@@ -309,15 +289,9 @@ var configAttributeKeys = map[string]struct{}{
 }
 
 // buildRequestBody picks the upstream request body. `attributes.body`
-// is an explicit override (string passed verbatim, structured value
-// JSON-marshalled with implicit application/json). When absent, the
-// per-run input attributes (`attrs` minus known config keys) are
-// JSON-marshalled. When the resulting input bag is empty, no body is
-// sent.
-//
-// Under the 2026-05-21 userdata collapse `ud` and `attrs` are typically
-// the same map (the unified attribute bag); subtracting config keys
-// from the implicit-body path keeps the two roles distinguishable.
+// is an explicit override; absent, the per-run input attributes
+// (minus known config keys) are JSON-marshalled. When the resulting
+// input bag is empty, no body is sent.
 func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 	if b, ok := ud["body"]; ok && b != nil {
 		switch bb := b.(type) {
@@ -328,7 +302,7 @@ func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 			if err != nil {
 				return nil, "", fmt.Errorf("body not JSON-serialisable: %w", err)
 			}
-			return strings.NewReader(string(jb)), "application/json", nil
+			return bytes.NewReader(jb), "application/json", nil
 		}
 	}
 	inputs := map[string]any{}
@@ -345,15 +319,13 @@ func buildRequestBody(ud, attrs map[string]any) (io.Reader, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("attributes not JSON-serialisable: %w", err)
 	}
-	return strings.NewReader(string(jb)), "application/json", nil
+	return bytes.NewReader(jb), "application/json", nil
 }
 
-// buildAttributesDelta turns the upstream response into a Struct suitable for
-// StreamClose-Success.attributes_delta. JSON object responses are passed
+// buildAttributesDelta turns the upstream response into a Struct
+// suitable for Success.attributes_delta. JSON object responses pass
 // through as-is. Non-JSON responses are wrapped as
-// `{body_base64, content_type}` so the caller still sees the bytes. JSON
-// arrays / scalars are an error: the attributes shape is by spec a JSON
-// object.
+// `{body_base64, content_type}`. JSON arrays / scalars are an error.
 func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, error) {
 	if !strings.Contains(contentType, "json") {
 		return structpb.NewStruct(map[string]any{
@@ -375,46 +347,36 @@ func buildAttributesDelta(body []byte, contentType string) (*structpb.Struct, er
 	return structpb.NewStruct(m)
 }
 
-// executeStub short-circuits the network path; used when RIMSKY_EXECUTOR_STUB_MODE=1.
-// Returns attributes.stub_response if provided, else {stub: true}. The response
-// becomes the StreamClose-Success.attributes_delta — must be a JSON object
-// per spec §12.2.
-func (s *Server) executeStub(req *genv1.ExecuteRequest, send sendFunc) error {
+// executeStub short-circuits the network path; used when
+// RIMSKY_EXECUTOR_STUB_MODE=1. Returns attributes.stub_response if
+// provided, else {stub: true}.
+func (s *Server) executeStub(req *genv1.ExecuteRequest) *genv1.Outcome {
 	ud := req.GetAttributes().AsMap()
 	delta := map[string]any{"stub": true}
 	if sr, ok := ud["stub_response"]; ok {
 		m, ok := sr.(map[string]any)
 		if !ok {
-			return sendErrored(send, "http/attribute_invalid", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
+			return erroredOutcome("http/attribute_invalid", fmt.Sprintf("stub_response must be a JSON object, got %T", sr))
 		}
 		delta = m
 	}
 	v, err := structpb.NewStruct(delta)
 	if err != nil {
-		return sendErrored(send, "http/attribute_invalid", "stub_response not JSON-representable: "+err.Error())
+		return erroredOutcome("http/attribute_invalid", "stub_response not JSON-representable: "+err.Error())
 	}
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-			AttributesDelta: v,
-			Changed:         true,
-			ChangeSummary:   "stub",
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		AttributesDelta: v,
+		Changed:         true,
+		ChangeSummary:   "stub",
+	}}}
 }
 
-// executeParkProbe handles the conformance `park_reason_emission`
-// scenario in stub mode. Reads `attributes.park_reason` (defaulting
-// to `await_callback` when unset), validates it against the closed
-// two-value ParkReason set per the 2026-05-22 ParkReason-collapse
-// spec, and emits a Park terminal carrying the typed reason. Rejects
-// an unrecognized reason with `http/attribute_invalid` so the
-// executor surface enforces the closed set rather than relying on
-// the supervisor.
-//
-// `await_callback` leaves `resume_at` unset (indefinite,
-// callback-driven wake). `snooze` sets a finite `resume_at` so the
-// supervisor's auto-wake sweep would fire if this were a live park.
-func (s *Server) executeParkProbe(ud map[string]any, send sendFunc) error {
+// executeParkProbe handles the conformance park_reason_emission
+// scenario in stub mode. Reads attributes.park_reason (defaulting to
+// `await_callback`), validates it against the closed two-value
+// ParkReason set, and returns a Park terminal carrying the typed
+// reason.
+func (s *Server) executeParkProbe(ud map[string]any) *genv1.Outcome {
 	reasonStr, _ := ud["park_reason"].(string)
 	if reasonStr == "" {
 		reasonStr = "await_callback"
@@ -426,7 +388,7 @@ func (s *Server) executeParkProbe(ud map[string]any, send sendFunc) error {
 	case "snooze":
 		reason = genv1.ParkReason_PARK_REASON_SNOOZE
 	default:
-		return sendErrored(send, "http/attribute_invalid",
+		return erroredOutcome("http/attribute_invalid",
 			fmt.Sprintf("park_reason %q is not in the closed set {await_callback, snooze}", reasonStr))
 	}
 	note, _ := ud["park_reason_note"].(string)
@@ -437,15 +399,12 @@ func (s *Server) executeParkProbe(ud map[string]any, send sendFunc) error {
 	if reason == genv1.ParkReason_PARK_REASON_SNOOZE {
 		park.ResumeAt = timestamppb.New(time.Now().Add(30 * time.Second))
 	}
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: park}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}
 }
 
 // classifyTransportErr maps a transport-layer error to a hierarchical
-// error class per `concept:signal`. Distinguishes deadline-exceeded /
-// network-timeout errors (which operators typically want to retry with
-// backoff) from generic network errors.
+// error class per concept:signal. Distinguishes deadline-exceeded /
+// network-timeout errors from generic network errors.
 func classifyTransportErr(err error) string {
 	if err == nil {
 		return "http/network_error"
@@ -461,20 +420,13 @@ func classifyTransportErr(err error) string {
 }
 
 // classifyUnexpectedStatus maps an unexpected HTTP status to a
-// hierarchical error class per `concept:signal`:
-//   - 5xx → `http/server_error/<status>` (upstream may recover; subscribers
-//     can pattern-match `http/server_error/*` for transient flavors).
-//   - 4xx with a parseable JSON object body whose configured error-class
-//     field (`errorClassField`, default `error_class`, overridable per-node
-//     via `attributes.error_class_field` or by env) holds a non-empty token →
-//     `http/request_invalid/<body_class>` (the upstream named a specific
-//     request defect).
-//   - 4xx with a parseable JSON object body that does NOT carry the configured
-//     field → `http/request_invalid/_unspecified` (a stable, subscribable leaf
-//     so `http/request_invalid/*` policies still match taxonomy-less upstreams,
-//     rather than collapsing to the catch-all `http/expectation_mismatch`).
-//   - otherwise (non-4xx/5xx, empty body, or unparseable body) →
-//     `http/expectation_mismatch`.
+// hierarchical error class per concept:signal:
+//   - 5xx → http/server_error/<status>
+//   - 4xx with parseable JSON object + non-empty errorClassField →
+//     http/request_invalid/<body_class>
+//   - 4xx with parseable JSON object but missing field →
+//     http/request_invalid/_unspecified
+//   - otherwise → http/expectation_mismatch
 func classifyUnexpectedStatus(status int, body []byte, errorClassField string) string {
 	if status >= 500 && status <= 599 {
 		return fmt.Sprintf("http/server_error/%d", status)
@@ -488,10 +440,10 @@ func classifyUnexpectedStatus(status int, body []byte, errorClassField string) s
 			if cls, ok := decoded[errorClassField].(string); ok && cls != "" {
 				return "http/request_invalid/" + cls
 			}
-			// @constraint: 4xx body parsed as a JSON object but the configured
-			// error-class field is absent/empty — emit the stable `_unspecified`
-			// leaf so the request-invalid subtree stays subscribable even for
-			// upstreams that publish no taxonomy.
+			// @constraint: 4xx body parsed as a JSON object but the
+			// configured error-class field is absent/empty — emit the
+			// stable `_unspecified` leaf so the request-invalid subtree
+			// stays subscribable.
 			return "http/request_invalid/_unspecified"
 		}
 	}
@@ -499,25 +451,14 @@ func classifyUnexpectedStatus(status int, body []byte, errorClassField string) s
 }
 
 // defaultRetryAfter is the snooze window used when a 429 carries no
-// Retry-After header (or an unparseable one). RFC 9110 makes Retry-After
-// optional on 429, so we still need a finite resume_at so the supervisor's
-// SweepParkedNodes auto-wakes the node rather than leaving it parked forever.
+// Retry-After header (or an unparseable one). RFC 9110 makes
+// Retry-After optional on 429.
 const defaultRetryAfter = 30 * time.Second
 
-// parseRetryAfter computes the wall-clock resume time from a Retry-After
-// header value per RFC 9110 §10.2.3, which permits two forms:
-//   - delta-seconds: a non-negative integer count of seconds to wait
-//     (e.g. "7") → now + 7s.
-//   - HTTP-date: an absolute IMF-fixdate timestamp (e.g.
-//     "Wed, 21 Oct 2026 07:28:00 GMT") → that instant.
-//
-// `now` is injected (rather than calling time.Now directly) so the
-// delta-seconds branch is deterministically testable. An empty or
-// malformed header (including a negative delta) falls back to
-// now + defaultRetryAfter; a parseable HTTP-date that is not in the
-// future returns now itself (the upstream is explicitly clearing the
-// wait). Either way the result is a finite resume_at, which the
-// supervisor's auto-wake sweep requires to fire.
+// parseRetryAfter computes the wall-clock resume time from a
+// Retry-After header value per RFC 9110 §10.2.3 (delta-seconds OR
+// HTTP-date). `now` is injected so the delta-seconds branch is
+// deterministically testable.
 func parseRetryAfter(header string, now func() time.Time) time.Time {
 	header = strings.TrimSpace(header)
 	base := now()
@@ -535,37 +476,30 @@ func parseRetryAfter(header string, now func() time.Time) time.Time {
 			if t.After(base) {
 				return t
 			}
-			// @deliberate: a non-future date is treated as "retry now" rather
-			// than the generic default — the upstream is explicitly clearing
-			// the wait.
+			// @deliberate: a non-future date is treated as "retry now".
 			return base
 		}
 	}
 	return base.Add(defaultRetryAfter)
 }
 
-// sendParked emits a terminal StreamClose Park with PARK_REASON_SNOOZE and the
-// computed resume_at, reusing rimsky's existing parked-node auto-wake
-// mechanism. The supervisor's SweepParkedNodes wakes the node at resume_at and
-// re-dispatches it (resume_reason = "deadline_elapsed").
-func sendParked(send sendFunc, resumeAt time.Time, note string) error {
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: &genv1.Park{
-			Reason:     genv1.ParkReason_PARK_REASON_SNOOZE,
-			ResumeAt:   timestamppb.New(resumeAt),
-			ReasonNote: note,
-		}}},
-	}})
+// parkedOutcome builds a Park{SNOOZE} Outcome with the computed
+// resume_at, reusing rimsky's existing parked-node auto-wake
+// mechanism.
+func parkedOutcome(resumeAt time.Time, note string) *genv1.Outcome {
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: &genv1.Park{
+		Reason:     genv1.ParkReason_PARK_REASON_SNOOZE,
+		ResumeAt:   timestamppb.New(resumeAt),
+		ReasonNote: note,
+	}}}
 }
 
-func sendErrored(send sendFunc, class, msg string) error {
+func erroredOutcome(class, msg string) *genv1.Outcome {
 	payload, _ := structpb.NewStruct(map[string]any{"error": msg})
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-			ErrorClass: class,
-			Payload:    payload,
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+		ErrorClass: class,
+		Payload:    payload,
+	}}}
 }
 
 // defaultExpectStatus returns the default accepted status list (2xx).

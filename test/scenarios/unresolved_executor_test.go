@@ -77,7 +77,6 @@ func TestUnresolvedExecutor(t *testing.T) {
 		        required_stores = '{}',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
-		        last_heartbeat_at = NULL,
 		        enqueued_at = NOW() - INTERVAL '5 seconds'
 		  WHERE node_id = $1`,
 		n.ID,
@@ -99,7 +98,7 @@ func TestUnresolvedExecutor(t *testing.T) {
 		AcceptedExecutors: []string{"stub"},
 		Pool:              pool,
 		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
-		HeartbeatInterval: 100 * time.Millisecond,
+		LivenessInterval:  100 * time.Millisecond,
 	}
 
 	out, err := runtime.RunNode(h.Ctx, args, nil)

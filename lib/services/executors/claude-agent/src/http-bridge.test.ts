@@ -268,57 +268,20 @@ describe("HTTP bridge /execute observability ledger", () => {
   });
 });
 
-// @deliberate: the HTTP bridge body must also ride the per-dispatch named-event buffer on
-// the `events[]` array (the Go supervisor's callback parser reads `events`
-// regardless of transport). Payloads are base64-encoded per the proto-JSON
-// `bytes` rule.
-describe("http-bridge outcomeToCallbackBody named-event surfacing", () => {
-  it("populates events[] from the buffer with base64 payloads", () => {
-    const payload = Buffer.from(JSON.stringify({ pct: 50 }), "utf8");
-    const outcome: AgentOutcome = {
-      kind: "complete",
-      attributesDelta: { ok: true },
-      changed: true,
-      changeSummary: "did",
-      emittedEvents: [{ name: "progress", payload }],
-    };
-    const body = outcomeToCallbackBody(outcome, "ack-1");
-    expect(body.async_ack_id).toBe("ack-1");
-    expect(body.events).toEqual([
-      { name: "progress", payload: payload.toString("base64") },
-    ]);
-    // @deliberate: AsyncCallbackBody oneof shape the supervisor requires (success |
-    // error | park) — not the legacy `{type: ...}` discriminator.
-    expect(body.success).toBeDefined();
-  });
-
-  it("omits events[] entirely when the buffer is empty (no behavior change)", () => {
-    const outcome: AgentOutcome = {
-      kind: "errored",
-      errorClass: "agent/internal_error",
-      payload: { error: "boom" },
-    };
-    const body = outcomeToCallbackBody(outcome, "ack-2");
-    expect("events" in body).toBe(false);
-    expect(body.error).toBeDefined();
-  });
-});
-
-// @deliberate: positive coverage for the third AsyncCallbackBody outcome branch. The
-// sign-off gate never emits `park` (it only resolves success/errored), so the
-// gate e2e can only assert park-ABSENT; the park wire mapping itself
-// (outcomeToCallbackBody's park_requested branch) otherwise had no test that a
-// park outcome serializes to a body carrying the `park` one-of key. These
-// assert exactly that, including the resume_at present/absent split.
+// @constraint: TD-claude-agent-session-attribute-only +
+// uniform-attributes-delta — the HTTP bridge's Park-outcome
+// serialization merges sessionToken into attributes_delta (mirroring
+// the gRPC sibling in server.ts::outcomeToCallbackBody). Park.payload
+// and Park.session_token retire with the proto reservations; the
+// AsyncCallbackBody.events[] slot retires with named events.
 describe("http-bridge outcomeToCallbackBody park outcome", () => {
-  it("maps park_requested to AsyncCallbackBody.park with exactly one outcome key", () => {
-    const payload = Buffer.from(JSON.stringify({ snoozed: true }), "utf8");
+  it("merges sessionToken into attributes_delta on Park (no top-level session_token / payload)", () => {
     const resumeAt = new Date("2026-06-04T12:00:00.000Z");
     const outcome: AgentOutcome = {
       kind: "park_requested",
       reason: "snooze",
       reasonNote: "rate-limited; retry after window",
-      payload,
+      attributesDelta: null,
       resumeAt,
       sessionToken: "sess-park-1",
     };
@@ -331,20 +294,21 @@ describe("http-bridge outcomeToCallbackBody park outcome", () => {
     const park = body.park as Record<string, unknown>;
     expect(park.reason).toBe("snooze");
     expect(park.reason_note).toBe("rate-limited; retry after window");
-    expect(park.session_token).toBe("sess-park-1");
-    // @deliberate: bytes ride as base64 per the proto-JSON convention.
-    expect(park.payload).toBe(payload.toString("base64"));
     expect(park.resume_at).toBe(resumeAt.toISOString());
+    expect("session_token" in park).toBe(false);
+    expect("payload" in park).toBe(false);
+    const delta = park.attributes_delta as Record<string, unknown>;
+    expect(delta.session_token).toBe("sess-park-1");
   });
 
-  it("omits resume_at for an indefinite park (resumeAt null)", () => {
+  it("omits resume_at for an indefinite park (resumeAt null) and attributes_delta when fully empty", () => {
     const outcome: AgentOutcome = {
       kind: "park_requested",
       reason: "await_callback",
       reasonNote: "",
-      payload: Buffer.alloc(0),
+      attributesDelta: null,
       resumeAt: null,
-      sessionToken: "sess-park-2",
+      sessionToken: "",
     };
     const body = outcomeToCallbackBody(outcome, "ack-park-2");
     expect(["success", "error", "park"].filter((k) => k in body)).toEqual([
@@ -352,8 +316,10 @@ describe("http-bridge outcomeToCallbackBody park outcome", () => {
     ]);
     const park = body.park as Record<string, unknown>;
     expect("resume_at" in park).toBe(false);
+    expect("attributes_delta" in park).toBe(false);
+    expect("payload" in park).toBe(false);
+    expect("session_token" in park).toBe(false);
     expect(park.reason).toBe("await_callback");
-    expect(park.payload).toBe("");
   });
 });
 

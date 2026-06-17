@@ -111,7 +111,7 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		return fmt.Errorf("postgres.Enqueue: run_scope_id required for node %s", req.NodeID)
 	}
 	// @constraint: $7 / $8 carry the predecessor dispatch id + disposition for
-	// retries / heartbeat-stale recovery / recalculates; both NULL for initial
+	// retries / stale-recovery / recalculates; both NULL for initial
 	// dispatches. Per spec:2026-05-22-fan-out-safety-scope-first-design
 	// §Recovery-aware executor protocol.
 	var priorID any
@@ -119,8 +119,8 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		priorID = *req.PriorDispatchID
 	}
 	priorDisposition := nullableText(req.PriorDispatchDisposition)
-	// @constraint: when this enqueue follows a prior dispatch (heartbeat-stale
-	// recovery, retry-after-error, recalculate), the caller has already loaded
+	// @constraint: when this enqueue follows a prior dispatch (stale-recovery,
+	// retry-after-error, recalculate), the caller has already loaded
 	// the prior row's scratch triple and put it on req.InitialScratch* so the
 	// new dispatch row carries the executor's in-flight state across the
 	// recovery. Inert in rimsky per concept:inertness / @blessed-invariant 21.
@@ -327,7 +327,7 @@ func (q *queueImpl) ClaimDispatchRow(
 	}
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET claimed_by = $1, claimed_at = NOW(), last_heartbeat_at = NOW(), phase = 'active'
+		    SET claimed_by = $1, claimed_at = NOW(), last_progress_at = NOW(), phase = 'active'
 		  WHERE id = $2 AND claimed_by IS NULL AND phase = 'pending'`,
 		supervisorID, dispatchID,
 	)
@@ -354,7 +354,6 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 			`UPDATE rimsky_node_runs
 			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
 			        claimed_by = NULL,
-			        last_heartbeat_at = NULL,
 			        active_terminal_at = NOW()
 			  WHERE id = $1
 			    AND claimed_by = $2
@@ -367,7 +366,6 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 		`UPDATE rimsky_node_runs
 		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
 		        claimed_by = NULL,
-		        last_heartbeat_at = NULL,
 		        active_terminal_at = NOW()
 		  WHERE id = $1
 		    AND phase IN ('pending','active','held','parked')`,
@@ -385,10 +383,9 @@ func (q *queueImpl) RemoveForNode(ctx context.Context, nodeID shared.UUID, runSc
 // past active terminal so frame-end / retention / run-tree aggregation
 // can read state + settling_signal_type). Determines the terminal phase
 // from the row's `state` column — `state='failed'` ⇒ phase='failed',
-// everything else ⇒ phase='completed'. Clears claimed_by /
-// last_heartbeat_at and stamps active_terminal_at so the orphan-claim
-// reaper and the in-flight predicate both stop treating the row as
-// active.
+// everything else ⇒ phase='completed'. Clears claimed_by and stamps
+// active_terminal_at so the orphan-claim reaper and the in-flight
+// predicate both stop treating the row as active.
 //
 // expectedClaimedBy is the claimant-guard. When non-empty, the row only
 // retires if claimed_by matches — so a stale supervisor's terminal call
@@ -413,7 +410,6 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 			`UPDATE rimsky_node_runs
 			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
 			        claimed_by = NULL,
-			        last_heartbeat_at = NULL,
 			        active_terminal_at = NOW()
 			  WHERE node_id = $1
 			    AND run_scope_id = $2
@@ -427,7 +423,6 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 		`UPDATE rimsky_node_runs
 		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
 		        claimed_by = NULL,
-		        last_heartbeat_at = NULL,
 		        active_terminal_at = NOW()
 		  WHERE node_id = $1
 		    AND run_scope_id = $2
@@ -437,16 +432,21 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 	return err
 }
 
-// ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is
-// older than cutoff. @blessed-invariant 6 (5× heartbeat cutoff).
-func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]persistence.DispatchRow, error) {
+// ListOrphanedClaims returns claimed async-mode dispatch rows. The
+// returned set is exhaustive (every in-flight async claim with non-NULL
+// async_ack_id); SweepExecutorDeadlines per-row applies the effective
+// max_quiet_period and max_runtime decision using the denormalized
+// effective_max_quiet_period_seconds / effective_max_runtime_seconds
+// columns set at RegisterAsyncAck time.
+func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.DispatchRow, error) {
 	rows, err := q.pool.Query(ctx,
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
-		        claimed_by, claimed_at, last_heartbeat_at, frame_id
+		        claimed_by, claimed_at, frame_id, async_ack_id, async_ack_registered_at,
+		        last_progress_at, tags,
+		        effective_max_quiet_period_seconds, effective_max_runtime_seconds
 		   FROM rimsky_node_runs
 		  WHERE claimed_by IS NOT NULL
-		    AND last_heartbeat_at < $1`,
-		cutoff,
+		    AND async_ack_id IS NOT NULL`,
 	)
 	if err != nil {
 		return nil, err
@@ -458,7 +458,9 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([
 		var r persistence.DispatchRow
 		if err := rows.Scan(
 			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
-			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,
+			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
+			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
+			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
 		); err != nil {
 			return nil, err
 		}
@@ -480,7 +482,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 	if expectedClaimedBy != "" {
 		_, err := q.pool.Exec(ctx,
 			`UPDATE rimsky_node_runs
-			    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
+			    SET claimed_by = NULL, claimed_at = NULL, phase = 'pending'
 			  WHERE id = $1 AND claimed_by = $2`,
 			dispatchID, expectedClaimedBy,
 		)
@@ -488,7 +490,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 	}
 	_, err := q.pool.Exec(ctx,
 		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
+		    SET claimed_by = NULL, claimed_at = NULL, phase = 'pending'
 		  WHERE id = $1`,
 		dispatchID,
 	)
@@ -537,15 +539,106 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (p
 	return persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: *claimedBy}, nil
 }
 
-func (q *queueImpl) RefreshHeartbeat(ctx context.Context, supervisorID string) error {
-	_, err := q.pool.Exec(ctx,
-		`UPDATE rimsky_node_runs SET last_heartbeat_at = NOW() WHERE claimed_by = $1`,
-		supervisorID,
+// LookupRunByAsyncAckID returns the dispatch row previously registered
+// against ackID via RegisterAsyncAck, or (nil, nil) when no row matches.
+//
+// @constraint: the unique partial index rimsky_node_runs_async_ack_id_idx
+// (postgres migration 013) guarantees at most one row per ackID.
+func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx, ackID string) (*persistence.DispatchRow, error) {
+	if tx == nil {
+		return nil, errors.New("postgres.LookupRunByAsyncAckID: tx required")
+	}
+	row := q.q(tx).QueryRow(ctx,
+		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
+		        claimed_by, claimed_at, frame_id, async_ack_id, async_ack_registered_at,
+		        last_progress_at, tags,
+		        effective_max_quiet_period_seconds, effective_max_runtime_seconds
+		   FROM rimsky_node_runs
+		  WHERE async_ack_id = $1`,
+		ackID,
+	)
+	var r persistence.DispatchRow
+	if err := row.Scan(
+		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
+		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
+		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
+		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres.LookupRunByAsyncAckID: %w", err)
+	}
+	if r.RequiredStores == nil {
+		r.RequiredStores = []string{}
+	}
+	return &r, nil
+}
+
+// RegisterAsyncAck persists ackID and the per-row dispatch deadlines
+// onto the dispatch row.
+//
+// @constraint: caller-supplied tx is load-bearing — the registration
+// must commit atomically with the dispatch state mutation that
+// triggered the AwaitAsync handoff, otherwise an executor's eventual
+// callback could land before its registration is durable.
+func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int) error {
+	if tx == nil {
+		return errors.New("postgres.RegisterAsyncAck: tx required")
+	}
+	if ackID == "" {
+		return errors.New("postgres.RegisterAsyncAck: ackID required")
+	}
+	tag, err := q.q(tx).Exec(ctx,
+		`UPDATE rimsky_node_runs
+		    SET async_ack_id = $2,
+		        async_ack_registered_at = $3,
+		        last_progress_at = $3,
+		        effective_max_quiet_period_seconds = $4,
+		        effective_max_runtime_seconds = $5
+		  WHERE id = $1`,
+		runID, ackID, now, maxQuietSec, maxRuntimeSec,
 	)
 	if err != nil {
-		return fmt.Errorf("postgres.RefreshHeartbeat: %w", err)
+		return fmt.Errorf("postgres.RegisterAsyncAck: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("postgres.RegisterAsyncAck: %s: %w", runID, persistence.ErrRunRowMissing)
 	}
 	return nil
+}
+
+// BumpLastProgressAt advances col:rimsky_node_runs.last_progress_at.
+//
+// @constraint: the bump MUST run in the caller's tx when one exists so
+// it commits atomically with the writeback that triggered it; without
+// that, a crash between writeback-commit and bump-commit would leave
+// last_progress_at stale and bias the quiet-period sweep.
+func (q *queueImpl) BumpLastProgressAt(ctx context.Context, tx persistence.Tx, runID shared.UUID, now time.Time) (bool, error) {
+	tag, err := q.q(tx).Exec(ctx,
+		`UPDATE rimsky_node_runs SET last_progress_at = $2 WHERE id = $1`,
+		runID, now,
+	)
+	if err != nil {
+		return false, fmt.Errorf("postgres.BumpLastProgressAt: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// nilIfEmpty maps a zero-length byte slice to SQL NULL.
+func nilIfEmpty(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
+// nilIfEmptyStr maps an empty string to SQL NULL.
+func nilIfEmptyStr(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // nullableText converts an empty string to SQL NULL.
@@ -590,7 +683,9 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	// phases so the listing keeps its prior shape.
 	rows, err := q.pool.Query(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
-		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
+		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
+		        d.async_ack_registered_at, d.last_progress_at, d.tags,
+		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
 		   FROM rimsky_node_runs d
 		   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 		  WHERE d.phase IN ('pending','active','held','parked')
@@ -613,7 +708,9 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 		var r persistence.DispatchRow
 		if err := rows.Scan(
 			&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
-			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,
+			&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
+			&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
+			&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
 		); err != nil {
 			return persistence.PaginatedListResult[persistence.DispatchRow]{}, err
 		}
@@ -696,7 +793,9 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.pool.QueryRow(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
-		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
+		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
+		        d.async_ack_registered_at, d.last_progress_at, d.tags,
+		        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
 		   FROM rimsky_node_runs d
 		  WHERE d.id = $1
 		    AND d.phase IN ('pending','active','held','parked')`, id,
@@ -704,7 +803,9 @@ func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.D
 	var r persistence.DispatchRow
 	if err := row.Scan(
 		&r.ID, &r.NodeID, &r.ExecutorName, &r.RequiredStores,
-		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.LastHeartbeatAt, &r.FrameID,
+		&r.EnqueuedAt, &r.ClaimedBy, &r.ClaimedAt, &r.FrameID,
+		&r.AsyncAckID, &r.AsyncAckRegisteredAt, &r.LastProgressAt, &r.Tags,
+		&r.EffectiveMaxQuietPeriodSeconds, &r.EffectiveMaxRuntimeSeconds,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil

@@ -37,10 +37,13 @@ import "strings"
 //	"terminal/error/http/timeout"
 //	"transient/retry/3/agent/rate_limited"
 //	"attribute/budget_cents/changed"
-//	"event/discovered"
 //
 // Validated against the canonical taxonomy by ValidateTypePath. The
 // first slash-delimited segment is the TopLevelKind.
+//
+// Per TD-collapse-named-event-to-tags the historic `event/<name>`
+// kind is retired — non-terminal observable transitions now ride as
+// tags on the settling terminal verdict; see concept:terminal-tag.
 type TypePath string
 
 // Signal is the wire envelope for any node-run transition. Type
@@ -66,17 +69,12 @@ const (
 
 	// KindTransient is emitted during the lifetime of a dispatch for
 	// transitions observers may want to react to but that don't
-	// finish the dispatch. Leaves: retry/<n>/<class>,
-	// heartbeat_missed, await_async.
+	// finish the dispatch. Leaves: retry/<n>/<class>, await_async.
 	KindTransient TopLevelKind = "transient"
 
 	// KindAttribute is emitted when an upstream node writes an
 	// attribute. Leaf: <key>/changed.
 	KindAttribute TopLevelKind = "attribute"
-
-	// KindEvent is emitted when an executor produces a non-terminal
-	// named event. Leaf: <name>.
-	KindEvent TopLevelKind = "event"
 )
 
 // TopLevel returns the first slash-delimited segment of the TypePath
@@ -93,7 +91,7 @@ func (t TypePath) TopLevel() TopLevelKind {
 	}
 	k := TopLevelKind(s)
 	switch k {
-	case KindTerminal, KindTransient, KindAttribute, KindEvent:
+	case KindTerminal, KindTransient, KindAttribute:
 		return k
 	}
 	return ""

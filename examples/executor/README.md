@@ -1,3 +1,4 @@
+<!-- @story: executor-protocol -->
 # examples/executor — Reference Executor
 
 A minimal, copy-and-modify Go Executor that boots as a gRPC server and serves
@@ -12,25 +13,26 @@ the rimsky orchestrator itself.
 
 A real custom executor isn't just an Execute RPC — it advertises its
 contract surface to rimsky at startup so the orchestrator can gate
-templates, route declared errors, and emit named events on the unified
+templates, route declared errors, and surface tags on the unified
 event log. This example covers each protocol surface:
 
-- **Dispatch** — `Execute` is a server-streaming RPC. The example sends
-  one optional Heartbeat then exactly one terminal `StreamClose`. The
-  three terminal outcomes (`Success`, `Error`, `Park`,
-  `AwaitAsyncCallback`) are all built the same way; the example branches
-  on the resolved `mode` attribute to demonstrate Success vs. declared
-  Error vs. NamedEvent-then-Success.
+- **Dispatch** — `Execute` is a unary RPC. The example returns
+  exactly one `Outcome` carrying one of the four variants
+  (`Success`, `Error`, `Park`, `AwaitAsyncCallback`). The
+  example branches on the resolved `mode` attribute to demonstrate
+  Success vs. declared Error vs. tagged-Success.
 - **Capabilities handshake** — `ExecutorObservability.Capabilities`
   advertises three load-bearing fields rimsky reads at startup:
   - `expected_attributes_schema`: a JSON Schema rimsky merges with the
     template's `attributes:` block. Used by the registration-time
     validator (mode `all`/`available`) to refuse a template whose
     static defaults violate the executor's value constraints.
-  - `declared_events`: the set of `NamedEvent.name` values the executor
-    may emit. Rimsky validates emissions at the supervisor and validates
-    template `subscribes: [{type: event/<name>}]` references at
-    registration.
+  - `declared_tags`: the set of tag names this executor may include
+    on the `tags` field of a settling terminal verdict (Success /
+    Error / Park). Rimsky rejects emissions of undeclared names at
+    the supervisor's terminal handler and validates template
+    `subscribes: [{type: terminal/*, when: "<tag>" in payload.tags}]`
+    references at registration.
   - `declared_error_classes`: the set of `Error.error_class` values the
     executor may surface. Operator `error_types:` policy keys are
     range-checked against this set so a typo can't silently no-op a
@@ -40,9 +42,9 @@ event log. This example covers each protocol surface:
 
 | File                  | What it is                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------- |
-| `executor.go`         | The Executor type and its three RPCs. Read this first; it carries the full wiring contract. |
+| `executor.go`         | The Executor type and its two RPCs. Read this first; it carries the full wiring contract. |
 | `main.go`             | The binary entry point — `Listen` + `RunGRPC` lifecycle.                                    |
-| `executor_test.go`    | Fast in-process tests pinning the dispatch happy path + declared-class + named-event modes. |
+| `executor_test.go`    | Fast in-process tests pinning the dispatch happy path + declared-class + tagged-Success modes. |
 | `main_e2e_test.go`    | Cross-stack proof — boots a real rimsky-all-in-one stack and exhibits every surface above.  |
 | `go.mod` / `go.sum`   | Stand-alone Go module; the build-time dep is `lib/protocols` (the wire contract); the test-only deps add `lib/services/test/harness` for the cross-stack proof and never reach a consumer's `go build`. |
 
@@ -88,16 +90,25 @@ nodes:
 ## In-process tests
 
 `executor_test.go` stands up the Executor on a loopback port and drives
-the protocol directly via gRPC — no Docker, no rimsky stack. The three
-tests pin the dispatch contract:
+the protocol directly via gRPC — no Docker, no rimsky stack. The tests
+pin the dispatch contract:
 
-- `TestExecuteReturnsSingleSuccessTerminal` — exactly one `StreamClose`
-  with `Success`, plus non-empty `expected_attributes_schema`,
-  `declared_events`, `declared_error_classes`.
+- `TestExecuteReturnsSuccessOutcome` — exactly one `Outcome{Success}`,
+  plus non-empty `expected_attributes_schema`, `declared_tags`,
+  `declared_error_classes`.
 - `TestExecute_RaiseErrorEmitsDeclaredClass` — `mode: raise_error`
-  terminates with `Error.error_class = "example/forbidden"`.
-- `TestExecute_EmitEventEmitsDeclaredName` — `mode: emit_event` emits a
-  `NamedEvent` named `work_started` before the Success terminal.
+  settles with `Outcome{Error}` carrying
+  `error_class = "example/forbidden"`.
+- `TestExecute_EmitEventEmitsDeclaredTag` — `mode: emit_event` settles
+  with `Outcome{Success}` whose `tags` carries `work_started`.
+- `TestExecute_AsyncMode_ReturnsAwaitAsyncCallback` — `mode:
+  async_callback` with a supplied `async_ack_id` attribute settles
+  with `Outcome{AwaitAsyncCallback}` carrying that exact ack id, ready
+  for the supervisor to persist on
+  `col:rimsky_node_runs.async_ack_id`.
+- `TestExecute_AsyncMode_MissingAckIDSurfacesError` — the same mode
+  with an empty `async_ack_id` surfaces an Error rather than getting
+  stuck against a non-correlatable empty registry row.
 
 Run them:
 
@@ -119,18 +130,43 @@ end-to-end against the assembled product:
    executor produces an instance whose worker node settles to `fresh`
    through the real supervisor — proof the supervisor dialed the
    executor at the advertised endpoint and ran a real dispatch.
-2. **NamedEvent appears on the event log.** A template whose worker
-   carries `mode: emit_event` causes the executor to emit a NamedEvent
-   named `work_started` before the Success terminal; the supervisor
-   persists it on `rimsky_events` as kind `event/work_started`, visible
-   via `GET /v1/events?kind=event/work_started`.
+2. **Tag appears on the event log.** A template whose worker carries
+   `mode: emit_event` causes the executor to return Success carrying
+   `tags: ["work_started"]`; the supervisor persists the
+   `terminal/success` event row with `payload.tags`
+   including `work_started`, visible via
+   `GET /v1/events?kind=terminal/success`. A downstream subscriber
+   declared `subscribes: [{node: worker, type: terminal/success, when:
+   "work_started" in payload.tags}]` dispatches in the same frame —
+   proving end-to-end tag-keyed cascade.
 3. **Declared error class routes through `error_types:`.** A template
    whose worker declares `error_types: { example/forbidden: { policy:
    [give_up] } }` and carries `mode: raise_error` causes the executor
    to emit `Error{error_class: example/forbidden}`; rimsky routes the
    give_up action through the declared chain and emits the canonical
    signal `terminal/error/example/forbidden` on the event log.
-4. **Attribute schema validates at registration.** A template whose
+4. **Async-callback registration + delivery + persistent-registry
+   survival across supervisor restart.** A template whose worker
+   carries `mode: async_callback` and a known `async_ack_id` attribute
+   causes the executor to return `Outcome{AwaitAsyncCallback}`
+   synchronously; the supervisor persists the ack id to
+   `col:rimsky_node_runs.async_ack_id` in tx with the
+   `transient/await_async` signal emit (the production wiring runs in
+   `code:lib/runtime/runner_dispatch.go::registerAsyncIfSet` and the
+   columns are surfaced on `GET /v1/observability/node-runs`). After
+   confirming the persisted ack id, the test calls
+   `RimskyHandle.Restart()` — terminating the rimsky-all-in-one
+   container and bringing up a fresh one against the SAME Postgres
+   state DB. The fresh supervisor's in-memory `code:CallbackRegistry`
+   is empty; when the test POSTs `AsyncCallbackBody{success:{...}}` to
+   the post-restart `route:POST /v1/callback/{async_ack_id}`, the
+   handler falls through to `code:Queue.LookupRunByAsyncAckID` against
+   the persisted column, correlates the dispatch row, and drives the
+   verdict to `terminal/success`. The node reaches `fresh`. This is
+   the Falsifier-named "async-callback POST is dropped after the
+   supervisor that registered it restarts" leg of
+   STORY-executor-protocol.
+5. **Attribute schema validates at registration.** A template whose
    worker carries a static default `count: -1` violates the executor's
    advertised `count.minimum: 0` constraint; rimsky's registration-time
    validator (default mode `all`) refuses the template registration
@@ -154,7 +190,7 @@ go test -run TestE2E -count=1 -v -timeout 600s .
 ```
 
 The test brings up testcontainer Postgres + rimsky-all-in-one and runs
-the four legs against the SAME running stack (single bring-up,
+the five legs against the SAME running stack (single bring-up,
 ~60-90 s total wall time depending on Docker layer cache).
 
 ### How the harness wires the executor
@@ -190,7 +226,7 @@ exercising the real value path through the assembled rimsky stack.
 1. Copy `examples/executor/` into your own repo.
 2. Rename the module in `go.mod`.
 3. Replace the body of `Execute` with your work.
-4. Adjust `Capabilities` to advertise your real schema, event names,
+4. Adjust `Capabilities` to advertise your real schema, tags,
    and error classes — the three handshake fields are the contract
    rimsky reads at startup.
 5. Drop `executor_test.go` and `main_e2e_test.go` if they no longer

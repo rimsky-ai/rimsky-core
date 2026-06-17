@@ -251,7 +251,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 		NamedLocks:    cfg.NamedLocks,
 		Executors:     executorsByName,
 		// @deliberate: ExecutorCapabilities exposes the observability
-		// discovery cache's per-executor (declared_events,
+		// discovery cache's per-executor (declared_tags,
 		// declared_error_classes, expected_attributes_schema) to the
 		// controlapi templates registration validator. The cache is
 		// already populated by RunHandshake at startup and refreshed by
@@ -263,7 +263,7 @@ func StartControlAPI(cfg ControlAPIConfig) (ControlAPIHandle, error) {
 			if !ok || peer.Capabilities == nil {
 				return nil, nil, nil, false
 			}
-			return peer.Capabilities.DeclaredEvents,
+			return peer.Capabilities.DeclaredTags,
 				peer.Capabilities.DeclaredErrorClasses,
 				peer.Capabilities.ExpectedAttributesSchema,
 				true

@@ -2,26 +2,25 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Spec §12.4 — async-handoff terminal callback. Executors that
-// returned AwaitAsyncCallback POST an AsyncCallbackBody JSON body to
-// `POST {callback_url}/v1/callback/{async_ack_id}`. The CallbackRegistry
-// maps the ack id back to the per-run AsyncContext the runner registered
-// at handoff time; this file's HTTP handler classifies the body, builds
-// a `terminalEvent`, and drives the same `applyTerminal*` flow that the
-// synchronous executor-RPC path runs in `runner_terminal.go`.
+// Spec §12.4 — async-handoff terminal callback. Executors that returned
+// AwaitAsyncCallback POST an AsyncCallbackBody JSON body to
+// `POST {callback_url}/v1/callback/{async_ack_id}`. The callback handler
+// looks up the dispatch row by the persisted `async_ack_id` column (per
+// TD-persist-async-callback-registry, so a supervisor restart between
+// handoff and callback does not lose the row), classifies the body,
+// builds a `terminalEvent`, and drives the same `applyTerminal*` flow
+// that the synchronous unary executor-RPC path runs in
+// `runner_terminal.go`.
 //
-// Body shape mirrors the gRPC StreamClose outcome oneof (spec §12.3 —
-// HTTP+JSON bridge): the body carries exactly one of
-// `success` / `error` / `park`, plus an optional `events` array of
-// NamedEvent records replayed before the outcome verdict. The legacy
-// `{type: "complete"|"blocked"|"errored"}` discriminator is rejected
-// with HTTP 400. The chi route param is `{async_ack_id}` (spec §12.4);
-// the internal handler variable is named `ackID` for brevity.
+// Body shape mirrors the unary Execute outcome oneof: exactly one of
+// `success` / `error` / `park`. AwaitAsyncCallback chaining is forbidden
+// (the callback IS the second half of the async path). The chi route
+// param is `{async_ack_id}`; the internal handler variable is named
+// `ackID` for brevity.
 //
 // The dispatch row's frame_id is preserved across async handoff; the
 // callback resolution path commits cascade message-passes that inherit
-// the parent's frame_id (see runtime/runner_terminal.go and
-// docs/history/2026-04-26-frame-resolution-design.md §9).
+// the parent's frame_id (see runtime/runner_terminal.go).
 package runtime
 
 import (
@@ -82,9 +81,16 @@ type ackOutcomeRecord struct {
 	Phase  string
 }
 
-// CallbackRegistry tracks pending async executions. Runners register an
-// AsyncContext (defined in runner.go) when an executor returns
-// AwaitAsyncCallback; the HTTP endpoint resolves ackID to the context on callback.
+// CallbackRegistry is a read-through cache over the persistent
+// async-ack registry on rimsky_node_runs. The canonical source of
+// truth is `col:rimsky_node_runs.async_ack_id` written via
+// `code:Queue.RegisterAsyncAck` at runner-side AwaitAsync handling
+// (Task 9 step 7); this in-memory map only fronts hot lookups so the
+// common-case callback handler doesn't open a tx. A miss falls
+// through to `code:Queue.LookupRunByAsyncAckID` at the handler, so
+// callbacks survive supervisor restart.
+//
+// @concept: async-callback-persistence
 type CallbackRegistry struct {
 	mu      sync.RWMutex
 	pending map[string]AsyncContext
@@ -102,8 +108,10 @@ func (r *CallbackRegistry) Register(ackID string, ctx AsyncContext) {
 	r.pending[ackID] = ctx
 }
 
-// Pop returns and removes the AsyncContext for ackID. The bool is false when
-// ackID is unknown.
+// Pop returns and removes the AsyncContext for ackID from the
+// in-memory cache. The bool is false when the cache has no entry —
+// callers fall through to the persistent lookup via
+// `code:Queue.LookupRunByAsyncAckID`.
 func (r *CallbackRegistry) Pop(ackID string) (AsyncContext, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -242,7 +250,11 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 	// URL.
 	if c.Persist != nil {
 		r.Method(http.MethodPost, "/v1/runs/{run_id}/attributes", rimskyattrs.Handler(rimskyattrs.HandlerDeps{
-			Store:  attributesStoreAdapter{store: c.Persist},
+			Store: attributesStoreAdapter{
+				store: c.Persist,
+				queue: c.Queue,
+				clock: c.Clock,
+			},
 			Auth:   c.attributesAuth,
 			Logger: c.Logger,
 		}))
@@ -264,6 +276,13 @@ func (c *CallbackServer) Start(host string, port int) (string, error) {
 			Auth:   c.attributesAuth,
 			Logger: c.Logger,
 		}))
+	}
+	// @constraint: spec §12.6 — keepalive endpoint. Standalone liveness
+	// ping that bumps last_progress_at without writing attributes or
+	// scratch. Requires Queue + Persist (the bump runs against
+	// col:rimsky_node_runs); mounted only when both are wired.
+	if c.Persist != nil && c.Queue != nil {
+		r.Post("/v1/runs/{run_id}/keepalive", c.handleKeepalive)
 	}
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -310,32 +329,20 @@ func (c *CallbackServer) Close(ctx context.Context) error {
 }
 
 // asyncCallbackBody mirrors the AsyncCallbackBody shape from
-// protocols/proto/v1/executor.proto (post 2026-05-12 nomenclature
-// resolution). Events processed in arrival order before the outcome
-// verdict is applied.
-//
-// Exactly one of success | error | park MUST be set; the legacy
-// `{type: ...}` discriminator shape is no longer accepted (pre-v1; no
-// consumer pin).
+// proto:executor.proto. Per TD-collapse-named-event-to-tags the
+// `events` array is gone; tags ride on each settling outcome variant.
+// Exactly one of success | error | park MUST be set.
 type asyncCallbackBody struct {
-	Events  []asyncCallbackNamedEvent `json:"events,omitempty"`
-	Success *asyncCallbackSuccess     `json:"success,omitempty"`
-	Error   *asyncCallbackError       `json:"error,omitempty"`
-	Park    *asyncCallbackPark        `json:"park,omitempty"`
-}
-
-// asyncCallbackNamedEvent mirrors the proto NamedEvent message.
-//
-// Payload is base64-encoded on the wire (proto-JSON rule for `bytes`).
-type asyncCallbackNamedEvent struct {
-	Name    string `json:"name"`
-	Payload []byte `json:"payload,omitempty"`
+	Success *asyncCallbackSuccess `json:"success,omitempty"`
+	Error   *asyncCallbackError   `json:"error,omitempty"`
+	Park    *asyncCallbackPark    `json:"park,omitempty"`
 }
 
 type asyncCallbackSuccess struct {
 	Changed         bool           `json:"changed,omitempty"`
 	ChangeSummary   string         `json:"change_summary,omitempty"`
 	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
+	Tags            []string       `json:"tags,omitempty"`
 	// Scratch is the executor-attached opaque bytes mirroring the proto
 	// Success.scratch field (base64 on the wire per proto-JSON bytes
 	// projection). Inert in rimsky per @blessed-invariant 21.
@@ -344,8 +351,10 @@ type asyncCallbackSuccess struct {
 }
 
 type asyncCallbackError struct {
-	ErrorClass string `json:"error_class,omitempty"`
-	Payload    any    `json:"payload,omitempty"`
+	ErrorClass      string         `json:"error_class,omitempty"`
+	Payload         any            `json:"payload,omitempty"`
+	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
+	Tags            []string       `json:"tags,omitempty"`
 	// Scratch mirrors Error.scratch. @concept: executor
 	Scratch []byte `json:"scratch,omitempty"`
 }
@@ -357,14 +366,23 @@ type asyncCallbackPark struct {
 	ReasonNote string `json:"reason_note,omitempty"`
 	// @constraint: ReasonLabel required when Reason == "other" per spec E12.
 	ReasonLabel string `json:"reason_label,omitempty"`
-	Payload     []byte `json:"payload,omitempty"`
 	// @constraint: ResumeAt is RFC3339; empty = absent.
-	ResumeAt     string `json:"resume_at,omitempty"`
-	SessionToken string `json:"session_token,omitempty"`
+	ResumeAt        string         `json:"resume_at,omitempty"`
+	AttributesDelta map[string]any `json:"attributes_delta,omitempty"`
+	Tags            []string       `json:"tags,omitempty"`
 	// Scratch mirrors Park.scratch. @concept: executor
 	Scratch []byte `json:"scratch,omitempty"`
 }
 
+// @blessed-invariant: persistent-registry-survives-restart — the
+// async-callback registry survives supervisor restart. The in-memory
+// cache is a hot-path optimization; the canonical record lives in
+// `col:rimsky_node_runs.async_ack_id`, and a callback POST that
+// arrives after the supervisor reboot still resolves to the correct
+// dispatch via the persisted column lookup. A cache-only path here
+// would silently 404 every post-restart callback.
+//
+// @concept: async-callback-persistence
 func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
 	ackID := chi.URLParam(r, "async_ack_id")
 	if ackID == "" {
@@ -373,9 +391,25 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	}
 	asyncCtx, ok := c.Registry.Pop(ackID)
 	if !ok {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"unknown_async_ack_id"}`))
-		return
+		// @constraint: persistent registry fallback (the persistent-
+		// registry-survives-restart invariant) — the in-memory cache
+		// missed (e.g. supervisor restarted between
+		// AwaitAsyncCallback and the inbound POST). Look up the
+		// dispatch row by ack id and reconstruct the minimal
+		// AsyncContext from the persisted columns the terminal
+		// handler needs to drive applyTerminal*.
+		row, err := c.lookupAsyncCtxByAck(r.Context(), ackID)
+		if err != nil {
+			c.Logger.Warn("callback: persistent lookup failed", "async_ack_id", ackID, "error", err.Error())
+			http.Error(w, `{"error":"internal"}`, http.StatusInternalServerError)
+			return
+		}
+		if row == nil {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"unknown_async_ack_id"}`))
+			return
+		}
+		asyncCtx = *row
 	}
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -387,13 +421,12 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	// `{type: ...}` discriminator shape is no longer accepted (pre-v1;
 	// no consumer pin). Errors surface as HTTP 400 with a precise
 	// message.
-	t, namedEvents, parseErr := parseAsyncCallback(bodyBytes)
+	t, parseErr := parseAsyncCallback(bodyBytes)
 	if parseErr != nil {
 		c.Registry.Register(ackID, asyncCtx)
 		http.Error(w, `{"error":"`+parseErr.Error()+`"}`, http.StatusBadRequest)
 		return
 	}
-	t.NamedEvents = namedEvents
 
 	if err := c.driveTerminal(r.Context(), asyncCtx, t); err != nil {
 		// @constraint: re-register so the executor can retry. If we
@@ -463,6 +496,57 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// lookupAsyncCtxByAck looks up the dispatch row by ack id and
+// reconstructs the minimal AsyncContext the terminal handler needs to
+// drive applyTerminal*. The persistent registry survives supervisor
+// restart: when the in-memory cache misses, this path finds the
+// dispatch and rebuilds enough state for driveTerminal.
+//
+// Returns (nil, nil) when no row matches the ack id.
+//
+// @concept: async-callback-persistence
+func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) (*AsyncContext, error) {
+	if c.Persist == nil || c.Queue == nil {
+		return nil, nil
+	}
+	var row *persistence.DispatchRow
+	if err := c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		r, err := c.Queue.LookupRunByAsyncAckID(ctx, tx, ackID)
+		row = r
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, nil
+	}
+	supervisorID := c.SupervisorID
+	if row.ClaimedBy != nil {
+		supervisorID = *row.ClaimedBy
+	}
+	var instanceID shared.UUID
+	if err := c.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		n, err := c.Persist.Nodes().Get(ctx, row.NodeID, tx)
+		if err != nil {
+			return err
+		}
+		if n == nil {
+			return fmt.Errorf("lookupAsyncCtxByAck: node %s missing for dispatch %s", row.NodeID, row.ID)
+		}
+		instanceID = n.InstanceID
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("lookupAsyncCtxByAck: resolve instance: %w", err)
+	}
+	return &AsyncContext{
+		NodeID:       row.NodeID,
+		InstanceID:   instanceID,
+		DispatchID:   row.ID,
+		SupervisorID: supervisorID,
+		FrameID:      row.FrameID,
+	}, nil
+}
+
 // findCanonicalSuccessor walks from the rejected dispatch's run row to
 // its RunScope and returns the in-flight run id for the same node in the
 // same RunScope, when one exists. The result is the canonical successor
@@ -500,15 +584,12 @@ func (c *CallbackServer) findCanonicalSuccessor(ctx context.Context, ac AsyncCon
 // outcome oneof variant must be set; the legacy `{type: ...}`
 // discriminator shape is no longer accepted (pre-v1; no consumer pin).
 //
-// Returns:
-//
-//	terminalEvent — populated on success.
-//	[]namedEventRecord — events from `events: [...]`.
-//	error — non-nil on malformed body. The caller surfaces this as HTTP 400.
-func parseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error) {
+// Tags ride on the settling outcome variants; the legacy `events`
+// array has been retired (TD-collapse-named-event-to-tags).
+func parseAsyncCallback(raw []byte) (terminalEvent, error) {
 	var body asyncCallbackBody
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return terminalEvent{}, nil, errors.New("invalid json")
+		return terminalEvent{}, errors.New("invalid json")
 	}
 	outcomeCount := 0
 	if body.Success != nil {
@@ -521,14 +602,7 @@ func parseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error) {
 		outcomeCount++
 	}
 	if outcomeCount != 1 {
-		return terminalEvent{}, nil, fmt.Errorf("expected AsyncCallbackBody; outcome oneof must be set (success | error | park); got %d outcomes", outcomeCount)
-	}
-	events := make([]namedEventRecord, 0, len(body.Events))
-	for _, e := range body.Events {
-		events = append(events, namedEventRecord{
-			Name:          e.Name,
-			PayloadInline: e.Payload,
-		})
+		return terminalEvent{}, fmt.Errorf("expected AsyncCallbackBody; outcome oneof must be set (success | error | park); got %d outcomes", outcomeCount)
 	}
 	switch {
 	case body.Success != nil:
@@ -537,34 +611,37 @@ func parseAsyncCallback(raw []byte) (terminalEvent, []namedEventRecord, error) {
 			Changed:       body.Success.Changed,
 			ChangeSummary: body.Success.ChangeSummary,
 			AttributesDel: body.Success.AttributesDelta,
+			Tags:          dedupTagsRT(body.Success.Tags),
 			Scratch:       body.Success.Scratch,
-		}, events, nil
+		}, nil
 	case body.Error != nil:
 		return terminalEvent{
-			Kind:       terminalKindErrored,
-			ErrorClass: body.Error.ErrorClass,
-			Payload:    map[string]any{"payload": body.Error.Payload},
-			Scratch:    body.Error.Scratch,
-		}, events, nil
+			Kind:          terminalKindErrored,
+			ErrorClass:    body.Error.ErrorClass,
+			Payload:       map[string]any{"payload": body.Error.Payload},
+			AttributesDel: body.Error.AttributesDelta,
+			Tags:          dedupTagsRT(body.Error.Tags),
+			Scratch:       body.Error.Scratch,
+		}, nil
 	case body.Park != nil:
 		t := terminalEvent{
-			Kind:             terminalKindPark,
-			ParkReason:       parkReasonFromStorageForm(body.Park.Reason),
-			ParkReasonNote:   body.Park.ReasonNote,
-			ParkReasonLabel:  body.Park.ReasonLabel,
-			ParkPayload:      body.Park.Payload,
-			ParkSessionToken: body.Park.SessionToken,
-			Scratch:          body.Park.Scratch,
+			Kind:            terminalKindPark,
+			ParkReason:      parkReasonFromStorageForm(body.Park.Reason),
+			ParkReasonNote:  body.Park.ReasonNote,
+			ParkReasonLabel: body.Park.ReasonLabel,
+			AttributesDel:   body.Park.AttributesDelta,
+			Tags:            dedupTagsRT(body.Park.Tags),
+			Scratch:         body.Park.Scratch,
 		}
 		if body.Park.ResumeAt != "" {
 			if pt, err := time.Parse(time.RFC3339, body.Park.ResumeAt); err == nil {
 				t.ParkResumeAt = pt
 			}
 		}
-		return t, events, nil
+		return t, nil
 	}
 	// @deliberate: unreachable — outcomeCount==1 enforced above.
-	return terminalEvent{}, nil, errors.New("unreachable")
+	return terminalEvent{}, errors.New("unreachable")
 }
 
 // driveTerminal reconstructs the runner's `RunArgs` + `acquisition` shape
@@ -843,8 +920,25 @@ func truncForLog(s string, max int) string {
 //
 // The split exists because `graph/attribute` cannot import
 // `foundation/persistence` without a cycle.
+//
+// @constraint: every mutating write (Upsert, MergeDelta) bundles a
+// code:Queue.BumpLastProgressAt call into the same tx so the §12.5
+// writeback's success advances col:rimsky_node_runs.last_progress_at
+// atomically with the attributes write. Per TD-three-dispatch-deadlines
+// the quiet-period sweep keys on last_progress_at; splitting the bump
+// into a separate tx would race with a crash between the two commits
+// and bias the sweep into killing live work.
 type attributesStoreAdapter struct {
 	store persistence.Tables
+	queue persistence.Queue
+	clock shared.Clock
+}
+
+func (a attributesStoreAdapter) now() time.Time {
+	if a.clock != nil {
+		return a.clock.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (a attributesStoreAdapter) GetByRun(ctx context.Context, runID shared.UUID) (*rimskyattrs.Row, error) {
@@ -869,13 +963,29 @@ func (a attributesStoreAdapter) GetByRun(ctx context.Context, runID shared.UUID)
 
 func (a attributesStoreAdapter) Upsert(ctx context.Context, runID, nodeID shared.UUID, data map[string]any) error {
 	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return a.store.NodeAttributes().Upsert(ctx, runID, nodeID, data, tx)
+		if err := a.store.NodeAttributes().Upsert(ctx, runID, nodeID, data, tx); err != nil {
+			return err
+		}
+		if a.queue != nil {
+			if _, err := a.queue.BumpLastProgressAt(ctx, tx, runID, a.now()); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
 func (a attributesStoreAdapter) MergeDelta(ctx context.Context, runID shared.UUID, delta map[string]any) error {
 	return a.store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return a.store.NodeAttributes().MergeDelta(ctx, runID, delta, tx)
+		if err := a.store.NodeAttributes().MergeDelta(ctx, runID, delta, tx); err != nil {
+			return err
+		}
+		if a.queue != nil {
+			if _, err := a.queue.BumpLastProgressAt(ctx, tx, runID, a.now()); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -945,7 +1055,17 @@ func (a scratchStoreAdapter) Write(ctx context.Context, runID shared.UUID, b []b
 		inline = b
 	}
 	if err := a.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return a.queue.WriteScratchInTx(ctx, tx, runID, inline, handle, handleBackend)
+		if err := a.queue.WriteScratchInTx(ctx, tx, runID, inline, handle, handleBackend); err != nil {
+			return err
+		}
+		// @constraint: bump last_progress_at in the same tx as the
+		// scratch write so the quiet-period sweep counts from this
+		// checkpoint. Same atomic-commit guarantee as the §12.5
+		// attributes writeback above.
+		if _, err := a.queue.BumpLastProgressAt(ctx, tx, runID, time.Now().UTC()); err != nil {
+			return err
+		}
+		return nil
 	}); err != nil {
 		// @constraint: translate the persistence missing-row sentinel
 		// into the scratch-callback sentinel so the HTTP handler maps

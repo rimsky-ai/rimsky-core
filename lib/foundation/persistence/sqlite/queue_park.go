@@ -22,7 +22,9 @@ import (
 )
 
 // ParkActiveInTx transitions a node-run row from phase='active' to
-// phase='parked' under the supplied claimant guard.
+// phase='parked' under the supplied claimant guard. Park no longer
+// carries inline payload bytes or a session token — resume state rides
+// attribute carry-forward (concept:parked-state).
 func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in persistence.ParkActiveInput) error {
 	if tx == nil {
 		return errors.New("sqlite.ParkActiveInTx: tx required")
@@ -34,34 +36,22 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 	if !in.ResumeAt.IsZero() {
 		resumeAt = formatTime(in.ResumeAt)
 	}
-	var payloadInline any
-	if len(in.PayloadInline) > 0 {
-		payloadInline = in.PayloadInline
-	}
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
 		    SET phase = 'parked',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
-		        last_heartbeat_at = NULL,
 		        parked_at = ?,
 		        resume_at = ?,
 		        parked_reason = ?,
 		        parked_reason_note = ?,
-		        parked_reason_label = ?,
-		        session_token = ?,
-		        parked_payload_inline = ?,
-		        parked_payload_handle = ?,
-		        parked_payload_handle_backend = ?
+		        parked_reason_label = ?
 		  WHERE id = ?
 		    AND claimed_by = ?
 		    AND phase = 'active'`,
 		formatTime(in.ParkedAt), resumeAt,
 		nullableString(in.Reason), nullableString(in.ReasonNote),
 		nullableString(in.ReasonLabel),
-		nullableString(in.SessionToken),
-		payloadInline,
-		nullableString(in.PayloadHandle), nullableString(in.PayloadHandleBackend),
 		in.DispatchID.String(), in.ExpectedClaimedBy,
 	)
 	if err != nil {
@@ -85,8 +75,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	}
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
-		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.phase = 'parked'
@@ -104,16 +93,14 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 }
 
 // ListParkedOverdue returns parked rows whose parked_at +
-// max_park_duration_seconds is older than now. SQLite has no native
-// `interval`; we compare via app-side filter on the loaded rows.
+// max_park_duration_seconds is older than now.
 func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]persistence.ParkedRow, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
-		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.phase = 'parked'
@@ -135,8 +122,7 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 	// overdue predicate (parked_at + max_park_duration_seconds <= now)
 	// is enforced app-side. The resume_at gate (NULL or strictly in the
 	// future) prevents racing the deadline-elapsed wake path, which
-	// picks rows whose resume_at <= now; see the postgres mirror for
-	// the full rationale.
+	// picks rows whose resume_at <= now; see the postgres mirror.
 	out := make([]persistence.ParkedRow, 0, len(all))
 	for _, r := range all {
 		if r.MaxParkDurationSeconds == nil {
@@ -147,7 +133,6 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 			continue
 		}
 		if r.ResumeAt != nil && !r.ResumeAt.After(now) {
-			// @constraint: resume_at has elapsed → row is the wake path's, skip (the max-park sweep does not steal rows the wake sweep will resume).
 			continue
 		}
 		out = append(out, r)
@@ -234,20 +219,14 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 	return out, nil
 }
 
-// GetParkedByNode returns the parked row for a node, or nil.
+// GetParkedByNode returns the parked row for a (node, run scope) pair,
+// or (nil, nil) when no parked row exists.
 //
-// When `runID` is non-nil the SELECT is narrowed to that specific
-// in-flight row — fan-out children share a node_id with their siblings,
-// so a SELECT by node_id alone can return any of the in-flight parked
-// rows while children race. Nil `runID` preserves the legacy by-node
-// lookup for paths that don't face fan-out ambiguity.
-//
-// @concept: fan-out
+// @concept: run-scope
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
-		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.node_id = ?
@@ -266,33 +245,22 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, run
 }
 
 // ResumeParkedInTx transitions parked→pending so the next
-// SelectCandidates tick picks the row up. Park metadata is preserved
-// for the resume-dispatch path. The row goes back to claimed_by=NULL
-// so any eligible supervisor can pick it up; the wake-source supervisor
-// id is recorded by callers in the parked_resume_started audit event.
-// The wakeReason is persisted on rimsky_node_runs.wake_reason so
-// the resume-dispatch path's LoadResumeMetadataInTx can attach it to
-// ResumeContext.resume_reason. enqueued_at is preserved across the
-// resume — see the postgres mirror for the rationale.
-func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, wakeReason string) (bool, error) {
+// SelectCandidates tick picks the row up via the standard atomic
+// acquisition path. Park reason metadata is preserved on the row;
+// resume state rides attribute carry-forward (concept:parked-state).
+func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) (bool, error) {
 	if tx == nil {
 		return false, errors.New("sqlite.ResumeParkedInTx: tx required")
-	}
-	var wakeReasonArg any
-	if wakeReason != "" {
-		wakeReasonArg = wakeReason
 	}
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
 		    SET phase = 'pending',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
-		        last_heartbeat_at = NULL,
-		        resume_at = NULL,
-		        wake_reason = ?
+		        resume_at = NULL
 		  WHERE id = ?
 		    AND phase = 'parked'`,
-		wakeReasonArg, dispatchID.String(),
+		dispatchID.String(),
 	)
 	if err != nil {
 		return false, fmt.Errorf("sqlite.ResumeParkedInTx: %w", err)
@@ -305,9 +273,7 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 }
 
 // RebindRunFrameInTx updates rimsky_node_runs.frame_id for the given
-// dispatch row to `newFrameID`. Mirror of the postgres helper used by
-// the hard-dep cascade extension and the standard cascade-subscription
-// path to rebind a woken parked run into the active frame.
+// dispatch row to `newFrameID`.
 //
 // Returns `persistence.ErrRunRowMissing` when no row matches
 // `dispatchID`: callers always reach this primitive after resolving
@@ -361,16 +327,11 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	return count, nil, nil
 }
 
-// SetRetryNoProgressForNodeInTx mirrors the postgres impl: writes the
-// carry-forward retry counter onto the current node-run row keyed
-// by node_id (used by the retry round-trip to accumulate the counter
-// across the remove-and-reinsert cycle).
+// SetRetryNoProgressForNodeInTx writes the carry-forward retry counter
+// onto the freshly-inserted pending run row for (node_id, run_scope_id).
+// Scoped to `phase = 'pending' AND claimed_by IS NULL`.
 //
-// Scoped to `phase = 'pending' AND claimed_by IS NULL` so only the
-// freshly-inserted pending row is touched — fan-out siblings still
-// mid-flight in other phases keep their counters intact.
-//
-// @concept: fan-out
+// @concept: run-scope
 func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error {
 	if tx == nil {
 		return errors.New("sqlite.SetRetryNoProgressForNodeInTx: tx required")
@@ -412,117 +373,17 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 	return nil
 }
 
-// LoadResumeMetadataInTx returns the parked metadata that survived
-// parked → pending so resume dispatch can attach it to ResumeContext.
-//
-// SQLite stores TIMESTAMP columns as fixed-width UTC TEXT
-// (timeLayoutFixedNanos, whose lexicographic order matches chronological
-// order). modernc/sqlite
-// v1.50.0 onward refuses to scan a TEXT column into sql.NullTime —
-// `unsupported Scan, storing driver.Value type string into type
-// *time.Time`. Per the convention used elsewhere in this file
-// (scanOneSqliteParkedRow's resumeAtStr handling) we scan the column
-// into sql.NullString and run it through parseTime when valid.
-func (q *queueImpl) LoadResumeMetadataInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) (*persistence.ResumeMetadataRow, error) {
-	if tx == nil {
-		return nil, errors.New("sqlite.LoadResumeMetadataInTx: tx required")
-	}
-	var (
-		inline      []byte
-		handle      sql.NullString
-		backend     sql.NullString
-		reason      sql.NullString
-		reasonNote  sql.NullString
-		session     sql.NullString
-		wakeReason  sql.NullString
-		parkedAtStr sql.NullString
-	)
-	err := q.q(tx).QueryRowContext(ctx,
-		`SELECT parked_payload_inline, parked_payload_handle, parked_payload_handle_backend,
-		        parked_reason, parked_reason_note, session_token, wake_reason, parked_at
-		   FROM rimsky_node_runs
-		  WHERE id = ?`,
-		dispatchID.String(),
-	).Scan(&inline, &handle, &backend, &reason, &reasonNote, &session, &wakeReason, &parkedAtStr)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("sqlite.LoadResumeMetadataInTx: %w", err)
-	}
-	if len(inline) == 0 && !handle.Valid && !backend.Valid && !reason.Valid && !reasonNote.Valid && !session.Valid && !wakeReason.Valid && !parkedAtStr.Valid {
-		return nil, nil
-	}
-	out := &persistence.ResumeMetadataRow{PayloadInline: inline}
-	if handle.Valid {
-		out.PayloadHandle = handle.String
-	}
-	if backend.Valid {
-		out.PayloadHandleBackend = backend.String
-	}
-	if reason.Valid {
-		out.Reason = reason.String
-	}
-	if reasonNote.Valid {
-		out.ReasonNote = reasonNote.String
-	}
-	if session.Valid {
-		out.SessionToken = session.String
-	}
-	if wakeReason.Valid {
-		out.WakeReason = wakeReason.String
-	}
-	if parkedAtStr.Valid {
-		t, err := parseTime(parkedAtStr.String)
-		if err != nil {
-			return nil, fmt.Errorf("sqlite.LoadResumeMetadataInTx: parse parked_at: %w", err)
-		}
-		out.ParkedAt = t
-	}
-	return out, nil
-}
-
-// ClearResumeMetadataInTx clears the parked_* metadata after a
-// successful resume.
-func (q *queueImpl) ClearResumeMetadataInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) error {
-	if tx == nil {
-		return errors.New("sqlite.ClearResumeMetadataInTx: tx required")
-	}
-	_, err := q.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		    SET parked_at = NULL,
-		        parked_reason = NULL,
-		        parked_reason_note = NULL,
-		        parked_payload_inline = NULL,
-		        parked_payload_handle = NULL,
-		        parked_payload_handle_backend = NULL,
-		        session_token = NULL,
-		        wake_reason = NULL
-		  WHERE id = ?`,
-		dispatchID.String(),
-	)
-	if err != nil {
-		return fmt.Errorf("sqlite.ClearResumeMetadataInTx: %w", err)
-	}
-	return nil
-}
-
 // LoadScratchInTx returns the persisted scratch triple for a dispatch
-// row. Spill resolution (materializing the bytes when scratch_handle is
-// set) is the caller's responsibility, via `concept:blob-backend`.
+// row. Spill resolution is the caller's responsibility, via
+// `concept:blob-backend`.
 //
-// Asymmetry with WriteScratchInTx is deliberate. A missing dispatch
-// row is degraded to an empty-scratch result (nil bytes, no handle,
-// no backend, no error) so the recovery-enqueue load sites
-// (conductor.go::SweepStaleHeartbeats, cascade_recalculate.go,
-// on_error.go, runner_error_policy.go) treat a retired or
-// already-GC'd prior row as "no carry-forward state" and the
-// successor dispatch begins with empty scratch — the same view a
-// first-dispatch executor sees. WriteScratchInTx is strict
-// (returns persistence.ErrRunRowMissing on 0 rows affected) because
-// the executor's mid-dispatch checkpoint contract requires the
-// missing-row case to surface to the executor, not be silently
-// swallowed (STORY-opaque-executor-scratch).
+// Asymmetry with WriteScratchInTx is deliberate: a missing row degrades
+// to an empty-scratch result so recovery-enqueue load sites treat a
+// retired or already-GC'd prior row as "no carry-forward state".
+// WriteScratchInTx is strict (returns persistence.ErrRunRowMissing on
+// 0 rows affected) because the executor's mid-dispatch checkpoint
+// contract requires the missing-row case to surface
+// (STORY-opaque-executor-scratch).
 //
 // @concept: executor
 func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) ([]byte, string, string, error) {
@@ -556,23 +417,14 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, disp
 	return inline, hStr, bStr, nil
 }
 
-// WriteScratchInTx persists scratch onto a dispatch row. Sets either
-// inline OR (handle + handleBackend); the opposite triple is cleared in
-// the same UPDATE so a writeback that drops a previously-spilled scratch
-// to small inline bytes does not leave the stale handle dangling.
+// WriteScratchInTx persists scratch onto a dispatch row.
 //
 // Returns `persistence.ErrRunRowMissing` when no row matches
-// `dispatchID`. Mirror of the postgres impl — the scratch HTTP
-// callback is the only signal an executor has that its mid-dispatch
-// state was persisted; a silent no-op on missing row would let an
-// executor believe it has checkpointed state that will never reach
-// the next dispatch, violating STORY-opaque-executor-scratch's
-// round-trip contract.
-//
-// Asymmetry with LoadScratchInTx is deliberate (see that function's
-// comment): load degrades a missing row to an empty-scratch result so
-// recovery-enqueue load sites continue cleanly; write surfaces the
-// sentinel so the executor's checkpoint contract is preserved.
+// `dispatchID`. The scratch HTTP callback is the only signal an
+// executor has that its mid-dispatch state was persisted; a silent
+// no-op on missing row would let an executor believe it has
+// checkpointed state that will never reach the next dispatch,
+// violating STORY-opaque-executor-scratch's round-trip contract.
 //
 // @concept: executor
 func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error {
@@ -631,23 +483,20 @@ type rowScanner interface {
 
 func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 	var (
-		idStr, nodeIDStr       string
-		executor               sql.NullString
-		storesStr              string
-		frameIDStr             string
-		parkedAtStr            string
-		resumeAtStr            sql.NullString
-		reason, sessionToken   sql.NullString
-		reasonNote             sql.NullString
-		payloadInline          []byte
-		payloadHandle, backend sql.NullString
-		maxParkSec             sql.NullInt64
-		consecutiveRetries     int
+		idStr, nodeIDStr   string
+		executor           sql.NullString
+		storesStr          string
+		frameIDStr         string
+		parkedAtStr        string
+		resumeAtStr        sql.NullString
+		reason             sql.NullString
+		reasonNote         sql.NullString
+		maxParkSec         sql.NullInt64
+		consecutiveRetries int
 	)
 	if err := row.Scan(
 		&idStr, &nodeIDStr, &executor, &storesStr, &frameIDStr,
-		&parkedAtStr, &resumeAtStr, &reason, &reasonNote, &sessionToken,
-		&payloadInline, &payloadHandle, &backend,
+		&parkedAtStr, &resumeAtStr, &reason, &reasonNote,
 		&maxParkSec, &consecutiveRetries,
 	); err != nil {
 		return nil, err
@@ -677,7 +526,6 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 		NodeID:                   node,
 		FrameID:                  frame,
 		ParkedAt:                 parkedAt,
-		PayloadInline:            payloadInline,
 		ConsecutiveRetriesNoProg: consecutiveRetries,
 		RequiredStores:           stores,
 	}
@@ -696,15 +544,6 @@ func scanOneSqliteParkedRow(row rowScanner) (*persistence.ParkedRow, error) {
 	}
 	if reasonNote.Valid {
 		out.ReasonNote = reasonNote.String
-	}
-	if sessionToken.Valid {
-		out.SessionToken = sessionToken.String
-	}
-	if payloadHandle.Valid {
-		out.PayloadHandle = payloadHandle.String
-	}
-	if backend.Valid {
-		out.PayloadHandleBackend = backend.String
 	}
 	if maxParkSec.Valid {
 		v := int(maxParkSec.Int64)

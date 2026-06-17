@@ -132,9 +132,9 @@ func (f *schedFixture) createNode(t *testing.T, executor string, state cascade.N
 	}
 	pgtest.ExecForTest(ctx, t, f.driver,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores,
-		                               enqueued_at, claimed_by, claimed_at, last_heartbeat_at,
+		                               enqueued_at, claimed_by, claimed_at,
 		                               phase, state, frame_id, run_scope_id)
-		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), NULL, NULL, NULL,
+		 VALUES (gen_random_uuid(), $1, $2, '{}', NOW(), NULL, NULL,
 		         $3, $4, $5, $6)`,
 		n.ID, executor, runPhase, string(state), frameID, f.instance.MainRunScopeID)
 	n.State = state
@@ -186,30 +186,20 @@ func insertRunningFrame(ctx context.Context, t *testing.T, f *schedFixture, inst
 	return frameID
 }
 
-// setHeartbeat forces last_heartbeat_at + claimed_by directly on the
-// in-flight run row. Post-stage-3 cutover: heartbeat / supervisor live
-// on the run row only.
-func (f *schedFixture) setHeartbeat(t *testing.T, nodeID shared.UUID, at time.Time, sup string) {
-	t.Helper()
-	pgtest.ExecForTest(context.Background(), t, f.driver,
-		`UPDATE rimsky_node_runs
-		    SET last_heartbeat_at = $1, claimed_by = $2, claimed_at = $1
-		  WHERE node_id = $3
-		    AND phase IN ('pending','active','held','parked')`,
-		at, sup, nodeID,
-	)
-}
+// @deliberate: legacy `setHeartbeat` helper deleted alongside its
+// callers in Pass 1; the historic name has no live consumers after
+// TD-three-dispatch-deadlines and the test fixture below no longer
+// needs to seed the retired heartbeat column.
 
 // schedConfig returns a Config wired to the fixture's persistence layer.
 func (f *schedFixture) schedConfig() Config {
 	return Config{
-		Persist:              f.persist,
-		Queue:                f.queue,
-		AdvisoryLocker:       f.coordinator,
-		Clock:                f.clock,
-		Logger:               f.log,
-		HeartbeatTimeout:     15 * time.Second,
-		OrphanedClaimTimeout: 75 * time.Second,
+		Persist:               f.persist,
+		Queue:                 f.queue,
+		AdvisoryLocker:        f.coordinator,
+		Clock:                 f.clock,
+		Logger:                f.log,
+		MaxQuietPeriodDefault: 75 * time.Second,
 	}
 }
 
@@ -247,52 +237,6 @@ func TestScheduler_ReadySweep_EnqueuesExecutorNodes(t *testing.T) {
 		`SELECT COUNT(*) FROM rimsky_node_runs WHERE node_id = $1`,
 		[]any{target.ID}, &count)
 	assert.Equal(t, 1, count, "expected a dispatch row for the ready node")
-}
-
-func TestScheduler_StaleHeartbeat_Reenqueues(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	f := newSchedFixture(t)
-
-	// @deliberate: running node with a stale heartbeat.
-	n := f.createNode(t, "worker", cascade.NodeStateRunning)
-	f.setHeartbeat(t, n.ID, time.Now().Add(-5*time.Minute), "sup-dead")
-
-	require.NoError(t, tick(ctx, f.schedConfig(), nil))
-
-	// @deliberate: Node should be stale now.
-	var after *persistence.NodeRow
-	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		r, err := f.persist.Nodes().Get(ctx, n.ID, tx)
-		after = r
-		return err
-	})
-	assert.Equal(t, cascade.NodeStateStale, after.State)
-
-	// @deliberate: transient/heartbeat_missed signal appended (canonical audit row
-	// per concept:signal post-Pass-5; the legacy "heartbeat_lost"
-	// fixed-string row retired).
-	var events persistence.EventListResult
-	inTxTest(t, ctx, f.persist, func(tx persistence.Tx) error {
-		e, err := f.persist.Events().List(ctx,
-			persistence.EventListFilter{NodeID: &n.ID, Kind: "transient/heartbeat_missed"},
-			persistence.ListPagination{Limit: 10}, tx,
-		)
-		events = e
-		return err
-	})
-	require.NotEmpty(t, events.Events, "expected a transient/heartbeat_missed signal event")
-
-	// @deliberate: Two dispatch rows: the retired zombie (phase='completed' after
-	// SweepStaleHeartbeats retired it) + the re-enqueued pending row.
-	// Total row count = 2 (retired + new); the in-flight count = 1.
-	var inFlightCount int
-	pgtest.QueryRowForTest(ctx, t, f.driver,
-		`SELECT COUNT(*) FROM rimsky_node_runs
-		  WHERE node_id = $1
-		    AND phase IN ('pending','active','held','parked')`,
-		[]any{n.ID}, &inFlightCount)
-	assert.Equal(t, 1, inFlightCount, "expected exactly one in-flight re-enqueued dispatch row")
 }
 
 // @blessed-invariant: orphan-claim-cutoff-five-times-heartbeat-timeout
@@ -335,10 +279,19 @@ func TestScheduler_OrphanedClaim_Released(t *testing.T) {
 		return nil
 	}))
 
-	// @deliberate: backdate last_heartbeat_at past the 75s (5 × 15s)
-	// cutoff.
+	// @deliberate: simulate a row that went async (async_ack_id set,
+	// per-row effective_max_quiet_period_seconds denormalized) and has
+	// been quiet for longer than its cap. The real
+	// runner_dispatch.go::registerAsyncIfSet path runs this denormalization
+	// at AwaitAsyncCallback registration; this test stamps the row
+	// directly to simulate that production state. Per
+	// TD-three-dispatch-deadlines + concept:dispatch-deadlines.
 	pgtest.ExecForTest(ctx, t, f.driver,
-		`UPDATE rimsky_node_runs SET last_heartbeat_at = NOW() - INTERVAL '10 minutes' WHERE id = $1`,
+		`UPDATE rimsky_node_runs
+		    SET last_progress_at = NOW() - INTERVAL '10 minutes',
+		        async_ack_id = 'orphan-test-ack',
+		        effective_max_quiet_period_seconds = 75
+		  WHERE id = $1`,
 		dispatchID,
 	)
 

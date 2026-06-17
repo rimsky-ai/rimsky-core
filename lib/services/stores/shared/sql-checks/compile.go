@@ -101,7 +101,14 @@ func compileNoNulls(cfg map[string]any, schema, table string) (Compiled, error) 
 	}
 	sql := fmt.Sprintf("SELECT %s FROM %s.%s", strings.Join(terms, " + "), schema, table)
 	thresholdLocal := threshold
-	fieldsLocal := append([]string(nil), fields...)
+	// @constraint: Counts entries must be structpb-compatible because the
+	// executor relays Counts into Success/Error attributes_delta via
+	// structpb.NewStruct, which rejects []string. Materialise fields as
+	// []any here so the per-check Counts shape stays Struct-safe.
+	fieldsLocal := make([]any, len(fields))
+	for i, f := range fields {
+		fieldsLocal[i] = f
+	}
 	return Compiled{
 		Kind: "no_nulls",
 		SQL:  sql,
@@ -249,7 +256,14 @@ func compilePKUnique(cfg map[string]any, schema, table string) (Compiled, error)
 		"SELECT %s, count(*) FROM %s.%s GROUP BY %s HAVING count(*) > 1 LIMIT 1",
 		colList, schema, table, colList,
 	)
-	fieldsLocal := append([]string(nil), fields...)
+	// @constraint: Counts entries must be structpb-compatible (executor
+	// relays Counts into Success/Error attributes_delta via
+	// structpb.NewStruct, which rejects []string). Same fix as
+	// compileNoNulls above.
+	fieldsLocal := make([]any, len(fields))
+	for i, f := range fields {
+		fieldsLocal[i] = f
+	}
 	return Compiled{
 		Kind: "pk_unique",
 		SQL:  sql,

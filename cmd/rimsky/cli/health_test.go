@@ -21,7 +21,7 @@ func fakeHealthServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":      "ok",
-			"supervisors": []map[string]any{{"id": "sup1", "concurrency": 4, "active_node_count": 0, "last_heartbeat_at": "2026-05-02T00:00:00Z", "accepted_executors": []string{}}},
+			"supervisors": []map[string]any{{"id": "sup1", "concurrency": 4, "active_node_count": 0, "accepted_executors": []string{}}},
 			"node_counts": map[string]int{"fresh": 0},
 		})
 	}))

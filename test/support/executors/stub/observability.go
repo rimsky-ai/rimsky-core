@@ -76,7 +76,7 @@ func (s *ObservabilityServer) Capabilities(_ context.Context, _ *genv1.ExecutorC
 		// override this with a constraining schema via
 		// NewObservabilityServerWithSchema.
 		ExpectedAttributesSchema: schema,
-		DeclaredEvents: []string{
+		DeclaredTags: []string{
 			"ready",
 			"signal",
 			"checkpoint",

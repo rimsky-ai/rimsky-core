@@ -37,7 +37,6 @@ var expectedSqliteTables = []string{
 	"rimsky_messages",
 	"rimsky_migrations",
 	"rimsky_node_attributes",
-	"rimsky_node_events",
 	"rimsky_node_runs",
 	"rimsky_nodes",
 	"rimsky_publisher_subscriptions",

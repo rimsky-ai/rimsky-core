@@ -30,21 +30,17 @@ import (
 )
 
 // nodeCols is the canonical projection of a NodeRow. State /
-// settling_signal_type / last_heartbeat_at / assigned_supervisor_id no
-// longer live on the rimsky_nodes row (the column-drop is folded into
-// the flattened baseline migration; historically migration 004 dropped
-// them) — they're sourced from the in-flight rimsky_node_runs row via
-// the LEFT JOIN shape below. Callers that need the projection use
-// `nodeSelect` (which embeds the join) rather than the bare table.
+// settling_signal_type / assigned_supervisor_id are sourced from the
+// in-flight rimsky_node_runs row via the LEFT JOIN below.
 //
 // Nodes with no in-flight run row default to state='fresh' / NULL
-// settling_signal_type / NULL heartbeat / NULL supervisor — the model
-// is "fresh = no run row".
+// settling_signal_type / NULL supervisor — the model is "fresh = no
+// run row".
 const nodeCols = `
   n.id, n.instance_id, n.node_type, n.executor,
   COALESCE(r.state, 'fresh') AS state, r.settling_signal_type,
   n.current_error_class, n.retry_counter, n.action_index,
-  r.last_heartbeat_at, r.claimed_by AS assigned_supervisor_id,
+  r.claimed_by AS assigned_supervisor_id,
   n.frame_id, n.tags, n.created_at, n.updated_at,
   CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.id END AS in_flight_run_id,
   CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.run_scope_id END AS in_flight_run_scope_id
@@ -68,7 +64,7 @@ const nodeCols = `
 // the newest active_terminal_at / enqueued_at wins.
 const nodeSelect = `FROM rimsky_nodes n
 LEFT JOIN LATERAL (
-    SELECT id, state, settling_signal_type, last_heartbeat_at, claimed_by, frame_id, phase, run_scope_id
+    SELECT id, state, settling_signal_type, claimed_by, frame_id, phase, run_scope_id
       FROM rimsky_node_runs
      WHERE node_id = n.id
      ORDER BY CASE WHEN phase IN ('pending','active','held','parked') THEN 0 ELSE 1 END,
@@ -271,43 +267,15 @@ func (s *nodesImpl) ListPureCascadeReady(ctx context.Context, tx persistence.Tx)
 }
 
 // ListRunning returns nodes with an in-flight rimsky_node_runs row in
-// state='running'. Post-stage-3: state, last_heartbeat_at, and
-// claimed_by all come from the run row; the remaining columns come from
-// rimsky_nodes (identity + scheduling metadata).
+// state='running'. State and claimed_by come from the run row; the
+// remaining columns come from rimsky_nodes (identity + scheduling
+// metadata).
 func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persistence.NodeRow, error) {
 	ex := s.q(tx)
 	rows, err := ex.Query(ctx,
 		`SELECT `+nodeCols+` `+nodeSelect+`
 		  WHERE r.state = 'running'
 		  ORDER BY n.updated_at ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectNodes(rows)
-}
-
-func (s *nodesImpl) ListRunningBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.NodeRow, error) {
-	ex := s.q(tx)
-	rows, err := ex.Query(ctx,
-		`SELECT `+nodeCols+` `+nodeSelect+`
-		  WHERE r.state = 'running'
-		    AND r.claimed_by = $1
-		  ORDER BY n.updated_at ASC`, supervisorID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectNodes(rows)
-}
-
-func (s *nodesImpl) ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time, tx persistence.Tx) ([]persistence.NodeRow, error) {
-	ex := s.q(tx)
-	rows, err := ex.Query(ctx,
-		`SELECT `+nodeCols+` `+nodeSelect+`
-		  WHERE r.state = 'running'
-		    AND r.last_heartbeat_at IS NOT NULL
-		    AND r.last_heartbeat_at < $1`, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -589,39 +557,6 @@ func (s *nodesImpl) UpdateError(ctx context.Context, id foundationshared.UUID, e
 		       updated_at = NOW()
 		 WHERE id = $1`,
 		id, es.ActionIndex, es.RetryCounter, nullableString(es.CurrentErrorClass),
-	)
-	return err
-}
-
-// UpdateHeartbeat writes last_heartbeat_at on the in-flight rimsky_node_runs
-// row. Post-stage-3 cutover: the run row is the sole heartbeat authority.
-// No-op when no in-flight row exists (the caller has already passed the
-// transition that removed it).
-//
-// `runID` (when non-nil) targets the specific in-flight row — required
-// for fan-out children so the heartbeat refresh + claimed_by stamp
-// doesn't leak across siblings sharing a node_id (which would render
-// the unclaimed siblings invisible to SelectCandidates' `claimed_by IS
-// NULL` filter).
-//
-// @blessed-invariant 4: claimant-guarded release. The `claimed_by IS
-// NULL OR claimed_by = $3` predicate means a supervisor can stamp an
-// unclaimed row or refresh its own, but never overwrite another
-// supervisor's claim — without it, a stale supervisor's heartbeat would
-// steal ownership AND defeat the orphan reaper. An empty supervisorID
-// ($3 NULL) matches only unclaimed rows: an identity-less call cannot
-// keep someone else's claim alive.
-func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
-	ex := s.q(tx)
-	_, err := ex.Exec(ctx,
-		`UPDATE rimsky_node_runs
-		   SET last_heartbeat_at = $2,
-		       claimed_by = COALESCE($3, claimed_by)
-		 WHERE node_id = $1
-		   AND run_scope_id = $4
-		   AND phase IN ('pending','active','held','parked')
-		   AND (claimed_by IS NULL OR claimed_by = $3)`,
-		id, at, nullableString(supervisorID), runScopeID,
 	)
 	return err
 }
@@ -933,7 +868,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		executor           *string
 		settlingSignalType *string
 		currentErrClass    *string
-		lastHB             *time.Time
 		assignedSup        *string
 		frameID            *foundationshared.UUID
 		tags               []string
@@ -944,7 +878,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		&r.ID, &r.InstanceID, &r.NodeType,
 		&executor, &r.State, &settlingSignalType,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
-		&lastHB, &assignedSup, &frameID,
+		&assignedSup, &frameID,
 		&tags,
 		&r.CreatedAt, &r.UpdatedAt,
 		&inFlightRunID, &inFlightRunScope,
@@ -957,7 +891,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.SettlingSignalType = settlingSignalType
 	r.CurrentErrorClass = derefString(currentErrClass)
 	r.AssignedSupervisorID = derefString(assignedSup)
-	r.LastHeartbeatAt = lastHB
 	r.FrameID = frameID
 	// @constraint: normalize NULL-via-default to empty slice (rather than nil)
 	// so the JSON encoding emits `[]` rather than `null` — per the NodeRow

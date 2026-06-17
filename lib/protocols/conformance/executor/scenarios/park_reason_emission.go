@@ -14,56 +14,53 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+// @deliberate: park_reason_emission asserts the Park outcome carries
+// a typed reason from the closed two-value set
+// (PARK_REASON_AWAIT_CALLBACK | PARK_REASON_SNOOZE). Per
+// TD-remove-resume-context the Park outcome no longer carries
+// `payload` or `session_token` — those proto fields are reserved.
+// State that needs to ride across the park boundary lives on
+// `attributes_delta`.
+//
+// @concept: parked-state
 func init() {
 	conformance.Register(conformance.Scenario{
 		Name:         "park_reason_emission",
 		RequiresStub: true,
-		Run:          runParkReasonEmission,
+		Run: func(ctx context.Context, env conformance.Env) error {
+			attrs, err := structpb.NewStruct(map[string]any{
+				"probe_park":  true,
+				"park_reason": "await_callback",
+			})
+			if err != nil {
+				return fmt.Errorf("build attributes: %w", err)
+			}
+			req := &genv1.ExecuteRequest{
+				NodeId:      "park-reason-emission",
+				InstanceId:  "park-reason-emission",
+				NodeType:    "conformance",
+				Attributes:  attrs,
+				CallbackUrl: env.Callbacks.URL(),
+			}
+			outcome, err := env.Client.Execute(ctx, req)
+			if err != nil {
+				return fmt.Errorf("Execute: %w", err)
+			}
+			settled, err := conformance.AwaitTerminal(ctx, outcome, env)
+			if err != nil {
+				return fmt.Errorf("AwaitTerminal: %w", err)
+			}
+			park, ok := settled.GetOutcome().(*genv1.Outcome_Park)
+			if !ok {
+				return fmt.Errorf("expected Outcome_Park, got %T", settled.GetOutcome())
+			}
+			reason := park.Park.GetReason()
+			switch reason {
+			case genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, genv1.ParkReason_PARK_REASON_SNOOZE:
+			default:
+				return fmt.Errorf("Park.reason outside the closed two-value set: %v", reason)
+			}
+			return nil
+		},
 	})
-}
-
-// runParkReasonEmission probes the executor's Park.reason emission
-// shape. Drives stub mode with `probe_park: true, park_reason:
-// "await_callback"`; asserts the StreamClose.Park.reason field
-// round-trips a value in the closed two-value set
-// (proto:executor.proto::ParkReason — AWAIT_CALLBACK | SNOOZE). The
-// proto wire layer caps the set at decode, so this probe pins the
-// executor's emission shape rather than re-enforcing the enum cap.
-//
-// Per spec .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §ParkReason collapse.
-func runParkReasonEmission(ctx context.Context, env conformance.Env) error {
-	ud, _ := structpb.NewStruct(map[string]any{
-		"probe_park":       true,
-		"park_reason":      "await_callback",
-		"park_reason_note": "rimsky conformance executor park-reason probe",
-	})
-	req := &genv1.ExecuteRequest{
-		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-probe", Attributes: ud,
-		CallbackUrl: env.Callbacks.URL(),
-	}
-	stream, err := env.Client.Execute(ctx, req)
-	if err != nil {
-		return fmt.Errorf("execute: %w", err)
-	}
-	defer stream.Close()
-
-	ev, err := conformance.AwaitTerminal(ctx, stream, env)
-	if err != nil {
-		return err
-	}
-	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
-	if !ok {
-		return fmt.Errorf("unexpected terminal type: %T", ev.Event)
-	}
-	park, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_Park)
-	if !ok {
-		return fmt.Errorf("expected Park outcome, got %T", sc.StreamClose.Outcome)
-	}
-	r := park.Park.GetReason()
-	if r != genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK && r != genv1.ParkReason_PARK_REASON_SNOOZE {
-		return fmt.Errorf("Park.reason=%v is outside the closed two-value set (AWAIT_CALLBACK | SNOOZE)", r)
-	}
-	return nil
 }

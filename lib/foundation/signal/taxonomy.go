@@ -31,10 +31,8 @@ var canonicalEmitPatterns = []string{
 	"terminal/park/await_callback",
 	"terminal/infra/*",
 	"transient/retry/*",
-	"transient/heartbeat_missed",
 	"transient/await_async",
 	"attribute/*/changed",
-	"event/*",
 }
 
 // ValidateTypePath returns nil if t is a legal emit-shape path under
@@ -59,11 +57,16 @@ func ValidateTypePath(t TypePath) error {
 // ValidateSubscriptionType returns nil if t is a legal subscription
 // pattern. Subscription patterns may be exact emit-shape paths OR a
 // trailing-"*" prefix that itself matches some prefix of the
-// canonical taxonomy (e.g., "terminal/error/*", "terminal/*",
-// "event/*"). Positional wildcards (e.g., "terminal/*/foo",
-// "*/error/*") are explicitly rejected at the operator-template
-// surface with a precise error message — operators must express
-// such patterns via CEL when:.
+// canonical taxonomy (e.g., "terminal/error/*", "terminal/*").
+// Positional wildcards (e.g., "terminal/*/foo", "*/error/*") are
+// explicitly rejected at the operator-template surface with a
+// precise error message — operators must express such patterns via
+// CEL when:.
+//
+// @deliberate: the historic `event/*` subscription form retired
+// alongside `event/<name>` (TD-collapse-named-event-to-tags); a
+// template using it now fails registration with the "not in
+// canonical taxonomy" error from this validator.
 //
 // Asymmetry note: the cascade matcher tolerates positional `*` at
 // runtime as a defensive convenience, but operator-declared

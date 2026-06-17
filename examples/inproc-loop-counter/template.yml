@@ -4,23 +4,25 @@ frame_resolution_mode: coalesce
 nodes:
   - type: counter
     kind: loop_counter
-    # Self-subscribe on `event/loop` so the counter re-fires within the
-    # same RunScope on each loop emit. With max=3, the counter dispatches
-    # three times: dispatches 1 and 2 emit `event/loop` (new_count 1, 2 <
-    # max=3); dispatch 3 emits `event/done` (new_count 3 == max). The
-    # `frame: next` spelling opens a fresh frame for each self-emit, so
-    # each re-dispatch sees the prior dispatch's writeback through
-    # attribute carry-forward (count 0 -> 1 -> 2 on the incoming bag).
+    # Self-subscribe on `terminal/success` with a CEL `when:` filter
+    # over `payload.tags` so the counter re-fires within the same
+    # RunScope on each `loop` tag. With max=3 the counter dispatches
+    # three times: dispatches 1 and 2 emit Success with the `loop` tag
+    # (new_count 1, 2 < max=3); dispatch 3 emits Success with the
+    # `done` tag (new_count 3 == max). Per concept:terminal-tag tags
+    # ride on the settling terminal verdict; subscribers route on
+    # `payload.tags` via CEL list membership.
     #
-    # Loop termination: only `event/loop` is subscribed. When the counter
-    # emits `event/done` on the final dispatch, no node has a subscription
-    # matching that type-path, so the cascade has nothing to fan out to and
-    # the loop stops. Adding another node with `subscribes: [{node: counter,
-    # type: event/done}]` is how a real template hooks completion handling.
+    # Loop termination: only the `loop` tag triggers cascade re-fire.
+    # When the counter emits Success with `done`, no subscription
+    # matches the filter, so the cascade has nothing to fan out to and
+    # the loop stops. A real template hooks completion by adding
+    # another node subscribed on terminal/success with
+    # `when: "done" in payload.tags`.
     subscribes:
       - node: counter
-        type: event/loop
-        frame: next
+        type: terminal/success
+        when: '"loop" in payload.tags'
         wake_on_change: true
         force_upstream_refresh: false
     attributes:

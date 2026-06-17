@@ -29,7 +29,7 @@ type SupervisorConfig struct {
 	Clock             shared.Clock
 	Logger            shared.Logger
 	Concurrency       int
-	HeartbeatInterval time.Duration
+	LivenessInterval  time.Duration
 	ClaimPollInterval time.Duration
 	Resolver          executor.Resolver
 	// Stores is the parsed `stores:` block from rimsky.yml: an
@@ -208,7 +208,7 @@ func StartSupervisor(cfg SupervisorConfig) (SupervisorHandle, error) {
 		Clock:                       cfg.Clock,
 		Logger:                      cfg.Logger,
 		Concurrency:                 cfg.Concurrency,
-		HeartbeatInterval:           cfg.HeartbeatInterval,
+		LivenessInterval:            cfg.LivenessInterval,
 		ClaimPollInterval:           cfg.ClaimPollInterval,
 		Resolver:                    cfg.Resolver,
 		StoreRegistry:               registry,

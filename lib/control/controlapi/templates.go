@@ -201,12 +201,12 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		// @constraint: wrap the operator-supplied observability hook so the inproc
 		// executor's baked-in capabilities shadow it for the inproc
 		// alias only; every other name still routes through the cache.
-		hooks.ExecutorDeclaredEvents = func(name string) ([]string, bool) {
+		hooks.ExecutorDeclaredTags = func(name string) ([]string, bool) {
 			if name == loop_counter.ExecutorAlias {
-				return loop_counter.DeclaredEvents(), true
+				return loop_counter.DeclaredTags(), true
 			}
-			events, _, _, ok := deps.ExecutorCapabilities(name)
-			return events, ok
+			tags, _, _, ok := deps.ExecutorCapabilities(name)
+			return tags, ok
 		}
 		hooks.ExecutorDeclaredErrorClasses = func(name string) ([]string, bool) {
 			if inprocAlias(name) {
@@ -238,9 +238,9 @@ func validatorHooksFor(deps AppDeps, spec node.TemplateSpec) node.RegistryHooks 
 		// executor's baked-in capabilities and stay nil-shaped for
 		// every other name so the validator's silent-skip path keeps
 		// its current behavior for non-inproc executors.
-		hooks.ExecutorDeclaredEvents = func(name string) ([]string, bool) {
+		hooks.ExecutorDeclaredTags = func(name string) ([]string, bool) {
 			if name == loop_counter.ExecutorAlias {
-				return loop_counter.DeclaredEvents(), true
+				return loop_counter.DeclaredTags(), true
 			}
 			return nil, false
 		}

@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/google/uuid"
 
@@ -29,9 +28,9 @@ type HandlerContextFactory func(dispatchID, nodeID shared.UUID) HandlerContext
 
 // InProcessClient is a Client implementation that dispatches to an
 // InProcessHandler registered in the supervisor's InProcessRegistry.
-// The handler runs on a goroutine; events flow through a buffered
-// channel-backed EventStream. The dispatch loop's Recv / Close
-// semantics are identical to the gRPC client.
+// The handler runs synchronously on the caller's goroutine and its
+// returned *Outcome flows back across the unary boundary — symmetric
+// with the gRPC client and the HTTP bridge.
 //
 // @concept: executor
 type InProcessClient struct {
@@ -56,7 +55,19 @@ func NewInProcessClient(endpoint Endpoint, registry *InProcessRegistry, newHctx 
 	return &InProcessClient{registry: registry, url: endpoint.URL, newHctx: newHctx}, nil
 }
 
-func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (EventStream, error) {
+// Execute drives the in-process handler synchronously on the
+// caller's goroutine. The caller's ctx — already deadline-bounded by
+// runner_dispatch.go's sync_rpc_deadline wrap (per
+// TD-three-dispatch-deadlines) — propagates to the handler unchanged,
+// so a handler that honors ctx.Err() picks up the deadline directly.
+// Deadline-driven cancellation surfaces as ctx.Err() ==
+// context.DeadlineExceeded which the runner's dispatch path maps to
+// error_class=executor_sync_timeout. A handler that ignores ctx
+// blocks the goroutine; the supervisor's panic-safe wrapper below
+// catches any handler panic but cannot interrupt a ctx-deaf handler.
+//
+// @concept: dispatch-deadlines
+func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	h, ok := c.registry.Lookup(c.url)
 	if !ok {
 		return nil, fmt.Errorf("InProcessClient.Execute: no handler for %q", c.url)
@@ -78,98 +89,24 @@ func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest
 	if c.newHctx != nil {
 		hctx = c.newHctx(shared.UUID(dispatchID), shared.UUID(nodeID))
 	}
-	// @constraint: derive an internal cancellable context so
-	// EventStream.Close / abandoning the dispatch mid-stream can signal
-	// the handler goroutine to drop its in-flight Send and exit
-	// promptly. Without this, a handler whose Send blocks on a full
-	// buffer after the supervisor abandoned the stream would leak the
-	// goroutine for the supervisor's lifetime (the gRPC analogue cancels
-	// the server-stream when the client goes away; we mirror it).
-	handlerCtx, cancel := context.WithCancel(ctx)
-	// @deliberate: buffer of 16 covers heartbeat/named-event bursts
-	// without blocking typical handler loops; a deeper buffer would
-	// mask handler bugs (the dispatch loop is supposed to drain at
-	// gRPC-stream cadence). Close-on-handler-return is the EOF protocol.
-	ch := make(chan *genv1.ExecuteEvent, 16)
-	errCh := make(chan error, 1)
-	sink := &channelSink{ch: ch, ctx: handlerCtx}
-	go func() {
-		// @constraint: panic-safe goroutine — a panicking handler must
-		// NOT crash the supervisor (the gRPC analogue only crashes the
-		// remote executor process; the inproc model must not be
-		// qualitatively less robust). The recover deferred translates a
-		// panic into a non-nil error written to errCh, and `close(errCh)`
-		// runs from the deferred so both panic and clean-return paths
-		// close errCh — without that, a panic would close ch but leak
-		// errCh, and inprocEventStream.Recv would wedge forever waiting
-		// on a channel that is never closed and never sent to.
+	// @constraint: panic-safe call — a panicking in-process handler must
+	// not crash the supervisor (the gRPC analogue only crashes the
+	// remote executor process; the in-process model must not be
+	// qualitatively less robust). Recover translates a panic into a
+	// non-nil error returned to the runtime.
+	var outcome *genv1.Outcome
+	func() {
 		defer func() {
 			if p := recover(); p != nil {
-				select {
-				case errCh <- fmt.Errorf("inproc handler panic: %v", p):
-				default:
-				}
+				err = fmt.Errorf("inproc handler panic: %v", p)
 			}
-			close(errCh)
 		}()
-		defer close(ch)
-		if err := h.Execute(handlerCtx, req, sink, hctx); err != nil {
-			errCh <- err
-		}
+		outcome, err = h.Execute(ctx, req, hctx)
 	}()
-	return &inprocEventStream{ch: ch, errCh: errCh, cancel: cancel}, nil
+	if err != nil {
+		return nil, err
+	}
+	return outcome, nil
 }
 
 func (c *InProcessClient) Close() error { return nil }
-
-// channelSink is the in-process EventSink. The handler emits
-// ExecuteEvents through it, blocking on a full buffer until the
-// dispatch loop drains — identical to a gRPC server-stream's Send
-// blocking on backpressure. When the dispatch loop abandons the
-// stream (EventStream.Close), the embedded ctx cancels and a blocked
-// Send returns ctx.Err() so the handler goroutine exits rather than
-// leaking. The handler is expected to surrender on a Send error
-// (return promptly) — the InProcessHandler doc-block spells this
-// contract out.
-type channelSink struct {
-	ch  chan<- *genv1.ExecuteEvent
-	ctx context.Context
-}
-
-func (s *channelSink) Send(ev *genv1.ExecuteEvent) error {
-	select {
-	case s.ch <- ev:
-		return nil
-	case <-s.ctx.Done():
-		return s.ctx.Err()
-	}
-}
-
-type inprocEventStream struct {
-	ch     <-chan *genv1.ExecuteEvent
-	errCh  <-chan error
-	cancel context.CancelFunc
-}
-
-func (s *inprocEventStream) Recv() (*genv1.ExecuteEvent, error) {
-	ev, ok := <-s.ch
-	if !ok {
-		if err, ok := <-s.errCh; ok && err != nil {
-			return nil, err
-		}
-		return nil, io.EOF
-	}
-	return ev, nil
-}
-
-// Close cancels the handler's derived context so a blocked Send wakes
-// and returns ctx.Err(). The handler goroutine is then expected to
-// exit promptly; channelSink.Send's ctx-cancel branch is the wake
-// path. Idempotent: calling Close multiple times is safe (the
-// CancelFunc itself is idempotent).
-func (s *inprocEventStream) Close() error {
-	if s.cancel != nil {
-		s.cancel()
-	}
-	return nil
-}

@@ -22,7 +22,7 @@ The row also carries:
 The row carries the **state column**:
 
 - A state field constrained to one of three values — the 3-state lifecycle.
-  - `active`: currently held by a supervisor, heartbeating. The holder-supervisor reference is set.
+  - `active`: currently held by a supervisor; liveness is observed via the supervisor's outgoing dispatch RPC (sync) or the dispatch row's `last_progress_at` (async). The holder-supervisor reference is set.
   - `committed`: producer commit fired; row preserved past terminal. The holder-supervisor reference is null.
   - `abandoned`: producer abandon fired (natural or force-cancel); row preserved. The holder-supervisor reference is null.
 - A resolved-at timestamp recording when the row exited `active`. Null while `active`; set to the promotion time. The retention sweep filters on this column.
@@ -45,11 +45,11 @@ The single source of truth for "who holds what right now." Conflict-check predic
 
 ## Boundaries
 
-Owns: the lock-state ledger, claimant-guarded mutation predicates, the held-flag plus null-on-parent-delete reference shape that lets held handles outlive their parent. Does NOT own: producer-internal state (see `concept:claim-producer`), heartbeats (those are on `concept:node-run`), claim-disposition verb dispatch (see `concept:auto-terminal`). Adjacent: `concept:claim`, `concept:node-run`, `concept:auto-terminal`, `concept:supervisor`, `concept:orphan-reaper`, `concept:inertness`.
+Owns: the lock-state ledger, claimant-guarded mutation predicates, the held-flag plus null-on-parent-delete reference shape that lets held handles outlive their parent. Does NOT own: producer-internal state (see `concept:claim-producer`), liveness tracking (those are on `concept:node-run`), claim-disposition verb dispatch (see `concept:auto-terminal`). Adjacent: `concept:claim`, `concept:node-run`, `concept:auto-terminal`, `concept:supervisor`, `concept:orphan-reaper`, `concept:inertness`.
 
 ## Invariants
 
-- Every active-row mutation (promote, heartbeat-extend, the ownership-bail delete) matches the holding supervisor in its predicate (`@blessed-invariant 4` — claimant-guarded release).
+- Every active-row mutation (promote, liveness-extend, the ownership-bail delete) matches the holding supervisor in its predicate (`@blessed-invariant 4` — claimant-guarded release).
 - Non-active-row deletion (retention sweep, asset Release path) is absence-guarded: the row has a null holder-supervisor reference by construction; the row-discovery query filter (committed-durable rows for Release; committed-or-abandoned rows for the retention sweep) substitutes for the per-row claimant check.
 - The holder-supervisor reference is set on active rows (per the first CHECK constraint), null on terminal rows (per the second CHECK constraint).
 - The node-run reference nulls on the parent's deletion (rather than cascading) so terminal handles survive their parent's deletion until either the retention sweep reaps them or (for durable-committed) the asset Release path fires.

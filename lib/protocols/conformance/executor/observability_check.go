@@ -29,7 +29,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"time"
 
 	"google.golang.org/grpc"
@@ -91,15 +90,15 @@ func RunObservabilityCheck(ctx context.Context, opts ObservabilityCheckOpts, log
 	} else {
 		logf("observability: expected_attributes_schema = empty (executor accepts any attributes)\n")
 	}
-	for i, name := range caps.GetDeclaredEvents() {
+	for i, name := range caps.GetDeclaredTags() {
 		if name == "" {
-			return fmt.Errorf("Capabilities.declared_events[%d] is empty", i)
+			return fmt.Errorf("Capabilities.declared_tags[%d] is empty", i)
 		}
 	}
-	if names := caps.GetDeclaredEvents(); len(names) > 0 {
-		logf("observability: declared_events = %v\n", names)
+	if names := caps.GetDeclaredTags(); len(names) > 0 {
+		logf("observability: declared_tags = %v\n", names)
 	} else {
-		logf("observability: declared_events = []\n")
+		logf("observability: declared_tags = []\n")
 	}
 
 	const probeID = "conformance-probe-no-dispatch"
@@ -166,24 +165,14 @@ func runCannedDispatch(ctx context.Context, conn *grpc.ClientConn, obs genv1.Exe
 		return fmt.Errorf("build attributes: %w", err)
 	}
 	exec := genv1.NewExecutorClient(conn)
-	stream, err := exec.Execute(ctx, &genv1.ExecuteRequest{
+	if _, err := exec.Execute(ctx, &genv1.ExecuteRequest{
 		DispatchId: dispatchID,
 		NodeId:     "obs-probe-node",
 		InstanceId: "obs-probe-instance",
 		NodeType:   "conformance-observability",
 		Attributes: ud,
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("Execute: %w", err)
-	}
-	for {
-		_, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("Execute recv: %w", err)
-		}
 	}
 	time.Sleep(100 * time.Millisecond)
 	tr, err := obs.GetTrace(ctx, &genv1.GetTraceRequest{DispatchId: dispatchID})

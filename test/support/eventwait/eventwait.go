@@ -44,7 +44,7 @@ type Matcher struct {
 	// NodeID scopes to one node's events. Optional.
 	NodeID *shared.UUID
 	// Kind matches the canonical wire kind exactly (e.g.
-	// "transient/heartbeat_missed"). Empty → no exact-kind condition.
+	// "transient/await_async"). Empty → no exact-kind condition.
 	Kind string
 	// KindPrefix matches kinds by prefix (e.g. "transient/retry/").
 	// Empty → no prefix condition. Combined with Kind via OR when both

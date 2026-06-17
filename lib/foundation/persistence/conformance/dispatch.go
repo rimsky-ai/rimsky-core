@@ -95,16 +95,18 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 		t.Fatalf("expected exactly 1 winning claim, got wins=%d losses=%d", wins, losses)
 	}
 
-	// @deliberate: no "find by node_id" helper exists; ListOrphanedClaims
-	// with a far-future cutoff is the only way to retrieve the dispatch row
-	// (it returns rows under any last_heartbeat_at).
-	rows, err := q.ListOrphanedClaims(ctx, time.Now().Add(1*time.Hour))
+	// @deliberate: find the dispatch row via the live-listing surface —
+	// the async-orphan sweep no longer surfaces sync-mode dispatch rows,
+	// so it cannot serve as a "find by node_id" backstop the way the
+	// pre-rewrite test used it. ListLive walks every in-flight dispatch
+	// row independent of the async-ack registry.
+	live, err := q.ListLive(ctx, persistence.DispatchListFilter{}, persistence.ListPagination{Limit: 50})
 	if err != nil {
-		t.Fatalf("ListOrphanedClaims: %v", err)
+		t.Fatalf("ListLive: %v", err)
 	}
 	var dispatchID shared.UUID
 	var winner string
-	for _, r := range rows {
+	for _, r := range live.Rows {
 		if r.NodeID == fix.NodeID {
 			dispatchID = r.ID
 			if r.ClaimedBy != nil {
@@ -139,31 +141,20 @@ func testDispatchClaimRelease(t *testing.T, d persistence.Database) {
 			owner.Kind, owner.SupervisorID, winner)
 	}
 
-	// @constraint: ListOrphanedClaims filters by last_heartbeat_at < cutoff.
-	// The row's heartbeat was set to "now" at claim time, so a past cutoff
-	// must exclude it and a future cutoff must include it.
-	pastCutoff := time.Now().Add(-1 * time.Hour)
-	rowsPast, err := q.ListOrphanedClaims(ctx, pastCutoff)
+	// @constraint: ListOrphanedClaims filters by async_ack_id IS NOT
+	// NULL. The per-row per-deadline matrix evaluates in Go in
+	// code:SweepExecutorDeadlines (using the denormalized
+	// effective_max_quiet_period_seconds and effective_max_runtime_seconds
+	// columns). A sync-mode dispatch never carries an async_ack_id, so
+	// the orphan-sweep view never surfaces it. The async-mode round-trip
+	// is exercised by the ParkResume/RegisterAsyncAckRoundTrip bucket.
+	rowsSync, err := q.ListOrphanedClaims(ctx)
 	if err != nil {
-		t.Fatalf("ListOrphanedClaims past: %v", err)
+		t.Fatalf("ListOrphanedClaims: %v", err)
 	}
-	for _, r := range rowsPast {
+	for _, r := range rowsSync {
 		if r.NodeID == fix.NodeID {
-			t.Fatalf("expected fixture row absent from past-cutoff orphan list")
+			t.Fatalf("sync-mode dispatch row leaked into the async-orphan sweep")
 		}
-	}
-	rowsFuture, err := q.ListOrphanedClaims(ctx, time.Now().Add(1*time.Hour))
-	if err != nil {
-		t.Fatalf("ListOrphanedClaims future: %v", err)
-	}
-	found := false
-	for _, r := range rowsFuture {
-		if r.NodeID == fix.NodeID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected fixture row in future-cutoff orphan list")
 	}
 }

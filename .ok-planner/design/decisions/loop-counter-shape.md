@@ -12,9 +12,9 @@ The in-process handler for the loop-counter utility kind has:
 
 - A required integer-typed maximum-count input attribute with no default, validated as strictly positive at registration via the attribute schema.
 - An executor-written carry-forward integer-typed count attribute, defaulting to zero, marked read-only on the schema.
-- Two declared named events: a step-iteration event and a done event.
-- On every dispatch: read the count attribute from incoming attributes (carry-forward yields the prior value, or zero on the first dispatch in scope); increment the count; emit the step-iteration event if the new count is below the maximum, otherwise emit the done event; close the stream with the success outcome carrying an attribute delta that persists the new count for next-dispatch carry-forward.
+- Two declared tags: a step-iteration tag and a done tag.
+- On every dispatch: read the count attribute from incoming attributes (carry-forward yields the prior value, or zero on the first dispatch in scope); increment the count; include the step-iteration tag on the Success outcome if the new count is below the maximum, otherwise include the done tag; the Success outcome carries an `attributes_delta` that persists the new count for next-dispatch carry-forward.
 
 ## Rationale
 
-Minimum surface for "count up to N, emit on each step, emit a different event on the terminal step." Both events are observable from downstream subscriptions; the count attribute is visible to other nodes (and to the loop-counter itself across dispatches via carry-forward). Scope-bounded carry-forward makes the new-RunScope-resets-count behavior fall out naturally — no separate reset mechanism needed.
+Minimum surface for "count up to N, emit on each step, include a different tag on the terminal step." Both tags are observable from downstream subscriptions via `terminal/success` with a CEL `when:` filter on `payload.tags`; the count attribute is visible to other nodes (and to the loop-counter itself across dispatches via carry-forward). Scope-bounded carry-forward makes the new-RunScope-resets-count behavior fall out naturally — no separate reset mechanism needed.

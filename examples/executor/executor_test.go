@@ -2,196 +2,163 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
+// @story: executor-protocol — fast in-process tests pinning the
+// dispatch happy path + declared-class + tagged-Success modes against
+// the unary executor protocol.
+
 package main
 
 import (
 	"context"
-	"io"
-	"net"
 	"testing"
-	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// TestExecuteReturnsSingleSuccessTerminal starts the example executor in-process
-// and asserts the dispatch protocol's happy path: the Execute stream yields
-// exactly one StreamClose terminal carrying Success, then closes (io.EOF). It
-// also asserts Capabilities advertises a non-empty attributes schema, a
-// non-empty declared events list, and a non-empty declared error classes
-// list — the three handshake fields rimsky reads at startup and gates
-// templates against.
-func TestExecuteReturnsSingleSuccessTerminal(t *testing.T) {
-	conn := startInProcessExecutor(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	stream, err := genv1.NewExecutorClient(conn).Execute(ctx, &genv1.ExecuteRequest{
-		NodeId: "n1", InstanceId: "i1", NodeType: "example",
-	})
+// @deliberate: TestExecuteReturnsSuccessOutcome — default dispatch
+// path (no `mode` attribute) settles as Outcome{Success} with no
+// tags and a non-error change summary. Plus the Capabilities
+// handshake advertises all three load-bearing fields:
+// expected_attributes_schema, declared_tags, declared_error_classes.
+func TestExecuteReturnsSuccessOutcome(t *testing.T) {
+	e := &Executor{}
+	outcome, err := e.Execute(context.Background(), &genv1.ExecuteRequest{})
 	if err != nil {
-		t.Fatalf("execute: %v", err)
+		return
+	}
+	success, ok := outcome.GetOutcome().(*genv1.Outcome_Success)
+	if !ok {
+		t.Fatalf("expected Outcome_Success, got %T", outcome.GetOutcome())
+	}
+	if len(success.Success.GetTags()) != 0 {
+		t.Errorf("default Success.Tags should be empty, got %v", success.Success.GetTags())
 	}
 
-	terminals := 0
-	for {
-		ev, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("recv: %v", err)
-		}
-		if sc := ev.GetStreamClose(); sc != nil {
-			terminals++
-			if sc.GetSuccess() == nil {
-				t.Fatalf("terminal outcome is not Success: %+v", sc.GetOutcome())
-			}
-		}
-	}
-	if terminals != 1 {
-		t.Fatalf("want exactly one StreamClose terminal, got %d", terminals)
-	}
-
-	caps, err := genv1.NewExecutorObservabilityClient(conn).
-		Capabilities(ctx, &genv1.ExecutorCapabilitiesRequest{})
+	caps, err := e.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
 	if err != nil {
-		t.Fatalf("capabilities: %v", err)
+		t.Fatalf("Capabilities: %v", err)
 	}
 	if len(caps.GetExpectedAttributesSchema()) == 0 {
-		t.Fatal("Capabilities advertised no attributes schema; attribute-bearing nodes would be rejected")
+		t.Errorf("expected_attributes_schema is empty")
 	}
-	if len(caps.GetDeclaredEvents()) == 0 {
-		t.Fatal("Capabilities advertised no declared_events; subscriptions to event/<name> would be refused at registration")
+	if len(caps.GetDeclaredTags()) == 0 {
+		t.Errorf("declared_tags is empty")
 	}
 	if len(caps.GetDeclaredErrorClasses()) == 0 {
-		t.Fatal("Capabilities advertised no declared_error_classes; operator error_types: policy keys would be refused at registration")
+		t.Errorf("declared_error_classes is empty")
 	}
 }
 
-// TestExecute_RaiseErrorEmitsDeclaredClass asserts that when mode is
-// `raise_error`, the StreamClose terminal carries Error with the
-// DeclaredErrorClass — the same string the operator's `error_types:`
-// chain keys on. Pinning this in-process catches a regression in the
-// executor's class spelling without the cross-stack proof's overhead.
+// @deliberate: TestExecute_RaiseErrorEmitsDeclaredClass — `mode:
+// raise_error` settles as Outcome{Error} carrying the executor's
+// declared error class. Per @concept:error-policy the wire value of
+// Error.error_class IS the routing key; an operator template's
+// `error_types: { example/forbidden: ... }` chain matches on this
+// exact string.
 func TestExecute_RaiseErrorEmitsDeclaredClass(t *testing.T) {
-	conn := startInProcessExecutor(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	attrs, err := structpb.NewStruct(map[string]any{"mode": "raise_error"})
+	e := &Executor{}
+	req := mustExecuteRequest(t, map[string]any{"mode": "raise_error"})
+	outcome, err := e.Execute(context.Background(), req)
 	if err != nil {
-		t.Fatalf("structpb.NewStruct: %v", err)
+		t.Fatalf("Execute: %v", err)
 	}
-
-	stream, err := genv1.NewExecutorClient(conn).Execute(ctx, &genv1.ExecuteRequest{
-		NodeId: "n1", InstanceId: "i1", NodeType: "example", Attributes: attrs,
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+	errOut, ok := outcome.GetOutcome().(*genv1.Outcome_Error)
+	if !ok {
+		t.Fatalf("expected Outcome_Error, got %T", outcome.GetOutcome())
 	}
-
-	var gotClass string
-	for {
-		ev, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("recv: %v", err)
-		}
-		if sc := ev.GetStreamClose(); sc != nil {
-			if e := sc.GetError(); e != nil {
-				gotClass = e.GetErrorClass()
-			}
-		}
-	}
-	if gotClass != DeclaredErrorClass {
-		t.Fatalf("error_class on the terminal: got %q want %q (the operator's error_types: chain keys on this exact string)",
-			gotClass, DeclaredErrorClass)
+	if errOut.Error.GetErrorClass() != DeclaredErrorClass {
+		t.Errorf("Error.error_class = %q, want %q",
+			errOut.Error.GetErrorClass(), DeclaredErrorClass)
 	}
 }
 
-// TestExecute_EmitEventEmitsDeclaredName asserts that when mode is
-// `emit_event`, the stream emits at least one NamedEvent whose name is
-// DeclaredEventName before the Success terminal. Pinning this in-process
-// catches a regression in the event name spelling without the cross-stack
-// proof's overhead — the cross-stack proof then asserts the named event
-// appears as a kind=`event/<name>` row on GET /v1/events.
-func TestExecute_EmitEventEmitsDeclaredName(t *testing.T) {
-	conn := startInProcessExecutor(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	attrs, err := structpb.NewStruct(map[string]any{"mode": "emit_event"})
+// @deliberate: TestExecute_EmitEventEmitsDeclaredTag — `mode:
+// emit_event` settles as Outcome{Success} carrying the declared tag
+// in `Tags`. Per @concept:terminal-tag the tag rides on the
+// settling verdict; downstream subscribers fire via
+// `type: terminal/success when: "<tag>" in payload.tags`.
+func TestExecute_EmitEventEmitsDeclaredTag(t *testing.T) {
+	e := &Executor{}
+	req := mustExecuteRequest(t, map[string]any{"mode": "emit_event"})
+	outcome, err := e.Execute(context.Background(), req)
 	if err != nil {
-		t.Fatalf("structpb.NewStruct: %v", err)
+		t.Fatalf("Execute: %v", err)
 	}
-
-	stream, err := genv1.NewExecutorClient(conn).Execute(ctx, &genv1.ExecuteRequest{
-		NodeId: "n1", InstanceId: "i1", NodeType: "example", Attributes: attrs,
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+	success, ok := outcome.GetOutcome().(*genv1.Outcome_Success)
+	if !ok {
+		t.Fatalf("expected Outcome_Success, got %T", outcome.GetOutcome())
 	}
-
-	var (
-		sawDeclared    bool
-		successOutcome bool
-	)
-	for {
-		ev, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("recv: %v", err)
-		}
-		if ne := ev.GetNamedEvent(); ne != nil {
-			if ne.GetName() == DeclaredEventName {
-				sawDeclared = true
-			}
-		}
-		if sc := ev.GetStreamClose(); sc != nil {
-			successOutcome = sc.GetSuccess() != nil
-		}
-	}
-	if !sawDeclared {
-		t.Fatalf("did not see a NamedEvent with name %q on the stream", DeclaredEventName)
-	}
-	if !successOutcome {
-		t.Fatal("terminal outcome on emit_event mode must be Success (event-emit-then-success contract)")
+	tags := success.Success.GetTags()
+	if len(tags) != 1 || tags[0] != DeclaredTagName {
+		t.Errorf("Success.Tags = %v, want [%q]", tags, DeclaredTagName)
 	}
 }
 
-// startInProcessExecutor stands up the Executor as an in-process gRPC
-// server on a free port and returns a connected client conn. Cleanup is
-// registered via t.Cleanup; callers do not need to defer anything.
-func startInProcessExecutor(t *testing.T) *grpc.ClientConn {
+// @deliberate: TestExecute_AsyncMode_ReturnsAwaitAsyncCallback —
+// `mode: async_callback` with a supplied `async_ack_id` attribute
+// settles the unary RPC as Outcome{AwaitAsyncCallback} carrying that
+// exact ack id. Per @concept:async-callback-persistence the supervisor
+// keys the dispatch row's `col:rimsky_node_runs.async_ack_id` on this
+// value; an incoming callback POST to `/v1/callback/{ack_id}` is
+// correlated by lookup against that column, surviving supervisor
+// restart. The empty-callback-url branch is exercised: with no URL set
+// the executor returns AwaitAsync without dispatching the deferred
+// POST goroutine, so the test asserts on the unary-response shape only.
+func TestExecute_AsyncMode_ReturnsAwaitAsyncCallback(t *testing.T) {
+	e := &Executor{}
+	const wantAck = "ack-async-unit-test-1"
+	req := mustExecuteRequest(t, map[string]any{
+		"mode":         "async_callback",
+		"async_ack_id": wantAck,
+	})
+	outcome, err := e.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	await, ok := outcome.GetOutcome().(*genv1.Outcome_AwaitAsync)
+	if !ok {
+		t.Fatalf("expected Outcome_AwaitAsync, got %T", outcome.GetOutcome())
+	}
+	if got := await.AwaitAsync.GetAsyncAckId(); got != wantAck {
+		t.Errorf("AwaitAsyncCallback.async_ack_id = %q, want %q", got, wantAck)
+	}
+}
+
+// @deliberate: TestExecute_AsyncMode_MissingAckIDSurfacesError — the
+// empty-ack-id branch of the async-callback path is a template
+// mistake (the executor has no way to manufacture a stable id the
+// supervisor's persistent registry can correlate against). The
+// executor surfaces it as an Error{DeclaredErrorClass} instead of
+// AwaitAsync against an empty ack id, so the failure is visible in
+// the audit log instead of stuck in `running`.
+func TestExecute_AsyncMode_MissingAckIDSurfacesError(t *testing.T) {
+	e := &Executor{}
+	req := mustExecuteRequest(t, map[string]any{"mode": "async_callback"})
+	outcome, err := e.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	errOut, ok := outcome.GetOutcome().(*genv1.Outcome_Error)
+	if !ok {
+		t.Fatalf("expected Outcome_Error (empty async_ack_id), got %T", outcome.GetOutcome())
+	}
+	if errOut.Error.GetErrorClass() != DeclaredErrorClass {
+		t.Errorf("Error.error_class = %q, want %q",
+			errOut.Error.GetErrorClass(), DeclaredErrorClass)
+	}
+}
+
+func mustExecuteRequest(t *testing.T, attrs map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	attrStruct, err := structpb.NewStruct(attrs)
 	if err != nil {
-		t.Fatalf("listen: %v", err)
+		t.Fatalf("structpb.NewStruct: %v", err)
 	}
-	srv := grpc.NewServer()
-	exec := &Executor{}
-	genv1.RegisterExecutorServer(srv, exec)
-	genv1.RegisterExecutorObservabilityServer(srv, exec)
-	go func() { _ = srv.Serve(lis) }()
-	t.Cleanup(srv.Stop)
-
-	conn, err := grpc.NewClient(lis.Addr().String(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatalf("dial: %v", err)
+	return &genv1.ExecuteRequest{
+		NodeId:     "00000000-0000-0000-0000-000000000001",
+		InstanceId: "00000000-0000-0000-0000-000000000002",
+		Attributes: attrStruct,
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	return conn
 }

@@ -52,7 +52,7 @@ func TestAcquireSubClaims_UnsupportedSplitErrors(t *testing.T) {
 		ProducerName:        "ds-store",
 		HolderSupervisorID:  "sup-U",
 		InstanceID:          shared.UUID{},
-		HeartbeatInterval:   30 * time.Second,
+		LivenessInterval:    30 * time.Second,
 	})
 	require.Error(t, err)
 }
@@ -76,7 +76,7 @@ func TestAcquireSubClaims_UnknownProducerErrors(t *testing.T) {
 		ProducerName:        "missing-store",
 		HolderSupervisorID:  "sup-X",
 		InstanceID:          shared.UUID{},
-		HeartbeatInterval:   30 * time.Second,
+		LivenessInterval:    30 * time.Second,
 	})
 	require.Error(t, err)
 }
@@ -117,7 +117,7 @@ func TestAcquireSubClaims_EmptyPartitionKeyRejected(t *testing.T) {
 		ProducerName:        "ds-store",
 		HolderSupervisorID:  "sup-EK",
 		InstanceID:          shared.UUID{},
-		HeartbeatInterval:   30 * time.Second,
+		LivenessInterval:    30 * time.Second,
 	})
 	require.ErrorContains(t, err, "empty partition_key")
 }
@@ -346,7 +346,7 @@ func TestSubClaim_BeginThenCommitFlowsThroughRuntime(t *testing.T) {
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  "sup-FAN",
 			InstanceID:          shared.UUID{},
-			HeartbeatInterval:   30 * time.Second,
+			LivenessInterval:    30 * time.Second,
 			ParentIsHeld:        false,
 		})
 		subClaims = out
@@ -576,7 +576,7 @@ func TestSubClaim_CrossSupervisorSettlementResolvesParent(t *testing.T) {
 			HolderNodeID:        parentNode.ID,
 			HolderSupervisorID:  supOne,
 			InstanceID:          shared.UUID{},
-			HeartbeatInterval:   30 * time.Second,
+			LivenessInterval:    30 * time.Second,
 		})
 		subClaims = out
 		return err

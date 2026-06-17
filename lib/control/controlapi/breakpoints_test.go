@@ -165,6 +165,38 @@ func TestBreakpoint_CreateAcceptsTrailingWildcardSignal(t *testing.T) {
 	require.Equal(t, "terminal/error/*", out["signal_type"])
 }
 
+// TestBreakpoint_CreateRejectsRetiredEventTypePath pins the
+// TD-collapse-named-event-to-tags retirement of the `event/<name>`
+// signal-type-path at the breakpoint surface. signal.ValidateSubscriptionType
+// no longer admits `event/*` or `event/<name>`; the breakpoint create
+// handler routes through that validator so the rejection is automatic.
+// Per concept:terminal-tag, an operator who wants to break on the
+// observable discriminator that used to ride as a NamedEvent now
+// declares a `terminal/*` matcher and filters via a `payload.tags`
+// CEL predicate downstream (the matcher itself stays type-path-only;
+// payload.tags-aware breakpoint matching is handled in the eval path).
+func TestBreakpoint_CreateRejectsRetiredEventTypePath(t *testing.T) {
+	t.Parallel()
+	cases := []string{"event/discovered", "event/*"}
+	for _, sig := range cases {
+		sig := sig
+		t.Run(sig, func(t *testing.T) {
+			t.Parallel()
+			h, teardown := newHarness(t)
+			t.Cleanup(teardown)
+			_, instID := seedBPInstance(t, h, uuid.NewString())
+
+			status, _ := h.httpJSON(t, "POST", fmt.Sprintf("/v1/instances/%s/breakpoints", instID), map[string]any{
+				"checkpoint":  "after_terminal",
+				"signal_type": sig,
+				"mode":        "notify_only",
+			})
+			require.Equal(t, http.StatusBadRequest, status,
+				"signal_type=%q must reject — event/<name> retired under TD-collapse-named-event-to-tags", sig)
+		})
+	}
+}
+
 // TestBreakpoint_CreateRejectsUnknownNodeType verifies matcher
 // validation routes through the foundation/matcher package's
 // ValidationRefs and the controlapi error translator (400 with

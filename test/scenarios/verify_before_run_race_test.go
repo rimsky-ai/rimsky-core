@@ -65,8 +65,8 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 	dispatchID := uuid.New()
 	mainScopeID := h.GetMainRunScopeID(iid)
 	_, err = h.Pool.Exec(h.Ctx,
-		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, last_heartbeat_at, frame_id, run_scope_id)
-		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), NOW(), $3, $4)`,
+		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, claimed_by, claimed_at, frame_id, run_scope_id)
+		 VALUES ($1, $2, 'stub', '{}', NOW() - INTERVAL '5 seconds', 'fake-other', NOW(), $3, $4)`,
 		dispatchID, n.ID, *n.FrameID, mainScopeID,
 	)
 	require.NoError(t, err)
@@ -91,7 +91,7 @@ func TestVerifyBeforeRunRace(t *testing.T) {
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
-		HeartbeatInterval: 100 * time.Millisecond,
+		LivenessInterval: 100 * time.Millisecond,
 	}
 	out, err := runtime.RunNode(h.Ctx, args, nil)
 	require.NoError(t, err)

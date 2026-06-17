@@ -4,7 +4,7 @@
 
 import { afterEach, describe, it, expect } from "vitest";
 import { Observability, capabilitiesPayload } from "./observability.js";
-import { resolveDeclaredEvents } from "./expected-attributes-schema.js";
+import { resolveDeclaredTags } from "./expected-attributes-schema.js";
 
 describe("Observability ledger", () => {
   it("records and retrieves events for a dispatch", () => {
@@ -59,29 +59,29 @@ describe("Observability ledger", () => {
   });
 });
 
-describe("RIMSKY_EXECUTOR_DECLARED_EVENTS env override", () => {
+describe("RIMSKY_EXECUTOR_DECLARED_TAGS env override", () => {
   afterEach(() => {
-    delete process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS;
+    delete process.env.RIMSKY_EXECUTOR_DECLARED_TAGS;
   });
 
   it("defaults to [] when unset", () => {
-    delete process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS;
-    expect(resolveDeclaredEvents()).toEqual([]);
-    expect(capabilitiesPayload().declared_events).toEqual([]);
+    delete process.env.RIMSKY_EXECUTOR_DECLARED_TAGS;
+    expect(resolveDeclaredTags()).toEqual([]);
+    expect(capabilitiesPayload().declared_tags).toEqual([]);
   });
 
   it('parses "a,b" into ["a","b"] and surfaces it in capabilitiesPayload (HTTP surface)', () => {
-    process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS = "a,b";
-    expect(resolveDeclaredEvents()).toEqual(["a", "b"]);
-    // @deliberate: the HTTP+JSON observability surface advertises declared_events from
+    process.env.RIMSKY_EXECUTOR_DECLARED_TAGS = "a,b";
+    expect(resolveDeclaredTags()).toEqual(["a", "b"]);
+    // @deliberate: the HTTP+JSON observability surface advertises declared_tags from
     // the resolved list.
-    expect(capabilitiesPayload().declared_events).toEqual(["a", "b"]);
+    expect(capabilitiesPayload().declared_tags).toEqual(["a", "b"]);
   });
 
   it("trims whitespace and drops empty segments", () => {
-    process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS = " progress , , milestone ,";
-    expect(resolveDeclaredEvents()).toEqual(["progress", "milestone"]);
-    expect(capabilitiesPayload().declared_events).toEqual([
+    process.env.RIMSKY_EXECUTOR_DECLARED_TAGS = " progress , , milestone ,";
+    expect(resolveDeclaredTags()).toEqual(["progress", "milestone"]);
+    expect(capabilitiesPayload().declared_tags).toEqual([
       "progress",
       "milestone",
     ]);

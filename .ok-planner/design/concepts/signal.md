@@ -15,11 +15,11 @@ The signal travels two independent paths once emitted:
 1. **Cascade walker.** Subscription edges keyed by type-path prefix select candidate receivers; a CEL `when:` predicate evaluated against the payload gates wait-set insertion.
 2. **Audit log.** Every signal writes one row to the persisted audit-event ledger with the event kind set to the signal's type-path string and the audit payload set to the signal payload. Audit emission is unconditional and independent of subscribers.
 
-The signal vocabulary unifies three otherwise-parallel surfaces — `last_outcome`, `transition_reason`, and the subscription entry's structured-filter fields (when, outcome, error-class, reason, name, kind, sender, sender-kind, target) — into one type-path-plus-payload contract.
+The signal vocabulary unifies the historical parallel surfaces (run outcome, transition reason, subscription's structured-filter fields) into one type-path-plus-payload contract.
 
 ## Purpose
 
-Make "what just happened to a node-run" one vocabulary across cascade-fire, audit, and subscription. A single subscription surface (`type:` path + `when:` CEL predicate) lets operators reason uniformly about every observable transition; a single audit vocabulary (the signal type-path as the audit-event kind) lets observability tooling describe what happened without spelunking through three overlapping enums; a single emission discipline lets new transitions (retries, heartbeat misses, attribute writes) become first-class observable events without inventing new switch-paths.
+Make "what just happened to a node-run" one vocabulary across cascade-fire, audit, and subscription. A single subscription surface (`type:` path + `when:` CEL predicate) lets operators reason uniformly about every observable transition; a single audit vocabulary (the signal type-path as the audit-event kind) lets observability tooling describe what happened without spelunking through overlapping enums; a single emission discipline lets new transitions become first-class observable events without inventing new switch-paths.
 
 ## Signal type-path taxonomy
 
@@ -29,21 +29,17 @@ Four top-level kinds. Type-paths are canonical and validator-enforced.
 
 The `terminal/*` leaves are `terminal/success`; `terminal/error/<error_class>` (the `error_class` segment may itself contain `/`); `terminal/park/snooze` and `terminal/park/await_callback`; and `terminal/infra/<reason>`.
 
-Emitted exactly once per run, at the moment the run settles. `terminal/park/*` leaves are exactly the park-reason enum (a two-value closed set fixed on the wire executor protocol).
+Emitted exactly once per run, at the moment the run settles. `terminal/park/*` leaves are exactly the park-reason enum (a two-value closed set fixed on the wire executor protocol). The terminal payload carries the settling verdict's `tags` set; subscribers fire by CEL filtering over `payload.tags` (see "Payload schemas").
 
 ### `transient/*` — mid-dispatch transitions, dispatch not yet settled
 
-The `transient/*` leaves are `transient/retry/<attempt>/<error_class>`, `transient/heartbeat_missed`, and `transient/await_async`.
+The `transient/*` leaves are `transient/retry/<attempt>/<error_class>` and `transient/await_async`.
 
 `transient/await_async` is the executor await-async-callback outcome — the node stays in `running` state until the callback's eventual terminal settles it. It is NOT a `terminal/park/*` leaf.
 
 ### `attribute/<key>/changed` — attribute writes
 
 Emitted per changed attribute key when a node settles with a non-empty attribute delta.
-
-### `event/<name>` — named-event emissions
-
-Emitted when an executor produces a non-terminal named event (`concept:named-event`). The payload's `event_payload` field carries the executor-provided bytes (the field is named per the field-naming convention below to disambiguate from the wire carrier's opaque `payload` field).
 
 ### `message/<kind>/<sender_kind>/<target>` — boundary-crossing messages
 
@@ -53,15 +49,15 @@ Emitted when a `concept:message` arrives at an instance. The three structured fi
 
 Each signal type's payload is a typed object. The CEL environment binds these field types at template registration so subscribers' `when:` predicates parse-check. The per-type payload schema is a property of the concept: each type-path resolves to one payload shape.
 
+`terminal/*` payloads bind a `tags: list<string>` field for CEL `in` predicates over `payload.tags`. The tag set carries the executor-emitted discriminators on the settling-Outcome's `tags` set; the audit row persists them in the `payload->tags` JSONB column and subscribers match them via the CEL `when:` filter (see `concept:terminal-tag`).
+
 ### Field-naming convention
 
-The signal envelope's outer field is `payload`. To avoid a bare-`payload` collision when a signal's payload itself wraps an opaque sub-object whose wire carrier also names its own opaque field `payload` (the executor error carrier, the named-event carrier, the park carrier, and the message envelope each carry one), the inner field is renamed with a domain prefix:
+The signal envelope's outer field is `payload`. To avoid a bare-`payload` collision when a signal's payload itself wraps an opaque sub-object whose wire carrier also names its own opaque field `payload` (the executor error carrier and the message envelope each carry one), the inner field is renamed with a domain prefix:
 
 | Wire carrier | Renamed-in-signal field |
 | --- | --- |
 | executor error payload | `error_payload` |
-| named-event payload | `event_payload` |
-| park payload | `park_payload` |
 
 This is a rimsky-side rename only; wire field names do not change. CEL predicates against the signal payload see the renamed fields (`when: payload.error_payload.foo > 5`).
 
@@ -89,7 +85,7 @@ Does NOT own:
 - Policy resolution — what tuple the runtime should produce on a given terminal kind (lives in `concept:error-policy` / `concept:terminal-resolution`).
 - The wire executor protocol (signals are emitted on the rimsky side from the wire outcomes, not by the executor directly).
 
-Adjacent: `concept:node-subscription`, `concept:error-policy`, `concept:cascade`, `concept:wait-set`, `concept:event-log`, `concept:executor`.
+Adjacent: `concept:node-subscription`, `concept:error-policy`, `concept:cascade`, `concept:wait-set`, `concept:event-log`, `concept:executor`, `concept:terminal-tag`.
 
 ## Invariants
 
@@ -98,6 +94,7 @@ Adjacent: `concept:node-subscription`, `concept:error-policy`, `concept:cascade`
 - **Audit-log emission is unconditional.** Every signal writes one row to the persisted audit-event ledger regardless of whether any subscriber exists.
 - **Cascade-fire is `subscription edge match && CEL predicate evaluates true`.** No separate sender-side gate.
 - **Wildcard syntax is trailing-`*` only.** `terminal/error/*` matches `terminal/error/foo` and `terminal/error/foo/bar`; no positional wildcards (no `terminal/*/foo`); no full glob. Operators wanting more complex patterns express them via CEL.
+- **`terminal/*` leaves carry tags** (matched via CEL `when:` filter on `payload.tags`); the discriminator rides as metadata on the terminal payload — the settling-Outcome's `tags` set, persisted in the audit row's `payload->tags` JSONB column.
 - **CEL is the filter language; exact-type subscriptions parse-check field references against the resolved payload schema; prefix-type subscriptions bind `payload` as `dyn`.** This keeps tight checking for the common exact-type case while letting prefix subscriptions span heterogeneous payload shapes.
 - **`terminal/park/*` leaves are the closed two-value set determined by the park-reason enum.** The taxonomy is downstream of the wire park-reason enum. The await-async-callback outcome is a transient (`transient/await_async`), not a park — the node stays in `running` state during the callback wait.
-- **The wait-set `topic_kind` discriminator is a faithful projection of the signal top-level kind:** each of the five canonical kinds (terminal, transient, attribute, event, message) maps to its own `topic_kind` value; no two distinct signal classes collapse onto a shared bucket. (`state` is admitted as a defensive fallback for unrecognized rows.)
+- **The wait-set `topic_kind` discriminator is a faithful projection of the signal top-level kind:** each of the four canonical kinds (terminal, transient, attribute, message) maps to its own `topic_kind` value; the message-kind row is admitted by the protocol-level signal taxonomy but not in the storage projection (the storage CHECK admits `terminal`, `transient`, `attribute`, plus `state` as a defensive fallback for unrecognized rows).

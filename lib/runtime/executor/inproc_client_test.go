@@ -7,7 +7,6 @@ package executor
 import (
 	"context"
 	"errors"
-	"io"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,13 +16,14 @@ import (
 )
 
 // fakeHandler is a test-only InProcessHandler whose Execute body is
-// driven by a caller-provided closure.
+// driven by a caller-provided closure. Per TD-execute-rpc-unary the
+// handler returns the settling Outcome directly.
 type fakeHandler struct {
-	fn func(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error
+	fn func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error)
 }
 
-func (f *fakeHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error {
-	return f.fn(ctx, req, sink, hctx)
+func (f *fakeHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
+	return f.fn(ctx, req, hctx)
 }
 
 func newFreshRequest(t *testing.T) *genv1.ExecuteRequest {
@@ -34,59 +34,35 @@ func newFreshRequest(t *testing.T) *genv1.ExecuteRequest {
 	}
 }
 
-func TestInProcessClient_HappyPathStreamsAndEOFs(t *testing.T) {
+func successOutcome() *genv1.Outcome {
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{Changed: true}}}
+}
+
+func TestInProcessClient_HappyPath(t *testing.T) {
 	const url = "inproc://test-happy"
 	reg := NewInProcessRegistry()
-	hb := &genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_NamedEvent{NamedEvent: &genv1.NamedEvent{Name: "tick"}}}
-	close1 := &genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{Changed: true}}}}}
-	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error {
-		if err := sink.Send(hb); err != nil {
-			return err
-		}
-		return sink.Send(close1)
+	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
+		return successOutcome(), nil
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-
 	client, err := NewInProcessClient(Endpoint{Transport: "inproc", URL: url}, reg, nil)
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	stream, err := client.Execute(context.Background(), newFreshRequest(t))
+	outcome, err := client.Execute(context.Background(), newFreshRequest(t))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	ev1, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("Recv 1: %v", err)
-	}
-	if ev1.GetNamedEvent().GetName() != "tick" {
-		t.Fatalf("expected NamedEvent name=tick, got %+v", ev1)
-	}
-	ev2, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("Recv 2: %v", err)
-	}
-	if ev2.GetStreamClose().GetSuccess() == nil {
-		t.Fatalf("expected Success StreamClose, got %+v", ev2)
-	}
-	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("expected io.EOF after handler return, got %v", err)
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("expected Success outcome, got %+v", outcome)
 	}
 }
 
-// TestInProcessClient_HandlerPanicSurfacesAsError pins the goroutine
-// panic-recovery contract: a handler that panics MUST surface a
-// non-nil error to the consumer's Recv (after the channel closes) and
-// MUST NOT wedge the consumer or crash the supervisor. Without the
-// recover-deferred + close(errCh) in the goroutine, a panic would
-// close ch but leave errCh open-and-never-sent, and the consumer
-// (inprocEventStream.Recv) would block forever on the errCh read
-// after seeing EOF on ch.
 func TestInProcessClient_HandlerPanicSurfacesAsError(t *testing.T) {
 	const url = "inproc://test-panic"
 	reg := NewInProcessRegistry()
-	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error {
+	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
 		panic("handler exploded")
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -95,25 +71,17 @@ func TestInProcessClient_HandlerPanicSurfacesAsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	stream, err := client.Execute(context.Background(), newFreshRequest(t))
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	_, err = stream.Recv()
-	if err == nil {
-		t.Fatalf("expected handler-panic error from Recv, got nil")
-	}
-	if errors.Is(err, io.EOF) {
-		t.Fatalf("expected non-EOF panic error from Recv, got io.EOF")
+	if _, err := client.Execute(context.Background(), newFreshRequest(t)); err == nil {
+		t.Fatalf("expected handler-panic error, got nil")
 	}
 }
 
-func TestInProcessClient_HandlerErrorSurfacesAfterClose(t *testing.T) {
+func TestInProcessClient_HandlerErrorSurfaces(t *testing.T) {
 	const url = "inproc://test-err"
 	reg := NewInProcessRegistry()
 	want := errors.New("kaboom")
-	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error {
-		return want
+	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
+		return nil, want
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -121,13 +89,9 @@ func TestInProcessClient_HandlerErrorSurfacesAfterClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	stream, err := client.Execute(context.Background(), newFreshRequest(t))
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	_, err = stream.Recv()
+	_, err = client.Execute(context.Background(), newFreshRequest(t))
 	if err == nil {
-		t.Fatalf("expected handler error from Recv, got nil")
+		t.Fatalf("expected handler error, got nil")
 	}
 	if !errors.Is(err, want) {
 		t.Fatalf("expected handler error %v, got %v", want, err)
@@ -138,9 +102,8 @@ func TestInProcessClient_ScratchOnSuccessReachesConsumer(t *testing.T) {
 	const url = "inproc://test-scratch"
 	reg := NewInProcessRegistry()
 	scratch := []byte("opaque-bytes")
-	close1 := &genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{Scratch: scratch}}}}}
-	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error {
-		return sink.Send(close1)
+	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{Scratch: scratch}}}, nil
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -148,15 +111,11 @@ func TestInProcessClient_ScratchOnSuccessReachesConsumer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	stream, err := client.Execute(context.Background(), newFreshRequest(t))
+	outcome, err := client.Execute(context.Background(), newFreshRequest(t))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	ev, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("Recv: %v", err)
-	}
-	got := ev.GetStreamClose().GetSuccess().GetScratch()
+	got := outcome.GetSuccess().GetScratch()
 	if string(got) != string(scratch) {
 		t.Fatalf("expected scratch %q, got %q", scratch, got)
 	}
@@ -188,8 +147,8 @@ func TestNewInProcessClient_RejectsWrongTransport(t *testing.T) {
 func TestInProcessClient_ParsesTypedUUIDsAtBoundary(t *testing.T) {
 	const url = "inproc://test-uuid"
 	reg := NewInProcessRegistry()
-	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error {
-		return sink.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{}}}}})
+	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
+		return successOutcome(), nil
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -210,8 +169,8 @@ func TestInProcessClient_ParsesTypedUUIDsAtBoundary(t *testing.T) {
 func TestInProcessClient_PoolWiresInprocCase(t *testing.T) {
 	const url = "inproc://test-pool"
 	reg := NewInProcessRegistry()
-	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error {
-		return sink.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{}}}}})
+	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
+		return successOutcome(), nil
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -246,11 +205,11 @@ func TestInProcessClient_HandlerContextFactoryReceivesTypedIDs(t *testing.T) {
 		gotScratchWriter bool
 	}
 	cap := &capture{}
-	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, sink EventSink, hctx HandlerContext) error {
+	if err := reg.Register(url, &fakeHandler{fn: func(ctx context.Context, req *genv1.ExecuteRequest, hctx HandlerContext) (*genv1.Outcome, error) {
 		if hctx.Scratch != nil {
 			cap.gotScratchWriter = true
 		}
-		return sink.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{}}}}})
+		return successOutcome(), nil
 	}}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -264,15 +223,8 @@ func TestInProcessClient_HandlerContextFactoryReceivesTypedIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewInProcessClient: %v", err)
 	}
-	stream, err := client.Execute(context.Background(), newFreshRequest(t))
-	if err != nil {
+	if _, err := client.Execute(context.Background(), newFreshRequest(t)); err != nil {
 		t.Fatalf("Execute: %v", err)
-	}
-	if _, err := stream.Recv(); err != nil {
-		t.Fatalf("Recv 1: %v", err)
-	}
-	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
-		t.Fatalf("Recv EOF: %v", err)
 	}
 	if !cap.gotScratchWriter {
 		t.Fatalf("expected handler to receive non-nil ScratchWriter from factory")

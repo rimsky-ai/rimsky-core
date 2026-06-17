@@ -119,9 +119,7 @@ func TestSignalEmission_ParkSnooze(t *testing.T) {
 	h.Stub.WhenType("worker").Park(
 		genv1.ParkReason_PARK_REASON_SNOOZE,
 		"sleep-1h",
-		nil,
 		resume,
-		"sess-1",
 	)
 
 	tid := h.DeployTemplate(node.TemplateSpec{

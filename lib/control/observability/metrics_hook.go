@@ -57,11 +57,6 @@ func (h *RegistryHook) IncNamedLockAcquisition(lockName, intent string) {
 	h.reg.NamedLockAcquisitions.WithLabelValues(lockName, intent).Inc()
 }
 
-// IncNamedEvent records a NamedEvent persistence write.
-func (h *RegistryHook) IncNamedEvent(executor, eventName string) {
-	h.reg.NamedEvents.WithLabelValues(executor, eventName).Inc()
-}
-
 // ObserveDispatchLatency observes the wall-clock dispatch duration.
 func (h *RegistryHook) ObserveDispatchLatency(executor string, seconds float64) {
 	h.reg.DispatchLatencySeconds.WithLabelValues(executor).Observe(seconds)

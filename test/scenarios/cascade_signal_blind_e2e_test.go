@@ -4,28 +4,35 @@
 
 // Executable proof for STORY-cascade-signal-blind.
 //
-// Drives the real assembled stack (control-api + scheduler + supervisor +
-// stub-executor + Postgres via testcontainers) through every cascade-firing
-// signal type in the canonical taxonomy — `terminal/success`,
-// `terminal/error/<class>` (give_up flavor and pass flavor),
-// `transient/retry/<n>/<class>`, `attribute/<key>/changed`, `event/<name>` —
-// and asserts that (a) a subscriber dispatches for each, AND (b) the audit
-// row lands in `rimsky_events`.
+// Drives the real assembled stack (control-api + scheduler +
+// supervisor + stub-executor + Postgres via testcontainers) through
+// every cascade-firing signal type in the post-collapse taxonomy —
+// `terminal/success`, `terminal/error/<class>` (give_up and pass
+// flavors), `attribute/<key>/changed` — plus the new
+// `terminal/success` + `when: "<tag>" in payload.tags` CEL row that
+// replaces the retired `event/<name>` signal under
+// TD-collapse-named-event-to-tags.
 //
-// Per-sender (`{ node: X, type: ... }`) and cross-cutting (`instance: true`)
-// subscription shapes are exercised for the terminal/success +
-// terminal/error/<class> rows. Per-sender alone for transient/retry,
-// attribute/<key>/changed, and event/<name>, because those are emitted
-// inside the runtime against a specific sender-run and a per-sender shape
-// is sufficient to prove the signal-blind code-path. Both `give_up` and
-// `pass` variants of `terminal/error/<class>` are exercised — the per-sender
-// `terminal/error/*` row is the regression close for GH issue #15 (a
-// per-sender error-subscription silently skipped on v0.6.0).
+// For each row asserts (a) a subscriber dispatches in response to
+// the signal, AND (b) the audit row lands in `rimsky_events`. The
+// per-sender (`{ node: X, type: ... }`) and cross-cutting (`instance:
+// true`) subscription shapes are exercised for the terminal/success
+// + terminal/error rows; per-sender alone for attribute/<key>/changed
+// and the tag CEL row. Trailing-`*` prefix shapes (`terminal/error/*`)
+// are exercised on the error rows. The `transient/retry/<n>/<class>`
+// signal is exercised by the retry-after-error scratch round-trip in
+// `code:test/scenarios/scratch_round_trip_e2e_test.go::TestScratchRoundTripE2E_RetryAfterError`,
+// which drives a real retry chain end to end; we don't duplicate
+// here.
 //
-// Load-bearing property: cascade signal-blindness — drive REAL settlements
-// through the runtime, do not hand-inject signals.
+// Load-bearing property: cascade signal-blindness — drive REAL
+// settlements through the runtime; no hand-injected signals. Per
+// TD-collapse-named-event-to-tags the `event/<name>` row is dropped
+// entirely and replaced by the `terminal/success + tags` CEL row.
 //
-//	@story: cascade-signal-blind
+// @story: cascade-signal-blind
+// @concept: cascade
+// @concept: terminal-tag
 
 package scenarios
 
@@ -43,12 +50,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// waitForNodeStateNoEvent polls the node row until the state matches, with
-// no `terminal/success` event-row requirement. The harness's
-// WaitForNodeState requires a terminal/success row when waiting on fresh —
-// fine for the success path, wrong for `pass`-settled fresh (where the
-// settling signal is terminal/error/<class>, not terminal/success). Used by
-// the pass-flavored terminal/error rows.
+// @deliberate: waitForNodeStateNoEvent polls the node row until the
+// state matches, with no `terminal/success` event-row requirement.
+// The harness's WaitForNodeState requires a terminal/success row when
+// waiting on fresh — fine for the success path, wrong for `pass`-
+// settled fresh (where the settling signal is terminal/error/<class>,
+// not terminal/success). Used by the pass-flavored terminal/error
+// rows.
 func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state cascade.NodeState, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -66,52 +74,27 @@ func waitForNodeStateNoEvent(h *scenario.Harness, nodeID shared.UUID, state casc
 	return false
 }
 
-// TestCascadeSignalBlind_E2E drives the cascade signal-blindness story
-// via real settlements through the runtime. Each subtest exercises one
-// (signal-type, subscription-shape) row by:
-//
-//  1. Deploying a fresh template with a sender configured to produce the
-//     signal and a receiver subscribed to a matching type-path.
-//  2. Creating an instance and waiting for the receiver to reach `fresh`
-//     (the cascade-fire observable: the receiver dispatched in response
-//     to the signal).
-//  3. Asserting the audit row for the signal lands in `rimsky_events`
-//     keyed on the sender node id.
-//
-// Drive-the-real-runtime: every row uses h.Stub.WhenType + the harness's
-// real control-api / scheduler / supervisor chain; no hand-injected
-// signals.
 func TestCascadeSignalBlind_E2E(t *testing.T) {
 	t.Parallel()
 
 	t.Run("terminal_success__per_sender", testCascadeTerminalSuccessPerSender)
 	t.Run("terminal_success__cross_cutting", testCascadeTerminalSuccessCrossCutting)
 
-	// @constraint: The GH issue #15 regression close: a per-sender `terminal/error/*`
-	// subscription must dispatch when the sender settles
-	// terminal/error/<class>.
-	t.Run("terminal_error_giveup__per_sender", testCascadeTerminalErrorGiveUpPerSender)
-	t.Run("terminal_error_giveup__cross_cutting", testCascadeTerminalErrorGiveUpCrossCutting)
+	t.Run("terminal_error_giveup__per_sender_prefix", testCascadeTerminalErrorGiveUpPerSender)
+	t.Run("terminal_error_giveup__cross_cutting_exact", testCascadeTerminalErrorGiveUpCrossCutting)
 
-	t.Run("terminal_error_pass__per_sender", testCascadeTerminalErrorPassPerSender)
-	t.Run("terminal_error_pass__cross_cutting", testCascadeTerminalErrorPassCrossCutting)
-
-	// @deliberate: The pre-message-schema-layer `transient_retry__per_sender`
-	// variant retired alongside the per-subscription `frame: next`
-	// modifier: it asserted the receiver dispatches DURING the sender's
-	// retry window, which required opening a new frame for the receiver
-	// on each transient/retry emit. With the cascade walker collapsed to
-	// one in-frame path, cross-frame coupling moves to message-emitter
-	// nodes; the equivalent retry-window dispatch becomes a
-	// message-emitter scenario covered later in the message-schema-layer
-	// rollout.
+	t.Run("terminal_error_pass__per_sender_prefix", testCascadeTerminalErrorPassPerSender)
 
 	t.Run("attribute_changed__per_sender", testCascadeAttributeChangedPerSender)
 
-	t.Run("event_named__per_sender", testCascadeEventNamedPerSender)
+	// @constraint: Post TD-collapse-named-event-to-tags the
+	// `event/<name>` taxonomy row retires; subscribers express tag
+	// interest via CEL filters over `payload.tags` on the terminal/*
+	// signal. This row pins the new shape.
+	t.Run("terminal_success_with_tag_filter__per_sender", testCascadeTerminalSuccessWithTagFilterPerSender)
 }
 
-// @deliberate: terminal/success
+// @deliberate: terminal/success per-sender exact
 
 func testCascadeTerminalSuccessPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -146,6 +129,8 @@ func testCascadeTerminalSuccessPerSender(t *testing.T) {
 	require.True(t, h.WaitForEventKind(sender.ID, "terminal/success", 10*time.Second),
 		"audit row for terminal/success must land in rimsky_events")
 }
+
+// @deliberate: terminal/success cross-cutting exact
 
 func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
@@ -183,17 +168,8 @@ func testCascadeTerminalSuccessCrossCutting(t *testing.T) {
 
 // @deliberate: terminal/error/<class> give_up flavor
 
-// testCascadeTerminalErrorGiveUpPerSender — REGRESSION CLOSE for GH issue
-// #15. A per-sender subscription on `terminal/error/*` MUST dispatch when
-// the sender settles `terminal/error/<class>` via `error_types: give_up`.
-//
-// Per the plan's necessity rule, if this fails on the current code despite
-// the post-v0.6.0 signal-emit refactor at commit 6088bb0, the implementer
-// fixes the underlying code in the same pass.
 func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: Stub auto-prefixes single-segment classes with `stub/` at emit time,
-	// so the wire error_class is `stub/giveup_class`.
 	h.Stub.WhenType("sender").Error("giveup_class", map[string]any{"hint": "fail"})
 	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
 
@@ -209,9 +185,9 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 			}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
-				// @deliberate: Trailing-* prefix shape per the plan's regression-close
-				// requirement. Per-sender (Node: "sender") fires only on
-				// signals emitted by the named sender.
+				// @deliberate: Trailing-* prefix shape — per-sender
+				// `terminal/error/*` fires on any terminal/error/<class>
+				// signal from the named sender.
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Node: "sender", Type: "terminal/error/*",
 					WakeOnChange:         node.BoolPtr(true),
@@ -227,12 +203,10 @@ func testCascadeTerminalErrorGiveUpPerSender(t *testing.T) {
 	require.NotNil(t, sender)
 	require.NotNil(t, receiver)
 
-	// @deliberate: give_up settles the sender failed; the receiver still dispatches
-	// because the subscription wildcard-matches terminal/error/*.
 	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFailed, 30*time.Second),
 		"sender should settle failed under give_up")
 	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender terminal/error/* subscriber must dispatch on the sender's give_up settlement (GH #15 regression close)")
+		"per-sender terminal/error/* subscriber must dispatch on the sender's give_up settlement")
 	require.True(t, h.WaitForEventKind(sender.ID, "terminal/error/stub/giveup_class", 10*time.Second),
 		"audit row for terminal/error/<class> must land in rimsky_events")
 }
@@ -254,8 +228,6 @@ func testCascadeTerminalErrorGiveUpCrossCutting(t *testing.T) {
 			}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
-				// @deliberate: Per the plan: `instance: true` + exact
-				// `terminal/error/<class>` for the cross-cutting variant.
 				scenario.WithSubscribes(node.SubscriptionEntry{
 					Instance:             true,
 					Type:                 "terminal/error/stub/giveup_class_cc",
@@ -314,12 +286,8 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 	require.NotNil(t, sender)
 	require.NotNil(t, receiver)
 
-	// @constraint: pass settles the sender fresh — the wire signal is still
-	// terminal/error/<class>; the receiver wildcards on it. Use the
-	// no-event waiter for the sender because pass-settled fresh carries a
-	// terminal/error/<class> signal rather than terminal/success (the
-	// harness's WaitForNodeState requires the terminal/success row when
-	// waiting on fresh).
+	// @constraint: pass settles the sender fresh — the wire signal is
+	// still terminal/error/<class>; the receiver wildcards on it.
 	require.True(t, waitForNodeStateNoEvent(h, sender.ID, cascade.NodeStateFresh, 30*time.Second),
 		"sender should settle fresh under pass (the wire signal is still terminal/error/<class>)")
 	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
@@ -328,55 +296,10 @@ func testCascadeTerminalErrorPassPerSender(t *testing.T) {
 		"audit row for terminal/error/<class> must land in rimsky_events under pass")
 }
 
-func testCascadeTerminalErrorPassCrossCutting(t *testing.T) {
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	h.Stub.WhenType("sender").Error("pass_class_cc", map[string]any{"hint": "absolve"})
-	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "cascade-signal-blind-error-pass-cross-cutting", Version: "1",
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{
-				Type:     "sender",
-				Executor: "stub",
-				ErrorTypes: map[string]node.ErrorTypePolicy{
-					"stub/pass_class_cc": {Policy: []node.PolicyAction{{Action: "pass"}}},
-				},
-			}),
-			scenario.MakeNode(
-				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
-				scenario.WithSubscribes(node.SubscriptionEntry{
-					Instance:             true,
-					Type:                 "terminal/error/stub/pass_class_cc",
-					WakeOnChange:         node.BoolPtr(true),
-					ForceUpstreamRefresh: node.BoolPtr(false),
-				}),
-			),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-csb-err-pass-cc", map[string]any{})
-
-	sender := h.FindNode(iid, "sender")
-	receiver := h.FindNode(iid, "receiver")
-	require.NotNil(t, sender)
-	require.NotNil(t, receiver)
-
-	require.True(t, waitForNodeStateNoEvent(h, sender.ID, cascade.NodeStateFresh, 30*time.Second),
-		"sender should settle fresh under pass")
-	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"cross-cutting terminal/error/<class> subscriber must dispatch under pass")
-	require.True(t, h.WaitForEventKind(sender.ID, "terminal/error/stub/pass_class_cc", 10*time.Second),
-		"audit row for terminal/error/<class> must land in rimsky_events under pass")
-}
-
 // @deliberate: attribute/<key>/changed
 
 func testCascadeAttributeChangedPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: Sender's Success emits an attributes_delta with key `score`. The
-	// runtime's applyTerminalComplete walks t.AttributesDel and emits a
-	// per-key attribute/<key>/changed signal — both cascade (in-tx) and
-	// audit (post-commit).
 	h.Stub.WhenType("sender").Success(map[string]any{"score": 42}, true, "scored")
 	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
 
@@ -385,9 +308,6 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "sender", Executor: "stub"},
-				// @deliberate: Declare the attribute key on the sender so the cross-
-				// check accepts a downstream subscription / substitution
-				// referencing it.
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -413,40 +333,43 @@ func testCascadeAttributeChangedPerSender(t *testing.T) {
 	require.NotNil(t, receiver)
 
 	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFresh, 30*time.Second),
-		"sender should settle fresh and emit attribute/score/changed")
+		"sender should settle terminal/success")
 	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender attribute/<key>/changed subscriber must dispatch")
+		"per-sender attribute/<key>/changed subscriber must dispatch when sender's terminal carries that key in attributes_delta")
 	require.True(t, h.WaitForEventKind(sender.ID, "attribute/score/changed", 10*time.Second),
-		"audit row for attribute/score/changed must land in rimsky_events")
+		"audit row for attribute/<key>/changed must land in rimsky_events")
 }
 
-// @deliberate: event/<name>
+// @deliberate: terminal/success + CEL `when:` tag filter — the post-
+// collapse replacement for the retired `event/<name>` taxonomy row.
+// The subscriber's `when: "<tag>" in payload.tags` predicate gates the
+// fire on the sender's settling outcome carrying that tag.
 
-func testCascadeEventNamedPerSender(t *testing.T) {
+func testCascadeTerminalSuccessWithTagFilterPerSender(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: `ready` is declared in the stub's DeclaredEvents so the validator
-	// accepts a downstream `event/ready` subscription against the stub
-	// executor.
-	h.Stub.WhenType("sender").
-		EmitNamedEvent("ready", []byte(`{"go":true}`)).
-		Success(map[string]any{"k": 1}, true, "done")
+	// @deliberate: Sender's Success carries an explicit `ready` tag on
+	// the terminal verdict; the subscriber's CEL `when:` predicate
+	// gates on its presence in payload.tags.
+	h.Stub.WhenType("sender").Success(map[string]any{"k": 1}, true, "ok").Tags("ready")
 	h.Stub.WhenType("receiver").Success(map[string]any{"r": 1}, true, "rcv")
 
 	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "cascade-signal-blind-event-named-per-sender", Version: "1",
+		Name: "cascade-signal-blind-tag-filter-per-sender", Version: "1",
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(node.TemplateNodeDef{Type: "sender", Executor: "stub"}),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "receiver", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{
-					Node: "sender", Type: "event/ready",
+					Node:                 "sender",
+					Type:                 "terminal/success",
+					When:                 `"ready" in payload.tags`,
 					WakeOnChange:         node.BoolPtr(true),
 					ForceUpstreamRefresh: node.BoolPtr(false),
 				}),
 			),
 		},
 	})
-	iid := h.CreateInstance(tid, "ck-csb-event-ps", map[string]any{})
+	iid := h.CreateInstance(tid, "ck-csb-tag-ps", map[string]any{})
 
 	sender := h.FindNode(iid, "sender")
 	receiver := h.FindNode(iid, "receiver")
@@ -454,9 +377,9 @@ func testCascadeEventNamedPerSender(t *testing.T) {
 	require.NotNil(t, receiver)
 
 	require.True(t, h.WaitForNodeState(sender.ID, cascade.NodeStateFresh, 30*time.Second),
-		"sender should settle and emit event/ready")
+		"sender should settle terminal/success with the `ready` tag")
 	require.True(t, h.WaitForNodeState(receiver.ID, cascade.NodeStateFresh, 30*time.Second),
-		"per-sender event/<name> subscriber must dispatch")
-	require.True(t, h.WaitForEventKind(sender.ID, "event/ready", 10*time.Second),
-		"audit row for event/ready must land in rimsky_events")
+		"per-sender terminal/success+tag-filter subscriber must dispatch when sender's verdict carries `ready` in payload.tags")
+	require.True(t, h.WaitForEventKind(sender.ID, "terminal/success", 10*time.Second),
+		"audit row for terminal/success must land in rimsky_events")
 }

@@ -46,7 +46,7 @@ func TestRunNode_NoCandidate(t *testing.T) {
 		AcceptedExecutors: []string{"stub"},
 		Pool:              clientPool,
 		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
-		HeartbeatInterval: 100 * time.Millisecond,
+		LivenessInterval:  100 * time.Millisecond,
 	}
 
 	res, err := runtime.RunNode(ctx, args, nil)

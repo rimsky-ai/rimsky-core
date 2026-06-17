@@ -83,12 +83,20 @@ const healthPollInterval = 500 * time.Millisecond
 // against rimsky's tables or seed operator-owned tables. Both DSN fields
 // are empty when the stack is brought up on SQLite (WithSQLite) — there
 // is no Postgres in that mode.
+//
+// CallbackBaseURL is the host-reachable base for the supervisor's
+// async-callback listener (container port 9100, host-mapped). Tests
+// that drive the async-callback POST path (acting in place of an
+// external executor's webhook delivery) use this to dial
+// `${CallbackBaseURL}/v1/callback/{async_ack_id}` from the host. Empty
+// only when the harness fails to map 9100 (a fatal bring-up condition).
 type RimskyEndpoint struct {
-	BaseURL     string // @constraint: e.g. http://127.0.0.1:32678 — reach from the test process
-	InternalURL string // @constraint: e.g. http://rimsky:8080 — reach from sibling containers on Network
-	HostDSN     string // @constraint: postgres DSN reachable from the test process
-	InternalDSN string // @constraint: postgres DSN reachable from sibling containers (host=rimsky-pg, port=5432)
-	Network     string // @constraint: docker network name; pass to siblings via testcontainers.WithNetwork
+	BaseURL         string // @constraint: e.g. http://127.0.0.1:32678 — reach from the test process
+	InternalURL     string // @constraint: e.g. http://rimsky:8080 — reach from sibling containers on Network
+	CallbackBaseURL string // @constraint: e.g. http://127.0.0.1:32679 — supervisor's callback listener, reach from the test process
+	HostDSN         string // @constraint: postgres DSN reachable from the test process
+	InternalDSN     string // @constraint: postgres DSN reachable from sibling containers (host=rimsky-pg, port=5432)
+	Network         string // @constraint: docker network name; pass to siblings via testcontainers.WithNetwork
 }
 
 // Option configures the rimsky.yml rendered for the rimsky/all
@@ -492,9 +500,10 @@ func (h *RimskyHandle) Restart(ctx context.Context, t testing.TB) {
 		_ = h.container.Terminate(termCtx)
 		cancel()
 	}
-	c, baseURL := runRimskyContainer(ctx, t, h.cb, h.yamlBytes, h.Endpoint.Network)
+	c, baseURL, callbackBaseURL := runRimskyContainer(ctx, t, h.cb, h.yamlBytes, h.Endpoint.Network)
 	h.container = c
 	h.Endpoint.BaseURL = baseURL
+	h.Endpoint.CallbackBaseURL = callbackBaseURL
 }
 
 // BringUpRimskyHandle is BringUpRimsky's restart-capable sibling: it
@@ -559,17 +568,18 @@ func BringUpRimskyHandle(ctx context.Context, t testing.TB, opts ...Option) *Rim
 	// process. Extracted to runRimskyContainer so RimskyHandle.Restart
 	// can re-run only the rimsky/all bring-up step (the persistence
 	// container persists).
-	rimsky, baseURL := runRimskyContainer(ctx, t, cb, yamlBytes, networkName)
+	rimsky, baseURL, callbackBaseURL := runRimskyContainer(ctx, t, cb, yamlBytes, networkName)
 
 	internalURL := "http://rimsky:8080"
 
 	return &RimskyHandle{
 		Endpoint: RimskyEndpoint{
-			BaseURL:     baseURL,
-			InternalURL: internalURL,
-			HostDSN:     hostDSN,
-			InternalDSN: internalDSN,
-			Network:     networkName,
+			BaseURL:         baseURL,
+			InternalURL:     internalURL,
+			CallbackBaseURL: callbackBaseURL,
+			HostDSN:         hostDSN,
+			InternalDSN:     internalDSN,
+			Network:         networkName,
 		},
 		container: rimsky,
 		cb:        cb,
@@ -618,11 +628,17 @@ func startPostgresOnNetwork(ctx context.Context, t testing.TB, networkName strin
 
 // runRimskyContainer starts a rimsky/all container with the given
 // rendered rimsky.yml on the given docker network, waits for /health
-// 200, and returns the container plus its host-mapped base URL. Used
-// by BringUpRimskyHandle on the initial boot and by RimskyHandle.Restart
-// on subsequent boots — the implementations are identical so they share
-// this helper.
-func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string) {
+// 200, and returns the container plus its host-mapped base URL and
+// callback URL. Used by BringUpRimskyHandle on the initial boot and by
+// RimskyHandle.Restart on subsequent boots — the implementations are
+// identical so they share this helper.
+//
+// Both control-api port 8080 and supervisor callback-listener port 9100
+// are exposed and host-mapped. The supervisor callback is what an
+// external executor POSTs `AsyncCallbackBody` to, so a test acting in
+// place of that executor needs a host-reachable URL — the callback path
+// is part of the public protocol surface, not an internal-only listener.
+func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, yamlBytes []byte, networkName string) (testcontainers.Container, string, string) {
 	t.Helper()
 	env := map[string]string{
 		"RIMSKY_CONFIG":            "/etc/rimsky/rimsky.yml",
@@ -638,7 +654,11 @@ func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, ya
 		env[k] = v
 	}
 	rimskyOpts := []testcontainers.ContainerCustomizer{
-		testcontainers.WithExposedPorts("8080/tcp"),
+		// @constraint: 8080 is the control-api; 9100 is the supervisor's
+		// async-callback / writeback / keepalive listener (set by
+		// dockerfiles/all-in-one.supervisor-config.yml). Both must be
+		// host-mapped so tests can drive the public HTTP surfaces.
+		testcontainers.WithExposedPorts("8080/tcp", "9100/tcp"),
 		tcnet.WithNetworkName([]string{"rimsky"}, networkName),
 		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
@@ -680,11 +700,18 @@ func runRimskyContainer(ctx context.Context, t testing.TB, cb *configBuilder, ya
 	}
 	baseURL := fmt.Sprintf("http://%s:%s", hostIP, mapped.Port())
 
+	mappedCb, err := rimsky.MappedPort(ctx, "9100")
+	if err != nil {
+		dumpLogsForFailure(t, rimsky)
+		t.Fatalf("harness: rimsky callback mapped port: %v", err)
+	}
+	callbackBaseURL := fmt.Sprintf("http://%s:%s", hostIP, mappedCb.Port())
+
 	if err := waitForHealth(ctx, baseURL, healthDeadline); err != nil {
 		dumpLogsForFailure(t, rimsky)
 		t.Fatalf("harness: rimsky /health did not return 200: %v", err)
 	}
-	return rimsky, baseURL
+	return rimsky, baseURL, callbackBaseURL
 }
 
 // PostJSON marshals body to JSON and POSTs to e.BaseURL+path. Helper

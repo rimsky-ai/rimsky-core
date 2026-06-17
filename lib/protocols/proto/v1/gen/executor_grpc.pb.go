@@ -30,17 +30,20 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Executor is the protocol rimsky supervisors use to dispatch work to
-// external executors. See docs/history/2026-04-27-stores-redesign-v2-design.md §12
-// for the full contract (transports, async handoff, attributes, stores,
-// versioning, auth).
+// external executors. The dispatch verb is unary: the supervisor calls
+// Execute once and receives a single Outcome. The Outcome is one of four
+// variants — Success / Error / Park / AwaitAsyncCallback — three of which
+// settle the dispatch directly and the fourth of which defers the verdict
+// to a later HTTP POST callback. See concept:executor for the full
+// contract (transports, async handoff, attributes, stores, deadlines,
+// auth).
 type ExecutorClient interface {
 	// Execute is called by the rimsky supervisor when dispatching a node.
-	// The response stream carries zero or more `Heartbeat` events, zero or
-	// more `NamedEvent` records, and exactly ONE `StreamClose` event; the
-	// executor MUST close the stream immediately after the `StreamClose`
-	// event. Stream close without a `StreamClose` event is treated by the
-	// supervisor as an infrastructure error.
-	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error)
+	// The executor returns exactly one Outcome. There is no stream, no
+	// heartbeats, and no named events; per-dispatch liveness for async
+	// dispatches travels over the HTTP keepalive / attribute-writeback
+	// callbacks (see concept:executor liveness sections).
+	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*Outcome, error)
 }
 
 type executorClient struct {
@@ -51,41 +54,35 @@ func NewExecutorClient(cc grpc.ClientConnInterface) ExecutorClient {
 	return &executorClient{cc}
 }
 
-func (c *executorClient) Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteEvent], error) {
+func (c *executorClient) Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*Outcome, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Executor_ServiceDesc.Streams[0], Executor_Execute_FullMethodName, cOpts...)
+	out := new(Outcome)
+	err := c.cc.Invoke(ctx, Executor_Execute_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ExecuteRequest, ExecuteEvent]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
+	return out, nil
 }
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Executor_ExecuteClient = grpc.ServerStreamingClient[ExecuteEvent]
 
 // ExecutorServer is the server API for Executor service.
 // All implementations must embed UnimplementedExecutorServer
 // for forward compatibility.
 //
 // Executor is the protocol rimsky supervisors use to dispatch work to
-// external executors. See docs/history/2026-04-27-stores-redesign-v2-design.md §12
-// for the full contract (transports, async handoff, attributes, stores,
-// versioning, auth).
+// external executors. The dispatch verb is unary: the supervisor calls
+// Execute once and receives a single Outcome. The Outcome is one of four
+// variants — Success / Error / Park / AwaitAsyncCallback — three of which
+// settle the dispatch directly and the fourth of which defers the verdict
+// to a later HTTP POST callback. See concept:executor for the full
+// contract (transports, async handoff, attributes, stores, deadlines,
+// auth).
 type ExecutorServer interface {
 	// Execute is called by the rimsky supervisor when dispatching a node.
-	// The response stream carries zero or more `Heartbeat` events, zero or
-	// more `NamedEvent` records, and exactly ONE `StreamClose` event; the
-	// executor MUST close the stream immediately after the `StreamClose`
-	// event. Stream close without a `StreamClose` event is treated by the
-	// supervisor as an infrastructure error.
-	Execute(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error
+	// The executor returns exactly one Outcome. There is no stream, no
+	// heartbeats, and no named events; per-dispatch liveness for async
+	// dispatches travels over the HTTP keepalive / attribute-writeback
+	// callbacks (see concept:executor liveness sections).
+	Execute(context.Context, *ExecuteRequest) (*Outcome, error)
 	mustEmbedUnimplementedExecutorServer()
 }
 
@@ -96,8 +93,8 @@ type ExecutorServer interface {
 // pointer dereference when methods are called.
 type UnimplementedExecutorServer struct{}
 
-func (UnimplementedExecutorServer) Execute(*ExecuteRequest, grpc.ServerStreamingServer[ExecuteEvent]) error {
-	return status.Error(codes.Unimplemented, "method Execute not implemented")
+func (UnimplementedExecutorServer) Execute(context.Context, *ExecuteRequest) (*Outcome, error) {
+	return nil, status.Error(codes.Unimplemented, "method Execute not implemented")
 }
 func (UnimplementedExecutorServer) mustEmbedUnimplementedExecutorServer() {}
 func (UnimplementedExecutorServer) testEmbeddedByValue()                  {}
@@ -120,16 +117,23 @@ func RegisterExecutorServer(s grpc.ServiceRegistrar, srv ExecutorServer) {
 	s.RegisterService(&Executor_ServiceDesc, srv)
 }
 
-func _Executor_Execute_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ExecuteRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
+func _Executor_Execute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
 	}
-	return srv.(ExecutorServer).Execute(m, &grpc.GenericServerStream[ExecuteRequest, ExecuteEvent]{ServerStream: stream})
+	if interceptor == nil {
+		return srv.(ExecutorServer).Execute(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Executor_Execute_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ExecutorServer).Execute(ctx, req.(*ExecuteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Executor_ExecuteServer = grpc.ServerStreamingServer[ExecuteEvent]
 
 // Executor_ServiceDesc is the grpc.ServiceDesc for Executor service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -137,13 +141,12 @@ type Executor_ExecuteServer = grpc.ServerStreamingServer[ExecuteEvent]
 var Executor_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "rimsky.v1.Executor",
 	HandlerType: (*ExecutorServer)(nil),
-	Methods:     []grpc.MethodDesc{},
-	Streams: []grpc.StreamDesc{
+	Methods: []grpc.MethodDesc{
 		{
-			StreamName:    "Execute",
-			Handler:       _Executor_Execute_Handler,
-			ServerStreams: true,
+			MethodName: "Execute",
+			Handler:    _Executor_Execute_Handler,
 		},
 	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "executor.proto",
 }

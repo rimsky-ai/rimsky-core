@@ -2,444 +2,317 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// @concept: executor
+// @concept: orphan-reaper
+
 package sqlite_test
 
 import (
 	"context"
-	"path/filepath"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
-	_ "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
+	sqlitedrv "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 )
 
-// openMigratedSQLite returns a 1-conn SQLite-backed driver with
-// migrations applied. The driver is closed on test cleanup.
-func openMigratedSQLite(t *testing.T) persistence.Database {
+// seedDispatchInstance creates a template + instance + run-scope + frame
+// + node, then inserts a single in-flight async dispatch row carrying
+// the post-coherence columns (async_ack_id, last_progress_at). Returns
+// the dispatch row id and the run-scope id so callers can drive the
+// keepalive / sweep paths against a realistic row shape.
+func seedDispatchInstance(t *testing.T, ctx context.Context, d persistence.Database) (shared.UUID, shared.UUID) {
 	t.Helper()
-	dir := t.TempDir()
-	d, err := persistence.Open(context.Background(), persistence.Config{
-		Driver: "sqlite",
-		SQLite: &persistence.SQLiteConfig{Path: filepath.Join(dir, "guard.db")},
-	})
+	rawDB := sqlitedrv.DBFromDatabase(d)
+
+	templateID := "sha256-" + uuid.NewString()
+	instanceID := uuid.New()
+	scopeID := uuid.New()
+	frameID := uuid.New()
+	nodeID := uuid.New()
+	runID := shared.UUID(uuid.New())
+	msgID := uuid.New().String()
+
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_templates (id, spec, state, source) VALUES (?, '{}', 'registered', 'direct')`,
+		templateID,
+	); err != nil {
+		t.Fatalf("seed template: %v", err)
+	}
+	stx, err := rawDB.BeginTx(ctx, nil)
 	if err != nil {
-		t.Fatalf("open: %v", err)
+		t.Fatalf("begin: %v", err)
 	}
-	t.Cleanup(func() { _ = d.Close() })
-	if err := d.Migrate(context.Background(), shared.SilentLogger{}); err != nil {
-		t.Fatalf("migrate: %v", err)
+	defer func() { _ = stx.Rollback() }()
+	if _, err := stx.ExecContext(ctx,
+		`INSERT INTO rimsky_instances (id, template_hash, main_run_scope_id) VALUES (?, ?, ?)`,
+		instanceID.String(), templateID, scopeID.String(),
+	); err != nil {
+		t.Fatalf("seed instance: %v", err)
 	}
-	return d
+	if _, err := stx.ExecContext(ctx,
+		`INSERT INTO rimsky_run_scopes (id, graph_name, partition_key, instance_id) VALUES (?, 'main', '', ?)`,
+		scopeID.String(), instanceID.String(),
+	); err != nil {
+		t.Fatalf("seed run_scope: %v", err)
+	}
+	if err := stx.Commit(); err != nil {
+		t.Fatalf("commit seed: %v", err)
+	}
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_messages (id, instance_id, type, sender, sender_kind)
+		 VALUES (?, ?, 'fixture/message', 'operator', 'operator')`,
+		msgID, instanceID.String(),
+	); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_frames
+		   (frame_id, instance_id, triggering_message_id, state, frame_timeout_ms, started_at)
+		 VALUES (?, ?, ?, 'running', 600000, datetime('now'))`,
+		frameID.String(), instanceID.String(), msgID,
+	); err != nil {
+		t.Fatalf("seed frame: %v", err)
+	}
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_nodes (id, instance_id, node_type, frame_id)
+		 VALUES (?, ?, 'fixture', ?)`,
+		nodeID.String(), instanceID.String(), frameID.String(),
+	); err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	if _, err := rawDB.ExecContext(ctx,
+		`INSERT INTO rimsky_node_runs
+		   (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id,
+		    run_scope_id, claimed_by, claimed_at, last_progress_at)
+		 VALUES (?, ?, 'stub', '[]', datetime('now'), 'active', 'running', ?, ?,
+		         'sup-test', datetime('now'), datetime('now'))`,
+		runID.String(), nodeID.String(), frameID.String(), scopeID.String(),
+	); err != nil {
+		t.Fatalf("seed in-flight run: %v", err)
+	}
+	return runID, scopeID
 }
 
-// expectPanic runs fn and reports whether it panicked. The fn is a
-// thunk so the test table can collect the closures upfront and the
-// panic recovery happens per-call.
-func expectPanic(fn func()) (panicked bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			panicked = true
-		}
-	}()
-	fn()
-	return false
-}
-
-// TestStoreMethodsRejectNilTx is the structural guard for option C:
-// every Store method must reject a nil tx by panicking. New methods
-// added to the Store interface MUST be added here.
+// TestQueue_BumpLastProgressAt_NoDeadlockUnderContention drives the
+// keepalive bump path concurrently from many goroutines. The post-
+// coherence keepalive endpoint hits BumpLastProgressAt on every POST;
+// under the widened pool (sqliteMaxOpenConns=8) and BEGIN IMMEDIATE
+// the writers serialize without deadlocking. The matrix runs the bump
+// N times per goroutine across M goroutines so the WAL writer slot is
+// genuinely contended.
 //
-// Rationale: passing a nil tx from inside an open Persist.Transaction
-// silently auto-commits on a fresh connection. Under SQLite
-// MaxOpenConns=1 the second connection cannot be acquired (the only
-// conn is held by the outer tx) → deadlock. Outside any tx the
-// silent auto-commit is also a footgun: callers can't tell that
-// their reads-and-writes aren't in a single atomic unit. Option C
-// removes the nil-tx code path entirely so callers must always pass
-// an explicit tx.
-func TestStoreMethodsRejectNilTx(t *testing.T) {
-	d := openMigratedSQLite(t)
-	store := d.Tables()
-	ctx := context.Background()
-	someID := uuid.New()
-	someHash := "sha256-deadbeef"
-
-	cases := []struct {
-		name string
-		call func()
+// @concept: executor
+func TestQueue_BumpLastProgressAt_NoDeadlockUnderContention(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		concurrency int
+		bumpsEach   int
 	}{
-		{"Templates.Insert", func() {
-			_ = store.Templates().Insert(ctx, persistence.TemplateInsertInput{}, nil)
-		}},
-		{"Templates.GetByHash", func() {
-			_, _ = store.Templates().GetByHash(ctx, someHash, nil)
-		}},
-		{"Templates.List", func() {
-			_, _ = store.Templates().List(ctx, persistence.TemplateListFilter{}, persistence.ListPagination{Limit: 1}, nil)
-		}},
-		{"Templates.UpdateState", func() {
-			_ = store.Templates().UpdateState(ctx, someHash, persistence.TemplateStateRegistered, nil)
-		}},
-		{"Templates.DeleteByHash", func() {
-			_ = store.Templates().DeleteByHash(ctx, someHash, nil)
-		}},
-		{"Templates.LockForUpdate", func() {
-			_, _ = store.Templates().LockForUpdate(ctx, someHash, nil)
-		}},
-		{"TemplateTags.Upsert", func() {
-			_ = store.TemplateTags().Upsert(ctx, "t", someHash, nil)
-		}},
-		{"TemplateTags.Get", func() {
-			_, _ = store.TemplateTags().Get(ctx, "t", nil)
-		}},
-		{"TemplateTags.ListByTemplate", func() {
-			_, _ = store.TemplateTags().ListByTemplate(ctx, someHash, nil)
-		}},
-		{"TemplateTags.List", func() {
-			_, _ = store.TemplateTags().List(ctx, persistence.ListPagination{Limit: 1}, nil)
-		}},
-		{"TemplateTags.Delete", func() {
-			_, _ = store.TemplateTags().Delete(ctx, "t", nil)
-		}},
-		{"TemplateTags.CountByTemplate", func() {
-			_, _ = store.TemplateTags().CountByTemplate(ctx, someHash, nil)
-		}},
-		{"Instances.Create", func() {
-			_, _ = store.Instances().Create(ctx, persistence.InstanceCreateInput{ID: someID}, nil)
-		}},
-		{"Instances.Get", func() {
-			_, _ = store.Instances().Get(ctx, someID, nil)
-		}},
-		{"Instances.GetByInstanceKey", func() {
-			_, _ = store.Instances().GetByInstanceKey(ctx, someHash, "k", nil)
-		}},
-		{"Instances.FindAnyByInstanceKey", func() {
-			_, _ = store.Instances().FindAnyByInstanceKey(ctx, "k", nil)
-		}},
-		{"Instances.List", func() {
-			_, _ = store.Instances().List(ctx, persistence.InstanceListFilter{}, persistence.ListPagination{Limit: 1}, nil)
-		}},
-		{"Instances.Delete", func() {
-			_ = store.Instances().Delete(ctx, someID, nil)
-		}},
-		{"Instances.MarkTerminated", func() {
-			_ = store.Instances().MarkTerminated(ctx, someID, nil)
-		}},
-		{"Instances.CountActiveByTemplate", func() {
-			_, _ = store.Instances().CountActiveByTemplate(ctx, someHash, nil)
-		}},
-		{"Instances.ListTerminatedWithLifecycleRows", func() {
-			_, _ = store.Instances().ListTerminatedWithLifecycleRows(ctx, 10, nil)
-		}},
-		{"Instances.CountByActive", func() {
-			_, _, _ = store.Instances().CountByActive(ctx, nil)
-		}},
-		{"Instances.IncrementAttributeOverrideMatchCounts", func() {
-			_ = store.Instances().IncrementAttributeOverrideMatchCounts(ctx, someID, []int{0}, nil)
-		}},
-		{"LifecycleIdempotency.Get", func() {
-			_, _ = store.LifecycleIdempotency().Get(ctx, "s", persistence.LifecycleIdempotencyScopeTemplate, "x", nil)
-		}},
-		{"LifecycleIdempotency.Upsert", func() {
-			_ = store.LifecycleIdempotency().Upsert(ctx, persistence.LifecycleIdempotencyRow{}, nil)
-		}},
-		{"LifecycleIdempotency.Delete", func() {
-			_ = store.LifecycleIdempotency().Delete(ctx, "s", persistence.LifecycleIdempotencyScopeTemplate, "x", nil)
-		}},
-		{"LifecycleIdempotency.DeleteByScope", func() {
-			_ = store.LifecycleIdempotency().DeleteByScope(ctx, persistence.LifecycleIdempotencyScopeTemplate, "x", nil)
-		}},
-		{"LifecycleIdempotency.ListByScope", func() {
-			_, _ = store.LifecycleIdempotency().ListByScope(ctx, persistence.LifecycleIdempotencyScopeTemplate, "x", nil)
-		}},
-		{"LifecycleIdempotency.ListByStore", func() {
-			_, _ = store.LifecycleIdempotency().ListByStore(ctx, "s", nil)
-		}},
-		{"Nodes.Create", func() {
-			_, _ = store.Nodes().Create(ctx, persistence.NodeCreateInput{}, nil)
-		}},
-		{"Nodes.Get", func() {
-			_, _ = store.Nodes().Get(ctx, someID, nil)
-		}},
-		{"Nodes.ListByInstance", func() {
-			_, _ = store.Nodes().ListByInstance(ctx, someID, nil)
-		}},
-		{"Nodes.ListByInstancePaged", func() {
-			_, _ = store.Nodes().ListByInstancePaged(ctx, someID, persistence.ListPagination{Limit: 1}, nil)
-		}},
-		{"Nodes.ListReadyForDispatch", func() {
-			_, _ = store.Nodes().ListReadyForDispatch(ctx, nil)
-		}},
-		{"Nodes.ListRunning", func() {
-			_, _ = store.Nodes().ListRunning(ctx, nil)
-		}},
-		{"Nodes.ListRunningBySupervisor", func() {
-			_, _ = store.Nodes().ListRunningBySupervisor(ctx, "sup", nil)
-		}},
-		{"Nodes.ListWithStaleHeartbeat", func() {
-			_, _ = store.Nodes().ListWithStaleHeartbeat(ctx, time.Now(), nil)
-		}},
-		{"Nodes.ListPureCascadeReady", func() {
-			_, _ = store.Nodes().ListPureCascadeReady(ctx, nil)
-		}},
-		{"Nodes.CountByState", func() {
-			_, _ = store.Nodes().CountByState(ctx, nil)
-		}},
-		{"Nodes.UpdateState", func() {
-			_ = store.Nodes().UpdateState(ctx, someID, someID, cascade.NodeStateFresh, cascade.ReasonOperatorReset, nil, nil)
-		}},
-		{"Nodes.UpdateHeartbeat", func() {
-			_ = store.Nodes().UpdateHeartbeat(ctx, someID, someID, time.Now(), "sup", nil)
-		}},
-		{"Nodes.SetFrameID", func() {
-			_ = store.Nodes().SetFrameID(ctx, someID, nil, nil)
-		}},
-		{"Nodes.ClearSettlingSignalType", func() {
-			_ = store.Nodes().ClearSettlingSignalType(ctx, someID, someID, nil)
-		}},
-		{"Nodes.DeleteByInstance", func() {
-			_ = store.Nodes().DeleteByInstance(ctx, someID, nil)
-		}},
-		{"Nodes.MarkStaleForCascade", func() {
-			_ = store.Nodes().MarkStaleForCascade(ctx, someID, someID, nil)
-		}},
-		{"ClaimHandles.Insert", func() {
-			_ = store.ClaimHandles().Insert(ctx, persistence.ClaimHandleInsertInput{}, nil)
-		}},
-		{"ClaimHandles.UpdateAddress", func() {
-			_ = store.ClaimHandles().UpdateAddress(ctx, someID, "sup", nil, nil)
-		}},
-		{"ClaimHandles.Get", func() {
-			_, _ = store.ClaimHandles().Get(ctx, someID, nil)
-		}},
-		{"ClaimHandles.ListByHolderNode", func() {
-			_, _ = store.ClaimHandles().ListByHolderNode(ctx, someID, nil)
-		}},
-		{"ClaimHandles.ExtendHeartbeat", func() {
-			_ = store.ClaimHandles().ExtendHeartbeat(ctx, "sup", time.Now(), nil)
-		}},
-		{"ClaimHandles.ListExpired", func() {
-			_, _ = store.ClaimHandles().ListExpired(ctx, nil)
-		}},
-		{"ClaimHandles.Delete", func() {
-			_ = store.ClaimHandles().Delete(ctx, someID, "sup", nil)
-		}},
-		{"ClaimHandles.CountByNamedLock", func() {
-			_, _ = store.ClaimHandles().CountByNamedLock(ctx, "n", nil)
-		}},
-		{"ClaimHandles.ListByProducerClaimScope", func() {
-			_, _ = store.ClaimHandles().ListByProducerClaimScope(ctx, "s", nil)
-		}},
-		{"ClaimHandles.DeleteIfExpired", func() {
-			_, _ = store.ClaimHandles().DeleteIfExpired(ctx, someID, "sup", nil)
-		}},
-		{"ClaimHandles.LockForUpdate", func() {
-			_, _ = store.ClaimHandles().LockForUpdate(ctx, someID, nil)
-		}},
-		{"ClaimHandles.UpdateClaimScope", func() {
-			_ = store.ClaimHandles().UpdateClaimScope(ctx, someID, "sup", nil, nil)
-		}},
-		{"ClaimHandles.UpdateRealizedWriteSemantics", func() {
-			_ = store.ClaimHandles().UpdateRealizedWriteSemantics(ctx, someID, "sup", "sync", nil)
-		}},
-		{"ClaimHandles.ListForObservability", func() {
-			_, _ = store.ClaimHandles().ListForObservability(ctx, persistence.LockHolderListFilter{}, persistence.ListPagination{Limit: 1}, nil)
-		}},
-		{"ClaimHandles.GetByFrameAndNode", func() {
-			_, _ = store.ClaimHandles().GetByFrameAndNode(ctx, someID, someID, nil)
-		}},
-		{"ClaimHandles.ListChildClaimHandles", func() {
-			_, _ = store.ClaimHandles().ListChildClaimHandles(ctx, someID, nil)
-		}},
-		{"ClaimHandles.Promote", func() {
-			_ = store.ClaimHandles().Promote(ctx, someID, "sup", spec.ClaimHandleStateCommitted, nil)
-		}},
-		{"ClaimHandles.SetVersionID", func() {
-			_ = store.ClaimHandles().SetVersionID(ctx, someID, "sup", "v1", nil)
-		}},
-		{"ClaimHandles.ListByInstanceAndState", func() {
-			_, _ = store.ClaimHandles().ListByInstanceAndState(
-				ctx, someID, spec.ClaimHandleStateCommitted, spec.ClaimLifetimeDurable, nil)
-		}},
-		{"ClaimHandles.ListByState", func() {
-			_, _ = store.ClaimHandles().ListByState(ctx, spec.ClaimHandleStateCommitted, nil)
-		}},
-		{"ClaimHandles.DeleteResolved", func() {
-			_ = store.ClaimHandles().DeleteResolved(ctx, someID, nil)
-		}},
-		// @deliberate: DeleteResolvedOlderThan is intentionally a no-tx
-		// method (single DELETE outside any caller-provided tx so the
-		// retention sweep's scheduler-tick advisory lock serializes
-		// across replicas at the tick boundary, not via tx per row).
-		// Not in the nil-tx-guard set; the option-C invariant covers
-		// only tx-accepting methods.
-		{"ClaimHandles.SetAggregationPolicy", func() {
-			_ = store.ClaimHandles().SetAggregationPolicy(ctx, someID, "sup", nil, nil)
-		}},
-		{"ClaimHandles.BumpExpectedChildrenCount", func() {
-			_ = store.ClaimHandles().BumpExpectedChildrenCount(ctx, someID, "sup", 1, nil)
-		}},
-		{"ClaimHandles.BumpChildOutcomeCount", func() {
-			_ = store.ClaimHandles().BumpChildOutcomeCount(ctx, someID, "sup", "commit", 1, nil)
-		}},
-		{"NodeAttributes.GetByRun", func() {
-			_, _ = store.NodeAttributes().GetByRun(ctx, someID, nil)
-		}},
-		{"NodeAttributes.GetLatestByNode", func() {
-			_, _ = store.NodeAttributes().GetLatestByNode(ctx, someID, someID, nil)
-		}},
-		{"NodeAttributes.Upsert", func() {
-			_ = store.NodeAttributes().Upsert(ctx, someID, someID, nil, nil)
-		}},
-		{"NodeAttributes.MergeDelta", func() {
-			_ = store.NodeAttributes().MergeDelta(ctx, someID, nil, nil)
-		}},
-		{"ClaimHolders.Insert", func() {
-			_ = store.ClaimHolders().Insert(ctx, persistence.ClaimHolderInsertInput{}, nil)
-		}},
-		{"ClaimHolders.Get", func() {
-			_, _ = store.ClaimHolders().Get(ctx, someID, nil)
-		}},
-		{"ClaimHolders.ListByClaimHandleID", func() {
-			_, _ = store.ClaimHolders().ListByClaimHandleID(ctx, someID, nil)
-		}},
-		{"ClaimHolders.ListByHolderRun", func() {
-			_, _ = store.ClaimHolders().ListByHolderRun(ctx, someID, nil)
-		}},
-		{"ClaimHolders.ListActiveByClaimHandleID", func() {
-			_, _ = store.ClaimHolders().ListActiveByClaimHandleID(ctx, someID, nil)
-		}},
-		{"ClaimHolders.Complete", func() {
-			_ = store.ClaimHolders().Complete(ctx, someID, persistence.ClaimHolderStateCompleted, nil)
-		}},
-		{"ClaimHolders.CompleteByClaimHandleAndRun", func() {
-			_ = store.ClaimHolders().CompleteByClaimHandleAndRun(ctx, someID, someID, persistence.ClaimHolderStateCompleted, nil)
-		}},
-		{"Events.Append", func() {
-			_ = store.Events().Append(ctx, persistence.EventAppendInput{}, nil)
-		}},
-		{"Events.List", func() {
-			_, _ = store.Events().List(ctx, persistence.EventListFilter{}, persistence.ListPagination{Limit: 1}, nil)
-		}},
-		{"Events.LastTerminalByNodes", func() {
-			_, _ = store.Events().LastTerminalByNodes(ctx, []shared.UUID{someID}, nil)
-		}},
-		{"Supervisors.Register", func() {
-			_ = store.Supervisors().Register(ctx, persistence.SupervisorRegisterInput{}, nil)
-		}},
-		{"Supervisors.Heartbeat", func() {
-			_ = store.Supervisors().Heartbeat(ctx, "sup", 0, nil)
-		}},
-		{"Supervisors.Get", func() {
-			_, _ = store.Supervisors().Get(ctx, "sup", nil)
-		}},
-		{"Supervisors.List", func() {
-			_, _ = store.Supervisors().List(ctx, nil)
-		}},
-		{"Supervisors.ListStale", func() {
-			_, _ = store.Supervisors().ListStale(ctx, time.Now(), nil)
-		}},
-		{"Supervisors.Unregister", func() {
-			_ = store.Supervisors().Unregister(ctx, "sup", nil)
-		}},
-		{"Frames.ListRunningFramesNoPendingNodes", func() {
-			_, _ = store.Frames().ListRunningFramesNoPendingNodes(ctx, nil)
-		}},
-		{"Frames.HasFailedNode", func() {
-			_, _ = store.Frames().HasFailedNode(ctx, someID, someID, nil)
-		}},
-		{"Frames.MarkRunningFrameTerminal", func() {
-			_, _ = store.Frames().MarkRunningFrameTerminal(ctx, someID, persistence.FrameStateCompleted, nil)
-		}},
-		{"Frames.MarkInstanceTerminatedIfDone", func() {
-			_ = store.Frames().MarkInstanceTerminatedIfDone(ctx, someID, nil)
-		}},
-		{"Frames.ListQueuedFramesReadyToStart", func() {
-			_, _ = store.Frames().ListQueuedFramesReadyToStart(ctx, nil)
-		}},
-		{"Frames.PromoteQueuedFrameToRunning", func() {
-			_, _ = store.Frames().PromoteQueuedFrameToRunning(ctx, someID, nil)
-		}},
-		{"Frames.MarkSourceNodeStale", func() {
-			_, _ = store.Frames().MarkSourceNodeStale(ctx, someID, someID, someID, nil)
-		}},
-		{"Frames.ListStuckRunningFrames", func() {
-			_, _ = store.Frames().ListStuckRunningFrames(ctx, nil)
-		}},
-		{"Frames.ListOrphanFrameDispatches", func() {
-			_, _ = store.Frames().ListOrphanFrameDispatches(ctx, nil)
-		}},
-		{"Frames.LookupFrameTimeoutMs", func() {
-			_, _ = store.Frames().LookupFrameTimeoutMs(ctx, someID, nil)
-		}},
-		{"Frames.InsertFrame", func() {
-			_, _ = store.Frames().InsertFrame(ctx, someID, someID, 1000, nil)
-		}},
-		{"Frames.ListForObservability", func() {
-			_, _ = store.Frames().ListForObservability(ctx, persistence.FrameListFilter{}, persistence.ListPagination{Limit: 1}, nil)
-		}},
-		{"Frames.GetForObservability", func() {
-			_, _ = store.Frames().GetForObservability(ctx, someID, nil)
-		}},
-	}
-
-	var missing []string
-	for _, tc := range cases {
-		tc := tc
+		{name: "low_contention", concurrency: 4, bumpsEach: 16},
+		{name: "moderate_contention", concurrency: 16, bumpsEach: 32},
+		{name: "high_contention", concurrency: 32, bumpsEach: 16},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if !expectPanic(tc.call) {
-				missing = append(missing, tc.name)
-				t.Errorf("expected panic on nil tx, got none")
+			ctx := context.Background()
+			d := openSQLite(t)
+			runID, _ := seedDispatchInstance(t, ctx, d)
+			store := d.Tables()
+
+			var wg sync.WaitGroup
+			var bumps atomic.Int64
+			wg.Add(tc.concurrency)
+			done := make(chan struct{})
+			deadline := time.AfterFunc(45*time.Second, func() { close(done) })
+			defer deadline.Stop()
+
+			for g := 0; g < tc.concurrency; g++ {
+				go func() {
+					defer wg.Done()
+					for i := 0; i < tc.bumpsEach; i++ {
+						select {
+						case <-done:
+							return
+						default:
+						}
+						err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+							_, berr := d.Queue().BumpLastProgressAt(ctx, tx, runID, time.Now())
+							return berr
+						})
+						if err != nil {
+							t.Errorf("BumpLastProgressAt: %v", err)
+							return
+						}
+						bumps.Add(1)
+					}
+				}()
+			}
+			wg.Wait()
+			expected := int64(tc.concurrency * tc.bumpsEach)
+			if got := bumps.Load(); got != expected {
+				t.Fatalf("bumps completed=%d want=%d (some goroutines deadlocked or errored)", got, expected)
 			}
 		})
 	}
-	if len(missing) > 0 {
-		t.Logf("methods accepting nil tx (option C violation): %s", strings.Join(missing, ", "))
+}
+
+// TestQueue_BumpAndSweepConcurrent_NoDeadlock pins that the writer-
+// serialization slot does not deadlock when the orphan-reaper's
+// quiet-period sweep (ListOrphanedClaims) runs concurrently with
+// executor BumpLastProgressAt traffic. Pre-coherence the heartbeat-
+// loss sweep was the analogous path; per
+// TD-orphan-reaper-no-heartbeat the sweep keys on last_progress_at.
+//
+// @concept: orphan-reaper
+func TestQueue_BumpAndSweepConcurrent_NoDeadlock(t *testing.T) {
+	ctx := context.Background()
+	d := openSQLite(t)
+	runID, _ := seedDispatchInstance(t, ctx, d)
+	rawDB := sqlitedrv.DBFromDatabase(d)
+	if _, err := rawDB.ExecContext(ctx,
+		`UPDATE rimsky_node_runs SET async_ack_id = 'ack-sweep' WHERE id = ?`,
+		runID.String(),
+	); err != nil {
+		t.Fatalf("set async_ack_id: %v", err)
+	}
+	store := d.Tables()
+
+	const (
+		bumpGoroutines  = 8
+		sweepGoroutines = 4
+		bumpsEach       = 32
+		sweepsEach      = 32
+	)
+	var wg sync.WaitGroup
+	wg.Add(bumpGoroutines + sweepGoroutines)
+	bumpDone := make(chan struct{})
+
+	for g := 0; g < bumpGoroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < bumpsEach; i++ {
+				err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+					_, berr := d.Queue().BumpLastProgressAt(ctx, tx, runID, time.Now())
+					return berr
+				})
+				if err != nil {
+					t.Errorf("bump: %v", err)
+					return
+				}
+			}
+		}()
+	}
+
+	go func() {
+		wg2 := sync.WaitGroup{}
+		wg2.Add(sweepGoroutines)
+		for g := 0; g < sweepGoroutines; g++ {
+			go func() {
+				defer wg2.Done()
+				defer wg.Done()
+				for i := 0; i < sweepsEach; i++ {
+					if _, err := d.Queue().ListOrphanedClaims(ctx); err != nil {
+						t.Errorf("sweep ListOrphanedClaims: %v", err)
+						return
+					}
+				}
+			}()
+		}
+		wg2.Wait()
+		close(bumpDone)
+	}()
+
+	finished := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(60 * time.Second):
+		t.Fatal("deadlock: keepalive + sweep workload did not finish within 60s")
 	}
 }
 
-// TestNilTxFromInsideTransactionDoesNotDeadlock pins the bug shape
-// from docs/future-work/2026-05-05-nil-tx-deadlock-audit.md. Before
-// option C this test would deadlock (nil-tx auto-commit waiting for
-// the only pool conn that the outer tx is holding); the test deadline
-// catches it as a timeout. After option C the inner call panics,
-// rolling back the outer tx cleanly in milliseconds.
-//
-// The shape under test: an outer Persist.Transaction whose callback
-// calls a Store method with tx == nil. This is exactly the
-// runner_locks.go bug pattern.
-func TestNilTxFromInsideTransactionDoesNotDeadlock(t *testing.T) {
-	d := openMigratedSQLite(t)
+// TestQueue_PoolWidthDoesNotStarveLockFreeRead pins the wide-pool
+// guarantee for the keepalive workload: a held writer transaction
+// (such as the supervisor's settle tx) must NOT block parallel lock-
+// free reads (such as the observability endpoint's ListLive) from
+// making progress on a different connection. Pre-fix (MaxOpenConns=1)
+// the read would queue behind the writer and the 1.5s context fires
+// first; the wider pool (sqliteMaxOpenConns=8) lets the read get its
+// own connection and run lock-free under WAL.
+func TestQueue_PoolWidthDoesNotStarveLockFreeRead(t *testing.T) {
+	ctx := context.Background()
+	d := openSQLite(t)
+	runID, _ := seedDispatchInstance(t, ctx, d)
 	store := d.Tables()
 
-	// @deliberate: 2 s is generous: the panic-recovery path returns in
-	// milliseconds. A real deadlock (pre-option-C) would block forever
-	// and only surface as DeadlineExceeded once the deadline elapses.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	bumperStarted := make(chan struct{})
+	release := make(chan struct{})
+	bumperErr := make(chan error, 1)
+	go func() {
+		bumperErr <- store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			if _, berr := d.Queue().BumpLastProgressAt(ctx, tx, runID, time.Now()); berr != nil {
+				return berr
+			}
+			close(bumperStarted)
+			<-release
+			return nil
+		})
+	}()
+	<-bumperStarted
+
+	readCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
+	_, err := d.Queue().ListLive(readCtx, persistence.DispatchListFilter{}, persistence.ListPagination{Limit: 10})
+	close(release)
+	if err != nil {
+		t.Fatalf("ListLive starved by held bumper tx: %v "+
+			"(wide pool guarantee: a held writer conn must NOT block lock-free reads)", err)
+	}
+	if err := <-bumperErr; err != nil {
+		t.Fatalf("bumper tx: %v", err)
+	}
+}
 
-	start := time.Now()
-	err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		// @deliberate: historical bug pattern — inner call passes nil
-		// even though the outer tx is right there in scope.
-		defer func() { _ = recover() }() // @deliberate: swallow the expected panic
-		_, _ = store.Nodes().Get(ctx, uuid.New(), nil)
-		return nil
-	})
-	elapsed := time.Since(start)
+// TestQueue_RegisterAsyncAckAndLookupRoundTrip pins the persistent
+// async-callback registry contract: RegisterAsyncAck writes the ack id
+// on the dispatch row, LookupRunByAsyncAckID locates the same row.
+// This is the per TD-persist-async-callback-registry replacement for
+// the in-memory CallbackRegistry the streaming protocol used.
+//
+// @concept: async-callback-persistence
+func TestQueue_RegisterAsyncAckAndLookupRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	d := openSQLite(t)
+	runID, _ := seedDispatchInstance(t, ctx, d)
+	store := d.Tables()
 
-	// @deliberate: acceptable outcomes are err == nil with elapsed < 1s
-	// (panic recovered, tx committed empty) or err is the panic
-	// propagated (still no deadlock). Unacceptable is elapsed ≈
-	// deadline (deadlock surfaced as DeadlineExceeded).
-	if elapsed >= 1500*time.Millisecond {
-		t.Fatalf("nil-tx-from-inside-tx took %v (≈ deadline) — deadlock not eliminated; err=%v", elapsed, err)
+	const ackID = "ack-roundtrip"
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		return d.Queue().RegisterAsyncAck(ctx, tx, runID, ackID, time.Now(), nil, nil)
+	}); err != nil {
+		t.Fatalf("RegisterAsyncAck: %v", err)
+	}
+
+	var got *persistence.DispatchRow
+	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, lerr := d.Queue().LookupRunByAsyncAckID(ctx, tx, ackID)
+		got = row
+		return lerr
+	}); err != nil {
+		t.Fatalf("LookupRunByAsyncAckID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("LookupRunByAsyncAckID returned nil for a just-registered ack id; the persistent registry must survive in-process")
+	}
+	if got.ID != runID {
+		t.Fatalf("LookupRunByAsyncAckID returned run id %s, want %s", got.ID, runID)
 	}
 }

@@ -42,13 +42,12 @@ type nodeResponse struct {
 	// rimsky_node_runs.settling_signal_type column via NodeRow. Empty (and
 	// dropped by omitempty) while the node is unsettled / in-flight, where
 	// the projected column is NULL.
-	SettlingSignalType   string     `json:"settling_signal_type,omitempty"`
-	CurrentErrorClass    string     `json:"current_error_class,omitempty"`
-	RetryCounter         int        `json:"retry_counter"`
-	ActionIndex          int        `json:"action_index"`
-	LastHeartbeatAt      *time.Time `json:"last_heartbeat_at,omitempty"`
-	AssignedSupervisorID string     `json:"assigned_supervisor_id,omitempty"`
-	FrameID              string     `json:"frame_id,omitempty"`
+	SettlingSignalType   string `json:"settling_signal_type,omitempty"`
+	CurrentErrorClass    string `json:"current_error_class,omitempty"`
+	RetryCounter         int    `json:"retry_counter"`
+	ActionIndex          int    `json:"action_index"`
+	AssignedSupervisorID string `json:"assigned_supervisor_id,omitempty"`
+	FrameID              string `json:"frame_id,omitempty"`
 	// Tags is operator-facing metadata projected at instance creation
 	// (per spec 2026-05-19 Item 4). Always emitted as an array; empty
 	// means "no tags".
@@ -90,7 +89,6 @@ func toNodeResponse(n persistence.NodeRow) nodeResponse {
 		CurrentErrorClass:    n.CurrentErrorClass,
 		RetryCounter:         n.RetryCounter,
 		ActionIndex:          n.ActionIndex,
-		LastHeartbeatAt:      n.LastHeartbeatAt,
 		AssignedSupervisorID: n.AssignedSupervisorID,
 		FrameID:              frameID,
 		Tags:                 tags,

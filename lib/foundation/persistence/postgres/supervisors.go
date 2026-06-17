@@ -7,7 +7,6 @@ package postgres
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -16,7 +15,7 @@ import (
 
 const supervisorCols = `
   id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port,
-  last_heartbeat_at, active_node_count, registered_at
+  active_node_count, registered_at
 `
 
 func (s *supervisorsImpl) Register(ctx context.Context, in persistence.SupervisorRegisterInput, tx persistence.Tx) error {
@@ -31,15 +30,14 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	}
 	_, err := ex.Exec(ctx,
 		`INSERT INTO rimsky_supervisors
-		   (id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port, last_heartbeat_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		   (id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 ON CONFLICT (id) DO UPDATE
 		   SET accepted_executors = EXCLUDED.accepted_executors,
 		       accepted_stores    = EXCLUDED.accepted_stores,
 		       concurrency        = EXCLUDED.concurrency,
 		       callback_host      = EXCLUDED.callback_host,
 		       callback_port      = EXCLUDED.callback_port,
-		       last_heartbeat_at  = NOW(),
 		       active_node_count  = 0`,
 		in.ID, accepts, stores, in.Concurrency,
 		nullableString(in.CallbackHost), nullableInt(in.CallbackPort),
@@ -47,13 +45,13 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	return err
 }
 
-func (s *supervisorsImpl) Heartbeat(ctx context.Context, id string, activeNodeCount int, tx persistence.Tx) error {
+// UpdateActiveNodeCount writes the supervisor's current active-node
+// count. Replaces the prior Heartbeat method now that supervisor-level
+// heartbeat tracking has retired.
+func (s *supervisorsImpl) UpdateActiveNodeCount(ctx context.Context, id string, activeNodeCount int, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx,
-		`UPDATE rimsky_supervisors
-		   SET last_heartbeat_at = NOW(),
-		       active_node_count = $2
-		 WHERE id = $1`,
+		`UPDATE rimsky_supervisors SET active_node_count = $2 WHERE id = $1`,
 		id, activeNodeCount,
 	)
 	return err
@@ -85,18 +83,6 @@ func (s *supervisorsImpl) List(ctx context.Context, tx persistence.Tx) ([]persis
 	return collectSupervisors(rows)
 }
 
-func (s *supervisorsImpl) ListStale(ctx context.Context, cutoff time.Time, tx persistence.Tx) ([]persistence.SupervisorRow, error) {
-	ex := s.q(tx)
-	rows, err := ex.Query(ctx,
-		`SELECT `+supervisorCols+` FROM rimsky_supervisors
-		 WHERE last_heartbeat_at < $1`, cutoff)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectSupervisors(rows)
-}
-
 func (s *supervisorsImpl) Unregister(ctx context.Context, id string, tx persistence.Tx) error {
 	ex := s.q(tx)
 	_, err := ex.Exec(ctx, `DELETE FROM rimsky_supervisors WHERE id = $1`, id)
@@ -112,7 +98,7 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 	if err := sc.Scan(
 		&r.ID, &r.AcceptedExecutors, &r.AcceptedStores, &r.Concurrency,
 		&callbackHost, &callbackPort,
-		&r.LastHeartbeatAt, &r.ActiveNodeCount, &r.RegisteredAt,
+		&r.ActiveNodeCount, &r.RegisteredAt,
 	); err != nil {
 		return persistence.SupervisorRow{}, err
 	}

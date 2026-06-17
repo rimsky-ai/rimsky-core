@@ -2,11 +2,17 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// executor_handler_test.go — supervisor-facing Executor handler tests
+// under the unary RPC shape (TD-execute-rpc-unary). The handler resolves
+// the binding from the cache, dispatches to the agent over the
+// HostAgent.Connect stream, awaits a single DispatchFrame carrying a
+// marshaled Outcome, and returns it. Proxy-side failures surface as
+// Outcome{Error{error_class}}.
+
 package main
 
 import (
 	"context"
-	"io"
 	"testing"
 	"time"
 
@@ -15,8 +21,16 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// executorScript replays a Heartbeat then a terminal StreamClose{Success}
-// as two serialized ExecuteEvent response frames.
+// cacheReadyInstance survives from the pre-rewrite executor_handler
+// test harness so the sibling protocol-handler tests
+// (claim_producer_handler_test.go / lifecycle_handler_test.go) can
+// still seed the instance cache.
+func cacheReadyInstance(ts *proxyTestServer, instanceID, owner string, bindings map[string]bindingSpec) {
+	ts.state.cacheInstance(instanceID, bindings, owner, map[string]any{"cwd": "."})
+}
+
+// executorScript returns a dispatchHandler that answers each relayed
+// ExecuteRequest with a single serialized Outcome{Success}.
 func executorScript(t *testing.T) dispatchHandler {
 	t.Helper()
 	return func(protocol string, payload []byte) [][]byte {
@@ -24,53 +38,30 @@ func executorScript(t *testing.T) dispatchHandler {
 		if err := proto.Unmarshal(payload, &req); err != nil {
 			t.Errorf("agent: unmarshal execute request: %v", err)
 		}
-		hb, _ := proto.Marshal(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Heartbeat{Heartbeat: &genv1.Heartbeat{TimestampMs: 1}}})
-		done, _ := proto.Marshal(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{Changed: true}}},
-		}})
-		return [][]byte{hb, done}
+		done, _ := proto.Marshal(&genv1.Outcome{
+			Outcome: &genv1.Outcome_Success{Success: &genv1.Success{Changed: true}},
+		})
+		return [][]byte{done}
 	}
 }
 
-// collectExecute drains an Execute stream into the events received.
-func collectExecute(t *testing.T, client genv1.ExecutorClient, ctx context.Context, req *genv1.ExecuteRequest) []*genv1.ExecuteEvent {
+// collectExecute drives a unary Execute against the proxy and returns
+// the settling Outcome.
+func collectExecute(t *testing.T, client genv1.ExecutorClient, ctx context.Context, req *genv1.ExecuteRequest) *genv1.Outcome {
 	t.Helper()
-	stream, err := client.Execute(ctx, req)
+	outcome, err := client.Execute(ctx, req)
 	if err != nil {
-		t.Fatalf("execute: %v", err)
+		t.Fatalf("Execute: %v", err)
 	}
-	var events []*genv1.ExecuteEvent
-	for {
-		ev, err := stream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("recv: %v", err)
-		}
-		events = append(events, ev)
-	}
-	return events
+	return outcome
 }
 
-// terminalErrorClass returns the error_class of the last event if it is a
-// StreamClose{Error}, else "".
-func terminalErrorClass(events []*genv1.ExecuteEvent) string {
-	if len(events) == 0 {
-		return ""
-	}
-	sc := events[len(events)-1].GetStreamClose()
-	if sc == nil {
-		return ""
-	}
-	if e := sc.GetError(); e != nil {
+// terminalErrorClass returns the error_class on a settling Outcome, or "".
+func terminalErrorClass(outcome *genv1.Outcome) string {
+	if e := outcome.GetError(); e != nil {
 		return e.GetErrorClass()
 	}
 	return ""
-}
-
-func cacheReadyInstance(ts *proxyTestServer, instanceID, owner string, bindings map[string]bindingSpec) {
-	ts.state.cacheInstance(instanceID, bindings, owner, map[string]any{"cwd": "."})
 }
 
 func TestExecuteHappyPath(t *testing.T) {
@@ -82,19 +73,15 @@ func TestExecuteHappyPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
 	defer cancel()
 
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{
 		InstanceId:  "inst-1",
 		CallbackUrl: "http://supervisor:8080/v1/callback/ack-1",
 	})
-	if len(events) < 2 {
-		t.Fatalf("expected at least 2 events, got %d", len(events))
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("expected Outcome{Success}, got %T", outcome.GetOutcome())
 	}
-	if events[0].GetHeartbeat() == nil {
-		t.Fatalf("expected first event to be heartbeat, got %T", events[0].GetEvent())
-	}
-	sc := events[len(events)-1].GetStreamClose()
-	if sc == nil || sc.GetSuccess() == nil {
-		t.Fatalf("expected terminal Success, got %v", events[len(events)-1].GetEvent())
+	if !outcome.GetSuccess().GetChanged() {
+		t.Fatalf("expected Changed=true on Success")
 	}
 
 	// @constraint: a spawn was recorded with the original callback URL.
@@ -115,9 +102,9 @@ func TestExecuteCallbackRewrite(t *testing.T) {
 		var req genv1.ExecuteRequest
 		_ = proto.Unmarshal(payload, &req)
 		seenCallback = req.GetCallbackUrl()
-		done, _ := proto.Marshal(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{}}},
-		}})
+		done, _ := proto.Marshal(&genv1.Outcome{
+			Outcome: &genv1.Outcome_Success{Success: &genv1.Success{}},
+		})
 		return [][]byte{done}
 	}
 	connectFakeAgent(t, ts, "owner-1", "http://127.0.0.1:7777", handler)
@@ -135,6 +122,29 @@ func TestExecuteCallbackRewrite(t *testing.T) {
 	}
 }
 
+// TestExecuteErrorPreserved verifies that an Outcome{Error} returned by
+// the child is relayed end-to-end (proxy doesn't mask it as a
+// proxy-synthesized error_class).
+func TestExecuteErrorPreserved(t *testing.T) {
+	ts := newProxyTestServer(t, nil)
+	handler := func(protocol string, payload []byte) [][]byte {
+		done, _ := proto.Marshal(&genv1.Outcome{
+			Outcome: &genv1.Outcome_Error{Error: &genv1.Error{ErrorClass: "child_thing_broke"}},
+		})
+		return [][]byte{done}
+	}
+	connectFakeAgent(t, ts, "owner-1", "", handler)
+	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
+
+	client := genv1.NewExecutorClient(ts.supConn)
+	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
+	defer cancel()
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	if got := terminalErrorClass(outcome); got != "child_thing_broke" {
+		t.Fatalf("expected error_class %q, got %q", "child_thing_broke", got)
+	}
+}
+
 func TestExecuteMissingServiceName(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
@@ -143,8 +153,9 @@ func TestExecuteMissingServiceName(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if got := terminalErrorClass(events); got != errClassBindingNotFound {
+	// @constraint: no service-name metadata header → binding_not_found.
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	if got := terminalErrorClass(outcome); got != errClassBindingNotFound {
 		t.Fatalf("expected %s, got %q", errClassBindingNotFound, got)
 	}
 }
@@ -156,22 +167,9 @@ func TestExecuteInstanceNotFound(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
 	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "missing"})
-	if got := terminalErrorClass(events); got != errClassBindingNotFound {
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "missing"})
+	if got := terminalErrorClass(outcome); got != errClassBindingNotFound {
 		t.Fatalf("expected %s, got %q", errClassBindingNotFound, got)
-	}
-}
-
-func TestExecuteOwnerEmpty(t *testing.T) {
-	ts := newProxyTestServer(t, nil)
-	cacheReadyInstance(ts, "inst-1", "", map[string]bindingSpec{"codegen": {Path: "./c"}})
-
-	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
-	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if got := terminalErrorClass(events); got != errClassHostAgentNotConnected {
-		t.Fatalf("expected %s, got %q", errClassHostAgentNotConnected, got)
 	}
 }
 
@@ -182,8 +180,8 @@ func TestExecuteAgentNotConnected(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
 	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if got := terminalErrorClass(events); got != errClassHostAgentNotConnected {
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	if got := terminalErrorClass(outcome); got != errClassHostAgentNotConnected {
 		t.Fatalf("expected %s, got %q", errClassHostAgentNotConnected, got)
 	}
 }
@@ -196,24 +194,9 @@ func TestExecuteBindingNotFound(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
 	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if got := terminalErrorClass(events); got != errClassBindingNotFound {
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	if got := terminalErrorClass(outcome); got != errClassBindingNotFound {
 		t.Fatalf("expected %s, got %q", errClassBindingNotFound, got)
-	}
-}
-
-func TestExecuteSpawnTimeout(t *testing.T) {
-	ts := newProxyTestServer(t, nil)
-	fa := connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
-	fa.setSpawnDelay(3 * time.Second) // @constraint: exceeds the 2s spawnTimeout
-	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
-
-	client := genv1.NewExecutorClient(ts.supConn)
-	ctx, cancel := context.WithTimeout(callCtx("codegen"), 8*time.Second)
-	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if got := terminalErrorClass(events); got != errClassSpawnFailed {
-		t.Fatalf("expected %s, got %q", errClassSpawnFailed, got)
 	}
 }
 
@@ -226,13 +209,28 @@ func TestExecuteSpawnFailed(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
 	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if got := terminalErrorClass(events); got != errClassSpawnFailed {
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	if got := terminalErrorClass(outcome); got != errClassSpawnFailed {
 		t.Fatalf("expected %s, got %q", errClassSpawnFailed, got)
 	}
 }
 
-func TestExecuteDisconnectMidStream(t *testing.T) {
+func TestExecuteSpawnTimeout(t *testing.T) {
+	ts := newProxyTestServer(t, nil)
+	fa := connectFakeAgent(t, ts, "owner-1", "", executorScript(t))
+	fa.setSpawnDelay(3 * time.Second) // @constraint: exceeds the 2s spawnTimeout configured in the harness
+	cacheReadyInstance(ts, "inst-1", "owner-1", map[string]bindingSpec{"codegen": {Path: "./c"}})
+
+	client := genv1.NewExecutorClient(ts.supConn)
+	ctx, cancel := context.WithTimeout(callCtx("codegen"), 8*time.Second)
+	defer cancel()
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	if got := terminalErrorClass(outcome); got != errClassSpawnFailed {
+		t.Fatalf("expected %s, got %q", errClassSpawnFailed, got)
+	}
+}
+
+func TestExecuteDisconnectMidDispatch(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	fa := connectFakeAgent(t, ts, "owner-1", "", nil)
 	fa.setDropOnFirst(true)
@@ -241,16 +239,14 @@ func TestExecuteDisconnectMidStream(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
 	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if got := terminalErrorClass(events); got != errClassHostAgentDisconnected {
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	if got := terminalErrorClass(outcome); got != errClassHostAgentDisconnected {
 		t.Fatalf("expected %s, got %q", errClassHostAgentDisconnected, got)
 	}
 }
 
 // TestExecuteSupervisorCancelSendsCancelFrame asserts the proxy relays a
-// supervisor-side cancellation to the agent as a CANCEL DispatchFrame, so the
-// agent can tear down the child's inner Execute stream rather than leaving it
-// running until the child terminates.
+// supervisor-side cancellation to the agent as a CANCEL DispatchFrame.
 func TestExecuteSupervisorCancelSendsCancelFrame(t *testing.T) {
 	ts := newProxyTestServer(t, nil)
 	fa := connectFakeAgent(t, ts, "owner-1", "", nil)
@@ -260,12 +256,12 @@ func TestExecuteSupervisorCancelSendsCancelFrame(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithCancel(callCtx("codegen"))
 
-	stream, err := client.Execute(ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	// @deliberate: Recv in the background so the RPC is live; it will error when we cancel.
-	go func() { _, _ = stream.Recv() }()
+	// @deliberate: kick off Execute in background; it will return when ctx is cancelled.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = client.Execute(ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	}()
 
 	// @deliberate: Let the spawn + dispatch reach the stalling agent, then cancel.
 	time.Sleep(300 * time.Millisecond)
@@ -276,6 +272,7 @@ func TestExecuteSupervisorCancelSendsCancelFrame(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatalf("proxy did not send a CANCEL frame to the agent on supervisor cancel")
 	}
+	<-done
 }
 
 func TestExecuteFetcherFallbackPopulatesCache(t *testing.T) {
@@ -290,22 +287,11 @@ func TestExecuteFetcherFallbackPopulatesCache(t *testing.T) {
 	client := genv1.NewExecutorClient(ts.supConn)
 	ctx, cancel := context.WithTimeout(callCtx("codegen"), 5*time.Second)
 	defer cancel()
-	events := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
-	if terminalErrorClass(events) != "" {
-		t.Fatalf("expected success via fetcher fallback, got error: %q", terminalErrorClass(events))
+	outcome := collectExecute(t, client, ctx, &genv1.ExecuteRequest{InstanceId: "inst-1"})
+	if terminalErrorClass(outcome) != "" {
+		t.Fatalf("expected success via fetcher fallback, got error: %q", terminalErrorClass(outcome))
 	}
 	if _, ok := ts.state.lookupInstance("inst-1"); !ok {
 		t.Fatalf("fetcher fallback should populate the cache")
-	}
-}
-
-func TestExecutorObsCapabilitiesEmpty(t *testing.T) {
-	h := newExecutorObsHandler()
-	resp, err := h.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
-	if err != nil {
-		t.Fatalf("capabilities: %v", err)
-	}
-	if len(resp.GetDeclaredEvents()) != 0 || len(resp.GetExpectedAttributesSchema()) != 0 {
-		t.Fatalf("expected empty capability envelope")
 	}
 }

@@ -557,25 +557,19 @@ func runConformanceProbe(args []string) int {
 		Attributes:  ud,
 		CallbackUrl: receiver.URL(),
 	}
-	stream, err := client.Execute(ctx, req)
+	outcome, err := client.Execute(ctx, req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "execute: %v\n", err)
 		return 1
 	}
-	defer stream.Close()
 
-	ev, err := conformance.AwaitTerminal(ctx, stream, env)
+	settled, err := conformance.AwaitTerminal(ctx, outcome, env)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "conformance: %v\n", err)
 		return 1
 	}
-	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
-	if !ok {
-		fmt.Fprintf(os.Stderr, "conformance: unexpected terminal type %T\n", ev.Event)
-		return 1
-	}
-	switch oc := sc.StreamClose.Outcome.(type) {
-	case *genv1.StreamClose_Success:
+	switch oc := settled.GetOutcome().(type) {
+	case *genv1.Outcome_Success:
 		// @constraint: stub mode signals via attributes_delta on Success — probe asserts {stub:true} in the success delta.
 		m := oc.Success.GetAttributesDelta().AsMap()
 		if v, ok := m["stub"].(bool); !ok || !v {
@@ -584,13 +578,13 @@ func runConformanceProbe(args []string) int {
 		}
 		fmt.Println("conformance: stub-mode probe OK")
 		return 0
-	case *genv1.StreamClose_Error:
+	case *genv1.Outcome_Error:
 		fmt.Fprintf(os.Stderr, "conformance: got Error %s (%v)\n", oc.Error.ErrorClass, oc.Error.GetPayload().AsMap())
 		return 1
-	case *genv1.StreamClose_AwaitAsync:
+	case *genv1.Outcome_AwaitAsync:
 		fmt.Fprintln(os.Stderr, "conformance: stub-mode probe ended at AwaitAsyncCallback but no callback arrived")
 		return 1
 	}
-	fmt.Fprintf(os.Stderr, "conformance: unexpected StreamClose outcome %T\n", sc.StreamClose.Outcome)
+	fmt.Fprintf(os.Stderr, "conformance: unexpected Outcome variant %T\n", settled.GetOutcome())
 	return 1
 }

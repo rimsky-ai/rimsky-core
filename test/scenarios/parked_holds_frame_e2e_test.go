@@ -81,7 +81,7 @@ func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 	h.Stub.WhenType("root").Success(map[string]any{"r": 1}, true, "root")
 	h.Stub.WhenType("parker").Park(
 		genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK,
-		"waiting-for-wake", nil, time.Time{}, "",
+		"waiting-for-wake", time.Time{},
 	)
 
 	tid := h.DeployTemplate(node.TemplateSpec{

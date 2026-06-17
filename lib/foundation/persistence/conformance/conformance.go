@@ -71,7 +71,9 @@ func Suite(
 	// on runID (pure UPDATE); allocation moved to AffirmNodeRunRow. The
 	// shaped-from-nodeID + bool-return-of-inserted contract this test pinned
 	// is gone. Replacement coverage: AffirmNodeRunRow conformance below.
-	t.Run("NodesListRunningBySupervisor", func(t *testing.T) { testNodesListRunningBySupervisor(t, factory(t)) })
+	// @deliberate: NodesListRunningBySupervisor retired alongside
+	// ListRunningBySupervisor itself — the supervisor's heartbeat tick
+	// (the sole caller) is gone with the heartbeat surface.
 
 	// @deliberate: spec 2026-05-22-fan-out-safety-scope-first-design — RunScope-first
 	// conformance group (Tasks 28–31, 55).
@@ -99,7 +101,7 @@ func Suite(
 	})
 	t.Run("RunStateWritesIsolated", func(t *testing.T) {
 		t.Run("UpdateState", func(t *testing.T) { testRunStateWritesIsolated_UpdateState(t, factory(t)) })
-		t.Run("UpdateHeartbeat", func(t *testing.T) { testRunStateWritesIsolated_UpdateHeartbeat(t, factory(t)) })
+		t.Run("BumpLastProgressAt", func(t *testing.T) { testRunStateWritesIsolated_BumpLastProgressAt(t, factory(t)) })
 		t.Run("ClearSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ClearSettlingSignalType(t, factory(t)) })
 		t.Run("ResetFailedTerminalSettlingSignalType", func(t *testing.T) { testRunStateWritesIsolated_ResetFailedTerminalSettlingSignalType(t, factory(t)) })
 		t.Run("RemoveForNodeInTx", func(t *testing.T) { testRunStateWritesIsolated_RemoveForNodeInTx(t, factory(t)) })
@@ -154,15 +156,21 @@ func Suite(
 		t.Run("HandleReassignHolder", func(t *testing.T) { testClaimantGuardHandleReassignHolder(t, factory(t)) })
 		t.Run("HandleDelete", func(t *testing.T) { testClaimantGuardHandleDelete(t, factory(t)) })
 		t.Run("HandleDeleteIfExpired", func(t *testing.T) { testClaimantGuardHandleDeleteIfExpired(t, factory(t)) })
-		t.Run("HandleExtendHeartbeat", func(t *testing.T) { testClaimantGuardHandleExtendHeartbeat(t, factory(t)) })
+		// @deliberate: HandleExtendHeartbeat retired alongside
+		// ClaimHandles.ExtendHeartbeat — the claim-handle lease no longer
+		// refreshes on a heartbeat tick; it bounds by the originating
+		// dispatch's runtime deadlines instead.
 		t.Run("HolderRelease", func(t *testing.T) { testClaimantGuardHolderRelease(t, factory(t)) })
 		t.Run("RunClaimSteal", func(t *testing.T) { testClaimantGuardRunClaimSteal(t, factory(t)) })
 		t.Run("RunReleaseClaim", func(t *testing.T) { testClaimantGuardRunReleaseClaim(t, factory(t)) })
 		t.Run("RunComplete", func(t *testing.T) { testClaimantGuardRunComplete(t, factory(t)) })
 		t.Run("RunRemoveForNode", func(t *testing.T) { testClaimantGuardRunRemoveForNode(t, factory(t)) })
 		t.Run("RunPark", func(t *testing.T) { testClaimantGuardRunPark(t, factory(t)) })
-		t.Run("RunRefreshHeartbeat", func(t *testing.T) { testClaimantGuardRunRefreshHeartbeat(t, factory(t)) })
-		t.Run("NodeUpdateHeartbeat", func(t *testing.T) { testClaimantGuardNodeUpdateHeartbeat(t, factory(t)) })
+		// @deliberate: RunRefreshHeartbeat + NodeUpdateHeartbeat retired
+		// alongside the heartbeat surface itself. Async-mode liveness now
+		// rides BumpLastProgressAt + RegisterAsyncAck (covered in the
+		// ParkResume bucket below); sync-mode liveness rides the
+		// supervisor's gRPC connection state, not a persisted timestamp.
 		t.Run("RunEmptyClaimantCarveOut", func(t *testing.T) { testClaimantGuardRunEmptyClaimantCarveOut(t, factory(t)) })
 		t.Run("UnguardedMutationCarveOuts", func(t *testing.T) { testClaimantGuardUnguardedMutationCarveOuts(t, factory(t)) })
 	})
@@ -178,6 +186,8 @@ func Suite(
 		t.Run("MetadataRoundTrip", func(t *testing.T) { testParkResumeMetadataRoundTrip(t, factory(t)) })
 		t.Run("ParkedDiagnostic", func(t *testing.T) { testParkResumeParkedDiagnostic(t, factory(t)) })
 		t.Run("HeldFrameCount", func(t *testing.T) { testParkResumeHeldFrameCount(t, factory(t)) })
+		t.Run("RegisterAsyncAckRoundTrip", func(t *testing.T) { testRegisterAsyncAckRoundTrip(t, factory(t)) })
+		t.Run("BumpLastProgressAt", func(t *testing.T) { testBumpLastProgressAt(t, factory(t)) })
 	})
 	t.Run("FrameLifecycle", func(t *testing.T) {
 		t.Run("Default", func(t *testing.T) { testFrameLifecycleSerialQueue(t, factory(t)) })

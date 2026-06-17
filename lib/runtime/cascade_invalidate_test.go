@@ -81,7 +81,7 @@ func (f *invTestQueue) RemoveForNodeInTx(_ context.Context, nodeID shared.UUID, 
 	return nil
 }
 
-func (f *invTestQueue) ListOrphanedClaims(_ context.Context, _ time.Time) ([]persistence.DispatchRow, error) {
+func (f *invTestQueue) ListOrphanedClaims(_ context.Context) ([]persistence.DispatchRow, error) {
 	return nil, nil
 }
 func (f *invTestQueue) ReleaseClaim(_ context.Context, _ shared.UUID, _ string) error { return nil }
@@ -136,7 +136,7 @@ func (f *invTestQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) 
 func (f *invTestQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
+func (f *invTestQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (bool, error) {
 	return false, nil
 }
 func (f *invTestQueue) RebindRunFrameInTx(_ context.Context, _ persistence.Tx, _, _ shared.UUID) error {
@@ -151,14 +151,17 @@ func (f *invTestQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persis
 func (f *invTestQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {
 	return nil
 }
-func (f *invTestQueue) LoadResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.ResumeMetadataRow, error) {
-	return nil, nil
-}
 func (f *invTestQueue) CountParkedByReason(_ context.Context) (map[string]int, error) {
 	return nil, nil
 }
-func (f *invTestQueue) ClearResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
+func (f *invTestQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) (bool, error) {
+	return true, nil
+}
+func (f *invTestQueue) RegisterAsyncAck(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string, _ time.Time, _ *int, _ *int) error {
 	return nil
+}
+func (f *invTestQueue) LookupRunByAsyncAckID(_ context.Context, _ persistence.Tx, _ string) (*persistence.DispatchRow, error) {
+	return nil, nil
 }
 func (f *invTestQueue) LoadScratchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]byte, string, string, error) {
 	return nil, "", "", nil

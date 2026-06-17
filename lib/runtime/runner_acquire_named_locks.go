@@ -44,12 +44,12 @@ func takeNamedAdvisoryLocks(ctx context.Context, args RunArgs, tx persistence.Tx
 // Available=false.
 func acquireOneLock(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
-	sp any, cand persistence.Candidate, heartbeatInterval time.Duration,
+	sp any, cand persistence.Candidate, livenessInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, openResult, error) {
 	switch spec := sp.(type) {
 	case locks.NamedLockSpec:
-		al, ok, err := acquireNamedLock(ctx, args, tx, spec, cand, heartbeatInterval)
+		al, ok, err := acquireNamedLock(ctx, args, tx, spec, cand, livenessInterval)
 		if err != nil {
 			return AcquiredLock{}, openResultBail, err
 		}
@@ -58,7 +58,7 @@ func acquireOneLock(
 		}
 		return al, openResultAcquired, nil
 	case claimproducer.ClaimSpec:
-		return acquireClaim(ctx, args, tx, instanceID, spec, cand, heartbeatInterval, heldSubgraphs)
+		return acquireClaim(ctx, args, tx, instanceID, spec, cand, livenessInterval, heldSubgraphs)
 	}
 	return AcquiredLock{}, openResultBail, fmt.Errorf("acquireOneLock: unknown spec kind %T", sp)
 }
@@ -74,7 +74,7 @@ func acquireOneLock(
 // (control-api wires NamedLockDeclared unconditionally).
 func acquireNamedLock(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	spec locks.NamedLockSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
+	spec locks.NamedLockSpec, cand persistence.Candidate, livenessInterval time.Duration,
 ) (AcquiredLock, bool, error) {
 	if cfg, ok := args.NamedLocks.Get(spec.Name); ok {
 		count, err := args.ClaimHandles.CountByNamedLock(ctx, spec.Name, tx)
@@ -107,7 +107,7 @@ func acquireNamedLock(
 		LockName:           &nameCopy,
 		HolderSupervisorID: args.SupervisorID,
 		HolderNodeID:       cand.NodeID,
-		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
+		ExpiresAt:          args.Clock.Now().Add(5 * livenessInterval),
 		FrameID:            &frameID,
 		// @constraint: named locks are never held past active terminal; they
 		// release at the node-run's active-phase terminal.

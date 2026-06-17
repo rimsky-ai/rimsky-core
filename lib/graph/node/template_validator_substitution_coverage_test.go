@@ -9,13 +9,17 @@
 // ref has no covering subscription, naming the ref and showing the
 // subscription entry that would cover it.
 //
-// Three test functions cover the three uncovered ref shapes:
+// Two test functions cover the two uncovered ref shapes:
 //   - Per-field attribute ref ({{nodes.X.attribute.Y}}) with no
 //     covering subscription.
 //   - Whole-pull attribute ref ({{nodes.X.attribute}}) with only a
 //     per-field subscription on the same sender (asymmetry rule:
 //     decision:coverage-wildcard-asymmetry — the wildcard is required).
-//   - Event ref ({{nodes.X.event.Y}}) with no covering subscription.
+//
+// A third function pins the post-collapse rejection of the retired
+// event substitution form ({{nodes.X.event.Y}}) at directive-grammar
+// time — per TD-collapse-named-event-to-tags the event source-kind is
+// gone; the directive parser no longer admits it.
 //
 // Each test asserts the structured `substitution_ref_uncovered` entry
 // shape per TD-uncovered-substitution-error-shape: kind discriminator,
@@ -129,13 +133,16 @@ func TestSubstitutionCoverage_WholePullRefUncovered(t *testing.T) {
 		"attribute_property must name the schema path the whole-pull appeared in")
 }
 
-// TestSubstitutionCoverage_EventRefUncovered exhibits the event ref
-// shape: receiver reads `{{nodes.foo.event.something_happened}}` with
-// no covering `event/something_happened` subscription from `foo`. The
-// structured entry must suggest `event/something_happened`.
+// TestSubstitutionCoverage_EventRefRetired pins the post-collapse
+// rejection of the retired event substitution form: receiver reads
+// `{{nodes.foo.event.something_happened}}` and the directive grammar
+// must reject the form at validation time. Per
+// TD-collapse-named-event-to-tags the event source-kind is gone; the
+// fingerprint surface in the receiver's attribute schema is no longer
+// admitted by the directive parser.
 //
 //	@story: uncovered-substitution-rejected
-func TestSubstitutionCoverage_EventRefUncovered(t *testing.T) {
+func TestSubstitutionCoverage_EventRefRetired(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:    "demo",
 		Version: "1.0.0",
@@ -144,7 +151,6 @@ func TestSubstitutionCoverage_EventRefUncovered(t *testing.T) {
 			{
 				Type:     "rcv",
 				Executor: "h",
-				// @deliberate: no subscribes — event ref uncovered.
 				Attributes: &NodeAttributesDef{Schema: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -160,11 +166,19 @@ func TestSubstitutionCoverage_EventRefUncovered(t *testing.T) {
 	res := ValidateTemplate(spec, RegistryHooks{
 		StoreDeclared: storeDeclaredLookup(knownStores),
 	})
-	require.False(t, res.Ok(), "validator must reject the uncovered event ref")
-	entry := findCoverageEntry(t, res, "rcv", "nodes.foo.event.something_happened")
-	assertSuggestedEntryShape(t, entry, "foo", "event/something_happened")
-	require.Contains(t, entry["attribute_property"], "latest_event",
-		"attribute_property must name the schema path the event ref appeared in")
+	require.False(t, res.Ok(), "validator must reject the retired event substitution form")
+	// @deliberate: the rejection comes from the directive grammar
+	// (`nodes.<n>.<second>` admits only `attribute`); look for the
+	// grammar's error message anywhere in res.Errors.
+	var found bool
+	for _, e := range res.Errors {
+		if strings.Contains(e.Msg, "event") || strings.Contains(e.Msg, "second segment must be 'attribute'") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found,
+		"validator must surface a grammar error for the retired event form; got: %+v", res.Errors)
 }
 
 // findCoverageEntry returns the structured `substitution_ref_uncovered`

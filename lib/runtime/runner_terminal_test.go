@@ -4,28 +4,44 @@
 
 package runtime
 
+// @blessed-invariant: terminal-atomic-commit — coverage anchor: see
+//   test/scenarios/loop_counter_cap_e2e_test.go (runtime-side proof
+//   that the settling verdict + attributes_delta + tags commit
+//   together in one tx).
+//
+// @blessed-invariant: callback-determinism — coverage anchor: see
+//   test/scenarios/agentic_executor_async_handoff_test.go (runtime-
+//   side proof that the phase-check read and the terminal state
+//   mutation share one tx on the callback path).
+//
+// @blessed-invariant: affirm-node-run-row — coverage anchor: see
+//   test/scenarios/subscription_cascade_test.go (cascade walker is the
+//   lazy-allocation primitive for the receiver's in-flight row; the
+//   subsequent read returns the row id under the same tx).
+
 import (
 	"testing"
 
 	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 )
 
-// TestWaitSetTopicKindFor_FullTaxonomy pins waitSetTopicKindFor to the
-// 4-value signal taxonomy (terminal | transient | attribute | event),
+// TestWaitSetTopicKindFor_FullTaxonomy pins waitSetTopicKindFor to
+// the 3-value signal taxonomy (terminal | transient | attribute),
 // one bucket per top-level kind, with NO two distinct signal classes
 // collapsed onto the same value.
 //
-// The 'message' bucket retired with the 2026-06-14 message-schema-layer
-// reshape (Pass 4): the `message/*` top-level kind is gone from the
-// canonical taxonomy. Message arrival is now a virtual-node settle
-// whose subscribers wake via stale-marking, NOT via wait-set rows
-// keyed on a virtual sender run — so no signal that flows through this
-// mapper carries a `message/*` type-path.
+// @deliberate: the `event` bucket retired alongside `event/<name>` per
+// TD-collapse-named-event-to-tags — observable non-terminal
+// transitions ride as tags on the settling terminal verdict, not as
+// their own wait-set discriminator. The `message` bucket retired
+// earlier (2026-06-14 message-schema-layer reshape) for the same
+// virtual-node-settle reason.
 //
-// The assertion that guards against re-collapse is the no-two-classes-on-
-// the-same-bucket check at the end: terminal, transient, attribute, and
-// event must land on four distinct, kind-named values — not be silently
-// re-merged onto a shared "state" bucket by a future refactor.
+// The assertion that guards against re-collapse is the
+// no-two-classes-on-the-same-bucket check at the end: terminal,
+// transient, and attribute must land on three distinct, kind-named
+// values — not be silently re-merged onto a shared "state" bucket by
+// a future refactor.
 func TestWaitSetTopicKindFor_FullTaxonomy(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -35,7 +51,6 @@ func TestWaitSetTopicKindFor_FullTaxonomy(t *testing.T) {
 		{"terminal/success", signalpkg.TypePath("terminal/success"), "terminal"},
 		{"transient/await_async", signalpkg.TypePath("transient/await_async"), "transient"},
 		{"attribute/x/changed", signalpkg.TypePath("attribute/x/changed"), "attribute"},
-		{"event/foo", signalpkg.TypePath("event/foo"), "event"},
 	}
 
 	got := make(map[string]string, len(cases))

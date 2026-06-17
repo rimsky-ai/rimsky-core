@@ -712,8 +712,8 @@ func edgeFromMessageRef(receiverType string) SubscriptionEdge {
 	}
 }
 
-// substitutionRef is one parsed `{{nodes.X.attribute.Y}}` or
-// `{{nodes.X.event.Z.<path>}}` directive in a node's attribute schema.
+// substitutionRef is one parsed `{{nodes.X.attribute.Y}}` directive in
+// a node's attribute schema.
 //
 // RefLiteral and AttributeProperty are populated by
 // parseSubstitutionRefsFromAttributes so the registration-time coverage
@@ -723,8 +723,8 @@ func edgeFromMessageRef(receiverType string) SubscriptionEdge {
 // in. Per decision:uncovered-substitution-error-shape.
 type substitutionRef struct {
 	SenderNodeType string
-	// @constraint: TopicKind is "attribute" | "event"; Name is the
-	// attribute key or event name ("" indicates a whole-attribute pull);
+	// @constraint: TopicKind is "attribute"; Name is the attribute key
+	// ("" indicates a whole-attribute pull);
 	// RefLiteral is the exact "{{nodes.X.attribute.Y}}" text as it
 	// appears in the schema; AttributeProperty is the schema property
 	// path the ref appeared in (e.g. "properties.foo.source"). RefLiteral
@@ -924,17 +924,17 @@ func parseMessageDirective(body string) (messageRef, bool) {
 }
 
 // SubstitutionRefSpec is the exported per-directive substitution-ref
-// shape: sender node-type + topic kind (`attribute` | `event`) + the
-// name (attribute key or event name) the directive read. Returned by
-// `SubstitutionRefsFromAttributes` for callers outside the graph
-// package (e.g. the lineage writer in `runtime/lineage_writer.go`) that
-// need the full directive shape, not just the upstream sender set.
+// shape: sender node-type + topic kind (`attribute`) + the attribute
+// key the directive read. Returned by `SubstitutionRefsFromAttributes`
+// for callers outside the graph package (e.g. the lineage writer in
+// `runtime/lineage_writer.go`) that need the full directive shape, not
+// just the upstream sender set.
 //
 //	@concept: node-subscription
 type SubstitutionRefSpec struct {
 	// @constraint: SenderNodeType is the upstream node-type the directive
-	// named; TopicKind is "attribute" | "event"; Name is the attribute
-	// key or event name.
+	// named; TopicKind is "attribute" (the `event` kind is retired per
+	// TD-remove-event-substitution-path); Name is the attribute key.
 	SenderNodeType string
 	TopicKind      string
 	Name           string
@@ -962,11 +962,10 @@ func SubstitutionRefsFromAttributes(n TemplateNodeDef) []SubstitutionRefSpec {
 }
 
 // UpstreamNodeTypesFromAttributes returns the distinct sender
-// node-types referenced by `{{nodes.<X>.attribute.<Y>}}` /
-// `{{nodes.<X>.event.<Y>}}` directives in the receiver's attribute
-// schema. Excludes self-references. Exported for instance-creation
-// callers that need the receiver's upstream set without exposing the
-// full substitution-ref type.
+// node-types referenced by `{{nodes.<X>.attribute.<Y>}}` directives in
+// the receiver's attribute schema. Excludes self-references. Exported
+// for instance-creation callers that need the receiver's upstream set
+// without exposing the full substitution-ref type.
 //
 //	@concept: node-subscription
 func UpstreamNodeTypesFromAttributes(n TemplateNodeDef) []string {
@@ -1012,7 +1011,7 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 	}
 	seen := map[dedupKey]struct{}{}
 	// @deliberate: scanSrc accepts any directive shape
-	// parseSubstitutionDirective admits (attribute or event).
+	// parseSubstitutionDirective admits (attribute only).
 	// `propertyPath` is the schema-path string the source belongs to
 	// (e.g. "properties.foo.source"); used to populate
 	// substitutionRef.AttributeProperty.
@@ -1047,8 +1046,7 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 	}
 	// @deliberate: scanSrcAttributeOnly mirrors scanSrc but discards
 	// any directive whose TopicKind is not "attribute". Store-selector
-	// and lock-name reads enumerate only attribute refs; event reads at
-	// those sites are out of scope for the coverage check.
+	// and lock-name reads enumerate only attribute refs.
 	scanSrcAttributeOnly := func(src, propertyPath string) {
 		for _, m := range substitutionDirectiveRe.FindAllStringSubmatch(src, -1) {
 			literal := m[0]
@@ -1099,18 +1097,13 @@ func parseSubstitutionRefsFromAttributes(n TemplateNodeDef) []substitutionRef {
 
 // parseSubstitutionDirective parses one directive body (the text between
 // `{{...}}`) and returns a substitutionRef when the form is
-// `nodes.<X>.attribute(.<Y>?…)` or `nodes.<X>.event.<Y>(.…)?`. Returns
-// ok=false for any other shape (claim/params/legacy/etc.).
+// `nodes.<X>.attribute(.<Y>?…)`. Returns ok=false for any other shape
+// (claim/params/legacy/etc.).
 //
-// Bare-form pulls (`nodes.<X>.attribute` and `nodes.<X>.event.<name>`
-// with no trailing field path) per spec §Item 3 "Empty trailing path"
-// produce a substitutionRef with the appropriate Name:
-//
-//   - `nodes.<X>.attribute` → Name="" (whole-attribute pull; the
-//     coverage check requires a covering subscription on the
-//     wildcard `attribute/*` shape).
-//   - `nodes.<X>.event.<name>` → Name=<name> (whole-event-payload pull;
-//     same Name discipline as the field-path form).
+// Bare-form pulls (`nodes.<X>.attribute` with no trailing field path)
+// per spec §Item 3 "Empty trailing path" produce a substitutionRef with
+// Name="" (whole-attribute pull; the coverage check requires a covering
+// subscription on the wildcard `attribute/*` shape).
 //
 // Matches the validator's checkAttributeSource grammar in
 // `graph/node/template_validator.go::checkAttributeSource` so every
@@ -1145,15 +1138,6 @@ func parseSubstitutionDirective(body string) (substitutionRef, bool) {
 		}
 		return substitutionRef{
 			SenderNodeType: sender, TopicKind: "attribute", Name: name,
-		}, true
-	case "event":
-		// @deliberate: event name is required
-		// (nodes.<X>.event.<name>[.<path>…]).
-		if len(parts) < 4 || parts[3] == "" {
-			return substitutionRef{}, false
-		}
-		return substitutionRef{
-			SenderNodeType: sender, TopicKind: "event", Name: parts[3],
 		}, true
 	default:
 		return substitutionRef{}, false

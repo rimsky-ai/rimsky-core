@@ -26,7 +26,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { expectedAttributesSchemaBytes, resolveDeclaredEvents, declaredErrorClasses } from "./expected-attributes-schema.js";
+import { expectedAttributesSchemaBytes, resolveDeclaredTags, declaredErrorClasses } from "./expected-attributes-schema.js";
 
 export type Severity = "DEBUG" | "INFO" | "WARN" | "ERROR";
 
@@ -224,9 +224,9 @@ export function capabilitiesPayload(httpBridgeUrl = "") {
     retention_after_terminal_seconds: RETENTION_AFTER_TERMINAL_SECONDS,
     custom_ui: null,
     http_bridge_url: httpBridgeUrl,
-    // @deliberate: plan A1 — expected attribute schema bytes (base64 for JSON wire) and declared events.
+    // @deliberate: plan A1 — expected attribute schema bytes (base64 for JSON wire) and declared tags.
     expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()).toString("base64"),
-    declared_events: resolveDeclaredEvents(),
+    declared_tags: resolveDeclaredTags(),
     // @deliberate: 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
     declared_error_classes: declaredErrorClasses,
   };

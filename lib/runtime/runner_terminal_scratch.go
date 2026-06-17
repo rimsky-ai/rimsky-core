@@ -48,15 +48,15 @@ import (
 )
 
 // applyTerminalScratchInTx persists `scratch` onto the dispatch row in
-// the caller's tx. Picks inline vs. spilled-handle via the same
-// threshold and backend used by the parked-payload spill site. Empty
-// scratch is treated as no terminal-attach and short-circuits before
-// any UPDATE: the dispatch row's existing scratch state (none, a
-// mid-dispatch callback write, or recovery-copied prior bytes) is
-// preserved. Carry-forward to a successor still rides through the
-// row's persisted scratch under one of the three recovery dispositions
-// — heartbeat-stale, retry-after-error, recalculate — exactly as it
-// would for a non-empty terminal scratch.
+// the caller's tx. Picks inline vs. spilled-handle via the BlobBackend's
+// per-byte spill threshold. Empty scratch is treated as no
+// terminal-attach and short-circuits before any UPDATE: the dispatch
+// row's existing scratch state (none, a mid-dispatch callback write,
+// or recovery-copied prior bytes) is preserved. Carry-forward to a
+// successor still rides through the row's persisted scratch under one
+// of the three recovery dispositions — stale-recovery,
+// retry-after-error, recalculate — exactly as it would for a non-empty
+// terminal scratch.
 //
 // Sub-graph exit dispatch rows are excluded: see the file header for
 // the rationale and the @concept:executor invariant this carve-out

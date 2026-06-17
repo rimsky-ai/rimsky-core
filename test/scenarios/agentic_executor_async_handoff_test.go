@@ -7,6 +7,14 @@
 // POSTs a Success body to the supervisor's callback endpoint with the
 // same ack; the node reaches fresh.
 //
+// @blessed-invariant: persistent-registry-survives-restart — exercises
+// the persisted `col:rimsky_node_runs.async_ack_id` lookup path on
+// the callback handler. The harness drives the callback POST through
+// the same chi route the production path uses, so the lookup-by-ack
+// branch (fired when the in-memory cache is cold — the canonical
+// case after supervisor restart) is the one this test settles
+// against.
+//
 // Migrated to the stores-redesign template grammar (spec §11): the agent
 // node is built via scenario.MakeNode + scenario.WithAttributes. The
 // executor's terminal Success carries an attributes_delta the supervisor

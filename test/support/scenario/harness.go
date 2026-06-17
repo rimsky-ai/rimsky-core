@@ -89,14 +89,11 @@ type HarnessOpts struct {
 	// SchedulerTick overrides the default 250ms tick interval.
 	SchedulerTick time.Duration
 
-	// HeartbeatInterval overrides the supervisor's heartbeat tick
-	// (default 500ms) and the scheduler's heartbeat-timeout cutoff
-	// (default 5s).
-	HeartbeatInterval time.Duration
-
-	// HeartbeatTimeout overrides the scheduler's stale-heartbeat /
-	// orphan-claim cutoff (default 5s).
-	HeartbeatTimeout time.Duration
+	// LivenessInterval overrides the supervisor's liveness tick
+	// (default 500ms). The scheduler's quiet-period cutoff is
+	// derived as 5 × LivenessInterval (which keeps the historical
+	// 5s default when LivenessInterval is its 500ms default).
+	LivenessInterval time.Duration
 
 	// Clock injects a shared.Clock into every long-running component.
 	Clock shared.Clock
@@ -172,14 +169,11 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 		clock = shared.SystemClock{}
 	}
 
-	heartbeatInterval := opts.HeartbeatInterval
-	if heartbeatInterval == 0 {
-		heartbeatInterval = 500 * time.Millisecond
+	livenessInterval := opts.LivenessInterval
+	if livenessInterval == 0 {
+		livenessInterval = 500 * time.Millisecond
 	}
-	heartbeatTimeout := opts.HeartbeatTimeout
-	if heartbeatTimeout == 0 {
-		heartbeatTimeout = 5 * time.Second
-	}
+	maxQuietPeriod := 5 * livenessInterval
 	schedulerTick := opts.SchedulerTick
 	if schedulerTick == 0 {
 		schedulerTick = 250 * time.Millisecond
@@ -241,14 +235,13 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 
 	if !opts.NoScheduler {
 		sh, err := config.StartScheduler(config.SchedulerConfig{
-			Driver:               driver,
-			Clock:                clock,
-			Logger:               shared.SilentLogger{},
-			TickInterval:         schedulerTick,
-			HeartbeatTimeout:     heartbeatTimeout,
-			OrphanedClaimTimeout: 5 * heartbeatTimeout,
-			Stores:               opts.Stores,
-			NamedLocks:           opts.NamedLocks,
+			Driver:                driver,
+			Clock:                 clock,
+			Logger:                shared.SilentLogger{},
+			TickInterval:          schedulerTick,
+			MaxQuietPeriodDefault: maxQuietPeriod,
+			Stores:                opts.Stores,
+			NamedLocks:            opts.NamedLocks,
 			// @deliberate: Required for SweepParkedNodes (E3) so parked-rows can be
 			// resumed under the scheduler's own supervisor id.
 			SupervisorID: "scenario-scheduler",
@@ -328,7 +321,7 @@ func Start(t testing.TB, opts HarnessOpts) *Harness {
 			Clock:                       clock,
 			Logger:                      supLogger,
 			Concurrency:                 4,
-			HeartbeatInterval:           heartbeatInterval,
+			LivenessInterval:            livenessInterval,
 			ClaimPollInterval:           100 * time.Millisecond,
 			Resolver:                    resolver,
 			Stores:                      opts.Stores,

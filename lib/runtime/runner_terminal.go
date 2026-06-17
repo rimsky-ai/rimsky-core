@@ -89,7 +89,7 @@ func applyTerminal(
 	case terminalKindComplete:
 		pc, err = applyTerminalComplete(ctx, args, acq, resolvedAttrs, schema, t, tx)
 	case terminalKindErrored:
-		pc, err = applyTerminalError(ctx, args, acq, t.ErrorClass, t.Payload, t.Scratch, tx)
+		pc, err = applyTerminalError(ctx, args, acq, resolvedAttrs, t.ErrorClass, t.Payload, t.Tags, t.AttributesDel, t.Scratch, tx)
 	case terminalKindInfra:
 		pc, err = applyTerminalInfraError(ctx, args, acq, t.ErrorClass, t.Payload, t.Scratch, tx)
 	case terminalKindPark:
@@ -99,7 +99,7 @@ func applyTerminal(
 		// concept:terminal-resolution's kind table, Park retains claims
 		// and the run row; the await-async-callback transient likewise
 		// never reaches this switch (its callback's final terminal does).
-		return applyTerminalPark(ctx, args, acq, t, tx)
+		return applyTerminalPark(ctx, args, acq, resolvedAttrs, t, tx)
 	default:
 		return nil, fmt.Errorf("applyTerminal: unhandled terminal kind %v", t.Kind)
 	}
@@ -176,19 +176,10 @@ func runApplyTerminal(
 	t terminalEvent,
 	setup func(ctx context.Context, tx persistence.Tx) (skip bool, err error),
 ) error {
-	// @deliberate: persist any NamedEvent emissions captured during the dispatch's
-	// gRPC stream BEFORE applying the terminal verdict, per plan H1.
-	// Each event opens its own short tx so per-row emitted_at
-	// timestamps land in source order — under postgres NOW() is
-	// constant for a tx, so threading these into the determinism tx
-	// would collapse multi-emission ordering and break
-	// `LatestByName` (see TestOnEventMultipleEmissionsLatestWins).
-	// Named-event persistence is observability data and is not part of
-	// the callback-determinism invariant. Failures are best-effort and
-	// logged.
-	if len(t.NamedEvents) > 0 {
-		processNamedEvents(ctx, args, acq, t.NamedEvents)
-	}
+	// @deliberate: Per TD-collapse-named-event-to-tags the rimsky_node_events ledger
+	// has retired; subscriber-visible discriminators ride as Tags on
+	// the settling terminal verdict (concept:terminal-tag). The
+	// pre-Pass-1 processNamedEvents step is gone.
 	var postCommit postCommitFn
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		if setup != nil {
@@ -255,6 +246,16 @@ func terminalClassFor(k terminalKind) string {
 //
 //	@concept: sub-graph
 //	@concept: delegation
+//	@concept: terminal-tag
+//
+// @blessed-invariant: terminal-atomic-commit — the settling verdict
+// (run-state mutation), `attributes_delta` writeback, and `tags`
+// persistence all ride the caller-provided tx and commit together.
+// A crash between the verdict and either side-effect would corrupt
+// the cascade — subscribers would fire on a verdict whose tags
+// hadn't landed, or carry-forward attributes would diverge from the
+// dispatch they originated in. The tx is the unit of recovery here;
+// none of these writes are deferred to a separate Persist.Transaction.
 func applyTerminalComplete(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
@@ -298,7 +299,7 @@ func applyTerminalComplete(
 			// every reject, violating STORY-opaque-executor-scratch's
 			// round-trip contract.
 			return applyErrorPolicyWithScratch(ctx, args, acq, "attributes_schema_failed",
-				map[string]any{"error": err.Error()}, t.Scratch, tx)
+				map[string]any{"error": err.Error()}, t.Tags, t.Scratch, tx)
 		}
 	}
 
@@ -472,44 +473,43 @@ func applyTerminalComplete(
 	// senders (multi-invalidator); the settlement-side walk gates the
 	// initial-instance case + the deeper-level pessimistic seed.
 	//
-	// Consolidate every signal this terminal emits — the success
-	// envelope, one attribute/<key>/changed per merged attribute, and
-	// one event/<name> per named event — into a single cascade walk.
-	// One walk visits each (receiver, frame) at most once across the
-	// full signal set, preserving the once-per-frame dispatch
-	// invariant. Per concept:signal each signal matches against the
-	// subscriber edge map independently; a shared visited set across
-	// the per-signal loop ensures receivers seeded by an earlier
-	// signal don't get re-seeded by a later one.
+	// @constraint: consolidate every signal this terminal emits — the
+	// success envelope and one attribute/<key>/changed per merged
+	// attribute — into a single cascade walk. One walk visits each
+	// (receiver, frame) at most once across the full signal set,
+	// preserving the once-per-frame dispatch invariant. Per
+	// concept:signal each signal matches the subscriber edge map
+	// independently; a shared visited set across the per-signal loop
+	// ensures receivers seeded by an earlier signal don't get re-seeded
+	// by a later one. Per TD-collapse-named-event-to-tags the historic
+	// event/<name> signal is gone — its observable discriminator now
+	// rides as payload.tags on the success envelope below.
 	visited := map[foundationshared.UUID]struct{}{}
-	// @deliberate: run-disposition signal: terminal/success — cascade AND audit in the
-	// same tx via the single emit chokepoint (signal_emit.go). This
-	// replaces the old split where the cascade fired here in-tx but the
-	// audit row was rebuilt and written in a post-commit closure: two
-	// constructions of the same signal that could drift, and the shape
-	// that let other settlement paths emit without cascading.
+	// @deliberate: run-disposition signal: terminal/success — cascade AND
+	// audit in the same tx via the single emit chokepoint
+	// (signal_emit.go). Tags carry concept:terminal-tag's discriminator
+	// (gate-2-validated against the emitter's declared_tags upstream in
+	// readExecutorOutcome).
 	successSig := signalpkg.Signal{
 		Type: "terminal/success",
 		Payload: map[string]any{
 			"changed":          t.Changed,
 			"attributes_delta": orEmptyMap(t.AttributesDel),
 			"change_summary":   t.ChangeSummary,
+			"tags":             t.Tags,
 		},
 	}
 	if err := emitSignalInTx(ctx, args, tx,
 		acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, successSig, visited); err != nil {
 		return nil, err
 	}
-	// @deliberate: data signals: attribute/<key>/changed (one per merged attribute)
-	// and event/<name> (one per named event) cascade here at terminal so
-	// subscribers gate, sharing the once-per-frame guard above so a
-	// receiver already seeded by terminal/success is not re-seeded. They
-	// are NOT routed through emitSignalInTx: their audit rows are written
-	// on their own schedule (attribute deltas in the post-commit closure
-	// below — keyed on the changed delta, not every merged key; named
-	// events at emission time in persistOneNamedEvent), so routing them
-	// through the chokepoint would double-write those rows. They are
-	// data-change signals, not run dispositions.
+	// @deliberate: data signal attribute/<key>/changed (one per merged
+	// attribute) cascades here at terminal so subscribers gate, sharing
+	// the once-per-frame guard above so a receiver already seeded by
+	// terminal/success is not re-seeded. NOT routed through
+	// emitSignalInTx: its audit row is written on its own schedule
+	// (post-commit closure below — keyed on the changed delta, not
+	// every merged key), so the chokepoint would double-write.
 	for key, value := range merged {
 		attrSig := signalpkg.Signal{
 			Type: signalpkg.TypePath(fmt.Sprintf("attribute/%s/changed", key)),
@@ -523,19 +523,11 @@ func applyTerminalComplete(
 			return nil, err
 		}
 	}
-	for _, evt := range t.NamedEvents {
-		eventSig := signalpkg.Signal{
-			Type: signalpkg.TypePath("event/" + evt.Name),
-			Payload: map[string]any{
-				"name":          evt.Name,
-				"event_payload": eventPayloadAsMap(evt.PayloadInline),
-			},
-		}
-		if err := cascadeSubscribersStaleInTxWithVisited(ctx, args, tx,
-			acq.NodeID, acq.NodeType, acq.DispatchID, acq.InstanceID, acq.FrameID, eventSig, visited); err != nil {
-			return nil, err
-		}
-	}
+	// @deliberate: Per TD-collapse-named-event-to-tags the per-event
+	// cascade walk has retired — subscribers express tag interest via
+	// CEL filters over `payload.tags` on the terminal/* signal, and
+	// the terminal/* cascade emission above carries the verdict's tags
+	// through.
 	// @concept: wait-set
 	// @deliberate: settled-state drain: the sender just reached `fresh`. Any
 	// wait-set rows the sender was gating get removed in bulk so
@@ -1360,28 +1352,30 @@ func orEmptyMap(m map[string]any) map[string]any {
 }
 
 // waitSetTopicKindFor maps a signal.TypePath to the
-// rimsky_wait_set.topic_kind discriminator. The DB CHECK admits the four
-// canonical signal taxonomy values plus a 'state' fallback; the mapping
-// is a faithful projection of the signal top-level kind, with no two
-// distinct signal classes collapsed onto a shared bucket.
+// rimsky_wait_set.topic_kind discriminator. The DB CHECK admits the
+// three canonical signal taxonomy values plus a 'state' fallback;
+// the mapping is a faithful projection of the signal top-level kind,
+// with no two distinct signal classes collapsed onto a shared
+// bucket.
 //
 //   - terminal/*              → "terminal"
 //   - transient/*             → "transient"
 //   - attribute/<key>/changed → "attribute"
-//   - event/<name>            → "event"
 //   - empty/unrecognized      → "state" (fallback only)
 //
-// "state" survives solely as the empty/unrecognized fallback (and for
-// back-compat with any legacy 'state' rows / conformance fixtures); the
-// canonical kinds no longer fold onto it. The mapping is a runtime detail
-// for the wait-set ledger only; the audit-log `kind` field stays the full
-// canonical signal path.
+// "state" survives solely as the empty/unrecognized fallback (and
+// for back-compat with any legacy 'state' rows / conformance
+// fixtures); the canonical kinds no longer fold onto it. The mapping
+// is a runtime detail for the wait-set ledger only; the audit-log
+// `kind` field stays the full canonical signal path.
 //
-// The pre-2026-06-14 'message' bucket retired alongside the signal
-// taxonomy's `message/*` kind. Message arrival is now a virtual-node
-// settle whose subscribers wake via stale-marking, NOT via wait-set
-// rows keyed on a virtual sender run — so no wait-set row ever carries
-// a 'message' topic_kind. Migration 011 drops 'message' from the CHECK.
+// @deliberate: the pre-2026-06-14 'message' bucket retired alongside
+// the signal taxonomy's `message/*` kind, and the pre-Pass-1 'event'
+// bucket retired alongside `event/<name>` (TD-collapse-named-event-
+// to-tags): a settling terminal's `payload.tags` field carries the
+// observable discriminator that used to ride as a NamedEvent. Both
+// strings are now rejected by the migration-013 CHECK on
+// rimsky_wait_set.topic_kind.
 func waitSetTopicKindFor(pattern signalpkg.TypePath) string {
 	switch pattern.TopLevel() {
 	case signalpkg.KindTerminal:
@@ -1390,8 +1384,6 @@ func waitSetTopicKindFor(pattern signalpkg.TypePath) string {
 		return "transient"
 	case signalpkg.KindAttribute:
 		return "attribute"
-	case signalpkg.KindEvent:
-		return "event"
 	default:
 		return "state"
 	}

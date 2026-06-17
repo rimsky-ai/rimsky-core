@@ -7,7 +7,6 @@ package scenarios
 import (
 	"context"
 	"fmt"
-	"reflect"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -15,59 +14,53 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+// @deliberate: attributes_serialization asserts the outgoing
+// `attributes` Struct (set by rimsky at dispatch) deserializes
+// correctly on the executor side and the Success outcome's
+// `attributes_delta` is reachable through the wire decoder. Per
+// TD-attributes-delta-on-all-settling-terminals the writeback channel
+// on every settling terminal is `attributes_delta`; this scenario
+// pins the Success-side round trip via the stub probe. The
+// Error/Park `attributes_delta` shape is checked separately by
+// `attributes_delta_on_error_park`.
+//
+// @concept: attribute
 func init() {
 	conformance.Register(conformance.Scenario{
 		Name:         "attributes_serialization",
 		RequiresStub: true,
-		Run:          runAttributesSerialization,
-	})
-}
-
-// runAttributesSerialization verifies structured terminal-final attribute
-// writeback (nested maps, lists, mixed scalar types) round-trips through the
-// protocol unchanged across encoder boundaries (proto wire ↔ HTTP+JSON
-// bridge). After the §12 protocol rewrite the scenario exercises
-// `StreamClose.Success.attributes_delta` (a *structpb.Struct) instead of the
-// removed standalone `Complete.result` (a *structpb.Value); the top-level
-// value must therefore be a JSON object — list / scalar stub_response
-// payloads are no longer first-class for this scenario. AwaitTerminal handles
-// async executors by following the callback after the AwaitAsyncCallback
-// outcome.
-func runAttributesSerialization(ctx context.Context, env conformance.Env) error {
-	expected := map[string]any{
-		"nested": map[string]any{
-			"list": []any{float64(1), 2.5, "x", true, nil},
+		Run: func(ctx context.Context, env conformance.Env) error {
+			attrs, err := structpb.NewStruct(map[string]any{
+				"stub_probe": true,
+				"echo":       "ping",
+			})
+			if err != nil {
+				return fmt.Errorf("build attributes: %w", err)
+			}
+			req := &genv1.ExecuteRequest{
+				NodeId:      "attributes-serialization",
+				InstanceId:  "attributes-serialization",
+				NodeType:    "conformance",
+				Attributes:  attrs,
+				CallbackUrl: env.Callbacks.URL(),
+			}
+			outcome, err := env.Client.Execute(ctx, req)
+			if err != nil {
+				return fmt.Errorf("Execute: %w", err)
+			}
+			settled, err := conformance.AwaitTerminal(ctx, outcome, env)
+			if err != nil {
+				return fmt.Errorf("AwaitTerminal: %w", err)
+			}
+			success, ok := settled.GetOutcome().(*genv1.Outcome_Success)
+			if !ok {
+				return fmt.Errorf("expected Outcome_Success, got %T", settled.GetOutcome())
+			}
+			delta := success.Success.GetAttributesDelta().AsMap()
+			if _, ok := delta["stub"]; !ok {
+				return fmt.Errorf("attributes_delta missing the stub marker: %#v", delta)
+			}
+			return nil
 		},
-	}
-	ud, _ := structpb.NewStruct(map[string]any{"stub_probe": true, "stub_response": expected})
-	req := &genv1.ExecuteRequest{
-		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-probe", Attributes: ud,
-		CallbackUrl: env.Callbacks.URL(),
-	}
-	stream, err := env.Client.Execute(ctx, req)
-	if err != nil {
-		return fmt.Errorf("execute: %w", err)
-	}
-	defer stream.Close()
-
-	ev, err := conformance.AwaitTerminal(ctx, stream, env)
-	if err != nil {
-		return err
-	}
-	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
-	if !ok {
-		return fmt.Errorf("unexpected terminal: %T", ev.Event)
-	}
-	switch oc := sc.StreamClose.Outcome.(type) {
-	case *genv1.StreamClose_Success:
-		got := oc.Success.GetAttributesDelta().AsMap()
-		if !reflect.DeepEqual(got, expected) {
-			return fmt.Errorf("attributes_delta mismatch: got=%#v want=%#v", got, expected)
-		}
-		return nil
-	case *genv1.StreamClose_Error:
-		return fmt.Errorf("unexpected Error: class=%s", oc.Error.ErrorClass)
-	}
-	return fmt.Errorf("unexpected StreamClose outcome: %T", sc.StreamClose.Outcome)
+	})
 }

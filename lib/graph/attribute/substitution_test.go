@@ -209,63 +209,6 @@ func TestSubstitute_ErrorRedaction(t *testing.T) {
 	}
 }
 
-// TestSubstitute_NodesEvent covers the new nodes.<emitter>.event.<name>.<path>
-// substitution source kind (plan F4).
-func TestSubstitute_NodesEvent(t *testing.T) {
-	t.Parallel()
-
-	emissions := map[string]json.RawMessage{
-		"router|action_taken": mustJSON(t, map[string]any{
-			"action": "approve",
-			"score":  0.92,
-		}),
-	}
-	ctx := ResolveContext{
-		EventLookup: func(emitter, name string) (json.RawMessage, bool) {
-			payload, ok := emissions[emitter+"|"+name]
-			return payload, ok
-		},
-	}
-
-	t.Run("ok-leaf", func(t *testing.T) {
-		got, err := Substitute("{{nodes.router.event.action_taken.action}}", ctx)
-		if err != nil {
-			t.Fatalf("Substitute: %v", err)
-		}
-		if got != "approve" {
-			t.Fatalf("got %q, want approve", got)
-		}
-	})
-
-	t.Run("missing-emitter", func(t *testing.T) {
-		_, err := Substitute("{{nodes.unknown.event.action_taken.action}}", ctx)
-		if !IsMissingSource(err) {
-			t.Fatalf("want ErrMissingSource, got %v", err)
-		}
-	})
-
-	t.Run("missing-field", func(t *testing.T) {
-		_, err := Substitute("{{nodes.router.event.action_taken.no_such_field}}", ctx)
-		if !IsMissingSource(err) {
-			t.Fatalf("want ErrMissingSource, got %v", err)
-		}
-	})
-
-	t.Run("nil-lookup-rejects", func(t *testing.T) {
-		_, err := Substitute("{{nodes.router.event.action_taken.action}}", ResolveContext{})
-		if !IsMissingSource(err) {
-			t.Fatalf("want ErrMissingSource, got %v", err)
-		}
-	})
-
-	t.Run("malformed-shape", func(t *testing.T) {
-		_, err := Substitute("{{nodes.router.action_taken}}", ctx)
-		if !IsMissingSource(err) {
-			t.Fatalf("want ErrMissingSource, got %v", err)
-		}
-	})
-}
-
 // TestSubstitute_TriggerMessage exercises the
 // `{{trigger.message.payload.X}}` directive form added by spec §E14.
 func TestSubstitute_TriggerMessage(t *testing.T) {
@@ -824,12 +767,6 @@ func TestSubstituteValue_BareForm(t *testing.T) {
 				Payload: mustJSON(t, map[string]any{"items": float64(5)}),
 			},
 		},
-		EventLookup: func(emitter, name string) (json.RawMessage, bool) {
-			if emitter == "upstream" && name == "finished" {
-				return mustJSON(t, map[string]any{"ok": true}), true
-			}
-			return nil, false
-		},
 		TriggerMessagePayload: mustJSON(t, map[string]any{"kind": "trigger"}),
 	}
 
@@ -855,16 +792,9 @@ func TestSubstituteValue_BareForm(t *testing.T) {
 		}
 	})
 
-	t.Run("nodes.X.event.<name> (whole event payload)", func(t *testing.T) {
-		got, err := SubstituteValue("{{nodes.upstream.event.finished}}", ctx)
-		if err != nil {
-			t.Fatalf("err: %v", err)
-		}
-		m, _ := got.(map[string]any)
-		if m["ok"] != true {
-			t.Fatalf("got %v", got)
-		}
-	})
+	// @deliberate: nodes.X.event.<name> whole-payload form retired
+	// alongside TD-collapse-named-event-to-tags; the bare-form test
+	// covers attributes / claim / trigger arms.
 
 	t.Run("trigger.message.payload (whole trigger payload)", func(t *testing.T) {
 		got, err := SubstituteValue("{{trigger.message.payload}}", ctx)

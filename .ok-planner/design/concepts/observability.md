@@ -16,7 +16,7 @@ Services declare their own capabilities and trace surfaces; rimsky should learn 
 
 ## Boundaries
 
-Owns: the optional service protocols, the handshake mechanism, the refresh-loop policy, the per-service `userdata_schema` validation surface. Does NOT own: the cache the handshake populates (see `discovery-cache`), the operator-dashboard HTTP routes (see `cascade-graph`), the per-event audit log (see `event-log`). Adjacent: `discovery-cache`, `cascade-graph`, `executor`, `claim-producer`, `event-log`, `named-event`.
+Owns: the optional service protocols, the handshake mechanism, the refresh-loop policy, the per-service `userdata_schema` validation surface. Does NOT own: the cache the handshake populates (see `discovery-cache`), the operator-dashboard HTTP routes (see `cascade-graph`), the per-event audit log (see `event-log`). Adjacent: `discovery-cache`, `cascade-graph`, `executor`, `claim-producer`, `event-log`, `terminal-tag`.
 
 ## Invariants
 

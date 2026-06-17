@@ -10,7 +10,7 @@
 //
 // Six recognized source kinds:
 //
-//   - {{nodes.<node>.attribute.<field>}} — upstream node's persisted attributes (also `{{nodes.<node>.event.<event_name>.<field>}}` for a named-event payload)
+//   - {{nodes.<node>.attribute.<field>}} — upstream node's persisted attributes
 //   - {{claim.<alias>.claim_scope}} — live claim's claim-scope bytes (also `.address` and `.payload.<field>`)
 //   - {{params.<key>}} — instance-level config params
 //   - {{trigger.message.payload.<field>}} — the bound trigger message's payload at named path
@@ -80,25 +80,10 @@ import (
 //   - Params: rimsky_instances.params as opaque json.RawMessage.
 //
 // All three maps may be nil; nil is treated as empty.
-//
-// EventLookup is an optional callable resolving the most recent named
-// event payload for substitutions of the form
-// `nodes.<emitter_node>.event.<event_name>.<json_path>` (per the
-// 2026-05-08 platform-extensions plan F4). When nil, every such
-// directive returns ErrMissingSource. The lookup returns
-// (payload, ok=true) when a row exists in the per-instance event ledger
-// for (emitter, event_name); the most recent emission wins. Payload
-// bytes are walked via the same walkPath machinery attribute and claim
-// payloads use, preserving @blessed-invariant 20.
 type ResolveContext struct {
 	Deps   map[string]json.RawMessage
 	Claim  map[string]claimproducer.ClaimResult
 	Params json.RawMessage
-
-	// EventLookup, when non-nil, resolves named-event payload bytes for
-	// the (emitter, eventName) pair. ok=false means "no emission yet" and
-	// translates to ErrMissingSource.
-	EventLookup func(emitter, eventName string) (payload json.RawMessage, ok bool)
 
 	// TriggerMessagePayload is the opaque payload bytes of the trigger
 	// message bound to this frame (the rimsky_messages row whose
@@ -277,12 +262,14 @@ func SubstituteValue(rawValue string, ctx ResolveContext) (any, error) {
 // lenient `?` marker, in which case missing resolves to the empty
 // string).
 //
-// Recognized source kinds (post-2026-05-14):
+// Recognized source kinds:
 //
 //	nodes.<X>.attribute.<key>...   — upstream attribute walk
-//	nodes.<X>.event.<name>.<path>  — upstream named-event walk
 //	claim.<alias>.{address|claim_scope|payload.<key>...}
 //	params.<key>...
+//	trigger.message.payload.<key>...
+//	child.partition_key
+//	messages.<type>.<key>...
 //
 // The legacy `deps.<X>.<key>` form is retired; callers receive a
 // migration-pointer error.
@@ -492,8 +479,7 @@ func stringifyAny(v any) string {
 //
 // Rimsky never logs, formats with `%v`, validates beyond schema gates,
 // transforms, or includes payload bytes in error messages. Same opacity
-// discipline as `@blessed-invariant 20/21` (claim content, blob content
-// / named-event payloads).
+// discipline as `@blessed-invariant 20/21` (claim content, blob content).
 func resolveTriggerValue(directive string, rest []string, ctx ResolveContext) (any, error) {
 	if len(rest) < 2 {
 		return nil, &ErrMissingSource{Directive: directive, Reason: "trigger directive needs trigger.message.payload[.<field>]"}
@@ -615,57 +601,32 @@ func resolveChildValue(directive string, rest []string, ctx ResolveContext) (any
 	return ctx.ChildPartitionKey, nil
 }
 
-// resolveNodesValue handles two `nodes.<X>.<kind>(.<...>?)` directive
-// forms:
-//
-//   - `nodes.<node>.attribute(.<field>?…)` — walks the upstream node's
-//     persisted attributes data. Empty trailing field path resolves to
-//     the whole attribute object (per spec §Item 3).
-//   - `nodes.<emitter>.event.<event_name>(.<field>?…)` — walks the most
-//     recent named-event payload via ResolveContext.EventLookup. Empty
-//     trailing field path resolves to the whole event payload.
+// resolveNodesValue handles the `nodes.<node>.attribute(.<field>?…)`
+// directive form: walks the upstream node's persisted attributes data.
+// Empty trailing field path resolves to the whole attribute object
+// (per spec §Item 3).
 //
 // Walks bytes via walkPath — the sanctioned introspection site for
 // payload field-walks (@blessed-invariant 20).
 func resolveNodesValue(directive string, rest []string, ctx ResolveContext) (any, error) {
 	if len(rest) < 2 {
-		return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.{attribute|event}[.<field>]"}
+		return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.attribute[.<field>]"}
 	}
 	nodeName := rest[0]
 	kind := rest[1]
-	switch kind {
-	case "attribute":
-		fieldPath := rest[2:]
-		data, ok := ctx.Deps[nodeName]
-		if !ok {
-			return nil, &ErrMissingSource{Directive: directive, Reason: "no upstream node " + nodeName}
-		}
-		val, ok := walkPath(data, fieldPath)
-		if !ok {
-			return nil, &ErrMissingSource{Directive: directive, Reason: "attribute field path not found"}
-		}
-		return val, nil
-	case "event":
-		if len(rest) < 3 {
-			return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive needs <node>.event.<name>[.<field>]"}
-		}
-		eventName := rest[2]
-		fieldPath := rest[3:]
-		if ctx.EventLookup == nil {
-			return nil, &ErrMissingSource{Directive: directive, Reason: "no event lookup configured"}
-		}
-		payload, ok := ctx.EventLookup(nodeName, eventName)
-		if !ok || len(payload) == 0 {
-			return nil, &ErrMissingSource{Directive: directive, Reason: "no emission for event"}
-		}
-		val, ok := walkPath(payload, fieldPath)
-		if !ok {
-			return nil, &ErrMissingSource{Directive: directive, Reason: "event payload field path not found"}
-		}
-		return val, nil
-	default:
-		return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive second segment must be 'attribute' or 'event'"}
+	if kind != "attribute" {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "nodes directive second segment must be 'attribute'"}
 	}
+	fieldPath := rest[2:]
+	data, ok := ctx.Deps[nodeName]
+	if !ok {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "no upstream node " + nodeName}
+	}
+	val, ok := walkPath(data, fieldPath)
+	if !ok {
+		return nil, &ErrMissingSource{Directive: directive, Reason: "attribute field path not found"}
+	}
+	return val, nil
 }
 
 // resolveClaimValue handles three sub-shapes per spec §16.1:

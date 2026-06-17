@@ -6,7 +6,6 @@ package conformance
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -21,45 +20,33 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// CallbackReceiver is the conformance-side endpoint that async executors POST
-// their terminal verdicts to. It listens on a kernel-allocated port and routes
-// each incoming POST by `async_ack_id` to a per-scenario channel registered
-// ahead of time via Register.
+// CallbackReceiver is the conformance-side endpoint that async
+// executors POST their terminal verdicts to. It listens on a
+// kernel-allocated port and routes each incoming POST by
+// `async_ack_id` to a per-scenario channel registered ahead of time
+// via Register.
 //
-// Scenarios that test terminal verdicts use AwaitTerminal — it reads the gRPC
-// stream until it sees a terminal StreamClose event. If that StreamClose
-// outcome is AwaitAsyncCallback, AwaitTerminal then waits on the receiver's
-// channel for the eventual callback POST and synthesizes an equivalent
-// ExecuteEvent for the caller. This lets the same scenario validate both
-// synchronous and async executors without per-scenario branching.
-//
-// The receiver accepts the AsyncCallbackBody shape with the outcome
-// oneof keyed `success | error | park`. The pre-rename
-// `{type: "complete"|"blocked"|"errored", ...}` discriminator shape and the
-// per-terminal keys `complete | blocked | errored | park_requested` are no
-// longer accepted — same as the supervisor's parser at
-// runtime/callback.go.
+// Per TD-collapse-named-event-to-tags + TD-remove-resume-context the
+// body shape is the AsyncCallbackBody outcome oneof
+// (success / error / park) with no `events` array and no
+// session_token / payload bytes on Park — those are gone.
 type CallbackReceiver struct {
 	srv          *http.Server
-	bindAddr     string // @constraint: listening "ip:port"
-	advertiseURL string // @constraint: base URL executors should POST to
+	bindAddr     string
+	advertiseURL string
 	mu           sync.Mutex
-	wait         map[string]chan *genv1.ExecuteEvent
+	wait         map[string]chan *genv1.Outcome
 }
 
 // ReceiverOptions configures the address the receiver binds and the URL it
-// advertises to executors. Both fields default sensibly for in-process /
-// localhost use; containerized executors (e.g. claude-agent inside docker)
-// need BindHost="0.0.0.0" and AdvertiseHost="host.docker.internal" or a
-// reachable host IP so their callback POST can cross the network boundary.
+// advertises to executors.
 type ReceiverOptions struct {
-	BindHost      string // @constraint: default "127.0.0.1"
-	AdvertiseHost string // @constraint: default same as BindHost; never "0.0.0.0"
+	BindHost      string
+	AdvertiseHost string
 }
 
 // StartCallbackReceiver binds an HTTP listener and returns a CallbackReceiver
-// ready to accept POSTs at `${URL()}/v1/callback/{async_ack_id}`. Caller must
-// Close() to release the listener.
+// ready to accept POSTs at `${URL()}/v1/callback/{async_ack_id}`.
 func StartCallbackReceiver(opts ...ReceiverOptions) (*CallbackReceiver, error) {
 	o := ReceiverOptions{}
 	if len(opts) > 0 {
@@ -83,7 +70,7 @@ func StartCallbackReceiver(opts ...ReceiverOptions) (*CallbackReceiver, error) {
 	r := &CallbackReceiver{
 		bindAddr:     ln.Addr().String(),
 		advertiseURL: fmt.Sprintf("http://%s:%d", advertise, tcpAddr.Port),
-		wait:         map[string]chan *genv1.ExecuteEvent{},
+		wait:         map[string]chan *genv1.Outcome{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/callback/", r.handle)
@@ -92,8 +79,7 @@ func StartCallbackReceiver(opts ...ReceiverOptions) (*CallbackReceiver, error) {
 	return r, nil
 }
 
-// URL returns the absolute base URL the receiver advertises, suitable for
-// passing as `ExecuteRequest.callback_url` to the executor.
+// URL returns the absolute base URL the receiver advertises.
 func (r *CallbackReceiver) URL() string {
 	if r == nil {
 		return ""
@@ -101,16 +87,13 @@ func (r *CallbackReceiver) URL() string {
 	return r.advertiseURL
 }
 
-// Register reserves a channel for a future callback addressed to ackID. The
-// returned channel receives exactly one ExecuteEvent (the synthesized terminal)
-// and is then closed. Pre-registration eliminates the race where the executor's
-// callback arrives before the scenario starts waiting for it.
-func (r *CallbackReceiver) Register(ackID string) <-chan *genv1.ExecuteEvent {
+// Register reserves a channel for a future callback addressed to ackID.
+func (r *CallbackReceiver) Register(ackID string) <-chan *genv1.Outcome {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	ch, ok := r.wait[ackID]
 	if !ok {
-		ch = make(chan *genv1.ExecuteEvent, 1)
+		ch = make(chan *genv1.Outcome, 1)
 		r.wait[ackID] = ch
 	}
 	return ch
@@ -139,7 +122,7 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "decode: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	ev, err := parseCallbackBody(body)
+	outcome, err := parseCallbackBody(body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -147,33 +130,25 @@ func (r *CallbackReceiver) handle(w http.ResponseWriter, req *http.Request) {
 	r.mu.Lock()
 	ch, ok := r.wait[ackID]
 	if !ok {
-		ch = make(chan *genv1.ExecuteEvent, 1)
+		ch = make(chan *genv1.Outcome, 1)
 		r.wait[ackID] = ch
 	}
 	r.mu.Unlock()
 	select {
-	case ch <- ev:
+	case ch <- outcome:
 	default:
-		// @constraint: channel already has a buffered terminal; discard
-		// duplicates so the consumer sees the first synthesized event only.
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// parseCallbackBody parses the AsyncCallbackBody shape. Top-level
-// outcome oneof keys: success | error | park. The legacy
-// `{type: ...}` discriminator shape and the legacy
-// `complete | blocked | errored | park_requested` per-terminal keys
-// are no longer accepted.
+// parseCallbackBody parses the AsyncCallbackBody shape into an Outcome.
 //
 // @source: lib/runtime/callback.go::parseAsyncCallback
 // @diverged: true
 // @reason: The supervisor parses a typed body via json.Unmarshal into
 // asyncCallbackBody. The conformance receiver operates on a
-// map[string]any so test fixtures can be loose; payload bytes do not
-// have to be base64-encoded here. Both must reject !=1 outcome bodies
-// identically — that branch is the load-bearing parity check.
-func parseCallbackBody(body map[string]any) (*genv1.ExecuteEvent, error) {
+// map[string]any so test fixtures can be loose.
+func parseCallbackBody(body map[string]any) (*genv1.Outcome, error) {
 	outcomeCount := 0
 	if _, ok := body["success"]; ok {
 		outcomeCount++
@@ -188,57 +163,43 @@ func parseCallbackBody(body map[string]any) (*genv1.ExecuteEvent, error) {
 		return nil, fmt.Errorf("expected AsyncCallbackBody; outcome oneof must be set (success | error | park); got %d outcomes", outcomeCount)
 	}
 	if v, ok := body["success"]; ok {
-		return mapSuccess(asMap(v))
+		return mapSuccess(asMap(v)), nil
 	}
 	if v, ok := body["error"]; ok {
-		return mapErrorOutcome(asMap(v))
+		return mapErrorOutcome(asMap(v)), nil
 	}
 	if v, ok := body["park"]; ok {
-		return mapPark(asMap(v))
+		return mapPark(asMap(v)), nil
 	}
 	return nil, fmt.Errorf("callback body has no outcome field")
 }
 
-func mapSuccess(m map[string]any) (*genv1.ExecuteEvent, error) {
+func mapSuccess(m map[string]any) *genv1.Outcome {
 	delta, _ := structpb.NewStruct(asMap(m["attributes_delta"]))
-	return &genv1.ExecuteEvent{
-		Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-				AttributesDelta: delta,
-				Changed:         asBool(m["changed"]),
-				ChangeSummary:   asString(m["change_summary"]),
-			}}},
-		},
-	}, nil
-}
-
-func mapErrorOutcome(m map[string]any) (*genv1.ExecuteEvent, error) {
-	pl, _ := structpb.NewStruct(asMap(m["payload"]))
-	return &genv1.ExecuteEvent{
-		Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: asString(m["error_class"]),
-				Payload:    pl,
-			}}},
-		},
-	}, nil
-}
-
-func mapPark(m map[string]any) (*genv1.ExecuteEvent, error) {
-	payloadStr := asString(m["payload"])
-	var payloadBytes []byte
-	if payloadStr != "" {
-		// @constraint: payload is base64 over the JSON wire (Go []byte
-		// convention) — tolerate non-base64 by treating it as a literal.
-		if decoded, err := base64.StdEncoding.DecodeString(payloadStr); err == nil {
-			payloadBytes = decoded
-		} else {
-			payloadBytes = []byte(payloadStr)
-		}
+	return &genv1.Outcome{
+		Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+			AttributesDelta: delta,
+			Changed:         asBool(m["changed"]),
+			ChangeSummary:   asString(m["change_summary"]),
+			Tags:            asStringSlice(m["tags"]),
+		}},
 	}
-	// @constraint: ParkReason is a closed two-value set
-	// (proto:executor.proto::ParkReason). Unknown / empty falls back to
-	// PARK_REASON_AWAIT_CALLBACK — the safer default (no auto-resume).
+}
+
+func mapErrorOutcome(m map[string]any) *genv1.Outcome {
+	pl, _ := structpb.NewStruct(asMap(m["payload"]))
+	delta, _ := structpb.NewStruct(asMap(m["attributes_delta"]))
+	return &genv1.Outcome{
+		Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+			ErrorClass:      asString(m["error_class"]),
+			Payload:         pl,
+			AttributesDelta: delta,
+			Tags:            asStringSlice(m["tags"]),
+		}},
+	}
+}
+
+func mapPark(m map[string]any) *genv1.Outcome {
 	reasonStr := asString(m["reason"])
 	reasonEnum := genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK
 	if reasonStr != "" {
@@ -247,22 +208,20 @@ func mapPark(m map[string]any) (*genv1.ExecuteEvent, error) {
 			reasonEnum = genv1.ParkReason(v)
 		}
 	}
+	delta, _ := structpb.NewStruct(asMap(m["attributes_delta"]))
 	p := &genv1.Park{
-		Reason:       reasonEnum,
-		ReasonNote:   asString(m["reason_note"]),
-		Payload:      payloadBytes,
-		SessionToken: asString(m["session_token"]),
+		Reason:          reasonEnum,
+		ReasonNote:      asString(m["reason_note"]),
+		ReasonLabel:     asString(m["reason_label"]),
+		AttributesDelta: delta,
+		Tags:            asStringSlice(m["tags"]),
 	}
 	if rawResume := asString(m["resume_at"]); rawResume != "" {
 		if pt, err := time.Parse(time.RFC3339, rawResume); err == nil {
 			p.ResumeAt = timestamppb.New(pt)
 		}
 	}
-	return &genv1.ExecuteEvent{
-		Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: p}},
-		},
-	}, nil
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: p}}
 }
 
 func asMap(v any) map[string]any {
@@ -278,4 +237,17 @@ func asString(v any) string {
 func asBool(v any) bool {
 	b, _ := v.(bool)
 	return b
+}
+func asStringSlice(v any) []string {
+	raw, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, x := range raw {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }

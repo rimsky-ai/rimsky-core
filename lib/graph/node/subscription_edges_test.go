@@ -220,27 +220,22 @@ func TestBuildSubscriptionEdges_CrossCuttingAndPerNodeBothMatch(t *testing.T) {
 	}
 }
 
-// TestParseSubstitutionDirective_BareEventRejected — bare-form event
-// pulls still require the event name. A `{{nodes.X.event}}` directive
-// (no event name) is malformed; parseSubstitutionDirective returns
-// ok=false. Tests the parsing primitive used by the coverage check.
-func TestParseSubstitutionDirective_BareEventRejected(t *testing.T) {
-	got, ok := parseSubstitutionDirective("nodes.emit.event")
-	if ok {
-		t.Fatalf("parseSubstitutionDirective(`nodes.emit.event`) expected ok=false; got %+v", got)
-	}
-}
-
-// TestParseSubstitutionDirective_BareEventWithName — `{{nodes.X.event.<name>}}`
-// (no trailing path) is the bare-event form. The parser yields
-// (sender=X, kind=event, Name=<name>).
-func TestParseSubstitutionDirective_BareEventWithName(t *testing.T) {
-	ref, ok := parseSubstitutionDirective("nodes.emit.event.progress")
-	if !ok {
-		t.Fatalf("parseSubstitutionDirective: expected ok=true for bare-event form")
-	}
-	if ref.TopicKind != "event" || ref.Name != "progress" {
-		t.Errorf("ref mismatch: %+v", ref)
+// TestParseSubstitutionDirective_EventFormRetired — the
+// `{{nodes.X.event.<name>}}` substitution form is retired per
+// TD-collapse-named-event-to-tags; parseSubstitutionDirective no
+// longer admits it (`event` is not a valid second segment). Both the
+// bare `nodes.X.event` form and the named `nodes.X.event.<name>` form
+// return ok=false.
+func TestParseSubstitutionDirective_EventFormRetired(t *testing.T) {
+	for _, body := range []string{
+		"nodes.emit.event",
+		"nodes.emit.event.progress",
+		"nodes.emit.event.progress.field",
+	} {
+		got, ok := parseSubstitutionDirective(body)
+		if ok {
+			t.Fatalf("parseSubstitutionDirective(%q) expected ok=false (event form retired); got %+v", body, got)
+		}
 	}
 }
 

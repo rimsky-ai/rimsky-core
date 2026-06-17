@@ -40,7 +40,7 @@ func TestSupervisor_StartShutdown(t *testing.T) {
 		Clock:             shared.SystemClock{},
 		Logger:            shared.SilentLogger{},
 		Concurrency:       1,
-		HeartbeatInterval: 200 * time.Millisecond,
+		LivenessInterval:  200 * time.Millisecond,
 		ClaimPollInterval: 200 * time.Millisecond,
 		Resolver:          executor.NewStaticResolver(map[string]executor.Endpoint{}),
 		StoreRegistry:     reg,

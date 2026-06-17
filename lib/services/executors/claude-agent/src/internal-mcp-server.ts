@@ -489,57 +489,8 @@ export function registerTools(mcp: McpServer, registry: TokenRegistry, log: Logg
     },
   );
 
-  mcp.tool(
-    "emit_named_event",
-    "Emit a non-terminal named event. The name must be one the executor " +
-      "declares (RIMSKY_EXECUTOR_DECLARED_EVENTS); an undeclared name is " +
-      "rejected. The payload is an opaque JSON value carried through " +
-      "verbatim. Emitting an event does not end the run — you must still " +
-      "call report_complete / report_blocked / report_error / report_park.",
-    {
-      token: tokenField,
-      name: z.string(),
-      // @deliberate: inert payload (concept:inertness / @blessed-invariant 21): the
-      // handler serializes it to bytes opaquely and buffers it; it never
-      // logs, formats, validates-beyond-serialization, or transforms it.
-      payload: z.unknown().optional(),
-    },
-    async (args) => {
-      const entry = registry.lookup(args.token);
-      if (!entry) return unknownToken("emit_named_event");
-      logCall("emit_named_event", entry.runId);
-      // @deliberate: self-consistency guard (NOT rimsky access): reject any name the
-      // executor does not declare. Rimsky would otherwise persist an
-      // undeclared name as a downstream no-op, so this is early feedback
-      // for the template author, not a correctness gate. (Args are not
-      // logged: the rejected `name` could carry agent-generated text.)
-      if (!entry.declaredEvents.includes(args.name)) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                status: "rejected",
-                error: "undeclared_event",
-                declared_events: entry.declaredEvents,
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-      // @deliberate: serialize the payload to bytes opaquely. `undefined` (payload
-      // omitted) serializes to the JSON literal `null` so the wire carries
-      // a well-formed value; the executor does not inspect it further.
-      const payloadBytes = Buffer.from(
-        JSON.stringify(args.payload ?? null),
-        "utf8",
-      );
-      entry.emitNamedEvent(args.name, payloadBytes);
-      const ack = { status: "accepted" as const };
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(ack) }],
-      };
-    },
-  );
+  // @constraint: TD-collapse-named-event-to-tags retires the
+  // `emit_named_event` MCP tool. Non-terminal observable transitions
+  // ride tags on the settling terminal verdict (concept:terminal-tag);
+  // there is no mid-dispatch emit surface.
 }

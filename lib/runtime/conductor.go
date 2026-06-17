@@ -8,20 +8,23 @@
 // orchestrator that gates each tick under the advisory lock and runs
 // the foundation sweeps:
 //
-//   - Stale-heartbeat sweep: running nodes whose last_heartbeat is older
-//     than the cutoff are forced running→stale, supervisor assignment is
-//     cleared, a heartbeat_lost event is appended, and the node is
-//     re-enqueued (no retry bump — infra event, not application error).
-//
-//   - Dispatch-claim orphan sweep: dispatch rows whose `last_heartbeat_at`
-//     is older than the cutoff are released claimant-guarded so a fresh
-//     supervisor can pick them up.
-//
+//   - Dispatch-claim orphan sweep: async-mode dispatch rows whose
+//     `last_progress_at` is older than the cutoff are released
+//     claimant-guarded so a fresh supervisor can pick them up.
 //   - Lock-holder orphan reap: see orphan_reaper.go (called by callers
 //     out of band; foundation provides the primitive).
-//
 //   - Ready sweep: executor-backed stale nodes whose deps are all fresh
 //     get enqueued for the next claim cycle.
+//
+// Per TD-three-dispatch-deadlines + TD-persist-async-callback-registry,
+// orphan detection no longer keys on a per-dispatch heartbeat
+// timestamp. Sync-mode dispatches surface failure through the
+// supervisor's gRPC connection state (in-band); async-mode dispatches
+// surface failure through the `max_quiet_period` and `max_runtime`
+// deadlines walked by lib/graph/scheduler/scheduler.go's
+// SweepExecutorDeadlines. This file's orphan sweep is the persistence-
+// layer side of the async deadline path: it picks the rows
+// scheduler-side flagged as quiet-too-long and releases their claims.
 //
 // The foundation conductor does not run the graph-layer sweeps
 // (cron schedules, pure-cascade transitions, frame-engine ticks).
@@ -39,241 +42,86 @@ package runtime
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/events"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	signalpkg "github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
-	signalaudit "github.com/rimsky-ai/rimsky-core/lib/foundation/signal/audit"
 )
 
 // ConductorArgs bundles the dependencies for the foundation sweeps.
 //
-// HeartbeatTimeout is the cutoff used by SweepStaleHeartbeats.
-// OrphanedClaimTimeout is the shared 5×heartbeat_interval cutoff used
-// by `SweepOrphanedNodeRuns` and `SweepOrphanedClaimHandles` (per
-// `@blessed-invariant 6`). The constant name retains the legacy
-// "Claim" label even though the two reaped row kinds are now named
-// rimsky_node_runs and rimsky_claim_handles.
-type ConductorArgs struct {
-	Persist              persistence.Tables
-	Queue                persistence.Queue
-	Clock                shared.Clock
-	Logger               shared.Logger
-	HeartbeatTimeout     time.Duration
-	OrphanedClaimTimeout time.Duration
-}
-
-// reapedDispatchIDFor resolves the dispatch id of the zombie run the
-// heartbeat sweep just retired: the in-tx GetInFlightRunForNode result
-// when it landed, else the node row's projected in-flight id, else
-// zero (no pairing event possible — the row was already gone).
-func reapedDispatchIDFor(cur *persistence.NodeRow, priorDispatchID shared.UUID) shared.UUID {
-	if priorDispatchID != (shared.UUID{}) {
-		return priorDispatchID
-	}
-	if cur.InFlightRunID != nil {
-		return *cur.InFlightRunID
-	}
-	return shared.UUID{}
-}
-
-// SweepStaleHeartbeats finds running nodes whose last_heartbeat is
-// older than now - HeartbeatTimeout, transitions them to stale, and
-// re-enqueues them for the next claim cycle. The retired zombie
-// dispatch's work_started is paired with a
-// work_completed{terminal_kind:"abandoned"} append in the same tx.
-func SweepStaleHeartbeats(ctx context.Context, args ConductorArgs) error {
-	log := args.Logger
-	if log == nil {
-		log = shared.SilentLogger{}
-	}
-	cutoff := args.Clock.Now().Add(-args.HeartbeatTimeout)
-	var stale []persistence.NodeRow
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := args.Persist.Nodes().ListWithStaleHeartbeat(ctx, cutoff, tx)
-		stale = rows
-		return err
-	}); err != nil {
-		return err
-	}
-	for _, n := range stale {
-		nodeID := n.ID
-		instanceID := n.InstanceID
-		var dispatchID shared.UUID
-		if n.InFlightRunID != nil {
-			dispatchID = *n.InFlightRunID
-		}
-		thresholdMs := int(args.HeartbeatTimeout / time.Millisecond)
-		lastHeartbeat := n.LastHeartbeatAt
-		if lastHeartbeat == nil {
-			t := time.Time{}
-			lastHeartbeat = &t
-		}
-		heartbeatSig := signalpkg.Signal{
-			Type: "transient/heartbeat_missed",
-			Payload: map[string]any{
-				"last_heartbeat_at": *lastHeartbeat,
-				"dispatch_id":       dispatchID,
-				"threshold_ms":      thresholdMs,
-			},
-		}
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// @concept: signal — transient/heartbeat_missed is the canonical audit row for this transition.
-			// @deliberate: the 2026-05-23 signal-taxonomy / policy-decoupling spec retired the pre-Pass-5 fixed-string "heartbeat_lost" audit row.
-			return signalaudit.EmitSignal(ctx, args.Persist.Events(),
-				instanceID, nodeID, heartbeatSig, args.Clock.Now(), tx)
-		}); err != nil {
-			log.Warn("tick: append heartbeat_missed signal failed",
-				"node_id", n.ID.String(), "error", err.Error())
-		}
-		// @constraint: the running → stale transition also clears assigned_supervisor_id + heartbeat as part of the state transition; no separate clear call needed.
-		// @constraint: pessimistic-invalidate — the running → stale transition IS this sender's invalidation in this frame; gates downstream subscribers so they don't dispatch with stale upstream data while the re-enqueued sender is re-running.
-		// @concept: cascade
-		// @concept: wait-set
-		// @deliberate: no outer RunScope guard against the `n` projection — the batch read above is stale relative to concurrent close+reopen, so the authoritative RunScope read is the in-tx re-read below; the read-then-write pair must be atomic to satisfy the state-machine-writes-single-tx invariant.
-		// @constraint: bundle state-mutation (UpdateState + zombie row retirement + cascade walk) AND the recovery Enqueue in a single tx so a crash between them can't strand the node in state=stale with no in-flight dispatch row; mirrors the OnError-retry branch's tx-atomic remove+enqueue pair.
-		// @blessed-invariant: state-machine-writes-single-tx
-		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			// @constraint: re-read mutable fields (FrameID, InFlightRunID, Executor, RunScopeID) INSIDE this tx so the read-then-write pair is atomic; using the outer batch read (the `stale` slice from ListWithStaleHeartbeat) could race with another supervisor's orphan reaper that rotated the in-flight run between the outer batch read and this tx, in which case `n.InFlightRunID` would point at a pre-predecessor instead of the row this tx is about to retire.
-			// @blessed-invariant: state-machine-writes-single-tx
-			cur, err := args.Persist.Nodes().Get(ctx, n.ID, tx)
-			if err != nil {
-				return err
-			}
-			if cur == nil {
-				return nil
-			}
-			// @constraint: use the re-read RunScopeID — a concurrent close + reopen could move the node into a different scope; we want this tx to address whatever scope the node is in NOW.
-			if cur.RunScopeID == nil {
-				return nil
-			}
-			curScopeID := *cur.RunScopeID
-			// @constraint: thread the projected RunScope id so the running → stale transition addresses this specific run row even when fan-out siblings share the same node_id.
-			if err := args.Persist.Nodes().UpdateState(ctx, cur.ID, curScopeID,
-				cascade.NodeStateStale, cascade.ReasonHeartbeatLost, nil, tx); err != nil {
-				return err
-			}
-			// @constraint: capture the predecessor dispatch id BEFORE retiring the zombie row; GetInFlightRunForNode inside this tx returns the row this sweep is about to retire (the correct prior_dispatch_id for the recovery enqueue), and falling back to cur.InFlightRunID is safe because the re-read above was tx-atomic with the projection.
-			priorDispatchID, _, err := args.Queue.GetInFlightRunForNode(ctx, tx, cur.ID, curScopeID)
-			if err != nil {
-				return fmt.Errorf("resolve prior dispatch id: %w", err)
-			}
-			// @constraint: retire the zombie row to phase='completed' so the (node_id, run_scope_id) in-flight slot frees up — without this the recovery EnqueueInTx below is blocked by the NOT EXISTS guard on the in-flight uniqueness predicate; empty expectedClaimedBy because the sweep is by definition retiring a row whose holder is gone (no claimant guard).
-			if err := args.Queue.RemoveForNodeInTx(ctx, cur.ID, curScopeID, "", tx); err != nil {
-				return fmt.Errorf("retire zombie run: %w", err)
-			}
-			// @constraint: pair the retired dispatch's work_started with a work_completed{terminal_kind:"abandoned"} so the ledger's started/completed pairing survives heartbeat loss — the dispatch never reaches applyTerminal, so this sweep is the only site that can close the pair; supervisor_id is the (gone) holder recorded on the node row; dispatch_id is the retired row (the pairing join key).
-			if reapedDispatchID := reapedDispatchIDFor(cur, priorDispatchID); reapedDispatchID != (shared.UUID{}) {
-				if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
-					NodeID: &cur.ID, InstanceID: &cur.InstanceID,
-					Kind: events.KindWorkCompleted(), Payload: map[string]any{
-						"supervisor_id": cur.AssignedSupervisorID,
-						"dispatch_id":   reapedDispatchID.String(),
-						"terminal_kind": "abandoned",
-					},
-				}, tx); err != nil {
-					return fmt.Errorf("append work_completed for reaped dispatch: %w", err)
-				}
-			}
-			if cur.FrameID != nil {
-				if err := walkCascadeForInvalidatedNode(ctx, args.Persist, args.Queue, tx,
-					log, cur.ID, cur.InstanceID, *cur.FrameID); err != nil {
-					return err
-				}
-			}
-			// @constraint: re-enqueue without bumping retry_counter; RequiredStores is left empty because the foundation tick does not have the in-memory template registry threaded through, and an empty RequiredStores trivially satisfies the supervisor-pool predicate (RequiredStores ⊆ AcceptedStores). FrameID is sourced from the node row — heartbeat-lost nodes were running in a frame and that frame_id remains the running frame (per blessed-invariant 19). A nil FrameID skips re-enqueue (the row is stranded only until the next tick re-resolves a frame; the state transition still commits).
-			if cur.FrameID == nil {
-				log.Warn("tick: skip re-enqueue: node frame_id is nil",
-					"node_id", cur.ID.String())
-				return nil
-			}
-			// @constraint: recovery-aware fields — the predecessor dispatch_id is the id captured above (or the in-flight projection if the lookup raced with retirement); the new dispatch supersedes it, and the executor reads the predecessor id on proto:executor.proto::ExecuteRequest.prior_dispatch_id at dispatch.
-			priorPtr := cur.InFlightRunID
-			if priorDispatchID != (shared.UUID{}) {
-				idCopy := priorDispatchID
-				priorPtr = &idCopy
-			}
-			// @constraint: scratch carry-forward — copy the prior dispatch row's executor-attached scratch onto the recovery row so the executor's in-flight state survives heartbeat-stale recovery; the opaque-executor-scratch story pins scratch round-trip across EVERY prior-dispatch disposition, and skipping it here would silently lose the executor's scratch on every heartbeat-stale recovery.
-			// @constraint: use EnqueueInTx (not the auto-commit Enqueue wrapper) — the recovery scratch load + the INSERT must share a snapshot; the auto-commit wrapper has a documented closed-scope-race surface (see postgres/queue.go EnqueueInTx) where a concurrent RunScopes().Close() commit between the INSERT and the fallback SELECT can silently drop the recovery enqueue, and the scratch load is also vulnerable to mid-call mutation against the prior row without the shared tx.
-			// @concept: executor
-			var scratchInline []byte
-			var scratchHandle, scratchBackend string
-			if priorPtr != nil && *priorPtr != (shared.UUID{}) {
-				var lerr error
-				scratchInline, scratchHandle, scratchBackend, lerr = args.Queue.LoadScratchInTx(ctx, tx, *priorPtr)
-				if lerr != nil {
-					return fmt.Errorf("load prior scratch: %w", lerr)
-				}
-			}
-			if err := args.Queue.EnqueueInTx(ctx, persistence.DispatchRequest{
-				NodeID:                      cur.ID,
-				ExecutorName:                cur.Executor,
-				RequiredStores:              []string{},
-				EnqueuedAt:                  args.Clock.Now(),
-				FrameID:                     *cur.FrameID,
-				RunScopeID:                  curScopeID,
-				PriorDispatchID:             priorPtr,
-				PriorDispatchDisposition:    "heartbeat_stale",
-				InitialScratchInline:        scratchInline,
-				InitialScratchHandle:        scratchHandle,
-				InitialScratchHandleBackend: scratchBackend,
-			}, tx); err != nil {
-				// @constraint: defensive — closed RunScope means the rendezvous fired while the sweep was preparing the retry; walker discipline per concept:run-scope is do not enqueue into a closed scope (the state-machine writes above already committed).
-				// @concept: run-scope
-				if errors.Is(err, persistence.ErrRunScopeClosed) {
-					log.Warn("tick: skip re-enqueue: run scope closed",
-						"node_id", cur.ID.String(),
-						"run_scope_id", curScopeID.String())
-					return nil
-				}
-				return err
-			}
-			return nil
-		}); err != nil {
-			log.Warn("tick: heartbeat_lost state transition failed",
-				"node_id", n.ID.String(), "error", err.Error())
-			continue
-		}
-	}
-	return nil
-}
-
-// SweepOrphanedNodeRuns releases dispatch rows whose last_heartbeat_at is
-// older than now - OrphanedClaimTimeout, claimant-guarded so a fresh
-// supervisor can pick them up.
+// MaxQuietPeriodDefault and MaxRuntimeDefault are the deployment-level
+// fallback values for the two operator-opt-in dispatch deadlines. They
+// participate in the resolution chain (per-node template value folded
+// over deployment default folded over built-in 0=disabled) which
+// runs at AwaitAsyncCallback-registration time; the resolved per-row
+// values land on col:rimsky_node_runs.effective_max_quiet_period_seconds
+// and col:rimsky_node_runs.effective_max_runtime_seconds, which is what
+// SweepExecutorDeadlines reads.
 //
-// Per spec §7.4: the predicate column is `rimsky_node_runs.last_heartbeat_at`.
-// Distinct from the §7.5 lock-holder orphan reaper in orphan_reaper.go
-// which keys on `rimsky_claim_handles.expires_at`.
-func SweepOrphanedNodeRuns(ctx context.Context, args ConductorArgs) error {
+// @concept: dispatch-deadlines
+type ConductorArgs struct {
+	Persist               persistence.Tables
+	Queue                 persistence.Queue
+	Clock                 shared.Clock
+	Logger                shared.Logger
+	MaxQuietPeriodDefault time.Duration
+	MaxRuntimeDefault     time.Duration
+}
+
+// SweepExecutorDeadlines releases async-mode dispatch rows whose
+// per-row effective max_quiet_period or max_runtime have elapsed,
+// claimant-guarded so a fresh supervisor can pick them up. The
+// per-row effective values are denormalized at AwaitAsyncCallback
+// registration time (see runner_dispatch.go::registerAsyncIfSet);
+// this sweep iterates in-flight async rows and decides release
+// per-row based on the two deadlines + the appropriate timestamp
+// (last_progress_at for quiet, claimed_at for runtime). The
+// persistence-layer side of the executor-quiet / max_runtime path;
+// sync-mode dispatches surface failure via the supervisor's gRPC
+// connection state and never reach this sweep.
+//
+// @concept: dispatch-deadlines
+// @decision: dispatch-deadlines
+//
+// @agent-contract:
+//   - What: enforces per-row max_quiet_period and max_runtime by
+//     releasing claims with the matching error_class event
+//     (executor_quiet / max_runtime_exceeded). Per-row values were
+//     resolved per-node at AwaitAsyncCallback registration; this
+//     sweep is purely the time-comparison + release step.
+//   - Idempotent: release of an already-released row is a no-op
+//     thanks to the claimant-guarded UPDATE.
+func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 	log := args.Logger
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	cutoff := args.Clock.Now().Add(-args.OrphanedClaimTimeout)
-	orphans, err := args.Queue.ListOrphanedClaims(ctx, cutoff)
+	now := args.Clock.Now()
+	// @constraint: ListOrphanedClaims returns the full set of claimed
+	// async-mode dispatches; the per-node × per-deadline matrix is
+	// evaluated in Go below using the per-row denormalized effective_*
+	// columns.
+	candidates, err := args.Queue.ListOrphanedClaims(ctx)
 	if err != nil {
 		return err
 	}
-	for _, o := range orphans {
+	for _, o := range candidates {
 		nodeID := o.NodeID
 		prior := ""
 		if o.ClaimedBy != nil {
 			prior = *o.ClaimedBy
+		}
+		errorClass, lastProgress, releaseReason := decideExecutorDeadlineRelease(o, now)
+		if errorClass == "" {
+			continue
 		}
 		// @constraint: claimant-guarded release — passing prior ensures a fresh supervisor that re-claimed the row between ListOrphanedClaims and this UPDATE keeps its live claim intact.
 		if err := args.Queue.ReleaseClaim(ctx, o.ID, prior); err != nil {
 			log.Warn("tick: release orphaned claim failed",
 				"dispatch_id", o.ID.String(), "error", err.Error())
 			continue
-		}
-		var hb time.Time
-		if o.LastHeartbeatAt != nil {
-			hb = *o.LastHeartbeatAt
 		}
 		// @constraint: resolve the owning instance_id by fetching the node row so the orphaned_claim_released event surfaces on the instance-scoped /v1/events feed (operator filters by instance_id); without InstanceID set, the row is dropped by the events read filter and the orphan-recovery audit trail is silently invisible. A lookup failure here is non-fatal — we still append the event with NodeID alone rather than skipping it, so the global feed retains the orphan record.
 		// @story: event-log-read
@@ -296,9 +144,11 @@ func SweepOrphanedNodeRuns(ctx context.Context, args ConductorArgs) error {
 				NodeID:     &nodeID,
 				Kind:       events.KindOrphanedClaimReleased(),
 				Payload: map[string]any{
-					"dispatch_id":       o.ID.String(),
-					"prior_claimed_by":  prior,
-					"last_heartbeat_at": hb,
+					"dispatch_id":      o.ID.String(),
+					"prior_claimed_by": prior,
+					"last_progress_at": lastProgress,
+					"error_class":      errorClass,
+					"reason":           releaseReason,
 				},
 			}, tx)
 		}); err != nil {
@@ -307,6 +157,44 @@ func SweepOrphanedNodeRuns(ctx context.Context, args ConductorArgs) error {
 		}
 	}
 	return nil
+}
+
+// decideExecutorDeadlineRelease evaluates the per-row effective
+// max_quiet_period and max_runtime against the appropriate timestamps.
+// Returns (errorClass, lastProgress, reason); errorClass is "" when no
+// deadline has elapsed. max_runtime wins over max_quiet_period when both
+// have elapsed — max_runtime is the absolute upper bound and is the
+// more accurate description of the failure.
+func decideExecutorDeadlineRelease(o persistence.DispatchRow, now time.Time) (string, time.Time, string) {
+	var lastProgress time.Time
+	if o.LastProgressAt != nil {
+		lastProgress = *o.LastProgressAt
+	}
+	if o.EffectiveMaxRuntimeSeconds != nil && *o.EffectiveMaxRuntimeSeconds > 0 && o.ClaimedAt != nil {
+		runtime := now.Sub(*o.ClaimedAt)
+		if runtime > time.Duration(*o.EffectiveMaxRuntimeSeconds)*time.Second {
+			return "max_runtime_exceeded", lastProgress,
+				"dispatch runtime exceeded effective max_runtime"
+		}
+	}
+	if o.EffectiveMaxQuietPeriodSeconds != nil && *o.EffectiveMaxQuietPeriodSeconds > 0 {
+		// @deliberate: quiet window measured from last_progress_at, or
+		// claimed_at when progress has never been bumped — the row was
+		// just claimed and the executor has not yet returned an
+		// AwaitAsyncCallback round-trip.
+		ref := lastProgress
+		if ref.IsZero() && o.ClaimedAt != nil {
+			ref = *o.ClaimedAt
+		}
+		if !ref.IsZero() {
+			quiet := now.Sub(ref)
+			if quiet > time.Duration(*o.EffectiveMaxQuietPeriodSeconds)*time.Second {
+				return "executor_quiet", lastProgress,
+					"dispatch quiet-window exceeded effective max_quiet_period"
+			}
+		}
+	}
+	return "", lastProgress, ""
 }
 
 // SweepReady enqueues executor-backed stale nodes whose deps are all
@@ -325,7 +213,7 @@ func SweepReady(ctx context.Context, args ConductorArgs) error {
 		return err
 	}
 	for _, n := range ready {
-		// @constraint: RequiredStores is left empty (mirrors SweepStaleHeartbeats). FrameID is sourced from the node row — every stale node is part of the in-flight frame (blessed-invariant 19); a nil frame_id here means the frame engine has not yet advanced this node's queued frame, so skip and re-evaluate next tick.
+		// @constraint: RequiredStores is left empty (the foundation tick does not have the in-memory template registry threaded through, and an empty RequiredStores trivially satisfies the supervisor-pool predicate RequiredStores ⊆ AcceptedStores). FrameID is sourced from the node row — every stale node is part of the in-flight frame (blessed-invariant 19); a nil frame_id here means the frame engine has not yet advanced this node's queued frame, so skip and re-evaluate next tick.
 		if n.FrameID == nil {
 			log.Debug("tick: ready-sweep skip: node frame_id is nil",
 				"node_id", n.ID.String())

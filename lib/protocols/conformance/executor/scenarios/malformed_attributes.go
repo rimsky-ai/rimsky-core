@@ -6,7 +6,6 @@ package scenarios
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -15,59 +14,46 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+// @deliberate: malformed_attributes asserts the executor rejects a
+// dispatch carrying a reserved malformed-shape marker by settling
+// with Outcome{Error}; the error_class string is the executor's own
+// (e.g. agent/attribute_invalid for claude-agent). Per
+// TD-execute-rpc-unary the rejection rides the unary outcome — the
+// stream-close discriminator is gone.
+//
+// @concept: executor
 func init() {
 	conformance.Register(conformance.Scenario{
-		Name: "malformed_attributes",
-		// @constraint: stub-mode-only — a non-stub claude-agent run would
-		// actually spawn the LLM CLI before any heuristic could detect the
-		// malformed-attributes markers. Same gate applied to
-		// `attributes_serialization` and `heartbeats`.
+		Name:         "malformed_attributes",
 		RequiresStub: true,
-		Run:          runMalformedAttributes,
+		Run: func(ctx context.Context, env conformance.Env) error {
+			attrs, err := structpb.NewStruct(map[string]any{"_invalid": true})
+			if err != nil {
+				return fmt.Errorf("build attributes: %w", err)
+			}
+			req := &genv1.ExecuteRequest{
+				NodeId:      "malformed-attributes",
+				InstanceId:  "malformed-attributes",
+				NodeType:    "conformance",
+				Attributes:  attrs,
+				CallbackUrl: env.Callbacks.URL(),
+			}
+			outcome, err := env.Client.Execute(ctx, req)
+			if err != nil {
+				return fmt.Errorf("Execute: %w", err)
+			}
+			settled, err := conformance.AwaitTerminal(ctx, outcome, env)
+			if err != nil {
+				return fmt.Errorf("AwaitTerminal: %w", err)
+			}
+			errOut, ok := settled.GetOutcome().(*genv1.Outcome_Error)
+			if !ok {
+				return fmt.Errorf("expected Outcome_Error for malformed-shape marker, got %T", settled.GetOutcome())
+			}
+			if errOut.Error.GetErrorClass() == "" {
+				return fmt.Errorf("Error.error_class is empty")
+			}
+			return nil
+		},
 	})
-}
-
-// runMalformedAttributes sends attributes that should fail validation for any
-// conforming executor (missing url, empty stub_response not applied, etc.)
-// and asserts a terminal StreamClose with an Error outcome carrying some
-// error class. AwaitTerminal transparently follows the callback for async
-// executors.
-//
-// Reserved-key contract: scenario authors MUST use `_`-prefixed keys
-// (`_invalid`, `_missing_url`, …) for intentional malformed-shape
-// markers. The `_` prefix is reserved across executors so plain field
-// names (which a real template author might use legitimately) cannot
-// silently trip the rejection heuristic.
-func runMalformedAttributes(ctx context.Context, env conformance.Env) error {
-	ud, _ := structpb.NewStruct(map[string]any{
-		"_invalid":     map[string]any{"nested_null": nil},
-		"_missing_url": true,
-	})
-	req := &genv1.ExecuteRequest{
-		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-malformed", Attributes: ud,
-		CallbackUrl: env.Callbacks.URL(),
-	}
-	stream, err := env.Client.Execute(ctx, req)
-	if err != nil {
-		return fmt.Errorf("execute: %w", err)
-	}
-	defer stream.Close()
-
-	ev, err := conformance.AwaitTerminal(ctx, stream, env)
-	if err != nil {
-		return err
-	}
-	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
-	if !ok {
-		return fmt.Errorf("expected StreamClose, got %T", ev.Event)
-	}
-	er, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_Error)
-	if !ok {
-		return fmt.Errorf("expected Error outcome, got %T", sc.StreamClose.Outcome)
-	}
-	if er.Error.ErrorClass == "" {
-		return errors.New("Error outcome had empty error_class")
-	}
-	return nil
 }

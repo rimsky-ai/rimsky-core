@@ -17,7 +17,7 @@ import (
 // pins the type-path construction so the retire-Pass-5 work and
 // future Pass-3 refactors don't silently change the wire shape.
 func TestErrorPolicySignal_RetryShape(t *testing.T) {
-	got := errorPolicySignal("foo", map[string]any{"k": "v"}, "retry", 1, 500)
+	got := errorPolicySignal("foo", map[string]any{"k": "v"}, nil, "retry", 1, 500)
 	if got.Type != signalpkg.TypePath("transient/retry/1/foo") {
 		t.Fatalf("retry type: got %q want transient/retry/1/foo", got.Type)
 	}
@@ -36,7 +36,7 @@ func TestErrorPolicySignal_RetryShape(t *testing.T) {
 }
 
 func TestErrorPolicySignal_DiscardClaimsThenRetryShape(t *testing.T) {
-	got := errorPolicySignal("foo", nil, "discard_claims_then_retry", 2, 0)
+	got := errorPolicySignal("foo", nil, nil, "discard_claims_then_retry", 2, 0)
 	if got.Type != signalpkg.TypePath("transient/retry/2/foo") {
 		t.Fatalf("type: got %q", got.Type)
 	}
@@ -46,7 +46,7 @@ func TestErrorPolicySignal_DiscardClaimsThenRetryShape(t *testing.T) {
 }
 
 func TestErrorPolicySignal_GiveUpShape(t *testing.T) {
-	got := errorPolicySignal("http/timeout", map[string]any{"status": 504}, "give_up", 0, 0)
+	got := errorPolicySignal("http/timeout", map[string]any{"status": 504}, nil, "give_up", 0, 0)
 	if got.Type != signalpkg.TypePath("terminal/error/http/timeout") {
 		t.Fatalf("give_up type: got %q want terminal/error/http/timeout", got.Type)
 	}
@@ -56,7 +56,7 @@ func TestErrorPolicySignal_GiveUpShape(t *testing.T) {
 }
 
 func TestErrorPolicySignal_PassShape(t *testing.T) {
-	got := errorPolicySignal("foo", nil, "pass", 0, 0)
+	got := errorPolicySignal("foo", nil, nil, "pass", 0, 0)
 	if got.Type != signalpkg.TypePath("terminal/error/foo") {
 		t.Fatalf("pass type: got %q", got.Type)
 	}

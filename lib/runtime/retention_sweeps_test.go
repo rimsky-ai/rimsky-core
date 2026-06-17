@@ -147,33 +147,11 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	oldEventID := insertEvent(oldTime)
 	recentEventID := insertEvent(now.Add(-time.Minute))
 
-	insertNodeEvent := func(when time.Time) int64 {
-		res, err := rawDB.ExecContext(ctx,
-			`INSERT INTO rimsky_node_events (instance_id, emitter_node_id, event_name, emitted_at) VALUES (?, ?, 'progress', ?)`,
-			instanceID, uuid.New().String(), rfc(when),
-		)
-		if err != nil {
-			t.Fatalf("seed node_event: %v", err)
-		}
-		id, _ := res.LastInsertId()
-		return id
-	}
-	oldNodeEventID := insertNodeEvent(oldTime)
-	recentNodeEventID := insertNodeEvent(now.Add(-time.Minute))
-
-	// @deliberate: An old named event whose payload spilled to a backend. The sweep must
-	// queue its (handle, backend) into rimsky_blob_orphans when it reaps the
-	// row — otherwise the spilled bytes leak (a durable instance never hits
-	// the instance-delete cascade that would otherwise reclaim them).
-	const spilledHandle = "blob-handle-sweep"
-	if _, err := rawDB.ExecContext(ctx,
-		`INSERT INTO rimsky_node_events
-		   (instance_id, emitter_node_id, event_name, payload_handle, payload_handle_backend, emitted_at)
-		 VALUES (?, ?, 'progress', ?, 'filesystem', ?)`,
-		instanceID, uuid.New().String(), spilledHandle, rfc(oldTime),
-	); err != nil {
-		t.Fatalf("seed spilled node_event: %v", err)
-	}
+	// @deliberate: Per TD-collapse-named-event-to-tags the
+	// rimsky_node_events ledger has retired; the retention sweep no
+	// longer needs a node-event seed, and there is no spilled-payload
+	// surface to test.
+	_ = uuid.New
 
 	// @deliberate: Sweep with ONLY TraceTrailing set (RecentFramesKept unset)
 	// A 1h window puts the cutoff between the old rows (-24h) and the
@@ -213,16 +191,5 @@ func TestSweepRunTreeRetention_TraceTrailingOnly(t *testing.T) {
 	}
 	if count("rimsky_events", "id", recentEventID) != 1 {
 		t.Errorf("recent audit event must survive")
-	}
-	if count("rimsky_node_events", "id", oldNodeEventID) != 0 {
-		t.Errorf("old named event should be reaped by the trailing window")
-	}
-	if count("rimsky_node_events", "id", recentNodeEventID) != 1 {
-		t.Errorf("recent named event must survive")
-	}
-	if count("rimsky_blob_orphans", "handle", spilledHandle) != 1 {
-		t.Errorf("the reaped spilled named-event's blob handle %q must be queued into "+
-			"rimsky_blob_orphans by the sweep; otherwise SweepOrphanedBlobs never reaps it and the "+
-			"bytes leak", spilledHandle)
 	}
 }

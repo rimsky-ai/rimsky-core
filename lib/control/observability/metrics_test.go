@@ -30,7 +30,6 @@ func TestMetricsHandler_Smoke(t *testing.T) {
 	m.Invalidates.WithLabelValues("admin").Inc()
 	m.ClaimAcquisitions.WithLabelValues("filesystem", "rw").Inc()
 	m.NamedLockAcquisitions.WithLabelValues("deploy-mutex", "acquired").Inc()
-	m.NamedEvents.WithLabelValues("worker", "action_taken").Inc()
 	m.NodesByState.WithLabelValues("fresh").Set(0)
 	m.ParkedByReason.WithLabelValues("rate_limit").Set(0)
 	m.HeldFrames.Set(0)
@@ -62,7 +61,6 @@ func TestMetricsHandler_Smoke(t *testing.T) {
 		"rimsky_invalidates_total",
 		"rimsky_claim_acquisitions_total",
 		"rimsky_named_lock_acquisitions_total",
-		"rimsky_named_events_total",
 		"rimsky_nodes_by_state",
 		"rimsky_parked_nodes_by_reason",
 		"rimsky_held_frames",

@@ -29,7 +29,7 @@ import (
 type supervisorYAMLConfig struct {
 	SupervisorID        string                 `yaml:"supervisor_id"`
 	Concurrency         int                    `yaml:"concurrency"`
-	HeartbeatIntervalMs int                    `yaml:"heartbeat_interval_ms"`
+	LivenessIntervalMs  int                    `yaml:"liveness_interval_ms"`
 	ClaimPollIntervalMs int                    `yaml:"claim_poll_interval_ms"`
 	Callback            supervisorYAMLCallback `yaml:"callback"`
 }
@@ -106,9 +106,9 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 	if concurrency < 1 {
 		concurrency = 4
 	}
-	heartbeatMs := cfg.HeartbeatIntervalMs
-	if heartbeatMs < 100 {
-		heartbeatMs = 5000
+	livenessMs := cfg.LivenessIntervalMs
+	if livenessMs < 100 {
+		livenessMs = 5000
 	}
 	claimPollMs := cfg.ClaimPollIntervalMs
 	if claimPollMs < 50 {
@@ -230,7 +230,7 @@ func RunSupervisor(ctx context.Context, logger *slog.Logger, driver persistence.
 		Clock:                       shared.SystemClock{},
 		Logger:                      log,
 		Concurrency:                 concurrency,
-		HeartbeatInterval:           time.Duration(heartbeatMs) * time.Millisecond,
+		LivenessInterval:            time.Duration(livenessMs) * time.Millisecond,
 		ClaimPollInterval:           time.Duration(claimPollMs) * time.Millisecond,
 		Resolver:                    resolver,
 		Stores:                      storesCfg,

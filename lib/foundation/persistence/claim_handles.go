@@ -68,7 +68,6 @@ type ClaimHandleRow struct {
 	HolderSupervisorID *string      `json:"holder_supervisor_id,omitempty"`
 	HolderNodeID       shared.UUID  `json:"holder_node_id"`
 	ClaimedAt          time.Time    `json:"claimed_at"`
-	LastHeartbeatAt    time.Time    `json:"last_heartbeat_at"`
 	ExpiresAt          time.Time    `json:"expires_at"`
 	FrameID            *shared.UUID `json:"frame_id,omitempty"`
 	// RealizedWriteSemantics is the per-claim semantics returned by
@@ -223,7 +222,6 @@ type ClaimHandleTable interface {
 	// plus the linked sub-claim); the caller filters by producer + the
 	// sub-claim marker (`parent_claim_handle_id` set).
 	ListByNodeRun(ctx context.Context, nodeRunID shared.UUID, tx Tx) ([]ClaimHandleRow, error)
-	ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx Tx) error
 	ListExpired(ctx context.Context, tx Tx) ([]ClaimHandleRow, error)
 	Delete(ctx context.Context, id shared.UUID, expectedSupervisorID string, tx Tx) error
 

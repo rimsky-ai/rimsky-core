@@ -12,11 +12,13 @@ This concept describes the **receiver-side** template-DSL subscription declared 
 
 A node-subscription declares `type:` (a canonical signal type-path, exact or trailing-`*` prefix per `concept:signal`) plus an optional `when:` CEL predicate over the signal payload, plus two required cascade-shape booleans: `wake_on_change` and `force_upstream_refresh`. Sender-side filters (`node:` selects a specific upstream node-type, `instance: true` is cross-cutting) and the frame modifier (`frame: in | next`) apply. Subscriptions are declared per node under `subscribes:` in the template DSL.
 
+The subscription `type:` is one of `terminal/*`, `transient/*`, `attribute/*`, or `message/*`. To express interest in a specific terminal-tag discriminator, a subscription pairs `type: terminal/*` with a CEL `when:` filter over `payload.tags` — e.g., `subscribes: [{node: <sender>, type: terminal/*, when: "<name>" in payload.tags}]`. The CEL `when:` filter on `payload.tags` carries the discriminator at the payload layer rather than at the type-path leaf.
+
 `wake_on_change` governs whether a matching emission from the sender dispatches the receiver: `true` stale-marks the receiver and inserts a wait-set row gating its dispatch on the sender; `false` inserts only the wait-set row so the receiver's substitution context can read the sender's data if it dispatches via another edge, without firing the receiver itself.
 
 `force_upstream_refresh` governs whether the receiver's invalidation drags the sender into the same frame: `true` invalidates the sender so it re-runs in the same frame before the receiver dispatches; `false` leaves the sender wherever it is. A cross-cutting subscription (`instance: true`) cannot carry `force_upstream_refresh: true` — the combination is incoherent and rejected at registration.
 
-Every substitution ref in a node's attribute schema (`{{nodes.X.attribute.Y}}`, `{{nodes.X.event.Y}}`, or the whole-pull `{{nodes.X.attribute}}`) is matched at registration against the receiver's `subscribes:` block; a ref with no covering entry is rejected.
+Every substitution ref in a node's attribute schema (`{{nodes.X.attribute.Y}}` or the whole-pull `{{nodes.X.attribute}}`) is matched at registration against the receiver's `subscribes:` block; a ref with no covering entry is rejected.
 
 ## Purpose
 

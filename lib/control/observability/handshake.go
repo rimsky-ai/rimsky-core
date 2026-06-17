@@ -112,7 +112,7 @@ func executorCapsFromProto(r *genv1.ObservabilityCapabilities) *ObservabilityCap
 		CustomUI:                      customUIFromProto(r.GetCustomUi()),
 		HTTPBridgeURL:                 r.GetHttpBridgeUrl(),
 		ExpectedAttributesSchema:      schema,
-		DeclaredEvents:                append([]string(nil), r.GetDeclaredEvents()...),
+		DeclaredTags:                  append([]string(nil), r.GetDeclaredTags()...),
 		DeclaredErrorClasses:          append([]string(nil), r.GetDeclaredErrorClasses()...),
 	}
 }

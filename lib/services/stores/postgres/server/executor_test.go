@@ -2,12 +2,10 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Tests for the verifier-role executor wired into stores/postgres/.
-// Boots a real Postgres via testcontainers and drives executeCore
-// directly so the assertions can pin the terminal-event shape and the
-// SQL-side semantics. Per spec
-// .ok-planner/specs/2026-05-19-multi-instance-template-ergonomics-design.md
-// §Item 6.
+// executor_test.go — pg-store verifier-role executor coverage under
+// the unary RPC shape (TD-execute-rpc-unary). Boots a real Postgres
+// via testcontainers and drives Execute(req) directly so the
+// assertions can pin the settling Outcome and the SQL-side semantics.
 
 package server
 
@@ -27,9 +25,8 @@ import (
 	pgsstore "github.com/rimsky-ai/rimsky-core/lib/services/stores/postgres/store"
 )
 
-// bootExecutor stands up a fresh Postgres + pgsstore.Store + ExecutorServer,
-// returns the connection so the test can seed staging data. The test
-// is responsible for creating the staging schema and table.
+// bootExecutor stands up a fresh Postgres + pgsstore.Store + ExecutorServer
+// and returns the pool so the test can seed staging data.
 func bootExecutor(t *testing.T) (*pgxpool.Pool, *ExecutorServer) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -45,7 +42,7 @@ func bootExecutor(t *testing.T) (*pgxpool.Pool, *ExecutorServer) {
 		),
 	)
 	if err != nil {
-		t.Skipf("postgres testcontainer unavailable: %v", err)
+		t.Skipf("postgres testcontainer unavailable (requires Docker): %v", err)
 	}
 	t.Cleanup(func() {
 		termCtx, c := context.WithTimeout(context.Background(), 30*time.Second)
@@ -73,10 +70,7 @@ func bootExecutor(t *testing.T) (*pgxpool.Pool, *ExecutorServer) {
 	return pool, NewExecutorServer(st)
 }
 
-// seedStagingTable creates a staging schema + items table and inserts
-// rows. The verifier role expects schema/table to exist; the producer
-// role normally creates them via Open, but for unit scope we seed
-// directly.
+// seedStagingTable creates a staging schema + items table and inserts rows.
 func seedStagingTable(t *testing.T, pool *pgxpool.Pool, schema, table string, rows []map[string]any) {
 	t.Helper()
 	ctx := context.Background()
@@ -97,16 +91,6 @@ func seedStagingTable(t *testing.T, pool *pgxpool.Pool, schema, table string, ro
 	}
 }
 
-// captureSend collects ExecuteEvents emitted by executeCore so the
-// test can inspect the terminal verdict.
-func captureSend() (func(*genv1.ExecuteEvent) error, *[]*genv1.ExecuteEvent) {
-	out := &[]*genv1.ExecuteEvent{}
-	return func(ev *genv1.ExecuteEvent) error {
-		*out = append(*out, ev)
-		return nil
-	}, out
-}
-
 func TestExecutor_AllChecksPass(t *testing.T) {
 	pool, ex := bootExecutor(t)
 	seedStagingTable(t, pool, "staging_ok", "items", []map[string]any{
@@ -124,19 +108,16 @@ func TestExecutor_AllChecksPass(t *testing.T) {
 			map[string]any{"kind": "pk_unique", "config": map[string]any{"fields": []any{"id"}}},
 		},
 	})
-	send, out := captureSend()
-	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
-		t.Fatalf("executeCore: %v", err)
+	outcome, err := ex.Execute(context.Background(), &genv1.ExecuteRequest{Attributes: ud})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	if len(*out) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(*out))
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("expected Success, got %T", outcome.GetOutcome())
 	}
-	sc := (*out)[0].GetStreamClose()
-	if sc == nil {
-		t.Fatal("expected StreamClose")
-	}
-	if sc.GetSuccess() == nil {
-		t.Fatalf("expected Success, got %+v", sc.GetOutcome())
+	delta := outcome.GetSuccess().GetAttributesDelta().AsMap()
+	if delta["verifier_pass"] != true {
+		t.Errorf("expected verifier_pass=true, got %+v", delta)
 	}
 }
 
@@ -154,14 +135,13 @@ func TestExecutor_RowCountFails(t *testing.T) {
 			map[string]any{"kind": "row_count_absolute", "config": map[string]any{"min": 100}},
 		},
 	})
-	send, out := captureSend()
-	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
-		t.Fatalf("executeCore: %v", err)
+	outcome, err := ex.Execute(context.Background(), &genv1.ExecuteRequest{Attributes: ud})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	sc := (*out)[0].GetStreamClose()
-	errOutcome := sc.GetError()
+	errOutcome := outcome.GetError()
 	if errOutcome == nil {
-		t.Fatalf("expected Error, got %+v", sc.GetOutcome())
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
 	}
 	if errOutcome.GetErrorClass() != "pg/verifier_check_failed/row_count_absolute" {
 		t.Errorf("error_class: %q want pg/verifier_check_failed/row_count_absolute", errOutcome.GetErrorClass())
@@ -181,13 +161,12 @@ func TestExecutor_PKUniqueFails(t *testing.T) {
 			map[string]any{"kind": "pk_unique", "config": map[string]any{"fields": []any{"id"}}},
 		},
 	})
-	send, out := captureSend()
-	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
-		t.Fatalf("executeCore: %v", err)
+	outcome, err := ex.Execute(context.Background(), &genv1.ExecuteRequest{Attributes: ud})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	sc := (*out)[0].GetStreamClose()
-	if sc.GetError() == nil {
-		t.Fatalf("expected Error, got %+v", sc.GetOutcome())
+	if outcome.GetError() == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
 	}
 }
 
@@ -209,38 +188,22 @@ func TestExecutor_NoNullsFails(t *testing.T) {
 			map[string]any{"kind": "no_nulls", "config": map[string]any{"fields": []any{"payload"}}},
 		},
 	})
-	send, out := captureSend()
-	if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
-		t.Fatalf("executeCore: %v", err)
+	outcome, err := ex.Execute(context.Background(), &genv1.ExecuteRequest{Attributes: ud})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
 	}
-	sc := (*out)[0].GetStreamClose()
-	if sc.GetError() == nil {
-		t.Fatalf("expected Error, got %+v", sc.GetOutcome())
+	if outcome.GetError() == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
 	}
 }
 
 // TestExecutor_RowCountRatio drives the SQL-store verifier with a
-// `row_count_ratio` check — the check kind the in-process verifier
-// (verifier-shape-checks) already ships but the SQL substrate does not
-// yet compile. The store must run it as an aggregate-only count query,
-// compute ratio = row_count / baseline, and partition the terminal:
-// Success when the ratio is within [low, high], Error
-// (`pg/verifier_check_failed/row_count_ratio`) when it is not, carrying
-// the computed ratio in the failure payload so an operator subscribing
-// on that class can read the offending number.
-//
-// RED today: `sqlchecks.Compile` has no `row_count_ratio` arm, so the
-// kind falls through to `unknown check kind` → mapped to
-// `pg/attribute_invalid` at executor.go. The in-bounds subtest below
-// therefore observes an Error (pg/attribute_invalid) where it asserts
-// Success, and the out-of-bounds subtest observes pg/attribute_invalid
-// where it asserts pg/verifier_check_failed/row_count_ratio with a
-// ratio. Both fail until AUTHSTORES-18 adds the compiler arm.
+// row_count_ratio check, asserting both in-bounds Success and
+// out-of-bounds Error with the computed ratio in the failure payload.
 func TestExecutor_RowCountRatio(t *testing.T) {
 	pool, ex := bootExecutor(t)
 
-	// @deliberate: 4 rows against baseline 4 yields ratio 1.0, inside
-	// [0.5, 2.0], so row_count_ratio must terminate Success.
+	// @deliberate: 4 rows against baseline 4 yields ratio 1.0, inside [0.5, 2.0].
 	t.Run("in_bounds_success", func(t *testing.T) {
 		seedStagingTable(t, pool, "staging_ratio_ok", "items", []map[string]any{
 			{"id": "a", "payload": "x"},
@@ -257,25 +220,16 @@ func TestExecutor_RowCountRatio(t *testing.T) {
 				}},
 			},
 		})
-		send, out := captureSend()
-		if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
-			t.Fatalf("executeCore: %v", err)
+		outcome, err := ex.Execute(context.Background(), &genv1.ExecuteRequest{Attributes: ud})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
 		}
-		if len(*out) != 1 {
-			t.Fatalf("expected 1 event, got %d", len(*out))
-		}
-		sc := (*out)[0].GetStreamClose()
-		if sc == nil {
-			t.Fatal("expected StreamClose")
-		}
-		if sc.GetSuccess() == nil {
-			t.Fatalf("expected Success for in-bounds row_count_ratio, got %+v", sc.GetOutcome())
+		if outcome.GetSuccess() == nil {
+			t.Fatalf("expected Success for in-bounds row_count_ratio, got %T", outcome.GetOutcome())
 		}
 	})
 
-	// @deliberate: 4 rows against baseline 1 yields ratio 4.0, above
-	// high=2.0, so row_count_ratio must terminate Error and carry the
-	// computed ratio in the failure payload.
+	// @deliberate: 4 rows against baseline 1 yields ratio 4.0, above high=2.0.
 	t.Run("out_of_bounds_error", func(t *testing.T) {
 		seedStagingTable(t, pool, "staging_ratio_high", "items", []map[string]any{
 			{"id": "a", "payload": "x"},
@@ -292,24 +246,17 @@ func TestExecutor_RowCountRatio(t *testing.T) {
 				}},
 			},
 		})
-		send, out := captureSend()
-		if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
-			t.Fatalf("executeCore: %v", err)
+		outcome, err := ex.Execute(context.Background(), &genv1.ExecuteRequest{Attributes: ud})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
 		}
-		if len(*out) != 1 {
-			t.Fatalf("expected 1 event, got %d", len(*out))
-		}
-		sc := (*out)[0].GetStreamClose()
-		errOutcome := sc.GetError()
+		errOutcome := outcome.GetError()
 		if errOutcome == nil {
-			t.Fatalf("expected Error for out-of-bounds row_count_ratio, got %+v", sc.GetOutcome())
+			t.Fatalf("expected Error for out-of-bounds row_count_ratio, got %T", outcome.GetOutcome())
 		}
 		if got := errOutcome.GetErrorClass(); got != "pg/verifier_check_failed/row_count_ratio" {
 			t.Fatalf("error_class: %q want pg/verifier_check_failed/row_count_ratio", got)
 		}
-		// @constraint: the computed ratio must be present in the failure
-		// payload so a subscriber on this error_class can read the
-		// offending number.
 		ratio, ok := ratioFromFailurePayload(errOutcome.GetPayload())
 		if !ok {
 			t.Fatalf("computed ratio not present in failure payload: %v", errOutcome.GetPayload().AsMap())
@@ -321,9 +268,7 @@ func TestExecutor_RowCountRatio(t *testing.T) {
 }
 
 // ratioFromFailurePayload digs the computed `ratio` out of the verifier
-// failure payload shape built by buildVerifierFailurePayload: a top-level
-// `failures` array whose entries each carry a `counts` map. Returns the
-// first ratio found and whether one was present.
+// failure payload's `failures[].counts.ratio` shape.
 func ratioFromFailurePayload(payload *structpb.Struct) (float64, bool) {
 	if payload == nil {
 		return 0, false
@@ -361,12 +306,11 @@ func TestExecutor_InvalidAttributes(t *testing.T) {
 	for name, in := range tests {
 		t.Run(name, func(t *testing.T) {
 			ud, _ := structpb.NewStruct(in)
-			send, out := captureSend()
-			if err := ex.executeCore(context.Background(), &genv1.ExecuteRequest{Attributes: ud}, send); err != nil {
-				t.Fatalf("executeCore: %v", err)
+			outcome, err := ex.Execute(context.Background(), &genv1.ExecuteRequest{Attributes: ud})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
 			}
-			sc := (*out)[0].GetStreamClose()
-			errOutcome := sc.GetError()
+			errOutcome := outcome.GetError()
 			if errOutcome == nil {
 				t.Fatalf("expected Error")
 			}
@@ -374,5 +318,31 @@ func TestExecutor_InvalidAttributes(t *testing.T) {
 				t.Errorf("error_class: %q want pg/attribute_invalid", errOutcome.GetErrorClass())
 			}
 		})
+	}
+}
+
+// TestExecutor_Capabilities pins the observability handshake's
+// declared error vocabulary.
+func TestExecutor_Capabilities(t *testing.T) {
+	obs := NewExecutorObservabilityServer()
+	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	got := caps.GetDeclaredErrorClasses()
+	if len(got) == 0 {
+		t.Fatal("expected declared_error_classes to be non-empty")
+	}
+	have := map[string]bool{}
+	for _, c := range got {
+		have[c] = true
+	}
+	for _, must := range []string{
+		"pg/attribute_invalid",
+		"pg/verifier_check_failed/*",
+	} {
+		if !have[must] {
+			t.Errorf("declared_error_classes missing %q (got %v)", must, got)
+		}
 	}
 }

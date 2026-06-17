@@ -2,6 +2,12 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// executor_test.go — verifier-http executor coverage under the unary
+// RPC shape (TD-execute-rpc-unary). Each test calls Execute(req)
+// directly against an httptest.NewServer upstream and asserts on the
+// settling Outcome — Success on a matching status, Error{verifier/*}
+// on attribute violations or a non-matching status.
+
 package main
 
 import (
@@ -18,22 +24,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/services/executors/verifier-http/errorclasses"
 )
 
-type fakeStream struct{ events []*genv1.ExecuteEvent }
-
-func (f *fakeStream) send(ev *genv1.ExecuteEvent) error {
-	f.events = append(f.events, ev)
-	return nil
-}
-
-func (f *fakeStream) terminal() *genv1.StreamClose {
-	for _, ev := range f.events {
-		if sc := ev.GetStreamClose(); sc != nil {
-			return sc
-		}
-	}
-	return nil
-}
-
 func buildReq(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {
 	t.Helper()
 	st, err := structpb.NewStruct(ud)
@@ -43,7 +33,7 @@ func buildReq(t *testing.T, ud map[string]any) *genv1.ExecuteRequest {
 	return &genv1.ExecuteRequest{NodeType: "verifier-http", Attributes: st}
 }
 
-func TestExecuteCore_HappyPath(t *testing.T) {
+func TestExecute_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method: %s", r.Method)
@@ -61,18 +51,25 @@ func TestExecuteCore_HappyPath(t *testing.T) {
 		"body":            map[string]any{"k": "v"},
 		"expected_status": []any{float64(200)},
 	})
-	fs := &fakeStream{}
-	if err := executor.executeCore(context.Background(), req, fs.send); err != nil {
+	outcome, err := executor.Execute(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
-	term := fs.terminal()
-	if term == nil || term.GetSuccess() == nil {
-		t.Fatalf("expected Success, got: %+v", term)
+	success := outcome.GetSuccess()
+	if success == nil {
+		t.Fatalf("expected Success, got: %T", outcome.GetOutcome())
+	}
+	if success.GetChanged() {
+		t.Error("verifier success must report changed=false")
+	}
+	delta := success.GetAttributesDelta().AsMap()
+	if delta["verifier_pass"] != true {
+		t.Errorf("expected verifier_pass=true in attributes_delta, got %+v", delta)
 	}
 }
 
-func TestExecuteCore_StatusMismatch(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestExecute_StatusMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("bad"))
 	}))
@@ -82,29 +79,52 @@ func TestExecuteCore_StatusMismatch(t *testing.T) {
 		"url":             srv.URL,
 		"expected_status": []any{float64(200)},
 	})
-	fs := &fakeStream{}
-	if err := executor.executeCore(context.Background(), req, fs.send); err != nil {
+	outcome, err := executor.Execute(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
-	term := fs.terminal()
-	if term == nil {
-		t.Fatal("no terminal")
-	}
-	errOut := term.GetError()
+	errOut := outcome.GetError()
 	if errOut == nil {
-		t.Fatalf("expected Error, got: %+v", term)
+		t.Fatalf("expected Error, got: %T", outcome.GetOutcome())
 	}
 	if errOut.GetErrorClass() != "verifier/check_failed" {
 		t.Errorf("error_class: %s", errOut.GetErrorClass())
 	}
 }
 
-// TestExecuteCore_TimeoutClassifiesAsTimeout drives a deliberately-slow
-// upstream past the configured timeout and asserts the emission
-// carries the hierarchical `verifier/timeout` class (not the broader
-// `verifier/network_error`). Mirrors http-node's classifyTransportErr
-// discipline.
-func TestExecuteCore_TimeoutClassifiesAsTimeout(t *testing.T) {
+// TestExecute_StatusMismatchWithUpstreamClass asserts that when the
+// upstream body carries a typed class field, the executor surfaces it
+// on the hierarchical error_class so subscribers can pattern-match
+// `verifier/check_failed/*`.
+func TestExecute_StatusMismatchWithUpstreamClass(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"class":"quota_exhausted","message":"too many"}`))
+	}))
+	defer srv.Close()
+	executor := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"url": srv.URL,
+	})
+	outcome, _ := executor.Execute(context.Background(), req)
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got: %T", outcome.GetOutcome())
+	}
+	if got, want := errOut.GetErrorClass(), "verifier/check_failed/quota_exhausted"; got != want {
+		t.Errorf("error_class=%q, want %q", got, want)
+	}
+	payload := errOut.GetPayload().AsMap()
+	if payload["upstream_class"] != "quota_exhausted" {
+		t.Errorf("expected upstream_class on payload, got %+v", payload)
+	}
+}
+
+// TestExecute_TimeoutClassifiesAsTimeout drives a slow upstream past
+// the configured timeout and asserts the hierarchical verifier/timeout
+// class.
+func TestExecute_TimeoutClassifiesAsTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -115,26 +135,92 @@ func TestExecuteCore_TimeoutClassifiesAsTimeout(t *testing.T) {
 		"url":        srv.URL,
 		"timeout_ms": float64(20),
 	})
-	fs := &fakeStream{}
-	if err := executor.executeCore(context.Background(), req, fs.send); err != nil {
+	outcome, err := executor.Execute(context.Background(), req)
+	if err != nil {
 		t.Fatal(err)
 	}
-	term := fs.terminal()
-	if term == nil {
-		t.Fatal("no terminal")
-	}
-	errOut := term.GetError()
+	errOut := outcome.GetError()
 	if errOut == nil {
-		t.Fatalf("expected Error, got: %+v", term)
+		t.Fatalf("expected Error, got: %T", outcome.GetOutcome())
 	}
 	if errOut.GetErrorClass() != "verifier/timeout" {
 		t.Errorf("error_class: got %q, want verifier/timeout", errOut.GetErrorClass())
 	}
 }
 
+// TestExecute_NetworkError covers the unreachable-upstream branch.
+func TestExecute_NetworkError(t *testing.T) {
+	executor := NewServer(false)
+	// @deliberate: port 1 is reserved and unbound, so the dial fails synchronously.
+	req := buildReq(t, map[string]any{"url": "http://127.0.0.1:1/nope"})
+	outcome, _ := executor.Execute(context.Background(), req)
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got: %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/network_error" {
+		t.Errorf("error_class: got %q, want verifier/network_error", errOut.GetErrorClass())
+	}
+}
+
+func TestExecute_MissingURL(t *testing.T) {
+	executor := NewServer(false)
+	req := buildReq(t, map[string]any{})
+	outcome, _ := executor.Execute(context.Background(), req)
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got: %T", outcome.GetOutcome())
+	}
+	if errOut.GetErrorClass() != "verifier/attribute_invalid" {
+		t.Errorf("error_class: %s", errOut.GetErrorClass())
+	}
+}
+
+// TestExecute_StubMode short-circuits before the upstream call so an
+// unreachable URL still settles to Success.
+func TestExecute_StubMode(t *testing.T) {
+	executor := NewServer(true)
+	req := buildReq(t, map[string]any{"url": "http://unreachable.invalid/"})
+	outcome, err := executor.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	success := outcome.GetSuccess()
+	if success == nil {
+		t.Fatalf("expected Success, got %T", outcome.GetOutcome())
+	}
+	if success.GetAttributesDelta().AsMap()["stub"] != true {
+		t.Errorf("expected stub:true in delta, got %+v", success.GetAttributesDelta().AsMap())
+	}
+}
+
+// TestExecute_CustomClassField configures the executor to read the
+// upstream typed-class field from a non-default key.
+func TestExecute_CustomClassField(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		// @deliberate: typed class lives in `code`, not `class`, so the default reader misses it.
+		_, _ = w.Write([]byte(`{"code":"rate_limited"}`))
+	}))
+	defer srv.Close()
+	executor := NewServer(false)
+	req := buildReq(t, map[string]any{
+		"url":         srv.URL,
+		"class_field": "code",
+	})
+	outcome, _ := executor.Execute(context.Background(), req)
+	errOut := outcome.GetError()
+	if errOut == nil {
+		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
+	}
+	if got, want := errOut.GetErrorClass(), "verifier/check_failed/rate_limited"; got != want {
+		t.Errorf("error_class=%q, want %q", got, want)
+	}
+}
+
 // TestCapabilities_AdvertisesHierarchicalErrorClasses confirms the
-// observability surface advertises the canonical verifier/* leaves
-// imported from `pkg:executors/verifier-http/errorclasses`.
+// observability surface advertises the canonical verifier/* leaves.
 func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 	obs := NewObservabilityServer()
 	caps, err := obs.Capabilities(context.Background(), &genv1.ExecutorCapabilitiesRequest{})
@@ -153,21 +239,5 @@ func TestCapabilities_AdvertisesHierarchicalErrorClasses(t *testing.T) {
 		if c == "" {
 			t.Errorf("declared[%d]: empty string", i)
 		}
-	}
-}
-
-func TestExecuteCore_MissingURL(t *testing.T) {
-	executor := NewServer(false)
-	req := buildReq(t, map[string]any{})
-	fs := &fakeStream{}
-	if err := executor.executeCore(context.Background(), req, fs.send); err != nil {
-		t.Fatal(err)
-	}
-	term := fs.terminal()
-	if term == nil {
-		t.Fatal("no terminal")
-	}
-	if term.GetError().GetErrorClass() != "verifier/attribute_invalid" {
-		t.Errorf("error_class: %s", term.GetError().GetErrorClass())
 	}
 }

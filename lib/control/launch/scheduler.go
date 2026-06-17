@@ -128,7 +128,6 @@ func (f *failureReporter) Close() {
 //	RIMSKY_METRICS_HOST         optional; default 127.0.0.1.
 func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.Database, rimskyCfg *config.RimskyConfig) (StopFunc, <-chan error, error) {
 	tickMs := atoiDefault(os.Getenv("RIMSKY_SCHEDULER_TICK_MS"), 1500)
-	heartbeatMs := atoiDefault(os.Getenv("RIMSKY_HEARTBEAT_TIMEOUT_MS"), 15000)
 	log := shared.NewSlogLogger(logger)
 
 	// @deliberate: resolve the /metrics port up-front so a malformed env
@@ -182,7 +181,6 @@ func RunScheduler(ctx context.Context, logger *slog.Logger, driver persistence.D
 		Clock:                   shared.SystemClock{},
 		Logger:                  log,
 		TickInterval:            time.Duration(tickMs) * time.Millisecond,
-		HeartbeatTimeout:        time.Duration(heartbeatMs) * time.Millisecond,
 		Stores:                  rimskyCfg.Stores,
 		NamedLocks:              rimskyCfg.NamedLocks,
 		SupervisorID:            supervisorID,

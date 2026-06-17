@@ -93,7 +93,7 @@ func TestVerifyBeforeRun_PostCommitSteal(t *testing.T) {
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
-		HeartbeatInterval: 100 * time.Millisecond,
+		LivenessInterval: 100 * time.Millisecond,
 		// @deliberate: Force the cross-transaction ownership flip in the window between
 		// the acquisition commit and the verify-before-run separate-read.
 		PostCommitHook: func(ctx context.Context) {

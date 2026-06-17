@@ -28,6 +28,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -49,30 +50,26 @@ type Server struct {
 // NewServer constructs a Server with the optional stub-mode flag.
 func NewServer(stubMode bool) *Server { return &Server{stubMode: stubMode} }
 
-// Execute is the gRPC entrypoint. Adapts to the transport-neutral
-// `executeCore`.
-func (s *Server) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
-	return s.executeCore(req, stream.Send)
+// Execute is the gRPC entrypoint. Per TD-execute-rpc-unary the RPC
+// returns the settling Outcome directly.
+func (s *Server) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+	return s.executeCore(req), nil
 }
 
-// sendFunc is the narrow sender shared with executeCore; same shape
-// as http-node's transport seam.
-type sendFunc func(*genv1.ExecuteEvent) error
-
 // executeCore parses the attribute bag, runs the configured checks
-// against the rows payload, and emits a single StreamClose terminal.
-func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
+// against the rows payload, and returns a single settling Outcome.
+func (s *Server) executeCore(req *genv1.ExecuteRequest) *genv1.Outcome {
 	ud := req.GetAttributes().AsMap()
 	if probe, _ := ud["stub_probe"].(bool); probe && s.stubMode {
-		return send(stubSuccess())
+		return stubSuccess()
 	}
 	specs, err := parseChecks(ud)
 	if err != nil {
-		return sendErrored(send, "verifier/attribute_invalid", err.Error())
+		return erroredOutcome("verifier/attribute_invalid", err.Error())
 	}
 	rows, err := parseRows(ud)
 	if err != nil {
-		return sendErrored(send, "verifier/attribute_invalid", err.Error())
+		return erroredOutcome("verifier/attribute_invalid", err.Error())
 	}
 	// @deliberate: pair each Result with its declared Severity so the
 	// aggregator can partition failures — only error-severity failures
@@ -89,10 +86,6 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 		}
 		blockingFailures++
 		if firstBlockingKind == "" {
-			// @deliberate: prefer the spec's declared kind; fall back to
-			// the runner-reported kind (which is what the "unknown"
-			// dispatcher sets when spec.Kind isn't a registered check
-			// name).
 			firstBlockingKind = spec.Kind
 			if firstBlockingKind == "" {
 				firstBlockingKind = r.Kind
@@ -100,30 +93,17 @@ func (s *Server) executeCore(req *genv1.ExecuteRequest, send sendFunc) error {
 		}
 	}
 	if blockingFailures > 0 {
-		// @concept: signal — aggregate failure messages in a Struct
-		// payload; the rimsky-side error_class policy fires on the
-		// hierarchical `verifier/check_failed/<kind>` leaf. The payload
-		// also carries any warning-severity failures so the operator
-		// sees the full picture even when an error blocks.
-		payload := buildErrorPayload(results)
-		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: "verifier/check_failed/" + firstBlockingKind,
-				Payload:    payload,
-			}}},
-		}})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+			ErrorClass: "verifier/check_failed/" + firstBlockingKind,
+			Payload:    buildErrorPayload(results),
+		}}}
 	}
-	// @deliberate: no blocking failure means the dispatch succeeds; any
-	// warning-severity failure is surfaced as a non-blocking finding in
-	// the Success delta so the operator still sees the soft signal.
 	delta := buildSuccessDelta(results, len(rows))
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-			AttributesDelta: delta,
-			Changed:         false,
-			ChangeSummary:   fmt.Sprintf("verifier-shape-checks: %d checks passed (%d rows)", len(results), len(rows)),
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		AttributesDelta: delta,
+		Changed:         false,
+		ChangeSummary:   fmt.Sprintf("verifier-shape-checks: %d checks passed (%d rows)", len(results), len(rows)),
+	}}}
 }
 
 // parseChecks reads `attributes.checks` and validates each entry into a
@@ -277,27 +257,22 @@ func summarize(results []scoredResult) string {
 	return strings.Join(parts, ", ")
 }
 
-// sendErrored emits a one-shot Error StreamClose; mirrors http-node's
-// helper to keep parity.
-func sendErrored(send sendFunc, class, msg string) error {
+// erroredOutcome builds a one-shot Error outcome.
+func erroredOutcome(class, msg string) *genv1.Outcome {
 	payload, _ := structpb.NewStruct(map[string]any{"message": msg})
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-			ErrorClass: class, Payload: payload,
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+		ErrorClass: class, Payload: payload,
+	}}}
 }
 
-// stubSuccess returns a fixed Success terminal for the conformance probe.
-func stubSuccess() *genv1.ExecuteEvent {
+// stubSuccess returns a fixed Success outcome for the conformance probe.
+func stubSuccess() *genv1.Outcome {
 	delta, _ := structpb.NewStruct(map[string]any{"stub": true})
-	return &genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-			AttributesDelta: delta,
-			Changed:         false,
-			ChangeSummary:   "verifier-shape-checks stub",
-		}}},
-	}}
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		AttributesDelta: delta,
+		Changed:         false,
+		ChangeSummary:   "verifier-shape-checks stub",
+	}}}
 }
 
 // @deliberate: retains references that linters might otherwise

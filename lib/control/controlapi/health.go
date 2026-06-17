@@ -24,7 +24,7 @@ type supervisorSummary struct {
 	AcceptedExecutors []string  `json:"accepted_executors"`
 	Concurrency       int       `json:"concurrency"`
 	ActiveNodeCount   int       `json:"active_node_count"`
-	LastHeartbeatAt   time.Time `json:"last_heartbeat_at"`
+	RegisteredAt      time.Time `json:"registered_at"`
 }
 
 type healthResponse struct {
@@ -62,7 +62,7 @@ func handleHealth(deps AppDeps) http.HandlerFunc {
 				AcceptedExecutors: s.AcceptedExecutors,
 				Concurrency:       s.Concurrency,
 				ActiveNodeCount:   s.ActiveNodeCount,
-				LastHeartbeatAt:   s.LastHeartbeatAt,
+				RegisteredAt:      s.RegisteredAt,
 			})
 		}
 		countOut := map[string]int{

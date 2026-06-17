@@ -6,7 +6,6 @@ package conformance
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,152 +16,198 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-func extractStreamCloseOutcome(t *testing.T, ev *genv1.ExecuteEvent) any {
-	t.Helper()
-	sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose)
-	if !ok {
-		t.Fatalf("expected StreamClose, got %T", ev.Event)
-	}
-	return sc.StreamClose.Outcome
-}
-
-func TestParseCallbackBody_NewShape_Success(t *testing.T) {
+// TestParseCallbackBody_Success covers the wire shape for the success
+// settling terminal: attributes_delta + change_summary + changed all
+// land on the parsed Outcome.
+func TestParseCallbackBody_Success(t *testing.T) {
 	body := map[string]any{
 		"success": map[string]any{
 			"attributes_delta": map[string]any{"k": "v"},
 			"changed":          true,
 			"change_summary":   "applied",
+			"tags":             []any{"loop"},
 		},
 	}
-	ev, err := parseCallbackBody(body)
+	out, err := parseCallbackBody(body)
 	if err != nil {
 		t.Fatalf("parseCallbackBody: %v", err)
 	}
-	oc := extractStreamCloseOutcome(t, ev)
-	c, ok := oc.(*genv1.StreamClose_Success)
+	succ, ok := out.GetOutcome().(*genv1.Outcome_Success)
 	if !ok {
-		t.Fatalf("expected Success, got %T", oc)
+		t.Fatalf("expected Success, got %T", out.GetOutcome())
 	}
-	if !c.Success.Changed {
+	if !succ.Success.GetChanged() {
 		t.Errorf("changed not propagated")
 	}
-	if c.Success.ChangeSummary != "applied" {
-		t.Errorf("change_summary=%q want=applied", c.Success.ChangeSummary)
+	if succ.Success.GetChangeSummary() != "applied" {
+		t.Errorf("change_summary=%q want=applied", succ.Success.GetChangeSummary())
 	}
-	if got := c.Success.GetAttributesDelta().AsMap(); got["k"] != "v" {
+	if got := succ.Success.GetAttributesDelta().AsMap(); got["k"] != "v" {
 		t.Errorf("attributes_delta=%v want k=v", got)
 	}
+	tags := succ.Success.GetTags()
+	if len(tags) != 1 || tags[0] != "loop" {
+		t.Errorf("tags=%v want [loop]", tags)
+	}
 }
 
-func TestParseCallbackBody_NewShape_Error(t *testing.T) {
+// TestParseCallbackBody_Error covers the error wire shape: error_class
+// is the discriminator the error-policy router keys on, payload carries
+// per-error data.
+func TestParseCallbackBody_Error(t *testing.T) {
 	body := map[string]any{
 		"error": map[string]any{
-			"error_class": "boom",
-			"payload":     map[string]any{"detail": "x"},
+			"error_class":      "boom",
+			"payload":          map[string]any{"detail": "x"},
+			"attributes_delta": map[string]any{"last_error": "boom"},
+			"tags":             []any{"failed"},
 		},
 	}
-	ev, err := parseCallbackBody(body)
+	out, err := parseCallbackBody(body)
 	if err != nil {
 		t.Fatalf("parseCallbackBody: %v", err)
 	}
-	oc := extractStreamCloseOutcome(t, ev)
-	e, ok := oc.(*genv1.StreamClose_Error)
+	errOut, ok := out.GetOutcome().(*genv1.Outcome_Error)
 	if !ok {
-		t.Fatalf("expected Error, got %T", oc)
+		t.Fatalf("expected Error, got %T", out.GetOutcome())
 	}
-	if e.Error.ErrorClass != "boom" {
-		t.Errorf("error_class=%q want boom", e.Error.ErrorClass)
+	if errOut.Error.GetErrorClass() != "boom" {
+		t.Errorf("error_class=%q want=boom", errOut.Error.GetErrorClass())
+	}
+	if got := errOut.Error.GetPayload().AsMap(); got["detail"] != "x" {
+		t.Errorf("payload=%v want detail=x", got)
+	}
+	if got := errOut.Error.GetAttributesDelta().AsMap(); got["last_error"] != "boom" {
+		t.Errorf("attributes_delta=%v want last_error=boom", got)
+	}
+	if tags := errOut.Error.GetTags(); len(tags) != 1 || tags[0] != "failed" {
+		t.Errorf("tags=%v want [failed]", tags)
 	}
 }
 
-func TestParseCallbackBody_NewShape_Park_Base64Payload(t *testing.T) {
-	encoded := base64.StdEncoding.EncodeToString([]byte("opaque-bytes"))
-	resumeAt := time.Date(2026, 5, 9, 15, 30, 0, 0, time.UTC).Format(time.RFC3339)
+// TestParseCallbackBody_Park covers the park wire shape: reason +
+// reason_note + resume_at + attributes_delta. Per TD-remove-resume-
+// context the body must NOT carry session_token / payload bytes — that
+// state rides attributes_delta now.
+func TestParseCallbackBody_Park(t *testing.T) {
+	resumeAt := time.Date(2026, 6, 17, 15, 30, 0, 0, time.UTC).Format(time.RFC3339)
 	body := map[string]any{
 		"park": map[string]any{
-			"reason":        "rate_limit",
-			"payload":       encoded,
-			"session_token": "sess-1",
-			"resume_at":     resumeAt,
+			"reason":           "snooze",
+			"reason_note":      "rate-limited until cooldown elapses",
+			"reason_label":     "rate_limit",
+			"resume_at":        resumeAt,
+			"attributes_delta": map[string]any{"session_token": "tok-1"},
+			"tags":             []any{"parked"},
 		},
 	}
-	ev, err := parseCallbackBody(body)
+	out, err := parseCallbackBody(body)
 	if err != nil {
 		t.Fatalf("parseCallbackBody: %v", err)
 	}
-	oc := extractStreamCloseOutcome(t, ev)
-	p, ok := oc.(*genv1.StreamClose_Park)
+	park, ok := out.GetOutcome().(*genv1.Outcome_Park)
 	if !ok {
-		t.Fatalf("expected Park, got %T", oc)
+		t.Fatalf("expected Park, got %T", out.GetOutcome())
 	}
-	if string(p.Park.Payload) != "opaque-bytes" {
-		t.Errorf("payload=%q want opaque-bytes", string(p.Park.Payload))
+	if park.Park.GetReason() != genv1.ParkReason_PARK_REASON_SNOOZE {
+		t.Errorf("park reason=%v want=SNOOZE", park.Park.GetReason())
 	}
-	if p.Park.SessionToken != "sess-1" {
-		t.Errorf("session_token=%q", p.Park.SessionToken)
+	if park.Park.GetReasonNote() != "rate-limited until cooldown elapses" {
+		t.Errorf("reason_note=%q", park.Park.GetReasonNote())
 	}
-	if p.Park.ResumeAt == nil {
-		t.Fatalf("resume_at not propagated")
+	if park.Park.GetReasonLabel() != "rate_limit" {
+		t.Errorf("reason_label=%q", park.Park.GetReasonLabel())
 	}
-	if got := p.Park.ResumeAt.AsTime(); !got.Equal(time.Date(2026, 5, 9, 15, 30, 0, 0, time.UTC)) {
+	if park.Park.GetResumeAt() == nil {
+		t.Fatal("resume_at not propagated")
+	}
+	if got := park.Park.GetResumeAt().AsTime(); !got.Equal(time.Date(2026, 6, 17, 15, 30, 0, 0, time.UTC)) {
 		t.Errorf("resume_at=%v", got)
 	}
+	if got := park.Park.GetAttributesDelta().AsMap(); got["session_token"] != "tok-1" {
+		t.Errorf("attributes_delta=%v want session_token=tok-1", got)
+	}
+	if tags := park.Park.GetTags(); len(tags) != 1 || tags[0] != "parked" {
+		t.Errorf("tags=%v want [parked]", tags)
+	}
 }
 
-func TestParseCallbackBody_NewShape_Park_LiteralPayload(t *testing.T) {
-	// @constraint: non-base64 payload is tolerated as a literal string.
+// TestParseCallbackBody_ParkUnknownReasonFallsBackToAwaitCallback pins
+// the closed-set safety default: any unknown reason string (typo,
+// missing entry) falls back to PARK_REASON_AWAIT_CALLBACK — the safer
+// default because it does not auto-resume.
+func TestParseCallbackBody_ParkUnknownReasonFallsBackToAwaitCallback(t *testing.T) {
 	body := map[string]any{
-		"park": map[string]any{
-			"reason":        "rate_limit",
-			"payload":       "!!! not base64 !!!",
-			"session_token": "sess-2",
-		},
+		"park": map[string]any{"reason": "made_up"},
 	}
-	ev, err := parseCallbackBody(body)
+	out, err := parseCallbackBody(body)
 	if err != nil {
 		t.Fatalf("parseCallbackBody: %v", err)
 	}
-	oc := extractStreamCloseOutcome(t, ev)
-	p, ok := oc.(*genv1.StreamClose_Park)
+	park, ok := out.GetOutcome().(*genv1.Outcome_Park)
 	if !ok {
-		t.Fatalf("expected Park, got %T", oc)
+		t.Fatalf("expected Park, got %T", out.GetOutcome())
 	}
-	if string(p.Park.Payload) != "!!! not base64 !!!" {
-		t.Errorf("payload=%q", string(p.Park.Payload))
-	}
-	if p.Park.ResumeAt != nil {
-		t.Errorf("resume_at should be nil when absent, got %v", p.Park.ResumeAt)
+	if park.Park.GetReason() != genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK {
+		t.Errorf("park reason=%v want=AWAIT_CALLBACK fallback", park.Park.GetReason())
 	}
 }
 
+// TestParseCallbackBody_RejectsMultipleOutcomes pins that the oneof
+// contract is checked at parse — a body claiming both success AND error
+// is malformed and refused with no outcome.
 func TestParseCallbackBody_RejectsMultipleOutcomes(t *testing.T) {
 	body := map[string]any{
 		"success": map[string]any{},
 		"error":   map[string]any{"error_class": "x"},
 	}
 	if _, err := parseCallbackBody(body); err == nil {
-		t.Fatal("expected error for multi-outcome body, got nil")
+		t.Fatal("expected error for multi-outcome body")
 	}
 }
 
-func TestParseCallbackBody_NoOutcome(t *testing.T) {
+// TestParseCallbackBody_RejectsAllThreeOutcomes pins the same multi-
+// outcome rejection for the full three-key case.
+func TestParseCallbackBody_RejectsAllThreeOutcomes(t *testing.T) {
+	body := map[string]any{
+		"success": map[string]any{},
+		"error":   map[string]any{"error_class": "x"},
+		"park":    map[string]any{},
+	}
+	if _, err := parseCallbackBody(body); err == nil {
+		t.Fatal("expected error for body with all three outcomes")
+	}
+}
+
+// TestParseCallbackBody_RejectsNoOutcome pins that an empty body (or a
+// body carrying only the retired `events` field) is malformed.
+func TestParseCallbackBody_RejectsNoOutcome(t *testing.T) {
+	if _, err := parseCallbackBody(map[string]any{}); err == nil {
+		t.Fatal("expected error for empty body")
+	}
+	// @constraint: legacy `events` field (per TD-collapse-named-event-
+	// to-tags) is gone — a body carrying only events has no outcome.
 	if _, err := parseCallbackBody(map[string]any{"events": []any{}}); err == nil {
 		t.Fatal("expected error for body with no outcome field")
 	}
 }
 
+// TestParseCallbackBody_RejectsLegacyTypeDiscriminator pins that the
+// pre-coherence {type: "complete"|"blocked"|"errored"} shape no longer
+// parses. The migration is one-way per pre-v1 break-freely rules.
 func TestParseCallbackBody_RejectsLegacyTypeDiscriminator(t *testing.T) {
-	// @constraint: the legacy {type: "complete"|"blocked"|"errored"} shape
-	// is no longer accepted post-2026-05-12.
 	body := map[string]any{
 		"type":             "complete",
 		"attributes_delta": map[string]any{},
 	}
 	if _, err := parseCallbackBody(body); err == nil {
-		t.Fatal("expected error for legacy type-discriminator body, got nil")
+		t.Fatal("expected error for legacy type-discriminator body")
 	}
 }
 
+// TestReceiver_RegisterThenHandle covers the happy round-trip: Register
+// claims a channel, the executor's POST drops the outcome on it, the
+// awaiter reads it.
 func TestReceiver_RegisterThenHandle(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -178,19 +223,22 @@ func TestReceiver_RegisterThenHandle(t *testing.T) {
 	})
 
 	select {
-	case ev := <-ch:
-		if ev == nil {
-			t.Fatal("nil ev")
+	case out := <-ch:
+		if out == nil {
+			t.Fatal("nil outcome")
 		}
-		oc := extractStreamCloseOutcome(t, ev)
-		if _, ok := oc.(*genv1.StreamClose_Success); !ok {
-			t.Fatalf("expected Success, got %T", oc)
+		if _, ok := out.GetOutcome().(*genv1.Outcome_Success); !ok {
+			t.Fatalf("expected Success, got %T", out.GetOutcome())
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for callback")
 	}
 }
 
+// TestReceiver_HandleThenRegister covers the inverse race: the
+// callback arrives BEFORE Register. The receiver pre-creates the
+// channel and buffers the outcome; a later Register returns the same
+// buffered channel.
 func TestReceiver_HandleThenRegister(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -207,16 +255,20 @@ func TestReceiver_HandleThenRegister(t *testing.T) {
 
 	ch := r.Register(ackID)
 	select {
-	case ev := <-ch:
-		oc := extractStreamCloseOutcome(t, ev)
-		if _, ok := oc.(*genv1.StreamClose_Success); !ok {
-			t.Fatalf("expected Success, got %T", oc)
+	case out := <-ch:
+		if _, ok := out.GetOutcome().(*genv1.Outcome_Success); !ok {
+			t.Fatalf("expected Success, got %T", out.GetOutcome())
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for buffered callback")
 	}
 }
 
+// TestReceiver_DuplicateCallback_Discarded pins idempotent delivery:
+// the receiver's channel is buffered to depth 1; a duplicate callback
+// posted after the channel already holds the first outcome is silently
+// discarded. The first-wins discipline matches the persistent-registry
+// contract.
 func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -235,21 +287,24 @@ func TestReceiver_DuplicateCallback_Discarded(t *testing.T) {
 	})
 
 	first := <-ch
-	oc := extractStreamCloseOutcome(t, first)
-	if _, ok := oc.(*genv1.StreamClose_Success); !ok {
-		t.Fatalf("expected first=Success, got %T", oc)
+	if _, ok := first.GetOutcome().(*genv1.Outcome_Success); !ok {
+		t.Fatalf("expected first=Success, got %T", first.GetOutcome())
 	}
 
 	select {
 	case extra, ok := <-ch:
 		if ok && extra != nil {
-			t.Fatalf("unexpected duplicate callback delivered: %T", extra.Event)
+			t.Fatalf("unexpected duplicate delivered: %T", extra.GetOutcome())
 		}
 	case <-time.After(150 * time.Millisecond):
-		// @deliberate: expected silence — no second event delivered.
+		// @deliberate: expected silence — no second delivery.
 	}
 }
 
+// TestReceiver_ConcurrentRegisterAndHandle exercises the receiver
+// under concurrent register + post traffic — 32 goroutines half of
+// which register-then-post and half of which post-then-register. Every
+// channel must deliver exactly one outcome.
 func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -291,6 +346,9 @@ func TestReceiver_ConcurrentRegisterAndHandle(t *testing.T) {
 	wg.Wait()
 }
 
+// TestReceiver_AdvertiseHostFallback pins that AdvertiseHost="0.0.0.0"
+// is rewritten to BindHost on the URL — exposing the wildcard would
+// give the executor an unroutable callback target.
 func TestReceiver_AdvertiseHostFallback(t *testing.T) {
 	r, err := StartCallbackReceiver(ReceiverOptions{
 		BindHost:      "127.0.0.1",
@@ -300,11 +358,13 @@ func TestReceiver_AdvertiseHostFallback(t *testing.T) {
 		t.Fatalf("StartCallbackReceiver: %v", err)
 	}
 	defer func() { _ = r.Close() }()
-	if want := "127.0.0.1"; !contains(r.URL(), want) {
+	if want := "127.0.0.1"; !bytes.Contains([]byte(r.URL()), []byte(want)) {
 		t.Errorf("URL=%s want host=%s", r.URL(), want)
 	}
 }
 
+// TestReceiver_HandleRejectsMalformedJSON pins the receiver's input
+// guard — a non-JSON body is refused with 400 at the HTTP layer.
 func TestReceiver_HandleRejectsMalformedJSON(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -322,6 +382,30 @@ func TestReceiver_HandleRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+// TestReceiver_HandleRejectsEmptyOutcome pins that a well-formed JSON
+// body carrying NO outcome key (per AsyncCallbackBody) is refused with
+// 400 — exactly the empty-outcome falsifier the spec names.
+func TestReceiver_HandleRejectsEmptyOutcome(t *testing.T) {
+	r, err := StartCallbackReceiver()
+	if err != nil {
+		t.Fatalf("StartCallbackReceiver: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	body, _ := json.Marshal(map[string]any{})
+	resp, err := http.Post(r.URL()+"/v1/callback/x", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d want 400 for empty outcome body", resp.StatusCode)
+	}
+}
+
+// TestReceiver_HandleRejectsMultiOutcome pins that a wire-level body
+// carrying more than one of success / error / park is refused with 400
+// — the AsyncCallbackBody oneof discipline is enforced at HTTP parse.
 func TestReceiver_HandleRejectsMultiOutcome(t *testing.T) {
 	r, err := StartCallbackReceiver()
 	if err != nil {
@@ -343,6 +427,51 @@ func TestReceiver_HandleRejectsMultiOutcome(t *testing.T) {
 	}
 }
 
+// TestReceiver_HandleRejectsMissingAckID pins that a POST without an
+// ack id in the path is refused — there is no row to route to.
+func TestReceiver_HandleRejectsMissingAckID(t *testing.T) {
+	r, err := StartCallbackReceiver()
+	if err != nil {
+		t.Fatalf("StartCallbackReceiver: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	body, _ := json.Marshal(map[string]any{"success": map[string]any{}})
+	resp, err := http.Post(r.URL()+"/v1/callback/", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status=%d want 400 for missing ack_id", resp.StatusCode)
+	}
+}
+
+// TestReceiver_HandleSuccessReturns204 pins that a well-formed POST
+// returns 204 No Content on success (matching the §12.5 convention).
+// The conformance receiver pre-buffers the outcome even when no
+// channel has been Registered yet; that buffered state is the
+// idempotent-replay guarantee per concept:async-callback-persistence.
+func TestReceiver_HandleSuccessReturns204(t *testing.T) {
+	r, err := StartCallbackReceiver()
+	if err != nil {
+		t.Fatalf("StartCallbackReceiver: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	body, _ := json.Marshal(map[string]any{"success": map[string]any{"changed": true}})
+	resp, err := http.Post(r.URL()+"/v1/callback/ack-204", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("status=%d want 204", resp.StatusCode)
+	}
+}
+
+// postCallback marshals body to JSON and POSTs it to the callback
+// receiver, fatal on transport error or non-204.
 func postCallback(t *testing.T, baseURL, ackID string, body map[string]any) {
 	t.Helper()
 	buf, err := json.Marshal(body)
@@ -357,8 +486,4 @@ func postCallback(t *testing.T, baseURL, ackID string, body map[string]any) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("postCallback status=%d", resp.StatusCode)
 	}
-}
-
-func contains(s, sub string) bool {
-	return bytes.Contains([]byte(s), []byte(sub))
 }

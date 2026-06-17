@@ -44,12 +44,12 @@ The `substitution_refs` slice carries the object shape
 `{source_kind, source_node_alias, source_version_or_id}`. Two
 `source_kind` values are emitted by the runtime writer:
 
-- `attribute` / `event` — one entry per `{{nodes.X.attribute.Y}}` /
-  `{{nodes.X.event.Y}}` directive parsed from the receiver's
-  `attributes.schema`. `source_node_alias` is the upstream node-type
-  named in the directive; `source_version_or_id` is the attribute /
-  event name. These are informational; the ancestor walker skips them
-  because the `source_version_or_id` isn't a UUID.
+- `attribute` — one entry per `{{nodes.X.attribute.Y}}` directive
+  parsed from the receiver's `attributes.schema`. `source_node_alias`
+  is the upstream node-type named in the directive;
+  `source_version_or_id` is the attribute name. These are
+  informational; the ancestor walker skips them because the
+  `source_version_or_id` isn't a UUID.
 - `run` — one entry per distinct upstream sender, keyed by the
   upstream node's most recent leaf-run record's `run_id` (looked up in
   the lineage projection at emit time). `source_version_or_id` is a

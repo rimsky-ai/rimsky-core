@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -55,9 +54,8 @@ func TestLifecycleE2E_FullSequence(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{
 		// @deliberate: Skip the supervisor and scheduler; we don't need them for
 		// lifecycle event coverage and dropping them speeds the test up.
-		NoSupervisor:     true,
-		NoScheduler:      true,
-		HeartbeatTimeout: 30 * time.Second,
+		NoSupervisor: true,
+		NoScheduler:  true,
 		Stores: config.RemoteStoresConfig{
 			Stores: map[string]config.StoreEntry{
 				"alpha": {

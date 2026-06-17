@@ -17,8 +17,9 @@ import (
 // resume_at), in-graph or admin invalidate, or watchdog timeout
 // (max_park_duration → failed). Cascade does NOT propagate from parked;
 // held claims are retained across the park boundary; the orphan-claim
-// reaper skips phase='parked' rows because heartbeating is paused
-// during park.
+// reaper skips phase='parked' rows because parked rows are settled with
+// respect to liveness — there is no quiet-period or RPC connection
+// state to observe.
 type NodeState string
 
 const (
@@ -59,13 +60,13 @@ var (
 	ReasonPolicyGiveUp       = TransitionReason{Kind: "policy_give_up"}
 	ReasonOperatorReset      = TransitionReason{Kind: "operator_reset"}
 	ReasonOperatorInvalidate = TransitionReason{Kind: "operator_invalidate"}
-	ReasonHeartbeatLost      = TransitionReason{Kind: "heartbeat_lost"}
-	// @deliberate: distinguishes an explicit infra re-enqueue
-	// (stream_error, executor_dial_failed,
-	// stream_closed_without_terminal) from the scheduler's
-	// stale-heartbeat sweep — both produce `running → stale` but
-	// ReasonHeartbeatLost flags the latter; event-log honesty depends
-	// on this separation.
+	// @deliberate: an infra re-enqueue is an executor-side or transport-
+	// side failure (executor_dial_failed, RPC-broken-mid-call,
+	// connection-refused) that returns the run to `stale` without
+	// invoking the operator's error-policy chain; ReasonInfraReenqueue
+	// flags this distinct from ReasonPolicyRetry (which DID consult the
+	// policy chain). The stale-recovery sweep also lands on
+	// `running → stale`; it stamps the row via ReasonInfraReenqueue too.
 	ReasonInfraReenqueue = TransitionReason{Kind: "infra_reenqueue"}
 	ReasonPureCascade    = TransitionReason{Kind: "pure_cascade"}
 	// @constraint: transitions `stale → failed` directly when the
@@ -227,7 +228,6 @@ func NextState(current NodeState, reason TransitionReason) (NodeState, error) {
 		// itself is NOT a direct NextState input — see its docstring
 		// for why it's reserved-negative.
 		if reason.Kind == "policy_retry" ||
-			reason.Kind == "heartbeat_lost" ||
 			reason.Kind == "infra_reenqueue" {
 			return NodeStateStale, nil
 		}

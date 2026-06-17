@@ -26,7 +26,6 @@ type Tables interface {
 	Supervisors() SupervisorTable
 	Frames() FrameTable
 	BlobOrphans() BlobOrphanTable
-	NodeEvents() NodeEventTable
 	WaitSet() WaitSetTable
 
 	Messages() MessagesTable

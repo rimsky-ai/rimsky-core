@@ -108,7 +108,6 @@ func (w *nodeTrackingTables) Events() persistence.EventTable           { return 
 func (w *nodeTrackingTables) Supervisors() persistence.SupervisorTable { return w.inner.Supervisors() }
 func (w *nodeTrackingTables) Frames() persistence.FrameTable           { return w.inner.Frames() }
 func (w *nodeTrackingTables) BlobOrphans() persistence.BlobOrphanTable { return w.inner.BlobOrphans() }
-func (w *nodeTrackingTables) NodeEvents() persistence.NodeEventTable   { return w.inner.NodeEvents() }
 func (w *nodeTrackingTables) WaitSet() persistence.WaitSetTable        { return w.inner.WaitSet() }
 func (w *nodeTrackingTables) Messages() persistence.MessagesTable      { return w.inner.Messages() }
 func (w *nodeTrackingTables) MessageIdempotencies() persistence.MessageIdempotencyTable {

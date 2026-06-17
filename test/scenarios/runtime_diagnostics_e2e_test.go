@@ -98,7 +98,7 @@ func TestRuntimeDiagnosticsWedgedInstance(t *testing.T) {
 	// is NOT registered — the test asserts the wedged state, not the
 	// resume path (parked_lifecycle_test.go covers the wake leg).
 	h.Stub.WhenType("acquirer").
-		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "wedge_callback", []byte(`{"ticket":"R-1"}`), time.Time{}, "")
+		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "wedge_callback", time.Time{})
 	// @deliberate: inheritor pre-scripted but unreachable while the acquirer stays
 	// parked. The Holds binding below makes the acquirer's claim
 	// `is_held=TRUE` (the runtime sets is_held based on holding-subgraph

@@ -34,7 +34,7 @@ import (
 
 // testRecoveryAwareDispatch seeds a fan-out parent + one partition,
 // enqueues a recovery-aware child dispatch that carries
-// PriorDispatchID + PriorDispatchDisposition = "heartbeat_stale",
+// PriorDispatchID + PriorDispatchDisposition = "stale_recovery",
 // then asserts both fields round-trip through SelectCandidates.
 func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
@@ -110,18 +110,22 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	// @deliberate: write scratch onto the original dispatch row before
 	// retiring it. The recovery enqueue below loads this scratch and
 	// copies it onto the new dispatch row so the executor's in-flight
-	// state survives heartbeat-stale recovery — the opaque-executor-scratch
+	// state survives stale-recovery — the opaque-executor-scratch
 	// round-trip this conformance test pins.
 	scratchFixture := []byte("scratch-bytes-fixture")
 
-	// @deliberate: simulate heartbeat-stale recovery — remove the
-	// original row, then enqueue a successor that names the original as
-	// its prior.
+	// @deliberate: simulate stale-recovery — claim the original row,
+	// stamp its scratch, then remove via the claimant-guarded path so a
+	// successor enqueue can name the original as its prior.
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		// @constraint: RemoveForNodeInTx's claimant guard requires the
-		// caller to hold the claim, so set the heartbeat claimant first.
-		if err := store.Nodes().UpdateHeartbeat(ctx, childNodeID, partitionScopeID, time.Now(), "sup-stale", tx); err != nil {
+		// caller to hold the claim, so claim the row first.
+		ok, err := q.ClaimDispatchRow(ctx, tx, originalDispatchID, "sup-stale")
+		if err != nil {
 			return err
+		}
+		if !ok {
+			t.Fatalf("ClaimDispatchRow(original) did not claim")
 		}
 		if err := q.WriteScratchInTx(ctx, tx, originalDispatchID, scratchFixture, "", ""); err != nil {
 			return err
@@ -133,7 +137,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 
 	// @deliberate: recovery enqueue — load prior scratch, then enqueue
 	// with the carry-forward triple populated. The recovery production
-	// sites (conductor.go::SweepStaleHeartbeats, cascade_recalculate.go,
+	// sites (conductor.go::SweepExecutorDeadlines, cascade_recalculate.go,
 	// on_error.go, runner_error_policy.go::applyResolvedAction) follow
 	// this same load → enqueue shape. EnqueuedAt is set slightly in the
 	// past so the SelectCandidates time filter (enqueued_at <= now)
@@ -151,7 +155,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 			FrameID:                     fix.FrameID,
 			RunScopeID:                  partitionScopeID,
 			PriorDispatchID:             &originalDispatchID,
-			PriorDispatchDisposition:    "heartbeat_stale",
+			PriorDispatchDisposition:    "stale_recovery",
 			InitialScratchInline:        scratchInline,
 			InitialScratchHandle:        scratchHandle,
 			InitialScratchHandleBackend: scratchBackend,
@@ -191,15 +195,14 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 	if *got.PriorDispatchID != originalDispatchID {
 		t.Fatalf("Candidate.PriorDispatchID = %v; want %v", *got.PriorDispatchID, originalDispatchID)
 	}
-	if got.PriorDispatchDisposition != "heartbeat_stale" {
-		t.Fatalf("Candidate.PriorDispatchDisposition = %q; want heartbeat_stale", got.PriorDispatchDisposition)
+	if got.PriorDispatchDisposition != "stale_recovery" {
+		t.Fatalf("Candidate.PriorDispatchDisposition = %q; want stale_recovery", got.PriorDispatchDisposition)
 	}
 
 	// @constraint: scratch round-trip — the recovery row's scratch must
 	// match the bytes written to the original. Without this the
-	// executor's in-flight state silently vanishes on heartbeat-stale
-	// recovery; the opaque-executor-scratch contract this conformance
-	// test pins.
+	// executor's in-flight state silently vanishes on stale-recovery;
+	// the opaque-executor-scratch contract this conformance test pins.
 	var gotInline []byte
 	var gotHandle, gotBackend string
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
@@ -225,7 +228,7 @@ func testRecoveryAwareDispatch(t *testing.T, d persistence.Database) {
 // no row:
 //
 //   - LoadScratchInTx degrades to (nil, "", "", nil) so recovery-enqueue
-//     load sites (conductor.go::SweepStaleHeartbeats,
+//     load sites (conductor.go::SweepExecutorDeadlines,
 //     cascade_recalculate.go, on_error.go, runner_error_policy.go) treat
 //     a retired prior row as "no carry-forward state" and the successor
 //     dispatch begins with empty scratch.

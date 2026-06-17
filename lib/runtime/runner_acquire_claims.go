@@ -48,7 +48,7 @@ import (
 // targeting the same (producer, claim-scope) pair.
 func acquireClaim(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID,
-	spec claimproducer.ClaimSpec, cand persistence.Candidate, heartbeatInterval time.Duration,
+	spec claimproducer.ClaimSpec, cand persistence.Candidate, livenessInterval time.Duration,
 	heldSubgraphs []node.HoldingSubgraph,
 ) (AcquiredLock, openResult, error) {
 	// @constraint: latency timer for `rimsky_claim_acquisition_latency_seconds`. Start
@@ -137,7 +137,7 @@ func acquireClaim(
 		Intent:             &intentCopy,
 		HolderSupervisorID: args.SupervisorID,
 		HolderNodeID:       cand.NodeID,
-		ExpiresAt:          args.Clock.Now().Add(5 * heartbeatInterval),
+		ExpiresAt:          args.Clock.Now().Add(5 * livenessInterval),
 		FrameID:            &frameID,
 		IsHeld:             isHeld,
 		// @constraint: thread the template store-ref's lifetime hint onto the persisted

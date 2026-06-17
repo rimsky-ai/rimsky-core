@@ -165,7 +165,7 @@ func TestDurableLifetimePersistedOnAcquire(t *testing.T) {
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: "127.0.0.1:1"},
 		}),
-		HeartbeatInterval: 100 * time.Millisecond,
+		LivenessInterval: 100 * time.Millisecond,
 	}
 
 	// @constraint: Drive the REAL acquire path. A fan-out parent acquires its claim,

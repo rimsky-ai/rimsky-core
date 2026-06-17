@@ -10,8 +10,8 @@
 // ClaimProducer.Open for ClaimSpec acquisitions), runs the
 // verify-before-run guard (§7.3 step 4), transitions the node to
 // running (§7.3 step 4.5), resolves attribute source-directives,
-// determines the dispatch path, runs the heartbeat loop, and applies
-// the terminal event.
+// determines the dispatch path, dispatches the unary Execute RPC,
+// and applies the terminal event.
 //
 // Helpers split across files for readability:
 //   - runner_acquire.go  — §7.3 atomic acquisition + verify-before-run
@@ -142,10 +142,11 @@ type RunArgs struct {
 	Resolver    executor.Resolver
 	CallbackURL string
 
-	// HeartbeatInterval drives the §7.3 step 3 lock-holder ExpiresAt
-	// budget (5 × heartbeatInterval) and the in-loop heartbeat tick.
-	// Zero falls back to 5s.
-	HeartbeatInterval time.Duration
+	// LivenessInterval drives the §7.3 step 3 lock-holder ExpiresAt
+	// budget (5 × livenessInterval). Zero falls back to 5s. Replaces
+	// the retired HeartbeatInterval (executor-stream heartbeats retired
+	// in 2026-06-16 executor-protocol-coherence).
+	LivenessInterval time.Duration
 	// ResumeGrace is the preserve-for-resume cutoff. Zero falls back
 	// to 30 minutes.
 	ResumeGrace time.Duration
@@ -156,10 +157,10 @@ type RunArgs struct {
 	SelectCandidatesLimit int
 
 	// Blob is the active BlobBackend (loaded from BlobConfig at startup).
-	// Used by applyTerminalPark to spill large parked-payload bytes and
-	// by the H1 named-event persist path to spill large event payloads.
-	// Nil means "spill disabled" — callers store inline regardless of
-	// size (legacy behavior). Required when BlobSpillThreshold > 0.
+	// Used by the attribute write path to spill large attribute payloads
+	// through the configured backend. Nil means "spill disabled" —
+	// callers store inline regardless of size. Required when
+	// BlobSpillThreshold > 0.
 	Blob persistence.BlobBackend
 	// BlobSpillThreshold is the spill cutoff in bytes; payloads larger
 	// than this are written through Blob instead of stored inline.
@@ -177,6 +178,33 @@ type RunArgs struct {
 	// row disables the cap entirely).
 	MaxRetriesWithoutProgressDefault int
 
+	// SyncRPCDeadlineDefault is the deployment-level cap on the
+	// supervisor's outgoing unary Execute RPC. Per-node override on
+	// code:TemplateNodeDef.SyncRPCDeadline takes precedence; empty
+	// per-node value falls back to this default. Zero falls back to
+	// the built-in 30s default applied at dispatch time.
+	// A literal sentinel of -1 disables the cap (unbounded RPC).
+	//
+	// @concept: dispatch-deadlines
+	SyncRPCDeadlineDefault time.Duration
+
+	// MaxQuietPeriodDefault is the deployment-level cap on async-mode
+	// dispatches' time without bumping last_progress_at. Per-node
+	// override on code:TemplateNodeDef.MaxQuietPeriod takes
+	// precedence. Zero falls back to the built-in 15-minute default
+	// applied at sweep time.
+	//
+	// @concept: dispatch-deadlines
+	MaxQuietPeriodDefault time.Duration
+
+	// MaxRuntimeDefault is the deployment-level cap on per-dispatch
+	// wall-clock from claim to terminal. Per-node override on
+	// code:TemplateNodeDef.MaxRuntime takes precedence. Zero means
+	// disabled — only per-node values cap runtime.
+	//
+	// @concept: dispatch-deadlines
+	MaxRuntimeDefault time.Duration
+
 	// ExpectedAttributesSchemaFor returns the executor's advertised
 	// expected_attributes_schema bytes (JSON Schema) plus an ok flag
 	// (false for unknown executors). Used by
@@ -184,12 +212,21 @@ type RunArgs struct {
 	// the executor's schema into the per-node effective attribute
 	// schema at dispatch.
 	//
-	// Wired in cmd/rimsky-supervisor/main.go from the discovery cache
-	// (the same `disc` value that previously fed UserdataValidator
-	// before the 2026-05-21 userdata collapse).
+	// Wired in cmd/rimsky-supervisor/main.go from the discovery cache.
 	//
 	// @concept: attribute
 	ExpectedAttributesSchemaFor func(executorName string) (schema []byte, ok bool)
+
+	// DeclaredTagsFor returns the executor's advertised declared_tags
+	// (the observability capability that replaced declared_events) plus
+	// an ok flag. Used by the runner's gate-2 tag-validation helper to
+	// substitute an executor_protocol_violation Error when a settling
+	// outcome carries an undeclared tag (concept:terminal-tag). Empty
+	// declared_tags ([]string{}) + ok=true is a legal "this executor
+	// emits no tags" answer.
+	//
+	// @concept: terminal-tag
+	DeclaredTagsFor func(executorName string) (tags []string, ok bool)
 
 	// Metrics is the dispatch/terminal/invalidate/claim instrumentation
 	// hook (plan I1/I2/I3). Optional. The interface is intentionally
@@ -296,8 +333,6 @@ type MetricsHook interface {
 	// IncClaimAcquisition so named-lock activity is distinguishable from
 	// producer-claim activity on the metrics endpoint.
 	IncNamedLockAcquisition(lockName, intent string)
-	// @agent-contract: records a NamedEvent persistence write.
-	IncNamedEvent(executor, eventName string)
 	// @agent-contract: observes the wall-clock dispatch duration.
 	ObserveDispatchLatency(executor string, seconds float64)
 	// @agent-contract: observes the wall-clock claim acquisition tx
@@ -320,7 +355,6 @@ func (noopMetrics) IncTerminal(string, string)                     {}
 func (noopMetrics) IncInvalidate(string)                           {}
 func (noopMetrics) IncClaimAcquisition(string, string)             {}
 func (noopMetrics) IncNamedLockAcquisition(string, string)         {}
-func (noopMetrics) IncNamedEvent(string, string)                   {}
 func (noopMetrics) ObserveDispatchLatency(string, float64)         {}
 func (noopMetrics) ObserveClaimAcquisitionLatency(string, float64) {}
 func (noopMetrics) ObserveFrameDuration(float64)                   {}
@@ -460,12 +494,12 @@ func RunNode(
 	if log == nil {
 		log = shared.SilentLogger{}
 	}
-	heartbeatInterval := args.HeartbeatInterval
-	if heartbeatInterval <= 0 {
-		heartbeatInterval = 5 * time.Second
+	livenessInterval := args.LivenessInterval
+	if livenessInterval <= 0 {
+		livenessInterval = 5 * time.Second
 	}
 
-	acq, ok, err := acquireCandidate(ctx, args, heartbeatInterval)
+	acq, ok, err := acquireCandidate(ctx, args, livenessInterval)
 	if err != nil {
 		return RunnerResult{}, err
 	}
@@ -515,13 +549,13 @@ func RunNode(
 	dispatchAttrs := resolvedAttrs
 
 	dctx := dispatchContext{
-		Args:              args,
-		Acquired:          &acq,
-		Attributes:        dispatchAttrs,
-		AttributesSchema:  attrSchema,
-		HeartbeatInterval: heartbeatInterval,
-		Log:               log,
-		RegisterAsync:     registerAsync,
+		Args:             args,
+		Acquired:         &acq,
+		Attributes:       dispatchAttrs,
+		AttributesSchema: attrSchema,
+		LivenessInterval: livenessInterval,
+		Log:              log,
+		RegisterAsync:    registerAsync,
 	}
 	terminal, asyncResult, err := dispatch(ctx, dctx)
 	if err != nil {

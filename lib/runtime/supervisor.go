@@ -10,12 +10,14 @@
 //   - Starts an HTTP callback server so async-handoff executors can POST
 //     terminal outcomes (see callback.go).
 //   - Loops:
-//   - Heartbeat tick (HeartbeatInterval): update own supervisor row, update
-//     per-active-node heartbeats, refresh `rimsky_claim_handles` rows owned
-//     by this supervisor whose holder_node_id is currently `running` (per
-//     spec §7.5). Operator invalidates do not preempt running work — they
-//     enqueue/coalesce a frame (per
-//     docs/history/2026-04-26-frame-resolution-design.md §3.3 / §5.4).
+//   - Liveness tick (LivenessInterval): refresh the supervisor row's
+//     `active_node_count` so the operator's supervisors browse endpoint
+//     reflects in-flight work without polling each dispatch row. Per-dispatch
+//     liveness is observed via the dispatch row's `last_progress_at` (bumped
+//     by §12.5 attribute writeback and POST /v1/runs/{id}/keepalive) and via
+//     the supervisor's outgoing gRPC client connection state for sync
+//     dispatches; the tick no longer refreshes heartbeat columns (those were
+//     retired in 2026-06-16 executor-protocol-coherence).
 //   - Claim tick (ClaimPollInterval): while active < concurrency, try to
 //     claim one dispatch row via queue.Claim; on success, dispatch RunNode
 //     in a goroutine.
@@ -26,16 +28,12 @@
 //
 //	Every DELETE FROM rimsky_claim_handles and every UPDATE
 //	rimsky_node_runs SET claimed_by = NULL is gated on
-//	`AND … = supervisor_id`. The §7.5 heartbeat refresh below is a
-//	WRITE (not a release), but it inherits the same claimant guard:
-//	the WHERE clause is `holder_supervisor_id = $1`, so a stale
-//	heartbeat from a different supervisor can never extend a row it
-//	doesn't own. Concrete enforcement of the release path lives
+//	`AND … = supervisor_id`. Concrete enforcement of the release path lives
 //	across persistence.Queue / persistence.ClaimHandleTable impls,
-//	`runtime/runner.go`, and `graph/scheduler/scheduler.go`;
-//	this file's contribution is the heartbeat-write claimant guard.
-//	Do not relax the `holder_supervisor_id = $1` predicate on the
-//	heartbeat UPDATE.
+//	`runtime/runner.go`, and `graph/scheduler/scheduler.go`. This file's
+//	contribution is the supervisor-row writes for `active_node_count` and
+//	Unregister at shutdown; both run under the `supervisor_id = $self`
+//	predicate.
 //
 // @blessed-invariant 10: Lock acquisition is atomic with parent-run
 // claim acquisition. Per spec §4.10 + the 2026-05-15 data-platform-
@@ -50,11 +48,9 @@
 //	(invariant 4b) holds because rimsky's conflict predicate gates
 //	lock-holder INSERTs against `rimsky_claim_handles` only. The
 //	acquisition tx lives in `runtime/runner_acquire.go`; this file's
-//	contribution is structural — the heartbeat refresh below MUST
-//	NOT extend rows for nodes that have transitioned out of
-//	`running`. The `holder_node_id IN (running-nodes)` filter keeps
-//	the orphan-reap cutoff (5 × heartbeat_interval) attainable so
-//	stranded held subgraphs are eventually reaped.
+//	contribution is structural — the claim-handle `expires_at` budget
+//	(5 × LivenessInterval) bounds how long a stranded held subgraph
+//	can survive before the orphan-claim-handle sweep reaps it.
 package runtime
 
 import (
@@ -88,8 +84,12 @@ type Config struct {
 	Clock          shared.Clock
 	Logger         shared.Logger
 	Concurrency    int
-	// HeartbeatInterval defaults to 5s when zero.
-	HeartbeatInterval time.Duration
+	// LivenessInterval drives the supervisor's `active_node_count`
+	// refresh tick and is the budget multiplier for the claim-handle
+	// `expires_at` TTL (`5 × LivenessInterval`). Defaults to 5s when zero.
+	// Replaces the retired HeartbeatInterval (executor-stream heartbeats
+	// retired in 2026-06-16 executor-protocol-coherence).
+	LivenessInterval time.Duration
 	// ClaimPollInterval defaults to 1s when zero.
 	ClaimPollInterval time.Duration
 	Resolver          executor.Resolver
@@ -268,8 +268,8 @@ func (h *Handle) CallbackServeErr() <-chan error { return h.callbackServeErr }
 // is listening and the supervisor is registered; the claim/heartbeat loop
 // runs on a background goroutine.
 func Start(cfg Config) (*Handle, error) {
-	if cfg.HeartbeatInterval == 0 {
-		cfg.HeartbeatInterval = 5 * time.Second
+	if cfg.LivenessInterval == 0 {
+		cfg.LivenessInterval = 5 * time.Second
 	}
 	if cfg.ClaimPollInterval == 0 {
 		cfg.ClaimPollInterval = 1 * time.Second
@@ -577,78 +577,49 @@ func runLoop(
 	// tryClaim goroutines (incremented before launch, decremented when
 	// the goroutine exits). Used for the concurrency guard below and
 	// the shutdown drain wait; NOT used for the supervisor's
-	// `active_node_count` heartbeat field — that comes from a DB query
-	// so async dispatches whose goroutines have already returned
-	// (post-AwaitAsyncCallback) are still counted. See doHeartbeat
+	// `active_node_count` row — that comes from a DB query so async
+	// dispatches whose goroutines have already returned
+	// (post-AwaitAsyncCallback) are still counted. See tickLiveness
 	// below.
 	var activeMu sync.Mutex
 	activeCount := 0
 
-	heartbeatTick := time.NewTicker(cfg.HeartbeatInterval)
-	defer heartbeatTick.Stop()
+	livenessTick := time.NewTicker(cfg.LivenessInterval)
+	defer livenessTick.Stop()
 	claimTick := time.NewTicker(cfg.ClaimPollInterval)
 	defer claimTick.Stop()
 
-	doHeartbeat := func() {
-		hbCtx := context.Background()
-
-		// @constraint: DB-driven view of "what this supervisor is
-		// currently running." The result of this query drives both the
-		// per-node last_heartbeat_at refresh below AND the
-		// active_node_count we stamp into rimsky_supervisors via
-		// Supervisors().Heartbeat. Both must reflect the same source of
-		// truth — the in-memory goroutine counter (`activeCount`,
-		// retained for the concurrency guard below) under-counts async
-		// dispatches whose RunNode goroutine returned at
-		// AwaitAsyncCallback while the actual work continues on the
-		// executor side. Reading the DB here covers sync + async + any
-		// future "RunNode returned early" path.
-		var running []persistence.NodeRow
-		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
-			rows, err := cfg.Persist.Nodes().ListRunningBySupervisor(ctx, cfg.SupervisorID, tx)
-			running = rows
-			return err
-		}); err != nil {
-			cfg.Logger.Warn("supervisor: list running nodes by supervisor failed", "error", err.Error())
-			// @deliberate: fall through to the supervisor + lock-holder
-			// heartbeats with a zero count — keeping THIS supervisor's
-			// row alive matters more than the running-nodes count being
-			// momentarily wrong.
-			running = nil
-		}
-
-		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
-			return cfg.Persist.Supervisors().Heartbeat(ctx, cfg.SupervisorID, len(running), tx)
-		}); err != nil {
-			cfg.Logger.Warn("supervisor: supervisors.Heartbeat failed", "error", err.Error())
-		}
-		// @constraint: §7.5 lock-holder heartbeat refresh.
-		// ExtendHeartbeat issues the SQL with the running-nodes
-		// subquery filter so preserve-for-resume rows (anchored to
-		// nodes that have transitioned out of `running` to `stale`) are
-		// NOT refreshed — the resume-grace cutoff would never fire
-		// otherwise. The expiresAt budget is `5 × HeartbeatInterval`
-		// per the spec; the persistence layer converts the duration
-		// back to integer seconds for the §7.5 SQL literal.
-		expiresAt := cfg.Clock.Now().Add(5 * cfg.HeartbeatInterval)
-		if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
-			return lockHolders.ExtendHeartbeat(ctx, cfg.SupervisorID, expiresAt, tx)
-		}); err != nil {
-			cfg.Logger.Warn("supervisor: lockHolders.ExtendHeartbeat failed", "error", err.Error())
-		}
-		now := cfg.Clock.Now()
-		for _, n := range running {
-			nodeID := n.ID
-			if n.RunScopeID == nil {
-				continue
+	tickLiveness := func() {
+		tickCtx := context.Background()
+		// @deliberate: Per TD-three-dispatch-deadlines the supervisor's
+		// liveness tick no longer refreshes per-node, per-handle, or
+		// supervisor-level heartbeat columns — sync-mode dispatches
+		// surface liveness through the gRPC connection state; async-mode
+		// dispatches surface liveness through last_progress_at bumped by
+		// the attribute writeback + the explicit keepalive endpoint.
+		// What survives is the supervisor's active_node_count, written
+		// here so the operator's supervisors browse endpoint reflects
+		// in-flight work without polling each dispatch row.
+		var running int
+		if err := cfg.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
+			rows, err := cfg.Persist.Nodes().ListRunning(ctx, tx)
+			if err != nil {
+				return err
 			}
-			runScopeID := *n.RunScopeID
-			if err := cfg.Persist.Transaction(hbCtx, func(ctx context.Context, tx persistence.Tx) error {
-				return cfg.Persist.Nodes().UpdateHeartbeat(ctx, nodeID, runScopeID, now, cfg.SupervisorID, tx)
-			}); err != nil {
-				cfg.Logger.Warn("supervisor: node UpdateHeartbeat failed",
-					"node_id", nodeID.String(), "error", err.Error())
+			for _, r := range rows {
+				if r.AssignedSupervisorID == cfg.SupervisorID {
+					running++
+				}
 			}
+			return nil
+		}); err != nil {
+			cfg.Logger.Warn("supervisor: list running nodes failed", "error", err.Error())
+			running = 0
+		}
+		if err := cfg.Persist.Transaction(tickCtx, func(ctx context.Context, tx persistence.Tx) error {
+			return cfg.Persist.Supervisors().UpdateActiveNodeCount(ctx, cfg.SupervisorID, running, tx)
+		}); err != nil {
+			cfg.Logger.Warn("supervisor: supervisors.UpdateActiveNodeCount failed", "error", err.Error())
 		}
 	}
 
@@ -685,7 +656,7 @@ func runLoop(
 				StoreRegistry:                    cfg.StoreRegistry,
 				NamedLocks:                       cfg.NamedLocks,
 				CallbackURL:                      h.advertisedURL,
-				HeartbeatInterval:                cfg.HeartbeatInterval,
+				LivenessInterval:                 cfg.LivenessInterval,
 				Blob:                             cfg.Blob,
 				BlobSpillThreshold:               cfg.BlobSpillThreshold,
 				MaxRetriesWithoutProgressDefault: cfg.MaxRetriesWithoutProgressDefault,
@@ -700,9 +671,9 @@ func runLoop(
 				cfg.Logger.Warn("supervisor: RunNode failed", "error", runErr.Error())
 			}
 
-			// @deliberate: per-node heartbeat tracking is DB-driven (see
-			// doHeartbeat above) — no in-memory bookkeeping of
-			// result.NodeID is needed here. The heartbeat tick reads
+			// @deliberate: per-node liveness tracking is DB-driven (see
+			// tickLiveness above) — no in-memory bookkeeping of
+			// result.NodeID is needed here. The liveness tick reads
 			// `rimsky_nodes WHERE state='running' AND assigned_supervisor_id=$self`
 			// directly, which is correct for both sync (RunNode
 			// in-flight) and async (handed off, still running in the
@@ -770,8 +741,8 @@ func runLoop(
 			_ = pool.Close()
 			cfg.Logger.Info("supervisor stopped", "supervisor_id", cfg.SupervisorID)
 			return
-		case <-heartbeatTick.C:
-			doHeartbeat()
+		case <-livenessTick.C:
+			tickLiveness()
 		case <-claimTick.C:
 			tryClaim()
 		}

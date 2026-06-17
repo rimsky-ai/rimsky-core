@@ -8,10 +8,11 @@
 // work_completed event, so durations and did-everything-finish audits
 // are computable from the ledger. Dispatches that never reach
 // applyTerminal are paired where rimsky observes the loss: the
-// heartbeat-loss sweep (SweepStaleHeartbeats) emits
-// work_completed{terminal_kind:"abandoned"} for the zombie run it
-// retires. A work_started whose supervisor died can therefore stay
-// unpaired until the sweep's next pass reaps the run.
+// dispatch-deadline sweep (SweepExecutorDeadlines) releases the claim
+// with an `executor_quiet` or `max_runtime_exceeded` error class and
+// the subsequent retry / give_up emits work_completed. A work_started
+// whose supervisor died therefore stays unpaired until the sweep's
+// next pass releases the orphaned run.
 //
 // Two runs are driven to terminal through the real stack (supervisor +
 // stub executor + persistence): one completing successfully, one

@@ -154,10 +154,10 @@ func testQueueInTxAndDispatchNode(t *testing.T, d persistence.Database) {
 
 	// @constraint: post-stage-1 lifecycle flip (per the data-platform-extensions
 	// plan) — RemoveForNodeInTx no longer deletes the row; it flips the row
-	// to terminal phase and clears claimed_by / last_heartbeat_at so the
-	// orphan-claim reaper and the in-flight predicate both stop treating the
-	// row as active. The row itself survives so frame-end / retention /
-	// run-tree aggregation can read the terminal state + last_outcome.
+	// to terminal phase and clears claimed_by so the orphan-claim reaper
+	// and the in-flight predicate both stop treating the row as active.
+	// The row itself survives so frame-end / retention / run-tree
+	// aggregation can read the terminal state + last_outcome.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		return q.RemoveForNodeInTx(ctx, fix.NodeID, fix.MainRunScopeID, supID, tx)
 	}); err != nil {

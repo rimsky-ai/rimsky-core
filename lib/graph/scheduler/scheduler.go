@@ -5,14 +5,14 @@
 // Package scheduler main loop.
 //
 // This is the graph-layer scheduler — it composes the foundation
-// integration sweeps (advisory-lock tick gate, stale-heartbeat sweep,
-// dispatch-claim orphan sweep, lock-holder orphan reap, ready sweep)
-// with the graph-layer sweeps (pure-cascade transitions, frame-engine
-// tick). The cron-fire sweep retired with the 2026-05-15 plan B10 / D7
-// / E16; cron firing is owned by the bundled `sensors/sensor-cron/`
-// service via the Publisher protocol — Subscribe / Unsubscribe /
-// ListSubscriptions plus message envelopes POSTed to the generic
-// POST /instances/{instance_id}/messages endpoint with
+// integration sweeps (advisory-lock tick gate, executor-deadline
+// sweep, lock-holder orphan reap, ready sweep) with the graph-layer
+// sweeps (pure-cascade transitions, frame-engine tick). The cron-fire
+// sweep retired with the 2026-05-15 plan B10 / D7 / E16; cron firing
+// is owned by the bundled `sensors/sensor-cron/` service via the
+// Publisher protocol — Subscribe / Unsubscribe / ListSubscriptions
+// plus message envelopes POSTed to the generic POST
+// /instances/{instance_id}/messages endpoint with
 // sender_kind="publisher".
 //
 // Per tick:
@@ -23,24 +23,22 @@
 //     unlocked run permits concurrent multi-replica sweeping).
 //  2. ProcessPureCascade — transition pure-cascade nodes (no executor) to
 //     fresh inline and emit recalculate to dependents.
-//  3. runtime.SweepStaleHeartbeats — running nodes whose last_heartbeat
-//     is older than the cutoff are forced running→stale, supervisor
-//     assignment is cleared, a heartbeat_lost event is appended, and the
-//     node is re-enqueued (no retry bump — infra event, not application
-//     error).
-//  4. runtime.SweepOrphanedNodeRuns — dispatch rows whose
-//     `last_heartbeat_at` is older than the cutoff are released
-//     claimant-guarded so a fresh supervisor can pick them up.
-//  5. runtime.SweepOrphanedClaimHandles — `rimsky_claim_handles` rows whose
+//  3. runtime.SweepExecutorDeadlines — async-mode dispatch rows whose
+//     per-row effective max_quiet_period (last_progress_at) or
+//     effective max_runtime (claimed_at) have elapsed are released
+//     claimant-guarded with error_class executor_quiet or
+//     max_runtime_exceeded so a fresh supervisor can pick them up.
+//     Per TD-three-dispatch-deadlines.
+//  4. runtime.SweepOrphanedClaimHandles — `rimsky_claim_handles` rows whose
 //     `expires_at < now()` are deleted claimant-guarded. Per v3 spec
 //     §7.5, ClaimProducer.Abandon is NOT called — the store's own TTL/sweep
 //     handles its internal state. Cascade FK on
 //     `rimsky_claim_holders.claim_handle_id` cleans up held-claim rows.
-//  6. runtime.SweepReady — executor-backed stale nodes whose deps
+//  5. runtime.SweepReady — executor-backed stale nodes whose deps
 //     are all fresh get enqueued for the next claim cycle.
-//  7. frame.RunTick — frame-end detection, queue advancement,
+//  6. frame.RunTick — frame-end detection, queue advancement,
 //     stuck-frame warning (advisory only), orphan-frame-dispatch reap.
-//  8. Breakpoint sweeps — delete TTL-expired
+//  7. Breakpoint sweeps — delete TTL-expired
 //     `rimsky_instance_breakpoints` rows, auto-resume stale
 //     `rimsky_breakpoint_hits` rows on `auto_resume_after_ttl`
 //     breakpoints, and reap orphaned-unresumed hit rows abandoned
@@ -63,8 +61,8 @@ import (
 //
 // ClaimHandles is required for the orphan-reap sweep. When nil the
 // corresponding sweep is skipped — this keeps tests that exercise only
-// the dispatch-claim / heartbeat / ready sweeps from being forced into
-// store wiring.
+// the dispatch-claim / executor-deadline / ready sweeps from being
+// forced into store wiring.
 //
 // In v3 the scheduler does not consult any store-side state — the v2
 // visibility-timeout sweep is gone, and the orphan reaper no longer
@@ -78,14 +76,25 @@ type Config struct {
 	Queue persistence.Queue
 	// AdvisoryLocker carries the cross-process synchronization primitives
 	// (scheduler-tick exclusion, etc.). Required for the per-tick guard.
-	AdvisoryLocker   persistence.AdvisoryLocker
-	Clock            shared.Clock
-	Logger           shared.Logger
-	TickInterval     time.Duration
-	HeartbeatTimeout time.Duration
-	// @constraint: OrphanedClaimTimeout defaults to 5 × HeartbeatTimeout.
-	OrphanedClaimTimeout time.Duration
-	ClaimHandles         persistence.ClaimHandleTable
+	AdvisoryLocker persistence.AdvisoryLocker
+	Clock          shared.Clock
+	Logger         shared.Logger
+	TickInterval   time.Duration
+	// @constraint: MaxQuietPeriodDefault and MaxRuntimeDefault are the
+	// deployment-level fallback values for the two operator-opt-in
+	// dispatch deadlines. They participate in the resolution chain
+	// (per-node template value folded over deployment default folded
+	// over built-in 0=disabled) which runs at AwaitAsyncCallback-
+	// registration time; the resolved per-row values land on
+	// col:rimsky_node_runs.effective_max_quiet_period_seconds and
+	// col:rimsky_node_runs.effective_max_runtime_seconds. Zero on
+	// either field means "no deployment-default cap; per-node value
+	// only". Per TD-three-dispatch-deadlines.
+	//
+	// @concept: dispatch-deadlines
+	MaxQuietPeriodDefault time.Duration
+	MaxRuntimeDefault     time.Duration
+	ClaimHandles          persistence.ClaimHandleTable
 	// SupervisorID is the scheduler's own supervisor id. Used by the
 	// parked-nodes sweep (E3) to claim wakes against — every wake
 	// transitions phase parked → pending so any executor-running
@@ -176,21 +185,10 @@ func Start(cfg Config) *Handle {
 	if cfg.TickInterval == 0 {
 		cfg.TickInterval = 1500 * time.Millisecond
 	}
-	if cfg.HeartbeatTimeout == 0 {
-		cfg.HeartbeatTimeout = 15 * time.Second
-	}
-	// @blessed-invariant: orphan-claim-cutoff-five-times-heartbeat-timeout
-	// A tighter cutoff (e.g. 2 × heartbeat_timeout) can sweep a
-	// live-but-slow supervisor's claim — when the supervisor has issued
-	// Claim() but hasn't yet flipped the node's state to running (slow
-	// dep-data fetch, cold start, etc.). The fresh supervisor would then
-	// run the handler concurrently with the original. The runners
-	// defensively re-read the claim before entering the handler as a
-	// hard backstop, but preserving the 5× floor keeps the window small
-	// enough in practice.
-	if cfg.OrphanedClaimTimeout == 0 {
-		cfg.OrphanedClaimTimeout = 5 * cfg.HeartbeatTimeout
-	}
+	// @deliberate: MaxQuietPeriodDefault and MaxRuntimeDefault stay 0 by
+	// default per TD-three-dispatch-deadlines ("default 0 = disabled").
+	// Operators opt in via rimsky.yml; per-node template values override
+	// the deployment default.
 	if cfg.Logger == nil {
 		cfg.Logger = shared.SilentLogger{}
 	}
@@ -207,8 +205,7 @@ func runLoop(cfg Config, h *Handle) {
 	defer close(h.done)
 	cfg.Logger.Info("scheduler started",
 		"tick_ms", cfg.TickInterval.Milliseconds(),
-		"heartbeat_timeout_ms", cfg.HeartbeatTimeout.Milliseconds(),
-		"orphaned_claim_timeout_ms", cfg.OrphanedClaimTimeout.Milliseconds(),
+		"max_quiet_period_default_ms", cfg.MaxQuietPeriodDefault.Milliseconds(),
 	)
 	for {
 		select {
@@ -283,19 +280,21 @@ func tick(ctx context.Context, cfg Config, h *Handle) error {
 	}
 
 	conductorArgs := runtime.ConductorArgs{
-		Persist:              cfg.Persist,
-		Queue:                cfg.Queue,
-		Clock:                cfg.Clock,
-		Logger:               log,
-		HeartbeatTimeout:     cfg.HeartbeatTimeout,
-		OrphanedClaimTimeout: cfg.OrphanedClaimTimeout,
+		Persist:               cfg.Persist,
+		Queue:                 cfg.Queue,
+		Clock:                 cfg.Clock,
+		Logger:                log,
+		MaxQuietPeriodDefault: cfg.MaxQuietPeriodDefault,
+		MaxRuntimeDefault:     cfg.MaxRuntimeDefault,
 	}
 
-	if err := runtime.SweepStaleHeartbeats(ctx, conductorArgs); err != nil {
-		return err
-	}
-
-	if err := runtime.SweepOrphanedNodeRuns(ctx, conductorArgs); err != nil {
+	// @deliberate: SweepExecutorDeadlines enforces the per-row
+	// effective_max_quiet_period_seconds and effective_max_runtime_seconds
+	// (denormalized at AwaitAsyncCallback-registration time) by releasing
+	// claims with the matching error_class. Sync-mode dispatches surface
+	// failure via the supervisor's gRPC connection state and never reach
+	// this sweep.
+	if err := runtime.SweepExecutorDeadlines(ctx, conductorArgs); err != nil {
 		return err
 	}
 

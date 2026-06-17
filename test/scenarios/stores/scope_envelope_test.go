@@ -100,7 +100,7 @@ func TestOpenScopeEnvelopeReachesStore(t *testing.T) {
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
-		HeartbeatInterval: 100 * time.Millisecond,
+		LivenessInterval: 100 * time.Millisecond,
 	}
 	out, err := runtime.RunNode(h.Ctx, args, nil)
 	require.NoError(t, err)

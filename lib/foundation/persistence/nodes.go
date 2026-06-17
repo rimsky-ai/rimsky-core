@@ -37,7 +37,6 @@ type NodeRow struct {
 	CurrentErrorClass    string       `json:"current_error_class,omitempty"`
 	RetryCounter         int          `json:"retry_counter"`
 	ActionIndex          int          `json:"action_index"`
-	LastHeartbeatAt      *time.Time   `json:"last_heartbeat_at,omitempty"`
 	AssignedSupervisorID string       `json:"assigned_supervisor_id,omitempty"`
 	FrameID              *shared.UUID `json:"frame_id,omitempty"`
 	// Tags is operator-facing metadata projected from the bound
@@ -103,17 +102,6 @@ type NodeTable interface {
 	ListByInstancePagedFiltered(ctx context.Context, instanceID shared.UUID, pag ListPagination, filter NodeListFilter, tx Tx) (PaginatedListResult[NodeRow], error)
 	ListReadyForDispatch(ctx context.Context, tx Tx) ([]NodeRow, error)
 	ListRunning(ctx context.Context, tx Tx) ([]NodeRow, error)
-	// @constraint: ListRunningBySupervisor returns the rows in
-	// state='running' currently assigned to the given supervisor
-	// (`assigned_supervisor_id = $1`). Used by the supervisor's
-	// heartbeat tick to refresh `last_heartbeat_at` on every running
-	// node it owns — covers both sync dispatches (RunNode in-flight)
-	// and async dispatches (handed off to the callback server but
-	// still running in the DB until the terminal callback arrives).
-	// The DB is the source of truth; do not rely on in-memory
-	// bookkeeping of "currently running" nodes.
-	ListRunningBySupervisor(ctx context.Context, supervisorID string, tx Tx) ([]NodeRow, error)
-	ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time, tx Tx) ([]NodeRow, error)
 	ListPureCascadeReady(ctx context.Context, tx Tx) ([]NodeRow, error)
 	CountByState(ctx context.Context, tx Tx) (map[cascade.NodeState]int, error)
 	// @agent-contract UpdateState transitions the node to `state` under
@@ -140,21 +128,6 @@ type NodeTable interface {
 	// for the bug that motivated this disambiguation.
 	UpdateState(ctx context.Context, id shared.UUID, runScopeID shared.UUID, state cascade.NodeState, reason cascade.TransitionReason, settlingSignalType *string, tx Tx) error
 	UpdateError(ctx context.Context, id shared.UUID, es spec.EvaluatorState, tx Tx) error
-	// @agent-contract UpdateHeartbeat refreshes the in-flight run row's
-	// last_heartbeat_at and (when supervisorID is non-empty) stamps
-	// claimed_by. `runID` disambiguates which in-flight row to address
-	// — required for fan-out children that share a node_id with
-	// siblings, to prevent leaking claimed_by onto pending siblings
-	// (which would render them unclaimable via SelectCandidates'
-	// `claimed_by IS NULL` filter). Nil `runID` preserves the legacy
-	// by-node-id update for paths that don't face fan-out ambiguity.
-	//
-	// Claimant-guarded (blessed-invariant 4): the write only lands when
-	// the row is unclaimed or already claimed by supervisorID — a row
-	// claimed by a different supervisor is untouched (no ownership
-	// steal, no heartbeat refresh that would defeat the orphan reaper).
-	// An empty supervisorID matches only unclaimed rows.
-	UpdateHeartbeat(ctx context.Context, id shared.UUID, runScopeID shared.UUID, at time.Time, supervisorID string, tx Tx) error
 	SetFrameID(ctx context.Context, id shared.UUID, frameID *shared.UUID, tx Tx) error
 	// @agent-contract ClearSettlingSignalType clears
 	// settling_signal_type to NULL on the in-flight rimsky_node_runs

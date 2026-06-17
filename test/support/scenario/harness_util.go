@@ -74,7 +74,7 @@ func StartStubExecutorWithSchema(t testing.TB, schema []byte) executor.Endpoint 
 
 // StartStubModeExecutorWithSchema is StartStubExecutorWithSchema but the
 // standalone stub runs in immediate-success "stub mode" — every Execute
-// dispatch short-circuits to a Success StreamClose. This lets a
+// dispatch short-circuits to a Success Outcome. This lets a
 // constraint-advertising executor both (a) advertise a constraining
 // schema the registration/instantiation validators read and (b) actually
 // settle a dispatched node to a terminal Complete verdict, without the

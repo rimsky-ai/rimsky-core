@@ -16,7 +16,7 @@ Cross-process coordination — through Postgres advisory locks, or under SQLite 
 
 ## Boundaries
 
-Owns: the four primitives, the two pinned long-lived keys (scheduler-tick and migration), the session-vs-transaction scope difference. Does NOT own: the conflict matrix that decides which lock modes coexist, heartbeat cutoffs, the claim-handle ledger. Adjacent: `sensor` (scheduler-tick lock), `persistence-database` (migration lock), `claim-handle`, `supervisor` (the acquisition tx).
+Owns: the four primitives, the two pinned long-lived keys (scheduler-tick and migration), the session-vs-transaction scope difference. Does NOT own: the conflict matrix that decides which lock modes coexist, `max_quiet_period` cutoffs, the claim-handle ledger. Adjacent: `sensor` (scheduler-tick lock), `persistence-database` (migration lock), `claim-handle`, `supervisor` (the acquisition tx).
 
 ## Invariants
 

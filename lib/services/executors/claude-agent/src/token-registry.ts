@@ -90,42 +90,12 @@ export interface TokenEntry {
   onAttributesSet: (
     delta: Record<string, unknown>,
   ) => Promise<{ status: number }>;
-  /**
-   * Event names this run is permitted to emit via `emit_named_event` —
-   * the executor's resolved `declared_events` list
-   * (`RIMSKY_EXECUTOR_DECLARED_EVENTS`). The tool rejects any name not in
-   * this list. This is a self-consistency check, NOT rimsky access: rimsky
-   * already treats unknown event names at runtime as no-ops, so the guard
-   * is early feedback for the template author, not a correctness gate.
-   */
-  declaredEvents: string[];
-  /**
-   * Per-dispatch buffer of named events emitted by the agent via
-   * `emit_named_event`. Each entry is a `{name, payload}` pair where
-   * `payload` is the opaque JSON-serialized bytes the tool received
-   * (`concept:inertness`: the executor never inspects or transforms it).
-   * The buffer rides the async-callback body's `events[]` array when the
-   * dispatch reaches a terminal outcome. Initialized empty per dispatch.
-   */
-  emittedEvents: NamedEventEmission[];
-  /**
-   * Append one emitted event to {@link emittedEvents}. Threaded so the
-   * `emit_named_event` MCP handler can buffer without reaching into the
-   * entry's internals.
-   */
-  emitNamedEvent: (name: string, payload: Buffer) => void;
 }
-
-/**
- * One non-terminal named event emitted by the agent during a dispatch.
- * `payload` is the opaque serialized bytes — the executor passes it
- * through without inspection (`concept:inertness` / `@blessed-invariant
- * 21`).
- */
-export interface NamedEventEmission {
-  name: string;
-  payload: Buffer;
-}
+// @constraint: TD-collapse-named-event-to-tags retires the
+// `emit_named_event` MCP tool, the per-dispatch named-event buffer,
+// and the executor's `declared_events` list. Non-terminal observable
+// transitions ride tags on the settling terminal verdict
+// (concept:terminal-tag); there is no mid-dispatch emit surface.
 
 export class TokenRegistry {
   private readonly map = new Map<string, TokenEntry>();

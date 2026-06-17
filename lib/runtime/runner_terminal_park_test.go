@@ -15,12 +15,11 @@ import (
 func TestParkTerminalSignal_Snooze(t *testing.T) {
 	resume := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
 	ev := terminalEvent{
-		ParkReason:       genv1.ParkReason_PARK_REASON_SNOOZE,
-		ParkResumeAt:     resume,
-		ParkSessionToken: "tok",
-		ParkPayload:      []byte("hi"),
-		ParkReasonLabel:  "wait",
-		ParkReasonNote:   "ten min",
+		ParkReason:      genv1.ParkReason_PARK_REASON_SNOOZE,
+		ParkResumeAt:    resume,
+		ParkReasonLabel: "wait",
+		ParkReasonNote:  "ten min",
+		Tags:            []string{"await_remote"},
 	}
 	got := parkTerminalSignal(ev)
 	if got.Type != signalpkg.TypePath("terminal/park/snooze") {
@@ -29,11 +28,12 @@ func TestParkTerminalSignal_Snooze(t *testing.T) {
 	if got.Payload["resume_at"].(time.Time) != resume {
 		t.Fatalf("resume_at: got %v", got.Payload["resume_at"])
 	}
-	if got.Payload["session_token"].(string) != "tok" {
-		t.Fatalf("session_token: got %v", got.Payload["session_token"])
-	}
 	if got.Payload["parked_reason_label"].(string) != "wait" {
 		t.Fatalf("parked_reason_label: got %v", got.Payload["parked_reason_label"])
+	}
+	tags := got.Payload["tags"].([]string)
+	if len(tags) != 1 || tags[0] != "await_remote" {
+		t.Fatalf("tags: got %v", tags)
 	}
 }
 

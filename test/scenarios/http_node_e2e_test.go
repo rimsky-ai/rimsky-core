@@ -247,7 +247,7 @@ func TestHttpNodeCrossStack(t *testing.T) {
 			"200-leg: node must reach fresh terminal")
 
 		// @deliberate: The upstream's response body is a JSON object; the executor
-		// merges it into the StreamClose-Success.attributes_delta and the
+		// merges it into the Outcome{Success}.attributes_delta and the
 		// supervisor lands the delta on rimsky_node_attributes.data. Any
 		// cheaper shape (success with an empty delta) would falsify the
 		// spec's "200 response populates the node's output attributes"
@@ -346,11 +346,12 @@ func TestHttpNodeCrossStack(t *testing.T) {
 		require.True(t, h.WaitForEventKind(thr.ID, "parked_resume_started", 30*time.Second),
 			"429-leg: supervisor's SweepParkedNodes must wake the parked node at resume_at")
 
-		// @deliberate: And the row's resume reason should be the deadline-elapsed
-		// flavor: the row's `wake_reason` propagates into the event
-		// payload's `resume_reason`. An external invalidate would record
-		// `external_invalidate` — that would surface on the wrong wake
-		// path.
+		// @deliberate: And the wake reason should be the deadline-elapsed
+		// flavor: SweepParkedNodes stamps `resume_reason` =
+		// `deadline_elapsed` on the `parked_resume_started` event payload
+		// when it fires off `resume_at`. An external invalidate would
+		// record `external_invalidate` — that would surface on the wrong
+		// wake path.
 		row := lastEventPayload(t, h, thr.ID, "parked_resume_started")
 		require.Equal(t, "deadline_elapsed", row["resume_reason"],
 			"429-leg: resume_reason must be deadline_elapsed (executor's resume_at fired, not external)")

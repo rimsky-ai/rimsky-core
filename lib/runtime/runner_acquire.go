@@ -74,17 +74,6 @@ func lookupGraphName(graphs []spec.GraphSpec, nodeType string) string {
 	return spec.MainGraphName
 }
 
-// resumeMetadata captures the parked metadata for a resumed run. When
-// non-nil, the runner attaches a ResumeContext to the ExecuteRequest
-// the executor receives. Per plan E4.
-type resumeMetadata struct {
-	// @constraint: post-spill resolution of Park.payload — bytes have
-	// already been expanded from any spill reference.
-	Payload      []byte
-	SessionToken string
-	Reason       WakeReason
-}
-
 // acquisition is the in-memory record of one successful acquisition.
 //
 // NOT safe for concurrent use across goroutines. The omnibus runner
@@ -155,7 +144,7 @@ type acquisition struct {
 	// @concept: run-scope
 	PriorDispatchID *shared.UUID
 	// PriorDispatchDisposition classifies why PriorDispatchID is set
-	// (lower_snake_case storage form: "heartbeat_stale" /
+	// (lower_snake_case storage form: "stale_recovery" /
 	// "retry_after_error" / "recalculate"). Empty when
 	// PriorDispatchID is nil. Surfaced on
 	// proto:executor.proto::ExecuteRequest.prior_dispatch_disposition.
@@ -197,10 +186,11 @@ type acquisition struct {
 	// pass / give_up resolutions.
 	PartialLocks []AcquiredLock
 
-	// Resume is set when this acquisition resumed a parked node — the
-	// dispatch path attaches a ResumeContext to the ExecuteRequest the
-	// executor receives. Nil means "fresh dispatch."
-	Resume *resumeMetadata
+	// @deliberate: the legacy Resume *resumeMetadata field is gone.
+	// Per TD-remove-resume-context, resume state rides attribute
+	// carry-forward — session_token / scratch / executor-private state
+	// land on req.Attributes via the normal attribute pipeline, no
+	// separate ResumeContext channel.
 	// UnavailableSpec is the spec whose Open returned Unavailable, when
 	// the acquisition took the Unavailable branch. Carried through the
 	// rollback so the unavailable-handler dispatch can log / route on
@@ -348,7 +338,7 @@ const defaultSelectCandidatesLimit = 8
 // long-gated old candidates (e.g. receivers under a parked upstream)
 // would hold the selection window every poll and starve younger
 // ungated rows for as long as the gates hold.
-func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.Duration) (acquisition, bool, error) {
+func acquireCandidate(ctx context.Context, args RunArgs, livenessInterval time.Duration) (acquisition, bool, error) {
 	limit := args.SelectCandidatesLimit
 	if limit <= 0 {
 		limit = defaultSelectCandidatesLimit
@@ -365,7 +355,7 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 		if len(candidates) == 0 {
 			return acquisition{}, false, nil
 		}
-		acq, ok, err := tryAcquireBatch(ctx, args, candidates, heartbeatInterval)
+		acq, ok, err := tryAcquireBatch(ctx, args, candidates, livenessInterval)
 		if err != nil || ok {
 			return acq, ok, err
 		}
@@ -381,7 +371,7 @@ func acquireCandidate(ctx context.Context, args RunArgs, heartbeatInterval time.
 // per-candidate flow; returns the first successful acquisition.
 func tryAcquireBatch(
 	ctx context.Context, args RunArgs, candidates []persistence.Candidate,
-	heartbeatInterval time.Duration,
+	livenessInterval time.Duration,
 ) (acquisition, bool, error) {
 	for _, cand := range candidates {
 		if cand.FrameID == (shared.UUID{}) {
@@ -391,7 +381,7 @@ func tryAcquireBatch(
 				"reason", "frame_id_null")
 			continue
 		}
-		acq, ok, err := tryAcquireWithTx(ctx, args, cand, heartbeatInterval)
+		acq, ok, err := tryAcquireWithTx(ctx, args, cand, livenessInterval)
 		if err == errAcquireUnavailable {
 			handleAcquireUnavailable(ctx, args, acq, cand)
 			continue
@@ -449,9 +439,6 @@ func tryAcquireBatch(
 		// WARN-and-continue so the loss is visible without losing the
 		// in-flight work.
 		if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			if err := args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, acq.RunScopeID, args.Clock.Now(), args.SupervisorID, tx); err != nil {
-				return err
-			}
 			if err := args.Persist.Events().Append(ctx, persistence.EventAppendInput{
 				NodeID: &acq.NodeID, InstanceID: &acq.InstanceID,
 				Kind: events.KindWorkStarted(), Payload: map[string]any{
@@ -468,7 +455,7 @@ func tryAcquireBatch(
 			}
 			return nil
 		}); err != nil {
-			args.Logger.Warn("tryAcquire: post-acquisition audit tx failed; heartbeat/work_started/lock_acquired events lost",
+			args.Logger.Warn("tryAcquire: post-acquisition audit tx failed; work_started/lock_acquired events lost",
 				"dispatch_id", acq.DispatchID.String(),
 				"node_id", acq.NodeID.String(),
 				"error", err.Error())
@@ -520,7 +507,7 @@ func selectCandidatesShortTx(
 // acquired list is in acq.PartialLocks for Abandon cleanup.
 func tryAcquireWithTx(
 	ctx context.Context, args RunArgs, cand persistence.Candidate,
-	heartbeatInterval time.Duration,
+	livenessInterval time.Duration,
 ) (acquisition, bool, error) {
 	var (
 		acq acquisition
@@ -528,7 +515,7 @@ func tryAcquireWithTx(
 	)
 	err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		var inner error
-		acq, ok, inner = tryAcquire(ctx, args, tx, cand, heartbeatInterval)
+		acq, ok, inner = tryAcquire(ctx, args, tx, cand, livenessInterval)
 		if inner != nil {
 			return inner
 		}
@@ -583,7 +570,7 @@ var errTryAcquireRollback = fmt.Errorf("supervisor: tryAcquire rollback (sentine
 // it's awaiting the read).
 func tryAcquire(
 	ctx context.Context, args RunArgs, tx persistence.Tx,
-	cand persistence.Candidate, heartbeatInterval time.Duration,
+	cand persistence.Candidate, livenessInterval time.Duration,
 ) (acquisition, bool, error) {
 	nd, err := args.Persist.Nodes().Get(ctx, cand.NodeID, tx)
 	if err != nil {
@@ -681,7 +668,7 @@ func tryAcquire(
 
 	acquiredLocks := make([]AcquiredLock, 0, len(specs))
 	for _, sp := range specs {
-		al, res, err := acquireOneLock(ctx, args, tx, nd.InstanceID, sp, cand, heartbeatInterval, heldSubgraphs)
+		al, res, err := acquireOneLock(ctx, args, tx, nd.InstanceID, sp, cand, livenessInterval, heldSubgraphs)
 		if res == openResultErrored {
 			// @constraint: a producer Open RPC faulted. err is the
 			// *peer.ProducerCallError carrying the translated error_class;
@@ -777,7 +764,7 @@ func tryAcquire(
 		out.InstanceAttributeOverrides = inst.AttributeOverrides
 		out.TemplateHash = inst.TemplateHash
 	}
-	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, heartbeatInterval); err != nil {
+	if err := acquireFanOutIfDeclared(ctx, args, tx, nd.InstanceID, &out, cand, nodeDef, acquiredLocks, livenessInterval); err != nil {
 		return acquisition{}, false, err
 	}
 	// @constraint: cross-supervisor sub-claim handoff. The sub-claim rows
@@ -828,7 +815,6 @@ func tryAcquire(
 		out.HeldClaims = held
 	}
 
-	loadResumeMetadataIfParked(ctx, args, tx, &out, cand)
 	// @constraint: load the dispatch row's executor-attached scratch
 	// (inline or spilled-handle materialized via Blob) so
 	// buildExecuteRequest can populate ExecuteRequest.scratch on the

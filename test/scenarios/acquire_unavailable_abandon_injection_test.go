@@ -178,7 +178,7 @@ func TestAcquireUnavailable_AbandonsPartialOpensExactlyOnce(t *testing.T) {
 		Resolver: executor.NewStaticResolver(map[string]executor.Endpoint{
 			"stub": {Transport: "grpc", URL: h.StubAddr},
 		}),
-		HeartbeatInterval: 100 * time.Millisecond,
+		LivenessInterval: 100 * time.Millisecond,
 		// @deliberate: The post-rollback / pre-Abandon window: the acquisition tx is
 		// rolled back (no claim-handle rows survive) but producer #1 has
 		// not yet received its Abandon.

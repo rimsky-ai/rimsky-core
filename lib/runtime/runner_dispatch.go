@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
@@ -76,60 +75,60 @@ func (e *executorSchemaUnavailableError) Error() string {
 	)
 }
 
-// dispatchContext carries the per-dispatch state through the
-// executor stream loop.
+// dispatchContext carries the per-dispatch state into the unary
+// Execute RPC call site.
 type dispatchContext struct {
-	Args              RunArgs
-	Acquired          *acquisition
-	Attributes        map[string]any
-	AttributesSchema  map[string]any
-	HeartbeatInterval time.Duration
-	Log               shared.Logger
-	RegisterAsync     func(ackID string, actx AsyncContext)
+	Args             RunArgs
+	Acquired         *acquisition
+	Attributes       map[string]any
+	AttributesSchema map[string]any
+	LivenessInterval time.Duration
+	Log              shared.Logger
+	RegisterAsync    func(ackID string, actx AsyncContext)
 }
 
-// terminalEvent is the runner-internal classification of an executor
-// stream's terminal event.
+// terminalEvent is the runner-internal classification of an executor's
+// settling outcome — the unary Execute RPC returns one of these per
+// dispatch.
+//
+// Per TD-attributes-delta-on-all-settling-terminals + TD-collapse-
+// named-event-to-tags, every settling kind (Complete/Errored/Park)
+// uniformly carries AttributesDel and Tags. Park no longer carries
+// inline payload bytes or a session token — resume state rides
+// attribute carry-forward (concept:parked-state).
 type terminalEvent struct {
 	Kind          terminalKind
 	Changed       bool
 	ChangeSummary string
+	// AttributesDel is the executor's attribute delta on a settling
+	// terminal (Success / Error / Park). Empty on non-settling kinds.
+	// Persisted alongside the verdict in the same tx by the terminal
+	// handlers.
+	//
+	// @concept: attribute
 	AttributesDel map[string]any
-	ErrorClass    string
-	Payload       map[string]any
+	// Tags is the set of subscriber-visible discriminators the
+	// executor attached on the settling outcome. Deduplicated +
+	// validated against the emitter's declared_tags before persistence;
+	// undeclared tags collapse into an executor_protocol_violation
+	// Error per the gate-2 runtime check (concept:terminal-tag).
+	Tags       []string
+	ErrorClass string
+	Payload    map[string]any
 	// @constraint: Park fields populated only when Kind == terminalKindPark.
 	ParkReason     genv1.ParkReason
 	ParkReasonNote string
-	// ParkReasonLabel is a freeform optional classification tag opaque to rimsky (the closed enum no longer requires it).
+	// ParkReasonLabel is a freeform optional classification tag opaque
+	// to rimsky (the closed enum no longer requires it).
 	ParkReasonLabel string
-	ParkPayload     []byte
 	// @constraint: zero value ParkResumeAt means indefinite park.
-	ParkResumeAt     time.Time
-	ParkSessionToken string
-	// NamedEvents is the optional list of non-terminal NamedEvent
-	// emissions captured during the dispatch (gRPC stream) or in the
-	// async-callback body. Processed in arrival order before the
-	// terminal verdict (per plan H1).
-	NamedEvents []namedEventRecord
+	ParkResumeAt time.Time
 	// Scratch is the executor-attached opaque bytes from a terminal
 	// outcome (Success/Error/Park). Persisted onto the dispatch row by
 	// applyTerminalComplete / applyTerminalError / applyTerminalPark.
 	// Empty when the executor did not attach scratch at terminal.
 	// @concept: executor
 	Scratch []byte
-}
-
-// namedEventRecord captures one NamedEvent emission for ledger persistence.
-//
-// PayloadInline / PayloadHandle / PayloadHandleBackend follow the same
-// inline-or-spill discipline as parked payloads and node attributes.
-// At the runtime entry point (before spill), only PayloadInline is
-// populated; spill-write happens in H1's persist path.
-type namedEventRecord struct {
-	Name                 string
-	PayloadInline        []byte
-	PayloadHandle        string
-	PayloadHandleBackend string
 }
 
 type terminalKind int
@@ -241,44 +240,55 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 	}
 	// @constraint: stamp the executor name so a host-agent-proxy fronting the
 	// executor protocol can route this Execute by service name. The
-	// stream interceptor reads it off the context; a directly-dialed
+	// unary interceptor reads it off the context; a directly-dialed
 	// hosted executor ignores the header.
 	ctx = peer.WithServiceName(ctx, acq.Executor)
-	stream, err := client.Execute(ctx, req)
+	// @constraint: TD-three-dispatch-deadlines — bound the unary RPC
+	// with sync_rpc_deadline (per-node, else deployment default 30s).
+	// Zero/negative disables the bound (unbounded RPC). Expiry surfaces
+	// via ctx.Err() and is mapped to executor_sync_timeout below.
+	deadline := resolveSyncRPCDeadline(acq.NodeDef, dctx.Args.SyncRPCDeadlineDefault)
+	if deadline > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, deadline)
+		defer cancel()
+	}
+	outcome, err := client.Execute(ctx, req)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return terminalEvent{
+				Kind:       terminalKindErrored,
+				ErrorClass: "executor_sync_timeout",
+				Payload: map[string]any{
+					"deadline": deadline.String(),
+					"error":    err.Error(),
+				},
+			}, nil, nil
+		}
 		return terminalEvent{Kind: terminalKindInfra, ErrorClass: "executor_dial_failed",
 			Payload: map[string]any{"error": err.Error()}}, nil, nil
 	}
-	// @deliberate: the executor has now accepted the Execute RPC (the
-	// stream handle is live). The resume metadata has been
-	// materialized into ResumeContext on the wire; clear it now so a
-	// re-park during this run, or any later retry cycle, starts a
-	// fresh resume cycle. If the stream subsequently errors mid-flight
-	// (executor crash, network blip), the dispatch is re-enqueued
-	// fresh via applyTerminalInfraError — by design, since the
-	// executor already saw the resume payload.
-	if dctx.Acquired.Resume != nil {
-		if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			return dctx.Args.Queue.ClearResumeMetadataInTx(ctx, tx, dctx.Acquired.DispatchID)
-		}); err != nil {
-			dctx.Args.Logger.Warn("runner_dispatch: clear resume metadata failed",
-				"dispatch_id", dctx.Acquired.DispatchID.String(),
-				"node_id", dctx.Acquired.NodeID.String(),
-				"error", err.Error())
-		}
-	}
-	terminal, asyncAck := readExecutorStream(ctx, dctx, stream)
-	_ = stream.Close()
+	terminal, asyncAck := readExecutorOutcome(ctx, dctx, outcome)
 
 	if asyncAck != "" {
 		registerAsyncIfSet(dctx, asyncAck)
-		// @concept: signal — canonical signal emission. transient/
-		// await_async fires when the executor returns
-		// AwaitAsyncCallback; the node stays in running state and
-		// the actual settling happens via the callback path. No
-		// fixed-string audit row existed for this transition
-		// pre-Pass-1, so the signal write stands alone.
-		if dctx.Args.Persist != nil {
+		// @concept: signal
+		// @concept: async-callback-persistence
+		// @concept: dispatch-deadlines
+		// @deliberate: persist the ack ID + denormalized per-row dispatch
+		// deadlines onto the dispatch row and emit the canonical
+		// transient/await_async signal in ONE tx so a supervisor crash
+		// between the two cannot leave an audit claiming "await_async
+		// fired" against an empty registry row (handler 404s under that
+		// mismatch). The persistent column is the source-of-truth for
+		// restart-survival; the in-memory cache in registerAsyncIfSet
+		// above is only the hot-path optimization (a miss falls through
+		// to Queue.LookupRunByAsyncAckID at the handler). The denormalized
+		// effective_max_quiet_period / max_runtime values let
+		// code:SweepExecutorDeadlines decide per-row whether to release
+		// without re-walking the template.
+		if dctx.Args.Persist != nil && dctx.Args.Queue != nil {
+			maxQuietSec, maxRuntimeSec := computeEffectiveDeadlineSecs(acq.NodeDef, dctx.Args.MaxQuietPeriodDefault, dctx.Args.MaxRuntimeDefault)
 			awaitSig := signalpkg.Signal{
 				Type: "transient/await_async",
 				Payload: map[string]any{
@@ -287,10 +297,13 @@ func dispatch(ctx context.Context, dctx dispatchContext) (terminalEvent, *Runner
 				},
 			}
 			if err := dctx.Args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+				if err := dctx.Args.Queue.RegisterAsyncAck(ctx, tx, acq.DispatchID, asyncAck, dctx.Args.Clock.Now(), maxQuietSec, maxRuntimeSec); err != nil {
+					return fmt.Errorf("register async ack: %w", err)
+				}
 				return signalaudit.EmitSignal(ctx, dctx.Args.Persist.Events(),
 					acq.InstanceID, acq.NodeID, awaitSig, dctx.Args.Clock.Now(), tx)
 			}); err != nil && dctx.Args.Logger != nil {
-				dctx.Args.Logger.Warn("runner_dispatch: emit transient/await_async signal failed",
+				dctx.Args.Logger.Warn("runner_dispatch: persist async-callback registry failed; await_async signal not emitted, restart-survival not in effect for this ack",
 					"node_id", acq.NodeID.String(),
 					"async_ack_id", asyncAck,
 					"error", err.Error())
@@ -331,106 +344,143 @@ func registerAsyncIfSet(dctx dispatchContext, asyncAck string) {
 	})
 }
 
-// readExecutorStream consumes the executor's gRPC stream up to the
-// terminal event.
+// readExecutorOutcome decodes a unary Execute response into a
+// terminalEvent. Runs the tag-validation helper on settling outcomes
+// (Success/Error/Park) before returning — an undeclared tag substitutes
+// an Error{error_class: executor_protocol_violation} so the verdict
+// path persists the protocol violation rather than the executor's
+// requested terminal (concept:terminal-tag gate-2 enforcement).
 //
-// Non-terminal NamedEvent records are accumulated on the returned
-// terminalEvent's NamedEvents slice; the H1 terminal-handler entry
-// point persists them via NodeEventTable before applying the terminal
-// verdict.
-func readExecutorStream(
-	ctx context.Context, dctx dispatchContext, stream interface {
-		Recv() (*genv1.ExecuteEvent, error)
-	},
+// The second return value is the AsyncAckId when the outcome is
+// AwaitAsyncCallback; empty for every settling kind.
+func readExecutorOutcome(
+	ctx context.Context, dctx dispatchContext, outcome *genv1.Outcome,
 ) (terminalEvent, string) {
+	if outcome == nil {
+		return terminalEvent{
+			Kind:       terminalKindInfra,
+			ErrorClass: "executor_returned_nil_outcome",
+		}, ""
+	}
+	switch oc := outcome.GetOutcome().(type) {
+	case *genv1.Outcome_Success:
+		t := terminalEvent{
+			Kind:          terminalKindComplete,
+			Changed:       oc.Success.Changed,
+			ChangeSummary: oc.Success.ChangeSummary,
+			Scratch:       oc.Success.Scratch,
+			Tags:          dedupTagsRT(oc.Success.Tags),
+		}
+		if oc.Success.AttributesDelta != nil {
+			t.AttributesDel = oc.Success.AttributesDelta.AsMap()
+		}
+		return validateTags(ctx, dctx, t), ""
+	case *genv1.Outcome_Error:
+		var payloadGo any
+		if oc.Error.Payload != nil {
+			payloadGo = oc.Error.Payload.AsMap()
+		}
+		t := terminalEvent{
+			Kind:       terminalKindErrored,
+			ErrorClass: oc.Error.ErrorClass,
+			Payload:    map[string]any{"payload": payloadGo},
+			Scratch:    oc.Error.Scratch,
+			Tags:       dedupTagsRT(oc.Error.Tags),
+		}
+		if oc.Error.AttributesDelta != nil {
+			t.AttributesDel = oc.Error.AttributesDelta.AsMap()
+		}
+		return validateTags(ctx, dctx, t), ""
+	case *genv1.Outcome_Park:
+		t := terminalEvent{
+			Kind:            terminalKindPark,
+			ParkReason:      oc.Park.Reason,
+			ParkReasonNote:  oc.Park.ReasonNote,
+			ParkReasonLabel: oc.Park.ReasonLabel,
+			Scratch:         oc.Park.Scratch,
+			Tags:            dedupTagsRT(oc.Park.Tags),
+		}
+		if oc.Park.AttributesDelta != nil {
+			t.AttributesDel = oc.Park.AttributesDelta.AsMap()
+		}
+		if oc.Park.ResumeAt != nil {
+			t.ParkResumeAt = oc.Park.ResumeAt.AsTime()
+		}
+		return validateTags(ctx, dctx, t), ""
+	case *genv1.Outcome_AwaitAsync:
+		return terminalEvent{Kind: terminalKindAsyncAccepted}, oc.AwaitAsync.AsyncAckId
+	default:
+		return terminalEvent{
+			Kind:       terminalKindInfra,
+			ErrorClass: "executor_returned_unknown_outcome",
+		}, ""
+	}
+}
+
+// dedupTagsRT collapses duplicates preserving first-appearance order
+// per concept:terminal-tag set semantics. Returns nil for empty input.
+func dedupTagsRT(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, t := range in {
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
+}
+
+// validateTags enforces the concept:terminal-tag gate-2 check: every
+// tag on a settling outcome must appear in the emitting executor's
+// declared_tags observability capability. An undeclared tag substitutes
+// an Error{error_class: executor_protocol_violation} terminal so the
+// verdict path persists the protocol violation rather than the
+// executor's requested settling kind. The synthetic Error carries
+// empty Tags so re-entry through this helper is a no-op.
+//
+// When the runtime cannot reach the discovery cache (no resolver
+// wired) the check soft-passes — the registration-time validator's
+// declared_tags check is the primary gate; this is the runtime
+// defense-in-depth.
+func validateTags(_ context.Context, dctx dispatchContext, t terminalEvent) terminalEvent {
+	if len(t.Tags) == 0 {
+		return t
+	}
+	if t.Kind != terminalKindComplete && t.Kind != terminalKindErrored && t.Kind != terminalKindPark {
+		return t
+	}
 	args := dctx.Args
 	acq := dctx.Acquired
-	var pending []namedEventRecord
-	for {
-		ev, rerr := stream.Recv()
-		if rerr == io.EOF {
+	if args.DeclaredTagsFor == nil || acq.Executor == "" {
+		return t
+	}
+	declared, ok := args.DeclaredTagsFor(acq.Executor)
+	if !ok {
+		return t
+	}
+	declaredSet := make(map[string]struct{}, len(declared))
+	for _, d := range declared {
+		declaredSet[d] = struct{}{}
+	}
+	for _, tag := range t.Tags {
+		if _, ok := declaredSet[tag]; !ok {
 			return terminalEvent{
-				Kind:        terminalKindInfra,
-				ErrorClass:  "stream_closed_without_terminal",
-				NamedEvents: pending,
-			}, ""
-		}
-		if rerr != nil {
-			return terminalEvent{
-				Kind:        terminalKindInfra,
-				ErrorClass:  "stream_error",
-				Payload:     map[string]any{"error": rerr.Error()},
-				NamedEvents: pending,
-			}, ""
-		}
-		switch e := ev.Event.(type) {
-		case *genv1.ExecuteEvent_Heartbeat:
-			if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-				return args.Persist.Nodes().UpdateHeartbeat(ctx, acq.NodeID, acq.RunScopeID, args.Clock.Now(), args.SupervisorID, tx)
-			}); err != nil && args.Logger != nil {
-				args.Logger.Warn("runner_dispatch: update heartbeat failed",
-					"node_id", acq.NodeID.String(),
-					"error", err.Error())
-			}
-			_ = e
-		case *genv1.ExecuteEvent_NamedEvent:
-			pending = append(pending, namedEventRecord{
-				Name:          e.NamedEvent.Name,
-				PayloadInline: e.NamedEvent.Payload,
-			})
-		case *genv1.ExecuteEvent_StreamClose:
-			sc := e.StreamClose
-			switch oc := sc.Outcome.(type) {
-			case *genv1.StreamClose_Success:
-				t := terminalEvent{
-					Kind:          terminalKindComplete,
-					Changed:       oc.Success.Changed,
-					ChangeSummary: oc.Success.ChangeSummary,
-					NamedEvents:   pending,
-					Scratch:       oc.Success.Scratch,
-				}
-				if oc.Success.AttributesDelta != nil {
-					t.AttributesDel = oc.Success.AttributesDelta.AsMap()
-				}
-				return t, ""
-			case *genv1.StreamClose_Error:
-				var payloadGo any
-				if oc.Error.Payload != nil {
-					payloadGo = oc.Error.Payload.AsMap()
-				}
-				return terminalEvent{
-					Kind:        terminalKindErrored,
-					ErrorClass:  oc.Error.ErrorClass,
-					Payload:     map[string]any{"payload": payloadGo},
-					NamedEvents: pending,
-					Scratch:     oc.Error.Scratch,
-				}, ""
-			case *genv1.StreamClose_Park:
-				t := terminalEvent{
-					Kind:             terminalKindPark,
-					ParkReason:       oc.Park.Reason,
-					ParkReasonNote:   oc.Park.ReasonNote,
-					ParkReasonLabel:  oc.Park.ReasonLabel,
-					ParkPayload:      oc.Park.Payload,
-					ParkSessionToken: oc.Park.SessionToken,
-					NamedEvents:      pending,
-					Scratch:          oc.Park.Scratch,
-				}
-				if oc.Park.ResumeAt != nil {
-					t.ParkResumeAt = oc.Park.ResumeAt.AsTime()
-				}
-				return t, ""
-			case *genv1.StreamClose_AwaitAsync:
-				// @constraint: AwaitAsyncCallback does not carry NamedEvents — the
-				// executor will POST them via the async-callback body's
-				// `events` array. The runtime drops `pending` here
-				// because the async-callback path handles the entire
-				// session's events on its own.
-				_ = pending
-				return terminalEvent{Kind: terminalKindAsyncAccepted}, oc.AwaitAsync.AsyncAckId
+				Kind:       terminalKindErrored,
+				ErrorClass: "executor_protocol_violation",
+				Payload: map[string]any{
+					"reason":        "undeclared_tag",
+					"tag":           tag,
+					"declared_tags": declared,
+				},
 			}
 		}
 	}
+	return t
 }
 
 // resolveAttributes is the runner's pre-dispatch substitution + validation
@@ -765,9 +815,6 @@ func buildResolveContextForDispatch(
 		}
 		paramsRaw = b
 	}
-	eventLookup := func(emitter, eventName string) (json.RawMessage, bool) {
-		return lookupEventPayload(ctx, args, acq.InstanceID, emitter, eventName)
-	}
 	// @deliberate: bind the frame's triggering message — payload bytes (the
 	// `{{trigger.message.payload.X}}` arm) AND its type (the new
 	// `{{messages.<type>.<field>}}` arm). One SQL fetch, two
@@ -791,7 +838,6 @@ func buildResolveContextForDispatch(
 		Deps:                  deps,
 		Claim:                 claims,
 		Params:                paramsRaw,
-		EventLookup:           eventLookup,
 		ChildPartitionKey:     partitionKey,
 		TriggerMessagePayload: triggerPayload,
 		TriggerMessageType:    triggerType,
@@ -804,12 +850,12 @@ func buildResolveContextForDispatch(
 // more than one delivered message exists, when the read fails, or when
 // the messages table is not wired (test contexts may omit it).
 //
-// Mirrors lookupEventPayload's short-tx pattern: the dispatch context is
-// built outside the acquisition tx (which has committed by then), so the
-// helper opens its own read tx rather than reusing a caller-supplied
-// one. Reads through Messages().ListDeliveredForFrame so the same
-// implementation services both the fan-out partition_request path and
-// the dispatch-time substitution context.
+// The dispatch context is built outside the acquisition tx (which has
+// committed by then), so the helper opens its own read tx rather than
+// reusing a caller-supplied one. Reads through
+// Messages().ListDeliveredForFrame so the same implementation services
+// both the fan-out partition_request path and the dispatch-time
+// substitution context.
 //
 // Per @blessed-invariant 21 the payload bytes are inert — forwarded
 // verbatim into the substitution context. The type-path discriminator is
@@ -831,78 +877,6 @@ func lookupTriggerMessageForFrame(
 		return nil
 	})
 	return payload, mtype
-}
-
-// lookupEventPayload resolves the most recent NamedEvent emission for
-// the (instance, emitter-type, event-name) tuple. Returns ok=false when
-// no row exists or the materialization fails.
-func lookupEventPayload(
-	ctx context.Context, args RunArgs, instanceID shared.UUID, emitterType, eventName string,
-) (json.RawMessage, bool) {
-	var out json.RawMessage
-	var found bool
-	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		rows, err := args.Persist.Nodes().ListByInstance(ctx, instanceID, tx)
-		if err != nil {
-			return nil
-		}
-		var emitterID string
-		for _, r := range rows {
-			if r.NodeType == emitterType {
-				emitterID = r.ID.String()
-				break
-			}
-		}
-		if emitterID == "" {
-			return nil
-		}
-		evt, err := args.Persist.NodeEvents().LatestByName(ctx, instanceID.String(), emitterID, eventName, tx)
-		if err != nil || evt == nil {
-			return nil
-		}
-		// @constraint: inline payload wins; otherwise materialize the handle through
-		// the configured BlobBackend.
-		if len(evt.PayloadInline) > 0 {
-			out = json.RawMessage(evt.PayloadInline)
-			found = true
-			return nil
-		}
-		if evt.PayloadHandle == "" {
-			return nil
-		}
-		switch {
-		case args.Blob == nil:
-			args.Logger.Warn("namedEventPayload: spilled payload but no BlobBackend configured; substitution will see empty",
-				"event_name", eventName,
-				"emitter_node_id", emitterID,
-				"handle_backend", evt.PayloadHandleBackend)
-		case args.Blob.Name() != evt.PayloadHandleBackend:
-			args.Logger.Warn("namedEventPayload: blob backend mismatch; substitution will see empty",
-				"event_name", eventName,
-				"emitter_node_id", emitterID,
-				"current_backend", args.Blob.Name(),
-				"handle_backend", evt.PayloadHandleBackend)
-		default:
-			b, ferr := args.Blob.Read(ctx, persistence.Handle(evt.PayloadHandle))
-			if ferr == nil {
-				out = json.RawMessage(b)
-				found = true
-				return nil
-			}
-			args.Logger.Warn("namedEventPayload: blob fetch failed; substitution will see empty",
-				"event_name", eventName,
-				"emitter_node_id", emitterID,
-				"error", ferr.Error())
-		}
-		return nil
-	}); err != nil && args.Logger != nil {
-		args.Logger.Warn("lookupEventPayload: tx failed; substitution will see empty",
-			"event_name", eventName,
-			"emitter_type", emitterType,
-			"instance_id", instanceID.String(),
-			"error", err.Error())
-	}
-	return out, found
 }
 
 // computeEffectiveAttributeSchema returns the per-node effective
@@ -1332,8 +1306,8 @@ func loadSubscribedNodeAttributesByID(ctx context.Context, args RunArgs, acq *ac
 // @concept: run-scope
 func priorDispositionFromStorageForm(s string) genv1.PriorDispatchDisposition {
 	switch s {
-	case "heartbeat_stale":
-		return genv1.PriorDispatchDisposition_PRIOR_HEARTBEAT_STALE
+	case "stale_recovery":
+		return genv1.PriorDispatchDisposition_PRIOR_STALE_RECOVERY
 	case "retry_after_error":
 		return genv1.PriorDispatchDisposition_PRIOR_RETRY_AFTER_ERROR
 	case "recalculate":
@@ -1408,14 +1382,14 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		// materialized from inline or spilled-handle at acquisition time
 		// (see runner_acquire_helpers.go::loadScratchIntoAcquisition).
 		// Empty on a fresh dispatch; carries forward from a prior
-		// dispatch row across heartbeat_stale / retry_after_error /
+		// dispatch row across stale_recovery / retry_after_error /
 		// recalculate transitions. Inert in rimsky per
 		// @blessed-invariant 21. @concept: executor
 		Scratch: acq.Scratch,
 	}
 	// @constraint: recovery-aware fields surface the predecessor dispatch identity +
-	// classifier when this run supersedes a prior dispatch (heartbeat
-	// stale recovery, retry-after-error, recalculate). Both unset on
+	// classifier when this run supersedes a prior dispatch
+	// (stale-recovery, retry-after-error, recalculate). Both unset on
 	// initial dispatches. Per spec
 	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
 	// §Recovery-aware executor protocol.
@@ -1427,26 +1401,16 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 		disposition := priorDispositionFromStorageForm(acq.PriorDispatchDisposition)
 		req.PriorDispatchDisposition = &disposition
 	}
-	// @deliberate: resume dispatch — when this acquisition is resuming a parked node,
-	// attach the persisted park metadata as ResumeContext so the
-	// executor can re-establish session state. Per plan E4.
-	//
-	// Note: the clear-of-parked-metadata is deferred to the dispatch
-	// caller (after the executor stream produces a terminal). If
-	// buildExecuteRequest cleared here and the executor RPC then failed
-	// (dial / serialization), the row would be re-enqueued via
-	// applyTerminalInfraError but the next pickup would be a fresh
-	// dispatch — the executor would never see the parked payload it
-	// was resuming. Keeping the clear in the success branch preserves
-	// the metadata across pre-RPC failures so the retry is still a
-	// resume.
-	if acq.Resume != nil {
-		req.ResumeContext = &genv1.ResumeContext{
-			Payload:      acq.Resume.Payload,
-			SessionToken: acq.Resume.SessionToken,
-			ResumeReason: string(acq.Resume.Reason),
-		}
-	}
+	// @deliberate: resume metadata is no longer threaded as a separate
+	// ResumeContext wire field. Per TD-remove-resume-context, resume
+	// state rides attribute carry-forward: the executor wrote
+	// session_token / scratch / any in-flight state to attributes_delta
+	// on the prior settling terminal (Park or Error), the supervisor
+	// persisted that delta onto the node-run row, and the next
+	// dispatch's attribute resolution surfaces it in
+	// req.Attributes. The executor reads incoming attributes to detect
+	// a resume situation (the resume marker is in the attributes the
+	// executor itself authored).
 	return req, nil
 }
 

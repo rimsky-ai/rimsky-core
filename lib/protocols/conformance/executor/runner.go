@@ -27,21 +27,22 @@ type Result struct {
 // RunnerOpts configures a single conformance run.
 type RunnerOpts struct {
 	Endpoint        Endpoint
-	RequireStubMode bool          // @constraint: if true, probe must return {stub:true}; else fail
-	Only            []string      // @constraint: run only these scenario names
-	Skip            []string      // @constraint: skip these scenario names
-	Timeout         time.Duration // @constraint: per-scenario; default 30s
-	CallbackBind    string        // @constraint: BindHost for the callback receiver (default "127.0.0.1")
-	CallbackHost    string        // @constraint: AdvertiseHost for the callback receiver (default same as BindHost)
+	RequireStubMode bool
+	Only            []string
+	Skip            []string
+	Timeout         time.Duration
+	CallbackBind    string
+	CallbackHost    string
 }
 
-// Run dials the endpoint, starts a CallbackReceiver, probes capabilities, and
-// executes every registered scenario (subject to Only/Skip filters). Returns
-// one Result per scenario.
+// Run dials the endpoint, starts a CallbackReceiver, probes
+// capabilities (stub mode and async-callback support), and executes
+// every scenario registered via All() — subject to the Only/Skip
+// filters and the per-scenario RequiresStub / RequiresAsync gates.
+// Returns one Result per scenario carrying pass / fail / skipped
+// state plus the failure error string when failed.
 //
-// @concept: conformance (executor conformance entry; the conformance library
-// lives in the protocols module, invocable from the thin CLI wrappers and
-// from service authors' own Go tests)
+// @concept: conformance
 func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Second
@@ -68,10 +69,9 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 			return nil, fmt.Errorf("stub-mode probe failed: %w", err)
 		}
 		if !stubOK {
-			return nil, fmt.Errorf("executor not in stub mode (probe returned non-stub response)")
+			return nil, fmt.Errorf("executor not in stub mode")
 		}
 	}
-
 	asyncSupport := probeAsyncSupport(ctx, env, opts.Timeout)
 
 	results := []Result{}
@@ -101,16 +101,8 @@ func Run(ctx context.Context, opts RunnerOpts) ([]Result, error) {
 	return results, nil
 }
 
-// probeStubMode sends a stub-probe Execute and returns true iff the resulting
-// terminal StreamClose Success outcome carries `attributes_delta = {stub: true}`.
-// AwaitTerminal handles async executors by following the callback when the
-// AwaitAsyncCallback outcome is observed.
-//
-// Callers that depend on a definite stub-mode answer (e.g.
-// `--require-stub-mode`) MUST inspect the returned error. A nil error +
-// false means "executor responded but did not advertise stub mode"; a
-// non-nil error means we never got a clean answer (connection failure,
-// timeout) and the result is indeterminate.
+// probeStubMode sends a stub-probe Execute and returns true iff the
+// resulting Success outcome carries `attributes_delta = {stub: true}`.
 func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, error) {
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -120,36 +112,25 @@ func probeStubMode(ctx context.Context, env Env, timeout time.Duration) (bool, e
 		Attributes:  ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
-	stream, err := env.Client.Execute(pctx, req)
+	outcome, err := env.Client.Execute(pctx, req)
 	if err != nil {
 		return false, err
 	}
-	defer stream.Close()
-	ev, err := AwaitTerminal(pctx, stream, env)
+	settled, err := AwaitTerminal(pctx, outcome, env)
 	if err != nil {
-		// @constraint: AwaitTerminal failures are indeterminate — the caller
-		// (`--require-stub-mode`) MUST treat this as a probe failure rather
-		// than "executor isn't stubbed". Returning (false, nil) here would
-		// let a non-stub executor pass the require gate when the probe RPC
-		// merely timed out.
 		return false, err
 	}
-	if sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose); ok {
-		if succ, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_Success); ok {
-			m := succ.Success.GetAttributesDelta().AsMap()
-			if v, ok := m["stub"].(bool); ok && v {
-				return true, nil
-			}
+	if succ, ok := settled.GetOutcome().(*genv1.Outcome_Success); ok {
+		m := succ.Success.GetAttributesDelta().AsMap()
+		if v, ok := m["stub"].(bool); ok && v {
+			return true, nil
 		}
 	}
 	return false, nil
 }
 
-// probeAsyncSupport sends an Execute with attributes.probe_async=true and
-// returns true iff the executor responds with a StreamClose whose outcome is
-// AwaitAsyncCallback on the gRPC stream. Unlike the regular terminal-await
-// flow, this probe deliberately stops at the gRPC terminal — receipt of
-// AwaitAsyncCallback IS the signal we are looking for.
+// probeAsyncSupport sends an Execute with attributes.probe_async=true
+// and returns true iff the executor responds with AwaitAsyncCallback.
 func probeAsyncSupport(ctx context.Context, env Env, timeout time.Duration) bool {
 	pctx, cancel := context.WithTimeout(ctx, timeout/3)
 	defer cancel()
@@ -159,26 +140,12 @@ func probeAsyncSupport(ctx context.Context, env Env, timeout time.Duration) bool
 		Attributes:  ud,
 		CallbackUrl: env.Callbacks.URL(),
 	}
-	stream, err := env.Client.Execute(pctx, req)
+	outcome, err := env.Client.Execute(pctx, req)
 	if err != nil {
 		return false
 	}
-	defer stream.Close()
-	for {
-		ev, err := stream.Recv()
-		if err != nil {
-			break
-		}
-		if sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose); ok {
-			switch sc.StreamClose.Outcome.(type) {
-			case *genv1.StreamClose_AwaitAsync:
-				return true
-			case *genv1.StreamClose_Success, *genv1.StreamClose_Error, *genv1.StreamClose_Park:
-				return false
-			}
-		}
-	}
-	return false
+	_, isAsync := outcome.GetOutcome().(*genv1.Outcome_AwaitAsync)
+	return isAsync
 }
 
 func skipMatch(name string, only, skip []string) bool {

@@ -20,13 +20,13 @@ import {
  *     for the terminal-final writeback pattern (empty for the
  *     incremental-via-callback pattern). The legacy `result` field has
  *     been retired.
- *   - `report_blocked` — emits a StreamClose `Error{error_class:
- *     "agent/blocked"}` outcome on the wire (post-E.2 the pre-rename
+ *   - `report_blocked` — settles the dispatch with an `Outcome{Error}`
+ *     carrying `error_class: "agent/blocked"` (post-E.2 the pre-rename
  *     Blocked variant collapsed into Error with the reserved
  *     `agent/blocked` class; 2026-05-23 the class moved under the
  *     hierarchical `agent/*` prefix per the signal-taxonomy spec).
- *   - `report_error`   — emits a StreamClose `Error{error_class}` outcome
- *     on the wire.
+ *   - `report_error`   — settles the dispatch with an `Outcome{Error}`
+ *     carrying the supplied `error_class`.
  *   - `attributes_read` / `attributes_set` — per spec §12.5; defined in
  *     `attributes-tools.ts` and re-exported here.
  */
@@ -75,15 +75,6 @@ export const ReportParkInput = z.object({
   reason: z.enum(PARK_REASONS),
   reason_note: z.string().optional(),
   resume_at: z.string().optional(),
-});
-
-export const EmitNamedEventInput = z.object({
-  token: z.string(),
-  name: z.string(),
-  // @deliberate: opaque per concept:inertness (@blessed-invariant 21): the tool
-  // serializes the payload to bytes and rides it through verbatim — it
-  // never inspects, validates-beyond-serialization, or transforms it.
-  payload: z.unknown(),
 });
 
 export { AttributesReadInput, AttributesSetInput };
@@ -170,24 +161,6 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           format: "date-time",
           description: "Optional ISO 8601 timestamp at which to wake. Absent means signal-only.",
         },
-      },
-    },
-  },
-  {
-    name: "emit_named_event",
-    description:
-      "Emit a non-terminal named event. The event name must be one the " +
-      "executor declares (RIMSKY_EXECUTOR_DECLARED_EVENTS); an undeclared " +
-      "name is rejected. The payload is an opaque JSON value carried " +
-      "through verbatim. Events ride the dispatch's final callback; this " +
-      "does not end the run — still call report_complete/blocked/error/park.",
-    inputSchema: {
-      type: "object",
-      required: ["token", "name"],
-      properties: {
-        token: { type: "string" },
-        name: { type: "string" },
-        payload: {},
       },
     },
   },

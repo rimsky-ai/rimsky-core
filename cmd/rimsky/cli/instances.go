@@ -374,16 +374,12 @@ func printInstanceStatus(status *InstanceStatus) {
 	fmt.Fprintln(os.Stdout, "\nNodes:")
 	nodeRows := make([][]string, 0, len(status.Nodes))
 	for _, n := range status.Nodes {
-		hb := ""
-		if n.LastHeartbeatAt != nil {
-			hb = *n.LastHeartbeatAt
-		}
 		nodeRows = append(nodeRows, []string{
 			n.ID, n.NodeType, n.State, n.CurrentErrorClass,
-			fmt.Sprintf("%d", n.RetryCounter), hb,
+			fmt.Sprintf("%d", n.RetryCounter),
 		})
 	}
-	EmitTable(os.Stdout, []string{"ID", "TYPE", "STATE", "ERROR_CLASS", "RETRIES", "LAST_HEARTBEAT"}, nodeRows)
+	EmitTable(os.Stdout, []string{"ID", "TYPE", "STATE", "ERROR_CLASS", "RETRIES"}, nodeRows)
 
 	fmt.Fprintln(os.Stdout, "\nRecent events:")
 	eventRows := make([][]string, 0, len(status.RecentEvents))

@@ -10,7 +10,7 @@ aliases:
 
 ## What it is
 
-`parked` is the fifth legal node state, entered from `running` when the executor emits a park outcome. While parked, the node is not running and not failed; it carries a `parked_payload`, optional `session_token`, optional `resume_at`, and `parked_reason`. The corresponding node-run phase is `'parked'`.
+`parked` is the fifth legal node state, entered from `running` when the executor emits a park outcome. While parked, the node is not running and not failed; it carries `parked_reason`, optional `parked_reason_label`, optional `parked_reason_note`, and optional `resume_at`. The corresponding node-run phase is `'parked'`.
 
 ### Park-flavored signals
 
@@ -18,16 +18,9 @@ Park terminals emit canonical signals per `concept:signal`: `terminal/park/snooz
 
 ### Resume context
 
-When the runner re-dispatches a parked node, a resume-context is populated on the execute request. It carries three fields: the parked payload (verbatim from the original park), an optional session token (verbatim from the original park), and a resume-reason discriminator (`"deadline_elapsed"` or `"external_invalidate"`).
+Parked nodes carry no dedicated resume context. On re-dispatch (whether time-wake via the parked sweep or cascade-invalidate via an upstream event), the executor receives the dispatch with the standard `ExecuteRequest.attributes` populated by attribute carry-forward. Executors that need state across a park-and-resume cycle write it to `attributes_delta` on the Park terminal and read it from incoming attributes on re-dispatch. The two exit paths (time-wake when `resume_at` has passed; external invalidate via admin endpoint or in-graph subscription match) still emit `terminal/park/<reason>` signals as before, but no per-row payload or session token is threaded through to the re-dispatch.
 
-Executors use these fields to resume external work. For example, an agent executor uses the session token to resume the external session it had open before parking; a long-running-job executor uses the parked payload to carry a job ID so the resumed dispatch can poll the same job.
-
-Two exit paths populate `resume_reason`:
-
-- **Time-based wake** — the parked-node sweep transitions the run when `resume_at` has passed; `resume_reason: "deadline_elapsed"`.
-- **External invalidate** — in-graph or admin invalidate against the parked node transitions it back to `stale` and re-dispatches on the next tick; `resume_reason: "external_invalidate"`.
-
-(The third exit path, watchdog timeout, does not re-dispatch — it forces `failed{error_class: "park_timeout"}` and emits no resume context.)
+(The third exit path, watchdog timeout, does not re-dispatch — it forces `failed{error_class: "park_timeout"}`.)
 
 ## Purpose
 
@@ -35,12 +28,12 @@ Some workloads (human review, scheduled wake, external event wait) cannot finish
 
 ## Boundaries
 
-Owns: the hold-state schema (the park fields on the node-run row), the three exit paths (time-wake, external invalidate, watchdog timeout), the resume context passed back on re-dispatch. Does NOT own: held-claim resolution (that's `auto-terminal`); orphan reaping (parked rows are explicitly skipped). Adjacent: `node-run`, `auto-terminal`, `claim-handle` (including its held variant), `blob-backend` (parked_payload spills via the same mechanism).
+Owns: the hold-state schema (the park fields on the node-run row), the three exit paths (time-wake, external invalidate, watchdog timeout). Does NOT own: held-claim resolution (that's `auto-terminal`); orphan reaping (parked rows are explicitly skipped). Adjacent: `node-run`, `auto-terminal`, `claim-handle` (including its held variant).
 
 ## Invariants
 
 - Parked nodes emit `terminal/park/*` signals; subscribers decide whether to react (propagation is determined by subscriber matches against the emitted signal, not by sender color).
-- The orphan-claim reaper skips `phase='parked'` rows because parked nodes do not heartbeat (`@blessed-invariant 6` exception).
+- The orphan-claim reaper skips `phase='parked'` rows because parked rows are settled with respect to liveness (no quiet-period or RPC connection state to observe).
 - Time-wake and external-invalidate both transition `parked → stale` (never directly to `running`); the next supervisor tick re-dispatches. Watchdog timeout is the one destructive exit (`parked → failed` with `error_class: "park_timeout"`).
 - Held-claim auto-terminal continues to fire correctly across park because the claim-holder's state stays `'active'` while the node is parked.
 

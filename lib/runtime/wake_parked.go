@@ -32,8 +32,9 @@ import (
 )
 
 // WakeReason captures the invalidate's source for the resume_reason
-// field of ResumeContext. Distinct values let the executor log / tune
-// behavior on resume.
+// field of the parked_resume_started audit event. Distinct values
+// let dashboards distinguish deadline-driven wakes from external
+// invalidates.
 type WakeReason string
 
 const (
@@ -130,7 +131,7 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 		return nil
 	}
 	return args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, string(reason))
+		resumed, err := args.Queue.ResumeParkedInTx(ctx, tx, parked.DispatchID)
 		if err != nil {
 			return err
 		}
@@ -151,8 +152,6 @@ func wakeParkedNode(ctx context.Context, args WakeParkedArgs, target *persistenc
 				"resume_reason": string(reason),
 				"supervisor_id": args.SupervisorID,
 				"prior_reason":  parked.Reason,
-				"had_session":   parked.SessionToken != "",
-				"payload_bytes": len(parked.PayloadInline) + len(parked.PayloadHandle),
 			},
 		}, tx); err != nil {
 			return err
@@ -241,7 +240,7 @@ func wakeParkedReceiverWithDepsInTx(
 		// is the Phase B recovery surface; bail out cleanly here.
 		return nil
 	}
-	resumed, err := queue.ResumeParkedInTx(ctx, tx, parked.DispatchID, "cascade_wake")
+	resumed, err := queue.ResumeParkedInTx(ctx, tx, parked.DispatchID)
 	if err != nil {
 		return fmt.Errorf("wakeParkedReceiverInTx: ResumeParkedInTx: %w", err)
 	}
@@ -291,8 +290,6 @@ func wakeParkedReceiverWithDepsInTx(
 		Payload: map[string]any{
 			"resume_reason": "cascade_wake",
 			"prior_reason":  parked.Reason,
-			"had_session":   parked.SessionToken != "",
-			"payload_bytes": len(parked.PayloadInline) + len(parked.PayloadHandle),
 		},
 	}, tx)
 }

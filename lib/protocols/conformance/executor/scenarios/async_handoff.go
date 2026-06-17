@@ -6,9 +6,7 @@ package scenarios
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -16,65 +14,55 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
+// @deliberate: async_handoff exercises the AwaitAsyncCallback path:
+// the unary Execute returns AwaitAsyncCallback immediately with a
+// non-empty async_ack_id, the conformance receiver registers the id,
+// the executor POSTs the settling outcome to
+// `${callback_url}/v1/callback/{ackId}`, and the receiver delivers
+// the outcome to the awaiter. Per
+// TD-persist-async-callback-registry the supervisor-side registry is
+// persistent; this conformance scenario asserts the protocol round
+// trip without exercising the persistence guarantee (the
+// async_callback_survives_restart scenario asserts that).
+//
+// @concept: async-callback-persistence
+// @concept: executor
 func init() {
 	conformance.Register(conformance.Scenario{
 		Name:          "async_handoff",
+		RequiresStub:  true,
 		RequiresAsync: true,
-		Run:           runAsyncHandoff,
+		Run: func(ctx context.Context, env conformance.Env) error {
+			attrs, err := structpb.NewStruct(map[string]any{"probe_async": true})
+			if err != nil {
+				return fmt.Errorf("build attributes: %w", err)
+			}
+			req := &genv1.ExecuteRequest{
+				NodeId:      "async-handoff",
+				InstanceId:  "async-handoff",
+				NodeType:    "conformance",
+				Attributes:  attrs,
+				CallbackUrl: env.Callbacks.URL(),
+			}
+			outcome, err := env.Client.Execute(ctx, req)
+			if err != nil {
+				return fmt.Errorf("Execute: %w", err)
+			}
+			await, ok := outcome.GetOutcome().(*genv1.Outcome_AwaitAsync)
+			if !ok {
+				return fmt.Errorf("expected Outcome_AwaitAsync from unary Execute, got %T", outcome.GetOutcome())
+			}
+			if await.AwaitAsync.GetAsyncAckId() == "" {
+				return fmt.Errorf("AwaitAsyncCallback carried empty async_ack_id")
+			}
+			settled, err := conformance.AwaitTerminal(ctx, outcome, env)
+			if err != nil {
+				return fmt.Errorf("AwaitTerminal: %w", err)
+			}
+			if _, isAsync := settled.GetOutcome().(*genv1.Outcome_AwaitAsync); isAsync {
+				return fmt.Errorf("AwaitTerminal returned AwaitAsyncCallback; expected a settling terminal after callback")
+			}
+			return nil
+		},
 	})
-}
-
-// runAsyncHandoff asserts the executor can emit an AwaitAsyncCallback
-// terminal StreamClose outcome when prompted via attributes.probe_async,
-// AND that the executor follows through with a callback POST resolving
-// to a real terminal verdict (Success / Error / Park) at the
-// conformance receiver.
-func runAsyncHandoff(ctx context.Context, env conformance.Env) error {
-	ud, _ := structpb.NewStruct(map[string]any{"probe_async": true})
-	req := &genv1.ExecuteRequest{
-		NodeId: "conformance", InstanceId: "conformance",
-		NodeType: "conformance-probe-async", Attributes: ud,
-		CallbackUrl: env.Callbacks.URL(),
-	}
-	stream, err := env.Client.Execute(ctx, req)
-	if err != nil {
-		return fmt.Errorf("execute: %w", err)
-	}
-	defer stream.Close()
-
-	var asyncAckID string
-	for {
-		ev, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			if asyncAckID != "" {
-				break
-			}
-			return fmt.Errorf("recv: %w", err)
-		}
-		if sc, ok := ev.Event.(*genv1.ExecuteEvent_StreamClose); ok {
-			if aw, ok := sc.StreamClose.Outcome.(*genv1.StreamClose_AwaitAsync); ok {
-				asyncAckID = aw.AwaitAsync.GetAsyncAckId()
-				continue
-			}
-			if asyncAckID == "" {
-				return fmt.Errorf("expected AwaitAsyncCallback, got %T", sc.StreamClose.Outcome)
-			}
-		}
-	}
-	if asyncAckID == "" {
-		return errors.New("stream ended without AwaitAsyncCallback")
-	}
-	ch := env.Callbacks.Register(asyncAckID)
-	select {
-	case cbEv := <-ch:
-		if cbEv == nil {
-			return errors.New("callback channel closed without delivering a terminal")
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("await callback for %s: %w", asyncAckID, ctx.Err())
-	}
 }

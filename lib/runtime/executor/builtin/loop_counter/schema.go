@@ -3,10 +3,11 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Package loop_counter ships the rimsky-bundled "loop_counter" utility
-// node: an in-process executor handler that increments a count attribute
-// across dispatches in a RunScope and emits `loop` or `done` named
-// events. See `concept:executor` (in-process form) and
-// `decision:loop-counter-shape` for the surface decisions.
+// node: an in-process executor handler that increments a count
+// attribute across dispatches in a RunScope and tags its settling
+// Success outcome with `loop` (while count < max) or `done` (at the
+// cap). See `concept:executor` (in-process form) /
+// `concept:terminal-tag` / `decision:loop-counter-shape`.
 package loop_counter
 
 // SchemaBytes returns the JSON Schema fragment for loop_counter's
@@ -27,8 +28,10 @@ func SchemaBytes() []byte {
 }`)
 }
 
-// DeclaredEvents is the loop_counter handler's named-event vocabulary.
-func DeclaredEvents() []string { return []string{"loop", "done"} }
+// DeclaredTags is the loop_counter handler's terminal-tag vocabulary.
+//
+// @concept: terminal-tag
+func DeclaredTags() []string { return []string{"loop", "done"} }
 
 // ExecutorAlias is the rimsky-side executor identity for the kind sugar.
 const ExecutorAlias = "rimsky.loop_counter"

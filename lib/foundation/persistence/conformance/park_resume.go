@@ -13,12 +13,11 @@
 //     parked_at + max_park_duration_seconds AND a not-yet-due resume_at
 //     are watchdog candidates (the park-timeout failure path).
 //   - ResumeParkedInTx: parked → pending exactly once (gated on
-//     phase='parked'), wake_reason persisted, the row re-enters the
-//     dispatch-candidate pool, and the park metadata survives the
-//     transition so E4 can build ResumeContext.
-//   - LoadResumeMetadataInTx / ClearResumeMetadataInTx: the metadata
-//     round-trip and the post-dispatch clear (a re-park cycle starts
-//     clean).
+//     phase='parked'), the row re-enters the dispatch-candidate pool,
+//     and the park metadata (reason, reason_note) survives the
+//     transition. Post-rewrite there is no separate ResumeContext
+//     channel and no inline park payload — resume state rides
+//     attribute carry-forward (concept:parked-state).
 //
 // SQLite stores the park timestamps as RFC3339 text while postgres
 // uses timestamptz + INTERVAL arithmetic in the overdue predicate —
@@ -27,7 +26,6 @@
 package conformance
 
 import (
-	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -356,7 +354,7 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 
 	for _, runID := range []shared.UUID{runA, runB} {
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-			_, err := q.ResumeParkedInTx(ctx, tx, runID, "deadline_elapsed")
+			_, err := q.ResumeParkedInTx(ctx, tx, runID)
 			return err
 		}); err != nil {
 			t.Fatalf("ResumeParkedInTx(%s): %v", runID, err)
@@ -368,9 +366,11 @@ func testParkResumeHeldFrameCount(t *testing.T, d persistence.Database) {
 }
 
 // testParkResumeMetadataRoundTrip covers the parked → pending
-// transition: exactly-once resume, wake_reason persistence, metadata
-// survival for ResumeContext, re-candidacy of the resumed row, and the
-// post-dispatch metadata clear.
+// transition: exactly-once resume, re-candidacy of the resumed row,
+// and survival of the park reason metadata on the row across the
+// transition. Resume state (session_token, executor-scratch) rides
+// attribute carry-forward and is exercised separately under
+// run_state_writes_isolated_by_scope.go.
 func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	fix := seedFixtureSet(ctx, t, d)
@@ -378,7 +378,6 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	now := time.Now()
 
 	runID := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, parkResumeSup)
-	payload := []byte(`{"resume":"state"}`)
 	parkedAt := now.Add(-30 * time.Minute)
 	parkRun(ctx, t, d, persistence.ParkActiveInput{
 		DispatchID:        runID,
@@ -387,8 +386,6 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 		ResumeAt:          now.Add(-1 * time.Minute),
 		Reason:            "snooze",
 		ReasonNote:        "free-form note",
-		SessionToken:      "session-token-1",
-		PayloadInline:     payload,
 	})
 
 	parked, err := q.GetParkedByNode(ctx, fix.NodeID, fix.MainRunScopeID)
@@ -398,29 +395,28 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	if parked == nil || parked.DispatchID != runID {
 		t.Fatalf("GetParkedByNode = %+v, want run %s", parked, runID)
 	}
-	if parked.Reason != "snooze" || parked.SessionToken != "session-token-1" ||
-		!bytes.Equal(parked.PayloadInline, payload) {
+	if parked.Reason != "snooze" || parked.ReasonNote != "free-form note" {
 		t.Fatalf("parked metadata mismatch: %+v", parked)
 	}
 
 	// @constraint: resume exactly once — first wake succeeds, second is
 	// a no-op (gated on phase='parked' — the exactly-once property the
 	// E3 sweep and the G3 invalidate handler both rely on when racing).
-	resume := func(wakeReason string) bool {
+	resume := func() bool {
 		var resumed bool
 		if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 			var err error
-			resumed, err = q.ResumeParkedInTx(ctx, tx, runID, wakeReason)
+			resumed, err = q.ResumeParkedInTx(ctx, tx, runID)
 			return err
 		}); err != nil {
 			t.Fatalf("ResumeParkedInTx: %v", err)
 		}
 		return resumed
 	}
-	if !resume("deadline_elapsed") {
+	if !resume() {
 		t.Fatalf("first ResumeParkedInTx did not resume the parked row")
 	}
-	if resume("deadline_elapsed") {
+	if resume() {
 		t.Fatalf("second ResumeParkedInTx resumed an already-pending row")
 	}
 
@@ -461,52 +457,126 @@ func testParkResumeMetadataRoundTrip(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("SelectCandidates after resume: %v", err)
 	}
+}
 
-	// @constraint: park metadata survives the parked → pending
-	// transition so E4 can build ResumeContext, and wake_reason rides
-	// along.
-	var meta *persistence.ResumeMetadataRow
+// testRegisterAsyncAckRoundTrip covers RegisterAsyncAck +
+// LookupRunByAsyncAckID — the persistent callback registry the
+// supervisor uses to route POST /v1/callback/{ack_id} after an
+// AwaitAsyncCallback handoff. Asserts registration uniqueness, durable
+// lookup, and that ack registration also bumps last_progress_at so the
+// quiet-period sweep treats fresh registration as recent activity.
+func testRegisterAsyncAckRoundTrip(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	q := d.Queue()
+
+	runID := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, parkResumeSup)
+	ackID := "ack-" + uuid.New().String()
+	now := time.Now().UTC().Truncate(time.Second)
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		var err error
-		meta, err = q.LoadResumeMetadataInTx(ctx, tx, runID)
-		return err
+		return q.RegisterAsyncAck(ctx, tx, runID, ackID, now, nil, nil)
 	}); err != nil {
-		t.Fatalf("LoadResumeMetadataInTx: %v", err)
-	}
-	if meta == nil {
-		t.Fatalf("LoadResumeMetadataInTx returned nil after resume")
-	}
-	if meta.Reason != "snooze" || meta.ReasonNote != "free-form note" ||
-		meta.SessionToken != "session-token-1" || !bytes.Equal(meta.PayloadInline, payload) {
-		t.Fatalf("resume metadata mismatch: %+v", meta)
-	}
-	if meta.WakeReason != "deadline_elapsed" {
-		t.Fatalf("wake_reason = %q, want deadline_elapsed", meta.WakeReason)
-	}
-	// @constraint: parked_at is preserved across the transition
-	// (drivers store it at different precisions; compare with a 1s
-	// tolerance).
-	if diff := meta.ParkedAt.Sub(parkedAt); diff < -time.Second || diff > time.Second {
-		t.Fatalf("parked_at = %v drifted from %v", meta.ParkedAt, parkedAt)
+		t.Fatalf("RegisterAsyncAck: %v", err)
 	}
 
-	// @constraint: after a successful resume dispatch the runner clears
-	// the metadata — a re-park cycle starts clean
-	// (LoadResumeMetadataInTx's nil contract distinguishes fresh
-	// dispatch from resume).
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return q.ClearResumeMetadataInTx(ctx, tx, runID)
+		got, err := q.LookupRunByAsyncAckID(ctx, tx, ackID)
+		if err != nil {
+			return err
+		}
+		if got == nil {
+			t.Fatalf("LookupRunByAsyncAckID(%q) returned nil after registration", ackID)
+		}
+		if got.ID != runID {
+			t.Fatalf("LookupRunByAsyncAckID = %s, want %s", got.ID, runID)
+		}
+		if got.AsyncAckID == nil || *got.AsyncAckID != ackID {
+			t.Fatalf("dispatch row AsyncAckID = %v, want %s", got.AsyncAckID, ackID)
+		}
+		if got.LastProgressAt == nil {
+			t.Fatalf("RegisterAsyncAck did not set last_progress_at")
+		}
+		return nil
 	}); err != nil {
-		t.Fatalf("ClearResumeMetadataInTx: %v", err)
+		t.Fatalf("LookupRunByAsyncAckID round-trip: %v", err)
 	}
+
+	// @constraint: unknown ackID resolves to (nil, nil), not an error.
 	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		var err error
-		meta, err = q.LoadResumeMetadataInTx(ctx, tx, runID)
-		return err
+		got, err := q.LookupRunByAsyncAckID(ctx, tx, "no-such-ack-id")
+		if err != nil {
+			return err
+		}
+		if got != nil {
+			t.Fatalf("LookupRunByAsyncAckID(unknown) = %+v, want nil", got)
+		}
+		return nil
 	}); err != nil {
-		t.Fatalf("LoadResumeMetadataInTx after clear: %v", err)
+		t.Fatalf("LookupRunByAsyncAckID(unknown): %v", err)
 	}
-	if meta != nil {
-		t.Fatalf("metadata survived ClearResumeMetadataInTx: %+v", meta)
+}
+
+// testBumpLastProgressAt covers the per-dispatch liveness timestamp.
+// The §12.5 attribute writeback handler and the explicit keepalive
+// endpoint both call BumpLastProgressAt to push the quiet-period sweep
+// out — assert the timestamp advances monotonically across calls.
+func testBumpLastProgressAt(t *testing.T, d persistence.Database) {
+	ctx := context.Background()
+	fix := seedFixtureSet(ctx, t, d)
+	q := d.Queue()
+
+	runID := seedClaimedRunForNode(ctx, t, d, fix, fix.NodeID, parkResumeSup)
+
+	t1 := time.Now().UTC().Truncate(time.Second)
+	var found bool
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var berr error
+		found, berr = q.BumpLastProgressAt(ctx, tx, runID, t1)
+		return berr
+	}); err != nil {
+		t.Fatalf("BumpLastProgressAt(t1): %v", err)
+	}
+	if !found {
+		t.Fatalf("BumpLastProgressAt(t1): found=false for seeded run %s", runID)
+	}
+
+	got, err := q.GetByID(ctx, runID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID after first bump: row=%v err=%v", got, err)
+	}
+	if got.LastProgressAt == nil || got.LastProgressAt.Before(t1.Add(-time.Second)) {
+		t.Fatalf("last_progress_at after first bump = %v, want >= %v", got.LastProgressAt, t1)
+	}
+
+	t2 := t1.Add(5 * time.Second)
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var berr error
+		found, berr = q.BumpLastProgressAt(ctx, tx, runID, t2)
+		return berr
+	}); err != nil {
+		t.Fatalf("BumpLastProgressAt(t2): %v", err)
+	}
+	if !found {
+		t.Fatalf("BumpLastProgressAt(t2): found=false for seeded run %s", runID)
+	}
+	got, err = q.GetByID(ctx, runID)
+	if err != nil || got == nil {
+		t.Fatalf("GetByID after second bump: row=%v err=%v", got, err)
+	}
+	if got.LastProgressAt == nil || got.LastProgressAt.Before(t2.Add(-time.Second)) {
+		t.Fatalf("last_progress_at after second bump = %v, want >= %v", got.LastProgressAt, t2)
+	}
+
+	// @constraint: bogus runID returns found=false with no error so the
+	// POST /v1/runs/{id}/keepalive handler can distinguish 404 from 500.
+	if err := d.Tables().Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+		var berr error
+		found, berr = q.BumpLastProgressAt(ctx, tx, shared.UUID(uuid.New()), t2)
+		return berr
+	}); err != nil {
+		t.Fatalf("BumpLastProgressAt(bogus): %v", err)
+	}
+	if found {
+		t.Fatalf("BumpLastProgressAt(bogus): found=true, want false")
 	}
 }

@@ -26,46 +26,30 @@ import {
 } from "./attributes-tools.js";
 import { detectRateLimit } from "./rate-limit.js";
 import { classifyAgentError } from "./error-classify.js";
-import { resolveDeclaredEvents } from "./expected-attributes-schema.js";
 import { verifyRequiredSignoffs } from "./signoff.js";
-import type { NamedEventEmission } from "./token-registry.js";
 
 /**
- * AgentOutcomeBase is the shared shape every `AgentOutcome` variant
- * embeds, so callback-body serialization can read cross-variant fields
- * uniformly without per-variant casing.
- */
-export type AgentOutcomeBase = {
-  /**
-   * Non-terminal named events the agent emitted via the
-   * `emit_named_event` MCP tool during the dispatch. Rides the
-   * async-callback body's `events[]` array (the gRPC stream already
-   * closed at dispatch, so events cannot ride it). Absent / empty when
-   * the agent emitted nothing.
-   */
-  emittedEvents?: NamedEventEmission[];
-};
-
-/**
- * AgentOutcome is the discriminated-union outcome the executor relays back
- * to the rimsky supervisor via the async callback URL. Per spec §12.2 the
- * legacy `result` field has been retired in favour of `attributes_delta`.
+ * AgentOutcome is the discriminated-union outcome the executor relays
+ * back to the rimsky supervisor via the async callback URL. Per
+ * TD-attributes-delta-on-all-settling-terminals every settling variant
+ * uniformly carries `attributes_delta`.
  *
- * - `complete`: terminal success — maps to a StreamClose `Success` outcome on
- *   the wire. `attributesDelta` is the terminal-final writeback (may be `null`
- *   when the executor used the incremental `attributes_set` callback path; the
- *   supervisor already has that data).
- * - `blocked`: maps to a StreamClose `Error{error_class:"agent/blocked"}`
- *   outcome on the wire (post-E.2 the pre-rename Blocked variant collapsed
- *   into Error with the reserved `agent/blocked` class; 2026-05-23 the
+ * - `complete`: maps to AsyncCallbackBody.success on the wire.
+ *   `attributesDelta` is the terminal-final writeback (may be `null`
+ *   when the executor used the incremental `attributes_set` callback
+ *   path; the supervisor already has that data).
+ * - `blocked`: maps to AsyncCallbackBody.error with
+ *   `error_class:"agent/blocked"` (post-E.2 collapse; 2026-05-23 the
  *   class moved under the hierarchical `agent/*` prefix per the
  *   signal-taxonomy spec).
- * - `errored`: maps to a StreamClose `Error{error_class}` outcome on the wire.
- *
- * @source rimsky/src/supervisor/agentic-runner.ts (semantic port)
+ * - `errored`: maps to AsyncCallbackBody.error with the executor's
+ *   error class.
+ * - `park_requested`: maps to AsyncCallbackBody.park. Per
+ *   TD-claude-agent-session-attribute-only the session token rides
+ *   `attributesDelta.session_token`; the proto Park.payload and
+ *   Park.session_token fields are reserved.
  */
-export type AgentOutcome = AgentOutcomeBase &
-  (
+export type AgentOutcome =
   | {
       kind: "complete";
       attributesDelta: Record<string, unknown> | null;
@@ -76,23 +60,27 @@ export type AgentOutcome = AgentOutcomeBase &
   | { kind: "errored"; errorClass: string; payload: unknown }
   | {
       // @deliberate: J9 rate-limit auto-park (and any other voluntary
-      // park trigger). The supervisor receives the `Park` terminal via
-      // the gRPC stream or async callback (see plan A3). `reason` is
-      // the typed ParkReason snake_case value from the closed two-value
-      // set (await_callback | snooze) per the fan-out-safety-scope-first
-      // §ParkReason collapse. `reasonNote` is the free-form annotation
+      // park trigger). `reason` is the typed ParkReason snake_case
+      // value from the closed two-value set (await_callback | snooze)
+      // per the fan-out-safety-scope-first §ParkReason collapse.
+      // `reasonNote` is the free-form annotation
       // (col:rimsky_node_runs.parked_reason_note). The MCP `report_park`
       // tool resolves this same outcome shape; the rate-limit detection
       // path emits `reason: snooze` (deadline-based wake via
       // SweepParkedNodes) with a descriptive `reasonNote`.
+      //
+      // @constraint: TD-claude-agent-session-attribute-only —
+      // `sessionToken` is written into `attributesDelta.session_token`
+      // by `outcomeToCallbackBody`; the resume dispatch reads it from
+      // `req.attributes.session_token`. The retired Park.session_token
+      // proto field does not carry it.
       kind: "park_requested";
       reason: string;
       reasonNote: string;
-      payload: Uint8Array;
+      attributesDelta: Record<string, unknown> | null;
       resumeAt: Date | null; // @deliberate: null → indefinite park
       sessionToken: string;
-    }
-  );
+    };
 
 /**
  * One entry in a node's `cli.mcp_servers`. Either an inline server declared
@@ -191,9 +179,9 @@ export interface AgentRunOptions {
      * J8 plan: maximum corrective `report_complete` retries on schema-
      * validation failure. The executor returns "rejected" with the
      * validation errors to the agent's MCP call, the agent corrects
-     * and retries; after this many failed retries the run terminates
-     * with a StreamClose `Error{error_class: "agent/schema_violation"}`
-     * outcome on the wire. Default 3.
+     * and retries; after this many failed retries the run settles
+     * with an `Outcome{Error}` carrying
+     * `error_class: "agent/schema_violation"`. Default 3.
      */
     maxSchemaCorrections?: number;
     /**
@@ -259,19 +247,18 @@ export interface AgentRunOptions {
   logger: Logger;
   /**
    * J10: Resume context populated by the supervisor when this dispatch
-   * is a resume after a prior `Park` terminal. When `sessionToken` is
-   * non-empty, claude-agent launches the CLI with `--resume <token>`
-   * so the prior conversation resumes; `payload` and `resumeReason`
-   * are surfaced to the agent by appending a fixed `---`-delimited
-   * metadata footer to the user prompt (see the prompt-assembly block
-   * in `runAgentReal` below, ~lines 312-334). No template substitution
-   * runs — rimsky already resolved prompt attributes at dispatch.
+   * is a resume after a prior `Park` terminal OR a fresh dispatch
+   * after attribute carry-forward seeded the field. Read off
+   * `req.attributes.session_token` by the server — there is no
+   * separate Park-side resume channel (the
+   * `ExecuteRequest.resume_context` field is reserved and
+   * `Park.session_token` is reserved; per
+   * TD-claude-agent-session-attribute-only the token rides
+   * `attributes_delta` on Park and the next dispatch's
+   * `req.attributes` on resume). Empty string means a fresh
+   * conversation.
    */
-  resumeContext?: {
-    payload?: Uint8Array;
-    sessionToken?: string;
-    resumeReason?: string;
-  };
+  sessionToken: string;
   /**
    * Optional override for the writeback POST function used by the
    * `attributes_set` MCP tool. Tests swap this out to avoid real network
@@ -357,7 +344,7 @@ async function runAgentStub(opts: AgentRunOptions): Promise<AgentOutcome> {
       kind: "park_requested",
       reason: parkReason,
       reasonNote,
-      payload: new Uint8Array(0),
+      attributesDelta: null,
       resumeAt,
       sessionToken: "",
     };
@@ -449,7 +436,7 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     silenceTimeoutMs,
     logger,
     postAttributes,
-    resumeContext,
+    sessionToken,
   } = opts;
 
   const cwdResolution = resolveCwd({
@@ -466,18 +453,20 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
   }
   const cwd = cwdResolution.cwd;
 
-  // @deliberate: deliver the per-run callback token + resume metadata
-  // to the agent via a fixed `---`-delimited footer appended to the
-  // user prompt ONLY; the system prompt stays clean to preserve
-  // prompt caching (per-run mutable content invalidates the cache).
-  // Post-2026-05-21 userdata collapse the executor no longer runs a
-  // template-rendering pass against the prompts — rimsky resolved the
-  // prompt attributes at dispatch.
+  // @deliberate: deliver the per-run callback token to the agent via a
+  // fixed `---`-delimited footer appended to the user prompt ONLY; the
+  // system prompt stays clean to preserve prompt caching (per-run
+  // mutable content invalidates the cache). Post-2026-05-21 userdata
+  // collapse the executor no longer runs a template-rendering pass
+  // against the prompts — rimsky resolved the prompt attributes at
+  // dispatch.
+  //
+  // @constraint: TD-claude-agent-session-attribute-only — the resume
+  // payload / resume reason that used to ride the retired Park-side
+  // resume_context channel are gone. Resume state is conveyed solely by
+  // the carry-forward session_token attribute, which we apply to the
+  // CLI's `--resume` flag below (not as prompt metadata).
   const callbackToken = randomUUID();
-  const resumePayload = resumeContext?.payload && resumeContext.payload.length > 0
-    ? Buffer.from(resumeContext.payload).toString("utf8")
-    : "";
-  const resumeReason = resumeContext?.resumeReason ?? "";
 
   const renderedSystem = systemPrompt;
   // @deliberate: `binding_id` is the raw `ExecuteRequest.dispatch_id`. Validators sign
@@ -490,8 +479,6 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     "\n\n---\n" +
     `callback_token: ${callbackToken}\n` +
     `binding_id: ${dispatchId ?? ""}\n` +
-    `resume_payload: ${resumePayload}\n` +
-    `resume_reason: ${resumeReason}\n` +
     "---\n";
 
   // @deliberate: per-dispatch internal MCP server. The shared / global server on `callback`
@@ -757,13 +744,11 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     };
   };
 
-  // @deliberate: per-dispatch named-event sink. The `emit_named_event` MCP tool
-  // appends one `{name, payload}` per accepted emission; the buffer rides
-  // the async-callback body's `events[]` array when the run resolves. The
-  // declared-events list is the executor's resolved `declared_events`
-  // (RIMSKY_EXECUTOR_DECLARED_EVENTS) — the tool's self-consistency check.
-  const emittedEvents: NamedEventEmission[] = [];
-  const declaredEvents = resolveDeclaredEvents();
+  // @constraint: TD-collapse-named-event-to-tags — the per-dispatch
+  // named-event sink retires. Non-terminal observable transitions ride
+  // tags on the settling terminal verdict; there is no mid-dispatch
+  // emit surface. The token registry entry below carries no event
+  // buffer.
 
   effectiveCallback.registry.register(callbackToken, {
     runId,
@@ -771,11 +756,6 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
     cancelToken,
     nodeId,
     callbackUrl,
-    declaredEvents,
-    emittedEvents,
-    emitNamedEvent: (name, payload) => {
-      emittedEvents.push({ name, payload });
-    },
     onComplete: async (
       attributesDelta,
       changed,
@@ -965,7 +945,10 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
           kind: "park_requested",
           reason,
           reasonNote: reasonNote ?? "",
-          payload: new Uint8Array(),
+          // @constraint: TD-claude-agent-session-attribute-only —
+          // session_token rides attributes_delta on the wire.
+          // outcomeToCallbackBody merges it into the Park body.
+          attributesDelta: null,
           resumeAt: parsedResumeAt,
           sessionToken: runId,
         });
@@ -1047,21 +1030,24 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
   let handle: CliHandle;
   try {
-    // @deliberate: J10 — when resumeContext.sessionToken is set we resume the
-    // same CLI session so the agent's prior context (tool calls, memory, partial
-    // work) is preserved across the park boundary. Otherwise this is a fresh
-    // dispatch.
+    // @constraint: TD-claude-agent-session-attribute-only — when the
+    // carry-forward `session_token` attribute is non-empty, resume the
+    // same CLI session so the agent's prior context (tool calls,
+    // memory, partial work) is preserved across the dispatch boundary.
+    // Otherwise this is a fresh dispatch. Source of the token: the
+    // dispatch's `req.attributes.session_token` (rimsky's
+    // carry-forward); no separate resume_context channel.
     if (
-      resumeContext?.sessionToken &&
-      resumeContext.sessionToken.length > 0 &&
+      sessionToken &&
+      sessionToken.length > 0 &&
       cliRunner.resume !== undefined
     ) {
       logger.info(
-        { runId, session_token: resumeContext.sessionToken, resume_reason: resumeContext.resumeReason ?? "" },
-        "cli.resume_after_park",
+        { runId, session_token: sessionToken },
+        "cli.resume_with_session_token",
       );
       handle = await cliRunner.resume({
-        sessionId: resumeContext.sessionToken,
+        sessionId: sessionToken,
         prompt: renderedUser,
         tools: [
           { kind: "mcp-http", name: "rimsky-callback", url: effectiveCallback.url },
@@ -1287,10 +1273,12 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
               ? signalRL.reason
               : "claude cli rate-limit detected; resume_at=" +
                 (signalRL.resumeAt?.toISOString() ?? "indefinite"),
-          payload: new Uint8Array(),
+          attributesDelta: null,
           resumeAt: signalRL.resumeAt,
-          // @deliberate: the CLI session id is the rimsky run id; resume passes
-          // it back via ResumeContext.session_token for `--resume`.
+          // @constraint: TD-claude-agent-session-attribute-only — the
+          // CLI session id (= rimsky run id) rides
+          // attributes_delta.session_token; the resume dispatch reads
+          // it from req.attributes.session_token.
           sessionToken: runId,
         });
         return;
@@ -1438,13 +1426,6 @@ async function runAgentReal(opts: AgentRunOptions): Promise<AgentOutcome> {
 
   try {
     const outcome = await outcomePromise;
-    // @deliberate: stamp the per-dispatch named-event buffer onto the resolved outcome
-    // so `outcomeToCallbackBody` can ride the events on the async-callback
-    // body's `events[]` array (the gRPC stream already closed at dispatch).
-    // Buffer is captured before the registry entry is released below.
-    if (emittedEvents.length > 0) {
-      outcome.emittedEvents = emittedEvents;
-    }
     return outcome;
   } finally {
     silenceStopped = true;

@@ -46,6 +46,7 @@ func signalForTerminal(t terminalEvent) signalpkg.Signal {
 			"changed":          t.Changed,
 			"attributes_delta": orEmptyMap(t.AttributesDel),
 			"change_summary":   t.ChangeSummary,
+			"tags":             t.Tags,
 		}
 		return signalpkg.Signal{Type: signalpkg.TypePath("terminal/success"), Payload: payload}
 	case terminalKindErrored:
@@ -53,35 +54,29 @@ func signalForTerminal(t terminalEvent) signalpkg.Signal {
 		if payload == nil {
 			payload = map[string]any{}
 		}
+		payload["tags"] = t.Tags
 		return signalpkg.Signal{
 			Type:    signalpkg.TypePath("terminal/error/" + t.ErrorClass),
 			Payload: payload,
 		}
 	case terminalKindPark:
-		if t.ParkReason == genv1.ParkReason_PARK_REASON_SNOOZE {
-			return signalpkg.Signal{
-				Type: signalpkg.TypePath("terminal/park/snooze"),
-				Payload: map[string]any{
-					"resume_at":           t.ParkResumeAt,
-					"session_token":       t.ParkSessionToken,
-					"park_payload":        t.ParkPayload,
-					"parked_reason_label": t.ParkReasonLabel,
-					"parked_reason_note":  t.ParkReasonNote,
-				},
-			}
-		}
-		// @deliberate: AWAIT_CALLBACK resume_at may be zero; omit the key
-		// in that case so the payload stays value-based — no pointer
-		// indirection mismatch with the SNOOZE branch above, which always
-		// carries a time.Time value under resume_at.
+		// @deliberate: Per TD-remove-resume-context, session_token and
+		// park_payload no longer ride on the Park signal payload —
+		// resume state lives in attribute carry-forward. The payload
+		// surfaces park reason metadata + the verdict's tags.
 		payload := map[string]any{
-			"session_token":       t.ParkSessionToken,
-			"park_payload":        t.ParkPayload,
 			"parked_reason_label": t.ParkReasonLabel,
 			"parked_reason_note":  t.ParkReasonNote,
+			"tags":                t.Tags,
 		}
 		if !t.ParkResumeAt.IsZero() {
 			payload["resume_at"] = t.ParkResumeAt
+		}
+		if t.ParkReason == genv1.ParkReason_PARK_REASON_SNOOZE {
+			return signalpkg.Signal{
+				Type:    signalpkg.TypePath("terminal/park/snooze"),
+				Payload: payload,
+			}
 		}
 		return signalpkg.Signal{
 			Type:    signalpkg.TypePath("terminal/park/await_callback"),

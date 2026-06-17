@@ -7,7 +7,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"io"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -20,20 +19,14 @@ import (
 // One Client per (transport, TLS mode, endpoint). Cached inside the
 // supervisor so connections are reused across dispatches.
 //
-// @concept: executor (the in-repo Go-side surface of the Executor.Execute
-// wire protocol; reference executor impls are not part of this repo)
+// Per concept:executor / TD-execute-rpc-unary the Execute RPC is
+// unary: a single call returns the settling Outcome (Success / Error /
+// Park) or AwaitAsyncCallback. The HTTP-bridge client wraps the same
+// shape over an HTTP POST.
+//
+// @concept: executor
 type Client interface {
-	Execute(ctx context.Context, req *genv1.ExecuteRequest) (EventStream, error)
-	Close() error
-}
-
-// EventStream abstracts gRPC streaming + HTTP-bridge newline-delimited
-// JSON so the supervisor loop is transport-agnostic.
-type EventStream interface {
-	// @agent-contract: io.EOF marks normal stream end; any other error is
-	// a transport-level failure the supervisor loop must surface to its
-	// caller.
-	Recv() (*genv1.ExecuteEvent, error)
+	Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error)
 	Close() error
 }
 
@@ -59,7 +52,6 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 		// name); the TLSMode interceptors annotate RPC errors with the
 		// peer + mode under tls: required (no-op otherwise).
 		grpc.WithChainUnaryInterceptor(peer.ServiceNameUnaryInterceptor, peer.TLSModeUnaryInterceptor(endpoint.URL, endpoint.TLS)),
-		grpc.WithChainStreamInterceptor(peer.ServiceNameStreamInterceptor, peer.TLSModeStreamInterceptor(endpoint.URL, endpoint.TLS)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("executor.NewGRPCClient: dial %s: %w", endpoint.URL, err)
@@ -67,27 +59,10 @@ func NewGRPCClient(endpoint Endpoint) (Client, error) {
 	return &grpcClient{conn: conn, api: genv1.NewExecutorClient(conn)}, nil
 }
 
-func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (EventStream, error) {
-	s, err := c.api.Execute(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return &grpcEventStream{s: s}, nil
+func (c *grpcClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+	return c.api.Execute(ctx, req)
 }
 func (c *grpcClient) Close() error { return c.conn.Close() }
-
-type grpcEventStream struct {
-	s genv1.Executor_ExecuteClient
-}
-
-func (e *grpcEventStream) Recv() (*genv1.ExecuteEvent, error) {
-	ev, err := e.s.Recv()
-	if err == io.EOF {
-		return nil, io.EOF
-	}
-	return ev, err
-}
-func (e *grpcEventStream) Close() error { return nil }
 
 // ClientPool caches Clients by (transport, TLS mode, URL). Thread-safe.
 // The TLS mode is part of the key so two entries sharing a URL with

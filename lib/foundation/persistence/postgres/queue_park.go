@@ -29,31 +29,22 @@ func (q *queueImpl) ParkActiveInTx(ctx context.Context, tx persistence.Tx, in pe
 		return errors.New("postgres.ParkActiveInTx: ExpectedClaimedBy required")
 	}
 	resumeAt := timeOrNullPark(in.ResumeAt)
-	payloadInline := nilIfEmpty(in.PayloadInline)
-	payloadHandle := nilIfEmptyStr(in.PayloadHandle)
-	payloadHandleBackend := nilIfEmptyStr(in.PayloadHandleBackend)
 
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET phase = 'parked',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
-		        last_heartbeat_at = NULL,
 		        parked_at = $3,
 		        resume_at = $4,
 		        parked_reason = $5,
-		        parked_reason_note = NULLIF($10, ''),
-		        parked_reason_label = NULLIF($11, ''),
-		        session_token = NULLIF($6, ''),
-		        parked_payload_inline = $7,
-		        parked_payload_handle = $8,
-		        parked_payload_handle_backend = $9
+		        parked_reason_note = NULLIF($6, ''),
+		        parked_reason_label = NULLIF($7, '')
 		  WHERE id = $1
 		    AND claimed_by = $2
 		    AND phase = 'active'`,
 		in.DispatchID, in.ExpectedClaimedBy, in.ParkedAt, resumeAt,
-		in.Reason, in.SessionToken, payloadInline,
-		payloadHandle, payloadHandleBackend, in.ReasonNote, in.ReasonLabel,
+		in.Reason, in.ReasonNote, in.ReasonLabel,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres.ParkActiveInTx: %w", err)
@@ -72,8 +63,7 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 	}
 	rows, err := q.pool.Query(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
-		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.phase = 'parked'
@@ -92,21 +82,14 @@ func (q *queueImpl) ListParkedReadyForResume(ctx context.Context, cutoff time.Ti
 
 // ListParkedOverdue returns parked rows whose parked_at +
 // max_park_duration_seconds is older than now AND whose resume_at is
-// either NULL or strictly in the future. The latter condition prevents
-// the deadline-elapsed wake path and the max_park_duration overrun path
-// from racing on the same row: ListParkedReadyForResume picks rows
-// whose resume_at <= now, and ListParkedOverdue must skip them so the
-// wake transition (parked→pending) and the overdue transition
-// (parked→failed) don't fight (the second loses on the state machine's
-// "stale → failed under park_timeout" rejection).
+// either NULL or strictly in the future.
 func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit int) ([]persistence.ParkedRow, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := q.pool.Query(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
-		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.phase = 'parked'
@@ -126,8 +109,7 @@ func (q *queueImpl) ListParkedOverdue(ctx context.Context, now time.Time, limit 
 }
 
 // ListParkedDiagnostic returns currently-parked rows for the admin
-// diagnostic endpoints. Joins rimsky_nodes for the instance_id needed
-// by the diagnostics endpoints' frame/instance grouping.
+// diagnostic endpoints.
 func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx, reasonFilter string) ([]persistence.ParkedDiagnosticRow, error) {
 	if tx == nil {
 		return nil, errors.New("postgres.ListParkedDiagnostic: tx required")
@@ -190,19 +172,10 @@ func (q *queueImpl) ListParkedDiagnostic(ctx context.Context, tx persistence.Tx,
 
 // GetParkedByNode returns the parked row for a node, or (nil, nil) when
 // the node has no parked node-run row.
-//
-// When `runID` is non-nil the SELECT is narrowed to that specific
-// in-flight row — fan-out children share a node_id with their siblings,
-// so a SELECT by node_id alone can return any of the in-flight parked
-// rows while children race. Nil `runID` preserves the legacy by-node
-// lookup for paths that don't face fan-out ambiguity.
-//
-// @concept: fan-out
 func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID) (*persistence.ParkedRow, error) {
 	row := q.pool.QueryRow(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.frame_id,
-		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note, d.session_token,
-		        d.parked_payload_inline, d.parked_payload_handle, d.parked_payload_handle_backend,
+		        d.parked_at, d.resume_at, d.parked_reason, d.parked_reason_note,
 		        d.max_park_duration_seconds, d.consecutive_retries_no_progress
 		   FROM rimsky_node_runs d
 		  WHERE d.node_id = $1
@@ -222,58 +195,21 @@ func (q *queueImpl) GetParkedByNode(ctx context.Context, nodeID shared.UUID, run
 
 // ResumeParkedInTx transitions parked→pending so the next
 // SelectCandidates tick picks it up via the standard atomic acquisition
-// path. The park metadata (parked_payload_*, parked_reason,
-// session_token) is preserved on the row so the resume-dispatch path
-// (E4) can build a ResumeContext from it; the persistence-level
-// helpers below (LoadResumeMetadataInTx / ClearResumeMetadataInTx) read
-// and clear it after the resume is dispatched.
-//
-// The row goes back to phase='pending' / claimed_by=NULL so any
-// eligible supervisor can pick it up. This honors the supervisor-pool
-// specialisation: the supervisor that wakes a node may not be the one
-// that runs the resume (e.g. an admin invalidate fired against a
-// control-api process that doesn't itself run executors). The wake
-// supervisor id is recorded by the caller in the parked_resume_started
-// audit event.
-//
-// wakeReason is persisted on rimsky_node_runs.wake_reason. The
-// resume-dispatch path's LoadResumeMetadataInTx reads it back so the
-// executor's ResumeContext.resume_reason matches the actual wake source
-// (deadline_elapsed vs external_invalidate). Empty wakeReason persists
-// NULL, which the loader maps to "external_invalidate" as a fallback.
-//
-// enqueued_at is preserved across the resume rather than reset to NOW():
-// resumed rows compete with fresh dispatches under the runner's
-// `ORDER BY enqueued_at` page, and a row that has been waiting through
-// park time should not be deprioritized behind freshly-enqueued rows.
-// Operators expect "resume now" not "resume after every fresh dispatch
-// in the queue" semantics.
-func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, wakeReason string) (bool, error) {
+// path. The park reason metadata is preserved on the row; resume state
+// rides attribute carry-forward per concept:parked-state.
+func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) (bool, error) {
 	if tx == nil {
 		return false, errors.New("postgres.ResumeParkedInTx: tx required")
-	}
-	var wakeReasonArg any
-	if wakeReason != "" {
-		wakeReasonArg = wakeReason
 	}
 	cmd, err := q.q(tx).Exec(ctx,
 		`UPDATE rimsky_node_runs
 		    SET phase = 'pending',
 		        claimed_by = NULL,
 		        claimed_at = NULL,
-		        last_heartbeat_at = NULL,
-		        resume_at = NULL,
-		        wake_reason = $2
-		    -- enqueued_at, parked_at, parked_reason, parked_payload_*,
-		    -- session_token are PRESERVED. enqueued_at preservation keeps
-		    -- the resumed row from being deprioritized below freshly-
-		    -- enqueued rows under ORDER BY enqueued_at. The other park
-		    -- metadata is consumed by the resume-dispatch path (E4) to
-		    -- build ResumeContext, then cleared via
-		    -- ClearResumeMetadataInTx after a successful dispatch.
+		        resume_at = NULL
 		  WHERE id = $1
 		    AND phase = 'parked'`,
-		dispatchID, wakeReasonArg,
+		dispatchID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("postgres.ResumeParkedInTx: %w", err)
@@ -282,17 +218,7 @@ func (q *queueImpl) ResumeParkedInTx(ctx context.Context, tx persistence.Tx, dis
 }
 
 // RebindRunFrameInTx updates rimsky_node_runs.frame_id for the given
-// dispatch row to `newFrameID`. Used by the hard-dep cascade extension
-// and the standard cascade-subscription path when a parked run is
-// woken: the woken run's frame_id stays at its parked-frame value
-// until rebound, which would otherwise hide it from
-// `GetInFlightRunForNode(node, newFrameID)` on the receiver side.
-// Idempotent — re-binding to the same frame is a no-op (RowsAffected==1
-// on the UPDATE, but the column value is unchanged).
-//
-// Returns `persistence.ErrRunRowMissing` when no row matches
-// `dispatchID`: callers always reach this primitive after resolving
-// the run row, so a silent no-op would hide programmer errors.
+// dispatch row to `newFrameID`.
 func (q *queueImpl) RebindRunFrameInTx(
 	ctx context.Context, tx persistence.Tx,
 	dispatchID, newFrameID shared.UUID,
@@ -338,19 +264,7 @@ func (q *queueImpl) GetRetryNoProgress(ctx context.Context, dispatchID shared.UU
 	return count, nil, nil
 }
 
-// SetRetryNoProgressForNodeInTx writes the carry-forward counter onto
-// the current node-run row for nodeID. Used by the retry path to
-// accumulate the counter across retry round-trips (each retry deletes
-// the prior row and inserts a new one with default counter=0).
-//
-// The UPDATE is scoped to `phase = 'pending' AND claimed_by IS NULL` so
-// only the freshly-inserted pending row (no other phase / no claimant
-// yet) is touched. Without this gate, fan-out children sharing a
-// node_id would have their counters clobbered on every sibling retry —
-// the retry path's `RemoveForNodeInTx` is claimant-guarded but the
-// counter stamp would still leak across siblings still mid-flight.
-//
-// @concept: fan-out
+// SetRetryNoProgressForNodeInTx writes the carry-forward counter.
 func (q *queueImpl) SetRetryNoProgressForNodeInTx(ctx context.Context, tx persistence.Tx, nodeID shared.UUID, runScopeID shared.UUID, count int) error {
 	if tx == nil {
 		return errors.New("postgres.SetRetryNoProgressForNodeInTx: tx required")
@@ -385,95 +299,7 @@ func (q *queueImpl) UpdateDispatchTuningInTx(ctx context.Context, tx persistence
 	return nil
 }
 
-// LoadResumeMetadataInTx returns the parked metadata that survived the
-// parked → pending transition (so the resume dispatch path can attach
-// it to ResumeContext on the ExecuteRequest).
-func (q *queueImpl) LoadResumeMetadataInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) (*persistence.ResumeMetadataRow, error) {
-	if tx == nil {
-		return nil, errors.New("postgres.LoadResumeMetadataInTx: tx required")
-	}
-	var (
-		inline     []byte
-		handle     sql.NullString
-		backend    sql.NullString
-		reason     sql.NullString
-		reasonNote sql.NullString
-		session    sql.NullString
-		wakeReason sql.NullString
-		parkedAt   sql.NullTime
-	)
-	err := q.q(tx).QueryRow(ctx,
-		`SELECT parked_payload_inline, parked_payload_handle, parked_payload_handle_backend,
-		        parked_reason, parked_reason_note, session_token, wake_reason, parked_at
-		   FROM rimsky_node_runs
-		  WHERE id = $1`,
-		dispatchID,
-	).Scan(&inline, &handle, &backend, &reason, &reasonNote, &session, &wakeReason, &parkedAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("postgres.LoadResumeMetadataInTx: %w", err)
-	}
-	if len(inline) == 0 && !handle.Valid && !backend.Valid && !reason.Valid && !reasonNote.Valid && !session.Valid && !wakeReason.Valid && !parkedAt.Valid {
-		return nil, nil
-	}
-	out := &persistence.ResumeMetadataRow{
-		PayloadInline: inline,
-	}
-	if handle.Valid {
-		out.PayloadHandle = handle.String
-	}
-	if backend.Valid {
-		out.PayloadHandleBackend = backend.String
-	}
-	if reason.Valid {
-		out.Reason = reason.String
-	}
-	if reasonNote.Valid {
-		out.ReasonNote = reasonNote.String
-	}
-	if session.Valid {
-		out.SessionToken = session.String
-	}
-	if wakeReason.Valid {
-		out.WakeReason = wakeReason.String
-	}
-	if parkedAt.Valid {
-		out.ParkedAt = parkedAt.Time
-	}
-	return out, nil
-}
-
-// ClearResumeMetadataInTx clears the parked_payload_* / parked_reason /
-// parked_at columns after a successful resume dispatch. session_token
-// is also cleared because the executor's resume should consume it once
-// (re-park starts a fresh session_token).
-func (q *queueImpl) ClearResumeMetadataInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) error {
-	if tx == nil {
-		return errors.New("postgres.ClearResumeMetadataInTx: tx required")
-	}
-	_, err := q.q(tx).Exec(ctx,
-		`UPDATE rimsky_node_runs
-		    SET parked_at = NULL,
-		        parked_reason = NULL,
-		        parked_reason_note = NULL,
-		        parked_payload_inline = NULL,
-		        parked_payload_handle = NULL,
-		        parked_payload_handle_backend = NULL,
-		        session_token = NULL,
-		        wake_reason = NULL
-		  WHERE id = $1`,
-		dispatchID,
-	)
-	if err != nil {
-		return fmt.Errorf("postgres.ClearResumeMetadataInTx: %w", err)
-	}
-	return nil
-}
-
-// scanParkedRows iterates a Rows cursor and materializes ParkedRow
-// values.
+// scanParkedRows iterates a Rows cursor.
 func scanParkedRows(rows pgx.Rows) ([]persistence.ParkedRow, error) {
 	var out []persistence.ParkedRow
 	for rows.Next() {
@@ -489,26 +315,20 @@ func scanParkedRows(rows pgx.Rows) ([]persistence.ParkedRow, error) {
 	return out, nil
 }
 
-// scanOneParkedRow scans either a Rows cursor (Next-driven) or a
-// QueryRow result. The pgx Row interface satisfies both.
+// scanOneParkedRow scans either a Rows cursor or a QueryRow result.
 func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	var (
-		r              persistence.ParkedRow
-		executor       sql.NullString
-		stores         []string
-		resumeAt       sql.NullTime
-		reason         sql.NullString
-		reasonNote     sql.NullString
-		sessionToken   sql.NullString
-		payloadInline  []byte
-		payloadHandle  sql.NullString
-		payloadBackend sql.NullString
-		maxParkSec     sql.NullInt32
+		r          persistence.ParkedRow
+		executor   sql.NullString
+		stores     []string
+		resumeAt   sql.NullTime
+		reason     sql.NullString
+		reasonNote sql.NullString
+		maxParkSec sql.NullInt32
 	)
 	if err := row.Scan(
 		&r.DispatchID, &r.NodeID, &executor, &stores, &r.FrameID,
-		&r.ParkedAt, &resumeAt, &reason, &reasonNote, &sessionToken,
-		&payloadInline, &payloadHandle, &payloadBackend,
+		&r.ParkedAt, &resumeAt, &reason, &reasonNote,
 		&maxParkSec, &r.ConsecutiveRetriesNoProg,
 	); err != nil {
 		return nil, err
@@ -530,16 +350,6 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	if reasonNote.Valid {
 		r.ReasonNote = reasonNote.String
 	}
-	if sessionToken.Valid {
-		r.SessionToken = sessionToken.String
-	}
-	r.PayloadInline = payloadInline
-	if payloadHandle.Valid {
-		r.PayloadHandle = payloadHandle.String
-	}
-	if payloadBackend.Valid {
-		r.PayloadHandleBackend = payloadBackend.String
-	}
 	if maxParkSec.Valid {
 		v := int(maxParkSec.Int32)
 		r.MaxParkDurationSeconds = &v
@@ -547,24 +357,7 @@ func scanOneParkedRow(row pgx.Row) (*persistence.ParkedRow, error) {
 	return &r, nil
 }
 
-// LoadScratchInTx returns the persisted scratch triple for a dispatch
-// row. Spill resolution (materializing the bytes when scratch_handle is
-// set) is the caller's responsibility, via `concept:blob-backend`.
-//
-// Asymmetry with WriteScratchInTx is deliberate. A missing dispatch
-// row is degraded to an empty-scratch result (nil bytes, no handle,
-// no backend, no error) so the recovery-enqueue load sites
-// (conductor.go::SweepStaleHeartbeats, cascade_recalculate.go,
-// on_error.go, runner_error_policy.go) treat a retired or
-// already-GC'd prior row as "no carry-forward state" and the
-// successor dispatch begins with empty scratch — the same view a
-// first-dispatch executor sees. WriteScratchInTx is strict
-// (returns persistence.ErrRunRowMissing on 0 rows affected) because
-// the executor's mid-dispatch checkpoint contract requires the
-// missing-row case to surface to the executor, not be silently
-// swallowed (STORY-opaque-executor-scratch).
-//
-// @concept: executor
+// LoadScratchInTx returns the persisted scratch triple for a dispatch row.
 func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID) ([]byte, string, string, error) {
 	if tx == nil {
 		return nil, "", "", errors.New("postgres.LoadScratchInTx: tx required")
@@ -596,26 +389,7 @@ func (q *queueImpl) LoadScratchInTx(ctx context.Context, tx persistence.Tx, disp
 	return inline, hStr, bStr, nil
 }
 
-// WriteScratchInTx persists scratch onto a dispatch row. Sets either
-// inline OR (handle + handleBackend); the opposite triple is cleared in
-// the same UPDATE so a writeback that drops a previously-spilled scratch
-// to small inline bytes does not leave the stale handle dangling.
-//
-// Returns `persistence.ErrRunRowMissing` when no row matches
-// `dispatchID`. The scratch HTTP callback is the only signal an
-// executor has that its mid-dispatch state was persisted; a silent
-// no-op on missing row would let an executor believe it has
-// checkpointed state that will never reach the next dispatch,
-// violating STORY-opaque-executor-scratch's round-trip contract. The
-// HTTP handler maps the sentinel to a 4xx response so the executor
-// surfaces the missing-row case; in-process callers see it directly.
-//
-// Asymmetry with LoadScratchInTx is deliberate (see that function's
-// comment): load degrades a missing row to an empty-scratch result so
-// recovery-enqueue load sites continue cleanly; write surfaces the
-// sentinel so the executor's checkpoint contract is preserved.
-//
-// @concept: executor
+// WriteScratchInTx persists scratch onto a dispatch row.
 func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error {
 	if tx == nil {
 		return errors.New("postgres.WriteScratchInTx: tx required")
@@ -641,8 +415,6 @@ func (q *queueImpl) WriteScratchInTx(ctx context.Context, tx persistence.Tx, dis
 }
 
 // timeOrNullPark returns the time value or nil for an explicit NULL.
-// Used by ParkActiveInTx; named distinctly to avoid colliding with the
-// pre-existing helpers in events.go and supervisors.go.
 func timeOrNullPark(t time.Time) any {
 	if t.IsZero() {
 		return nil

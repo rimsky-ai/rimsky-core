@@ -125,8 +125,8 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 		return fmt.Errorf("sqlite.Enqueue: run_scope_id required for node %s", req.NodeID)
 	}
 	// @constraint: prior_dispatch_id / prior_dispatch_disposition carry
-	// the predecessor dispatch identity for retries / heartbeat-stale
-	// recovery / recalculates. Both NULL for initial dispatches. Per spec
+	// the predecessor dispatch identity for retries / stale-recovery /
+	// recalculates. Both NULL for initial dispatches. Per spec
 	// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
 	// §Recovery-aware executor protocol.
 	var priorDispatchID any
@@ -135,12 +135,11 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	}
 	priorDisposition := nullableString(req.PriorDispatchDisposition)
 	// @constraint: scratch carry-forward — when this enqueue follows a
-	// prior dispatch (heartbeat-stale recovery, retry-after-error,
-	// recalculate), the caller has already loaded the prior row's
-	// scratch triple and put it on req.InitialScratch* so the new
-	// dispatch row carries the executor's in-flight state across the
-	// recovery. Inert in rimsky per concept:inertness /
-	// @blessed-invariant 21.
+	// prior dispatch (stale-recovery, retry-after-error, recalculate),
+	// the caller has already loaded the prior row's scratch triple and
+	// put it on req.InitialScratch* so the new dispatch row carries the
+	// executor's in-flight state across the recovery. Inert in rimsky
+	// per concept:inertness / @blessed-invariant 21.
 	//
 	// @concept: executor
 	var scratchInlineArg any
@@ -385,7 +384,7 @@ func (q *queueImpl) ClaimDispatchRow(
 	now := nowUTC()
 	res, err := q.q(tx).ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET claimed_by = ?, claimed_at = ?, last_heartbeat_at = ?, phase = 'active'
+		    SET claimed_by = ?, claimed_at = ?, last_progress_at = ?, phase = 'active'
 		  WHERE id = ? AND claimed_by IS NULL AND phase = 'pending'`,
 		supervisorID, now, now, dispatchID.String(),
 	)
@@ -411,7 +410,6 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 			`UPDATE rimsky_node_runs
 			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
 			        claimed_by = NULL,
-			        last_heartbeat_at = NULL,
 			        active_terminal_at = ?
 			  WHERE id = ?
 			    AND claimed_by = ?
@@ -424,7 +422,6 @@ func (q *queueImpl) Complete(ctx context.Context, dispatchID shared.UUID, expect
 		`UPDATE rimsky_node_runs
 		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
 		        claimed_by = NULL,
-		        last_heartbeat_at = NULL,
 		        active_terminal_at = ?
 		  WHERE id = ?
 		    AND phase IN ('pending','active','held','parked')`,
@@ -449,7 +446,6 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 			`UPDATE rimsky_node_runs
 			    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
 			        claimed_by = NULL,
-			        last_heartbeat_at = NULL,
 			        active_terminal_at = ?
 			  WHERE node_id = ?
 			    AND run_scope_id = ?
@@ -463,7 +459,6 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 		`UPDATE rimsky_node_runs
 		    SET phase = CASE WHEN state = 'failed' THEN 'failed' ELSE 'completed' END,
 		        claimed_by = NULL,
-		        last_heartbeat_at = NULL,
 		        active_terminal_at = ?
 		  WHERE node_id = ?
 		    AND run_scope_id = ?
@@ -473,16 +468,21 @@ func (q *queueImpl) RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, r
 	return err
 }
 
-// ListOrphanedClaims returns dispatch rows whose last_heartbeat_at is
-// older than cutoff. @blessed-invariant 6 (5× heartbeat cutoff).
-func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]persistence.DispatchRow, error) {
+// ListOrphanedClaims returns claimed async-mode dispatch rows. The
+// returned set is exhaustive (every in-flight async claim with non-NULL
+// async_ack_id); SweepExecutorDeadlines per-row applies the effective
+// max_quiet_period and max_runtime decision using the denormalized
+// effective_max_quiet_period_seconds / effective_max_runtime_seconds
+// columns set at RegisterAsyncAck time.
+func (q *queueImpl) ListOrphanedClaims(ctx context.Context) ([]persistence.DispatchRow, error) {
 	rows, err := q.db.QueryContext(ctx,
 		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
-		        claimed_by, claimed_at, last_heartbeat_at, frame_id
+		        claimed_by, claimed_at, frame_id, async_ack_id,
+		        async_ack_registered_at, last_progress_at, tags,
+		        effective_max_quiet_period_seconds, effective_max_runtime_seconds
 		   FROM rimsky_node_runs
 		  WHERE claimed_by IS NOT NULL
-		    AND last_heartbeat_at < ?`,
-		formatTime(cutoff),
+		    AND async_ack_id IS NOT NULL`,
 	)
 	if err != nil {
 		return nil, err
@@ -491,66 +491,9 @@ func (q *queueImpl) ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([
 
 	var out []persistence.DispatchRow
 	for rows.Next() {
-		var r persistence.DispatchRow
-		var (
-			idStr             string
-			nodeIDStr         string
-			executorName      sql.NullString
-			requiredStoresStr string
-			enqueuedAtStr     string
-			claimedBy         sql.NullString
-			claimedAtStr      sql.NullString
-			lastHeartbeatStr  sql.NullString
-			frameIDStr        string
-		)
-		if err := rows.Scan(
-			&idStr, &nodeIDStr, &executorName, &requiredStoresStr,
-			&enqueuedAtStr, &claimedBy, &claimedAtStr, &lastHeartbeatStr, &frameIDStr,
-		); err != nil {
-			return nil, err
-		}
-		var err error
-		if r.ID, err = uuid.Parse(idStr); err != nil {
-			return nil, err
-		}
-		if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
-			return nil, err
-		}
-		if executorName.Valid {
-			v := executorName.String
-			r.ExecutorName = &v
-		}
-		stores, err := unmarshalStringArray(requiredStoresStr)
+		r, err := scanDispatchRow(rows)
 		if err != nil {
 			return nil, err
-		}
-		r.RequiredStores = stores
-		if r.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
-			return nil, err
-		}
-		if claimedBy.Valid {
-			v := claimedBy.String
-			r.ClaimedBy = &v
-		}
-		if claimedAtStr.Valid {
-			t, err := parseTime(claimedAtStr.String)
-			if err != nil {
-				return nil, err
-			}
-			r.ClaimedAt = &t
-		}
-		if lastHeartbeatStr.Valid {
-			t, err := parseTime(lastHeartbeatStr.String)
-			if err != nil {
-				return nil, err
-			}
-			r.LastHeartbeatAt = &t
-		}
-		if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
-			return nil, err
-		}
-		if r.RequiredStores == nil {
-			r.RequiredStores = []string{}
 		}
 		out = append(out, r)
 	}
@@ -564,7 +507,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 	if expectedClaimedBy != "" {
 		_, err := q.db.ExecContext(ctx,
 			`UPDATE rimsky_node_runs
-			    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
+			    SET claimed_by = NULL, claimed_at = NULL, phase = 'pending'
 			  WHERE id = ? AND claimed_by = ?`,
 			dispatchID.String(), expectedClaimedBy,
 		)
@@ -572,7 +515,7 @@ func (q *queueImpl) ReleaseClaim(ctx context.Context, dispatchID shared.UUID, ex
 	}
 	_, err := q.db.ExecContext(ctx,
 		`UPDATE rimsky_node_runs
-		    SET claimed_by = NULL, claimed_at = NULL, last_heartbeat_at = NULL, phase = 'pending'
+		    SET claimed_by = NULL, claimed_at = NULL, phase = 'pending'
 		  WHERE id = ?`,
 		dispatchID.String(),
 	)
@@ -623,15 +566,94 @@ func (q *queueImpl) GetClaimedBy(ctx context.Context, dispatchID shared.UUID) (p
 	return persistence.ClaimOwnership{Kind: "claimed_by", SupervisorID: claimedBy.String}, nil
 }
 
-func (q *queueImpl) RefreshHeartbeat(ctx context.Context, supervisorID string) error {
-	_, err := q.db.ExecContext(ctx,
-		`UPDATE rimsky_node_runs SET last_heartbeat_at = ? WHERE claimed_by = ?`,
-		nowUTC(), supervisorID,
+// LookupRunByAsyncAckID returns the dispatch row previously registered
+// against ackID via RegisterAsyncAck, or (nil, nil) when no row matches.
+//
+// @constraint: the unique partial index rimsky_node_runs_async_ack_id_idx
+// (sqlite migration 013) guarantees at most one row per ackID.
+func (q *queueImpl) LookupRunByAsyncAckID(ctx context.Context, tx persistence.Tx, ackID string) (*persistence.DispatchRow, error) {
+	if tx == nil {
+		return nil, errors.New("sqlite.LookupRunByAsyncAckID: tx required")
+	}
+	row := q.q(tx).QueryRowContext(ctx,
+		`SELECT id, node_id, executor_name, required_stores, enqueued_at,
+		        claimed_by, claimed_at, frame_id, async_ack_id,
+		        async_ack_registered_at, last_progress_at, tags,
+		        effective_max_quiet_period_seconds, effective_max_runtime_seconds
+		   FROM rimsky_node_runs
+		  WHERE async_ack_id = ?`,
+		ackID,
+	)
+	r, err := scanDispatchRow(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("sqlite.LookupRunByAsyncAckID: %w", err)
+	}
+	return &r, nil
+}
+
+// RegisterAsyncAck persists ackID and per-row dispatch deadlines onto
+// the dispatch row.
+//
+// @constraint: caller-supplied tx is load-bearing — the registration
+// must commit atomically with the dispatch state mutation that
+// triggered the AwaitAsync handoff.
+func (q *queueImpl) RegisterAsyncAck(ctx context.Context, tx persistence.Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int) error {
+	if tx == nil {
+		return errors.New("sqlite.RegisterAsyncAck: tx required")
+	}
+	if ackID == "" {
+		return errors.New("sqlite.RegisterAsyncAck: ackID required")
+	}
+	var maxQuietArg, maxRuntimeArg any
+	if maxQuietSec != nil {
+		maxQuietArg = *maxQuietSec
+	}
+	if maxRuntimeSec != nil {
+		maxRuntimeArg = *maxRuntimeSec
+	}
+	res, err := q.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs
+		    SET async_ack_id = ?,
+		        async_ack_registered_at = ?,
+		        last_progress_at = ?,
+		        effective_max_quiet_period_seconds = ?,
+		        effective_max_runtime_seconds = ?
+		  WHERE id = ?`,
+		ackID, formatTime(now), formatTime(now), maxQuietArg, maxRuntimeArg, runID.String(),
 	)
 	if err != nil {
-		return fmt.Errorf("sqlite.RefreshHeartbeat: %w", err)
+		return fmt.Errorf("sqlite.RegisterAsyncAck: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite.RegisterAsyncAck: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("sqlite.RegisterAsyncAck: %s: %w", runID, persistence.ErrRunRowMissing)
 	}
 	return nil
+}
+
+// BumpLastProgressAt advances col:rimsky_node_runs.last_progress_at.
+//
+// @constraint: the bump MUST run in the caller's tx when one exists so
+// it commits atomically with the writeback that triggered it.
+func (q *queueImpl) BumpLastProgressAt(ctx context.Context, tx persistence.Tx, runID shared.UUID, now time.Time) (bool, error) {
+	res, err := q.q(tx).ExecContext(ctx,
+		`UPDATE rimsky_node_runs SET last_progress_at = ? WHERE id = ?`,
+		formatTime(now), runID.String(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("sqlite.BumpLastProgressAt: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("sqlite.BumpLastProgressAt: rows-affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ListLive returns currently-live dispatch rows for the observability
@@ -659,7 +681,9 @@ func (q *queueImpl) ListLive(ctx context.Context, filter persistence.DispatchLis
 	// past active terminal; the "live" observability surface filters to
 	// in-flight phases so the listing keeps its prior shape.
 	q1 := `SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
-	        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
+	        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
+	        d.async_ack_registered_at, d.last_progress_at, d.tags,
+	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
 	   FROM rimsky_node_runs d
 	   LEFT JOIN rimsky_nodes n ON n.id = d.node_id
 	  WHERE d.phase IN ('pending','active','held','parked')` +
@@ -742,74 +766,19 @@ func (q *queueImpl) CountParkedByReason(ctx context.Context) (map[string]int, er
 func (q *queueImpl) GetByID(ctx context.Context, id shared.UUID) (*persistence.DispatchRow, error) {
 	row := q.db.QueryRowContext(ctx,
 		`SELECT d.id, d.node_id, d.executor_name, d.required_stores, d.enqueued_at,
-		        d.claimed_by, d.claimed_at, d.last_heartbeat_at, d.frame_id
+		        d.claimed_by, d.claimed_at, d.frame_id, d.async_ack_id,
+		        d.async_ack_registered_at, d.last_progress_at, d.tags,
+	        d.effective_max_quiet_period_seconds, d.effective_max_runtime_seconds
 		   FROM rimsky_node_runs d
 		  WHERE d.id = ?
 		    AND d.phase IN ('pending','active','held','parked')`, id.String(),
 	)
-	var (
-		idStr             string
-		nodeIDStr         string
-		executorName      sql.NullString
-		requiredStoresStr string
-		enqueuedAtStr     string
-		claimedBy         sql.NullString
-		claimedAtStr      sql.NullString
-		lastHeartbeatStr  sql.NullString
-		frameIDStr        string
-	)
-	if err := row.Scan(
-		&idStr, &nodeIDStr, &executorName, &requiredStoresStr,
-		&enqueuedAtStr, &claimedBy, &claimedAtStr, &lastHeartbeatStr, &frameIDStr,
-	); err != nil {
+	r, err := scanDispatchRow(row)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
-	}
-	var r persistence.DispatchRow
-	var err error
-	if r.ID, err = uuid.Parse(idStr); err != nil {
-		return nil, err
-	}
-	if r.NodeID, err = uuid.Parse(nodeIDStr); err != nil {
-		return nil, err
-	}
-	if executorName.Valid {
-		v := executorName.String
-		r.ExecutorName = &v
-	}
-	stores, err := unmarshalStringArray(requiredStoresStr)
-	if err != nil {
-		return nil, err
-	}
-	r.RequiredStores = stores
-	if r.EnqueuedAt, err = parseTime(enqueuedAtStr); err != nil {
-		return nil, err
-	}
-	if claimedBy.Valid {
-		v := claimedBy.String
-		r.ClaimedBy = &v
-	}
-	if claimedAtStr.Valid {
-		t, err := parseTime(claimedAtStr.String)
-		if err != nil {
-			return nil, err
-		}
-		r.ClaimedAt = &t
-	}
-	if lastHeartbeatStr.Valid {
-		t, err := parseTime(lastHeartbeatStr.String)
-		if err != nil {
-			return nil, err
-		}
-		r.LastHeartbeatAt = &t
-	}
-	if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
-		return nil, err
-	}
-	if r.RequiredStores == nil {
-		r.RequiredStores = []string{}
 	}
 	return &r, nil
 }
@@ -935,22 +904,45 @@ func buildLiveDispatchFilters(filter persistence.DispatchListFilter) (stateClaus
 	return stateClause, executor, instanceID
 }
 
-func scanDispatchRow(rows *sql.Rows) (persistence.DispatchRow, error) {
+// scanner is implemented by both *sql.Row and *sql.Rows so a single
+// row-shape decoder serves both QueryRow and Query iteration sites.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+// scanDispatchRow decodes a row from the canonical dispatch SELECT shape
+// used by ListLive / GetByID / ListOrphanedClaims /
+// LookupRunByAsyncAckID — fourteen columns: id, node_id, executor_name,
+// required_stores, enqueued_at, claimed_by, claimed_at, frame_id,
+// async_ack_id, async_ack_registered_at, last_progress_at, tags,
+// effective_max_quiet_period_seconds, effective_max_runtime_seconds.
+//
+// Tags are persisted as a JSON string array per the SQLite schema; the
+// decoder deduplicates preserving first-appearance order so callers
+// observe set semantics (concept:terminal-tag).
+func scanDispatchRow(row scanner) (persistence.DispatchRow, error) {
 	var (
-		idStr             string
-		nodeIDStr         string
-		executorName      sql.NullString
-		requiredStoresStr string
-		enqueuedAtStr     string
-		claimedBy         sql.NullString
-		claimedAtStr      sql.NullString
-		lastHeartbeatStr  sql.NullString
-		frameIDStr        string
-		r                 persistence.DispatchRow
+		idStr                string
+		nodeIDStr            string
+		executorName         sql.NullString
+		requiredStoresStr    string
+		enqueuedAtStr        string
+		claimedBy            sql.NullString
+		claimedAtStr         sql.NullString
+		frameIDStr           string
+		asyncAckID           sql.NullString
+		asyncAckRegisteredAt sql.NullString
+		lastProgressAtStr    sql.NullString
+		tagsStr              sql.NullString
+		maxQuietSec          sql.NullInt64
+		maxRuntimeSec        sql.NullInt64
+		r                    persistence.DispatchRow
 	)
-	if err := rows.Scan(
+	if err := row.Scan(
 		&idStr, &nodeIDStr, &executorName, &requiredStoresStr,
-		&enqueuedAtStr, &claimedBy, &claimedAtStr, &lastHeartbeatStr, &frameIDStr,
+		&enqueuedAtStr, &claimedBy, &claimedAtStr, &frameIDStr,
+		&asyncAckID, &asyncAckRegisteredAt, &lastProgressAtStr, &tagsStr,
+		&maxQuietSec, &maxRuntimeSec,
 	); err != nil {
 		return persistence.DispatchRow{}, err
 	}
@@ -978,26 +970,70 @@ func scanDispatchRow(rows *sql.Rows) (persistence.DispatchRow, error) {
 		r.ClaimedBy = &v
 	}
 	if claimedAtStr.Valid {
-		t, err := parseTime(claimedAtStr.String)
-		if err != nil {
-			return persistence.DispatchRow{}, err
+		t, perr := parseTime(claimedAtStr.String)
+		if perr != nil {
+			return persistence.DispatchRow{}, perr
 		}
 		r.ClaimedAt = &t
-	}
-	if lastHeartbeatStr.Valid {
-		t, err := parseTime(lastHeartbeatStr.String)
-		if err != nil {
-			return persistence.DispatchRow{}, err
-		}
-		r.LastHeartbeatAt = &t
 	}
 	if r.FrameID, err = uuid.Parse(frameIDStr); err != nil {
 		return persistence.DispatchRow{}, err
 	}
+	if asyncAckID.Valid {
+		v := asyncAckID.String
+		r.AsyncAckID = &v
+	}
+	if asyncAckRegisteredAt.Valid {
+		t, perr := parseTime(asyncAckRegisteredAt.String)
+		if perr != nil {
+			return persistence.DispatchRow{}, perr
+		}
+		r.AsyncAckRegisteredAt = &t
+	}
+	if lastProgressAtStr.Valid {
+		t, perr := parseTime(lastProgressAtStr.String)
+		if perr != nil {
+			return persistence.DispatchRow{}, perr
+		}
+		r.LastProgressAt = &t
+	}
+	rawTags, terr := decodeTagsJSON(tagsStr)
+	if terr != nil {
+		return persistence.DispatchRow{}, terr
+	}
+	r.Tags = dedupTags(rawTags)
 	if r.RequiredStores == nil {
 		r.RequiredStores = []string{}
 	}
+	if maxQuietSec.Valid {
+		v := int(maxQuietSec.Int64)
+		r.EffectiveMaxQuietPeriodSeconds = &v
+	}
+	if maxRuntimeSec.Valid {
+		v := int(maxRuntimeSec.Int64)
+		r.EffectiveMaxRuntimeSeconds = &v
+	}
 	return r, nil
+}
+
+// dedupTags collapses duplicates while preserving first-appearance
+// order, per concept:terminal-tag set semantics. Returns nil for empty
+// input so the JSON-omitempty tag on DispatchRow.Tags drops the column
+// from observability serialization when no tags are set.
+func dedupTags(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, t := range in {
+		if _, ok := seen[t]; ok {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	return out
 }
 
 func encodeDispatchCursor(enqueued time.Time, id shared.UUID) string {

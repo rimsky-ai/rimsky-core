@@ -161,18 +161,27 @@ func TestPGFusedStore_ExecutorConformance(t *testing.T) {
 	if passed == 0 {
 		t.Fatalf("executor conformance: 0 scenarios passed (skipped=%d)", skipped)
 	}
-	// @constraint: execute_happy_path is not stub-gated, so a real
-	// (non-stub) executor MUST land it in the passing set; a missing or
-	// failing row here means the runner silently skipped the baseline.
-	foundHappy := false
-	for _, r := range results {
-		if r.Scenario == "execute_happy_path" && r.Passed {
-			foundHappy = true
-			break
+	// @constraint: The non-stub baseline pair (`cancel`,
+	// `unknown_ack_id`) are not stub-gated, so a real (non-stub)
+	// executor MUST land them in the passing set; a missing or failing
+	// row here means the runner silently skipped one half of the
+	// non-stub conformance surface. Stub-gated scenarios that the pg
+	// verifier legitimately skips (every Execute-driving scenario,
+	// since a verifier has no stub mode) are NOT in this list — the
+	// `passed > 0` floor above plus an explicit per-scenario assertion
+	// would conflate "executor skipped because it can't stub" with
+	// "executor failed silently."
+	for _, want := range []string{"cancel", "unknown_ack_id"} {
+		found := false
+		for _, r := range results {
+			if r.Scenario == want && r.Passed {
+				found = true
+				break
+			}
 		}
-	}
-	if !foundHappy {
-		t.Errorf("expected `execute_happy_path` scenario to pass; results: %v", scenarioNames(results))
+		if !found {
+			t.Errorf("expected non-stub scenario %q to pass; results: %v", want, scenarioNames(results))
+		}
 	}
 }
 

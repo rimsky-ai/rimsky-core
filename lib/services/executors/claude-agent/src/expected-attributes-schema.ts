@@ -188,25 +188,28 @@ export const expectedAttributesSchema = {
 } as const;
 
 /**
- * Names of events claude-agent may emit via the NamedEvent wire type.
+ * Tags claude-agent may include on its settling terminal verdict
+ * (Success / Error / Park `tags` field).
  *
- * The base set is empty: rate-limit handling uses the `Park` terminal, not
- * events. A deployment (or a derivative image) declares the names its
- * agents will emit via the `emit_named_event` MCP tool through the
- * `RIMSKY_EXECUTOR_DECLARED_EVENTS` env var (comma-separated; whitespace
- * trimmed; empty segments dropped). The resolved list is advertised via
- * `Capabilities.declared_events` (server.ts + observability.ts), so
- * rimsky's registration-time `subscribes:` cross-check sees the names
- * without a source fork, and it is the self-consistency list the
- * `emit_named_event` handler checks an emitted name against.
+ * The base set is empty: rate-limit handling uses the `Park` terminal,
+ * not tags. A deployment (or a derivative image) declares the tags its
+ * agents will emit via the `RIMSKY_EXECUTOR_DECLARED_TAGS` env var
+ * (comma-separated; whitespace trimmed; empty segments dropped). The
+ * resolved list is advertised via `Capabilities.declared_tags`
+ * (server.ts + observability.ts), so rimsky's registration-time
+ * `subscribes:` `when: "<tag>" in payload.tags` cross-check sees the
+ * names without a source fork. Per concept:terminal-tag tags can only
+ * ride on the settling terminal verdict — no mid-dispatch emission.
  *
- * Resolved at call time (not module-load) so a test (or a late
- * env-var set) is reflected without re-importing the module — mirrors
- * the lazy `process.env` reads elsewhere in this executor
- * (e.g. `stubModeEnabled()`).
+ * Resolved at call time (not module-load) so a test (or a late env-var
+ * set) is reflected without re-importing the module — mirrors the lazy
+ * `process.env` reads elsewhere in this executor (e.g.
+ * `stubModeEnabled()`).
+ *
+ * @concept: terminal-tag
  */
-export function resolveDeclaredEvents(): string[] {
-  const raw = process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS;
+export function resolveDeclaredTags(): string[] {
+  const raw = process.env.RIMSKY_EXECUTOR_DECLARED_TAGS;
   if (!raw) return [];
   return raw
     .split(",")

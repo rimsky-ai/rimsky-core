@@ -46,24 +46,24 @@ type LeafRunHeldClaim struct {
 }
 
 // SubstitutionRef is one entry of LeafRunRecord.SubstitutionRefs — the
-// upstream source the receiving run consumed at dispatch-time via
-// `{{nodes.<X>.attribute.<Y>}}` / `{{nodes.<X>.event.<Y>}}` directives.
-// The richer object shape (over a bare `[]string`) lets the
-// `/lineage/by-source/{kind}/{id}` reverse-lookup discriminate by source
-// kind, and lets the ancestor walker resolve the upstream's lineage row
-// by RUN id (not just node-type) when one is available.
+// upstream source the receiving run consumed at dispatch-time via a
+// `{{nodes.<X>.attribute.<Y>}}` directive. The richer object shape
+// (over a bare `[]string`) lets the `/lineage/by-source/{kind}/{id}`
+// reverse-lookup discriminate by source kind, and lets the ancestor
+// walker resolve the upstream's lineage row by RUN id (not just
+// node-type) when one is available.
 //
 // Field semantics:
 //
-//   - `SourceKind` ∈ {`attribute`, `event`, `run`, `claim`}. `attribute`
-//     and `event` are emitted by the runtime substitution layer;
-//     `run` is reserved for run-tree links pre-populated by the dispatch
-//     path (when the upstream's leaf-run row is known at acquire-time);
-//     `claim` for claim-source linkage (post-v1).
+//   - `SourceKind` ∈ {`attribute`, `run`, `claim`}. `attribute` is
+//     emitted by the runtime substitution layer; `run` is reserved for
+//     run-tree links pre-populated by the dispatch path (when the
+//     upstream's leaf-run row is known at acquire-time); `claim` for
+//     claim-source linkage (post-v1).
 //   - `SourceNodeAlias` is the upstream node-type (template alias) the
 //     directive named.
 //   - `SourceVersionOrID` is the specific upstream run id (when known) or
-//     the upstream attribute/event name (when run id not yet wired).
+//     the upstream attribute name (when run id not yet wired).
 //
 // Aligned with subscribers/openlineage/subscriber.go::SubstitutionRef.
 type SubstitutionRef struct {
@@ -313,9 +313,9 @@ type LeafRunEmitInput struct {
 	// pre-acquisition emit sites should plumb it explicitly).
 	TemplateHash string
 	// SubstitutionRefs lists upstream sources this run consumed at
-	// dispatch-time via `{{nodes.X.attribute.Y}}` /
-	// `{{nodes.X.event.Y}}` directives, resolved to upstream run ids
-	// where the dispatcher can find them. Sourced from
+	// dispatch-time via `{{nodes.X.attribute.Y}}` directives,
+	// resolved to upstream run ids where the dispatcher can find
+	// them. Sourced from
 	// `runtime.collectSubstitutionRefsForEmit` (which inspects
 	// `acq.NodeDef.Attributes` and looks up the upstream node's most
 	// recent leaf-run lineage row). The ancestor walker
@@ -495,11 +495,10 @@ func logMissingFieldsOnce(logger shared.Logger, rec LeafRunRecord) {
 
 // CollectSubstitutionRefsForEmit builds the per-run SubstitutionRef
 // slice from the acquisition context. For each `{{nodes.X.attribute.Y}}`
-// / `{{nodes.X.event.Y}}` directive in the receiver's attribute schema,
-// the helper:
+// directive in the receiver's attribute schema, the helper:
 //
 //  1. Records the directive shape as `(SourceKind, SourceNodeAlias,
-//     SourceVersionOrID=<attribute-or-event-name>)`.
+//     SourceVersionOrID=<attribute-name>)`.
 //  2. Looks up the upstream node's most recent leaf-run lineage row in
 //     the same instance and adds a second `SourceKind="run"` entry
 //     keyed by the upstream run id. The ancestor walker
@@ -508,12 +507,11 @@ func logMissingFieldsOnce(logger shared.Logger, rec LeafRunRecord) {
 //     upstream lineage row.
 //
 // The two-entry-per-directive shape gives operators both pieces of
-// information: which directive caused the read (attribute/event +
-// name) and which specific upstream run produced the value. When the
-// upstream's lineage row isn't yet available (cold start, retention
-// sweep removed it, etc.), only the directive-shape entry is emitted —
-// the ancestor walker silently skips entries whose
-// `SourceVersionOrID` isn't a UUID.
+// information: which directive caused the read (attribute + name) and
+// which specific upstream run produced the value. When the upstream's
+// lineage row isn't yet available (cold start, retention sweep removed
+// it, etc.), only the directive-shape entry is emitted — the ancestor
+// walker silently skips entries whose `SourceVersionOrID` isn't a UUID.
 //
 // Best-effort: failures (no template, no upstream node) return nil
 // rather than failing the emit, since the lineage row itself is

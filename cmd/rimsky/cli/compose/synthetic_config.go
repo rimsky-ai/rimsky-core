@@ -284,7 +284,7 @@ func WriteSyntheticSupervisorYAML(runDir string) error {
 type supervisorYAMLProbe struct {
 	SupervisorID        string                      `yaml:"supervisor_id,omitempty"`
 	Concurrency         int                         `yaml:"concurrency,omitempty"`
-	HeartbeatIntervalMs int                         `yaml:"heartbeat_interval_ms,omitempty"`
+	LivenessIntervalMs  int                         `yaml:"liveness_interval_ms,omitempty"`
 	ClaimPollIntervalMs int                         `yaml:"claim_poll_interval_ms,omitempty"`
 	Callback            supervisorYAMLProbeCallback `yaml:"callback"`
 }

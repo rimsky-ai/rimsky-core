@@ -16,10 +16,8 @@ func TestValidateTypePath_AcceptsCanonical(t *testing.T) {
 		"terminal/infra/heartbeat_lost",
 		"transient/retry/3/agent/rate_limited",
 		"transient/retry/1/foo",
-		"transient/heartbeat_missed",
 		"transient/await_async",
 		"attribute/budget_cents/changed",
-		"event/discovered",
 	}
 	for _, c := range cases {
 		c := c
@@ -58,7 +56,6 @@ func TestValidateSubscriptionType_AcceptsTrailingWildcard(t *testing.T) {
 	cases := []TypePath{
 		"terminal/error/*",
 		"terminal/*",
-		"event/*",
 		"transient/*",
 		"transient/retry/*",
 		"attribute/*",

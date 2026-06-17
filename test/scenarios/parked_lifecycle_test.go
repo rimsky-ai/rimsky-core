@@ -56,7 +56,7 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 	// `WaitForNodeState` windows.
 	resumeAt := time.Now().Add(15 * time.Second)
 	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "rate_limit", []byte(`{"hint":"backoff"}`), resumeAt, "session-abc")
+		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "rate_limit", resumeAt)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-deadline", Version: "1",
@@ -127,9 +127,9 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 
 	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 30*time.Second),
 		"sweep should wake the parked node when resume_at elapses")
-	// @deliberate: Verify the persisted resume_reason is "deadline_elapsed" — the
-	// runner reads this from rimsky_node_runs.wake_reason and
-	// attaches it to the ExecuteRequest.resume_context so executors can
+	// @deliberate: Verify the resume_reason on the parked_resume_started
+	// audit event payload is "deadline_elapsed" — SweepParkedNodes
+	// stamps it on the wake event so dashboards / scenarios can
 	// distinguish deadline-elapsed wakes from external invalidates.
 	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")
 	require.Equal(t, "deadline_elapsed", row["resume_reason"],
@@ -150,7 +150,7 @@ func TestParkedLifecycleMaxParkDurationOverrun(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{})
 	// @deliberate: Park indefinitely so SweepParkedNodes' watchdog branch fires; the
 	// runtime measures overrun against parked_at + max_park_duration.
-	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "waiting", nil, time.Time{}, "")
+	h.Stub.WhenType("worker").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "waiting", time.Time{})
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-overrun", Version: "1",
@@ -276,7 +276,7 @@ func TestParkedLifecycleHeldClaimRetentionAcrossPark(t *testing.T) {
 	// container speeds and was the documented flake source.
 	resumeAt := time.Now().Add(10 * time.Second)
 	h.Stub.WhenType("acquirer").
-		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "checkpoint", []byte(`{"step":1}`), resumeAt, "tok-1")
+		Park(genv1.ParkReason_PARK_REASON_SNOOZE, "checkpoint", resumeAt)
 	// @deliberate: Inheritor is pre-scripted but won't be reached until the
 	// acquirer resumes and completes.
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "inheritor-done")
@@ -417,7 +417,7 @@ func TestParkedLifecycleParkTimeoutAbandonsHeldClaim(t *testing.T) {
 			},
 		},
 	})
-	h.Stub.WhenType("acquirer").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "waiting_held", nil, time.Time{}, "")
+	h.Stub.WhenType("acquirer").Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "waiting_held", time.Time{})
 	h.Stub.WhenType("inheritor").Success(map[string]any{}, true, "should-not-run")
 
 	tid := h.DeployTemplate(node.TemplateSpec{

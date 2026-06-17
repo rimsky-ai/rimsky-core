@@ -157,11 +157,11 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
     }
   });
 
-  it("resume context drives cliRunner.resume() with prior sessionId", async () => {
+  it("attribute-driven session_token drives cliRunner.resume() with prior sessionId", async () => {
     const resumeRequests: CliResumeRequest[] = [];
     const fakeCli: CliRunner = {
       spawn: async () => {
-        throw new Error("spawn must not be called when resumeContext.sessionToken set");
+        throw new Error("spawn must not be called when sessionToken set");
       },
       resume: async (req) => {
         resumeRequests.push(req);
@@ -187,25 +187,23 @@ describe("J11 e2e — claude-agent rate-limit park + resume", () => {
       callback: cb,
       silenceTimeoutMs: 5_000,
       logger,
-      resumeContext: {
-        sessionToken: "session-from-prior-park",
-        resumeReason: "deadline_elapsed",
-      },
+      // @constraint: TD-claude-agent-session-attribute-only — the resume
+      // signal is the carry-forward session_token, passed directly. The
+      // retired resume_context channel does not exist.
+      sessionToken: "session-from-prior-park",
     });
 
     expect(resumeRequests.length).toBeGreaterThan(0);
-    // @deliberate: the first invocation is the J10 path: resumeContext.sessionToken
-    // becomes the --resume session id. (The agent-run code may also
-    // fire a second recovery-retry resume keyed on runId after the
-    // subprocess exits 0 without report_complete; we only assert the
-    // initial J10 invocation here.)
+    // @deliberate: sessionToken becomes the --resume session id. (The
+    // agent-run code may also fire a second recovery-retry resume keyed
+    // on runId after the subprocess exits 0 without report_complete; we
+    // only assert the initial resume invocation here.)
     expect(resumeRequests[0]!.sessionId).toBe("session-from-prior-park");
-    // @deliberate: the executor appends a fixed metadata footer to the user prompt
-    // post-2026-05-21 userdata collapse (callback_token + resume
-    // metadata). Assert the prompt starts with the resolved bytes and
-    // carries the footer with the correct resume_reason.
+    // @deliberate: the executor appends a fixed metadata footer to the
+    // user prompt post-2026-05-21 userdata collapse (callback_token +
+    // binding_id). resume_reason is gone with the resume_context
+    // channel.
     expect(resumeRequests[0]!.prompt.startsWith("user prompt\n\n---\n")).toBe(true);
-    expect(resumeRequests[0]!.prompt).toContain("resume_reason: deadline_elapsed");
     // @deliberate: the J10 resume path must pass the rimsky-callback MCP tool config.
     // The Claude CLI's --resume does not carry --mcp-config across, so
     // without this the resumed subprocess has no MCP servers registered

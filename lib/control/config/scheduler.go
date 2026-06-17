@@ -32,11 +32,9 @@ type SchedulerConfig struct {
 	Clock  shared.Clock
 	Logger shared.Logger
 	// @constraint: zero values fall back to the documented defaults —
-	// TickInterval 1500ms, HeartbeatTimeout 15s, OrphanedClaimTimeout
-	// 5×HeartbeatTimeout.
-	TickInterval         time.Duration
-	HeartbeatTimeout     time.Duration
-	OrphanedClaimTimeout time.Duration
+	// TickInterval 1500ms, MaxQuietPeriodDefault 15m.
+	TickInterval          time.Duration
+	MaxQuietPeriodDefault time.Duration
 	// Stores is the parsed `stores:` block from rimsky.yml. Each entry
 	// is dialed at startup and validated against the operator-declared
 	// capabilities; mismatches fail StartScheduler.
@@ -119,16 +117,15 @@ func StartScheduler(cfg SchedulerConfig) (SchedulerHandle, error) {
 		return nil, fmt.Errorf("StartScheduler: Driver.Coordinator() returned nil")
 	}
 	inner := scheduler.Config{
-		Persist:              persistStore,
-		Queue:                persistQueue,
-		AdvisoryLocker:       coordinator,
-		Clock:                cfg.Clock,
-		Logger:               cfg.Logger,
-		TickInterval:         cfg.TickInterval,
-		HeartbeatTimeout:     cfg.HeartbeatTimeout,
-		OrphanedClaimTimeout: cfg.OrphanedClaimTimeout,
-		ClaimHandles:         persistStore.ClaimHandles(),
-		SupervisorID:         cfg.SupervisorID,
+		Persist:               persistStore,
+		Queue:                 persistQueue,
+		AdvisoryLocker:        coordinator,
+		Clock:                 cfg.Clock,
+		Logger:                cfg.Logger,
+		TickInterval:          cfg.TickInterval,
+		MaxQuietPeriodDefault: cfg.MaxQuietPeriodDefault,
+		ClaimHandles:          persistStore.ClaimHandles(),
+		SupervisorID:          cfg.SupervisorID,
 		// @constraint: StoreRegistry is the dialed producer registry —
 		// required by the park_timeout watchdog to fire Abandon on held
 		// claims (@blessed-invariant 13).

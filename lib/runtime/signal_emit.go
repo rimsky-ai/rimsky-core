@@ -26,9 +26,11 @@
 //     a BARE audit row, no cascade. (See the comment in applyTerminalPark
 //     and TestParkedLifecycleHeldClaimRetentionAcrossPark for the
 //     held-claim breakage a park cascade causes.)
-//   - attribute/<key>/changed and event/<name> are data signals: cascaded
-//     at terminal but audited on their own schedule (see
-//     applyTerminalComplete / persistOneNamedEvent).
+//   - attribute/<key>/changed are data signals: cascaded at terminal
+//     but audited on their own schedule (see applyTerminalComplete).
+//     Per TD-collapse-named-event-to-tags the historic `event/<name>`
+//     data signal retired — non-terminal observable transitions ride
+//     as tags on the settling terminal verdict (concept:terminal-tag).
 //   - message/* uses a distinct subscriber edge map (message_delivery.go).
 package runtime
 
@@ -78,11 +80,12 @@ import (
 //     Do NOT add signal-type branching here or below: subscriptions
 //     drive cascades, period.
 //
-//   - What it does NOT handle: data signals attribute/<key>/changed and
-//     event/<name> (cascaded at terminal but audited on their own
-//     schedule — see applyTerminalComplete and persistOneNamedEvent) and
-//     message/* (a distinct subscriber edge map, see message_delivery.go).
-//     Those are data/transport signals, not run dispositions.
+//   - What it does NOT handle: data signal attribute/<key>/changed
+//     (cascaded at terminal but audited on its own schedule — see
+//     applyTerminalComplete) and message/* (a distinct subscriber
+//     edge map, see message_delivery.go). The pre-Pass-1
+//     `event/<name>` data signal is retired entirely under
+//     TD-collapse-named-event-to-tags.
 //
 //   - Thread-safety: none of its own; it runs inside the caller's tx and
 //     inherits that tx's isolation.

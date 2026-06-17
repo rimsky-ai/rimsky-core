@@ -50,7 +50,7 @@ func handleListEvents(deps AppDeps) http.HandlerFunc {
 					" (expected an operational kind from the OperationalKind proto enum"+
 					" or a canonical signal type-path; got: "+
 					strings.Join(events.AllOperationalKinds(), ", ")+
-					", or terminal/*, transient/*, attribute/*/changed, event/*, message/*)")
+					", or terminal/*, transient/*, attribute/*/changed)")
 				return
 			}
 		}

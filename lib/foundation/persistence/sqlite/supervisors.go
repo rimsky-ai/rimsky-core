@@ -12,14 +12,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"time"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
 const supervisorCols = `
   id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port,
-  last_heartbeat_at, active_node_count, registered_at
+  active_node_count, registered_at
 `
 
 func (s *supervisorsImpl) Register(ctx context.Context, in persistence.SupervisorRegisterInput, tx persistence.Tx) error {
@@ -34,29 +33,28 @@ func (s *supervisorsImpl) Register(ctx context.Context, in persistence.Superviso
 	now := nowUTC()
 	_, err := s.q(tx).ExecContext(ctx,
 		`INSERT INTO rimsky_supervisors
-		   (id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port, last_heartbeat_at, registered_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		   (id, accepted_executors, accepted_stores, concurrency, callback_host, callback_port, registered_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE
 		   SET accepted_executors = excluded.accepted_executors,
 		       accepted_stores    = excluded.accepted_stores,
 		       concurrency        = excluded.concurrency,
 		       callback_host      = excluded.callback_host,
 		       callback_port      = excluded.callback_port,
-		       last_heartbeat_at  = excluded.last_heartbeat_at,
 		       active_node_count  = 0`,
 		in.ID, marshalStringArray(accepts), marshalStringArray(stores), in.Concurrency,
-		nullableString(in.CallbackHost), nullableInt(in.CallbackPort), now, now,
+		nullableString(in.CallbackHost), nullableInt(in.CallbackPort), now,
 	)
 	return err
 }
 
-func (s *supervisorsImpl) Heartbeat(ctx context.Context, id string, activeNodeCount int, tx persistence.Tx) error {
+// UpdateActiveNodeCount writes the supervisor's current active-node
+// count. Replaces the prior Heartbeat method now that supervisor-level
+// heartbeat tracking has retired.
+func (s *supervisorsImpl) UpdateActiveNodeCount(ctx context.Context, id string, activeNodeCount int, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_supervisors
-		   SET last_heartbeat_at = ?,
-		       active_node_count = ?
-		 WHERE id = ?`,
-		nowUTC(), activeNodeCount, id,
+		`UPDATE rimsky_supervisors SET active_node_count = ? WHERE id = ?`,
+		activeNodeCount, id,
 	)
 	return err
 }
@@ -85,17 +83,6 @@ func (s *supervisorsImpl) List(ctx context.Context, tx persistence.Tx) ([]persis
 	return collectSupervisors(rows)
 }
 
-func (s *supervisorsImpl) ListStale(ctx context.Context, cutoff time.Time, tx persistence.Tx) ([]persistence.SupervisorRow, error) {
-	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+supervisorCols+` FROM rimsky_supervisors
-		 WHERE last_heartbeat_at < ?`, formatTime(cutoff))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectSupervisors(rows)
-}
-
 func (s *supervisorsImpl) Unregister(ctx context.Context, id string, tx persistence.Tx) error {
 	_, err := s.q(tx).ExecContext(ctx, `DELETE FROM rimsky_supervisors WHERE id = ?`, id)
 	return err
@@ -108,13 +95,12 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 		acceptedStoresStr    string
 		callbackHost         sql.NullString
 		callbackPort         sql.NullInt64
-		lastHeartbeatAtStr   string
 		registeredAtStr      string
 	)
 	if err := sc.Scan(
 		&r.ID, &acceptedExecutorsStr, &acceptedStoresStr, &r.Concurrency,
 		&callbackHost, &callbackPort,
-		&lastHeartbeatAtStr, &r.ActiveNodeCount, &registeredAtStr,
+		&r.ActiveNodeCount, &registeredAtStr,
 	); err != nil {
 		return persistence.SupervisorRow{}, err
 	}
@@ -132,11 +118,6 @@ func scanSupervisor(sc scannable) (persistence.SupervisorRow, error) {
 	if callbackPort.Valid {
 		r.CallbackPort = int(callbackPort.Int64)
 	}
-	lastHB, err := parseTime(lastHeartbeatAtStr)
-	if err != nil {
-		return persistence.SupervisorRow{}, err
-	}
-	r.LastHeartbeatAt = lastHB
 	regAt, err := parseTime(registeredAtStr)
 	if err != nil {
 		return persistence.SupervisorRow{}, err

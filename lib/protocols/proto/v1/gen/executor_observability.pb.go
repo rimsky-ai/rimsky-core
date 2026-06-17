@@ -195,14 +195,15 @@ type ObservabilityCapabilities struct {
 	// at dispatch and the post-write-back bag at commit. Validation
 	// failures route through Error { error_class: "template_validation_failed" }.
 	ExpectedAttributesSchema []byte `protobuf:"bytes,6,opt,name=expected_attributes_schema,json=expectedAttributesSchema,proto3" json:"expected_attributes_schema,omitempty"`
-	// declared_events is the set of event names this executor may emit
-	// via the NamedEvent wire type on ExecuteEvent. Empty means
-	// "executor does not emit events."
+	// declared_tags is the set of tag names this executor may include on
+	// a settling outcome (Success / Error / Park). Empty means "executor
+	// does not emit tags."
 	//
-	// Rimsky validates that template subscriptions of the form
-	// `subscribes: [{node: <sender>, type: event/<name>}]` reference an
-	// event in declared_events.
-	DeclaredEvents []string `protobuf:"bytes,7,rep,name=declared_events,json=declaredEvents,proto3" json:"declared_events,omitempty"`
+	// Rimsky validates at template registration that every subscription's
+	// CEL `when:` filter over `payload.tags` references a tag in
+	// declared_tags, and rejects emissions of undeclared names at the
+	// supervisor's terminal handler.
+	DeclaredTags []string `protobuf:"bytes,7,rep,name=declared_tags,json=declaredTags,proto3" json:"declared_tags,omitempty"`
 	// declared_error_classes is the set of error-class paths this
 	// executor may emit on Error.error_class. Patterns ending in `*`
 	// indicate prefix-pattern leaves (e.g., `http/server_error/*`);
@@ -297,9 +298,9 @@ func (x *ObservabilityCapabilities) GetExpectedAttributesSchema() []byte {
 	return nil
 }
 
-func (x *ObservabilityCapabilities) GetDeclaredEvents() []string {
+func (x *ObservabilityCapabilities) GetDeclaredTags() []string {
 	if x != nil {
-		return x.DeclaredEvents
+		return x.DeclaredTags
 	}
 	return nil
 }
@@ -631,15 +632,15 @@ var File_executor_observability_proto protoreflect.FileDescriptor
 const file_executor_observability_proto_rawDesc = "" +
 	"\n" +
 	"\x1cexecutor_observability.proto\x12\trimsky.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x1d\n" +
-	"\x1bExecutorCapabilitiesRequest\"\xfb\x03\n" +
+	"\x1bExecutorCapabilitiesRequest\"\xf7\x03\n" +
 	"\x19ObservabilityCapabilities\x12,\n" +
 	"\x12supports_trace_get\x18\x01 \x01(\bR\x10supportsTraceGet\x122\n" +
 	"\x15supports_trace_stream\x18\x02 \x01(\bR\x13supportsTraceStream\x12G\n" +
 	" retention_after_terminal_seconds\x18\x03 \x01(\x04R\x1dretentionAfterTerminalSeconds\x120\n" +
 	"\tcustom_ui\x18\x04 \x01(\v2\x13.rimsky.v1.CustomUIR\bcustomUi\x12&\n" +
 	"\x0fhttp_bridge_url\x18\x05 \x01(\tR\rhttpBridgeUrl\x12<\n" +
-	"\x1aexpected_attributes_schema\x18\x06 \x01(\fR\x18expectedAttributesSchema\x12'\n" +
-	"\x0fdeclared_events\x18\a \x03(\tR\x0edeclaredEvents\x124\n" +
+	"\x1aexpected_attributes_schema\x18\x06 \x01(\fR\x18expectedAttributesSchema\x12#\n" +
+	"\rdeclared_tags\x18\a \x03(\tR\fdeclaredTags\x124\n" +
 	"\x16declared_error_classes\x18\b \x03(\tR\x14declaredErrorClasses\x12<\n" +
 	"\x1avalidation_supported_roles\x18\t \x03(\tR\x18validationSupportedRoles\"\x8a\x01\n" +
 	"\bCustomUI\x12\x15\n" +

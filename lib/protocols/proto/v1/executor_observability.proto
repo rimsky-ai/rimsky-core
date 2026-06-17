@@ -49,14 +49,15 @@ message ObservabilityCapabilities {
   // failures route through Error { error_class: "template_validation_failed" }.
   bytes expected_attributes_schema = 6;
 
-  // declared_events is the set of event names this executor may emit
-  // via the NamedEvent wire type on ExecuteEvent. Empty means
-  // "executor does not emit events."
+  // declared_tags is the set of tag names this executor may include on
+  // a settling outcome (Success / Error / Park). Empty means "executor
+  // does not emit tags."
   //
-  // Rimsky validates that template subscriptions of the form
-  // `subscribes: [{node: <sender>, type: event/<name>}]` reference an
-  // event in declared_events.
-  repeated string declared_events = 7;
+  // Rimsky validates at template registration that every subscription's
+  // CEL `when:` filter over `payload.tags` references a tag in
+  // declared_tags, and rejects emissions of undeclared names at the
+  // supervisor's terminal handler.
+  repeated string declared_tags = 7;
 
   // declared_error_classes is the set of error-class paths this
   // executor may emit on Error.error_class. Patterns ending in `*`

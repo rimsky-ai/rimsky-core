@@ -8,15 +8,15 @@ aliases: []
 
 ## What it is
 
-The blob-backend interface is the abstraction that backs spilled byte streams from three surfaces: attribute values, parked-node payloads, and named-event payloads. It exposes five methods (write, read, ranged read, delete, and a backend-name accessor). Four implementations: inline (default; spill disabled), Postgres large-object, filesystem, and an in-memory backend legal only in the single-process deployment mode.
+The blob-backend interface is the abstraction that backs spilled byte streams from one surface: attribute values. It exposes five methods (write, read, ranged read, delete, and a backend-name accessor). Four implementations: inline (default; spill disabled), Postgres large-object, filesystem, and an in-memory backend legal only in the single-process deployment mode.
 
 ## Purpose
 
-A 50KB attribute value, a 200MB parked payload, and a 10-byte event payload all need to behave the same to substitution consumers. Spilling above a configurable threshold (default 64KB) keeps inline JSONB columns small; a pluggable backend lets operators pick the storage shape (Postgres large-object, shared filesystem, etc.).
+A 50KB attribute value and a 5MB attribute blob need to behave the same to substitution consumers. Spilling above a configurable threshold (default 64KB) keeps inline JSONB columns small; a pluggable backend lets operators pick the storage shape (Postgres large-object, shared filesystem, etc.).
 
 ## Boundaries
 
-Owns: the abstraction, the four impls, the spill threshold, the orphan-blob ledger and sweep. Does NOT own: substitution (see `attribute`), claim-payload bytes (those are claim-handle-owned), userdata (always inline). Adjacent: `attribute`, `parked-state`, `named-event`, `inertness`, `persistence-database`.
+Owns: the abstraction, the four impls, the spill threshold, the orphan-blob ledger and sweep. Does NOT own: substitution (see `attribute`), claim-payload bytes (those are claim-handle-owned), userdata (always inline). Adjacent: `attribute`, `inertness`, `persistence-database`.
 
 ## Invariants
 

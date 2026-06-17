@@ -121,6 +121,7 @@ type runRowSnapshot struct {
 	State              cascade.NodeState
 	SettlingSignalType string
 	ClaimedBy          string
+	LastProgressAt     *time.Time
 }
 
 func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runID shared.UUID) runRowSnapshot {
@@ -147,8 +148,14 @@ func snapshotRun(ctx context.Context, t *testing.T, d persistence.Database, runI
 	if err != nil {
 		t.Fatalf("snapshotRun.Queue.GetByID: %v", err)
 	}
-	if row != nil && row.ClaimedBy != nil {
-		out.ClaimedBy = *row.ClaimedBy
+	if row != nil {
+		if row.ClaimedBy != nil {
+			out.ClaimedBy = *row.ClaimedBy
+		}
+		if row.LastProgressAt != nil {
+			t := *row.LastProgressAt
+			out.LastProgressAt = &t
+		}
 	}
 	return out
 }
@@ -173,22 +180,36 @@ func testRunStateWritesIsolated_UpdateState(t *testing.T, d persistence.Database
 	}
 }
 
-// testRunStateWritesIsolated_UpdateHeartbeat.
-func testRunStateWritesIsolated_UpdateHeartbeat(t *testing.T, d persistence.Database) {
+// testRunStateWritesIsolated_BumpLastProgressAt: claim both runs,
+// bump scope A's last_progress_at, assert scope B's is unchanged.
+func testRunStateWritesIsolated_BumpLastProgressAt(t *testing.T, d persistence.Database) {
 	ctx := context.Background()
 	f := seedTwoScopeRuns(ctx, t, d)
 	store := d.Tables()
+	q := d.Queue()
+
+	if err := inTx(ctx, store, func(tx persistence.Tx) error {
+		if _, err := q.ClaimDispatchRow(ctx, tx, f.runA, "sup-A"); err != nil {
+			return err
+		}
+		_, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
+		return err
+	}); err != nil {
+		t.Fatalf("seed claims: %v", err)
+	}
 
 	before := snapshotRun(ctx, t, d, f.runB)
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateHeartbeat(ctx, f.fix.NodeID, f.scopeA, time.Now(), "sup-A", tx)
+		_, berr := q.BumpLastProgressAt(ctx, tx, f.runA, time.Now().Add(1*time.Hour))
+		return berr
 	}); err != nil {
-		t.Fatalf("UpdateHeartbeat(A): %v", err)
+		t.Fatalf("BumpLastProgressAt(A): %v", err)
 	}
 	after := snapshotRun(ctx, t, d, f.runB)
-	if before.ClaimedBy != after.ClaimedBy {
-		t.Fatalf("UpdateHeartbeat leaked supervisor across scope: B before=%q, after=%q",
-			before.ClaimedBy, after.ClaimedBy)
+	if (before.LastProgressAt == nil) != (after.LastProgressAt == nil) ||
+		(before.LastProgressAt != nil && !before.LastProgressAt.Equal(*after.LastProgressAt)) {
+		t.Fatalf("BumpLastProgressAt leaked across scope: B before=%v after=%v",
+			before.LastProgressAt, after.LastProgressAt)
 	}
 }
 
@@ -260,10 +281,11 @@ func testRunStateWritesIsolated_RemoveForNodeInTx(t *testing.T, d persistence.Da
 	q := d.Queue()
 
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		if err := store.Nodes().UpdateHeartbeat(ctx, f.fix.NodeID, f.scopeA, time.Now(), "sup-A", tx); err != nil {
+		if _, err := q.ClaimDispatchRow(ctx, tx, f.runA, "sup-A"); err != nil {
 			return err
 		}
-		return store.Nodes().UpdateHeartbeat(ctx, f.fix.NodeID, f.scopeB, time.Now(), "sup-B", tx)
+		_, err := q.ClaimDispatchRow(ctx, tx, f.runB, "sup-B")
+		return err
 	}); err != nil {
 		t.Fatalf("seed supervisors: %v", err)
 	}
@@ -313,8 +335,6 @@ func testRunStateWritesIsolated_GetParkedByNode(t *testing.T, d persistence.Data
 			ExpectedClaimedBy: "sup-B",
 			ParkedAt:          time.Now(),
 			Reason:            "snooze",
-			SessionToken:      "tok",
-			PayloadInline:     []byte(`{}`),
 		})
 	}); err != nil {
 		t.Fatalf("seed park B: %v", err)

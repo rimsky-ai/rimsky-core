@@ -11,7 +11,7 @@
 //     reaches terminal as success (rimsky-compose-success.yml);
 //   - 1 (any-failure): mixed-outcome manifest where one instance
 //     succeeds and one fails at dispatch time — the stub executor
-//     emits StreamClose.Error (error_class `stub/failed`) for the
+//     emits Outcome{Error{error_class: stub/failed}} for the
 //     `oops` instance, the runner settles it as ColorFailed under
 //     the default fail-fast policy, and the verb's classifier maps
 //     the mixed roster to ReasonAnyFailure (rimsky-compose.yml);

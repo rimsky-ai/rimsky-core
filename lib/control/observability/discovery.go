@@ -84,12 +84,13 @@ type ObservabilityCapabilities struct {
 	// Plumbed from ObservabilityCapabilities.expected_attributes_schema (proto v1).
 	ExpectedAttributesSchema []byte `json:"expected_attributes_schema,omitempty"`
 
-	// DeclaredEvents is the set of event names this executor may emit
-	// via the non-terminal NamedEvent wire type. Rimsky validates that
-	// any on_event handlers in templates referencing this executor name
-	// an event in declared_events. Empty means "executor does not emit
-	// events." Plumbed from ObservabilityCapabilities.declared_events.
-	DeclaredEvents []string `json:"declared_events,omitempty"`
+	// DeclaredTags is the set of tag names this executor may attach on
+	// a settling outcome (concept:terminal-tag). Rimsky validates that
+	// any tag referenced in a subscriber's CEL `payload.tags` filter
+	// against this executor is declared here. Empty means "executor
+	// emits no tags." Plumbed from
+	// proto:executor_observability.proto::ObservabilityCapabilities.declared_tags.
+	DeclaredTags []string `json:"declared_tags,omitempty"`
 
 	// DeclaredErrorClasses is the set of error-class paths this peer
 	// may emit. For executor entries: classes emitted on

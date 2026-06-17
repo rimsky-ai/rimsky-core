@@ -223,7 +223,11 @@ async function runAndCallback(
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
       postAttributes: config.postAttributes,
-      resumeContext: parseResumeContext(body.resume_context),
+      // @constraint: TD-claude-agent-session-attribute-only — the session
+      // token rides attributes only. The retired resume_context body
+      // channel does not exist; attributes.session_token IS the resume
+      // signal.
+      sessionToken: stringOr(attributes.session_token, ""),
     });
     const cb = outcomeToCallbackBody(outcome, ackId);
     if (config.observability) {
@@ -283,62 +287,30 @@ async function runAndCallback(
 }
 
 /**
- * Wraps a Uint8Array in a base64 string suitable for the proto-JSON
- * `bytes` field encoding (the convention Go's `encoding/json.Unmarshal`
- * uses to decode `[]byte` fields). Used by both transports — keep in sync
- * with server.ts.
- */
-function encodeBase64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64");
-}
-
-/**
- * Projects the per-dispatch named-event buffer into the callback body's
- * `events` slot (proto field 1 of AsyncCallbackBody). Each entry is
- * `{name, payload}` with the payload base64-encoded — the proto-JSON
- * convention for `bytes` fields the Go supervisor's
- * `asyncCallbackNamedEvent.Payload []byte` decodes regardless of transport.
- * An empty / absent buffer yields no `events` key.
- *
- * Exported for unit tests; not part of the agent-contract surface.
- */
-export function emittedEventsCallbackSlot(
-  outcome: AgentOutcome,
-): { events: { name: string; payload: string }[] } | Record<string, never> {
-  const emitted = outcome.emittedEvents ?? [];
-  if (emitted.length === 0) return {};
-  return {
-    events: emitted.map((e) => ({
-      name: e.name,
-      payload: encodeBase64(e.payload),
-    })),
-  };
-}
-
-/**
  * Exported for unit tests; not part of the agent-contract surface.
  */
 export function outcomeToCallbackBody(
   outcome: AgentOutcome,
   ackId: string,
 ): Record<string, unknown> {
-  // @deliberate: the callback body uses the AsyncCallbackBody outcome-oneof shape
-  // (success | error | park), identical to the gRPC variant in server.ts —
-  // both POST to the same supervisor `/v1/callback/{ack}` endpoint, whose
-  // parser (Go parseAsyncCallback) requires exactly one of success | error |
-  // park and rejects the legacy `{type: ...}` / `{park_requested: ...}`
-  // discriminator shape with HTTP 400. `async_ack_id` is carried in the body
-  // for the HTTP bridge (the gRPC variant omits it — it rides the route
-  // param); the supervisor reads the ack from the route and ignores the
-  // body field, so it is harmless. Events ride the `events[]` array.
+  // @constraint: AsyncCallbackBody carries exactly one outcome variant
+  // (success | error | park), identical in shape to the gRPC variant in
+  // server.ts. Per TD-collapse-named-event-to-tags the `events[]` slot
+  // retires; tags ride on the settling verdict (Success/Error/Park
+  // `tags` field). Per TD-claude-agent-session-attribute-only the
+  // session token rides `attributes_delta` on Park; the proto
+  // Park.payload and Park.session_token fields are reserved.
   //
-  // @source server.ts::outcomeToCallbackBody (the gRPC sibling; same oneof
-  // body, minus async_ack_id).
-  const events = emittedEventsCallbackSlot(outcome);
+  // `async_ack_id` is carried in the body for the HTTP bridge (the
+  // gRPC variant omits it — it rides the route param); the supervisor
+  // reads the ack from the route and ignores the body field, so it is
+  // harmless.
+  //
+  // @source server.ts::outcomeToCallbackBody (the gRPC sibling; same
+  // oneof body, minus async_ack_id).
   if (outcome.kind === "complete") {
     return {
       async_ack_id: ackId,
-      ...events,
       success: {
         attributes_delta: outcome.attributesDelta,
         changed: outcome.changed,
@@ -352,7 +324,6 @@ export function outcomeToCallbackBody(
     // signal-taxonomy spec, hierarchical-class convention).
     return {
       async_ack_id: ackId,
-      ...events,
       error: {
         error_class: "agent/blocked",
         payload: { reason: outcome.reason, context: outcome.context },
@@ -360,23 +331,27 @@ export function outcomeToCallbackBody(
     };
   }
   if (outcome.kind === "park_requested") {
-    // @deliberate: the proto-JSON convention for `bytes` fields is base64; Go's
-    // `encoding/json.Unmarshal` into []byte expects a base64 string.
+    const parkBody: Record<string, unknown> = {
+      reason: outcome.reason,
+      reason_note: outcome.reasonNote ?? "",
+    };
+    if (outcome.resumeAt) {
+      parkBody.resume_at = outcome.resumeAt.toISOString();
+    }
+    const delta: Record<string, unknown> = { ...(outcome.attributesDelta ?? {}) };
+    if (outcome.sessionToken && outcome.sessionToken.length > 0) {
+      delta.session_token = outcome.sessionToken;
+    }
+    if (Object.keys(delta).length > 0) {
+      parkBody.attributes_delta = delta;
+    }
     return {
       async_ack_id: ackId,
-      ...events,
-      park: {
-        reason: outcome.reason,
-        reason_note: outcome.reasonNote ?? "",
-        payload: encodeBase64(outcome.payload),
-        ...(outcome.resumeAt ? { resume_at: outcome.resumeAt.toISOString() } : {}),
-        session_token: outcome.sessionToken,
-      },
+      park: parkBody,
     };
   }
   return {
     async_ack_id: ackId,
-    ...events,
     error: {
       error_class: outcome.errorClass,
       payload: outcome.payload,
@@ -632,27 +607,3 @@ function numberOrUndefined(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-// @source: lib/services/executors/claude-agent/src/server.ts (parseResumeContext)
-function parseResumeContext(v: unknown): {
-  payload?: Uint8Array;
-  sessionToken?: string;
-  resumeReason?: string;
-} | undefined {
-  if (!v || typeof v !== "object") return undefined;
-  const r = v as Record<string, unknown>;
-  const out: {
-    payload?: Uint8Array;
-    sessionToken?: string;
-    resumeReason?: string;
-  } = {};
-  if (typeof r.payload === "string" && r.payload.length > 0) {
-    out.payload = Buffer.from(r.payload, "base64");
-  }
-  if (typeof r.session_token === "string" && r.session_token.length > 0) {
-    out.sessionToken = r.session_token;
-  }
-  if (typeof r.resume_reason === "string" && r.resume_reason.length > 0) {
-    out.resumeReason = r.resume_reason;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}

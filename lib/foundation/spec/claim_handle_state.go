@@ -8,7 +8,9 @@ import "errors"
 
 // ClaimHandleState is the rimsky_claim_handles.state enum.
 //
-// active: currently held by a supervisor, heartbeating.
+// active: currently held by a supervisor; liveness is observed via the
+// supervisor's outgoing dispatch RPC (sync) or the dispatch row's
+// last_progress_at (async).
 // committed: producer Commit fired; row preserved past terminal.
 // abandoned: producer Abandon fired (natural or force-cancel); row preserved.
 //

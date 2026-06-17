@@ -7,97 +7,93 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// TestProtoSmoke_NamedEvent round-trips a NamedEvent message and asserts
-// the fields land where expected.
-func TestProtoSmoke_NamedEvent(t *testing.T) {
-	src := &NamedEvent{
-		Name:    "rate_limit_observed",
-		Payload: []byte(`{"reset_at": "2026-05-08T13:00:00Z"}`),
-	}
+// TestProtoSmoke_OutcomeSuccess round-trips a Success outcome variant
+// with attributes_delta + tags.
+func TestProtoSmoke_OutcomeSuccess(t *testing.T) {
+	delta, _ := structpb.NewStruct(map[string]any{"count": float64(1)})
+	src := &Outcome{Outcome: &Outcome_Success{Success: &Success{
+		Changed:         true,
+		ChangeSummary:   "ok",
+		AttributesDelta: delta,
+		Tags:            []string{"loop", "done"},
+	}}}
 	bytes, err := proto.Marshal(src)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	var got NamedEvent
+	var got Outcome
 	if err := proto.Unmarshal(bytes, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got.GetName() != src.Name {
-		t.Fatalf("name: got %q, want %q", got.GetName(), src.Name)
+	if !got.GetSuccess().GetChanged() {
+		t.Fatalf("changed flag lost on round-trip")
 	}
-	if string(got.GetPayload()) != string(src.Payload) {
-		t.Fatalf("payload bytes mismatch")
+	if len(got.GetSuccess().GetTags()) != 2 || got.GetSuccess().GetTags()[0] != "loop" {
+		t.Fatalf("tags mismatch: got %v", got.GetSuccess().GetTags())
 	}
 }
 
-// TestProtoSmoke_Park round-trips a Park outcome with all fields
-// populated.
-func TestProtoSmoke_Park(t *testing.T) {
-	src := &Park{
-		Reason:       ParkReason_PARK_REASON_SNOOZE,
-		Payload:      []byte(`{"agent_state": "..."}`),
-		ResumeAt:     timestamppb.New(timestamppb.Now().AsTime()),
-		SessionToken: "sess-abc-123",
-	}
+// TestProtoSmoke_OutcomePark round-trips a Park outcome without
+// session_token / inline payload (TD-remove-resume-context) but with
+// attributes_delta + tags carrying the executor's state forward.
+func TestProtoSmoke_OutcomePark(t *testing.T) {
+	delta, _ := structpb.NewStruct(map[string]any{"session_token": "sess-abc"})
+	src := &Outcome{Outcome: &Outcome_Park{Park: &Park{
+		Reason:          ParkReason_PARK_REASON_SNOOZE,
+		ResumeAt:        timestamppb.New(timestamppb.Now().AsTime()),
+		AttributesDelta: delta,
+		Tags:            []string{"awaiting_remote"},
+	}}}
 	bytes, err := proto.Marshal(src)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	var got Park
+	var got Outcome
 	if err := proto.Unmarshal(bytes, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if got.GetReason() != src.Reason {
-		t.Fatalf("reason: got %q, want %q", got.GetReason(), src.Reason)
+	if got.GetPark().GetReason() != src.GetPark().GetReason() {
+		t.Fatalf("reason: got %q, want %q", got.GetPark().GetReason(), src.GetPark().GetReason())
 	}
-	if string(got.GetPayload()) != string(src.Payload) {
-		t.Fatalf("payload bytes mismatch")
-	}
-	if got.GetSessionToken() != src.SessionToken {
-		t.Fatalf("session_token: got %q, want %q", got.GetSessionToken(), src.SessionToken)
-	}
-	if got.GetResumeAt() == nil {
+	if got.GetPark().GetResumeAt() == nil {
 		t.Fatalf("resume_at should round-trip non-nil")
 	}
+	if len(got.GetPark().GetTags()) != 1 || got.GetPark().GetTags()[0] != "awaiting_remote" {
+		t.Fatalf("park tags mismatch: %v", got.GetPark().GetTags())
+	}
+	if got.GetPark().GetAttributesDelta().AsMap()["session_token"] != "sess-abc" {
+		t.Fatalf("attributes_delta session_token did not round-trip")
+	}
 }
 
-// TestProtoSmoke_ResumeContext round-trips a ResumeContext.
-func TestProtoSmoke_ResumeContext(t *testing.T) {
-	src := &ResumeContext{
-		Payload:      []byte(`{"agent_state": "..."}`),
-		SessionToken: "sess-abc-123",
-		ResumeReason: "deadline_elapsed",
-	}
+// TestProtoSmoke_OutcomeAwaitAsync round-trips an AwaitAsyncCallback.
+func TestProtoSmoke_OutcomeAwaitAsync(t *testing.T) {
+	src := &Outcome{Outcome: &Outcome_AwaitAsync{AwaitAsync: &AwaitAsyncCallback{
+		AsyncAckId:           "ack-123",
+		ExpectedCompletionMs: 5000,
+	}}}
 	bytes, err := proto.Marshal(src)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	var got ResumeContext
+	var got Outcome
 	if err := proto.Unmarshal(bytes, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if string(got.GetPayload()) != string(src.Payload) {
-		t.Fatalf("payload bytes mismatch")
-	}
-	if got.GetSessionToken() != src.SessionToken {
-		t.Fatalf("session_token mismatch")
-	}
-	if got.GetResumeReason() != src.ResumeReason {
-		t.Fatalf("resume_reason mismatch")
+	if got.GetAwaitAsync().GetAsyncAckId() != "ack-123" {
+		t.Fatalf("async_ack_id lost on round-trip")
 	}
 }
 
 // TestProtoSmoke_AsyncCallbackBody round-trips an async callback body
-// containing both events and a Success outcome.
+// containing a Success outcome. Per TD-collapse-named-event-to-tags the
+// pre-2026-06-16 events array has retired.
 func TestProtoSmoke_AsyncCallbackBody(t *testing.T) {
 	src := &AsyncCallbackBody{
-		Events: []*NamedEvent{
-			{Name: "phase_observed", Payload: []byte(`{"phase":"warmup"}`)},
-			{Name: "phase_observed", Payload: []byte(`{"phase":"steady"}`)},
-		},
 		Outcome: &AsyncCallbackBody_Success{Success: &Success{Changed: true, ChangeSummary: "ok"}},
 	}
 	bytes, err := proto.Marshal(src)
@@ -108,23 +104,18 @@ func TestProtoSmoke_AsyncCallbackBody(t *testing.T) {
 	if err := proto.Unmarshal(bytes, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if len(got.GetEvents()) != 2 {
-		t.Fatalf("events: got %d, want 2", len(got.GetEvents()))
-	}
 	if got.GetSuccess() == nil || !got.GetSuccess().GetChanged() {
 		t.Fatalf("success outcome missing or not changed")
 	}
 }
 
 // TestProtoSmoke_ObservabilityCapabilitiesNewFields round-trips
-// expected_attributes_schema and declared_events on
-// ObservabilityCapabilities. The field was renamed from
-// `userdata_schema` to `expected_attributes_schema` under the
-// 2026-05-21 userdata-collapse spec (proto field number unchanged).
+// expected_attributes_schema + declared_tags on
+// ObservabilityCapabilities.
 func TestProtoSmoke_ObservabilityCapabilitiesNewFields(t *testing.T) {
 	src := &ObservabilityCapabilities{
 		ExpectedAttributesSchema: []byte(`{"type":"object"}`),
-		DeclaredEvents:           []string{"phase_observed", "rate_limit_observed"},
+		DeclaredTags:             []string{"phase_observed", "rate_limit_observed"},
 	}
 	bytes, err := proto.Marshal(src)
 	if err != nil {
@@ -137,45 +128,10 @@ func TestProtoSmoke_ObservabilityCapabilitiesNewFields(t *testing.T) {
 	if string(got.GetExpectedAttributesSchema()) != string(src.ExpectedAttributesSchema) {
 		t.Fatalf("expected_attributes_schema bytes mismatch")
 	}
-	if len(got.GetDeclaredEvents()) != 2 {
-		t.Fatalf("declared_events: got %d, want 2", len(got.GetDeclaredEvents()))
+	if len(got.GetDeclaredTags()) != 2 {
+		t.Fatalf("declared_tags: got %d, want 2", len(got.GetDeclaredTags()))
 	}
-	if got.GetDeclaredEvents()[0] != "phase_observed" {
-		t.Fatalf("declared_events[0] mismatch")
-	}
-}
-
-// TestProtoSmoke_ExecuteEventOneofWithStreamClose verifies the
-// StreamClose oneof variants marshal and dispatch correctly.
-func TestProtoSmoke_ExecuteEventOneofWithStreamClose(t *testing.T) {
-	cases := []struct {
-		name string
-		evt  *ExecuteEvent
-	}{
-		{"named_event", &ExecuteEvent{Event: &ExecuteEvent_NamedEvent{NamedEvent: &NamedEvent{Name: "x"}}}},
-		{"park", &ExecuteEvent{Event: &ExecuteEvent_StreamClose{
-			StreamClose: &StreamClose{Outcome: &StreamClose_Park{Park: &Park{Reason: ParkReason_PARK_REASON_SNOOZE}}},
-		}}},
-		{"success", &ExecuteEvent{Event: &ExecuteEvent_StreamClose{
-			StreamClose: &StreamClose{Outcome: &StreamClose_Success{Success: &Success{Changed: true}}},
-		}}},
-		{"error", &ExecuteEvent{Event: &ExecuteEvent_StreamClose{
-			StreamClose: &StreamClose{Outcome: &StreamClose_Error{Error: &Error{ErrorClass: "x"}}},
-		}}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			bytes, err := proto.Marshal(tc.evt)
-			if err != nil {
-				t.Fatalf("Marshal: %v", err)
-			}
-			var got ExecuteEvent
-			if err := proto.Unmarshal(bytes, &got); err != nil {
-				t.Fatalf("Unmarshal: %v", err)
-			}
-			if got.GetEvent() == nil {
-				t.Fatalf("oneof variant lost on round-trip")
-			}
-		})
+	if got.GetDeclaredTags()[0] != "phase_observed" {
+		t.Fatalf("declared_tags[0] mismatch")
 	}
 }

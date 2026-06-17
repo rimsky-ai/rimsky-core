@@ -51,7 +51,6 @@ func (p *scopeOnlyPersist) Events() persistence.EventTable                      
 func (p *scopeOnlyPersist) Supervisors() persistence.SupervisorTable                  { return nil }
 func (p *scopeOnlyPersist) Frames() persistence.FrameTable                            { return nil }
 func (p *scopeOnlyPersist) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
-func (p *scopeOnlyPersist) NodeEvents() persistence.NodeEventTable                    { return nil }
 func (p *scopeOnlyPersist) WaitSet() persistence.WaitSetTable                         { return nil }
 func (p *scopeOnlyPersist) Messages() persistence.MessagesTable                       { return nil }
 func (p *scopeOnlyPersist) MessageIdempotencies() persistence.MessageIdempotencyTable { return nil }

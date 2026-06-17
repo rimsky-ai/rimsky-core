@@ -1335,11 +1335,11 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 	})
 
-	t.Run("bare nodes event pull accepted", func(t *testing.T) {
-		// @deliberate: event-name field IS required for bare-event
-		// form; only the path-after-name is optional. The cross-check
-		// against the sender's executor's declared_events is silently
-		// skipped here (no ExecutorDeclaredEvents hook wired).
+	t.Run("bare nodes event pull rejected (retired)", func(t *testing.T) {
+		// @deliberate: Per TD-collapse-named-event-to-tags the
+		// `nodes.X.event.<name>.<path>` substitution arm has retired;
+		// the validator must surface the migration as a hard error so
+		// operators see the rewrite path explicitly.
 		spec := &TemplateSpec{
 			Name:    "demo",
 			Version: "1.0.0",
@@ -1348,11 +1348,6 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 				{
 					Type:     "receive",
 					Executor: "h",
-					Subscribes: []SubscriptionEntry{
-						// @deliberate: covering subscription for the
-						// bare-form event pull.
-						{Node: "emit", Type: "event/progress", WakeOnChange: BoolPtr(true), ForceUpstreamRefresh: BoolPtr(false)},
-					},
 					Attributes: &NodeAttributesDef{Schema: map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -1366,7 +1361,7 @@ func TestCheckAttributeSource_BareFormPulls(t *testing.T) {
 			},
 		}
 		res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-		assert.True(t, res.Ok(), "errors: %+v", res.Errors)
+		assert.False(t, res.Ok(), "expected validator to reject the retired event source-kind")
 	})
 
 	t.Run("empty trailing dot still rejected", func(t *testing.T) {

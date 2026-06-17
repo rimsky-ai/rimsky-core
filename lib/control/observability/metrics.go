@@ -40,7 +40,6 @@ type MetricsRegistry struct {
 	// set stays stable while named locks remain distinguishable from
 	// producer claims at a glance.
 	NamedLockAcquisitions *prometheus.CounterVec
-	NamedEvents           *prometheus.CounterVec
 
 	NodesByState    *prometheus.GaugeVec
 	ParkedByReason  *prometheus.GaugeVec
@@ -79,10 +78,6 @@ func NewMetricsRegistry() *MetricsRegistry {
 		NamedLockAcquisitions: prometheus.NewCounterVec(
 			prometheus.CounterOpts{Name: "rimsky_named_lock_acquisitions_total", Help: "Named-lock acquisitions by lock name and intent."},
 			[]string{"lock_name", "intent"},
-		),
-		NamedEvents: prometheus.NewCounterVec(
-			prometheus.CounterOpts{Name: "rimsky_named_events_total", Help: "NamedEvent emissions persisted, by emitter executor and event name."},
-			[]string{"executor", "event_name"},
 		),
 		NodesByState: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{Name: "rimsky_nodes_by_state", Help: "Count of nodes in each state."},
@@ -135,7 +130,6 @@ func NewMetricsRegistry() *MetricsRegistry {
 		m.Invalidates,
 		m.ClaimAcquisitions,
 		m.NamedLockAcquisitions,
-		m.NamedEvents,
 		m.NodesByState,
 		m.ParkedByReason,
 		m.HeldFrames,

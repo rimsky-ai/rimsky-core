@@ -94,7 +94,7 @@ func testAcquisitionTxAtomicity(t *testing.T, d persistence.Database) {
 	if got != nil {
 		t.Fatalf("rollback failed: lock-holder %s present", lockHolderID)
 	}
-	rows, err := q.ListOrphanedClaims(ctx, time.Now().Add(1*time.Hour))
+	rows, err := q.ListOrphanedClaims(ctx)
 	if err != nil {
 		t.Fatalf("ListOrphanedClaims: %v", err)
 	}

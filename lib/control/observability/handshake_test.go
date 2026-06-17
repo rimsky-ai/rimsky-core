@@ -229,11 +229,11 @@ func TestHandshake_RealProberCachesAndHeals(t *testing.T) {
 	// @constraint: assert on the wire-advertised caps the real stub serves
 	// (observability.go Capabilities), NOT SupportsTraceGet — the stub
 	// advertises that false; only the fakeProber set it true. Matching
-	// DeclaredEvents/ExpectedAttributesSchema proves the real caps round-
+	// DeclaredTags/ExpectedAttributesSchema proves the real caps round-
 	// tripped the gRPC boundary into the cache.
-	wantEvents := []string{"ready", "signal", "checkpoint", "progress", "completed"}
-	if !reflect.DeepEqual(entry.Capabilities.DeclaredEvents, wantEvents) {
-		t.Fatalf("DeclaredEvents = %v, want %v", entry.Capabilities.DeclaredEvents, wantEvents)
+	wantTags := []string{"ready", "signal", "checkpoint", "progress", "completed"}
+	if !reflect.DeepEqual(entry.Capabilities.DeclaredTags, wantTags) {
+		t.Fatalf("DeclaredTags = %v, want %v", entry.Capabilities.DeclaredTags, wantTags)
 	}
 	if len(entry.Capabilities.ExpectedAttributesSchema) == 0 {
 		t.Fatalf("ExpectedAttributesSchema empty — caps not probed over the wire")

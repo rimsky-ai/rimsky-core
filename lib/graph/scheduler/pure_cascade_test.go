@@ -57,7 +57,7 @@ func (f *fakeQueue) RemoveForNode(_ context.Context, _ shared.UUID, _ shared.UUI
 func (f *fakeQueue) RemoveForNodeInTx(_ context.Context, _ shared.UUID, _ shared.UUID, _ string, _ persistence.Tx) error {
 	return nil
 }
-func (f *fakeQueue) ListOrphanedClaims(_ context.Context, _ time.Time) ([]persistence.DispatchRow, error) {
+func (f *fakeQueue) ListOrphanedClaims(_ context.Context) ([]persistence.DispatchRow, error) {
 	return nil, nil
 }
 func (f *fakeQueue) ReleaseClaim(_ context.Context, _ shared.UUID, _ string) error { return nil }
@@ -102,7 +102,7 @@ func (f *fakeQueue) ListParkedOverdue(_ context.Context, _ time.Time, _ int) ([]
 func (f *fakeQueue) GetParkedByNode(_ context.Context, _ shared.UUID, _ shared.UUID) (*persistence.ParkedRow, error) {
 	return nil, nil
 }
-func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string) (bool, error) {
+func (f *fakeQueue) ResumeParkedInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (bool, error) {
 	return false, nil
 }
 func (f *fakeQueue) RebindRunFrameInTx(_ context.Context, _ persistence.Tx, _, _ shared.UUID) error {
@@ -117,11 +117,14 @@ func (f *fakeQueue) SetRetryNoProgressForNodeInTx(_ context.Context, _ persisten
 func (f *fakeQueue) UpdateDispatchTuningInTx(_ context.Context, _ persistence.Tx, _ shared.UUID, _ *int, _ *int) error {
 	return nil
 }
-func (f *fakeQueue) LoadResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) (*persistence.ResumeMetadataRow, error) {
-	return nil, nil
+func (f *fakeQueue) BumpLastProgressAt(_ context.Context, _ persistence.Tx, _ shared.UUID, _ time.Time) (bool, error) {
+	return true, nil
 }
-func (f *fakeQueue) ClearResumeMetadataInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) error {
+func (f *fakeQueue) RegisterAsyncAck(_ context.Context, _ persistence.Tx, _ shared.UUID, _ string, _ time.Time, _ *int, _ *int) error {
 	return nil
+}
+func (f *fakeQueue) LookupRunByAsyncAckID(_ context.Context, _ persistence.Tx, _ string) (*persistence.DispatchRow, error) {
+	return nil, nil
 }
 func (f *fakeQueue) LoadScratchInTx(_ context.Context, _ persistence.Tx, _ shared.UUID) ([]byte, string, string, error) {
 	return nil, "", "", nil

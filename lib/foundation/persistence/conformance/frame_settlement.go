@@ -132,7 +132,7 @@ func testFrameSettlementNoPendingNodes(t *testing.T, d persistence.Database) {
 	// frame unresolved and held — the supervisor treats both states
 	// as unsettled.
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		resumed, err := q.ResumeParkedInTx(ctx, tx, runID, "deadline_elapsed")
+		resumed, err := q.ResumeParkedInTx(ctx, tx, runID)
 		if err != nil {
 			return err
 		}
@@ -368,7 +368,7 @@ func testFrameSettlementInstanceTermination(t *testing.T, d persistence.Database
 		t.Fatalf("InsertFrame(queued): %v", err)
 	}
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, err := q.ResumeParkedInTx(ctx, tx, runID, "deadline_elapsed")
+		_, err := q.ResumeParkedInTx(ctx, tx, runID)
 		return err
 	}); err != nil {
 		t.Fatalf("ResumeParkedInTx: %v", err)

@@ -10,7 +10,7 @@
 //
 //  1. ExecuteRequest parsing reads `prior_dispatch_id` and
 //     `prior_dispatch_disposition`. When the Go supervisor enqueues a
-//     dispatch that supersedes a heartbeat-stale / failed / recalculated
+//     dispatch that supersedes a stale-recovered / failed / recalculated
 //     predecessor, those two fields land on the proto wire and must be
 //     read off the request payload as-is.
 //
@@ -60,17 +60,17 @@ describe("recovery-aware protocol", () => {
   describe("ExecuteRequest parsing", () => {
     it("reads prior_dispatch_id and prior_dispatch_disposition off an incoming payload", () => {
       // @deliberate: wire shape produced by the Go supervisor when this dispatch
-      // supersedes a heartbeat-stale predecessor.
+      // supersedes a stale-recovered predecessor.
       const payload = JSON.parse(JSON.stringify({
         node_id: "node-a",
         instance_id: "inst-1",
         dispatch_id: "dispatch-new",
         prior_dispatch_id: "dispatch-old",
-        prior_dispatch_disposition: "heartbeat_stale",
+        prior_dispatch_disposition: "stale_recovery",
       })) as RecoveryAwareExecuteRequestShape;
 
       expect(payload.prior_dispatch_id).toBe("dispatch-old");
-      expect(payload.prior_dispatch_disposition).toBe("heartbeat_stale");
+      expect(payload.prior_dispatch_disposition).toBe("stale_recovery");
       // @deliberate: dispatch_id remains the supervisor-side rimsky_node_runs.id of
       // the current row (the new one); prior_dispatch_id names the
       // superseded predecessor.
@@ -92,7 +92,7 @@ describe("recovery-aware protocol", () => {
       // executor passes it through to user-code as-is (the executor
       // does not interpret the value beyond surfacing it on the
       // attribute bag / callback metadata).
-      for (const v of ["heartbeat_stale", "retry_after_error", "recalculate"]) {
+      for (const v of ["stale_recovery", "retry_after_error", "recalculate"]) {
         const payload = JSON.parse(JSON.stringify({
           prior_dispatch_id: "d-prev",
           prior_dispatch_disposition: v,

@@ -55,7 +55,7 @@ func applyErrorPolicy(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	errorClass string, payload map[string]any, tx persistence.Tx,
 ) (postCommitFn, error) {
-	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, payload, nil, tx)
+	return applyErrorPolicyWithScratch(ctx, args, acq, errorClass, payload, nil, nil, tx)
 }
 
 // applyErrorPolicyWithScratch is the scratch-aware entry point. Most
@@ -68,7 +68,7 @@ func applyErrorPolicy(
 // @concept: executor
 func applyErrorPolicyWithScratch(
 	ctx context.Context, args RunArgs, acq *acquisition,
-	errorClass string, payload map[string]any, scratch []byte, tx persistence.Tx,
+	errorClass string, payload map[string]any, tags []string, scratch []byte, tx persistence.Tx,
 ) (postCommitFn, error) {
 	// @constraint: persist the executor-attached terminal scratch onto
 	// the row first so the retry branch's LoadScratchInTx pulls the
@@ -133,7 +133,7 @@ func applyErrorPolicyWithScratch(
 	// @constraint: build the canonical Resolution (signal + dispatch
 	// disposition + color) once here so signal-emit + applyResolvedAction
 	// share the same instance.
-	resolution := buildResolution(resolved, errorClass, payload, carryForwardCount)
+	resolution := buildResolution(resolved, errorClass, payload, tags, carryForwardCount)
 
 	if err := args.Persist.Nodes().UpdateError(ctx, acq.NodeID, resolved.NewState, tx); err != nil {
 		return nil, fmt.Errorf("applyErrorPolicy: %w", err)
@@ -308,11 +308,11 @@ func applyResolvedAction(
 		}, tx); err != nil {
 			// @constraint: defensive — a closed RunScope means the
 			// rendezvous has fired while this runner was processing the
-			// terminal (e.g. a heartbeat-loss sweep retired the runner's
+			// terminal (e.g. SweepExecutorDeadlines retired the runner's
 			// own active dispatch via claimant-guard mismatch and closed
 			// the scope). Walker discipline per concept:run-scope: do not
 			// enqueue into a closed scope; the state writes above already
-			// committed. Mirrors OnError retry and SweepStaleHeartbeats.
+			// committed. Mirrors OnError retry and SweepExecutorDeadlines.
 			// @concept: run-scope
 			if errors.Is(err, persistence.ErrRunScopeClosed) {
 				if args.Logger != nil {
@@ -581,9 +581,10 @@ func buildResolution(
 	resolved node.ResolvedAction,
 	errorClass string,
 	errorPayload map[string]any,
+	tags []string,
 	retriesSoFar int,
 ) spec.Resolution {
-	sig := errorPolicySignal(errorClass, errorPayload, resolved.Kind, retriesSoFar, resolved.DelayMs)
+	sig := errorPolicySignal(errorClass, errorPayload, tags, resolved.Kind, retriesSoFar, resolved.DelayMs)
 	switch resolved.Kind {
 	case "retry":
 		return spec.Resolution{
@@ -626,7 +627,7 @@ func buildResolution(
 // dimension, not the signal payload.
 //
 //	@concept: signal
-func errorPolicySignal(errorClass string, errorPayload map[string]any, resolvedKind string, retriesSoFar int, delayMs int) signalpkg.Signal {
+func errorPolicySignal(errorClass string, errorPayload map[string]any, tags []string, resolvedKind string, retriesSoFar int, delayMs int) signalpkg.Signal {
 	switch resolvedKind {
 	case "retry", "discard_claims_then_retry":
 		typ := signalpkg.TypePath(fmt.Sprintf("transient/retry/%d/%s", retriesSoFar, errorClass))
@@ -643,7 +644,9 @@ func errorPolicySignal(errorClass string, errorPayload map[string]any, resolvedK
 	default:
 		// @constraint: give_up | pass — both settle as
 		// terminal/error/<class>; color is differentiated upstream via
-		// Resolution.Color.
+		// Resolution.Color. concept:terminal-tag — Tags ride on the
+		// settling Error envelope so subscribers can
+		// `when: "<tag>" in payload.tags`-filter the same as on success.
 		typ := signalpkg.TypePath("terminal/error/" + errorClass)
 		return signalpkg.Signal{
 			Type: typ,
@@ -652,6 +655,7 @@ func errorPolicySignal(errorClass string, errorPayload map[string]any, resolvedK
 				"error_payload":  errorPayload,
 				"attempt":        retriesSoFar,
 				"retries_so_far": retriesSoFar,
+				"tags":           tags,
 			},
 		}
 	}

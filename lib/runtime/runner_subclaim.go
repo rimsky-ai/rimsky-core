@@ -53,9 +53,9 @@ type AcquireSubClaimsInput struct {
 	// InstanceID is sourced from the parent NodeRunRow's InstanceID,
 	// threaded through tryAcquire → acquireFanOutIfDeclared. Used by
 	// Registry.GetWithContext for late-bound claim-producer resolution.
-	InstanceID        shared.UUID
-	FrameID           *shared.UUID
-	HeartbeatInterval time.Duration
+	InstanceID       shared.UUID
+	FrameID          *shared.UUID
+	LivenessInterval time.Duration
 	// PartitionRequest is the producer-interpreted bytes that drive
 	// SplitScope. Caller is responsible for substitution; rimsky passes
 	// the bytes verbatim per `@blessed-invariant 20` (claim content is
@@ -277,7 +277,7 @@ func AcquireSubClaims(
 			Intent:              &intent,
 			HolderSupervisorID:  in.HolderSupervisorID,
 			HolderNodeID:        in.HolderNodeID,
-			ExpiresAt:           args.Clock.Now().Add(5 * in.HeartbeatInterval),
+			ExpiresAt:           args.Clock.Now().Add(5 * in.LivenessInterval),
 			FrameID:             in.FrameID,
 			ParentClaimHandleID: &parentID,
 			Lifetime:            lifetime,

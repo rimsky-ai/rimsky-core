@@ -71,52 +71,34 @@ func (a *agent) handleDispatchFrame(ctx context.Context, df *genv1.DispatchFrame
 	}
 }
 
-// dispatchExecutor forwards an ExecuteRequest to the child's Executor server
-// and streams each ExecuteEvent back as a DATA frame on the same stream-id.
+// dispatchExecutor forwards an ExecuteRequest to the child's Executor
+// server and sends the returned Outcome back as a single DATA frame on
+// the same stream-id. Executor.Execute is unary per
+// TD-execute-rpc-unary; the agent is now a one-shot request/response
+// relay rather than a stream forwarder.
 func (a *agent) dispatchExecutor(ctx context.Context, child *liveChild, df *genv1.DispatchFrame) {
 	var req genv1.ExecuteRequest
 	if err := proto.Unmarshal(df.GetPayload(), &req); err != nil {
 		a.sendDispatchCancel(df)
 		return
 	}
-
 	// @constraint: a per-dispatch cancelable context is required so an inbound
-	// CANCEL frame for this stream_id can tear down the child's inner Execute
-	// stream.
+	// CANCEL frame for this stream_id can tear down the child's inner Execute call.
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	a.registerDispatchCancel(df.GetStreamId(), cancel)
 	defer a.clearDispatchCancel(df.GetStreamId())
 
-	stream, err := genv1.NewExecutorClient(child.conn).Execute(dispatchCtx, &req)
+	outcome, err := genv1.NewExecutorClient(child.conn).Execute(dispatchCtx, &req)
 	if err != nil {
 		a.sendDispatchCancel(df)
 		return
 	}
-
-	for {
-		ev, recvErr := stream.Recv()
-		if recvErr != nil {
-			// @constraint: EOF or transport error here means the child dropped
-			// without a terminal — the inner StreamClose (if any) was already
-			// forwarded below, so signal CANCEL upstream.
-			a.sendDispatchCancel(df)
-			return
-		}
-		payload, marshalErr := proto.Marshal(ev)
-		if marshalErr != nil {
-			a.sendDispatchCancel(df)
-			return
-		}
-		if !a.sendDispatchData(df, payload) {
-			return
-		}
-		// @constraint: after forwarding the inner terminal event the
-		// proxy closes its side of the stream; the agent must return
-		// to release this loop's hold on the dispatch channel.
-		if _, terminal := ev.GetEvent().(*genv1.ExecuteEvent_StreamClose); terminal {
-			return
-		}
+	payload, marshalErr := proto.Marshal(outcome)
+	if marshalErr != nil {
+		a.sendDispatchCancel(df)
+		return
 	}
+	a.sendDispatchData(df, payload)
 }
 
 // dispatchClaimProducer forwards a unary claim-producer RPC to the child and

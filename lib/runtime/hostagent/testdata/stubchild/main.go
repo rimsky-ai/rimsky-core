@@ -78,6 +78,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
@@ -225,22 +226,20 @@ func recordExec() {
 	_, _ = f.Write(append(line, '\n'))
 }
 
-// Execute emits one NamedEvent (when STUBCHILD_EXECUTE_ECHO is set) echoing
-// the request's node_id, then a terminal StreamClose with a Success outcome.
-func (s *stubExecutor) Execute(req *genv1.ExecuteRequest, stream grpc.ServerStreamingServer[genv1.ExecuteEvent]) error {
+// @deliberate: Execute returns a unary Outcome{Success}; when
+// STUBCHILD_EXECUTE_ECHO is set the echoed node_id rides
+// attributes_delta + tags["stubchild.output"] per
+// TD-collapse-named-event-to-tags (no separate NamedEvent surface).
+func (s *stubExecutor) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	recordPID(req.GetRunScopeId())
 	recordExec()
+	success := &genv1.Success{Changed: true}
 	if os.Getenv("STUBCHILD_EXECUTE_ECHO") != "" {
-		if err := stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_NamedEvent{NamedEvent: &genv1.NamedEvent{
-			Name:    "stubchild.output",
-			Payload: []byte(req.GetNodeId()),
-		}}}); err != nil {
-			return err
-		}
+		delta, _ := structpb.NewStruct(map[string]any{"echoed_node_id": req.GetNodeId()})
+		success.AttributesDelta = delta
+		success.Tags = []string{"stubchild.output"}
 	}
-	return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{Changed: true}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: success}}, nil
 }
 
 type stubExecutorObs struct {
@@ -248,7 +247,7 @@ type stubExecutorObs struct {
 }
 
 func (s *stubExecutorObs) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
-	return &genv1.ObservabilityCapabilities{DeclaredEvents: []string{"stubchild.output"}}, nil
+	return &genv1.ObservabilityCapabilities{DeclaredTags: []string{"stubchild.output"}}, nil
 }
 
 type stubClaimProducer struct {

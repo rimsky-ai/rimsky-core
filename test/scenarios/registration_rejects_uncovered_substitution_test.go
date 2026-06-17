@@ -8,10 +8,10 @@
 // The validator unit tests in
 // lib/graph/node/template_validator_substitution_coverage_test.go
 // pin the structured-entry shape in-process. This scenario test boots
-// the real assembled stack via testcontainers and submits each of the
-// three uncovered-ref templates through the actual POST /v1/templates
-// HTTP boundary the operator interacts with — so the proof exercises
-// the response-rendering site that builds the JSON the operator sees
+// the real assembled stack via testcontainers and submits the
+// uncovered-ref templates through the actual POST /v1/templates HTTP
+// boundary the operator interacts with — so the proof exercises the
+// response-rendering site that builds the JSON the operator sees
 // (lib/control/controlapi/templates.go), not just the validator that
 // produces the structured entries.
 //
@@ -80,15 +80,6 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 			// whole-pull; the wildcard is required (coverage asymmetry).
 			suggestedType: "attribute/*",
 		},
-		{
-			name:             "event_ref",
-			spec:             eventUncoveredSpec("uncovered-event-ref", "1"),
-			receiver:         "rcv",
-			refContains:      "nodes.foo.event.something_happened",
-			attrPropContains: "latest_event",
-			suggestedSender:  "foo",
-			suggestedType:    "event/something_happened",
-		},
 	}
 
 	for _, tc := range cases {
@@ -146,6 +137,38 @@ func TestRegistrationRejectsUncoveredSubstitution(t *testing.T) {
 				"the note must mention force_upstream_refresh so the author understands the flag effect")
 		})
 	}
+
+	// @deliberate: TD-collapse-named-event-to-tags retired the
+	// `nodes.<X>.event.<name>` substitution form. The directive grammar
+	// now rejects it at parse time, so the rejection no longer carries
+	// the structured `substitution_ref_uncovered` entry — it surfaces as
+	// a directive-grammar error in the validation_errors array. Confirm
+	// the registration still fails HTTP 400 with a recognisable message.
+	t.Run("event_ref_retired", func(t *testing.T) {
+		resp := postJSON(t, h.ControlBase+"/v1/templates", map[string]any{
+			"spec": eventUncoveredSpec("uncovered-event-ref", "1"),
+		})
+		require.Equal(t, http.StatusBadRequest, resp.status,
+			"registration must reject the retired event substitution form with HTTP 400: %s",
+			resp.bodyStr())
+		errsAny, ok := resp.body["validation_errors"].([]any)
+		require.True(t, ok,
+			"response body must carry a validation_errors array: %s", resp.bodyStr())
+		var found bool
+		for _, e := range errsAny {
+			m, ok := e.(map[string]any)
+			if !ok {
+				continue
+			}
+			msg, _ := m["msg"].(string)
+			if strings.Contains(msg, "event") || strings.Contains(msg, "second segment must be 'attribute'") {
+				found = true
+				break
+			}
+		}
+		require.True(t, found,
+			"validation_errors must mention the retired event form: %+v", errsAny)
+	})
 }
 
 // perFieldUncoveredSpec builds the inner `spec:` map for a template
@@ -215,8 +238,9 @@ func wholePullUncoveredSpec(name, version string) map[string]any {
 }
 
 // eventUncoveredSpec builds the inner `spec:` map for a template whose
-// receiver reads {{nodes.foo.event.something_happened}} but declares
-// no covering event/something_happened subscription on foo.
+// receiver reads {{nodes.foo.event.something_happened}} — the retired
+// event substitution form. The directive grammar rejects this at parse
+// time per TD-collapse-named-event-to-tags.
 func eventUncoveredSpec(name, version string) map[string]any {
 	return map[string]any{
 		"name":    name,

@@ -70,9 +70,8 @@ func TestCanary_LifecycleSubscriberCallbackContract(t *testing.T) {
 	h := scenario.Start(t, scenario.HarnessOpts{
 		// @deliberate: Lifecycle events fire from control-api regardless of the
 		// supervisor/scheduler state — drop both to speed the test.
-		NoSupervisor:     true,
-		NoScheduler:      true,
-		HeartbeatTimeout: 30 * time.Second,
+		NoSupervisor: true,
+		NoScheduler:  true,
 		Stores: config.RemoteStoresConfig{
 			Stores: map[string]config.StoreEntry{
 				"canary-lifecycle": {

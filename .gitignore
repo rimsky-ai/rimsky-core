@@ -68,6 +68,16 @@ lib/services/stubexecutor
 /lifecyclesubscriber
 /data-processing
 
+# Stray test/example binaries left by ad-hoc `go build` inside the
+# package directory: the example executor binary lands inside
+# examples/executor/; the compose stub-executor testdata binary lands
+# next to its source under cmd/rimsky/cli/compose/testdata/; the
+# root-level stubchild is a stray from an out-of-tree build of the
+# hostagent test fixture (whose in-tree path is already covered above).
+/examples/executor/executor
+/cmd/rimsky/cli/compose/testdata/stub-executor/stub-executor
+/stubchild
+
 # Local env / coverage
 .env
 *.env.local

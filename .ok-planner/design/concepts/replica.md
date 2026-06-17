@@ -20,7 +20,7 @@ To document that scaling rimsky binaries horizontally is the operator's decision
 
 Owns: the design statement "rimsky doesn't model replicas." That's it.
 
-Does NOT own: the actual replica posture of any individual binary, the deployment-tier load balancer config, the operator's scaling decisions, or any per-binary HA semantics. Adjacent: `concept:supervisor` (where the actual coordination primitives live — advisory locks, heartbeats), `concept:executor` (executors can be replicated freely; rimsky load-balances dispatch among reachable replicas), `concept:publisher` and `concept:sensor` (per their own per-concept replica policies).
+Does NOT own: the actual replica posture of any individual binary, the deployment-tier load balancer config, the operator's scaling decisions, or any per-binary HA semantics. Adjacent: `concept:supervisor` (where the actual coordination primitives live — advisory locks), `concept:executor` (executors can be replicated freely; rimsky load-balances dispatch among reachable replicas), `concept:publisher` and `concept:sensor` (per their own per-concept replica policies).
 
 ## Invariants
 

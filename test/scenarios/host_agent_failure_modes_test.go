@@ -4,7 +4,7 @@
 
 // host_agent_failure_modes_test.go — end-to-end failure modes for the
 // host-agent + host-agent-proxy late-bound dispatch path. Each proxy
-// resolution/spawn failure surfaces as an executor StreamClose{Error,
+// resolution/spawn failure surfaces as an executor Outcome{Error,
 // error_class}; the runtime emits a terminal/error/<class> signal event we
 // assert on. Reconnect recovery is covered by restarting the in-process
 // agent and confirming a fresh run completes.

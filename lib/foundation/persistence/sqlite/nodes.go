@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -30,15 +29,15 @@ import (
 )
 
 // nodeCols / nodeSelect mirror the postgres impl: state +
-// settling_signal_type + last_heartbeat_at + claimed_by come from the
-// in-flight rimsky_node_runs row; identity + scheduling metadata come
-// from rimsky_nodes. The COALESCE(r.state, 'fresh') is the post-cutover
-// rule: a node with no in-flight run row is implicitly 'fresh'.
+// settling_signal_type + claimed_by come from the in-flight
+// rimsky_node_runs row; identity + scheduling metadata come from
+// rimsky_nodes. The COALESCE(r.state, 'fresh') is the cutover rule: a
+// node with no in-flight run row is implicitly 'fresh'.
 const nodeCols = `
   n.id, n.instance_id, n.node_type, n.executor,
   COALESCE(r.state, 'fresh') AS state, r.settling_signal_type,
   n.current_error_class, n.retry_counter, n.action_index,
-  r.last_heartbeat_at, r.claimed_by AS assigned_supervisor_id,
+  r.claimed_by AS assigned_supervisor_id,
   n.frame_id, n.tags, n.created_at, n.updated_at,
   CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.id END AS in_flight_run_id,
   CASE WHEN r.phase IN ('pending','active','held','parked') THEN r.run_scope_id END AS in_flight_run_scope_id
@@ -49,7 +48,7 @@ const nodeCols = `
 // Includes all phases (completed terminals carry settling_signal_type).
 const nodeSelect = `FROM rimsky_nodes n
 LEFT JOIN (
-    SELECT id, node_id, state, settling_signal_type, last_heartbeat_at, claimed_by, frame_id, phase, run_scope_id,
+    SELECT id, node_id, state, settling_signal_type, claimed_by, frame_id, phase, run_scope_id,
            ROW_NUMBER() OVER (
                PARTITION BY node_id
                ORDER BY CASE WHEN phase IN ('pending','active','held','parked') THEN 0 ELSE 1 END,
@@ -236,32 +235,6 @@ func (s *nodesImpl) ListRunning(ctx context.Context, tx persistence.Tx) ([]persi
 		`SELECT `+nodeCols+` `+nodeSelect+`
 		  WHERE r.state = 'running'
 		  ORDER BY n.updated_at ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectNodes(rows)
-}
-
-func (s *nodesImpl) ListRunningBySupervisor(ctx context.Context, supervisorID string, tx persistence.Tx) ([]persistence.NodeRow, error) {
-	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+nodeCols+` `+nodeSelect+`
-		  WHERE r.state = 'running'
-		    AND r.claimed_by = ?
-		  ORDER BY n.updated_at ASC`, supervisorID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return collectNodes(rows)
-}
-
-func (s *nodesImpl) ListWithStaleHeartbeat(ctx context.Context, cutoff time.Time, tx persistence.Tx) ([]persistence.NodeRow, error) {
-	rows, err := s.q(tx).QueryContext(ctx,
-		`SELECT `+nodeCols+` `+nodeSelect+`
-		  WHERE r.state = 'running'
-		    AND r.last_heartbeat_at IS NOT NULL
-		    AND r.last_heartbeat_at < ?`, formatTime(cutoff))
 	if err != nil {
 		return nil, err
 	}
@@ -484,32 +457,6 @@ func (s *nodesImpl) UpdateError(ctx context.Context, id foundationshared.UUID, e
 		       updated_at = ?
 		 WHERE id = ?`,
 		es.ActionIndex, es.RetryCounter, nullableString(es.CurrentErrorClass), nowUTC(), id.String(),
-	)
-	return err
-}
-
-// UpdateHeartbeat writes last_heartbeat_at on the in-flight run row.
-// Post-stage-3: the run row is the sole heartbeat authority.
-//
-// `runID` (when non-nil) disambiguates which in-flight row to address —
-// required for fan-out children to prevent claimed_by leaking across
-// siblings. See the postgres mirror for the full rationale.
-//
-// @blessed-invariant 4: claimant-guarded release. The `claimed_by IS
-// NULL OR claimed_by = ?` predicate means a supervisor can stamp an
-// unclaimed row or refresh its own, but never overwrite another
-// supervisor's claim. See the postgres mirror.
-func (s *nodesImpl) UpdateHeartbeat(ctx context.Context, id foundationshared.UUID, runScopeID foundationshared.UUID, at time.Time, supervisorID string, tx persistence.Tx) error {
-	_, err := s.q(tx).ExecContext(ctx,
-		`UPDATE rimsky_node_runs
-		   SET last_heartbeat_at = ?,
-		       claimed_by = COALESCE(?, claimed_by)
-		 WHERE node_id = ?
-		   AND run_scope_id = ?
-		   AND phase IN ('pending','active','held','parked')
-		   AND (claimed_by IS NULL OR claimed_by = ?)`,
-		formatTime(at), nullableString(supervisorID), id.String(), runScopeID.String(),
-		nullableString(supervisorID),
 	)
 	return err
 }
@@ -819,7 +766,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		stateStr          string
 		settlingSignalStr sql.NullString
 		currentErrClass   sql.NullString
-		lastHB            sql.NullString
 		assignedSup       sql.NullString
 		frameIDStr        sql.NullString
 		tagsJSON          sql.NullString
@@ -832,7 +778,7 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 		&idStr, &instanceIDStr, &r.NodeType,
 		&executor, &stateStr, &settlingSignalStr,
 		&currentErrClass, &r.RetryCounter, &r.ActionIndex,
-		&lastHB, &assignedSup, &frameIDStr,
+		&assignedSup, &frameIDStr,
 		&tagsJSON,
 		&createdAtStr, &updatedAtStr,
 		&inFlightRunIDStr, &inFlightScopeStr,
@@ -867,13 +813,6 @@ func scanNode(sc scannable) (persistence.NodeRow, error) {
 	r.AssignedSupervisorID = assignedSup.String
 	r.CreatedAt = createdAt
 	r.UpdatedAt = updatedAt
-	if lastHB.Valid {
-		t, err := parseTime(lastHB.String)
-		if err != nil {
-			return persistence.NodeRow{}, err
-		}
-		r.LastHeartbeatAt = &t
-	}
 	frameID, err := scanNullableUUID(frameIDStr)
 	if err != nil {
 		return persistence.NodeRow{}, err

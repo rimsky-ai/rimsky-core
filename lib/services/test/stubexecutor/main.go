@@ -42,24 +42,19 @@ type server struct {
 	forceError bool
 }
 
-// Execute emits exactly one terminal StreamClose event and closes the
-// stream, per the Executor contract (zero heartbeats, no attribute
-// writeback). The outcome is Success by default, or Error when
+// Execute returns the settling Outcome. Per TD-execute-rpc-unary the
+// RPC is unary; the outcome is Success by default, or Error when
 // forceError is set.
-func (s server) Execute(_ *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
+func (s server) Execute(_ context.Context, _ *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	if s.forceError {
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: forcedErrorClass,
-			}}},
-		}})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+			ErrorClass: forcedErrorClass,
+		}}}, nil
 	}
-	return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-			Changed:       false,
-			ChangeSummary: "stub executor: success",
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		Changed:       false,
+		ChangeSummary: "stub executor: success",
+	}}}, nil
 }
 
 // observability implements genv1.ExecutorObservabilityServer. The standalone

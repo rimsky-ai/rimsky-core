@@ -40,7 +40,7 @@ import (
 func acquireFanOutIfDeclared(
 	ctx context.Context, args RunArgs, tx persistence.Tx, instanceID shared.UUID, out *acquisition,
 	cand persistence.Candidate, nodeDef *node.TemplateNodeDef,
-	acquiredLocks []AcquiredLock, heartbeatInterval time.Duration,
+	acquiredLocks []AcquiredLock, livenessInterval time.Duration,
 ) error {
 	if nodeDef == nil || nodeDef.FanOut == nil {
 		return nil
@@ -115,7 +115,7 @@ func acquireFanOutIfDeclared(
 		HolderSupervisorID:  args.SupervisorID,
 		InstanceID:          instanceID,
 		FrameID:             &frameID,
-		HeartbeatInterval:   heartbeatInterval,
+		LivenessInterval:    livenessInterval,
 		PartitionRequest:    partitionRequest,
 		// @constraint: sub-claims inherit the parent claim's lifetime. parentClaimSpec.Lifetime
 		// is the rimsky-internal plain-string carried on the ClaimSpec (lib/protocols
@@ -271,86 +271,6 @@ func triggerMessageForFrame(
 		return nil, ""
 	}
 	return rows[0].Payload, rows[0].Type
-}
-
-// loadResumeMetadataIfParked reads the per-run resume metadata from
-// the persistence layer when the node-run row carries parked metadata
-// surviving from a prior park, builds a resumeMetadata struct, and
-// resolves any spilled payload through the BlobBackend. The presence
-// of `out.Resume` is consumed by buildExecuteRequest to populate
-// ExecuteRequest.resume_context.
-//
-// Best-effort: blob/backend-mismatch failures pass an empty payload to
-// the executor and log a warn, rather than failing the acquisition —
-// the resume signal itself (session_token, wake_reason) is the
-// load-bearing part; the payload is executor-private metadata.
-func loadResumeMetadataIfParked(
-	ctx context.Context, args RunArgs, tx persistence.Tx, out *acquisition,
-	cand persistence.Candidate,
-) {
-	rm, rerr := args.Queue.LoadResumeMetadataInTx(ctx, tx, cand.DispatchID)
-	if rerr != nil || rm == nil {
-		return
-	}
-	payload := rm.PayloadInline
-	if rm.PayloadHandle != "" {
-		payload = readResumePayloadBlob(ctx, args, rm, cand)
-	}
-	// @deliberate: resume_reason is read from the persisted wake_reason column,
-	// populated by ResumeParkedInTx at wake time. Empty wake_reason
-	// (NULL) falls back to deadline_elapsed — covers older rows
-	// upgraded in place pre-v1 and any wake path that forgot to set
-	// it (none today; the fallback is defensive). The
-	// operator-invalidate path that used to set
-	// external_invalidate retired with the 2026-06-14
-	// message-schema-layer reshape; the parked-resume sweep is the
-	// only live wake source.
-	wakeReason := WakeDeadlineElapsed
-	if rm.WakeReason != "" {
-		wakeReason = WakeReason(rm.WakeReason)
-	}
-	out.Resume = &resumeMetadata{
-		Payload:      payload,
-		SessionToken: rm.SessionToken,
-		Reason:       wakeReason,
-	}
-	// @deliberate: observe parked duration on resume — measured from when the
-	// node-run entered phase='parked' (rm.ParkedAt) to now. Skipped
-	// when ParkedAt is zero (legacy rows or callers that haven't
-	// backfilled the field).
-	if !rm.ParkedAt.IsZero() {
-		metricsOf(args).ObserveParkedDurationOnResume(args.Clock.Now().Sub(rm.ParkedAt).Seconds())
-	}
-}
-
-// readResumePayloadBlob resolves a spilled resume payload through the
-// configured BlobBackend. Returns nil on any failure (missing backend,
-// backend-name mismatch, fetch error) with a per-case warn — the
-// caller treats nil as "no payload to thread through".
-func readResumePayloadBlob(
-	ctx context.Context, args RunArgs, rm *persistence.ResumeMetadataRow,
-	cand persistence.Candidate,
-) []byte {
-	if args.Blob == nil {
-		args.Logger.Warn("tryAcquire: spilled resume payload but no BlobBackend configured; passing empty payload to executor",
-			"node_id", cand.NodeID.String(),
-			"handle_backend", rm.PayloadHandleBackend)
-		return nil
-	}
-	if args.Blob.Name() != rm.PayloadHandleBackend {
-		args.Logger.Warn("tryAcquire: blob backend mismatch on resume; passing empty payload to executor",
-			"node_id", cand.NodeID.String(),
-			"current_backend", args.Blob.Name(),
-			"handle_backend", rm.PayloadHandleBackend)
-		return nil
-	}
-	b, berr := args.Blob.Read(ctx, persistence.Handle(rm.PayloadHandle))
-	if berr != nil {
-		args.Logger.Warn("tryAcquire: blob fetch for resume payload failed; passing empty payload to executor",
-			"node_id", cand.NodeID.String(), "error", berr.Error())
-		return nil
-	}
-	return b
 }
 
 // loadScratchIntoAcquisition reads the dispatch row's scratch bytes

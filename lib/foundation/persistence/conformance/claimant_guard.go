@@ -77,7 +77,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
@@ -151,9 +150,6 @@ func assertHandleIntact(t *testing.T, got *persistence.ClaimHandleRow, want pers
 		t.Fatalf("%s: holder nullability mutated by wrong claimant", op)
 	case got.HolderSupervisorID != nil && *got.HolderSupervisorID != *want.HolderSupervisorID:
 		t.Fatalf("%s: holder mutated by wrong claimant: got %q want %q", op, *got.HolderSupervisorID, *want.HolderSupervisorID)
-	}
-	if !got.LastHeartbeatAt.Equal(want.LastHeartbeatAt) {
-		t.Fatalf("%s: last_heartbeat_at mutated by wrong claimant", op)
 	}
 	if !got.ExpiresAt.Equal(want.ExpiresAt) {
 		t.Fatalf("%s: expires_at mutated by wrong claimant", op)
@@ -607,58 +603,6 @@ func testClaimantGuardHandleDeleteIfExpired(t *testing.T, d persistence.Database
 	}
 }
 
-// testClaimantGuardHandleExtendHeartbeat covers ExtendHeartbeat: the
-// wrong supervisor cannot refresh expiry on rows it does not hold.
-func testClaimantGuardHandleExtendHeartbeat(t *testing.T, d persistence.Database) {
-	ctx := context.Background()
-	fix := seedFixtureSet(ctx, t, d)
-	store := d.Tables()
-
-	// @constraint: ExtendHeartbeat's predicate requires a running
-	// node-run claimed by the supervisor against the handle's holder
-	// node — seed it for A so the owner-side assertion exercises the
-	// full predicate rather than tripping over a missing precondition.
-	_ = seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateState(ctx, fix.NodeID, fix.MainRunScopeID,
-			cascade.NodeStateRunning, cascade.ReasonDispatchClaimed, nil, tx)
-	}); err != nil {
-		t.Fatalf("UpdateState(running): %v", err)
-	}
-
-	in := guardScopeHandleInput(fix, guardSupA, time.Now().Add(1*time.Minute))
-	seedGuardClaimHandle(ctx, t, d, in)
-	before := getGuardClaimHandle(ctx, t, d, in.ID)
-
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.ClaimHandles().ExtendHeartbeat(ctx, guardSupB, time.Now().Add(1*time.Hour), tx)
-	}); err != nil {
-		t.Fatalf("wrong-claimant ExtendHeartbeat: %v", err)
-	}
-	assertHandleIntact(t, getGuardClaimHandle(ctx, t, d, in.ID), *before, "ExtendHeartbeat")
-
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		return store.ClaimHandles().ExtendHeartbeat(ctx, guardSupA, time.Now().Add(1*time.Hour), tx)
-	}); err != nil {
-		t.Fatalf("owner ExtendHeartbeat: %v", err)
-	}
-	after := getGuardClaimHandle(ctx, t, d, in.ID)
-	if !after.ExpiresAt.After(before.ExpiresAt) {
-		t.Fatalf("owner ExtendHeartbeat did not extend expires_at: before=%v after=%v",
-			before.ExpiresAt, after.ExpiresAt)
-	}
-	// @deliberate: The seeded heartbeat comes from the Go clock while
-	// ExtendHeartbeat stamps the database server's now() — on postgres
-	// those are different clock sources, so allow small skew rather
-	// than requiring strict monotonicity. The owner-success proof is
-	// the expires_at extension above; this only guards against gross
-	// regression.
-	if after.LastHeartbeatAt.Before(before.LastHeartbeatAt.Add(-2 * time.Second)) {
-		t.Fatalf("owner ExtendHeartbeat moved last_heartbeat_at backwards: before=%v after=%v",
-			before.LastHeartbeatAt, after.LastHeartbeatAt)
-	}
-}
-
 // testClaimantGuardHolderRelease covers
 // ClaimHolderTable.FailAllActiveByClaimHandle — the bulk holder release
 // is guarded through the parent handle's ownership (EXISTS sub-query).
@@ -766,9 +710,9 @@ func testClaimantGuardRunReleaseClaim(t *testing.T, d persistence.Database) {
 	if err != nil || afterRow == nil {
 		t.Fatalf("GetByID after wrong-claimant release: row=%v err=%v", afterRow, err)
 	}
-	if (afterRow.LastHeartbeatAt == nil) != (beforeRow.LastHeartbeatAt == nil) ||
-		(afterRow.LastHeartbeatAt != nil && !afterRow.LastHeartbeatAt.Equal(*beforeRow.LastHeartbeatAt)) {
-		t.Fatalf("wrong-claimant ReleaseClaim mutated last_heartbeat_at")
+	if (afterRow.LastProgressAt == nil) != (beforeRow.LastProgressAt == nil) ||
+		(afterRow.LastProgressAt != nil && !afterRow.LastProgressAt.Equal(*beforeRow.LastProgressAt)) {
+		t.Fatalf("wrong-claimant ReleaseClaim mutated last_progress_at")
 	}
 
 	if err := q.ReleaseClaim(ctx, dispatchID, guardSupA); err != nil {
@@ -801,9 +745,6 @@ func testClaimantGuardRunComplete(t *testing.T, d persistence.Database) {
 	}
 	if row == nil {
 		t.Fatalf("wrong-claimant Complete retired the row")
-	}
-	if row.LastHeartbeatAt == nil {
-		t.Fatalf("wrong-claimant Complete cleared last_heartbeat_at")
 	}
 
 	if err := q.Complete(ctx, dispatchID, guardSupA); err != nil {
@@ -838,9 +779,6 @@ func testClaimantGuardRunRemoveForNode(t *testing.T, d persistence.Database) {
 	}
 	if row == nil {
 		t.Fatalf("wrong-claimant RemoveForNodeInTx retired the row")
-	}
-	if row.LastHeartbeatAt == nil {
-		t.Fatalf("wrong-claimant RemoveForNodeInTx cleared last_heartbeat_at")
 	}
 
 	if err := q.RemoveForNode(ctx, fix.NodeID, fix.MainRunScopeID, guardSupA); err != nil {
@@ -910,119 +848,6 @@ func testClaimantGuardRunPark(t *testing.T, d persistence.Database) {
 	if owner.Kind != "unclaimed" {
 		t.Fatalf("park did not clear claimed_by: %s/%s", owner.Kind, owner.SupervisorID)
 	}
-}
-
-// testClaimantGuardRunRefreshHeartbeat covers RefreshHeartbeat: the
-// supervisor-scoped WHERE means another supervisor's refresh never
-// touches A's rows.
-func testClaimantGuardRunRefreshHeartbeat(t *testing.T, d persistence.Database) {
-	ctx := context.Background()
-	fix := seedFixtureSet(ctx, t, d)
-	q := d.Queue()
-	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
-
-	before, err := q.GetByID(ctx, dispatchID)
-	if err != nil || before == nil || before.LastHeartbeatAt == nil {
-		t.Fatalf("GetByID before refresh: row=%v err=%v", before, err)
-	}
-
-	if err := q.RefreshHeartbeat(ctx, guardSupB); err != nil {
-		t.Fatalf("wrong-claimant RefreshHeartbeat: %v", err)
-	}
-	mid, err := q.GetByID(ctx, dispatchID)
-	if err != nil || mid == nil || mid.LastHeartbeatAt == nil {
-		t.Fatalf("GetByID after wrong-claimant refresh: row=%v err=%v", mid, err)
-	}
-	if !mid.LastHeartbeatAt.Equal(*before.LastHeartbeatAt) {
-		t.Fatalf("wrong-claimant RefreshHeartbeat mutated last_heartbeat_at: before=%v after=%v",
-			before.LastHeartbeatAt, mid.LastHeartbeatAt)
-	}
-
-	// @deliberate: The short sleep guarantees a strictly-later
-	// timestamp at the drivers' stored precision (microseconds on
-	// postgres) so the owner-side .After() assertion below is reliable.
-	time.Sleep(20 * time.Millisecond)
-	if err := q.RefreshHeartbeat(ctx, guardSupA); err != nil {
-		t.Fatalf("owner RefreshHeartbeat: %v", err)
-	}
-	after, err := q.GetByID(ctx, dispatchID)
-	if err != nil || after == nil || after.LastHeartbeatAt == nil {
-		t.Fatalf("GetByID after owner refresh: row=%v err=%v", after, err)
-	}
-	if !after.LastHeartbeatAt.After(*before.LastHeartbeatAt) {
-		t.Fatalf("owner RefreshHeartbeat did not advance last_heartbeat_at: before=%v after=%v",
-			before.LastHeartbeatAt, after.LastHeartbeatAt)
-	}
-}
-
-// testClaimantGuardNodeUpdateHeartbeat covers Nodes().UpdateHeartbeat —
-// the node-keyed heartbeat write that also stamps claimed_by. The wrong
-// supervisor must neither overwrite the owner's claimed_by (an
-// ownership steal) nor refresh the heartbeat (which would defeat the
-// orphan reaper); the owner's refresh lands; an unclaimed in-flight row
-// remains stampable (the post-acquisition initial-stamp path).
-func testClaimantGuardNodeUpdateHeartbeat(t *testing.T, d persistence.Database) {
-	ctx := context.Background()
-	fix := seedFixtureSet(ctx, t, d)
-	store := d.Tables()
-	q := d.Queue()
-	dispatchID := seedClaimedGuardRun(ctx, t, d, fix, guardSupA)
-
-	before, err := q.GetByID(ctx, dispatchID)
-	if err != nil || before == nil || before.LastHeartbeatAt == nil {
-		t.Fatalf("GetByID before: row=%v err=%v", before, err)
-	}
-
-	// @deliberate: Pass a future timestamp (before+1h) under the wrong
-	// supervisor — if the guard ever leaks, the value would advance
-	// visibly, making this a tighter wrong-claimant assertion than
-	// passing time.Now().
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateHeartbeat(ctx, fix.NodeID, fix.MainRunScopeID,
-			before.LastHeartbeatAt.Add(1*time.Hour), guardSupB, tx)
-	}); err != nil {
-		t.Fatalf("wrong-claimant Nodes.UpdateHeartbeat: %v", err)
-	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "Nodes.UpdateHeartbeat")
-	mid, err := q.GetByID(ctx, dispatchID)
-	if err != nil || mid == nil || mid.LastHeartbeatAt == nil {
-		t.Fatalf("GetByID after wrong-claimant heartbeat: row=%v err=%v", mid, err)
-	}
-	if !mid.LastHeartbeatAt.Equal(*before.LastHeartbeatAt) {
-		t.Fatalf("wrong-claimant Nodes.UpdateHeartbeat mutated last_heartbeat_at: before=%v after=%v",
-			before.LastHeartbeatAt, mid.LastHeartbeatAt)
-	}
-
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateHeartbeat(ctx, fix.NodeID, fix.MainRunScopeID,
-			before.LastHeartbeatAt.Add(1*time.Hour), guardSupA, tx)
-	}); err != nil {
-		t.Fatalf("owner Nodes.UpdateHeartbeat: %v", err)
-	}
-	after, err := q.GetByID(ctx, dispatchID)
-	if err != nil || after == nil || after.LastHeartbeatAt == nil {
-		t.Fatalf("GetByID after owner heartbeat: row=%v err=%v", after, err)
-	}
-	if !after.LastHeartbeatAt.After(*before.LastHeartbeatAt) {
-		t.Fatalf("owner Nodes.UpdateHeartbeat did not advance last_heartbeat_at: before=%v after=%v",
-			before.LastHeartbeatAt, after.LastHeartbeatAt)
-	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupA, "owner Nodes.UpdateHeartbeat")
-
-	// @constraint: Nodes.UpdateHeartbeat's initial-stamp arm
-	// (claimed_by IS NULL) still admits any supervisor — release as A,
-	// then assert B successfully stamps the now-unclaimed row, which
-	// is the post-acquisition first-stamp path.
-	if err := q.ReleaseClaim(ctx, dispatchID, guardSupA); err != nil {
-		t.Fatalf("ReleaseClaim(A): %v", err)
-	}
-	if err := inTx(ctx, store, func(tx persistence.Tx) error {
-		return store.Nodes().UpdateHeartbeat(ctx, fix.NodeID, fix.MainRunScopeID,
-			time.Now(), guardSupB, tx)
-	}); err != nil {
-		t.Fatalf("stamp-unclaimed Nodes.UpdateHeartbeat: %v", err)
-	}
-	assertRunOwnedBy(ctx, t, d, dispatchID, guardSupB, "stamp-unclaimed Nodes.UpdateHeartbeat")
 }
 
 // testClaimantGuardRunEmptyClaimantCarveOut pins the named carve-out:

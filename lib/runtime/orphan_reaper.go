@@ -7,7 +7,7 @@
 //
 // Two complementary primitives, both invoked off the conductor's tick:
 //
-//   - SweepOrphanedNodeRuns (in conductor.go): stale `phase='active'`
+//   - SweepExecutorDeadlines (in conductor.go): stale `phase='active'`
 //     rimsky_node_runs rows. Releases the claim claimant-guarded,
 //     reverts the row to phase='pending' so a fresh supervisor can
 //     pick it up. Held-phase rows are NEVER reaped here — they have
@@ -24,9 +24,11 @@
 //     fires; the producer's own TTL/sweep handles cleanup of its
 //     internal state per foundation contract §4.5.
 //
-// Distinct from the dispatch-row reaper SweepOrphanedNodeRuns, which
-// keys on heartbeat staleness (dynamic). The claim-handle reaper
-// keys on expires_at (acquisition-time + 5×heartbeat_interval).
+// Distinct from the dispatch-row reaper SweepExecutorDeadlines, which
+// keys on quiet-period exceedance and absolute-runtime exceedance per
+// the per-dispatch effective deadlines (`max_quiet_period`,
+// `max_runtime`). The claim-handle reaper keys on `expires_at` set at
+// acquisition time.
 //
 // The visibility-timeout sweep that v2 did against operator-owned
 // items tables is gone — each store-service runs its own sweep
@@ -34,12 +36,12 @@
 // into producer items tables.
 //
 // Plan E2: parked rows (phase='parked') are intentionally excluded
-// from SweepOrphanedNodeRuns because they have claimed_by IS NULL by
+// from SweepExecutorDeadlines because they have claimed_by IS NULL by
 // construction (the active→parked transition in
-// queue_park.go::ParkActiveInTx clears the claim). The SQL predicate
-// `claimed_by IS NOT NULL AND last_heartbeat_at < cutoff` therefore
-// never matches a parked row. Held claim handles for parked nodes
-// remain in rimsky_claim_handles and are not reaped here either; the
+// queue_park.go::ParkActiveInTx clears the claim). The sweep's
+// claimed-by-IS-NOT-NULL predicate therefore never matches a parked
+// row. Held claim handles for parked nodes remain in
+// rimsky_claim_handles and are not reaped here either; the
 // auto-terminal mechanism + the holder-row TTL handle them.
 
 package runtime
@@ -110,7 +112,7 @@ func SweepOrphanedClaimHandles(ctx context.Context, args OrphanReaperArgs) error
 // its own state.
 //
 // If DeleteIfExpired finds no row to delete (claimant mismatch, or the
-// row was heartbeat-extended in the race window between ListExpired
+// row's expires_at was extended in the race window between ListExpired
 // and DeleteIfExpired), the function returns early without emitting
 // `lock_orphan_reaped`. This avoids false-positive observability noise
 // when the reaper loses the race.
@@ -137,7 +139,7 @@ func reapOneClaimHandle(ctx context.Context, args OrphanReaperArgs, lh persisten
 			return fmt.Errorf("delete lock-holder row: %w", err)
 		}
 		if !deleted {
-			// @deliberate: lost the race (heartbeat-extended or claimant
+			// @deliberate: lost the race (expires_at extended or claimant
 			// mismatch) — skip without emitting `lock_orphan_reaped` so the
 			// reaper's race losses are not surfaced as observability noise.
 			return nil
@@ -183,7 +185,6 @@ func lockReapPayload(lh persistence.ClaimHandleRow) map[string]any {
 		"holder_node_id":  lh.HolderNodeID.String(),
 		"expires_at":      lh.ExpiresAt,
 		"claimed_at":      lh.ClaimedAt,
-		"last_heartbeat":  lh.LastHeartbeatAt,
 	}
 	if lh.LockName != nil {
 		payload["lock_name"] = *lh.LockName

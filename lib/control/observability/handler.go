@@ -522,16 +522,18 @@ func handleListNodeRuns(deps Deps) http.HandlerFunc {
 				state = "claimed"
 			}
 			out = append(out, map[string]any{
-				"id":                row.ID,
-				"node_id":           row.NodeID,
-				"executor_name":     row.ExecutorName,
-				"state":             state,
-				"claimed_by":        row.ClaimedBy,
-				"enqueued_at":       row.EnqueuedAt,
-				"claimed_at":        row.ClaimedAt,
-				"last_heartbeat_at": row.LastHeartbeatAt,
-				"frame_id":          row.FrameID,
-				"required_stores":   row.RequiredStores,
+				"id":               row.ID,
+				"node_id":          row.NodeID,
+				"executor_name":    row.ExecutorName,
+				"state":            state,
+				"claimed_by":       row.ClaimedBy,
+				"enqueued_at":      row.EnqueuedAt,
+				"claimed_at":       row.ClaimedAt,
+				"last_progress_at": row.LastProgressAt,
+				"frame_id":         row.FrameID,
+				"required_stores":  row.RequiredStores,
+				"async_ack_id":     row.AsyncAckID,
+				"tags":             row.Tags,
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -585,18 +587,20 @@ func handleGetNodeRun(deps Deps) http.HandlerFunc {
 			return nil
 		})
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id":                match.ID,
-			"node_id":           match.NodeID,
-			"instance_id":       instanceID,
-			"node_type":         nodeType,
-			"executor_name":     match.ExecutorName,
-			"state":             state,
-			"claimed_by":        match.ClaimedBy,
-			"claimed_at":        match.ClaimedAt,
-			"last_heartbeat_at": match.LastHeartbeatAt,
-			"enqueued_at":       match.EnqueuedAt,
-			"frame_id":          match.FrameID,
-			"claim_id":          claimID,
+			"id":               match.ID,
+			"node_id":          match.NodeID,
+			"instance_id":      instanceID,
+			"node_type":        nodeType,
+			"executor_name":    match.ExecutorName,
+			"state":            state,
+			"claimed_by":       match.ClaimedBy,
+			"claimed_at":       match.ClaimedAt,
+			"last_progress_at": match.LastProgressAt,
+			"enqueued_at":      match.EnqueuedAt,
+			"frame_id":         match.FrameID,
+			"claim_id":         claimID,
+			"async_ack_id":     match.AsyncAckID,
+			"tags":             match.Tags,
 		})
 	}
 }

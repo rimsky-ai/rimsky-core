@@ -3,17 +3,13 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Park-terminal handler — applies the protocol-level Park
-// terminal event. Per the 2026-05-08 platform-extensions plan E1:
+// terminal event.
 //
 //   - Logs WARN when Park.reason is empty (permitted, discouraged).
 //   - Persists park metadata (parked_at, resume_at, parked_reason,
-//     session_token) to rimsky_node_runs.
-//   - Spills payloads larger than BlobSpillThreshold through the
-//     configured BlobBackend; smaller payloads stored inline. NOTE: when
-//     the backend is the degenerate "inline" backend (Blob.Name() ==
-//     "inline"), shouldSpillBlob returns false regardless of size, so all
-//     payloads are stored inline — this is intentional, the inline
-//     backend is the no-spill option.
+//     parked_reason_label, parked_reason_note) to rimsky_node_runs.
+//   - Commits the Park outcome's attributes_delta atomically with the
+//     park transition (per TD-attributes-delta-on-all-settling-terminals).
 //   - Transitions phase active→parked (clears claimed_by so the orphan-
 //     claim reaper's `claimed_by IS NOT NULL` predicate excludes the row).
 //   - Transitions node state running→parked via cascade.ReasonHandlerPark.
@@ -67,41 +63,24 @@ func parkReasonFromStorageForm(s string) genv1.ParkReason {
 // the park metadata, spills large payloads, transitions the node-run
 // phase to parked, and transitions the node state to parked.
 //
+// `resolvedAttrs` is the dispatch-time substituted attribute view; the
+// executor's `t.AttributesDel` (TD-attributes-delta-on-all-settling-
+// terminals) is merged against it and upserted into the node's
+// attribute row inside the caller-provided tx. This makes the delta
+// visible to the resume dispatch (attribute carry-forward) — the
+// claude-agent session-token round-trip (TD-claude-agent-session-
+// attribute-only) and any other attribute the executor authored on
+// the Park outcome both ride this writeback.
+//
 // Per the post-collapse ParkReason invariant (proto closed two-value
 // set: AWAIT_CALLBACK | SNOOZE; see proto:executor.proto::ParkReason),
-// the runtime no longer rejects park terminals on enum value: the
-// proto wire layer caps the set at decode, and both values are
+// the runtime accepts park terminals without enum-value rejection —
+// the proto wire layer caps the set at decode and both values are
 // unconditionally valid here.
 func applyTerminalPark(
-	ctx context.Context, args RunArgs, acq *acquisition, t terminalEvent, tx persistence.Tx,
+	ctx context.Context, args RunArgs, acq *acquisition,
+	resolvedAttrs map[string]any, t terminalEvent, tx persistence.Tx,
 ) (postCommitFn, error) {
-
-	// @deliberate: Blob.Write runs out-of-DB-tx by design (the blob backend is its own
-	// storage), so calling it inside the supervisor's outer tx is safe.
-	var (
-		payloadInline        []byte
-		payloadHandle        string
-		payloadHandleBackend string
-	)
-	if shouldSpillBlob(args, len(t.ParkPayload)) {
-		key := persistence.BlobKey{
-			NodeID: acq.NodeID.String(),
-			Hint:   "parked_payload",
-		}
-		h, err := args.Blob.Write(ctx, key, t.ParkPayload)
-		if err != nil {
-			// @deliberate: spill failure falls back to inline rather than failing the park
-			// transition; operator-side attribute-size constraints surface separately.
-			args.Logger.Warn("applyTerminalPark: blob spill failed; falling back to inline",
-				"node_id", acq.NodeID.String(), "error", err.Error())
-			payloadInline = t.ParkPayload
-		} else {
-			payloadHandle = string(h)
-			payloadHandleBackend = args.Blob.Name()
-		}
-	} else {
-		payloadInline = t.ParkPayload
-	}
 
 	// @constraint: max_park_duration_seconds is read from the node template so the
 	// watchdog can find an overdue cutoff; zero/empty stays NULL (no cap).
@@ -121,27 +100,38 @@ func applyTerminalPark(
 	}
 
 	now := args.Clock.Now()
+	// @deliberate: Per TD-remove-resume-context resume state rides
+	// attribute carry-forward — the executor that needs to thread state
+	// across the park boundary writes it into AttributesDel on this
+	// Park outcome, and the post-park attribute writeback below makes
+	// it visible to the next dispatch.
 	in := persistence.ParkActiveInput{
-		DispatchID:           acq.DispatchID,
-		ExpectedClaimedBy:    args.SupervisorID,
-		ParkedAt:             now,
-		ResumeAt:             t.ParkResumeAt,
-		Reason:               parkReasonStorageForm(t.ParkReason),
-		ReasonNote:           t.ParkReasonNote,
-		ReasonLabel:          t.ParkReasonLabel,
-		SessionToken:         t.ParkSessionToken,
-		PayloadInline:        payloadInline,
-		PayloadHandle:        payloadHandle,
-		PayloadHandleBackend: payloadHandleBackend,
+		DispatchID:        acq.DispatchID,
+		ExpectedClaimedBy: args.SupervisorID,
+		ParkedAt:          now,
+		ResumeAt:          t.ParkResumeAt,
+		Reason:            parkReasonStorageForm(t.ParkReason),
+		ReasonNote:        t.ParkReasonNote,
+		ReasonLabel:       t.ParkReasonLabel,
 	}
 
 	if err := args.Queue.ParkActiveInTx(ctx, tx, in); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
 	}
+	// @deliberate: attributes_delta upsert rides the park tx so the resume dispatch
+	// sees the executor-authored attribute view (e.g., session_token).
+	// Empty AttributesDel short-circuits without touching the row.
+	// @concept: attribute
+	if len(t.AttributesDel) > 0 {
+		merged := mergeAttributesDelta(resolvedAttrs, t.AttributesDel)
+		if err := upsertFinalAttributesTx(ctx, args, tx, acq, merged); err != nil {
+			return nil, fmt.Errorf("applyTerminalPark: upsert attributes_delta: %w", err)
+		}
+	}
 	// @deliberate: scratch is persisted onto the dispatch row inside the park tx so
 	// the column survives across the parked → pending resume transition and the
 	// resume dispatch sees the scratch the park terminal attached. Inline vs.
-	// spilled-handle picked via the same threshold as the parked-payload write above.
+	// spilled-handle picked via the BlobBackend's per-byte spill threshold.
 	// @concept: executor
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
 		return nil, fmt.Errorf("applyTerminalPark: %w", err)
@@ -232,34 +222,29 @@ func shouldSpillBlob(args RunArgs, size int) bool {
 
 // parkTerminalSignal constructs the canonical park-terminal signal
 // envelope. PARK_REASON_SNOOZE → terminal/park/snooze;
-// PARK_REASON_AWAIT_CALLBACK → terminal/park/await_callback. The
-// payload field names use the rimsky-side renaming convention
-// (park_payload, parked_reason_label, parked_reason_note) to avoid
-// the bare-`payload` collision per concept:signal.
+// PARK_REASON_AWAIT_CALLBACK → terminal/park/await_callback. Per
+// TD-remove-resume-context, Park no longer carries a session_token /
+// park_payload on the signal payload — resume state rides attribute
+// carry-forward; the canonical payload now is reason metadata + the
+// settling terminal's tags.
 //
 //	@concept: signal
 func parkTerminalSignal(t terminalEvent) signalpkg.Signal {
-	if t.ParkReason == genv1.ParkReason_PARK_REASON_SNOOZE {
-		return signalpkg.Signal{
-			Type: "terminal/park/snooze",
-			Payload: map[string]any{
-				"resume_at":           t.ParkResumeAt,
-				"session_token":       t.ParkSessionToken,
-				"park_payload":        t.ParkPayload,
-				"parked_reason_label": t.ParkReasonLabel,
-				"parked_reason_note":  t.ParkReasonNote,
-			},
-		}
-	}
-	// @deliberate: AWAIT_CALLBACK omits resume_at when zero so the payload stays
-	// value-based (the SNOOZE branch always carries a `time.Time` value); missing-key
-	// lookup returns nil to consumers, matching the prior pointer-nil observable.
 	payload := map[string]any{
-		"session_token":       t.ParkSessionToken,
-		"park_payload":        t.ParkPayload,
 		"parked_reason_label": t.ParkReasonLabel,
 		"parked_reason_note":  t.ParkReasonNote,
+		"tags":                t.Tags,
 	}
+	if t.ParkReason == genv1.ParkReason_PARK_REASON_SNOOZE {
+		payload["resume_at"] = t.ParkResumeAt
+		return signalpkg.Signal{
+			Type:    "terminal/park/snooze",
+			Payload: payload,
+		}
+	}
+	// @deliberate: AWAIT_CALLBACK omits resume_at when zero so the
+	// payload stays value-based; missing-key lookup returns nil to
+	// consumers, matching the prior pointer-nil observable.
 	if !t.ParkResumeAt.IsZero() {
 		payload["resume_at"] = t.ParkResumeAt
 	}

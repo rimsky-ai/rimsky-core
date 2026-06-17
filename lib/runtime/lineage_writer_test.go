@@ -290,7 +290,6 @@ func (f *emitFakePersist) Events() persistence.EventTable                       
 func (f *emitFakePersist) Supervisors() persistence.SupervisorTable                  { return nil }
 func (f *emitFakePersist) Frames() persistence.FrameTable                            { return nil }
 func (f *emitFakePersist) BlobOrphans() persistence.BlobOrphanTable                  { return nil }
-func (f *emitFakePersist) NodeEvents() persistence.NodeEventTable                    { return nil }
 func (f *emitFakePersist) WaitSet() persistence.WaitSetTable                         { return nil }
 func (f *emitFakePersist) Messages() persistence.MessagesTable                       { return nil }
 func (f *emitFakePersist) MessageIdempotencies() persistence.MessageIdempotencyTable { return nil }

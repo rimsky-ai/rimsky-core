@@ -2,11 +2,15 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// stub_test.go — stub Executor coverage under the unary RPC shape
+// (TD-execute-rpc-unary). Each test stands up the stub on a real
+// loopback gRPC listener, dispatches Execute(req), and asserts on the
+// settling Outcome plus the recorded ObservedRequest list.
+
 package stub
 
 import (
 	"context"
-	"io"
 	"net"
 	"testing"
 	"time"
@@ -19,9 +23,8 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// listenForTest mirrors stubtest.Listen but lives inside package stub so
-// the package's own tests can call it without an import cycle.
-func listenForTest(t testing.TB, s *Stub) (*grpc.Server, string) {
+// listenForTest stands up the stub on a real loopback gRPC listener.
+func listenForTest(t testing.TB, s *Stub) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -30,7 +33,7 @@ func listenForTest(t testing.TB, s *Stub) (*grpc.Server, string) {
 	RegisterObservability(srv)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
-	return srv, lis.Addr().String()
+	return lis.Addr().String()
 }
 
 func dial(t *testing.T, addr string) genv1.ExecutorClient {
@@ -41,161 +44,130 @@ func dial(t *testing.T, addr string) genv1.ExecutorClient {
 	return genv1.NewExecutorClient(conn)
 }
 
-func drain(t *testing.T, stream grpc.ServerStreamingClient[genv1.ExecuteEvent]) []*genv1.ExecuteEvent {
-	t.Helper()
-	var out []*genv1.ExecuteEvent
-	for {
-		ev, err := stream.Recv()
-		if err == io.EOF {
-			return out
-		}
-		require.NoError(t, err)
-		out = append(out, ev)
-	}
-}
-
-func TestScriptedComplete(t *testing.T) {
+func TestScripted_Success(t *testing.T) {
 	s := New()
 	s.WhenType("t.complete").Success(map[string]any{"ok": true}, true, "did the thing")
-	_, addr := listenForTest(t, s)
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.complete"})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.complete"})
 	require.NoError(t, err)
-	events := drain(t, stream)
-	require.Len(t, events, 2)
-	require.NotNil(t, events[0].GetHeartbeat())
-	comp := events[1].GetStreamClose().GetSuccess()
-	require.NotNil(t, comp)
-	require.True(t, comp.GetChanged())
-	require.Equal(t, "did the thing", comp.GetChangeSummary())
-	// @constraint: AttributesDelta replaced the legacy `Result` field per spec §12.2.
-	require.Equal(t, true, comp.GetAttributesDelta().AsMap()["ok"])
+	success := outcome.GetSuccess()
+	require.NotNil(t, success, "expected Success outcome")
+	require.True(t, success.GetChanged())
+	require.Equal(t, "did the thing", success.GetChangeSummary())
+	require.Equal(t, true, success.GetAttributesDelta().AsMap()["ok"])
 }
 
-func TestScriptedError(t *testing.T) {
+func TestScripted_Error(t *testing.T) {
 	s := New()
 	s.WhenType("t.err").Error("CONFIG", map[string]any{"hint": "bad"})
-	_, addr := listenForTest(t, s)
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.err"})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.err"})
 	require.NoError(t, err)
-	events := drain(t, stream)
-	require.Len(t, events, 2)
-	require.NotNil(t, events[0].GetHeartbeat())
-	e := events[1].GetStreamClose().GetError()
-	require.NotNil(t, e)
+	e := outcome.GetError()
+	require.NotNil(t, e, "expected Error outcome")
+	// @constraint: unscoped classes are prefixed with `stub/` per signal taxonomy.
 	require.Equal(t, "stub/CONFIG", e.GetErrorClass())
 	require.Equal(t, "bad", e.GetPayload().AsMap()["hint"])
 }
 
-func TestScriptedBlocked(t *testing.T) {
+// TestScripted_ErrorHierarchicalClassPassesThrough verifies an
+// operator-supplied hierarchical class (containing `/`) is not
+// re-prefixed.
+func TestScripted_ErrorHierarchicalClassPassesThrough(t *testing.T) {
 	s := New()
-	s.WhenType("t.blk").Error("executor_blocked", map[string]any{
-		"reason": "waiting for review",
-		"ticket": "Z-1",
-	})
-	_, addr := listenForTest(t, s)
+	s.WhenType("t.err2").Error("executor_blocked/quota", nil)
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.blk"})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.err2"})
 	require.NoError(t, err)
-	events := drain(t, stream)
-	require.Len(t, events, 2)
-	require.NotNil(t, events[0].GetHeartbeat())
-	b := events[1].GetStreamClose().GetError()
-	require.NotNil(t, b)
-	// @deliberate: Executor-blocked path: Error with the stub-prefixed class
-	// `stub/executor_blocked`. Tests construct the payload inline
-	// (reason + any context).
-	require.Equal(t, "stub/executor_blocked", b.GetErrorClass())
-	pl := b.GetPayload().AsMap()
-	require.Equal(t, "waiting for review", pl["reason"])
-	require.Equal(t, "Z-1", pl["ticket"])
+	require.Equal(t, "executor_blocked/quota", outcome.GetError().GetErrorClass())
 }
 
-func TestScriptedAwaitAsyncCallback(t *testing.T) {
+func TestScripted_Park(t *testing.T) {
 	s := New()
-	s.WhenType("t.async").AwaitAsyncCallback("ack-123", 5000)
-	_, addr := listenForTest(t, s)
+	resumeAt := time.Now().Add(time.Hour)
+	s.WhenType("t.park").Park(
+		genv1.ParkReason_PARK_REASON_SNOOZE,
+		"sleeping on it",
+		resumeAt,
+	)
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.async"})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.park"})
 	require.NoError(t, err)
-	events := drain(t, stream)
-	require.Len(t, events, 2)
-	require.NotNil(t, events[0].GetHeartbeat())
-	a := events[1].GetStreamClose().GetAwaitAsync()
-	require.NotNil(t, a)
+	park := outcome.GetPark()
+	require.NotNil(t, park, "expected Park outcome")
+	require.Equal(t, genv1.ParkReason_PARK_REASON_SNOOZE, park.GetReason())
+	require.Equal(t, "sleeping on it", park.GetReasonNote())
+	require.NotNil(t, park.GetResumeAt())
+}
+
+func TestScripted_AwaitAsyncCallback(t *testing.T) {
+	s := New()
+	s.WhenType("t.async").AwaitAsyncCallback("ack-123", 5000)
+	addr := listenForTest(t, s)
+	c := dial(t, addr)
+
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.async"})
+	require.NoError(t, err)
+	a := outcome.GetAwaitAsync()
+	require.NotNil(t, a, "expected AwaitAsyncCallback outcome")
 	require.Equal(t, "ack-123", a.GetAsyncAckId())
 	require.Equal(t, int64(5000), a.GetExpectedCompletionMs())
 }
 
-func TestHeartbeatsCount(t *testing.T) {
+// TestScripted_Tags pins the executor-attached tags onto the settling
+// terminal (concept:terminal-tag).
+func TestScripted_Tags(t *testing.T) {
 	s := New()
-	s.WhenType("t.hb").Success(nil, false, "").Heartbeats(3)
-	_, addr := listenForTest(t, s)
+	s.WhenType("t.tags").Success(nil, true, "").Tags("alpha", "beta")
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.hb"})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.tags"})
 	require.NoError(t, err)
-	events := drain(t, stream)
-	require.Len(t, events, 5)
-	for i := 0; i < 4; i++ {
-		require.NotNil(t, events[i].GetHeartbeat(), "event %d should be heartbeat", i)
-	}
-	require.NotNil(t, events[4].GetStreamClose().GetSuccess())
+	require.Equal(t, []string{"alpha", "beta"}, outcome.GetSuccess().GetTags())
 }
 
 func TestDelayRespectsContextCancellation(t *testing.T) {
 	s := New()
 	s.WhenType("t.slow").Success(nil, false, "").Delay(500 * time.Millisecond)
-	_, addr := listenForTest(t, s)
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	stream, err := c.Execute(ctx, &genv1.ExecuteRequest{NodeType: "t.slow"})
-	require.NoError(t, err)
-	// @deliberate: Expect the stream to error out (deadline/cancel) rather than produce a full sequence.
 	start := time.Now()
-	var gotTerminal bool
-	for {
-		ev, err := stream.Recv()
-		if err != nil {
-			break
-		}
-		if ev.GetStreamClose().GetSuccess() != nil || ev.GetStreamClose().GetError() != nil || ev.GetStreamClose().GetError() != nil || ev.GetStreamClose().GetAwaitAsync() != nil {
-			gotTerminal = true
-		}
-	}
-	require.False(t, gotTerminal, "terminal should not be emitted before cancellation")
+	_, err := c.Execute(ctx, &genv1.ExecuteRequest{NodeType: "t.slow"})
+	// @deliberate: Expect the call to error out (deadline) rather than return a settling Outcome.
+	require.Error(t, err)
 	require.Less(t, time.Since(start), 400*time.Millisecond, "should return quickly after cancellation")
 }
 
 func TestUnknownNodeTypeReturnsError(t *testing.T) {
 	s := New()
-	_, addr := listenForTest(t, s)
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.unknown"})
-	require.NoError(t, err)
-	_, err = stream.Recv()
+	_, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.unknown"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no script for node_type")
 }
 
 // TestObservedRequestCapturesAttributes verifies the stub records the
-// dispatch-time `attributes` field per spec §12.1 so supervisor /
-// scenario tests can assert that rimsky wired the unified attribute
-// bag through (post-2026-05-21 userdata-collapse: the wire-level
-// `userdata` field is gone).
+// dispatch-time `attributes` bag so supervisor / scenario tests can
+// assert that rimsky wired the unified attribute bag through.
 func TestObservedRequestCapturesAttributes(t *testing.T) {
 	s := New()
 	s.WhenType("t.obs").Success(map[string]any{}, false, "")
-	_, addr := listenForTest(t, s)
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
 	attrs, err := structpb.NewStruct(map[string]any{
@@ -205,14 +177,13 @@ func TestObservedRequestCapturesAttributes(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{
+	_, err = c.Execute(context.Background(), &genv1.ExecuteRequest{
 		NodeId:     "n-1",
 		InstanceId: "i-1",
 		NodeType:   "t.obs",
 		Attributes: attrs,
 	})
 	require.NoError(t, err)
-	_ = drain(t, stream)
 
 	obs := s.Observed()
 	require.Len(t, obs, 1)
@@ -224,63 +195,115 @@ func TestObservedRequestCapturesAttributes(t *testing.T) {
 	require.Equal(t, "https://example.test/api", obs[0].Attributes["endpoint"])
 }
 
-// TestStubModeReturnsImmediateComplete verifies stub mode short-circuits to
-// a single terminal StreamClose with a Success outcome (no heartbeat, no
-// scripted terminal) carrying attributes_delta sourced from
-// StubAttributesFor and changed=true.
-func TestStubModeReturnsImmediateComplete(t *testing.T) {
-	s := New().EnableStubMode()
-	_, addr := listenForTest(t, s)
+// TestObservedRequest_CapturesCandidateHandles verifies per-store
+// candidate handles round-trip into the recorded ObservedRequest.
+func TestObservedRequest_CapturesCandidateHandles(t *testing.T) {
+	s := New()
+	s.WhenType("t.handles").Success(nil, false, "")
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "items.fetch"})
+	_, err := c.Execute(context.Background(), &genv1.ExecuteRequest{
+		NodeType: "t.handles",
+		Stores: map[string]*genv1.StoreHandle{
+			"primary": {CandidateHandle: []byte("ch-1")},
+			"shadow":  {CandidateHandle: []byte("ch-2")},
+		},
+	})
 	require.NoError(t, err)
-	events := drain(t, stream)
-	require.Len(t, events, 1)
-	comp := events[0].GetStreamClose().GetSuccess()
-	require.NotNil(t, comp)
-	require.True(t, comp.GetChanged())
-	require.Equal(t, "stub", comp.GetChangeSummary())
-	require.Equal(t, []any{}, comp.GetAttributesDelta().AsMap()["items"])
-	require.Equal(t, "1970-01-01T00:00:00Z", comp.GetAttributesDelta().AsMap()["fetched_at"])
+
+	obs := s.Observed()
+	require.Len(t, obs, 1)
+	require.Equal(t, []byte("ch-1"), obs[0].CandidateHandles["primary"])
+	require.Equal(t, []byte("ch-2"), obs[0].CandidateHandles["shadow"])
+}
+
+// TestStubModeReturnsImmediateComplete verifies stub mode short-circuits
+// to Outcome{Success} carrying attributes_delta from StubAttributesFor.
+func TestStubModeReturnsImmediateComplete(t *testing.T) {
+	s := New().EnableStubMode()
+	addr := listenForTest(t, s)
+	c := dial(t, addr)
+
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "items.fetch"})
+	require.NoError(t, err)
+	success := outcome.GetSuccess()
+	require.NotNil(t, success, "expected Success outcome in stub mode")
+	require.True(t, success.GetChanged())
+	require.Equal(t, "stub", success.GetChangeSummary())
+	require.Equal(t, []any{}, success.GetAttributesDelta().AsMap()["items"])
+	require.Equal(t, "1970-01-01T00:00:00Z", success.GetAttributesDelta().AsMap()["fetched_at"])
 }
 
 // TestStubModeUnknownTypeReturnsEmptyDelta verifies stub mode tolerates
-// unknown node_types — StubAttributesFor returns `{}` and the executor
-// emits a StreamClose with a Success outcome carrying an empty
-// attributes_delta object.
+// unknown node_types — StubAttributesFor returns `{}` and Execute
+// emits Outcome{Success} with an empty attributes_delta.
 func TestStubModeUnknownTypeReturnsEmptyDelta(t *testing.T) {
 	s := New().EnableStubMode()
-	_, addr := listenForTest(t, s)
+	addr := listenForTest(t, s)
 	c := dial(t, addr)
 
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.never.heard.of"})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "completely.unknown"})
 	require.NoError(t, err)
-	events := drain(t, stream)
-	require.Len(t, events, 1)
-	comp := events[0].GetStreamClose().GetSuccess()
-	require.NotNil(t, comp)
-	require.True(t, comp.GetChanged())
-	require.Empty(t, comp.GetAttributesDelta().AsMap())
+	success := outcome.GetSuccess()
+	require.NotNil(t, success)
+	require.True(t, success.GetChanged())
+	require.Equal(t, map[string]any{}, success.GetAttributesDelta().AsMap())
 }
 
-// TestStubAttributesForReturnsCopy verifies callers can mutate the returned
-// map without affecting subsequent calls — the fixtures map is the source
-// of truth and must not leak.
-func TestStubAttributesForReturnsCopy(t *testing.T) {
-	first := StubAttributesFor("items.fetch")
-	first["fetched_at"] = "polluted"
-	first["items"] = []any{"x"}
-	second := StubAttributesFor("items.fetch")
-	require.Equal(t, "1970-01-01T00:00:00Z", second["fetched_at"])
-	require.Equal(t, []any{}, second["items"])
+// TestStubMode_ParkProbeReturnsPark covers the stub-mode park probe
+// (probe_park attribute) returning Park with the parsed reason.
+func TestStubMode_ParkProbeReturnsPark(t *testing.T) {
+	s := New().EnableStubMode()
+	addr := listenForTest(t, s)
+	c := dial(t, addr)
+
+	attrs, _ := structpb.NewStruct(map[string]any{
+		"probe_park":        true,
+		"park_reason":       "snooze",
+		"park_reason_note":  "scheduled rest",
+		"park_reason_label": "demo",
+	})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{
+		NodeType:   "any",
+		Attributes: attrs,
+	})
+	require.NoError(t, err)
+	park := outcome.GetPark()
+	require.NotNil(t, park, "expected Park outcome in stub mode under probe_park")
+	require.Equal(t, genv1.ParkReason_PARK_REASON_SNOOZE, park.GetReason())
+	require.Equal(t, "scheduled rest", park.GetReasonNote())
+	require.Equal(t, "demo", park.GetReasonLabel())
 }
 
-// TestStubAttributesForUnknownReturnsEmptyMap documents the contract in
-// the StubAttributesFor godoc: unknown node_types return a non-nil empty
-// map so the caller can convert it to an empty Struct without a nil-check.
-func TestStubAttributesForUnknownReturnsEmptyMap(t *testing.T) {
-	got := StubAttributesFor("does-not-exist")
-	require.NotNil(t, got)
-	require.Empty(t, got)
+// TestHoldUntilBlocksUntilSignal verifies the HoldUntil builder blocks
+// Execute until the channel closes.
+func TestHoldUntilBlocksUntilSignal(t *testing.T) {
+	hold := make(chan struct{})
+	s := New()
+	s.WhenType("t.hold").Success(nil, true, "").HoldUntil(hold)
+	addr := listenForTest(t, s)
+	c := dial(t, addr)
+
+	done := make(chan *genv1.Outcome, 1)
+	go func() {
+		outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{NodeType: "t.hold"})
+		require.NoError(t, err)
+		done <- outcome
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("Execute returned before hold released")
+	case <-time.After(80 * time.Millisecond):
+	}
+
+	close(hold)
+
+	select {
+	case outcome := <-done:
+		require.NotNil(t, outcome.GetSuccess())
+	case <-time.After(2 * time.Second):
+		t.Fatal("Execute did not return after hold released")
+	}
 }

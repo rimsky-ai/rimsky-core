@@ -2,27 +2,29 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// stub-executor is a minimal late-bound gRPC executor used by the Pass 6
+// stub-executor is a minimal late-bound gRPC executor used by the
 // acceptance proofs for the `rimsky compose run` verb. It reads
-// RIMSKY_AGENT_PORT (the env var the verb's hostagent.SpawnService helper
-// sets when it spawns a `--service` binary), binds a gRPC server on
-// 127.0.0.1:<port>, and answers Executor.Execute with one of three
-// behaviors driven by dispatch-time attributes:
+// RIMSKY_AGENT_PORT (the env var the verb's hostagent.SpawnService
+// helper sets when it spawns a `--service` binary), binds a gRPC
+// server on 127.0.0.1:<port>, and answers the unary Executor.Execute
+// RPC with one of three behaviors driven by dispatch-time attributes:
 //
-//   - default                       — emit a single Success terminal.
-//   - attributes.outcome="fail"     — emit a single Error terminal with
+//   - default                       — return Outcome{Success}.
+//   - attributes.outcome="fail"     — return Outcome{Error} with
 //     error_class=stub/failed.
 //   - attributes.delay_ms=<int>     — time.Sleep for the configured
-//     duration before terminating (lets
+//     duration before returning the
+//     settling Outcome (lets
 //     STORY-live-progress interleave a
 //     fast and slow instance to prove
 //     progress lines are emitted live,
 //     not batched).
 //
-// This binary is intentionally lighter than examples/executor — no
-// schema, no namedevent paths, no permissive open shape — so a copy
-// of it in a scenario test compiles fast and contributes minimal
-// surface area to debug.
+// Per TD-execute-rpc-unary the RPC is unary; the stub returns the
+// settling Outcome directly. This binary is intentionally lighter
+// than examples/executor — no schema beyond the permissive open
+// shape — so a copy of it in a scenario test compiles fast and
+// contributes minimal surface area to debug.
 package main
 
 import (
@@ -59,7 +61,7 @@ type executor struct {
 // slow-node scenario can prove that progress lines appear during the
 // sleep rather than only after the dispatch returns. outcome="fail"
 // flips the terminal from Success to Error.
-func (e executor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
+func (e executor) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	delay := intAttr(req, "delay_ms")
 	if delay > 0 {
 		// @constraint: bound the sleep at 60s so a malformed attribute cannot wedge
@@ -69,24 +71,19 @@ func (e executor) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_Execu
 		}
 		select {
 		case <-time.After(time.Duration(delay) * time.Millisecond):
-		case <-stream.Context().Done():
-			return stream.Context().Err()
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 	if stringAttr(req, "outcome") == "fail" {
-		err := stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				ErrorClass: stubErrorClass,
-			}}},
-		}})
-		return err
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+			ErrorClass: stubErrorClass,
+		}}}, nil
 	}
-	return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-			Changed:       false,
-			ChangeSummary: "stub executor: success",
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		Changed:       false,
+		ChangeSummary: "stub executor: success",
+	}}}, nil
 }
 
 // observability implements genv1.ExecutorObservabilityServer. The stub

@@ -8,52 +8,75 @@ import (
 	"reflect"
 	"strings"
 	"time"
-
-	foundationshared "github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
 // TerminalSuccessPayload is the payload schema for terminal/success.
 //
-// @deliberate: the signal envelope's outer field is Payload. To avoid
-// the bare-`payload` collision when a signal's payload itself wraps an
-// opaque sub-object originally named `payload` on the wire (executor
-// Error.payload, NamedEvent.payload, Park.payload, message envelope
-// payload), the inner field is renamed with a domain prefix:
-// error_payload, event_payload, park_payload, message_payload. This is
-// a rimsky-side rename only; the wire protos keep their original field
-// names.
+// @deliberate: the signal envelope's outer field is Payload. To
+// avoid the bare-`payload` collision when a signal's payload itself
+// wraps an opaque sub-object originally named `payload` on the wire
+// (executor Error.payload, message envelope payload), the inner
+// field is renamed with a domain prefix: error_payload,
+// message_payload. This is a rimsky-side rename only; the wire
+// protos keep their original field names.
+//
+// @constraint: Tags rides on every settling terminal under
+// TD-collapse-named-event-to-tags — subscribers fire on
+// `terminal/success when: "<tag>" in payload.tags`, replacing the
+// retired `event/<name>` source-kind. The list is deduplicated at
+// emit; CEL evaluates list membership directly.
+//
+// @concept: terminal-tag
 type TerminalSuccessPayload struct {
 	Changed         bool           `json:"changed"`
 	AttributesDelta map[string]any `json:"attributes_delta"`
 	ChangeSummary   string         `json:"change_summary,omitempty"`
+	Tags            []string       `json:"tags,omitempty"`
 }
 
 // TerminalErrorPayload is the payload schema for terminal/error/<class>.
+//
+// @constraint: Tags mirrors the TerminalSuccessPayload field —
+// subscribers can `when: "<tag>" in payload.tags`-filter against an
+// errored terminal just as against a successful one.
+//
+// @concept: terminal-tag
 type TerminalErrorPayload struct {
 	ErrorClass   string         `json:"error_class"`
 	ErrorPayload map[string]any `json:"error_payload,omitempty"`
 	Attempt      int            `json:"attempt"`
 	RetriesSoFar int            `json:"retries_so_far"`
+	Tags         []string       `json:"tags,omitempty"`
 }
 
 // TerminalParkSnoozePayload is the payload schema for
 // terminal/park/snooze.
+//
+// @constraint: Tags rides per TD-collapse-named-event-to-tags; resume
+// state lives in attribute carry-forward (per TD-remove-resume-context),
+// not on the Park payload.
+//
+// @concept: terminal-tag
 type TerminalParkSnoozePayload struct {
 	ResumeAt          time.Time `json:"resume_at"`
-	SessionToken      string    `json:"session_token,omitempty"`
-	ParkPayload       []byte    `json:"park_payload,omitempty"`
 	ParkedReasonLabel string    `json:"parked_reason_label,omitempty"`
 	ParkedReasonNote  string    `json:"parked_reason_note,omitempty"`
+	Tags              []string  `json:"tags,omitempty"`
 }
 
 // TerminalParkAwaitCallbackPayload is the payload schema for
 // terminal/park/await_callback.
+//
+// @constraint: Tags rides per TD-collapse-named-event-to-tags; resume
+// state lives in attribute carry-forward (per TD-remove-resume-context),
+// not on the Park payload.
+//
+// @concept: terminal-tag
 type TerminalParkAwaitCallbackPayload struct {
 	ResumeAt          *time.Time `json:"resume_at,omitempty"`
-	SessionToken      string     `json:"session_token,omitempty"`
-	ParkPayload       []byte     `json:"park_payload,omitempty"`
 	ParkedReasonLabel string     `json:"parked_reason_label,omitempty"`
 	ParkedReasonNote  string     `json:"parked_reason_note,omitempty"`
+	Tags              []string   `json:"tags,omitempty"`
 }
 
 // TerminalInfraPayload is the payload schema for terminal/infra/<reason>.
@@ -74,14 +97,6 @@ type TransientRetryPayload struct {
 	ErrorPayload    map[string]any `json:"error_payload,omitempty"`
 }
 
-// TransientHeartbeatMissedPayload is the payload schema for
-// transient/heartbeat_missed.
-type TransientHeartbeatMissedPayload struct {
-	LastHeartbeatAt time.Time             `json:"last_heartbeat_at"`
-	DispatchID      foundationshared.UUID `json:"dispatch_id"`
-	ThresholdMs     int                   `json:"threshold_ms"`
-}
-
 // TransientAwaitAsyncPayload is the payload schema for
 // transient/await_async.
 type TransientAwaitAsyncPayload struct {
@@ -97,12 +112,6 @@ type AttributeChangedPayload struct {
 	OldValue any    `json:"old_value,omitempty"`
 }
 
-// EventPayload is the payload schema for event/<name>.
-type EventPayload struct {
-	Name         string         `json:"name"`
-	EventPayload map[string]any `json:"event_payload,omitempty"`
-}
-
 // PayloadSchemaForType returns the Go reflect.Type of the payload
 // struct that matches the given exact TypePath, or (nil, false) when
 // the path is a prefix pattern (trailing "*") — prefix subscriptions
@@ -110,6 +119,11 @@ type EventPayload struct {
 //
 // The mapping is exhaustive over the canonical taxonomy enumerated in
 // taxonomy.go; an unrecognized exact path returns (nil, false).
+//
+// @deliberate: the historic `event/<name>` branch is gone per
+// TD-collapse-named-event-to-tags — observable non-terminal
+// transitions ride as tags on the settling terminal verdict
+// (concept:terminal-tag), not as their own signal kind.
 func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 	s := string(t)
 	if s == "" || strings.HasSuffix(s, "*") {
@@ -122,8 +136,6 @@ func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 		return reflect.TypeOf(TerminalParkSnoozePayload{}), true
 	case s == "terminal/park/await_callback":
 		return reflect.TypeOf(TerminalParkAwaitCallbackPayload{}), true
-	case s == "transient/heartbeat_missed":
-		return reflect.TypeOf(TransientHeartbeatMissedPayload{}), true
 	case s == "transient/await_async":
 		return reflect.TypeOf(TransientAwaitAsyncPayload{}), true
 	case strings.HasPrefix(s, "terminal/error/"):
@@ -134,8 +146,6 @@ func PayloadSchemaForType(t TypePath) (reflect.Type, bool) {
 		return reflect.TypeOf(TransientRetryPayload{}), true
 	case strings.HasPrefix(s, "attribute/") && strings.HasSuffix(s, "/changed"):
 		return reflect.TypeOf(AttributeChangedPayload{}), true
-	case strings.HasPrefix(s, "event/"):
-		return reflect.TypeOf(EventPayload{}), true
 	}
 	return nil, false
 }

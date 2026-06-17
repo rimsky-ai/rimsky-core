@@ -29,21 +29,27 @@ import { Observability } from "./observability.js";
 
 const logger = pino({ level: "silent" });
 
-interface ExecuteEvent {
-  heartbeat?: { timestamp_ms: number; note: string };
-  stream_close?: {
-    await_async?: { async_ack_id: string; expected_completion_ms: number };
-    success?: { attributes_delta: unknown; changed: boolean; change_summary: string };
-    error?: { error_class: string; payload: unknown };
-    park?: { reason: string; payload: unknown; resume_at?: string; session_token?: string };
-  };
-  complete?: {
-    attributes_delta: unknown;
-    changed: boolean;
-    change_summary: string;
-  };
-  blocked?: { reason: string };
-  errored?: { error_class: string };
+// @constraint: TD-execute-rpc-unary — the Execute RPC is unary; the
+// response is a single Outcome carrying AwaitAsyncCallback. The final
+// settling terminal rides the HTTP callback POST, not the gRPC reply.
+interface UnaryOutcome {
+  await_async?: { async_ack_id: string; expected_completion_ms: number };
+}
+
+// @deliberate: helper — call the unary Execute RPC and resolve with
+// the AwaitAsyncCallback outcome. Tests then wait for the callback POST
+// to capture the settling terminal.
+function executeUnary(
+  client: grpc.Client,
+  req: Record<string, unknown>,
+): Promise<UnaryOutcome> {
+  return new Promise((resolve, reject) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).Execute(req, (err: unknown, outcome: UnaryOutcome) => {
+      if (err) reject(err);
+      else resolve(outcome);
+    });
+  });
 }
 
 describe("gRPC server stub-mode Execute end-to-end", () => {
@@ -82,15 +88,14 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
     await cb.close();
   });
 
-  it("emits Heartbeat + AwaitAsyncCallback, then POSTs Success outcome with attributes_delta", async () => {
+  it("returns AwaitAsyncCallback on the unary Execute reply, then POSTs Success outcome with attributes_delta", async () => {
     const pkg = loadExecutorProto();
     const Client = pkg.rimsky.v1.Executor as unknown as new (
       addr: string,
       creds: grpc.ChannelCredentials,
     ) => grpc.Client;
     const client = new Client(srv.address, grpc.credentials.createInsecure());
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const call = (client as any).Execute({
+    const outcome = await executeUnary(client, {
       node_id: "n-1",
       instance_id: "i-1",
       node_type: "stub-agent",
@@ -107,21 +112,10 @@ describe("gRPC server stub-mode Execute end-to-end", () => {
       cancel_token: "cancel-tok-1",
     });
 
-    const events: ExecuteEvent[] = [];
-    await new Promise<void>((resolve, reject) => {
-      call.on("data", (ev: ExecuteEvent) => events.push(ev));
-      call.on("error", reject);
-      call.on("end", resolve);
-    });
-
-    expect(events.length).toBeGreaterThanOrEqual(2);
-    expect(events[0]!.heartbeat).toBeDefined();
-    const terminal = events[events.length - 1]!;
-    // @deliberate: post-spec:2026-05-12 (Group E.4): the stream-close event uses
-    // StreamClose + outcome oneof; AwaitAsyncCallback replaces AsyncAccepted.
-    expect(terminal.stream_close).toBeDefined();
-    expect(terminal.stream_close!.await_async).toBeDefined();
-    const ackId = terminal.stream_close!.await_async!.async_ack_id;
+    // @constraint: TD-execute-rpc-unary — the unary reply IS the
+    // AwaitAsyncCallback outcome carrying the async_ack_id.
+    expect(outcome.await_async).toBeDefined();
+    const ackId = outcome.await_async!.async_ack_id;
     expect(ackId).toBeTruthy();
 
     // @deliberate: wait for the background agent run + callback POST. Stub is ~50ms.
@@ -209,8 +203,7 @@ describe("gRPC Execute observability ledger", () => {
     ) => grpc.Client;
     const client = new Client(srv.address, grpc.credentials.createInsecure());
     const dispatchId = "trace-d1";
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const call = (client as any).Execute({
+    await executeUnary(client, {
       node_id: "n-obs",
       instance_id: "i-obs",
       node_type: "stub-agent",
@@ -226,12 +219,6 @@ describe("gRPC Execute observability ledger", () => {
       stores: {},
       callback_url: "http://supervisor.invalid/cb",
       cancel_token: "tok",
-    });
-    await new Promise<void>((resolve, reject) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      call.on("data", () => {});
-      call.on("error", reject);
-      call.on("end", resolve);
     });
     await waitFor(() => callbackPosts.length > 0, 2000);
 
@@ -333,15 +320,14 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
     await new Promise<void>((resolve) => supervisorLike.close(() => resolve()));
   });
 
-  it("POSTs to /v1/callback/{ackID} with a body keyed by `type`", async () => {
+  it("POSTs to /v1/callback/{ackID} with the AsyncCallbackBody outcome-oneof shape", async () => {
     const pkg = loadExecutorProto();
     const Client = pkg.rimsky.v1.Executor as unknown as new (
       addr: string,
       creds: grpc.ChannelCredentials,
     ) => grpc.Client;
     const client = new Client(srv.address, grpc.credentials.createInsecure());
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const call = (client as any).Execute({
+    const outcome = await executeUnary(client, {
       node_id: "n-e2e",
       instance_id: "i-e2e",
       node_type: "stub-agent",
@@ -358,20 +344,8 @@ describe("gRPC executor -> supervisor callback (protocol shape)", () => {
       cancel_token: "cancel-tok-e2e",
     });
 
-    interface ExecuteEventLocal {
-      heartbeat?: { timestamp_ms: number; note: string };
-      stream_close?: {
-        await_async?: { async_ack_id: string; expected_completion_ms: number };
-      };
-    }
-    const events: ExecuteEventLocal[] = [];
-    await new Promise<void>((resolve, reject) => {
-      call.on("data", (ev: ExecuteEventLocal) => events.push(ev));
-      call.on("error", reject);
-      call.on("end", resolve);
-    });
-    const terminal = events[events.length - 1]!;
-    const ackId = terminal.stream_close!.await_async!.async_ack_id;
+    expect(outcome.await_async).toBeDefined();
+    const ackId = outcome.await_async!.async_ack_id;
     expect(ackId).toBeTruthy();
 
     await waitFor(() => received.length > 0, 3000);
@@ -473,8 +447,7 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       for (const [k, val] of Object.entries(o)) fields[k] = toValue(val);
       return { fields };
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const call = (client as any).Execute({
+    const outcome = await executeUnary(client, {
       node_id: "n-gate",
       node_type: "stub-agent",
       dispatch_id: "d-grpc-gate",
@@ -489,17 +462,9 @@ describe("gRPC server Execute rejects a malformed sign-off gate config (no silen
       callback_url: fakeCallbackUrl,
     });
 
-    const events: ExecuteEvent[] = [];
-    await new Promise<void>((resolve, reject) => {
-      call.on("data", (ev: ExecuteEvent) => events.push(ev));
-      call.on("error", reject);
-      call.on("end", resolve);
-    });
-
-    // @deliberate: the stream completes the async handoff; the verdict rides the callback.
-    const terminal = events[events.length - 1]!;
-    expect(terminal.stream_close?.await_async).toBeDefined();
-    const ackId = terminal.stream_close!.await_async!.async_ack_id;
+    // @deliberate: the unary reply completes the async handoff; the verdict rides the callback.
+    expect(outcome.await_async).toBeDefined();
+    const ackId = outcome.await_async!.async_ack_id;
 
     await waitFor(() => callbackPosts.length > 0, 2000);
     expect(callbackPosts).toHaveLength(1);
@@ -704,11 +669,12 @@ describe("unwrapStructValue defensive defaults", () => {
   });
 });
 
-// @deliberate: the gRPC ExecutorObservability.Capabilities surface must carry the
-// RIMSKY_EXECUTOR_DECLARED_EVENTS-resolved list in declared_events (field 7).
-// This pairs with the HTTP capabilitiesPayload coverage in observability.test.ts
-// to cover "both capability surfaces."
-describe("ExecutorObservability.Capabilities declared_events (gRPC surface)", () => {
+// @constraint: TD-collapse-named-event-to-tags + observability-rename —
+// the gRPC ExecutorObservability.Capabilities surface carries the
+// RIMSKY_EXECUTOR_DECLARED_TAGS-resolved list in declared_tags (the
+// renamed observability field). Pairs with capabilitiesPayload coverage
+// in observability.test.ts to cover both capability surfaces.
+describe("ExecutorObservability.Capabilities declared_tags (gRPC surface)", () => {
   let cb: CallbackServerHandle;
   let srv: RunningServer;
   const fakeCli: CliRunner = {
@@ -718,7 +684,7 @@ describe("ExecutorObservability.Capabilities declared_events (gRPC surface)", ()
   };
 
   beforeEach(async () => {
-    process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS = "a,b";
+    process.env.RIMSKY_EXECUTOR_DECLARED_TAGS = "a,b";
     cb = await startInternalMcpServer({ logger });
     srv = await startGrpcServer({
       host: "127.0.0.1",
@@ -731,12 +697,12 @@ describe("ExecutorObservability.Capabilities declared_events (gRPC surface)", ()
   });
 
   afterEach(async () => {
-    delete process.env.RIMSKY_EXECUTOR_DECLARED_EVENTS;
+    delete process.env.RIMSKY_EXECUTOR_DECLARED_TAGS;
     await srv.shutdown();
     await cb.close();
   });
 
-  it("advertises the env-resolved declared_events over gRPC", async () => {
+  it("advertises the env-resolved declared_tags over gRPC", async () => {
     const pkg = loadExecutorProto();
     const ObsClient = pkg.rimsky.v1.ExecutorObservability as unknown as new (
       addr: string,
@@ -750,63 +716,52 @@ describe("ExecutorObservability.Capabilities declared_events (gRPC surface)", ()
         resolve(resp);
       });
     });
-    expect(caps.declared_events).toEqual(["a", "b"]);
+    expect(caps.declared_tags).toEqual(["a", "b"]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (client as any).close?.();
   });
 });
 
-// @deliberate: outcomeToCallbackBody must ride the per-dispatch named-event buffer on the
-// AsyncCallbackBody `events[]` array (the gRPC stream already closed at
-// dispatch). Payloads are base64-encoded per the proto-JSON `bytes` rule the
-// Go supervisor expects.
-describe("outcomeToCallbackBody named-event surfacing", () => {
-  it("populates events[] from the buffer with base64 payloads", () => {
-    const payloadA = Buffer.from(JSON.stringify({ pct: 50 }), "utf8");
-    const payloadB = Buffer.from("null", "utf8");
+// @constraint: TD-claude-agent-session-attribute-only +
+// uniform-attributes-delta — Park-outcome serialization carries
+// session_token via attributes_delta (not a top-level field). Park.payload
+// is gone with the proto reservation.
+describe("outcomeToCallbackBody park outcome shape", () => {
+  it("merges sessionToken into attributes_delta on Park (no top-level session_token)", () => {
     const outcome: AgentOutcome = {
-      kind: "complete",
-      attributesDelta: { ok: true },
-      changed: true,
-      changeSummary: "did",
-      emittedEvents: [
-        { name: "progress", payload: payloadA },
-        { name: "ping", payload: payloadB },
-      ],
-    };
-    const body = outcomeToCallbackBody(outcome);
-    expect(body.events).toEqual([
-      { name: "progress", payload: payloadA.toString("base64") },
-      { name: "ping", payload: payloadB.toString("base64") },
-    ]);
-    // @deliberate: the outcome verdict is still present alongside the events.
-    expect(body.success).toBeDefined();
-  });
-
-  it("omits events[] entirely when the buffer is empty (no behavior change)", () => {
-    const outcome: AgentOutcome = {
-      kind: "complete",
+      kind: "park_requested",
+      reason: "snooze",
+      reasonNote: "rate limited",
       attributesDelta: null,
-      changed: false,
-      changeSummary: null,
+      resumeAt: new Date("2026-06-17T12:00:00Z"),
+      sessionToken: "sess-abc",
     };
     const body = outcomeToCallbackBody(outcome);
-    expect("events" in body).toBe(false);
-    expect(body.success).toBeDefined();
+    expect(body.park).toBeDefined();
+    const park = body.park as Record<string, unknown>;
+    expect(park.reason).toBe("snooze");
+    expect(park.reason_note).toBe("rate limited");
+    expect(park.resume_at).toBe("2026-06-17T12:00:00.000Z");
+    expect(park.session_token).toBeUndefined();
+    expect(park.payload).toBeUndefined();
+    const delta = park.attributes_delta as Record<string, unknown>;
+    expect(delta.session_token).toBe("sess-abc");
   });
 
-  it("rides events[] alongside an error verdict too", () => {
-    const payload = Buffer.from(JSON.stringify({ detail: "x" }), "utf8");
+  it("omits resume_at when null and attributes_delta when both sessionToken and delta are empty", () => {
     const outcome: AgentOutcome = {
-      kind: "errored",
-      errorClass: "agent/blocked",
-      payload: { reason: "stuck" },
-      emittedEvents: [{ name: "diag", payload }],
+      kind: "park_requested",
+      reason: "await_callback",
+      reasonNote: "",
+      attributesDelta: null,
+      resumeAt: null,
+      sessionToken: "",
     };
     const body = outcomeToCallbackBody(outcome);
-    expect(body.events).toEqual([
-      { name: "diag", payload: payload.toString("base64") },
-    ]);
-    expect(body.error).toBeDefined();
+    const park = body.park as Record<string, unknown>;
+    expect("resume_at" in park).toBe(false);
+    expect("attributes_delta" in park).toBe(false);
+    expect("payload" in park).toBe(false);
+    expect("session_token" in park).toBe(false);
   });
 });

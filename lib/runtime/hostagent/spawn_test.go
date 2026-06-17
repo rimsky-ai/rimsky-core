@@ -2,6 +2,16 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
+// spawn_test.go — host-agent spawn / dispatch / reap coverage. Each
+// test stands up a fakeProxy, runs the production hostagent.Run loop
+// against it, and exec()s the real testdata/stubchild binary — so the
+// path under test is the real exec → RIMSKY_AGENT_PORT → port-probe →
+// Capabilities handshake → child registration path, not a mock.
+//
+// Under TD-execute-rpc-unary, Executor.Execute is unary: the agent
+// receives a DispatchFrame carrying a marshaled ExecuteRequest and
+// answers with one DispatchFrame carrying a marshaled Outcome.
+
 package hostagent
 
 import (
@@ -42,6 +52,36 @@ func spawnVia(t *testing.T, fp *fakeProxy, sp *genv1.Spawn) *genv1.SpawnAck {
 	return ack
 }
 
+// reapVia pushes a Reap and returns the Reaped reply.
+func reapVia(t *testing.T, fp *fakeProxy, spawnID string, graceSec int32) *genv1.Reaped {
+	t.Helper()
+	fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_Reap{Reap: &genv1.Reap{
+		SpawnId:             spawnID,
+		SigtermGraceSeconds: graceSec,
+	}}})
+	frame := fp.nextClientFrame(t)
+	reaped := frame.GetReaped()
+	if reaped == nil {
+		t.Fatalf("expected Reaped, got %T", frame.GetBody())
+	}
+	return reaped
+}
+
+// nextDispatch reads the next ClientFrame and asserts it is a DispatchFrame
+// for the given stream-id.
+func nextDispatch(t *testing.T, fp *fakeProxy, streamID string) *genv1.DispatchFrame {
+	t.Helper()
+	frame := fp.nextClientFrame(t)
+	df := frame.GetDispatchFrame()
+	if df == nil {
+		t.Fatalf("expected DispatchFrame, got %T", frame.GetBody())
+	}
+	if df.GetStreamId() != streamID {
+		t.Fatalf("dispatch stream_id = %q, want %q", df.GetStreamId(), streamID)
+	}
+	return df
+}
+
 // TestSpawnReadyCapabilitiesHandshake spawns the real stubchild and asserts a
 // READY ack carrying the per-protocol Capabilities responses.
 func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
@@ -64,7 +104,7 @@ func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 		t.Fatalf("spawn_id = %q, want %q", ack.GetSpawnId(), spawnID)
 	}
 
-	// @deliberate: Executor capabilities decode to the stubchild's declared events.
+	// @deliberate: Executor capabilities decode to the stubchild's declared tags.
 	execCaps := ack.GetCapabilities()[protocolExecutor]
 	if execCaps == nil {
 		t.Fatal("missing executor capabilities")
@@ -73,8 +113,8 @@ func TestSpawnReadyCapabilitiesHandshake(t *testing.T) {
 	if err := proto.Unmarshal(execCaps, &obs); err != nil {
 		t.Fatalf("unmarshal executor caps: %v", err)
 	}
-	if len(obs.GetDeclaredEvents()) != 1 || obs.GetDeclaredEvents()[0] != "stubchild.output" {
-		t.Fatalf("declared events = %v, want [stubchild.output]", obs.GetDeclaredEvents())
+	if len(obs.GetDeclaredTags()) != 1 || obs.GetDeclaredTags()[0] != "stubchild.output" {
+		t.Fatalf("declared tags = %v, want [stubchild.output]", obs.GetDeclaredTags())
 	}
 
 	// @deliberate: Claim-producer capabilities decode to the stubchild's write-semantics.
@@ -114,11 +154,29 @@ func TestSpawnRejectedByAllowPaths(t *testing.T) {
 	}
 }
 
+// TestSpawnBinaryMissing asserts a binding that names a non-existent path
+// fails with a spawn_failed ack (exercises the exec.Start error branch).
+func TestSpawnBinaryMissing(t *testing.T) {
+	fp := startFakeProxy(t)
+	connectAgentToFakeProxy(t, fp, Config{})
+
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	ack := spawnVia(t, fp, &genv1.Spawn{
+		SpawnId:             uuid.NewString(),
+		Binding:             &genv1.Binding{Path: missing},
+		ExpectedProtocols:   []string{protocolExecutor},
+		ReadyTimeoutSeconds: 2,
+	})
+	if ack.GetStatus() != genv1.SpawnAck_SPAWN_STATUS_FAILED {
+		t.Fatalf("status = %v, want FAILED", ack.GetStatus())
+	}
+	if ack.GetError().GetClass() != errClassSpawnFailed {
+		t.Fatalf("error class = %q, want %q", ack.GetError().GetClass(), errClassSpawnFailed)
+	}
+}
+
 // TestSpawnReadyTimeout asserts a child that never binds its port yields a
-// FAILED ack after the ready timeout (the stubchild honors STUBCHILD_NO_BIND
-// via env — but env is inherited; we instead point at a bare path that exists
-// but never serves by using a short timeout and the no-bind knob through the
-// agent's inherited env).
+// FAILED ack after the ready timeout.
 func TestSpawnReadyTimeout(t *testing.T) {
 	bin := buildStubChild(t)
 	t.Setenv("STUBCHILD_NO_BIND", "1") // @deliberate: inherited by the spawned child
@@ -136,10 +194,11 @@ func TestSpawnReadyTimeout(t *testing.T) {
 	}
 }
 
-// TestDispatchExecutorStreaming spawns the echoing stubchild, dispatches an
-// ExecuteRequest, and asserts the agent streams a NamedEvent then a terminal
-// StreamClose back as DATA frames.
-func TestDispatchExecutorStreaming(t *testing.T) {
+// TestDispatchExecutorReturnsUnaryOutcome spawns the echoing stubchild,
+// dispatches an ExecuteRequest, and asserts the agent answers with a
+// single DATA DispatchFrame carrying a serialized Outcome{Success}
+// — the unary RPC shape per TD-execute-rpc-unary.
+func TestDispatchExecutorReturnsUnaryOutcome(t *testing.T) {
 	bin := buildStubChild(t)
 	t.Setenv("STUBCHILD_EXECUTE_ECHO", "1")
 	fp := startFakeProxy(t)
@@ -166,28 +225,27 @@ func TestDispatchExecutorStreaming(t *testing.T) {
 		Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA,
 	}}})
 
-	// @deliberate: First DATA frame: the echoed NamedEvent.
-	first := nextDispatch(t, fp, streamID)
-	var ev1 genv1.ExecuteEvent
-	if err := proto.Unmarshal(first.GetPayload(), &ev1); err != nil {
-		t.Fatalf("unmarshal event 1: %v", err)
+	resp := nextDispatch(t, fp, streamID)
+	if resp.GetKind() != genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA {
+		t.Fatalf("kind = %v, want DATA (Outcome should not be CANCEL)", resp.GetKind())
 	}
-	named, ok := ev1.GetEvent().(*genv1.ExecuteEvent_NamedEvent)
-	if !ok {
-		t.Fatalf("event 1 = %T, want NamedEvent", ev1.GetEvent())
+	var outcome genv1.Outcome
+	if err := proto.Unmarshal(resp.GetPayload(), &outcome); err != nil {
+		t.Fatalf("unmarshal outcome: %v", err)
 	}
-	if string(named.NamedEvent.GetPayload()) != "node-7" {
-		t.Fatalf("echoed payload = %q, want node-7", named.NamedEvent.GetPayload())
+	success := outcome.GetSuccess()
+	if success == nil {
+		t.Fatalf("expected Outcome{Success}, got %T", outcome.GetOutcome())
 	}
-
-	// @deliberate: Second DATA frame: the terminal StreamClose.
-	second := nextDispatch(t, fp, streamID)
-	var ev2 genv1.ExecuteEvent
-	if err := proto.Unmarshal(second.GetPayload(), &ev2); err != nil {
-		t.Fatalf("unmarshal event 2: %v", err)
+	// @deliberate: STUBCHILD_EXECUTE_ECHO surfaces the node_id on
+	// attributes_delta + tags["stubchild.output"] per
+	// TD-collapse-named-event-to-tags.
+	if len(success.GetTags()) != 1 || success.GetTags()[0] != "stubchild.output" {
+		t.Fatalf("tags = %v, want [stubchild.output]", success.GetTags())
 	}
-	if _, ok := ev2.GetEvent().(*genv1.ExecuteEvent_StreamClose); !ok {
-		t.Fatalf("event 2 = %T, want StreamClose", ev2.GetEvent())
+	delta := success.GetAttributesDelta().AsMap()
+	if delta["echoed_node_id"] != "node-7" {
+		t.Fatalf("attributes_delta[echoed_node_id] = %v, want node-7", delta["echoed_node_id"])
 	}
 
 	reapVia(t, fp, spawnID, 5)
@@ -239,9 +297,7 @@ func TestDispatchClaimProducerUnary(t *testing.T) {
 // ClaimProducer verb named on the DispatchFrame — not one inferred from the
 // payload shape. CommitRequest/AbandonRequest/ReleaseRequest are byte-
 // identical at claim_id, so an agent that guessed from the payload would
-// silently Commit an Abandon/Release (a state-integrity bug). The stubchild
-// records each invoked verb to STUBCHILD_VERB_LOG; we dispatch Abandon then
-// Release and assert the child saw exactly those verbs.
+// silently Commit an Abandon/Release (a state-integrity bug).
 func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 	verbLog := filepath.Join(t.TempDir(), "verbs.log")
 	t.Setenv("STUBCHILD_VERB_LOG", verbLog)
@@ -297,7 +353,7 @@ func TestDispatchClaimProducerVerbFidelity(t *testing.T) {
 
 	// @deliberate: The child must have seen Abandon and Release — never Commit.
 	logged := readVerbLog(t, verbLog)
-	if got := joinVerbs(logged); got != "abandon,release" {
+	if got := strings.Join(logged, ","); got != "abandon,release" {
 		t.Fatalf("child saw verbs %q, want %q (a Commit here is the state-integrity bug)", got, "abandon,release")
 	}
 }
@@ -317,9 +373,6 @@ func readVerbLog(t *testing.T, path string) []string {
 	}
 	return out
 }
-
-// joinVerbs joins verbs with commas for a stable assertion string.
-func joinVerbs(verbs []string) string { return strings.Join(verbs, ",") }
 
 // TestReapTerminatesChild spawns the stubchild then reaps it, asserting a
 // clean Reaped ack.
@@ -346,36 +399,6 @@ func TestReapTerminatesChild(t *testing.T) {
 	if !reaped.GetClean() {
 		t.Fatal("expected clean reap (stubchild exits 0 on SIGTERM)")
 	}
-}
-
-// reapVia pushes a Reap and returns the Reaped reply.
-func reapVia(t *testing.T, fp *fakeProxy, spawnID string, graceSec int32) *genv1.Reaped {
-	t.Helper()
-	fp.sendToAgent(t, &genv1.ServerFrame{Body: &genv1.ServerFrame_Reap{Reap: &genv1.Reap{
-		SpawnId:             spawnID,
-		SigtermGraceSeconds: graceSec,
-	}}})
-	frame := fp.nextClientFrame(t)
-	reaped := frame.GetReaped()
-	if reaped == nil {
-		t.Fatalf("expected Reaped, got %T", frame.GetBody())
-	}
-	return reaped
-}
-
-// nextDispatch reads the next ClientFrame and asserts it is a DispatchFrame
-// for the given stream-id.
-func nextDispatch(t *testing.T, fp *fakeProxy, streamID string) *genv1.DispatchFrame {
-	t.Helper()
-	frame := fp.nextClientFrame(t)
-	df := frame.GetDispatchFrame()
-	if df == nil {
-		t.Fatalf("expected DispatchFrame, got %T", frame.GetBody())
-	}
-	if df.GetStreamId() != streamID {
-		t.Fatalf("dispatch stream_id = %q, want %q", df.GetStreamId(), streamID)
-	}
-	return df
 }
 
 // TestConfigDefaults asserts withDefaults fills the documented defaults.

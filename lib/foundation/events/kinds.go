@@ -18,11 +18,10 @@
 //     means adding an enum value and regenerating Go bindings, no
 //     schema migration required.
 //
-//   - Signal-class kinds (terminal/..., transient/..., attribute/...,
-//     event/...) — carry the parsed signal type-path under the
-//     canonical taxonomy. The signal package owns type-path
-//     validation; this package treats the path as opaque and exposes
-//     it through SignalPath() / String().
+//   - Signal-class kinds (terminal/..., transient/..., attribute/...)
+//     — carry the parsed signal type-path under the canonical taxonomy.
+//     The signal package owns type-path validation; this package treats
+//     the path as opaque and exposes it through SignalPath() / String().
 //
 // At the persistence boundary, Kind.String() produces the canonical
 // wire form (the snake_case operational name OR the slash-delimited
@@ -290,9 +289,6 @@ func KindWorkCompleted() Kind {
 }
 func KindWorkRejected() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_WORK_REJECTED)
-}
-func KindHeartbeatLost() Kind {
-	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_HEARTBEAT_LOST)
 }
 func KindNoOpCommit() Kind {
 	return OperationalKindFromProto(genv1.OperationalKind_OPERATIONAL_KIND_NO_OP_COMMIT)

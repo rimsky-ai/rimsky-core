@@ -9,8 +9,6 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // TestPayloads_RoundTrip exercises json.Marshal + json.Unmarshal on
@@ -46,10 +44,9 @@ func TestPayloads_RoundTrip(t *testing.T) {
 	t.Run("TerminalParkSnoozePayload", func(t *testing.T) {
 		in := TerminalParkSnoozePayload{
 			ResumeAt:          time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC),
-			SessionToken:      "tok",
-			ParkPayload:       []byte("hi"),
 			ParkedReasonLabel: "wait",
 			ParkedReasonNote:  "ten min",
+			Tags:              []string{"rate_limited"},
 		}
 		var out TerminalParkSnoozePayload
 		roundTrip(t, in, &out)
@@ -62,10 +59,9 @@ func TestPayloads_RoundTrip(t *testing.T) {
 		ts := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
 		in := TerminalParkAwaitCallbackPayload{
 			ResumeAt:          &ts,
-			SessionToken:      "tok",
-			ParkPayload:       []byte("hi"),
 			ParkedReasonLabel: "wait",
 			ParkedReasonNote:  "callback",
+			Tags:              []string{"awaiting_external"},
 		}
 		var out TerminalParkAwaitCallbackPayload
 		roundTrip(t, in, &out)
@@ -102,19 +98,6 @@ func TestPayloads_RoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("TransientHeartbeatMissedPayload", func(t *testing.T) {
-		in := TransientHeartbeatMissedPayload{
-			LastHeartbeatAt: time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC),
-			DispatchID:      uuid.New(),
-			ThresholdMs:     30000,
-		}
-		var out TransientHeartbeatMissedPayload
-		roundTrip(t, in, &out)
-		if !reflect.DeepEqual(in, out) {
-			t.Fatalf("round-trip mismatch: in=%+v out=%+v", in, out)
-		}
-	})
-
 	t.Run("TransientAwaitAsyncPayload", func(t *testing.T) {
 		in := TransientAwaitAsyncPayload{
 			AsyncAckID:  "ack-1",
@@ -140,12 +123,13 @@ func TestPayloads_RoundTrip(t *testing.T) {
 		}
 	})
 
-	t.Run("EventPayload", func(t *testing.T) {
-		in := EventPayload{
-			Name:         "discovered",
-			EventPayload: map[string]any{"k": "v"},
+	t.Run("TerminalSuccessPayloadWithTags", func(t *testing.T) {
+		in := TerminalSuccessPayload{
+			Changed:       true,
+			ChangeSummary: "loop iteration",
+			Tags:          []string{"loop", "iteration_3"},
 		}
-		var out EventPayload
+		var out TerminalSuccessPayload
 		roundTrip(t, in, &out)
 		if !reflect.DeepEqual(in, out) {
 			t.Fatalf("round-trip mismatch: in=%+v out=%+v", in, out)
@@ -178,10 +162,11 @@ func TestPayloadSchemaForType(t *testing.T) {
 		{"terminal/park/await_callback", reflect.TypeOf(TerminalParkAwaitCallbackPayload{}), true},
 		{"terminal/infra/heartbeat_lost", reflect.TypeOf(TerminalInfraPayload{}), true},
 		{"transient/retry/3/agent/rate_limited", reflect.TypeOf(TransientRetryPayload{}), true},
-		{"transient/heartbeat_missed", reflect.TypeOf(TransientHeartbeatMissedPayload{}), true},
 		{"transient/await_async", reflect.TypeOf(TransientAwaitAsyncPayload{}), true},
 		{"attribute/budget_cents/changed", reflect.TypeOf(AttributeChangedPayload{}), true},
-		{"event/discovered", reflect.TypeOf(EventPayload{}), true},
+		// @deliberate: event/<name> retired under TD-collapse-named-event-
+		// to-tags; PayloadSchemaForType must reject the path.
+		{"event/discovered", nil, false},
 		// @deliberate: message/* is a retired top-level taxonomy kind —
 		// the operator-invalidate retirement removed MessagePayload, so
 		// PayloadSchemaForType must return (nil, false) for any

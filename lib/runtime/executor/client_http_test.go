@@ -12,6 +12,7 @@ package executor
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,23 +22,25 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// stubBridgeHandler serves the §7.1 HTTP-bridge wire shape: one
-// ExecuteEvent JSON line, then stream end.
+// stubBridgeHandler serves the unary HTTP-bridge wire shape: a single
+// Outcome JSON body per TD-execute-rpc-unary.
 func stubBridgeHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/Execute" {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, _ = w.Write([]byte("{}\n"))
+		w.Header().Set("Content-Type", "application/json")
+		body, _ := json.Marshal(map[string]any{
+			"success": map[string]any{"changed": true},
+		})
+		_, _ = w.Write(body)
 	})
 }
 
 // TestHTTPClientTLSRequiredVerifiedExchange — `tls: required` + https
 // endpoint: the REAL NewHTTPClient path performs a verified TLS
-// handshake (test-injected root pool, production default system roots)
-// and exchanges a request.
+// handshake and exchanges a request.
 func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()
@@ -52,19 +55,17 @@ func TestHTTPClientTLSRequiredVerifiedExchange(t *testing.T) {
 		t.Fatalf("NewHTTPClient: %v", err)
 	}
 	defer c.Close()
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
 	if err != nil {
 		t.Fatalf("Execute over tls: required: %v", err)
 	}
-	defer stream.Close()
-	if _, err := stream.Recv(); err != nil {
-		t.Fatalf("Recv: %v", err)
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("expected Success outcome, got %+v", outcome)
 	}
 }
 
 // TestHTTPClientTLSRequiredRejectsPlaintextScheme — `tls: required` +
-// plaintext http:// URL: rejected at client construction — the mode is
-// never accepted-and-ignored. The error names the peer and the mode.
+// plaintext http:// URL: rejected at client construction.
 func TestHTTPClientTLSRequiredRejectsPlaintextScheme(t *testing.T) {
 	_, err := NewHTTPClient(Endpoint{Transport: "http", URL: "http://plaintext-bridge:8080", TLS: peer.TLSModeRequired})
 	if err == nil {
@@ -79,9 +80,8 @@ func TestHTTPClientTLSRequiredRejectsPlaintextScheme(t *testing.T) {
 }
 
 // TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly — `tls: required` +
-// https URL whose peer presents an unverifiable cert (no injected pool
-// → system roots, which don't trust the httptest CA): the handshake
-// fails loudly, and the failure names the peer + mode.
+// https URL whose peer presents an unverifiable cert: handshake fails
+// loudly, naming the peer + mode.
 func TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()
@@ -100,9 +100,7 @@ func TestHTTPClientTLSRequiredUnverifiedPeerFailsLoudly(t *testing.T) {
 	}
 }
 
-// TestHTTPClientTLSOffPlaintext — `tls: off` stays plaintext: the bridge
-// dials an http:// stub with no TLS machinery in the way (the control
-// arm of the story).
+// TestHTTPClientTLSOffPlaintext — `tls: off` stays plaintext.
 func TestHTTPClientTLSOffPlaintext(t *testing.T) {
 	srv := httptest.NewServer(stubBridgeHandler())
 	defer srv.Close()
@@ -112,19 +110,17 @@ func TestHTTPClientTLSOffPlaintext(t *testing.T) {
 		t.Fatalf("NewHTTPClient: %v", err)
 	}
 	defer c.Close()
-	stream, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
+	outcome, err := c.Execute(context.Background(), &genv1.ExecuteRequest{})
 	if err != nil {
 		t.Fatalf("Execute over tls: off: %v", err)
 	}
-	defer stream.Close()
-	if _, err := stream.Recv(); err != nil {
-		t.Fatalf("Recv: %v", err)
+	if outcome.GetSuccess() == nil {
+		t.Fatalf("expected Success outcome, got %+v", outcome)
 	}
 }
 
 // TestClientPoolKeyIncludesTLSMode — entries sharing a URL with
-// different `tls:` modes must not share one pooled client; a required
-// entry must never ride a connection created for an off twin.
+// different `tls:` modes must not share one pooled client.
 func TestClientPoolKeyIncludesTLSMode(t *testing.T) {
 	srv := httptest.NewTLSServer(stubBridgeHandler())
 	defer srv.Close()

@@ -50,7 +50,7 @@ type DispatchRequest struct {
 	RunScopeID shared.UUID
 
 	// PriorDispatchID, when non-nil, is the rimsky_node_runs.id of the
-	// dispatch this one supersedes (heartbeat-stale recovery, retry,
+	// dispatch this one supersedes (stale-recovery, retry,
 	// recalculate). Persisted on the new row's prior_dispatch_id column
 	// and surfaced to the executor on
 	// proto:executor.proto::ExecuteRequest.prior_dispatch_id. Nil for
@@ -60,7 +60,7 @@ type DispatchRequest struct {
 	PriorDispatchID *shared.UUID
 
 	// PriorDispatchDisposition classifies why PriorDispatchID is set
-	// (heartbeat-stale / retry-after-error / recalculate). Stored
+	// (stale-recovery / retry-after-error / recalculate). Stored
 	// lower_snake_case on the new row. Empty string when
 	// PriorDispatchID is nil. Surfaces on
 	// proto:executor.proto::ExecuteRequest.prior_dispatch_disposition.
@@ -149,7 +149,7 @@ type Candidate struct {
 	// @concept: run-scope
 	PriorDispatchID *shared.UUID
 	// PriorDispatchDisposition is the lower_snake_case classifier
-	// stored alongside PriorDispatchID (e.g. "heartbeat_stale",
+	// stored alongside PriorDispatchID (e.g. "stale_recovery",
 	// "retry_after_error", "recalculate"). Empty when
 	// PriorDispatchID is nil.
 	//
@@ -226,10 +226,9 @@ type Queue interface {
 
 	// @agent-contract: ClaimDispatchRow performs the claimant-guarded
 	// UPDATE of rimsky_node_runs.claimed_by from NULL to supervisorID for
-	// the given dispatch row, inside the caller's tx. Sets claimed_at and
-	// last_heartbeat_at to now(). Returns claimed=true when exactly one
-	// row was updated; false when the row was already claimed by someone
-	// else.
+	// the given dispatch row, inside the caller's tx. Sets claimed_at to
+	// now(). Returns claimed=true when exactly one row was updated;
+	// false when the row was already claimed by someone else.
 	ClaimDispatchRow(ctx context.Context, tx Tx, dispatchID shared.UUID, supervisorID string) (claimed bool, err error)
 
 	// @agent-contract: Complete deletes a dispatch row. If
@@ -250,14 +249,19 @@ type Queue interface {
 	// auto-commit RemoveForNode calls this internally with tx=nil.
 	RemoveForNodeInTx(ctx context.Context, nodeID shared.UUID, runScopeID shared.UUID, expectedClaimedBy string, tx Tx) error
 
-	// @agent-contract: ListOrphanedClaims returns dispatch rows whose
-	// last_heartbeat_at is older than cutoff.
-	ListOrphanedClaims(ctx context.Context, cutoff time.Time) ([]DispatchRow, error)
+	// @agent-contract: ListOrphanedClaims returns every claimed,
+	// async-mode dispatch row (claimed_by IS NOT NULL AND async_ack_id
+	// IS NOT NULL). The per-row + per-deadline matrix evaluates in Go
+	// (`code:SweepExecutorDeadlines`) using the denormalized
+	// effective_max_quiet_period_seconds and effective_max_runtime_seconds
+	// columns. The persistence layer does not pre-filter on
+	// last_progress_at because the cutoff is per-row, not global.
+	ListOrphanedClaims(ctx context.Context) ([]DispatchRow, error)
 
-	// @agent-contract: ReleaseClaim sets claimed_by=NULL, claimed_at=NULL,
-	// last_heartbeat_at=NULL on a dispatch row. If expectedClaimedBy is
-	// non-empty, the release is claimant-guarded (no-op on mismatch —
-	// protects a fresh supervisor's live claim from a stale sweep).
+	// @agent-contract: ReleaseClaim sets claimed_by=NULL, claimed_at=NULL
+	// on a dispatch row. If expectedClaimedBy is non-empty, the release is
+	// claimant-guarded (no-op on mismatch — protects a fresh supervisor's
+	// live claim from a stale sweep).
 	ReleaseClaim(ctx context.Context, dispatchID shared.UUID, expectedClaimedBy string) error
 
 	// @agent-contract: GetClaimedBy returns current ownership of a
@@ -271,10 +275,38 @@ type Queue interface {
 	// "not_found"} when the dispatch row does not exist.
 	GetDispatchNode(ctx context.Context, dispatchID shared.UUID) (shared.UUID, ClaimOwnership, error)
 
-	// @agent-contract: RefreshHeartbeat extends
-	// rimsky_node_runs.last_heartbeat_at to now() for every row claimed
-	// by supervisorID.
-	RefreshHeartbeat(ctx context.Context, supervisorID string) error
+	// @agent-contract: LookupRunByAsyncAckID returns the dispatch row
+	// previously registered against ackID via RegisterAsyncAck. Used by
+	// the callback handler to route a POST /v1/callback/{async_ack_id}
+	// to the correct dispatch durably across supervisor restart. Returns
+	// (nil, nil) when no row matches.
+	LookupRunByAsyncAckID(ctx context.Context, tx Tx, ackID string) (*DispatchRow, error)
+
+	// @agent-contract: RegisterAsyncAck persists ackID and the
+	// denormalized dispatch-deadline values onto the dispatch row in the
+	// caller's tx. MUST run in the same tx as the dispatch state
+	// mutation that triggered the AwaitAsync handoff, otherwise an
+	// executor's eventual callback could arrive before its registration
+	// is durable.
+	//
+	// maxQuietSec / maxRuntimeSec are the resolved per-row dispatch
+	// deadlines (per-node template value folded over deployment default,
+	// disabled-as-nil). SweepExecutorDeadlines reads them per row at
+	// tick-time to decide whether to release the claim with
+	// `executor_quiet` or `max_runtime_exceeded`. nil = no cap.
+	RegisterAsyncAck(ctx context.Context, tx Tx, runID shared.UUID, ackID string, now time.Time, maxQuietSec *int, maxRuntimeSec *int) error
+
+	// @agent-contract: BumpLastProgressAt advances
+	// col:rimsky_node_runs.last_progress_at to `now`. Returns
+	// (found=true) when a row was updated; (found=false) when no row
+	// matched runID (the dispatch has already terminalized and the row
+	// was reaped, or runID is bogus). Used by the §12.5 attribute
+	// writeback handler, the scratch writeback handler, and the
+	// explicit POST /v1/runs/{id}/keepalive endpoint. MUST run in the
+	// caller's tx when the caller is in one (so the bump commits
+	// atomically with the writeback); standalone callers can open
+	// their own short tx.
+	BumpLastProgressAt(ctx context.Context, tx Tx, runID shared.UUID, now time.Time) (bool, error)
 
 	// @agent-contract: ListLive returns currently-live dispatch rows (the
 	// table holds only rows with no terminal yet — terminals delete the
@@ -335,10 +367,11 @@ type Queue interface {
 	// @agent-contract: ParkActiveInTx transitions a node-run row from
 	// phase='active' to phase='parked' under the claimant's id. Persists
 	// the park metadata (parked_at, resume_at, parked_reason,
-	// session_token) and the payload via inline-or-handle (exactly one is
-	// non-empty). Clears claimed_by / claimed_at / last_heartbeat_at so
-	// the orphan-claim reaper's `claimed_by IS NOT NULL` predicate
-	// excludes the row. Used by E1's applyTerminalPark.
+	// parked_reason_label, parked_reason_note). Clears claimed_by /
+	// claimed_at so the orphan-claim reaper's `claimed_by IS NOT NULL`
+	// predicate excludes the row. Used by applyTerminalPark. Park no
+	// longer carries inline payload bytes or a session token — resume
+	// state rides attribute carry-forward (concept:parked-state).
 	ParkActiveInTx(ctx context.Context, tx Tx, in ParkActiveInput) error
 
 	// @agent-contract: ListParkedReadyForResume returns parked rows whose
@@ -371,23 +404,16 @@ type Queue interface {
 
 	// @agent-contract: ResumeParkedInTx transitions a parked row back to
 	// phase='pending' (so any eligible supervisor can pick it up — the
-	// row's claimed_by is reset to NULL). Park metadata
-	// (parked_payload_*, parked_reason, session_token) is preserved so
-	// the resume-dispatch path can build ResumeContext from it; the
-	// runner clears it via ClearResumeMetadataInTx after a successful
-	// dispatch.
+	// row's claimed_by is reset to NULL). Park metadata (parked_reason,
+	// parked_reason_label, parked_reason_note) is preserved on the row.
+	// Resume state rides attribute carry-forward per concept:parked-state.
 	//
-	// Used by E3's sweep-driven wake and by the unified invalidate
-	// handler (G3) for handler-emitted wakes. Returns resumed=true when
-	// exactly one row was updated.
-	//
-	// wakeReason is persisted on rimsky_node_runs.wake_reason so
-	// the resume-dispatch path (LoadResumeMetadataInTx) can attach it
-	// to ResumeContext.resume_reason ("deadline_elapsed" |
-	// "external_invalidate"). Empty wakeReason persists NULL. Callers
-	// record their supervisor id in the parked_resume_started audit
-	// event directly — this method does not touch claimed_by.
-	ResumeParkedInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, wakeReason string) (resumed bool, err error)
+	// Used by sweep-driven wake and by the unified invalidate handler
+	// for handler-emitted wakes. Returns resumed=true when exactly one
+	// row was updated. Callers record their supervisor id in the
+	// parked_resume_started audit event directly — this method does not
+	// touch claimed_by.
+	ResumeParkedInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) (resumed bool, err error)
 
 	// @agent-contract: RebindRunFrameInTx updates
 	// rimsky_node_runs.frame_id for the given dispatch row to
@@ -432,20 +458,6 @@ type Queue interface {
 	// DSL. Used by F2/F3 dispatch wiring.
 	UpdateDispatchTuningInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, maxParkDurationSeconds *int, maxRetriesWithoutProgress *int) error
 
-	// @agent-contract: LoadResumeMetadataInTx returns the parked metadata
-	// that survived the parked → pending transition
-	// (parked_payload_inline / parked_payload_handle /
-	// parked_payload_handle_backend / parked_reason / session_token).
-	// Returns (nil, nil) when the row has no parked metadata (fresh
-	// dispatch). Used by E4's resume dispatch.
-	LoadResumeMetadataInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) (*ResumeMetadataRow, error)
-
-	// @agent-contract: ClearResumeMetadataInTx clears the
-	// parked_payload_* / parked_reason / session_token columns. Called by
-	// the runner after a successful resume dispatch so a re-park cycle
-	// starts clean.
-	ClearResumeMetadataInTx(ctx context.Context, tx Tx, dispatchID shared.UUID) error
-
 	// @agent-contract: LoadScratchInTx returns the scratch bytes persisted
 	// on a node-run row for the dispatch path's wire-attach step. Resolves spill via
 	// `concept:blob-backend`: when scratch_handle is non-empty the caller
@@ -480,60 +492,26 @@ type Queue interface {
 	WriteScratchInTx(ctx context.Context, tx Tx, dispatchID shared.UUID, inline []byte, handle, handleBackend string) error
 }
 
-// ResumeMetadataRow is the parked metadata loaded by
-// LoadResumeMetadataInTx for the runner's resume-dispatch path.
-type ResumeMetadataRow struct {
-	PayloadInline        []byte
-	PayloadHandle        string
-	PayloadHandleBackend string
-	Reason               string
-	// ReasonNote is the free-form human annotation persisted alongside
-	// the typed Reason (`col:rimsky_node_runs.parked_reason_note`).
-	// Inert in rimsky (`concept:inertness structural-inertness discipline).
-	ReasonNote   string
-	SessionToken string
-	// WakeReason carries the WakeReason enum value persisted by
-	// ResumeParkedInTx ("deadline_elapsed" | "external_invalidate").
-	// Empty when no wake has been recorded.
-	WakeReason string
-	// ParkedAt is the timestamp recorded when the node-run first
-	// transitioned to phase='parked' (ParkActiveInTx). Preserved across
-	// the parked → pending transition; reset to NULL by
-	// ClearResumeMetadataInTx after a successful resume dispatch. Zero
-	// when no park occurred (fresh dispatch).
-	ParkedAt time.Time
-}
-
 // ParkActiveInput is the payload for Queue.ParkActiveInTx.
 //
-// PayloadInline and PayloadHandle are mutually exclusive: at most one is
-// non-empty per write. When PayloadHandle is set, PayloadHandleBackend
-// MUST also be non-empty so the read path can route the fetch.
+// ResumeAt may be zero (indefinite park; resume only via external
+// invalidate). Reason is the snake_case typed enum value stored in
+// col:rimsky_node_runs.parked_reason; ReasonNote is the free-form
+// human annotation stored in col:rimsky_node_runs.parked_reason_note
+// (inert in rimsky). ReasonLabel is the freeform classification tag
+// persisted on col:rimsky_node_runs.parked_reason_label (inert).
 //
-// ResumeAt may be zero (indefinite park; resume only via
-// external invalidate). Reason is the snake_case typed enum value
-// stored in col:rimsky_node_runs.parked_reason; ReasonNote is the
-// free-form human annotation stored in
-// col:rimsky_node_runs.parked_reason_note (inert in rimsky).
-//
-// ReasonLabel is the freeform classification tag persisted on
-// col:rimsky_node_runs.parked_reason_label. Spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Parked-state taxonomy requires this when Reason == "other"; the
-// runner-side guard rejects park terminals that violate that rule.
-// Inert in rimsky.
+// Park terminals no longer carry resume payload bytes or session tokens
+// on the wire — resume state rides attribute carry-forward
+// (concept:parked-state).
 type ParkActiveInput struct {
-	DispatchID           shared.UUID
-	ExpectedClaimedBy    string
-	ParkedAt             time.Time
-	ResumeAt             time.Time // @deliberate: zero ⇒ NULL (no deadline-based resume)
-	Reason               string
-	ReasonNote           string
-	ReasonLabel          string
-	SessionToken         string
-	PayloadInline        []byte
-	PayloadHandle        string
-	PayloadHandleBackend string
+	DispatchID        shared.UUID
+	ExpectedClaimedBy string
+	ParkedAt          time.Time
+	ResumeAt          time.Time // @deliberate: zero ⇒ NULL (no deadline-based resume)
+	Reason            string
+	ReasonNote        string
+	ReasonLabel       string
 }
 
 // ParkedDiagnosticRow is the read-projection used by the admin
@@ -558,8 +536,9 @@ type ParkedDiagnosticRow struct {
 }
 
 // ParkedRow is a row returned by ListParkedReadyForResume,
-// ListParkedOverdue, and GetParkedByNode. Carries the persisted park
-// metadata so the resume-dispatch path (E4) can build ResumeContext.
+// ListParkedOverdue, and GetParkedByNode. Parked rows carry no resume
+// payload bytes; the executor's attribute writeback carries state
+// across the park boundary per concept:parked-state.
 type ParkedRow struct {
 	DispatchID     shared.UUID
 	NodeID         shared.UUID
@@ -572,10 +551,6 @@ type ParkedRow struct {
 	// ReasonNote is the free-form human annotation persisted alongside
 	// Reason in col:rimsky_node_runs.parked_reason_note. Inert.
 	ReasonNote               string
-	SessionToken             string
-	PayloadInline            []byte
-	PayloadHandle            string
-	PayloadHandleBackend     string
 	MaxParkDurationSeconds   *int
 	ConsecutiveRetriesNoProg int
 }

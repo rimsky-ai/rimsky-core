@@ -13,16 +13,24 @@ import { createClaudeCliRunner } from "./cli-runner.js";
 import type { CliAuthConfig } from "./cli-env.js";
 import type { PostAttributesFn } from "./attributes-tools.js";
 import type { Observability, TraceEvent } from "./observability.js";
-import { expectedAttributesSchemaBytes, resolveDeclaredEvents, declaredErrorClasses } from "./expected-attributes-schema.js";
+import { expectedAttributesSchemaBytes, resolveDeclaredTags, declaredErrorClasses } from "./expected-attributes-schema.js";
 import { CliConfigError, isCliConfigError } from "./cli-config-error.js";
 import type { McpCatalog } from "./mcp-catalog.js";
 
 /**
- * Implements the gRPC Executor surface. Always responds with the async-handoff
- * pattern: one Heartbeat + StreamClose{AwaitAsyncCallback}, close stream,
- * run agent in background, POST final outcome to callback_url.
+ * Implements the gRPC Executor surface. Always responds with the
+ * async-handoff pattern: the unary `Execute` RPC returns
+ * `AwaitAsyncCallback` immediately, the agent runs in the background,
+ * and the final outcome is POSTed to `${callback_url}/v1/callback/{ack_id}`.
  *
- * Spec: docs/specs/2026-04-27-stores-redesign-v2-design.md §12.
+ * Per TD-execute-rpc-unary the `Execute` RPC is unary — no Heartbeat,
+ * no StreamClose, no per-event stream. Per TD-collapse-named-event-to-tags
+ * non-terminal observable transitions retire entirely; tags ride on the
+ * settling terminal verdict (concept:terminal-tag). Per
+ * TD-claude-agent-session-attribute-only the session_token rides
+ * `attributes_delta` on Park (and incoming `req.attributes` on the
+ * resume dispatch), not Park.session_token (the proto field is
+ * reserved).
  */
 export interface GrpcServerConfig {
   host: string;
@@ -115,29 +123,30 @@ interface ExecuteRequest {
    * 2026-05-20 per-run attribute keying spec — each dispatch has a
    * fresh dispatch_id; consumers keying on attempts use dispatch_id. */
   dispatch_id?: string;
-  /** Resume context populated by the supervisor when this is a
-   * resume after Park. session_token feeds the CLI's `--resume`
-   * arg; payload + reason are template-visible vars. */
-  resume_context?: {
-    /** Base64 of bytes; optional, may be empty. */
-    payload?: string;
-    session_token?: string;
-    resume_reason?: string;
-  };
   /** Recovery-aware fields (per the 2026-05-22 fan-out safety
    * scope-first spec §Recovery-aware executor protocol). When this
-   * dispatch supersedes a failed / heartbeat-stale / recalculated
+   * dispatch supersedes a failed / stale-recovered / recalculated
    * predecessor for the same (run_scope_id, node_id), the supervisor
    * stamps the predecessor's dispatch_id here so the executor can
    * identify itself as a continuation. `prior_dispatch_disposition`
-   * classifies why (`heartbeat_stale` | `retry_after_error` |
+   * classifies why (`stale_recovery` | `retry_after_error` |
    * `recalculate`). Both fields are optional and unset on initial
    * dispatches. */
   prior_dispatch_id?: string;
   prior_dispatch_disposition?: string;
 }
 
-type GrpcCall = grpc.ServerWritableStream<ExecuteRequest, unknown>;
+// @constraint: Outcome wraps the four-variant oneof — Success / Error /
+// Park / AwaitAsyncCallback — per the unary executor protocol. Only the
+// `await_async` shape is emitted from `Execute` itself; the final
+// settling terminal rides the callback POST body (see
+// `outcomeToCallbackBody`).
+interface OutcomeWire {
+  await_async?: { async_ack_id: string; expected_completion_ms: number };
+}
+
+type ExecuteUnaryCall = grpc.ServerUnaryCall<ExecuteRequest, OutcomeWire>;
+type ExecuteUnaryReply = grpc.sendUnaryData<OutcomeWire>;
 
 /**
  * @agent-contract
@@ -164,13 +173,14 @@ export async function startGrpcServer(
   });
 
   server.addService(pkg.rimsky.v1.Executor.service, {
-    Execute: (call: GrpcCall) => handleExecute(call, config, cliRunner, post),
+    Execute: (call: ExecuteUnaryCall, reply: ExecuteUnaryReply) =>
+      handleExecute(call, reply, config, cliRunner, post),
   });
 
-  // @deliberate: plan A1 — register the ExecutorObservability service so the rimsky
-  // supervisor's discovery handshake succeeds against the gRPC endpoint
-  // (otherwise the cached `expected_attributes_schema` and
-  // `declared_events` are never populated and dispatch-time
+  // @deliberate: plan A1 — register the ExecutorObservability service so
+  // the rimsky supervisor's discovery handshake succeeds against the gRPC
+  // endpoint (otherwise the cached `expected_attributes_schema` and
+  // `declared_tags` are never populated and dispatch-time
   // effective-attribute-schema computation silently falls through). The
   // handlers bridge into the same `Observability` ledger the HTTP+JSON
   // routes expose.
@@ -186,7 +196,7 @@ export async function startGrpcServer(
         custom_ui: null,
         http_bridge_url: config.observabilityHttpBridgeUrl ?? "",
         expected_attributes_schema: Buffer.from(expectedAttributesSchemaBytes()),
-        declared_events: resolveDeclaredEvents(),
+        declared_tags: resolveDeclaredTags(),
         // @deliberate: 2026-05-23 signal-taxonomy Pass 6: hierarchical error vocabulary.
         declared_error_classes: declaredErrorClasses,
       });
@@ -328,7 +338,8 @@ export async function startGrpcServer(
 }
 
 function handleExecute(
-  call: GrpcCall,
+  call: ExecuteUnaryCall,
+  reply: ExecuteUnaryReply,
   config: GrpcServerConfig,
   cliRunner: CliRunner,
   post: PostCallbackFn,
@@ -379,26 +390,21 @@ function handleExecute(
     });
   }
 
-  // @deliberate: 1) Heartbeat + StreamClose{AwaitAsyncCallback}, then close the stream.
-  // Post-spec:2026-05-12 (Group E.4): the wire is StreamClose + outcome
-  // oneof; AsyncAccepted is renamed AwaitAsyncCallback.
-  call.write({
-    heartbeat: {
-      timestamp_ms: Date.now(),
-      note: "accepted",
+  // @constraint: TD-execute-rpc-unary — `Execute` is unary. Reply with
+  // `AwaitAsyncCallback` immediately so the supervisor persists the
+  // `async_ack_id` against the dispatch row; the agent runs in the
+  // background and the final settling terminal rides the HTTP+JSON
+  // callback POST. There is no Heartbeat, no StreamClose, no per-event
+  // stream — the gRPC call returns once with `{ await_async }`.
+  reply(null, {
+    await_async: {
+      async_ack_id: ackId,
+      expected_completion_ms: 0,
     },
   });
-  call.write({
-    stream_close: {
-      await_async: {
-        async_ack_id: ackId,
-        expected_completion_ms: 0,
-      },
-    },
-  });
-  call.end();
 
-  // @deliberate: 2) Run the agent in the background; deliver final outcome via HTTP POST.
+  // @deliberate: Run the agent in the background; deliver the final
+  // outcome via HTTP POST to `${callback_url}/v1/callback/{ackId}`.
   void runAndCallback(req, ackId, traceId, runId, config, cliRunner, post, logger);
 }
 
@@ -412,19 +418,19 @@ async function runAndCallback(
   post: PostCallbackFn,
   logger: Logger,
 ): Promise<void> {
-  // @deliberate: fast-fail dispatches (CliConfigError thrown by resolveHostServers,
-  // dispatch_id missing, malformed attributes) settle in single-digit
-  // milliseconds. The supervisor registers the async ack id AFTER
-  // draining the gRPC stream — a sequence that takes tens of
-  // milliseconds. Without this defensive yield, the fast-fail callback
-  // POST races ahead of the registration, the supervisor responds 404
-  // (unknown ack id), the supervisor never receives the failure
-  // terminal, and the node hangs in `running` until the heartbeat-loss
-  // sweep re-dispatches into the same race — looping forever. Slow
+  // @deliberate: fast-fail dispatches (CliConfigError thrown by
+  // resolveHostServers, dispatch_id missing, malformed attributes)
+  // settle in single-digit milliseconds. The supervisor registers the
+  // async ack id AFTER receiving the unary `Execute` reply — a sequence
+  // that takes tens of milliseconds. Without this defensive yield, the
+  // fast-fail callback POST races ahead of the registration, the
+  // supervisor responds 404 (unknown ack id), the supervisor never
+  // receives the failure terminal, and the node hangs in `running`
+  // until the quiet-period / max-runtime sweep reaps it. Slow
   // (CLI-spawning) dispatches don't hit this because the spawn itself
   // takes longer than the registration window. Property protected:
-  // dispatch-time failures land on the FIRST callback POST, not via the
-  // heartbeat-loss sweep.
+  // dispatch-time failures land on the FIRST callback POST, not via
+  // the quiet-period sweep.
   await new Promise((r) => setTimeout(r, 100));
   try {
     const attributes = toRecord(req.attributes);
@@ -456,10 +462,12 @@ async function runAndCallback(
       silenceTimeoutMs: config.silenceTimeoutMs,
       logger,
       postAttributes: config.postAttributes,
-      resumeContext: resolveEffectiveResumeContext(
-        parseResumeContext(req.resume_context),
-        attributes,
-      ),
+      // @constraint: TD-claude-agent-session-attribute-only — the
+      // session token rides attributes only. When `attributes.session_token`
+      // is non-empty the CLI resumes the prior conversation; otherwise a
+      // fresh CLI conversation runs. The retired Park-side resume_context
+      // channel does not exist on the wire (its proto field is reserved).
+      sessionToken: stringOr(attributes.session_token, ""),
     });
     const body = outcomeToCallbackBody(outcome);
     if (config.observability) {
@@ -535,38 +543,6 @@ function buildCallbackUrl(base: string, ackId: string): string {
   return `${trimmed}/v1/callback/${encodeURIComponent(ackId)}`;
 }
 
-/**
- * Wraps a Uint8Array in a base64 string suitable for the proto-JSON
- * `bytes` field encoding (the convention Go's `encoding/json.Unmarshal`
- * uses to decode `[]byte` fields). Used by both transports — keep in sync
- * with http-bridge.ts.
- */
-function encodeBase64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64");
-}
-
-/**
- * Projects the per-dispatch named-event buffer into the AsyncCallbackBody
- * `events` slot (proto field 1). Each entry is `{name, payload}` with the
- * payload base64-encoded — the proto-JSON convention for `bytes` fields, as
- * the Go supervisor's `asyncCallbackNamedEvent.Payload []byte` expects. An
- * empty / absent buffer yields no `events` key (no behavior change for
- * agents that emit nothing).
- *
- * Exported for unit tests; not part of the agent-contract surface.
- */
-export function emittedEventsCallbackSlot(
-  outcome: AgentOutcome,
-): { events: { name: string; payload: string }[] } | Record<string, never> {
-  const emitted = outcome.emittedEvents ?? [];
-  if (emitted.length === 0) return {};
-  return {
-    events: emitted.map((e) => ({
-      name: e.name,
-      payload: encodeBase64(e.payload),
-    })),
-  };
-}
 
 /**
  * Exported for unit tests; not part of the agent-contract surface.
@@ -574,14 +550,15 @@ export function emittedEventsCallbackSlot(
 export function outcomeToCallbackBody(
   outcome: AgentOutcome,
 ): Record<string, unknown> {
-  // @deliberate: the callback body uses the AsyncCallbackBody outcome-oneof shape
-  // (success | error | park), optionally preceded by an `events[]` stream
-  // replayed before the outcome verdict. The legacy `{type: ...}`
-  // discriminator is no longer accepted by the supervisor.
-  const events = emittedEventsCallbackSlot(outcome);
+  // @constraint: AsyncCallbackBody carries exactly one outcome variant
+  // (success | error | park). Per TD-collapse-named-event-to-tags the
+  // `events[]` slot retires entirely — non-terminal observable
+  // transitions ride tags on the settling verdict instead. Per
+  // TD-claude-agent-session-attribute-only the session_token rides
+  // `attributes_delta` on Park; the proto Park.payload and
+  // Park.session_token fields are reserved.
   if (outcome.kind === "complete") {
     return {
-      ...events,
       success: {
         attributes_delta: outcome.attributesDelta,
         changed: outcome.changed,
@@ -594,7 +571,6 @@ export function outcomeToCallbackBody(
     // `Error{error_class: "agent/blocked"}` (renamed 2026-05-23 per
     // signal-taxonomy spec, hierarchical-class convention).
     return {
-      ...events,
       error: {
         error_class: "agent/blocked",
         payload: { reason: outcome.reason, context: outcome.context },
@@ -602,27 +578,31 @@ export function outcomeToCallbackBody(
     };
   }
   if (outcome.kind === "park_requested") {
-    // @deliberate: the proto-JSON convention for `bytes` fields is base64 — Go's
-    // `encoding/json` decodes []byte fields from base64 strings.
-    //
-    // The supervisor consumes `reason` as the closed two-value
-    // ParkReason projection (await_callback | snooze) per spec
+    // @constraint: The supervisor consumes `reason` as the closed
+    // two-value ParkReason projection (await_callback | snooze) per
+    // spec
     // .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
     // §ParkReason collapse. `reason_note` is the free-form human
-    // annotation; inert in rimsky.
-    return {
-      ...events,
-      park: {
-        reason: outcome.reason,
-        reason_note: outcome.reasonNote ?? "",
-        payload: encodeBase64(outcome.payload),
-        ...(outcome.resumeAt ? { resume_at: outcome.resumeAt.toISOString() } : {}),
-        session_token: outcome.sessionToken,
-      },
+    // annotation; inert in rimsky. `attributes_delta` is the
+    // session-token carry-forward channel — session_token is written
+    // here and read off `req.attributes.session_token` on resume.
+    const parkBody: Record<string, unknown> = {
+      reason: outcome.reason,
+      reason_note: outcome.reasonNote ?? "",
     };
+    if (outcome.resumeAt) {
+      parkBody.resume_at = outcome.resumeAt.toISOString();
+    }
+    const delta: Record<string, unknown> = { ...(outcome.attributesDelta ?? {}) };
+    if (outcome.sessionToken && outcome.sessionToken.length > 0) {
+      delta.session_token = outcome.sessionToken;
+    }
+    if (Object.keys(delta).length > 0) {
+      parkBody.attributes_delta = delta;
+    }
+    return { park: parkBody };
   }
   return {
-    ...events,
     error: {
       error_class: outcome.errorClass,
       payload: outcome.payload,
@@ -910,66 +890,6 @@ function numberOrUndefined(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
-/**
- * Parse the supervisor-supplied resume_context payload into the shape
- * runAgent consumes. Returns undefined when no resume context is set
- * (fresh dispatch). Per J10.
- */
-function parseResumeContext(v: unknown): {
-  payload?: Uint8Array;
-  sessionToken?: string;
-  resumeReason?: string;
-} | undefined {
-  if (!v || typeof v !== "object") return undefined;
-  const r = v as Record<string, unknown>;
-  const out: {
-    payload?: Uint8Array;
-    sessionToken?: string;
-    resumeReason?: string;
-  } = {};
-  if (typeof r.payload === "string" && r.payload.length > 0) {
-    out.payload = Buffer.from(r.payload, "base64");
-  }
-  if (typeof r.session_token === "string" && r.session_token.length > 0) {
-    out.sessionToken = r.session_token;
-  }
-  if (typeof r.resume_reason === "string" && r.resume_reason.length > 0) {
-    out.resumeReason = r.resume_reason;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-/**
- * Resolves the effective resume context for the current dispatch. The
- * supervisor-provided ResumeContext (req.resume_context) is the Park
- * path and wins when set. Otherwise, when the carry-forward
- * `session_token` attribute is non-empty, synthesize an attribute-
- * driven resume context so the CLI continues the prior conversation.
- *
- * Per the 2026-06-14 carry-forward design — the two paths are
- * independent: the Park path's session_token comes from the prior
- * Park terminal; the attribute path's session_token comes from the
- * prior dispatch's attribute writeback. Sub-graph invocations =
- * empty session_token = fresh CLI conversation.
- */
-function resolveEffectiveResumeContext(
-  fromParkPath: { payload?: Uint8Array; sessionToken?: string; resumeReason?: string } | undefined,
-  attributes: Record<string, unknown>,
-): { payload?: Uint8Array; sessionToken?: string; resumeReason?: string } | undefined {
-  if (fromParkPath && fromParkPath.sessionToken && fromParkPath.sessionToken.length > 0) {
-    return fromParkPath;
-  }
-  const fromAttribute = stringOr(attributes.session_token, "");
-  if (fromAttribute.length === 0) {
-    return fromParkPath;
-  }
-  return {
-    payload: new Uint8Array(),
-    sessionToken: fromAttribute,
-    resumeReason: "carry_forward",
-  };
-}
-
 function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
   if (!auth) {
     throw new Error(
@@ -980,9 +900,9 @@ function requireAuth(auth: CliAuthConfig | undefined): CliAuthConfig {
 }
 
 /**
- * Default callback poster. Uses Node's built-in `fetch`. Failures are logged
- * but not retried here; the supervisor's heartbeat-loss sweep will reclaim
- * the node if the callback never arrives.
+ * Default callback poster. Uses Node's built-in `fetch`. Failures are
+ * logged but not retried here; the supervisor's quiet-period /
+ * max-runtime sweep will reap the node if the callback never arrives.
  */
 export const defaultPostCallback: PostCallbackFn = async (url, body, logger) => {
   try {

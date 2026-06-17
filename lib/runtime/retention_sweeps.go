@@ -115,14 +115,17 @@ func SweepLineageRetention(
 //   - Events().DeleteOlderThan reaps rimsky_events (audit log) rows older
 //     than `cutoff`. Event logs are time-keyed (no frame FK), so the count
 //     cap does NOT apply to them — only the trailing time window.
-//   - NodeEvents().DeleteOlderThan reaps rimsky_node_events (named events)
-//     rows older than `cutoff`, likewise time-only.
 //
-// The event sweeps only run when TraceTrailing > 0 (a zero cutoff is the
+// The event sweep only runs when TraceTrailing > 0 (a zero cutoff is the
 // "no time bound" sentinel; running an event delete against it would be a
 // no-op at best and a full-table scan at worst). The frame reaper always
 // runs when EITHER dimension is enabled — the count cap alone is a valid
 // retention policy for structural rows even with no time window.
+//
+// Per TD-collapse-named-event-to-tags the rimsky_node_events ledger
+// has retired; subscriber-visible discriminators ride as tags on the
+// settling terminal verdict (concept:terminal-tag), so no separate
+// named-event retention sweep is needed.
 //
 // Post-stage-1 lifecycle flip: terminal run rows survive past active
 // terminal (RemoveForNodeInTx flips phase to a terminal value rather than
@@ -166,23 +169,6 @@ func SweepRunTreeRetention(
 		if log != nil && events > 0 {
 			log.Info("retention.trace.events.sweep",
 				"deleted", events, "cutoff", cutoff.Format(time.RFC3339))
-		}
-		// @constraint: DeleteOlderThan reaps the rows AND queues any
-		// spilled-payload blob handles into rimsky_blob_orphans atomically
-		// (one transaction inside the driver) — a reaped named-event row is
-		// never deleted without its blob handle durably queued, so the bytes
-		// can't leak. For a durable instance this is the only reclamation
-		// path (the instance-delete cascade never runs). The returned orphans
-		// are surfaced here for observability only; they are already
-		// persisted.
-		nodeEvents, orphans, err := tables.NodeEvents().DeleteOlderThan(ctx, cutoff)
-		if err != nil {
-			return frames, fmt.Errorf("SweepRunTreeRetention: node_events: %w", err)
-		}
-		if log != nil && nodeEvents > 0 {
-			log.Info("retention.trace.node_events.sweep",
-				"deleted", nodeEvents, "orphans_queued", len(orphans),
-				"cutoff", cutoff.Format(time.RFC3339))
 		}
 	}
 	return frames, nil

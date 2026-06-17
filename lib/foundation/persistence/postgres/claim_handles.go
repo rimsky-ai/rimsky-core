@@ -46,7 +46,7 @@ const lockHolderCols = `
   id, lock_kind, lock_name, producer_name, claim_scope_data, address, payload, intent,
   realized_write_semantics,
   holder_supervisor_id, holder_node_id,
-  claimed_at, last_heartbeat_at, expires_at, frame_id,
+  claimed_at, expires_at, frame_id,
   node_run_id, is_held,
   parent_claim_handle_id, lifetime, version_id,
   producer_candidate_handle,
@@ -101,18 +101,18 @@ func (s *claimHandlesImpl) Insert(ctx context.Context, in persistence.ClaimHandl
 		   id, lock_kind, lock_name, producer_name, claim_scope_data, address, payload, intent,
 		   realized_write_semantics,
 		   holder_supervisor_id, holder_node_id,
-		   claimed_at, last_heartbeat_at, expires_at, frame_id,
+		   claimed_at, expires_at, frame_id,
 		   node_run_id, is_held,
 		   parent_claim_handle_id, lifetime, producer_candidate_handle,
 		   aggregation_policy
-		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
 		in.ID, string(in.LockKind),
 		in.LockName, in.ProducerName,
 		nullableJSONB(in.ClaimScopeData), nullableJSONB(in.Address), nullableJSONB(in.Payload),
 		in.Intent,
 		rws,
 		in.HolderSupervisorID, in.HolderNodeID,
-		now, now, in.ExpiresAt, in.FrameID,
+		now, in.ExpiresAt, in.FrameID,
 		in.NodeRunID, in.IsHeld,
 		in.ParentClaimHandleID, string(lifetime), candidateHandle,
 		nullableJSONB(in.AggregationPolicy),
@@ -503,7 +503,7 @@ func qualifiedLockHolderCols(alias string) string {
 		alias + `.payload, ` +
 		alias + `.intent, ` + alias + `.realized_write_semantics, ` +
 		alias + `.holder_supervisor_id, ` + alias + `.holder_node_id, ` +
-		alias + `.claimed_at, ` + alias + `.last_heartbeat_at, ` + alias + `.expires_at, ` +
+		alias + `.claimed_at, ` + alias + `.expires_at, ` +
 		alias + `.frame_id, ` + alias + `.node_run_id, ` + alias + `.is_held, ` +
 		alias + `.parent_claim_handle_id, ` + alias + `.lifetime, ` +
 		alias + `.version_id, ` +
@@ -511,52 +511,6 @@ func qualifiedLockHolderCols(alias string) string {
 		alias + `.aggregation_policy, ` + alias + `.expected_children_count, ` +
 		alias + `.committed_children_count, ` + alias + `.abandoned_children_count, ` +
 		alias + `.state, ` + alias + `.resolved_at`
-}
-
-// ExtendHeartbeat updates last_heartbeat_at and expires_at for every row
-// owned by supervisorID whose lifetime should currently be active. Per
-// spec §7.5; the heartbeat keeps lock-holder rows alive against the
-// orphan reaper. Post-stage-3 / stage-5 the "running for this supervisor"
-// predicate sources from `rimsky_node_runs` (state + claimed_by); holder
-// membership joins through `rimsky_claim_holders.holder_run_id` →
-// `rimsky_node_runs`.
-func (s *claimHandlesImpl) ExtendHeartbeat(ctx context.Context, supervisorID string, expiresAt time.Time, tx persistence.Tx) error {
-	heartbeatSeconds := int(time.Until(expiresAt).Seconds())
-	if heartbeatSeconds < 1 {
-		heartbeatSeconds = 1
-	}
-	// @deliberate: non-active rows are excluded from the heartbeat: committed +
-	// abandoned rows have `holder_supervisor_id IS NULL` and unbounded
-	// lifetime (released only by the retention sweep or, for committed-
-	// durable, by `ReleaseHeldDurableClaims`), so they do not need
-	// `expires_at` refresh.
-	_, err := s.q(tx).Exec(ctx,
-		`UPDATE rimsky_claim_handles lh
-		   SET last_heartbeat_at = now(),
-		       expires_at = now() + ($2 * interval '1 second')
-		 WHERE `+claimantGuard("lh", 1)+`
-		   AND lh.state = 'active'
-		   AND (
-		        EXISTS (
-		            SELECT 1 FROM rimsky_node_runs r
-		             WHERE r.node_id = lh.holder_node_id
-		               AND r.claimed_by = $1
-		               AND r.state = 'running'
-		        )
-		        OR EXISTS (
-		            SELECT 1 FROM rimsky_claim_holders ch
-		              JOIN rimsky_node_runs r ON r.id = ch.holder_run_id
-		             WHERE ch.claim_handle_id = lh.id
-		               AND ch.state = 'active'
-		               AND r.state = 'running'
-		        )
-		   )`,
-		supervisorID, heartbeatSeconds,
-	)
-	if err != nil {
-		return fmt.Errorf("lockholders.ExtendHeartbeat: %w", err)
-	}
-	return nil
 }
 
 // ListExpired returns active rows whose `expires_at < now()`. The
@@ -886,7 +840,7 @@ func scanClaimHandle(sc scannable) (persistence.ClaimHandleRow, error) {
 		&lockName, &producerName, &scopeData, &address, &payload, &intent,
 		&rws,
 		&holderSupervisorID, &r.HolderNodeID,
-		&r.ClaimedAt, &r.LastHeartbeatAt, &r.ExpiresAt, &frameID,
+		&r.ClaimedAt, &r.ExpiresAt, &frameID,
 		&workerRequestID, &isHeld,
 		&parentClaimID, &lifetime, &versionID,
 		&candidateHandle,

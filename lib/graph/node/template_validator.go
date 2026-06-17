@@ -189,17 +189,19 @@ type RegistryHooks struct {
 	// per-node executor-name check.
 	ExecutorDeclared func(name string) bool
 
-	// ExecutorDeclaredEvents returns the set of event names the named
-	// executor advertises via ObservabilityCapabilities.declared_events
-	// (plan A1 / F6). Used to reject templates whose on_event handler
-	// names an event the executor does not declare. nil → skip the
-	// check (e.g. tests that don't wire an observability cache).
-	ExecutorDeclaredEvents func(name string) ([]string, bool)
+	// ExecutorDeclaredTags returns the set of tag names the named
+	// executor advertises via
+	// proto:executor_observability.proto::ObservabilityCapabilities.declared_tags
+	// (concept:terminal-tag). Used by validateNodeSubscriptions to
+	// reject `when: "<tag>" in payload.tags` predicates that name a
+	// tag the executor does not declare. nil → skip the check (e.g.
+	// tests that don't wire an observability cache).
+	ExecutorDeclaredTags func(name string) ([]string, bool)
 
 	// ExecutorDeclaredErrorClasses returns the set of error-class paths
 	// the named executor advertises via
 	// ObservabilityCapabilities.declared_error_classes. Mirrors
-	// ExecutorDeclaredEvents. Used by validateErrorTypes' vocabulary
+	// ExecutorDeclaredTags. Used by validateErrorTypes' vocabulary
 	// union and by the validator's range-check of terminal/error/*
 	// subscriptions against the sender's executor. nil → the executor
 	// contributes no vocabulary and the subscription check is skipped.
@@ -353,6 +355,7 @@ func ValidateTemplate(spec *TemplateSpec, hooks RegistryHooks) ValidationResult 
 		validateAttributesSchema(n, base, declared, spec, hooks, &res)
 		validateAcquireUnavailablePolicyAdvised(n, base, &res)
 		validateMaxParkDuration(n, base, &res)
+		validateDispatchDeadlines(n, base, &res)
 		validateHolds(n, base, spec, declared, &res)
 		validateFanOut(n, base, hooks, &res)
 		// @deliberate: operator-facing tags admit only
@@ -962,30 +965,34 @@ func validateSubscribes(n TemplateNodeDef, base string, declared map[string]int,
 				}
 			}
 		}
-		// @deliberate: cross-check `event/<name>` exact-path subscriptions
-		// against the sender's executor declared_events (carry-forward
-		// from the pre-reshape `on: event` check). Skip when the
-		// subscription names a message-virtual-node (not a declared real
-		// node-type) — message-virtual-nodes have no executor to consult.
-		if s.Node != "" && hooks.ExecutorDeclaredEvents != nil && tmpl != nil && isRealNode {
+		// @deliberate: Per TD-collapse-named-event-to-tags the
+		// `event/<name>` subscription form has retired — replaced by
+		// `type: terminal/* when: "<tag>" in payload.tags`. The
+		// tag-vocabulary cross-check (concept:terminal-tag gate-1)
+		// keys on the CEL when: predicate's literal tag operands: a
+		// `"foo" in payload.tags` clause is rejected at registration
+		// when "foo" is not in the emitter's declared_tags. Same
+		// "advisory warning, not hard rejection" posture as the
+		// error-class block above so an incomplete declared_tags
+		// vocabulary does not lock operators out.
+		if isRealNode && tmpl != nil && s.When != "" && hooks.ExecutorDeclaredTags != nil {
 			senderIdx := declared[s.Node]
 			sender := tmpl.Nodes[senderIdx]
-			if sender.Executor != "" && strings.HasPrefix(s.Type, "event/") &&
-				!strings.HasSuffix(s.Type, "*") {
-				name := strings.TrimPrefix(s.Type, "event/")
-				if names, ok := hooks.ExecutorDeclaredEvents(sender.Executor); ok {
-					found := false
-					for _, n := range names {
-						if n == name {
-							found = true
-							break
-						}
+			if sender.Executor != "" {
+				if declaredTags, ok := hooks.ExecutorDeclaredTags(sender.Executor); ok {
+					declaredSet := map[string]struct{}{}
+					for _, dt := range declaredTags {
+						declaredSet[dt] = struct{}{}
 					}
-					if !found {
-						res.Errors = append(res.Errors, ValidationError{
-							Path: sbase + ".type",
-							Msg:  fmt.Sprintf("event %q not declared by sender %q's executor %q", name, s.Node, sender.Executor),
-						})
+					for _, tag := range extractPayloadTagLiterals(s.When) {
+						if _, present := declaredSet[tag]; !present {
+							res.Warnings = append(res.Warnings, ValidationWarning{
+								Path: sbase + ".when",
+								Msg: fmt.Sprintf("tag %q referenced in `payload.tags` filter is not declared by sender %q's executor %q; "+
+									"the subscription registers but will only fire if the emitter sends this exact tag",
+									tag, s.Node, sender.Executor),
+							})
+						}
 					}
 				}
 			}
@@ -1097,26 +1104,6 @@ func validateSubstitutionRefExistence(
 						Msg:  fmt.Sprintf("substitution ref `nodes.%s.attribute.%s` references an attribute key not declared on the sender", ref.SenderNodeType, ref.Name),
 					})
 				}
-			case "event":
-				if hooks.ExecutorDeclaredEvents != nil && sender.Executor != "" {
-					if names, ok := hooks.ExecutorDeclaredEvents(sender.Executor); ok {
-						found := false
-						for _, name := range names {
-							if name == ref.Name {
-								found = true
-								break
-							}
-						}
-						if !found {
-							res.Errors = append(res.Errors, ValidationError{
-								Path: path,
-								Msg:  fmt.Sprintf("substitution ref `nodes.%s.event.%s` references an event not declared by executor %q", ref.SenderNodeType, ref.Name, sender.Executor),
-							})
-						}
-					}
-					// @deliberate: silent skip when executor capabilities
-					// are not visible.
-				}
 			}
 		}
 	}
@@ -1133,7 +1120,6 @@ func validateSubstitutionRefExistence(
 //
 //	{{nodes.X.attribute.Y}} <- attribute/Y/changed OR attribute/*
 //	{{nodes.X.attribute}}   <- attribute/* only (wildcard required)
-//	{{nodes.X.event.Y}}     <- event/Y
 //
 // The asymmetry — per-field reads are covered by the wildcard but the
 // whole-pull is NOT covered by a per-field subscription — keeps the
@@ -1216,7 +1202,6 @@ type coverageEntryKey struct {
 //	                          exact attribute/Y/changed OR attribute/*
 //	{{nodes.X.attribute}}   → required attribute/*; covered only by
 //	                          exact attribute/* (wildcard required)
-//	{{nodes.X.event.Y}}     → required event/Y; covered by exact event/Y
 func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (suggestedType string, covered bool) {
 	switch ref.TopicKind {
 	case "attribute":
@@ -1236,16 +1221,10 @@ func coverageMatch(idx map[coverageEntryKey]struct{}, ref substitutionRef) (sugg
 			return suggestedType, true
 		}
 		return suggestedType, false
-	case "event":
-		suggestedType = fmt.Sprintf("event/%s", ref.Name)
-		if _, ok := idx[coverageEntryKey{sender: ref.SenderNodeType, typ: suggestedType}]; ok {
-			return suggestedType, true
-		}
-		return suggestedType, false
 	}
 	// @deliberate: unknown topic kind — treat as covered to avoid
-	// spurious rejections; the directive parser admits only
-	// attribute/event so this is unreachable.
+	// spurious rejections; the directive parser admits only attribute so
+	// this is unreachable.
 	return "", true
 }
 
@@ -2318,16 +2297,15 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 			})
 		}
 	case "nodes":
-		// @deliberate: substitution forms are
-		// nodes.<node>.attribute(.<field>?…) and
-		// nodes.<emitter>.event.<event_name>(.<json-path>?). Bare forms
-		// `nodes.<node>.attribute` and `nodes.<node>.event.<name>` (no
-		// trailing field path) resolve to the whole attribute object /
-		// whole event payload per spec §Item 3 "Empty trailing path".
+		// @deliberate: substitution form is
+		// nodes.<node>.attribute(.<field>?…). The bare form
+		// `nodes.<node>.attribute` (no trailing field path) resolves to
+		// the whole attribute object per spec §Item 3 "Empty trailing
+		// path".
 		if len(parts) < 2 || parts[0] == "" {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.{attribute|event}[.<...>]", body),
+				Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.attribute[.<...>]", body),
 			})
 			return
 		}
@@ -2349,34 +2327,10 @@ func checkAttributeDirectiveBody(body, path string, declared map[string]int, dir
 					Msg:  fmt.Sprintf("nodes directive references unknown node %q", parts[0]),
 				})
 			}
-		case "event":
-			// @deliberate: nodes.<node>.event.<name>(.<path>?…) — event
-			// name is required; a missing field path is the bare form
-			// (resolves to the whole event payload).
-			if len(parts) < 3 || parts[2] == "" {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: path,
-					Msg:  fmt.Sprintf("nodes directive %q must be nodes.<node>.event.<name>[.<path>]", body),
-				})
-				return
-			}
-			if len(parts) > 3 && parts[3] == "" {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: path,
-					Msg:  fmt.Sprintf("nodes directive %q has an empty trailing segment", body),
-				})
-				return
-			}
-			if _, ok := declared[parts[0]]; !ok {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: path,
-					Msg:  fmt.Sprintf("nodes directive references unknown node %q", parts[0]),
-				})
-			}
 		default:
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("nodes directive %q second segment must be 'attribute' or 'event'", body),
+				Msg:  fmt.Sprintf("nodes directive %q second segment must be 'attribute'", body),
 			})
 		}
 	case "trigger":
@@ -2484,7 +2438,7 @@ func checkDispatchDirectives(s, path string, res *ValidationResult) {
 		if !directiveBodyRe.MatchString(body) {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: path,
-				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], nodes.<n>.event.<name>[.<path>], trigger.message.payload[.<f>], child.partition_key, or messages.<type>[.<field>])", body),
+				Msg:  fmt.Sprintf("invalid directive %q (expected claim.<a>.{address|claim_scope|payload[.<f>]}, params.<k>, nodes.<n>.attribute[.<f>], trigger.message.payload[.<f>], child.partition_key, or messages.<type>[.<field>])", body),
 			})
 		}
 	}
@@ -2507,6 +2461,42 @@ func validateMaxParkDuration(n TemplateNodeDef, base string, res *ValidationResu
 			Path: base + ".max_park_duration",
 			Msg:  fmt.Sprintf("invalid duration %q: %v", n.MaxParkDuration, err),
 		})
+	}
+}
+
+// validateDispatchDeadlines parses the three TD-three-dispatch-deadlines
+// knobs (sync_rpc_deadline, max_quiet_period, max_runtime) via
+// time.ParseDuration. Empty strings are valid (= use deployment
+// default). A negative duration is rejected — deadlines are nonneg by
+// construction.
+//
+// @concept: dispatch-deadlines
+func validateDispatchDeadlines(n TemplateNodeDef, base string, res *ValidationResult) {
+	for _, kv := range []struct {
+		value string
+		field string
+	}{
+		{n.SyncRPCDeadline, "sync_rpc_deadline"},
+		{n.MaxQuietPeriod, "max_quiet_period"},
+		{n.MaxRuntime, "max_runtime"},
+	} {
+		if kv.value == "" {
+			continue
+		}
+		d, err := parseDurationStrict(kv.value)
+		if err != nil {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + "." + kv.field,
+				Msg:  fmt.Sprintf("invalid duration %q: %v", kv.value, err),
+			})
+			continue
+		}
+		if d < 0 {
+			res.Errors = append(res.Errors, ValidationError{
+				Path: base + "." + kv.field,
+				Msg:  fmt.Sprintf("negative duration %q: deadlines must be >= 0", kv.value),
+			})
+		}
 	}
 }
 
@@ -3298,4 +3288,50 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 		}
 	}
 	return declaredMessages
+}
+
+// payloadTagsLiteralRE captures literal tag operands of `payload.tags`
+// CEL membership expressions in either operand order:
+//
+//	"foo" in payload.tags
+//	payload.tags.contains("foo")
+//
+// The regex is conservative — it matches single- and double-quoted
+// string literals only, so non-literal operands (variables, function
+// calls returning a string) are silently skipped. The
+// concept:terminal-tag gate-1 check is advisory: a tag in a literal
+// operand the executor does not declare yields a registration
+// warning; a non-literal operand passes the gate and is enforced at
+// runtime by readExecutorOutcome's gate-2 check on the actual
+// emitted tag set.
+//
+// @concept: terminal-tag
+var payloadTagsLiteralRE = regexp.MustCompile(`["']([^"']+)["']\s+in\s+payload\.tags|payload\.tags\.contains\(\s*["']([^"']+)["']\s*\)`)
+
+// extractPayloadTagLiterals returns the literal tag operands that
+// appear in `payload.tags` membership expressions inside a CEL
+// `when:` predicate. Non-literal operands (variables, sub-expressions)
+// are not surfaced — the runtime gate-2 check on the emitter's
+// declared_tags is the catch-all for those.
+//
+// @concept: terminal-tag
+func extractPayloadTagLiterals(when string) []string {
+	if when == "" {
+		return nil
+	}
+	var tags []string
+	seen := map[string]struct{}{}
+	for _, match := range payloadTagsLiteralRE.FindAllStringSubmatch(when, -1) {
+		for _, g := range match[1:] {
+			if g == "" {
+				continue
+			}
+			if _, dup := seen[g]; dup {
+				continue
+			}
+			seen[g] = struct{}{}
+			tags = append(tags, g)
+		}
+	}
+	return tags
 }

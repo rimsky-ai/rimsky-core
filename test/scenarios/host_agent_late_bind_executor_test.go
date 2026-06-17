@@ -10,7 +10,7 @@
 // stub, and tunnels Execute through to it. The run reaches terminal/success.
 //
 // Verifies the real dispatch path: supervisor → proxy (Executor.Execute with
-// x-rimsky-service-name) → agent → spawned stub binary → StreamClose.
+// x-rimsky-service-name) → agent → spawned stub binary → settling Outcome.
 package scenarios
 
 import (

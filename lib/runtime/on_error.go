@@ -204,7 +204,7 @@ func OnError(ctx context.Context, args OnErrorArgs) error {
 	// is the closest available signal for the audit row's `attempt` field).
 	// The envelope is constructed once and emitted inside whichever
 	// per-branch tx commits the matching state transition.
-	resolutionSig := errorPolicySignal(args.ErrorClass, args.Payload, resolved.Kind,
+	resolutionSig := errorPolicySignal(args.ErrorClass, args.Payload, nil, resolved.Kind,
 		resolved.NewState.RetryCounter, resolved.DelayMs)
 
 	switch resolved.Kind {

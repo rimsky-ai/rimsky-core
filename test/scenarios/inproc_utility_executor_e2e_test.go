@@ -107,17 +107,17 @@ func TestInprocUtilityExecutorE2E(t *testing.T) {
 
 	iid := h.CreateInstance(tid, "ck-inproc-loop-counter", map[string]any{})
 
-	// @constraint: wait for `event/done` to surface on the events
-	// feed. `done` only fires after the loop_counter reaches
-	// new_count == max — observable proof that the inproc
-	// loop_counter handler ran AND completed under no external
-	// executor configuration.
+	// @constraint: wait for the counter to reach fresh — the inproc
+	// loop_counter emits `done` (tag on the settling Success terminal)
+	// only once new_count == max, and the cascade walker has no
+	// subscription on the `done`-filtered terminal so the counter
+	// settles permanently. Reaching fresh is the observable proof that
+	// the inproc handler ran AND completed under no external executor
+	// configuration. Per concept:terminal-tag the per-emission tag
+	// rides on the settling Success outcome's `tags` field; downstream
+	// observers filter on `payload.tags` via CEL.
 	counter := h.FindNode(iid, "counter")
 	require.NotNil(t, counter, "counter node missing from instance")
-
-	require.True(t,
-		h.WaitForEventKind(counter.ID, "event/done", 30*time.Second),
-		"counter MUST emit `event/done` within the timeout — proves the inproc loop_counter handler is dispatching")
 
 	// @constraint: at terminal, the node row's state is `fresh` and
 	// the run terminated cleanly. WaitForNodeState returns false if

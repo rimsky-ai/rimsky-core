@@ -7,6 +7,9 @@
 // NOT a skeleton template for writing your own executor; implement the
 // Executor gRPC service against protocols/proto/v1/executor.proto.
 //
+// Per TD-execute-rpc-unary the Executor.Execute RPC is unary; the
+// stub returns the settling Outcome directly.
+//
 // Two primary uses:
 //   - executors/stub/stubtest — wrapper for in-process scenario tests
 //     in test/scenarios/. Tests script per-node-type behavior via
@@ -21,6 +24,7 @@
 package stub
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -55,19 +59,10 @@ const (
 	termSuccess terminalKind = iota
 	termError
 	termAsync
-	// @deliberate: termPark scripts a Park terminal event (parking the node until
-	// resume_at). Used by L2 conformance and by E6 / H3 scenario tests.
+	// @deliberate: termPark scripts a Park outcome (parking the node until
+	// resume_at).
 	termPark
 )
-
-// namedEventEmit captures one NamedEvent emission scripted before a
-// terminal verdict. Per plan L2/H1, the stub may emit zero or more
-// NamedEvent records before the terminal so test fixtures and the
-// rimsky-executor-conformance binary can exercise the streaming-events path.
-type namedEventEmit struct {
-	Name    string
-	Payload []byte
-}
 
 type script struct {
 	terminal          terminalKind
@@ -78,20 +73,17 @@ type script struct {
 	payload           any
 	asyncAckID        string
 	asyncCompletionMs int64
-	heartbeats        int
 	delay             time.Duration
 	parkReason        genv1.ParkReason
 	parkReasonNote    string
-	parkPayload       []byte
 	parkResumeAt      time.Time // @deliberate: zero ⇒ indefinite park (no resume_at)
-	parkSessionToken  string
-	// @deliberate: Named-event emissions scripted before the terminal. Emitted in
-	// order, between heartbeats and the terminal event.
-	namedEvents []namedEventEmit
-	// @deliberate: holdUntil, when non-nil, blocks the run after its first
-	// heartbeat until the channel closes (or the stream context
-	// cancels). Lets eligibility tests hold a sender in-flight at a
-	// deterministic midpoint instead of racing wall-clock delays.
+	// tags are the executor-attached subscriber-visible discriminators
+	// per concept:terminal-tag, threaded onto Success/Error/Park.
+	tags []string
+	// @deliberate: holdUntil, when non-nil, blocks the run until the
+	// channel closes (or the call context cancels). Lets eligibility
+	// tests hold a sender in-flight at a deterministic midpoint
+	// instead of racing wall-clock delays.
 	holdUntil <-chan struct{}
 }
 
@@ -113,13 +105,6 @@ type Stub struct {
 // CallbackURL and CancelToken are recorded so scenario tests exercising
 // the §12.5 incremental-writeback path can POST per-field deltas back to
 // the supervisor with the same auth shape a real executor would use.
-//
-// PriorDispatchID and PriorDispatchDisposition surface the recovery-aware
-// fields per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md
-// §"Recovery-aware executor protocol" — scenario tests (F2 retry-after-
-// error, F3 heartbeat-stale recovery, recalculate) assert on these so
-// the wire-level populate path is regression-pinned end-to-end.
 type ObservedRequest struct {
 	NodeID                   string
 	InstanceID               string
@@ -131,24 +116,14 @@ type ObservedRequest struct {
 	PriorDispatchID          string                         // @deliberate: empty when unset on the wire
 	PriorDispatchDisposition genv1.PriorDispatchDisposition // @deliberate: PRIOR_NONE when unset on the wire
 	// CandidateHandles records the per-store-alias candidate_handle bytes
-	// carried on each ExecuteRequest.StoreHandle. Empty for non-fan-out /
-	// non-DataProcessing dispatches; populated for fan-out leaf dispatches
-	// so tests can assert the supervisor threaded the sub-claim's
-	// `producer_candidate_handle` onto the wire (E4). Keyed by the
-	// StoreHandle map alias. Per @blessed-invariant 20 the bytes are inert
-	// in rimsky — recorded verbatim here for assertion only.
+	// carried on each ExecuteRequest.StoreHandle.
 	CandidateHandles map[string][]byte
 }
 
 // New constructs a Stub with no scripted node types registered.
 func New() *Stub { return &Stub{scripts: map[string]*script{}} }
 
-// EnableStubMode switches the Stub into immediate-success mode. In this mode
-// every Execute call short-circuits scripted behavior and returns a single
-// terminal StreamClose with Success outcome carrying `changed: true` and
-// `attributes_delta` populated from StubAttributesFor(node_type). Used by
-// conformance probes and end-to-end stack tests where the executor surface is
-// exercised but not the application logic.
+// EnableStubMode switches the Stub into immediate-success mode.
 func (s *Stub) EnableStubMode() *Stub {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -182,8 +157,7 @@ func (s *Stub) WhenType(t string) *TypeBuilder {
 	return &TypeBuilder{s: s, typ: t}
 }
 
-// Success configures the scripted terminal as a StreamClose with a
-// Success outcome on the wire.
+// Success configures the scripted terminal as a Success outcome on the wire.
 func (b *TypeBuilder) Success(result any, changed bool, changeSummary string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -192,12 +166,9 @@ func (b *TypeBuilder) Success(result any, changed bool, changeSummary string) *T
 	return b
 }
 
-// Error configures the scripted terminal as a StreamClose with an Error
-// outcome on the wire. The `class` argument becomes the wire-level
-// error_class. Per `concept:signal` hierarchical convention, the stub
-// executor prefixes single-segment classes with `stub/` at emit time
-// (e.g. `boom` → `stub/boom`); classes already containing `/` pass
-// through unchanged.
+// Error configures the scripted terminal as an Error outcome on the
+// wire. Per `concept:signal` hierarchical convention, the stub prefixes
+// single-segment classes with `stub/` at emit time.
 func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -206,7 +177,7 @@ func (b *TypeBuilder) Error(class string, payload any) *TypeBuilder {
 	return b
 }
 
-// AwaitAsyncCallback configures the scripted terminal as an AwaitAsyncCallback event.
+// AwaitAsyncCallback configures the scripted terminal as an AwaitAsyncCallback outcome.
 func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -215,55 +186,33 @@ func (b *TypeBuilder) AwaitAsyncCallback(ackID string, completionMs int64) *Type
 	return b
 }
 
-// Park configures the scripted terminal as a Park event.
-// resumeAt may be zero (indefinite park; resumes only via external
-// invalidate). reason is the typed ParkReason enum from the closed
-// two-value set (PARK_REASON_AWAIT_CALLBACK | PARK_REASON_SNOOZE).
-// reasonNote carries the optional free-form human annotation.
-// sessionToken is opaque to rimsky and round-tripped to the executor
-// on resume via ResumeContext.session_token.
-//
-// Per plan A3 / E1 / L2; updated for 2026-05-14 Piece 2 (ParkReason
-// typed); ParkReason collapsed to a closed two-value set per spec
-// .ok-planner/specs/2026-05-22-fan-out-safety-scope-first-design.md.
-func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, payload []byte, resumeAt time.Time, sessionToken string) *TypeBuilder {
+// Park configures the scripted terminal as a Park outcome. Per
+// TD-remove-resume-context, Park carries no session_token / payload
+// bytes — resume state rides attribute carry-forward.
+func (b *TypeBuilder) Park(reason genv1.ParkReason, reasonNote string, resumeAt time.Time) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
 	sc := b.s.scripts[b.typ]
 	sc.terminal = termPark
 	sc.parkReason = reason
 	sc.parkReasonNote = reasonNote
-	sc.parkPayload = payload
 	sc.parkResumeAt = resumeAt
-	sc.parkSessionToken = sessionToken
 	return b
 }
 
-// EmitNamedEvent scripts a NamedEvent emission before the terminal.
-// Multiple calls accumulate; events are emitted in the order recorded,
-// after heartbeats and before the terminal verdict. Per plan L2/H1.
-func (b *TypeBuilder) EmitNamedEvent(name string, payload []byte) *TypeBuilder {
+// Tags scripts the executor-attached tags on the settling outcome
+// (concept:terminal-tag). Duplicates are collapsed at decode by the
+// supervisor.
+func (b *TypeBuilder) Tags(tags ...string) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
-	sc := b.s.scripts[b.typ]
-	sc.namedEvents = append(sc.namedEvents, namedEventEmit{Name: name, Payload: payload})
+	b.s.scripts[b.typ].tags = append([]string(nil), tags...)
 	return b
 }
 
-// Heartbeats adds N extra heartbeat events before the terminal event.
-func (b *TypeBuilder) Heartbeats(n int) *TypeBuilder {
-	b.s.mu.Lock()
-	defer b.s.mu.Unlock()
-	b.s.scripts[b.typ].heartbeats = n
-	return b
-}
-
-// HoldUntil blocks each run of this node type after its first
-// heartbeat until ch closes (or the stream context cancels). The run
-// stays in-flight (active, claimed, heartbeated by the supervisor's
-// own refresh loop) for as long as the test holds the channel —
-// giving dispatch-eligibility tests a deterministic midpoint, unlike
-// Delay's wall-clock race.
+// HoldUntil blocks each run of this node type until ch closes (or the
+// call context cancels). Gives dispatch-eligibility tests a
+// deterministic midpoint.
 func (b *TypeBuilder) HoldUntil(ch <-chan struct{}) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -271,8 +220,7 @@ func (b *TypeBuilder) HoldUntil(ch <-chan struct{}) *TypeBuilder {
 	return b
 }
 
-// Delay sleeps for d before emitting each event. Useful for silence-detection
-// scenarios and context-cancellation tests.
+// Delay sleeps for d before returning the outcome.
 func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 	b.s.mu.Lock()
 	defer b.s.mu.Unlock()
@@ -280,11 +228,9 @@ func (b *TypeBuilder) Delay(d time.Duration) *TypeBuilder {
 	return b
 }
 
-// Execute implements genv1.ExecutorServer by streaming scripted events.
-// Records the incoming request (id/type/attributes) for test inspection.
-// If stub mode is enabled, short-circuits to an immediate StreamClose
-// with Success outcome keyed by node_type via StubAttributesFor.
-func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
+// Execute implements genv1.ExecutorServer with a unary RPC returning
+// the scripted Outcome.
+func (s *Stub) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	var candidateHandles map[string][]byte
 	if len(req.GetStores()) > 0 {
 		candidateHandles = make(map[string][]byte, len(req.GetStores()))
@@ -312,14 +258,6 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 	s.mu.Unlock()
 
 	if stubMode {
-		// @constraint: Park-emission probe path: rimsky-executor-conformance --check-park
-		// drives stub mode with attributes `{probe_park: true,
-		// park_reason: "<storage-form>", park_reason_label: "..."}`. The
-		// probe asserts the executor's Park.reason taxonomy + reason_label
-		// requirement (when reason = OTHER, reason_label must be set). The
-		// stub honors the probe by emitting a Park with the requested
-		// fields verbatim — production executors are expected to do the
-		// same. Per plan §M5.
 		attrs := req.GetAttributes().AsMap()
 		if probe, _ := attrs["probe_park"].(bool); probe {
 			reasonStr, _ := attrs["park_reason"].(string)
@@ -330,136 +268,91 @@ func (s *Stub) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteS
 				ReasonLabel: reasonLabel,
 				ReasonNote:  reasonNote,
 			}
-			return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-				StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: park}},
-			}})
+			return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}, nil
 		}
 		delta, err := structpb.NewStruct(StubAttributesFor(req.GetNodeType()))
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-				AttributesDelta: delta,
-				Changed:         true,
-				ChangeSummary:   "stub",
-			}}},
-		}})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+			AttributesDelta: delta,
+			Changed:         true,
+			ChangeSummary:   "stub",
+		}}}, nil
 	}
 
 	if !ok {
-		return fmt.Errorf("stub: no script for node_type %q", req.NodeType)
+		return nil, fmt.Errorf("stub: no script for node_type %q", req.NodeType)
 	}
 
-	// @constraint: emit at least one heartbeat before terminal — the
-	// stub guarantees the heartbeats+1 lower bound so callers can
-	// assert on the heartbeat-before-terminal invariant.
-	for i := 0; i < sc.heartbeats+1; i++ {
-		if sc.delay > 0 {
-			select {
-			case <-time.After(sc.delay):
-			case <-stream.Context().Done():
-				return stream.Context().Err()
-			}
-		}
-		if err := stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_Heartbeat{Heartbeat: &genv1.Heartbeat{
-			TimestampMs: time.Now().UnixMilli(),
-			Note:        fmt.Sprintf("stub heartbeat %d", i+1),
-		}}}); err != nil {
-			return err
+	if sc.delay > 0 {
+		select {
+		case <-time.After(sc.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-
 	if sc.holdUntil != nil {
 		select {
 		case <-sc.holdUntil:
-		case <-stream.Context().Done():
-			return stream.Context().Err()
-		}
-	}
-
-	// @deliberate: Scripted NamedEvent emissions before the terminal (plan L2 / H1).
-	for _, ne := range sc.namedEvents {
-		if err := stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_NamedEvent{NamedEvent: &genv1.NamedEvent{
-			Name:    ne.Name,
-			Payload: ne.Payload,
-		}}}); err != nil {
-			return err
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 
 	switch sc.terminal {
 	case termSuccess:
-		// @deliberate: Success carries `attributes_delta` (a Struct). The stub's
-		// `result` API is preserved for test convenience and mapped
-		// to an AttributesDelta map when the value is a map[string]any
-		// (the only realistic shape — the supervisor merges it into
-		// the resolved attribute object). Non-map / nil values are
-		// dropped; the executor side has no other field to emit them on.
 		delta, err := toStruct(sc.result)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-				AttributesDelta: delta, Changed: sc.changed, ChangeSummary: sc.changeSum,
-			}}},
-		}})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+			AttributesDelta: delta,
+			Changed:         sc.changed,
+			ChangeSummary:   sc.changeSum,
+			Tags:            sc.tags,
+		}}}, nil
 	case termError:
 		v, err := toStruct(sc.payload)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				// @deliberate: 2026-05-23 signal-taxonomy Pass 6: prefix unscoped
-				// classes with `stub/` so the stub executor follows the
-				// hierarchical-class convention. Classes already
-				// containing a `/` (operator-supplied hierarchical
-				// classes) pass through unchanged.
-				ErrorClass: prefixedStubClass(sc.errorClass), Payload: v,
-			}}},
-		}})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+			// @deliberate: 2026-05-23 signal-taxonomy Pass 6: prefix
+			// unscoped classes with `stub/` so the stub follows the
+			// hierarchical-class convention.
+			ErrorClass: prefixedStubClass(sc.errorClass),
+			Payload:    v,
+			Tags:       sc.tags,
+		}}}, nil
 	case termAsync:
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
-				AsyncAckId: sc.asyncAckID, ExpectedCompletionMs: sc.asyncCompletionMs,
-			}}},
-		}})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_AwaitAsync{AwaitAsync: &genv1.AwaitAsyncCallback{
+			AsyncAckId:           sc.asyncAckID,
+			ExpectedCompletionMs: sc.asyncCompletionMs,
+		}}}, nil
 	case termPark:
 		park := &genv1.Park{
-			Reason:       sc.parkReason,
-			ReasonNote:   sc.parkReasonNote,
-			Payload:      sc.parkPayload,
-			SessionToken: sc.parkSessionToken,
+			Reason:     sc.parkReason,
+			ReasonNote: sc.parkReasonNote,
+			Tags:       sc.tags,
 		}
 		if !sc.parkResumeAt.IsZero() {
 			park.ResumeAt = timestamppb.New(sc.parkResumeAt)
 		}
-		return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Park{Park: park}},
-		}})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Park{Park: park}}, nil
 	}
-	return nil
+	return nil, fmt.Errorf("stub: unknown terminal kind %d", sc.terminal)
 }
 
 // stubFixtures maps node_type to a default attributes_delta the stub
-// returns when stub mode is enabled. Kept small and illustrative on
-// purpose — real consumers register their own fixtures (or use the empty
-// default) rather than relying on this map. Any node_type absent from the
-// map gets `{}` from StubAttributesFor.
+// returns when stub mode is enabled.
 var stubFixtures = map[string]map[string]any{
 	"items.fetch":    {"items": []any{}, "fetched_at": "1970-01-01T00:00:00Z"},
 	"items.classify": {"category": "unclassified"},
 }
 
 // StubAttributesFor returns the default attributes_delta for a node_type
-// when the stub is running in stub mode. Returns an empty (non-nil) map
-// for unknown node_types so the resulting structpb.Struct has zero fields
-// (the supervisor treats an empty Struct as a no-op writeback).
-//
-// Returns a fresh map on every call; callers may mutate the result without
-// affecting subsequent dispatches.
+// when the stub is running in stub mode.
 func StubAttributesFor(nodeType string) map[string]any {
 	src, ok := stubFixtures[nodeType]
 	if !ok {
@@ -474,9 +367,7 @@ func StubAttributesFor(nodeType string) map[string]any {
 
 // prefixedStubClass returns class unchanged if it already contains a
 // `/` (operator-supplied hierarchical class) or is empty; otherwise
-// it returns `stub/<class>`. Per `concept:signal` hierarchical
-// error_class rule, all bundled-executor error classes carry a
-// `<executor>/<leaf>` shape.
+// it returns `stub/<class>`.
 func prefixedStubClass(class string) string {
 	if class == "" {
 		return class
@@ -487,13 +378,8 @@ func prefixedStubClass(class string) string {
 	return "stub/" + class
 }
 
-// toStruct converts an arbitrary input into a structpb.Struct for use as
-// Success.AttributesDelta or Error.Payload on the StreamClose outcome.
-// Nil inputs return nil — the supervisor treats nil delta as "no writeback".
-// map[string]any inputs are converted directly via structpb.NewStruct.
-// Other non-nil inputs are wrapped as `{value: <fmt.Sprint(v)>}` so the
-// test fixture can still observe scalar values without adding fields to
-// the proto.
+// toStruct converts an arbitrary input into a structpb.Struct for use
+// as Success.AttributesDelta or Error.Payload.
 func toStruct(v any) (*structpb.Struct, error) {
 	if v == nil {
 		return nil, nil
@@ -501,8 +387,7 @@ func toStruct(v any) (*structpb.Struct, error) {
 	m, ok := v.(map[string]any)
 	if !ok {
 		// @deliberate: Wrap non-map scalars under a single "value" field so the test
-		// fixture can still observe them when needed; preserves the
-		// pre-redesign convenience without adding a field to the proto.
+		// fixture can still observe them when needed.
 		return structpb.NewStruct(map[string]any{"value": fmt.Sprintf("%v", v)})
 	}
 	return structpb.NewStruct(m)

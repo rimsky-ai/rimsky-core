@@ -142,9 +142,15 @@ describe("buildClaudeCliArgs", () => {
     expect(REQUIRED_CALLBACK_TOOLS).toContain(
       "mcp__rimsky-callback__report_complete",
     );
-    // @deliberate: emit_named_event is auto-included because the allowlist derives from
-    // TOOL_DEFINITIONS — adding the tool needs no manual allowlist edit.
+    // @deliberate: report_park is auto-included because the allowlist
+    // derives from TOOL_DEFINITIONS — adding or retiring a tool needs
+    // no manual allowlist edit. (emit_named_event retired under
+    // TD-collapse-named-event-to-tags; tags ride on the settling
+    // verdict, no mid-dispatch emit tool exists.)
     expect(REQUIRED_CALLBACK_TOOLS).toContain(
+      "mcp__rimsky-callback__report_park",
+    );
+    expect(REQUIRED_CALLBACK_TOOLS).not.toContain(
       "mcp__rimsky-callback__emit_named_event",
     );
   });

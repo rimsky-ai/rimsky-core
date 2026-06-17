@@ -3,13 +3,13 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // executor_handler.go — the supervisor-facing Executor protocol handler.
-// Implements the spec's "Proxy on a supervisor's Executor.Execute(req)
-// call": resolve the dispatch to an owner's agent + spawned child,
-// rewrite the callback URL onto the agent's local listener, tunnel the
-// ExecuteRequest into the child via a DispatchFrame, stream the child's
-// ExecuteEvents back to the supervisor, and translate disconnects into a
-// synthetic terminal StreamClose. Proxy-side failures surface as
-// StreamClose{Error, error_class} on the streaming RPC.
+// Per TD-execute-rpc-unary the Executor.Execute RPC is unary: the
+// proxy resolves the dispatch to an owner's agent + spawned child,
+// rewrites the callback URL onto the agent's local listener, tunnels
+// the ExecuteRequest into the child via a DispatchFrame, awaits the
+// agent's reply DispatchFrame carrying the Outcome, unmarshals it,
+// and returns it on the unary call. Proxy-side failures surface as
+// Outcome{Error{error_class}}.
 //
 // @concept: host-agent-proxy
 
@@ -45,10 +45,8 @@ func newExecutorHandler(state *proxyState, cfg Config) *executorHandler {
 	}
 }
 
-// Execute resolves, spawns, tunnels, and streams an executor dispatch.
-func (h *executorHandler) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
-	ctx := stream.Context()
-
+// Execute resolves, spawns, tunnels, and returns the unary Outcome.
+func (h *executorHandler) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	res, rerr := resolveAndSpawn(
 		ctx, h.state, h.fetch,
 		[]string{protocolExecutor},
@@ -58,7 +56,7 @@ func (h *executorHandler) Execute(req *genv1.ExecuteRequest, stream genv1.Execut
 		h.spawnTimeout,
 	)
 	if rerr != nil {
-		return sendExecutorTerminalError(stream, rerr.class, rerr.msg)
+		return executorTerminalError(rerr.class, rerr.msg), nil
 	}
 
 	// @constraint: rewrite the callback URL onto the agent's local
@@ -69,7 +67,7 @@ func (h *executorHandler) Execute(req *genv1.ExecuteRequest, stream genv1.Execut
 
 	payload, err := proto.Marshal(forwarded)
 	if err != nil {
-		return sendExecutorTerminalError(stream, errClassExecutorCrashed, "marshal execute request: "+err.Error())
+		return executorTerminalError(errClassExecutorCrashed, "marshal execute request: "+err.Error()), nil
 	}
 
 	streamID := uuid.NewString()
@@ -83,71 +81,56 @@ func (h *executorHandler) Execute(req *genv1.ExecuteRequest, stream genv1.Execut
 		StreamId: streamID,
 		Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_DATA,
 	}}}) {
-		return sendExecutorTerminalError(stream, errClassHostAgentDisconnected, "agent disconnected before dispatch")
+		return executorTerminalError(errClassHostAgentDisconnected, "agent disconnected before dispatch"), nil
 	}
 
-	return h.pump(stream, res, streamID, respCh)
-}
-
-// pump reads response DispatchFrames, forwards inner ExecuteEvents to the
-// supervisor, and returns when the inner stream terminates or the agent
-// disconnects.
-func (h *executorHandler) pump(stream genv1.Executor_ExecuteServer, res *resolved, streamID string, respCh chan *genv1.DispatchFrame) error {
-	ctx := stream.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			// @constraint: the supervisor cancelled the Execute stream;
-			// signal the agent to cancel the child's inner Execute via
-			// a terminal CANCEL frame so the spawned executor's stream
-			// is torn down rather than left running until the child
-			// terminates on its own.
-			res.agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
-				SpawnId:  res.spawnID,
-				Protocol: protocolExecutor,
-				StreamId: streamID,
-				Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL,
-			}}})
-			return ctx.Err()
-		case frame, ok := <-respCh:
-			if !ok {
-				// @constraint: channel closed by closeAllStreams on agent disconnect.
-				h.state.dropSpawn(res.spawnID)
-				return sendExecutorTerminalError(stream, errClassHostAgentDisconnected, "agent disconnected mid-execute")
-			}
-			if frame.GetKind() == genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
-				h.state.dropSpawn(res.spawnID)
-				return sendExecutorTerminalError(stream, errClassExecutorCrashed, "spawned executor cancelled the stream")
-			}
-			var ev genv1.ExecuteEvent
-			if err := proto.Unmarshal(frame.GetPayload(), &ev); err != nil {
-				h.state.dropSpawn(res.spawnID)
-				return sendExecutorTerminalError(stream, errClassExecutorCrashed, "unmarshal execute event: "+err.Error())
-			}
-			if err := stream.Send(&ev); err != nil {
-				return err
-			}
-			if _, terminal := ev.GetEvent().(*genv1.ExecuteEvent_StreamClose); terminal {
-				return nil
-			}
+	select {
+	case <-ctx.Done():
+		// @constraint: the supervisor cancelled the Execute call; send
+		// a terminal CANCEL frame so the spawned executor's call is
+		// torn down rather than left running until the child terminates
+		// on its own.
+		res.agent.send(&genv1.ServerFrame{Body: &genv1.ServerFrame_DispatchFrame{DispatchFrame: &genv1.DispatchFrame{
+			SpawnId:  res.spawnID,
+			Protocol: protocolExecutor,
+			StreamId: streamID,
+			Kind:     genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL,
+		}}})
+		return nil, ctx.Err()
+	case frame, ok := <-respCh:
+		if !ok {
+			h.state.dropSpawn(res.spawnID)
+			return executorTerminalError(errClassHostAgentDisconnected, "agent disconnected mid-execute"), nil
 		}
+		if frame.GetKind() == genv1.DispatchFrame_DISPATCH_FRAME_KIND_CANCEL {
+			h.state.dropSpawn(res.spawnID)
+			return executorTerminalError(errClassExecutorCrashed, "spawned executor cancelled the call"), nil
+		}
+		var outcome genv1.Outcome
+		if err := proto.Unmarshal(frame.GetPayload(), &outcome); err != nil {
+			h.state.dropSpawn(res.spawnID)
+			return executorTerminalError(errClassExecutorCrashed, "unmarshal outcome: "+err.Error()), nil
+		}
+		return &outcome, nil
 	}
 }
 
-// sendExecutorTerminalError emits a single terminal StreamClose{Error}
-// with the given error_class on the supervisor-facing Execute stream.
-// The human-readable message rides Error.payload.message for diagnostics.
-func sendExecutorTerminalError(stream genv1.Executor_ExecuteServer, class, message string) error {
+// executorTerminalError synthesises an Outcome{Error{class}} so a
+// proxy-side failure surfaces through the same terminal-handler
+// pipeline a real executor's Error outcome takes.
+func executorTerminalError(class, message string) *genv1.Outcome {
 	var payload *structpb.Struct
 	if message != "" {
 		payload, _ = structpb.NewStruct(map[string]any{"message": message})
 	}
-	return stream.Send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-			ErrorClass: class,
-			Payload:    payload,
-		}}},
-	}})
+	return &genv1.Outcome{
+		Outcome: &genv1.Outcome_Error{
+			Error: &genv1.Error{
+				ErrorClass: class,
+				Payload:    payload,
+			},
+		},
+	}
 }
 
 // executorObsHandler implements genv1.ExecutorObservabilityServer. The
@@ -161,7 +144,7 @@ func newExecutorObsHandler() *executorObsHandler { return &executorObsHandler{} 
 
 func (h *executorObsHandler) Capabilities(_ context.Context, _ *genv1.ExecutorCapabilitiesRequest) (*genv1.ObservabilityCapabilities, error) {
 	return &genv1.ObservabilityCapabilities{
-		DeclaredEvents:           nil,
+		DeclaredTags:             nil,
 		ExpectedAttributesSchema: nil,
 	}, nil
 }

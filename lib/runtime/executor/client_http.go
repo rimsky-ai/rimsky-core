@@ -5,7 +5,6 @@
 package executor
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -19,14 +18,19 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/peer"
 )
 
-// httpClient implements the HTTP+JSON bridge. Wire format (§7.1):
-//   POST <endpoint.URL>/v1/Execute
-//     Content-Type: application/json
-//     body: JSON form of ExecuteRequest
-//   Response:
-//     Content-Type: application/x-ndjson
-//     body: one ExecuteEvent JSON per line, stream ends on connection close
-
+// httpClient implements the HTTP+JSON bridge for the unary executor
+// surface. Wire format:
+//
+//	POST <endpoint.URL>/v1/Execute
+//	  Content-Type: application/json
+//	  body: JSON form of ExecuteRequest
+//	Response: 200 OK
+//	  Content-Type: application/json
+//	  body: JSON form of Outcome (oneof Success / Error / Park /
+//	        AwaitAsyncCallback)
+//
+// Per concept:executor / TD-execute-rpc-unary the streaming + NDJSON
+// shape is gone; the bridge is a single request/response round trip.
 type httpClient struct {
 	client   *http.Client
 	endpoint string
@@ -54,9 +58,6 @@ func NewHTTPClient(endpoint Endpoint) (Client, error) {
 	if u.Scheme != "https" {
 		return nil, fmt.Errorf("executor.NewHTTPClient: peer %q (tls: required): endpoint scheme %q is not https — a tls: required HTTP-bridge executor must use an https:// URL", endpoint.URL, u.Scheme)
 	}
-	// @constraint: verified TLS uses the same root-pool posture as the gRPC dial
-	// sites (system roots, test-injectable); cloning the default transport
-	// preserves proxy/timeouts/HTTP2 behavior.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = peer.TLSClientConfig()
 	return &httpClient{
@@ -66,7 +67,7 @@ func NewHTTPClient(endpoint Endpoint) (Client, error) {
 	}, nil
 }
 
-func (c *httpClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (EventStream, error) {
+func (c *httpClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	body, err := protojson.Marshal(req)
 	if err != nil {
 		return nil, err
@@ -76,47 +77,27 @@ func (c *httpClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (Ev
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/x-ndjson")
+	httpReq.Header.Set("Accept", "application/json")
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		// @deliberate: mirror the gRPC TLSMode interceptors — failures under
-		// `tls: required` name the peer and the mode so a handshake failure
-		// surfaces loudly with the operator's intent attached.
 		if c.tlsMode == peer.TLSModeRequired {
 			return nil, fmt.Errorf("peer %q (tls: required): %w", c.endpoint, err)
 		}
 		return nil, err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
 		return nil, fmt.Errorf("http bridge: %s: %s", resp.Status, string(b))
 	}
-	return &httpEventStream{r: bufio.NewReader(resp.Body), body: resp.Body}, nil
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("http bridge: read body: %w", err)
+	}
+	var outcome genv1.Outcome
+	if err := protojson.Unmarshal(respBytes, &outcome); err != nil {
+		return nil, fmt.Errorf("http bridge: unmarshal outcome: %w", err)
+	}
+	return &outcome, nil
 }
 func (c *httpClient) Close() error { return nil }
-
-type httpEventStream struct {
-	r    *bufio.Reader
-	body io.ReadCloser
-}
-
-func (e *httpEventStream) Recv() (*genv1.ExecuteEvent, error) {
-	line, err := e.r.ReadBytes('\n')
-	if len(line) == 0 && err != nil {
-		if err == io.EOF {
-			return nil, io.EOF
-		}
-		return nil, err
-	}
-	line = bytes.TrimRight(line, "\r\n")
-	if len(line) == 0 {
-		return e.Recv()
-	}
-	var ev genv1.ExecuteEvent
-	if uerr := protojson.Unmarshal(line, &ev); uerr != nil {
-		return nil, fmt.Errorf("http bridge: unmarshal: %w", uerr)
-	}
-	return &ev, nil
-}
-func (e *httpEventStream) Close() error { return e.body.Close() }

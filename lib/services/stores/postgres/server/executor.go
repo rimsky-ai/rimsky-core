@@ -94,54 +94,47 @@ func (o *ExecutorObservabilityServer) Capabilities(_ context.Context, _ *genv1.E
 	}, nil
 }
 
-// Execute is the gRPC entrypoint. Adapts to the transport-neutral
-// executeCore (shared with future HTTP-bridge wiring).
-func (e *ExecutorServer) Execute(req *genv1.ExecuteRequest, stream genv1.Executor_ExecuteServer) error {
-	return e.executeCore(stream.Context(), req, stream.Send)
+// Execute is the gRPC entrypoint. Per TD-execute-rpc-unary the RPC
+// returns the settling Outcome directly; the verifier never carries
+// async work so it always returns a Success or Error variant.
+func (e *ExecutorServer) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
+	return e.executeCore(ctx, req)
 }
 
-// sendFunc is the narrow send seam for executeCore; mirrors
-// executors/verifier-shape-checks/server.go::sendFunc.
-type sendFunc func(*genv1.ExecuteEvent) error
-
-func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequest, send sendFunc) error {
+func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	ud := req.GetAttributes().AsMap()
 	schema, table, specs, err := parseVerifierAttributes(ud)
 	if err != nil {
-		return sendVerifierError(send, "pg/attribute_invalid", err.Error(), nil)
+		return verifierErrorOutcome("pg/attribute_invalid", err.Error(), nil), nil
 	}
 	pool := e.store.Pool()
 	if pool == nil {
 		// @concept: signal — no live pool is a transient connection-state
 		// defect, not an attribute defect, so emit `pg/connection_lost`.
-		return sendVerifierError(send, "pg/connection_lost", "postgres store has no live connection pool", nil)
+		return verifierErrorOutcome("pg/connection_lost", "postgres store has no live connection pool", nil), nil
 	}
 	conn := pgxPoolConn{pool: pool}
 	results, err := sqlchecks.Run(ctx, conn, schema, table, specs)
 	if err != nil {
-		return sendVerifierError(send, "pg/attribute_invalid", err.Error(), nil)
+		return verifierErrorOutcome("pg/attribute_invalid", err.Error(), nil), nil
 	}
 	if anyFailed(results) {
 		failedKind := firstFailedCheckKind(results)
-		return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-			StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-				// @constraint: per-check-kind leaf under the
-				// `pg/verifier_check_failed/*` prefix so subscribers can match
-				// the prefix for any verifier failure or pin to a specific
-				// check kind by leaf — the hierarchical-error-class pattern the
-				// signal taxonomy applies across all bundled executors.
-				ErrorClass: "pg/verifier_check_failed/" + failedKind,
-				Payload:    buildVerifierFailurePayload(results),
-			}}},
-		}})
+		return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+			// @constraint: per-check-kind leaf under the
+			// `pg/verifier_check_failed/*` prefix so subscribers can match
+			// the prefix for any verifier failure or pin to a specific
+			// check kind by leaf — the hierarchical-error-class pattern the
+			// signal taxonomy applies across all bundled executors.
+			ErrorClass: "pg/verifier_check_failed/" + failedKind,
+			Payload:    buildVerifierFailurePayload(results),
+		}}}, nil
 	}
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Success{Success: &genv1.Success{
-			AttributesDelta: buildVerifierSuccessDelta(results),
-			Changed:         false,
-			ChangeSummary:   fmt.Sprintf("postgres-store verifier: %d checks passed on %s.%s", len(results), schema, table),
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Success{Success: &genv1.Success{
+		AttributesDelta: buildVerifierSuccessDelta(results),
+		Changed:         false,
+		ChangeSummary:   fmt.Sprintf("postgres-store verifier: %d checks passed on %s.%s", len(results), schema, table),
+	}}}, nil
 }
 
 // firstFailedCheckKind returns the kind of the first failing check
@@ -252,17 +245,15 @@ func summarizeVerifier(results []sqlchecks.Result) string {
 	return strings.Join(parts, ", ")
 }
 
-// sendVerifierError emits a one-shot Error StreamClose. payload may be nil.
-func sendVerifierError(send sendFunc, class, msg string, payload *structpb.Struct) error {
+// verifierErrorOutcome builds a one-shot Error outcome; payload may be nil.
+func verifierErrorOutcome(class, msg string, payload *structpb.Struct) *genv1.Outcome {
 	if payload == nil {
 		p, _ := structpb.NewStruct(map[string]any{"message": msg})
 		payload = p
 	}
-	return send(&genv1.ExecuteEvent{Event: &genv1.ExecuteEvent_StreamClose{
-		StreamClose: &genv1.StreamClose{Outcome: &genv1.StreamClose_Error{Error: &genv1.Error{
-			ErrorClass: class, Payload: payload,
-		}}},
-	}})
+	return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
+		ErrorClass: class, Payload: payload,
+	}}}
 }
 
 // pgxPoolConn adapts a pgxpool.Pool to the sqlchecks.Conn interface.
