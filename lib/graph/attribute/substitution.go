@@ -486,17 +486,9 @@ func stringifyAny(v any) string {
 //   - the cascade walker's `messagePayloadAsMap` decode used to populate
 //     the message-virtual-node settle signal's `attributes_delta` so
 //     subscriber CEL `when:` predicates can match against body fields
-//     (`code:runtime/message_delivery.go::messagePayloadAsMap`);
+//     (`code:runtime/message_delivery.go::messagePayloadAsMap`); and
 //   - the persistence-layer fetch in `GET /messages/{id}`
-//     (control/controlapi/messages.go); and
-//   - the scheduler's `advanceOneFrame` runtime-internal wake-field
-//     extraction, which decodes the triggering message's payload solely
-//     to pull the rimsky-synthesized `wake_node_ids` array used to
-//     stale-mark cascade-driven receivers in the promotion tx
-//     (`code:graph/frame/engine.go::advanceOneFrame`). Distinct from the
-//     four body-reading sites above: the read targets a rimsky-owned
-//     runtime-synthetic field, not a user-authored body shape, and the
-//     bytes are never echoed into logs / errors.
+//     (control/controlapi/messages.go).
 //
 // Rimsky never logs, formats with `%v`, validates beyond schema gates,
 // transforms, or includes payload bytes in error messages. Same opacity
@@ -549,14 +541,10 @@ func resolveTriggerValue(directive string, rest []string, ctx ResolveContext) (a
 // `walkPath`), at the trigger arm (resolveTriggerValue), at the cascade
 // walker's `messagePayloadAsMap` decode used to populate the
 // message-virtual-node settle signal's `attributes_delta`
-// (`code:runtime/message_delivery.go::messagePayloadAsMap`), at the
-// persistence-layer fetch in `GET /messages/{id}`, and at the
-// scheduler's `advanceOneFrame` runtime-internal wake-field extraction
-// (`code:graph/frame/engine.go::advanceOneFrame`) — the last is distinct
-// from the four body-reading sites in that it reads the
-// rimsky-synthesized `wake_node_ids` array, not user-authored body
-// fields. Rimsky never logs, formats with `%v`, validates beyond schema
-// gates, transforms, or includes payload bytes in error messages.
+// (`code:runtime/message_delivery.go::messagePayloadAsMap`), and at the
+// persistence-layer fetch in `GET /messages/{id}`. Rimsky never logs,
+// formats with `%v`, validates beyond schema gates, transforms, or
+// includes payload bytes in error messages.
 //
 // @concept: message-schema
 func resolveMessagesValue(directive string, rest []string, ctx ResolveContext) (any, error) {

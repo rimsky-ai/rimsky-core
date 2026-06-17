@@ -53,11 +53,8 @@ func TestIdempotencyMatrix(t *testing.T) {
 	// @constraint: messageCount reads the live envelope count for an instance off the
 	// real GET /instances/{id}/messages projection — the persisted-side
 	// surface the spec names ("replay leaves a single envelope",
-	// "distinct-sender yields two envelopes"). The instance-factory's
-	// synthetic `instance/root` envelopes (seeded at create-time to
-	// satisfy the frame→message FK on the per-root-node frame) are
-	// excluded from the count via the type filter so the assertions stay
-	// keyed on operator-side emits only.
+	// "distinct-sender yields two envelopes"). The type filter scopes
+	// the count to the operator-side emits the matrix exercises.
 	messageCount := func(t *testing.T, instID string) int {
 		t.Helper()
 		status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?type=system/invalidate", instID), nil)

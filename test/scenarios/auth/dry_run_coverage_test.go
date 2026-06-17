@@ -153,7 +153,7 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 	dr := "?dry_run=true"
 
 	// @deliberate: A deployed template + instance, reused by the instance/message/
-	// breakpoint/asset:materialize cases.
+	// breakpoint cases.
 	tplHash := seedDeployedTemplate(t, f, adminKey, "dryrun-coverage")
 	code, instResp := f.request(t, "POST", "/v1/instances", adminKey, map[string]any{"template": tplHash})
 	if code != 201 && code != 200 {
@@ -450,11 +450,6 @@ func buildDryRunCases(t *testing.T, f *authFixture, adminKey string) map[string]
 			// @deliberate: Nothing to prune in the fixture; the gate is before the delete.
 		},
 
-		"asset:materialize": {
-			method: "POST", path: "/v1/instances/" + instanceID + "/assets/n1.main/materialize" + dr,
-			body:         map[string]any{"reason": "dry-run"},
-			wouldHaveKey: "would_have_materialized", verifyNoMutation: messageCountUnchanged(instanceID),
-		},
 		"asset:delete": {
 			method: "DELETE", path: "/v1/instances/" + assetInstanceID + "/assets/" + assetAlias + dr,
 			wouldHaveKey: "would_have_deleted_asset", verifyNoMutation: assetStillExists(assetInstanceID, assetAlias),

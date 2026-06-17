@@ -13,6 +13,7 @@
 package per_run_attributes
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -36,9 +38,17 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-downstream-read", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/upstream"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "upstream", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/upstream", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -68,6 +78,12 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	downN := h.FindNode(iid, "downstream")
 	require.NotNil(t, upN)
 	require.NotNil(t, downN)
+	// @constraint: upstream was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the initial cascade the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/upstream", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(upN.ID, cascade.NodeStateFresh, 15*time.Second))
 	require.True(t, h.WaitForNodeState(downN.ID, cascade.NodeStateFresh, 15*time.Second))
@@ -85,10 +101,9 @@ func TestPerRunAttributes_DownstreamReadsThisFrame(t *testing.T) {
 	h.Stub.WhenType("upstream").Success(map[string]any{"value": "fire-2"}, true, "ok")
 	h.Stub.WhenType("downstream").Success(map[string]any{}, true, "ok")
 
-	// @deliberate: Invalidate upstream so cascade refires downstream; the
-	// operator-invalidate HTTP route was retired with messaging, so the
-	// scenario harness drives the same replay path through InvalidateNode.
-	h.InvalidateNode(iid, upN.ID)
+	// @deliberate: Invalidate upstream so cascade refires downstream via
+	// a per-target typed-message wake — the universal post-spec trigger.
+	h.PostInstanceMessage(iid, "test/wake/upstream", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {

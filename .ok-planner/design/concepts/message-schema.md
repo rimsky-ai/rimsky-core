@@ -24,6 +24,6 @@ Owns: the registry's persisted shape (content-addressed into the template spec),
 - `type:` is unique across entries in the registry.
 - `type:` segments do not contain `.`; the substitution-directive parser splits on `.` and a segment-internal `.` would silently misroute.
 - `body_schema:` is a valid JSON Schema.
-- `body_schema:` must not declare the reserved top-level property `wake_node_ids`; this is the runtime-synthetic wake mechanism's field name, structurally guarded at registration (template) and at receipt (operator and publisher emits) so an author-declared envelope cannot smuggle stale-mark targets through the runtime wake path. The reservation is wire-name-only: publishers who happen to carry domain data of that name must pick another field name.
+- Every template's declared-types set carries an implicit `""` entry seeded at registration with a null body schema. The implicit entry has no fields and no substitution references can resolve against it; receivers gate on the entry via subscription edges, not via body substitution. An author-declared `messages:` entry of type `""` is refused at registration as reserved-for-runtime.
 - Receipt-time lookup against the registry is the gate: unknown type refuses with an unknown-type response.
 - The body-schema is documentation and a registration-time check on substitution references; the actual body bytes are validated at the receiver's dispatch via the existing attribute-validation machinery. The body remains inert at receipt (see `@blessed-invariant: 21`).

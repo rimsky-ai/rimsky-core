@@ -52,26 +52,6 @@ func TestClient_ListAssets(t *testing.T) {
 	}
 }
 
-func TestClient_MaterializeAsset(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/instances/abc/assets/loader.fs/materialize" {
-			t.Errorf("path: %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]any{"message_id": "m"})
-	}))
-	defer srv.Close()
-	c := NewClient(srv.URL)
-	out, err := c.MaterializeAsset(context.Background(), "abc", "loader.fs", MaterializeAssetRequest{Reason: "test"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out["message_id"] != "m" {
-		t.Errorf("message_id: %v", out)
-	}
-}
-
 func TestClient_DeleteAsset(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {

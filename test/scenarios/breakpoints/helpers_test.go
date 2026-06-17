@@ -230,6 +230,21 @@ func waitForStubObservedCount(h *scenario.Harness, nodeType string, want int, ti
 // returns the new instance id. Mirrors scenario.Harness.CreateInstance
 // but does NOT call waitForRootDispatch (no dispatch should happen until
 // resume).
+//
+// Post-spec instance creation is idle, so this helper additionally posts
+// an empty-message wake right after create. The wake POST enqueues BOTH
+// the wake envelope AND its delivering frame in the same tx via the
+// universal `POST /instances/{id}/messages` route (see
+// `handleCreateMessage`'s `EnqueueMessage` + `EnqueueFrame` calls). The
+// envelope persists in the message ledger and the frame persists in
+// `rimsky_frames` with `state=queued`; the frame stays queued (no
+// promotion) while the instance is paused. When the test resumes the
+// instance, the frame engine's queued-frame sweep promotes the frame to
+// running, the message delivers, and the cascade walker fires the
+// structural roots — preserving the helper's pre-spec contract that a
+// subsequent `instanceResume` triggers root dispatch.
+// @decision: empty-message-as-root-trigger
+// @decision: test-harness-create-instance-wakes-roots-after-create
 func createInstanceWithPause(t *testing.T, h *scenario.Harness, templateHash, consumerKey string, params map[string]any) shared.UUID {
 	t.Helper()
 	bodyMap := map[string]any{
@@ -249,5 +264,7 @@ func createInstanceWithPause(t *testing.T, h *scenario.Harness, templateHash, co
 	if err != nil {
 		t.Fatalf("createInstanceWithPause: bad instance_id %q: %v", idStr, err)
 	}
-	return shared.UUID(id)
+	instID := shared.UUID(id)
+	h.PostInstanceMessage(instID, "", nil, "bp-wake-"+instID.String())
+	return instID
 }

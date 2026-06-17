@@ -324,6 +324,10 @@ func deployTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any
 }
 
 // createInstance POSTs a new instance and returns its instance_id.
+// Instance creation is idle post-spec; the helper follows up with an empty
+// message so the structural roots wake.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
 func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
@@ -343,6 +347,7 @@ func createInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanc
 	if resp.InstanceID == "" {
 		t.Fatalf("instance_id empty: %s", string(raw))
 	}
+	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "scopes-conflict", instanceKey)
 	return resp.InstanceID
 }
 

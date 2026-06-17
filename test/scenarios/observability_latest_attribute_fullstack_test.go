@@ -21,6 +21,7 @@ package scenarios
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -32,6 +33,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -50,9 +52,17 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "latest-attr-bag", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/worker"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/worker", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -66,6 +76,12 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-latest-attr", map[string]any{})
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)
+	// @constraint: worker was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the initial dispatch the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh on first run")
@@ -78,7 +94,7 @@ func TestNodeLatestAttributeBagFullStack(t *testing.T) {
 	// DIFFERENT delta value — satisfies the "most-recent of two runs"
 	// clause: the latest bag must differ from the first.
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "second"}, true, "rerun")
-	h.InvalidateNode(iid, w.ID)
+	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @deliberate: Wait until the live primitive reports the SECOND run's bag (new run
 	// id + new value). This is the canonical value both surfaces must echo.

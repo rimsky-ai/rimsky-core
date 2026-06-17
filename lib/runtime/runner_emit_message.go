@@ -123,8 +123,7 @@ const EmitMessageDispatchName = "@emit-message"
 // running frame F0 belongs to the emit-node and has only its own
 // triggering message; `SweepDeliverMessagesForRunningFrames` never
 // creates a frame for a pending message). The enqueue mirrors the
-// operator-API path at `controlapi.handleCreateMessage` and the
-// runtime-synthetic path at `EnqueueSyntheticWakeFrame`: same tx, same
+// operator-API path at `controlapi.handleCreateMessage`: same tx, same
 // `EnqueueFrame` call, same FK target. On a replay branch (dedup hit)
 // the prior emit attempt already enqueued its frame, so the enqueue
 // is skipped — the existing frame is what delivers the existing

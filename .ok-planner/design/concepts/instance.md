@@ -12,7 +12,7 @@ An instance is one live deployment of a template, identified by a rimsky-generat
 
 ## Purpose
 
-Templates declare the graph shape; instances are the live runtimes. Instances are what frames belong to and what cascade resolves against.
+Templates declare the graph shape; instances are the live runtimes. Instances are what frames belong to and what cascade resolves against. Instance creation creates the per-instance row and the per-instance node rows and triggers the lifecycle-subscriber `OnInstanceCreated` callback; no frame is enqueued and no work begins until a sender posts a message. The empty-message trigger (`story:empty-message-wakes-roots`) is the universal convenience for waking every structural root without crafting a typed envelope.
 
 ## Boundaries
 

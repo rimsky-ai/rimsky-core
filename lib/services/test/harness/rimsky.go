@@ -730,6 +730,31 @@ func (e RimskyEndpoint) PostJSONWithHeaders(t testing.TB, path string, body any,
 	return resp.StatusCode, out
 }
 
+// EmptyWakeAfterCreate POSTs an empty-message wake to
+// `/v1/instances/{instanceID}/messages` so the deployed template's
+// structural roots fire. Instance creation is idle by spec
+// (story:instance-create-is-idle); the operator-level empty emit opens
+// the first frame for any structural-root receiver
+// (`subscribes:` empty/absent) on the template. Idempotency-Key is
+// `<idempotencyKeyPrefix>-wake-<instanceKey>`. The status check
+// accepts 201 (fresh insert) and 200 (idempotent replay); anything
+// else fails the test via t.Fatalf.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
+// @decision: compose-driver-emits-empty-message-after-create
+// @story: instance-create-is-idle
+func (e RimskyEndpoint) EmptyWakeAfterCreate(t testing.TB, instanceID, idempotencyKeyPrefix, instanceKey string) {
+	t.Helper()
+	wakeStatus, wakeRaw := e.PostJSONWithHeaders(t,
+		"/v1/instances/"+instanceID+"/messages",
+		map[string]any{"type": ""},
+		map[string]string{"Idempotency-Key": idempotencyKeyPrefix + "-wake-" + instanceKey})
+	if wakeStatus != http.StatusCreated && wakeStatus != http.StatusOK {
+		t.Fatalf("POST /v1/instances/%s/messages (empty wake): %d %s",
+			instanceID, wakeStatus, string(wakeRaw))
+	}
+}
+
 // GetJSON GETs e.BaseURL+path with optional Bearer key.
 func (e RimskyEndpoint) GetJSON(t testing.TB, path, bearer string) (int, []byte) {
 	t.Helper()

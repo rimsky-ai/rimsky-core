@@ -34,6 +34,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -42,6 +43,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -60,9 +62,17 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "multi-hard-dep-rendezvous", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/trigger"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "trigger", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/trigger", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -129,6 +139,12 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	require.NotNil(t, aN)
 	require.NotNil(t, bN)
 	require.NotNil(t, cN)
+	// @constraint: trigger was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the initial cascade the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/trigger", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	// @constraint: Phase 1 (boot): the boot frames must terminate — a never-
 	// fresh c means the walk is livelocked on mutual upstream
@@ -159,7 +175,7 @@ func TestMultiHardDepRendezvous(t *testing.T) {
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-2"}, true, "ok").Delay(300 * time.Millisecond)
 	h.Stub.WhenType("c").Success(map[string]any{}, true, "ok")
 
-	h.InvalidateNode(iid, trigN.ID)
+	h.PostInstanceMessage(iid, "test/wake/trigger", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {

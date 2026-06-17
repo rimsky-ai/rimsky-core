@@ -2,16 +2,18 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Verifies that POST /nodes/{id}/reset on a failed node drives through
-// the frame engine (frame.EnqueueFrame) rather than calling
-// UpdateState(failed → stale) directly. Direct UpdateState would strand
-// the node with no frame_id (blessed-invariant 19), and sweepReady /
-// RecalculateNode skip nil-frame_id nodes — the node would never run.
+// Verifies the post-spec node-reset / retry workflow. Per the
+// empty-message-wake-trigger spec:
+//   - POST /nodes/{id}/reset is a pure retry-budget-clear verb. It
+//     clears the error budget, resets the settling-signal-type, and
+//     nulls the frame_id pointer. It does NOT enqueue a frame.
+//   - The operator's workflow for retrying an errored node is two
+//     explicit steps: reset (clears the retry budget) then a message
+//     emit (empty for whole-instance, typed for partial) that
+//     invalidates the node so a fresh dispatch is attempted.
 //
-// This test catches review Issues 2 and 16: handleResetNode must clear
-// the prior frame_id (defensive) and enqueue a frame so the next
-// scheduler tick advances the queued frame and writes the new frame_id
-// onto the source node before any dispatch.
+// @story: node-admin
+// @decision: node-reset-as-pure-retry-budget-clear
 package frame_resolution
 
 import (
@@ -67,14 +69,19 @@ func TestResetFailedNodeDrivesThroughFrameEngine(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
+	// @constraint: post-spec the reset endpoint is a pure
+	// retry-budget-clear verb. It does NOT enqueue a frame. The
+	// operator drives the retry by posting an empty-message wake to
+	// invalidate the node.
+	// @story: node-admin
+	// @decision: node-reset-as-pure-retry-budget-clear
+	h.PostInstanceMessage(iid, "", nil, "reset-followup-wake-"+iid.String())
+
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 20*time.Second),
-		"worker did not reach fresh after reset; if reset bypassed the frame engine the node would be stuck stale with nil/old frame_id")
+		"worker did not reach fresh after reset+empty-message; the two-step retry workflow must drive the node back through the cascade")
 
 	require.True(t, waitForFramesByState(t, h, iid, "completed", 1, 5*time.Second),
 		"second frame should end completed")
-
-	frames := listFrames(t, h, iid)
-	require.Len(t, frames, 2, "expected one failed frame plus one completed frame after reset")
 
 	// @deliberate: Final frame_id on the now-fresh node should be cleared (per the
 	// enforceAndUpdate fresh-state guard; spec §4.4).

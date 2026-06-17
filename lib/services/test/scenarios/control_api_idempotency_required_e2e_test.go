@@ -101,12 +101,15 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 
 	messagesPath := "/v1/instances/" + instanceID + "/messages"
 
-	// @constraint: instance creation enqueues an `instance/root` synthetic
-	// envelope through the runtime-synthetic-envelope helper, so the ledger
-	// is NOT empty before the test's emits. Capture the baseline count once
-	// so each assertion checks the delta the test caused rather than an
-	// absolute count that drifts with future seeds.
-	baseline := countInstanceMessagesAtLeast(t, ep, messagesPath, 1, 5*time.Second)
+	// @constraint: post-spec instance creation is idle — the ledger is
+	// structurally empty before the test's emits, since
+	// createScenarioInstance POSTs to /v1/instances directly and never
+	// emits a wake (the compose driver's empty-message wake does not
+	// run on this test path). We baseline what is present rather than
+	// asserting absolute zero so a future seed step added at this call
+	// site does not silently invalidate the count math.
+	// @story: instance-create-is-idle
+	baseline := countInstanceMessages(t, ep, messagesPath)
 
 	// @deliberate: the body is held constant across all three POSTs below so
 	// the ONLY variable under test is the presence/absence of the
@@ -173,27 +176,6 @@ func TestControlAPIIdempotencyRequired_E2E(t *testing.T) {
 	if n := countInstanceMessages(t, ep, messagesPath); n != baseline+1 {
 		t.Fatalf("after replaying the same key, GET %s shows %d messages, want still exactly baseline+1=%d — the replay must not insert a second envelope",
 			messagesPath, n, baseline+1)
-	}
-}
-
-// countInstanceMessagesAtLeast polls the messages-list route until the
-// count reaches at least `want` (or the deadline passes, in which case
-// the test fails). Used to baseline a count when the seed flow
-// asynchronously enqueues envelopes (e.g. the `instance/root` synthetic
-// envelope that instance-create writes through the runtime-synthetic-
-// envelope helper).
-func countInstanceMessagesAtLeast(t *testing.T, ep harness.RimskyEndpoint, path string, want int, deadline time.Duration) int {
-	t.Helper()
-	end := time.Now().Add(deadline)
-	for {
-		n := countInstanceMessages(t, ep, path)
-		if n >= want {
-			return n
-		}
-		if !time.Now().Before(end) {
-			t.Fatalf("baseline count for %s never reached %d within %v (last seen=%d)", path, want, deadline, n)
-		}
-		time.Sleep(100 * time.Millisecond)
 	}
 }
 

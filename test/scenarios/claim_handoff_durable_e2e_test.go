@@ -54,6 +54,7 @@ package scenarios
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -200,14 +201,16 @@ func testClaimHandoffDurable_CrossDispatchHolds(t *testing.T) {
 	// will appear after invalidate.
 	d1RunID := latestRunIDForNode(t, h, coHolder.ID)
 
-	// @deliberate: D2: re-invalidate the co-holder. The runtime-synthetic envelope
-	// moves the node back to stale; the scheduler re-dispatches.
-	// On D2 acquire-tx, loadInheritedClaimsForNode walks holds:asset
-	// → acquirer's durable claim_handle row (still present at
-	// state=committed) → fills acq.HeldClaims; buildResolveContext-
-	// ForDispatch (post Pass-1) merges acq.HeldClaims into the
-	// substitution context so `{{claim.asset.address}}` resolves.
-	h.InvalidateNode(coHolder.InstanceID, coHolder.ID)
+	// @deliberate: D2: re-invalidate the co-holder via a per-target
+	// typed-message wake. On D2 acquire-tx, loadInheritedClaimsForNode
+	// walks holds:asset → acquirer's durable claim_handle row (still
+	// present at state=committed) → fills acq.HeldClaims;
+	// buildResolveContextForDispatch (post Pass-1) merges acq.HeldClaims
+	// into the substitution context so `{{claim.asset.address}}`
+	// resolves.
+	h.PostInstanceMessage(coHolder.InstanceID,
+		"test/wake/"+coHolder.NodeType, nil,
+		fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @deliberate: Wait until the co-holder has a NEW run row distinct from the
 	// D1 run id, then wait for it to settle fresh.
@@ -663,8 +666,12 @@ func startDurableHandoffHarness(t *testing.T, opts durableHandoffOpts) (*scenari
 	h.Stub.WhenType("acquirer").Success(map[string]any{}, true, "owned")
 	h.Stub.WhenType(opts.coHolderType).Success(map[string]any{}, true, "co-held")
 
+	wakeType := "test/wake/" + opts.coHolderType
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "claim-handoff-durable-" + opts.coHolderType, Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: wakeType},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "acquirer", Executor: "stub"},
@@ -684,7 +691,10 @@ func startDurableHandoffHarness(t *testing.T, opts durableHandoffOpts) (*scenari
 						opts.alias: {From: "acquirer"},
 					},
 				},
-				scenario.WithSubscribes(node.SubscriptionEntry{Node: "acquirer", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)}),
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{Node: "acquirer", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+					node.SubscriptionEntry{Node: wakeType, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+				),
 				scenario.WithAttributes(opts.coHolderAttrs),
 			),
 		},

@@ -104,14 +104,25 @@ func seedTerminalRunWithSignalType(
 	inst persistence.InstanceRow, nodeID shared.UUID, signalType string,
 ) uuid.UUID {
 	t.Helper()
-	var frameID uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver, `
-        SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 ORDER BY queued_at DESC LIMIT 1
-    `, []any{inst.ID}, &frameID)
+	// @constraint: post-spec instance creation is idle (no frame is
+	// enqueued), so the test seeds a triggering message + frame
+	// directly to satisfy the node_run FK on frame_id.
 	var mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver, `
         SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1
     `, []any{inst.ID}, &mainScopeID)
+	msgID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_messages
+            (id, instance_id, type, sender_kind, sender, payload, received_at)
+        VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
+    `, msgID, inst.ID)
+	frameID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_frames
+            (frame_id, instance_id, state, queued_at, ended_at, triggering_message_id, frame_timeout_ms)
+        VALUES ($1, $2, 'completed', now(), now(), $3, 60000)
+    `, frameID, inst.ID, msgID)
 
 	// @constraint: insert a completed-terminal run row. State 'fresh' on a completed
 	// terminal row matches the nodeSelect contract: a completed run

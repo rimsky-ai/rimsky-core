@@ -22,7 +22,7 @@ Wait-set insertion is gated by walk-time CEL filter evaluation: a cascade-walk m
 
 Owns:
 - The per-frame ledger schema and PK invariant.
-- The two insertion paths: (a) on cascade-walk when a sender transitions out of a settled state, and (b) at synthetic-frame promotion when the envelope payload carries `(receiver, upstream)` pairs declaring a force-upstream-refresh edge that must gate the receiver in the new frame.
+- The single insertion path: on cascade-walk when a sender transitions out of a settled state (pessimistic invalidate). The settled-state drain bulk-marks rows as drained when the sender resolves (fresh / failed / parked) by stamping a drain timestamp rather than deleting the row.
 - The bulk-drain-on-settle rule (stamping a drain timestamp; rows are never deleted on settle).
 - The eligibility predicate used by the ready-for-dispatch query.
 
@@ -38,6 +38,5 @@ Does NOT own:
 - A stale run is not dispatch-eligible while any subscribed upstream has an in-flight run in the same frame, regardless of which propagation path made the receiver stale; the eligibility predicate enforces this independent of wait-set seeding. Self-subscription is exempt: a node's own in-flight run never gates its own dispatch.
 - Bulk-drain on sender resolution covers every topic kind uniformly.
 - The primary key `(frame_id, receiver_run_id, sender_run_id, topic_kind, subscription_scope)` ensures duplicate inserts within the same transaction collapse to a no-op. The drain-timestamp field is a non-PK lifecycle marker; the substitution-context builder reads the drained attribute rows for a receiver.
-- Pre-emptive rows installed by synthetic-frame promotion (path b above) enter the same drain-on-settle lifecycle and feed the same eligibility predicate as cascade-walk rows; the receiver is gated until its declared force-upstream-refresh upstream settles and drains, which structurally guarantees the upstream runs before the receiver dispatches in the new frame.
 
 Drained rows are the durable record of "which senders contributed to this receiver's dispatch in this frame." The substitution-context builder queries them (filtered to attribute-topic rows, with sender state checked against settled-success outcomes) to populate the dependency map for `{{nodes.X.attribute.Y}}` directives. Cleanup happens via frame cascade-delete.

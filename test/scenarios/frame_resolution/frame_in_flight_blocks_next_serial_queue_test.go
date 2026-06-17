@@ -36,7 +36,7 @@ func TestFrameInFlightBlocksNextSerialQueue(t *testing.T) {
 		"first frame did not enter running")
 
 	// @constraint: Fire second invalidate; it should queue, not run.
-	fireInvalidate(t, h, iid, worker.ID)
+	postInvalidateMessage(t, h, iid)
 
 	// @constraint: While first is running, second must stay queued.
 	require.True(t, waitForFramesByState(t, h, iid, "queued", 1, 2*time.Second),

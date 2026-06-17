@@ -127,6 +127,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 	r.Post("/v1/instances/{idOrKey}/terminate", s.handleTerminateInstance)
 	r.Get("/v1/instances/{idOrKey}/nodes", s.handleListInstanceNodes)
 	r.Get("/v1/instances/{idOrKey}/breakpoint-hits", s.handleListBreakpointHits)
+	r.Post("/v1/instances/{idOrKey}/messages", s.handleCreateInstanceMessage)
 
 	r.Get("/v1/nodes/{id}", s.handleGetNode)
 	r.Post("/v1/nodes/{id}/reset", s.handleResetNode)
@@ -519,6 +520,55 @@ func nodeCountForSpec(spec map[string]any) int {
 		return len(nodes)
 	}
 	return 0
+}
+
+// handleCreateInstanceMessage stubs POST /v1/instances/{idOrKey}/messages.
+// The real control-api dedups on the Idempotency-Key header and returns the
+// original message_id with 200 OK on replay; for the cli stub we synthesize
+// a deterministic message_id from the idempotency key (when present) so a
+// re-issued request returns the same id, and we fall back to a monotonic
+// counter when the header is missing. The body shape mirrors the real
+// surface enough for the CLI client to round-trip successfully.
+//
+// @decision: compose-driver-emits-empty-message-after-create
+func (s *Server) handleCreateInstanceMessage(w http.ResponseWriter, r *http.Request) {
+	idOrKey := chi.URLParam(r, "idOrKey")
+	if s.maybeFail(w, r, "/v1/instances/"+idOrKey+"/messages") {
+		return
+	}
+	inst := s.State.FindInstance(idOrKey)
+	if inst == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "instance not found"})
+		return
+	}
+	var body struct {
+		Type    string          `json:"type"`
+		Payload json.RawMessage `json:"payload,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad body"})
+		return
+	}
+	// @constraint: Idempotency-Key is MANDATORY on every emit per the
+	// live control-api semantics (`code:lib/control/controlapi/messages.go::handleCreateMessage`
+	// at the pre-tx 400-on-missing-header gate). The stub mirrors that
+	// gate so a CLI test that omits the header against the stub fails
+	// the same way it would against the real server, rather than
+	// passing here and breaking in production. The CLI side helper
+	// (`code:cmd/rimsky/cli/client.go::CreateInstanceMessage`) always
+	// supplies the header; this guard catches a hand-rolled request
+	// that bypasses the helper.
+	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idemKey == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Idempotency-Key header is required"})
+		return
+	}
+	msgID, fresh := s.State.RecordInstanceMessage(inst.ID, idemKey)
+	status := http.StatusCreated
+	if !fresh {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, map[string]any{"message_id": msgID})
 }
 
 func (s *Server) handleListInstances(w http.ResponseWriter, r *http.Request) {

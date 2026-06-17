@@ -6,12 +6,8 @@ package frame
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
@@ -151,7 +147,15 @@ func transitionFrameEnd(ctx context.Context, store persistence.Tables, frameID, 
 	return nil
 }
 
+// runAdvanceQueued promotes every queued-and-ready frame to running.
+// Receivers wake exclusively via the subscriber-side cascade in
+// `runtime.cascadeMessageVirtualNodeSettleInTx`: the triggering
+// message's type is the virtual-node sender key; subscribers declared
+// via `subscribes: [{node: <type>, type: terminal/success}]` (including
+// the runtime-injected structural-root edges keyed by sender="") stale-
+// mark through the standard edge map.
 func runAdvanceQueued(ctx context.Context, store persistence.Tables, queue persistence.Queue, logger Logger) error {
+	_ = queue
 	var advances []persistence.FrameQueuedReady
 	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		as, err := store.Frames().ListQueuedFramesReadyToStart(ctx, tx)
@@ -165,230 +169,29 @@ func runAdvanceQueued(ctx context.Context, store persistence.Tables, queue persi
 	}
 
 	for _, a := range advances {
-		if err := advanceOneFrame(ctx, store, queue, a.FrameID, a.InstanceID, a.TriggeringMessageID, logger); err != nil {
+		var promoted bool
+		err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
+			moved, perr := store.Frames().PromoteQueuedFrameToRunning(ctx, a.FrameID, tx)
+			if perr != nil {
+				return perr
+			}
+			// @deliberate: !moved → another replica won; nothing to do.
+			promoted = moved
+			return nil
+		})
+		if err != nil {
 			logger.Warn("frame.start.advance_failed",
 				"frame_id", a.FrameID,
 				"instance_id", a.InstanceID,
 				"error", err.Error())
 			continue
 		}
-	}
-	return nil
-}
-
-// advanceOneFrame promotes one queued frame to running and stale-marks
-// every wake-target named in the triggering message's payload.
-//
-// Pass 4 of the 2026-06-14 message-schema-layer reshape: the legacy
-// rimsky_frames.source_node_ids column retired (Pass 1) and with it the
-// frame-engine path that stale-marked source nodes at promotion. The
-// replacement is `payload.wake_node_ids` on the triggering message — an
-// array of node-UUIDs the runtime-side (instance-factory for roots,
-// invalidate / reset handlers for ad-hoc invalidates) embeds when it
-// seeds the synthetic envelope. Reading the array at promotion preserves
-// the promote+stale-mark atomicity the supervisor's `ListReadyForDispatch`
-// relies on: the supervisor never sees a stale row whose frame is still
-// queued (the cheaper shape "stale-mark at instance-factory time" admits
-// dispatch against a queued frame, breaking the frame-end invariant).
-//
-// Two wake mechanisms by design (the divide is structural, not transitional):
-//
-//   - Runtime-synthetic envelopes (the ones THIS function looks at) wake
-//     receivers by enumerating node-UUIDs in `payload.wake_node_ids`. Emit
-//     sites construct these envelopes via `runtime.EnqueueSyntheticWakeFrame`
-//     — the instance-factory's initial-frame seed
-//     (`code:control/controlapi/instances.go::createInstance`, type
-//     `"instance/root"`), the reset handler's next-frame seed
-//     (`code:control/controlapi/nodes.go::handleResetNode`, type
-//     `"node/reset"`), and the asset-materialize handler
-//     (`code:control/controlapi/assets.go`, type `"asset/materialize"`).
-//     None of these types is declared in any template's `messages:`
-//     registry — they bypass the registry gate by going through
-//     `runtime.EnqueueMessage` directly. Receivers are addressed by UUID,
-//     not by subscription.
-//
-//   - Author-declared envelopes (operator-posted, publisher-emitted,
-//     cascade-emitted from a message-emitter node) carry NO
-//     `wake_node_ids`. Receivers wake through the subscriber-side cascade
-//     in `runtime.cascadeMessageVirtualNodeSettleInTx`: the message's
-//     `type` is the virtual-node sender key, subscribers declared via
-//     `subscribes: [{node: <type>, type: terminal/success}]` match through
-//     the standard edge map and stale-mark in the new frame.
-//
-// Template authors do NOT subscribe to the synthetic types — those
-// envelopes ship without `wake_node_ids` only by accident; a template
-// author who writes `subscribes: [{node: instance/root, type: terminal/
-// success}]` would discover the synthetic surface, but the registry
-// validator would reject `instance/root` as undeclared. The divide is
-// stable as long as runtime-synthetic types are confined to runtime-
-// internal call sites.
-//
-// @deliberate: runtime-synthetic envelopes wake via
-// payload.wake_node_ids; author-declared envelopes wake via the
-// subscriber-side cascade. Both surfaces converge on the same stale-
-// mark + dispatch path; only the wake-target selection differs.
-//
-// @blessed-invariant 21: messages are inert. The `json.Unmarshal`
-// below is the fifth sanctioned site that reads payload bytes — see
-// the enumeration in
-// `code:graph/attribute/substitution.go::resolveTriggerValue` and
-// `code:graph/attribute/substitution.go::resolveMessagesValue`. The
-// read is runtime-internal wake-field extraction (the rimsky-synthesized
-// `wake_node_ids` array) and a different surface than user-authored
-// body reads. The bytes are never logged, formatted with `%v`, or
-// echoed into error messages; an unparseable payload only emits a
-// warn with the frame_id + triggering_message_id + the decode error
-// string (never payload contents).
-func advanceOneFrame(
-	ctx context.Context, store persistence.Tables, queue persistence.Queue, frameID, instanceID, triggeringMessageID uuid.UUID, logger Logger,
-) error {
-	var promoted bool
-	if err := store.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
-		moved, err := store.Frames().PromoteQueuedFrameToRunning(ctx, frameID, tx)
-		if err != nil {
-			return err
+		if promoted {
+			logger.Info("frame.start",
+				"frame_id", a.FrameID,
+				"instance_id", a.InstanceID,
+				"triggering_message_id", a.TriggeringMessageID)
 		}
-		if !moved {
-			// @deliberate: Another replica won; nothing to do.
-			return nil
-		}
-		promoted = true
-		// @deliberate: Read the triggering message and stale-mark every
-		// wake_node_ids target IN THE PROMOTION TX. Co-committing
-		// guarantees the supervisor cannot observe a stale row before
-		// its frame transitions to running. The tx-aware GetInTx is
-		// mandatory here: the tx-less Get goes through the pool
-		// (db.QueryContext), and under SQLite's MaxOpenConns=1 that
-		// blocks forever waiting for the only pool connection — held
-		// by this open promotion tx. See @blessed-invariant: tx-aware
-		// reads from inside an open tx.
-		msg, err := store.Messages().GetInTx(ctx, tx, shared.UUID(triggeringMessageID))
-		if err != nil {
-			return fmt.Errorf("advanceOneFrame: get triggering message: %w", err)
-		}
-		if msg == nil || len(msg.Payload) == 0 {
-			return nil
-		}
-		var payloadMap map[string]any
-		if err := json.Unmarshal(msg.Payload, &payloadMap); err != nil {
-			// @deliberate: malformed payload — log and proceed. The frame is
-			// running; subscriber-side cascade is still available for
-			// other wake mechanisms.
-			logger.Warn("advanceOneFrame: malformed message payload",
-				"frame_id", frameID,
-				"triggering_message_id", triggeringMessageID,
-				"error", err.Error())
-			return nil
-		}
-		ids, _ := payloadMap["wake_node_ids"].([]any)
-		if len(ids) == 0 {
-			return nil
-		}
-		inst, err := store.Instances().Get(ctx, shared.UUID(instanceID), tx)
-		if err != nil {
-			return fmt.Errorf("advanceOneFrame: get instance: %w", err)
-		}
-		if inst == nil {
-			return nil
-		}
-		// @deliberate: capture per-node-id the affirmed in-flight run id
-		// so the upstream-refresh wait-set pre-install below can map
-		// (receiver_id, upstream_id) pairs into their run ids without a
-		// second resolver loop.
-		runIDByNode := make(map[shared.UUID]shared.UUID, len(ids))
-		for _, raw := range ids {
-			s, ok := raw.(string)
-			if !ok {
-				continue
-			}
-			parsed, perr := uuid.Parse(s)
-			if perr != nil {
-				continue
-			}
-			nodeID := shared.UUID(parsed)
-			node, gerr := store.Nodes().Get(ctx, nodeID, tx)
-			if gerr != nil {
-				return fmt.Errorf("advanceOneFrame: get wake node: %w", gerr)
-			}
-			if node == nil {
-				continue
-			}
-			scope := inst.MainRunScopeID
-			if node.RunScopeID != nil {
-				scope = *node.RunScopeID
-			}
-			if err := store.Nodes().AffirmNodeRunRow(ctx, nodeID, scope, shared.UUID(frameID), tx); err != nil {
-				if errors.Is(err, persistence.ErrRunScopeClosed) {
-					continue
-				}
-				return fmt.Errorf("advanceOneFrame: affirm wake node: %w", err)
-			}
-			runID, hasInFlight, err := queue.GetInFlightRunForNode(ctx, tx, nodeID, scope)
-			if err != nil {
-				return fmt.Errorf("advanceOneFrame: resolve wake run: %w", err)
-			}
-			if !hasInFlight {
-				continue
-			}
-			if err := store.Nodes().MarkStaleForCascade(ctx, runID, shared.UUID(frameID), tx); err != nil {
-				return fmt.Errorf("advanceOneFrame: stale-mark wake node: %w", err)
-			}
-			runIDByNode[nodeID] = runID
-		}
-		// @blessed-invariant: upstream-staled-before-receiver-dispatch
-		// — pre-install wait-set rows for every `wait_set_pairs` entry
-		// the synthetic envelope embedded. Each pair maps a receiver to
-		// a force_upstream_refresh upstream the receiver depends on;
-		// both are in this frame's wake_node_ids (the synthetic-envelope
-		// chokepoint auto-expanded them). The pre-installed wait-set
-		// row keys (frame, receiver_run, upstream_run) so the
-		// supervisor's existing eligibility predicate gates the receiver
-		// until the upstream settles + drains its wait-set; the cascade
-		// walker drains the row in the upstream's terminal tx; the
-		// substitution context builder reads the drained row at the
-		// receiver's dispatch — all existing machinery, no race window
-		// between stale-mark and gate install.
-		// @story: upstream-pull-on-invalidate
-		// @concept: wait-set
-		// @concept: cascade
-		if pairs, ok := payloadMap["wait_set_pairs"].([]any); ok {
-			for _, raw := range pairs {
-				m, ok := raw.(map[string]any)
-				if !ok {
-					continue
-				}
-				rStr, _ := m["receiver"].(string)
-				uStr, _ := m["upstream"].(string)
-				rUUID, rerr := uuid.Parse(rStr)
-				uUUID, uerr := uuid.Parse(uStr)
-				if rerr != nil || uerr != nil {
-					continue
-				}
-				receiverRun, rOK := runIDByNode[shared.UUID(rUUID)]
-				upstreamRun, uOK := runIDByNode[shared.UUID(uUUID)]
-				if !rOK || !uOK {
-					continue
-				}
-				if err := store.WaitSet().Insert(ctx, persistence.WaitSetRow{
-					FrameID:           shared.UUID(frameID),
-					ReceiverRunID:     receiverRun,
-					SenderRunID:       upstreamRun,
-					TopicKind:         "attribute",
-					SubscriptionScope: "direct",
-				}, tx); err != nil {
-					return fmt.Errorf("advanceOneFrame: install upstream-refresh wait-set: %w", err)
-				}
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	if promoted {
-		logger.Info("frame.start",
-			"frame_id", frameID,
-			"instance_id", instanceID,
-			"triggering_message_id", triggeringMessageID)
 	}
 	return nil
 }

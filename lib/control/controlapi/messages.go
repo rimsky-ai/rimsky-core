@@ -176,70 +176,6 @@ func (e *unknownMessageTypeError) Error() string {
 	return fmt.Sprintf("unknown message type %q (declared types: %v)", e.Type, e.Declared)
 }
 
-// reservedPayloadFieldWakeNodeIDs is the runtime-internal payload field
-// that runtime-synthetic envelopes (`node/reset`, `instance/root`,
-// `asset/materialize`) use to enumerate the node UUIDs to stale-mark in
-// the promotion tx (see `lib/graph/frame/engine.go::advanceOneFrame`).
-// An author-declared envelope MUST NOT carry this field on its payload
-// — otherwise an operator with `message:send` permission could smuggle
-// stale-mark targets through a declared message type and obtain a
-// backdoor unconditional stale-mark against any node UUID they can
-// name. The structural-divide @blessed-invariant in
-// `lib/graph/frame/engine.go` notes that author-declared envelopes
-// ship without `wake_node_ids` "only by accident"; this gate makes
-// that property structural rather than accidental.
-const reservedPayloadFieldWakeNodeIDs = "wake_node_ids"
-
-// errPayloadCarriesReservedField is the sentinel returned when an
-// author-declared message's payload carries the reserved
-// `wake_node_ids` field. Mapped to HTTP 400.
-var errPayloadCarriesReservedField = errors.New("message payload must not carry reserved field \"wake_node_ids\" (runtime-internal wake mechanism)")
-
-// validateReservedPayloadFields enforces the reserved-field guard on
-// an author-declared message's payload at receipt: the runtime-internal
-// `wake_node_ids` field MUST NOT appear on the wire. This is the
-// privilege-escalation guard — an author-declared envelope cannot
-// smuggle stale-mark targets through the runtime-synthetic wake
-// mechanism.
-//
-// Per the spec `.ok-planner/specs/2026-06-14-message-schema-layer-design.md`
-// (§"Receipt-time body shape is documentation only") and `concept:message-
-// schema`, the body shape itself is documentation plus a registration-
-// time check on substitution refs. The actual body bytes are validated
-// only at the receiver's dispatch via the existing attribute-validation
-// machinery (per `concept:attribute`). Receipt-time body-schema validation
-// would be a third read site for the payload bytes, violating
-// `@blessed-invariant: 21`. This helper therefore restricts itself to
-// the reserved-field guard, whose privilege-escalation rationale is
-// independent of the inertness invariant.
-//
-// An undeclared type never reaches this helper (the caller filters first).
-func validateReservedPayloadFields(payload json.RawMessage) error {
-	// @constraint: decode the payload only enough to test for the
-	// reserved key. An empty payload is admitted; there is nothing to
-	// check.
-	if len(payload) == 0 {
-		return nil
-	}
-	var body map[string]any
-	if err := json.Unmarshal(payload, &body); err != nil {
-		// @constraint: per `@blessed-invariant: message-inertness` we
-		// do not validate body shape at receipt; a non-object payload
-		// (array, scalar, malformed JSON) is admitted here and surfaces
-		// at the substitution leaf if a receiver tries to walk it. The
-		// reserved-field guard cannot see it either way (there is no
-		// top-level key to inspect), which is the correct floor: the
-		// guard exists to keep an operator from smuggling a
-		// `wake_node_ids` *property*; a non-object payload cannot do
-		// that by construction.
-		return nil
-	}
-	if _, ok := body[reservedPayloadFieldWakeNodeIDs]; ok {
-		return errPayloadCarriesReservedField
-	}
-	return nil
-}
-
 // handleCreateMessage is POST /instances/{id}/messages.
 //
 // Validates the body, requires the mandatory Idempotency-Key header,
@@ -268,10 +204,6 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&body); err != nil {
 			badRequest(w, "invalid JSON body: "+err.Error())
-			return
-		}
-		if body.Type == "" {
-			badRequest(w, "type is required")
 			return
 		}
 		// @constraint: the accepted `type:` set is gated on the instance's
@@ -375,31 +307,19 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 					matched = true
 				}
 			}
+			// @constraint: every template's declared-types set carries
+			// an implicit empty-string entry — the empty-message wake
+			// trigger seeded at registration. The receipt-time check
+			// admits empty-typed messages uniformly under the same
+			// uniform check.
+			// @decision: empty-message-as-root-trigger
+			// @story: empty-message-wakes-roots
+			if body.Type == "" {
+				matched = true
+			}
 			if !matched {
 				sort.Strings(declared)
 				return &unknownMessageTypeError{Type: body.Type, Declared: declared}
-			}
-			// @constraint: reserved-field guard. Runs INSIDE the tx (read
-			// in lockstep with the matched type) but BEFORE the
-			// idempotency insert + envelope insert so a
-			// runtime-internal-field-smuggling payload can never pollute
-			// the idempotency ledger nor land an envelope no receiver
-			// should ever match. This is the privilege-escalation guard:
-			// the payload must not carry the runtime-internal
-			// `wake_node_ids` field. Otherwise an operator with
-			// `message:send` could obtain a backdoor unconditional
-			// stale-mark against any node UUID. Body-schema validation
-			// does NOT run here — per `@blessed-invariant: message-inertness`
-			// and `concept:message-schema`, the declared body_schema is
-			// documentation plus a registration-time check on
-			// substitution refs; the actual body bytes are validated only
-			// at the receiver's dispatch via the existing
-			// attribute-validation gate. Adding a receipt-time validation
-			// pass would be a third read site for payload bytes.
-			//
-			// @concept: message-schema
-			if err := validateReservedPayloadFields(body.Payload); err != nil {
-				return err
 			}
 			// @constraint: publisher capability check: the publisher-subscription must
 			// be live (active, or still mounting) and bound to THIS
@@ -525,21 +445,23 @@ func handleCreateMessage(deps AppDeps) http.HandlerFunc {
 				if declared == nil {
 					declared = []string{}
 				}
+				// @constraint: surface the runtime-implicit empty-
+				// message type-path as a sibling field rather than
+				// folding it into `declared_types`. Operators (and
+				// publishers/compose drivers) post `"type": ""` to wake
+				// every structural root; the registry-mismatch response
+				// must advertise the admissible empty entry so an
+				// operator who typoed a message type discovers it
+				// alongside the author-declared set, and so an operator
+				// inspecting the response can distinguish author-
+				// declared types from the runtime-implicit one.
+				// @decision: empty-message-as-root-trigger
+				// @story: empty-message-wakes-roots
 				writeJSON(w, http.StatusBadRequest, map[string]any{
 					"error":          "unknown message type",
 					"type":           unknownType.Type,
 					"declared_types": declared,
-				})
-				return
-			}
-			if errors.Is(err, errPayloadCarriesReservedField) {
-				// @constraint: HTTP 400. Reserved-field
-				// privilege-escalation guard: payloads on
-				// author-declared types cannot carry `wake_node_ids`
-				// (the runtime-synthetic wake field).
-				writeJSON(w, http.StatusBadRequest, map[string]any{
-					"error":          "reserved payload field",
-					"reserved_field": reservedPayloadFieldWakeNodeIDs,
+					"implicit_types": []string{""},
 				})
 				return
 			}
@@ -638,17 +560,14 @@ func handleListInstanceMessages(deps AppDeps) http.HandlerFunc {
 // sanctioned read sites for message payload bytes — the others are the
 // substitution-leaf walks in
 // `code:lib/graph/attribute/substitution.go` (`resolveTriggerValue` and
-// `resolveMessagesValue`), the cascade walker's `messagePayloadAsMap`
+// `resolveMessagesValue`) and the cascade walker's `messagePayloadAsMap`
 // decode used to populate the message-virtual-node settle signal's
 // `attributes_delta` so subscriber CEL `when:` predicates can match
 // against body fields
-// (`code:lib/runtime/message_delivery.go::messagePayloadAsMap`), and the
-// scheduler's `advanceOneFrame` runtime-internal wake-field extraction
-// (`code:lib/graph/frame/engine.go::advanceOneFrame`), which pulls the
-// rimsky-synthesized `wake_node_ids` array from the triggering message's
-// payload inside the promotion tx. Rimsky never logs, formats with
-// `%v`, validates beyond schema gates, transforms, or includes payload
-// bytes in error messages. Same opacity discipline as
+// (`code:lib/runtime/message_delivery.go::messagePayloadAsMap`). Rimsky
+// never logs, formats with `%v`, validates beyond schema gates,
+// transforms, or includes payload bytes in error messages. Same opacity
+// discipline as
 func handleGetMessage(deps AppDeps) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		idStr := chi.URLParam(req, "id")

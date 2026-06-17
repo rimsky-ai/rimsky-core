@@ -416,13 +416,13 @@ func TestInstanceLifecycle_CreateGetDelete(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, status)
 }
 
-func TestInstanceCreate_RootEnqueued(t *testing.T) {
+func TestInstanceCreate_IsIdle(t *testing.T) {
 	t.Parallel()
 	h, teardown := newHarness(t)
 	t.Cleanup(teardown)
 	ctx := context.Background()
 
-	tplBody := validTemplateBody("enq-" + uuid.NewString())
+	tplBody := validTemplateBody("idle-" + uuid.NewString())
 	_, out := h.httpJSON(t, "POST", "/v1/templates", tplBody)
 	tplID := out["template_id"].(string)
 	deployStatus, _ := h.httpJSON(t, "POST", "/v1/templates/"+tplID+"/deploy", map[string]any{})
@@ -432,21 +432,26 @@ func TestInstanceCreate_RootEnqueued(t *testing.T) {
 		"instance_key": "ck-" + uuid.NewString(),
 	})
 	require.Equal(t, http.StatusCreated, status, out)
+	instID := out["instance_id"].(string)
+	require.NotEmpty(t, instID)
 
-	// @constraint: under the message-schema-layer redesign every frame carries a
-	// triggering_message_id (the instance-factory seeds a synthetic
-	// `instance/root` envelope per root node). The frame → root mapping
-	// rides on the envelope rather than a source-node-ids array, so the
-	// assertion is "exactly one queued frame whose origin envelope is the
-	// synthetic instance/root message" rather than the legacy source-array
-	// join.
+	// @constraint: post-spec instance creation is idle — no frame is
+	// enqueued, no synthetic message lands in the ledger, no node-run
+	// row exists until a sender posts a message.
+	// @story: instance-create-is-idle
 	var frameCount int
 	pgtest.QueryRowForTest(ctx, t, h.driver,
-		`SELECT count(*) FROM rimsky_frames f
-		 JOIN rimsky_messages m ON m.id = f.triggering_message_id
-		 WHERE m.type = 'instance/root' AND f.state = 'queued'`,
-		nil, &frameCount)
-	require.Equal(t, 1, frameCount, "expected root node to have a queued frame")
+		`SELECT count(*) FROM rimsky_frames WHERE instance_id = $1`,
+		[]any{instID}, &frameCount)
+	require.Equal(t, 0, frameCount,
+		"post-create the instance must have zero frames until a sender posts a message")
+
+	var msgCount int
+	pgtest.QueryRowForTest(ctx, t, h.driver,
+		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1`,
+		[]any{instID}, &msgCount)
+	require.Equal(t, 0, msgCount,
+		"post-create the instance's message ledger must be empty (no synthetic envelope)")
 }
 
 func TestInstanceDuplicateConsumerKey_Idempotent(t *testing.T) {
@@ -491,19 +496,30 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	status, _ := h.httpJSON(t, "POST", "/v1/nodes/"+nodeRow.ID.String()+"/reset", nil)
 	require.Equal(t, http.StatusConflict, status)
 
-	// @constraint: post-stage-3: state lives on rimsky_node_runs. Seed a failed
-	// terminal row to put the node in the failed state.
+	// @constraint: post-stage-3 state lives on rimsky_node_runs.
+	// Post-spec instance creation is idle, so we seed both a frame and
+	// a failed node_run row directly to put the node in the failed
+	// state for the reset gate test.
 	pgtest.ExecForTest(ctx, t, h.driver, `DELETE FROM rimsky_node_runs WHERE node_id=$1`, nodeRow.ID)
-	// @constraint: rimsky_node_runs.frame_id is NOT NULL — reuse an existing
-	// frame for this instance to satisfy the FK before inserting the run row.
-	var frameID uuid.UUID
-	pgtest.QueryRowForTest(ctx, t, h.driver, `
-        SELECT frame_id FROM rimsky_frames WHERE instance_id = $1 ORDER BY queued_at DESC LIMIT 1
-    `, []any{inst.ID}, &frameID)
+	// @constraint: post-spec the instance has no frame at create-time,
+	// so we synthesize a triggering message + frame to satisfy the
+	// node_run FK on frame_id.
 	var mainScopeID shared.UUID
 	pgtest.QueryRowForTest(ctx, t, h.driver, `
         SELECT main_run_scope_id FROM rimsky_instances WHERE id = $1
     `, []any{inst.ID}, &mainScopeID)
+	msgID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_messages
+            (id, instance_id, type, sender_kind, sender, payload, received_at)
+        VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
+    `, msgID, inst.ID)
+	frameID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_frames
+            (frame_id, instance_id, state, queued_at, started_at, triggering_message_id, frame_timeout_ms)
+        VALUES ($1, $2, 'running', now(), now(), $3, 60000)
+    `, frameID, inst.ID, msgID)
 	pgtest.ExecForTest(ctx, t, h.driver, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, active_terminal_at, run_scope_id)
@@ -521,15 +537,18 @@ func TestOperatorReset_OnlyValidFromFailed(t *testing.T) {
 	require.Equal(t, cascade.NodeStateFailed, loaded.State)
 	require.Nil(t, loaded.FrameID)
 
-	// @constraint: reset opens a queued frame triggered by a synthetic node/reset
-	// envelope; the legacy source_node_ids array surface is retired.
-	var sourceCount int
+	// @constraint: post-spec the reset endpoint is a pure retry-budget
+	// clear — it neither enqueues an envelope nor opens a frame.
+	// @story: node-admin
+	// @decision: node-reset-as-pure-retry-budget-clear
+	var resetFrameCount int
 	pgtest.QueryRowForTest(ctx, t, h.driver, `
 		SELECT count(*) FROM rimsky_frames f
 		JOIN rimsky_messages m ON m.id = f.triggering_message_id
-		WHERE f.instance_id = $1 AND f.state = 'queued' AND m.type = 'node/reset'
-	`, []any{inst.ID}, &sourceCount)
-	require.GreaterOrEqual(t, sourceCount, 1)
+		WHERE f.instance_id = $1 AND m.type = 'node/reset'
+	`, []any{inst.ID}, &resetFrameCount)
+	require.Equal(t, 0, resetFrameCount,
+		"post-spec the reset endpoint must not enqueue any node/reset frame")
 	_ = nodeRow
 }
 

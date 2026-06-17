@@ -3,219 +3,199 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Pass-7 acceptance gate for the 2026-06-03 durable-by-default lifecycle
-// spec, scenario 3 ("Parked holds the frame"). Proves end-to-end against
-// the real runtime (real control-api over HTTP, real supervisor +
-// async-callback listener, real scheduler + frame engine, testcontainers
-// Postgres) that:
+// spec, scenario 3 ("Outstanding work holds the frame"), expressed via
+// the parked-state flavor. Proves end-to-end against the real runtime
+// (real control-api over HTTP, real supervisor, real scheduler + frame
+// engine, testcontainers Postgres) that:
 //
-//   - A `parked` node_run holds its frame open — the frame stays
-//     `running`/held and the held-frames diagnostic reports it (the Pass-1
-//     frame-end fix: `ListRunningFramesNoPendingNodes` now treats parked as
-//     unresolved).
-//   - The instance is NOT terminated while parked, even though it was
-//     created with `terminate_after_run = true` (the Pass-3 parked-aware
-//     instance-terminal guard).
-//   - Only after the parked node is woken (runtime-synthetic invalidate),
-//     resumes, and resolves to Success — i.e. the frame genuinely ends —
-//     does `terminate_after_run` fire and stamp `terminated_at` (the
-//     Pass-3 strict "terminate after the next frame ends" semantics).
+//   - A parked node_run holds its frame open — the frame stays `running`
+//     and the held-frames diagnostic (`/v1/admin/diagnostics/held-frames`)
+//     reports it. This complements the async-callback flavor in
+//     `async_callback_holds_frame_e2e_test.go`; the held-frames
+//     diagnostic is specifically scoped to parked nodes
+//     (`phase='parked'`), so the parked-state property is the one that
+//     exercises the diagnostic surface.
+//   - The instance is NOT terminated while a parked node holds the
+//     frame, even though it was created with `terminate_after_run =
+//     true` (the Pass-3 instance-terminal guard treats parked as
+//     unresolved, matching the Pass-1
+//     `ListRunningFramesNoPendingNodes` semantics).
+//   - Only after the parked node resolves via a typed-message wake —
+//     i.e. the frame genuinely ends — does `terminate_after_run` fire
+//     and stamp `terminated_at` (the Pass-3 strict "terminate after the
+//     next frame ends" semantics).
 //
-// Wake mechanism (load-bearing): a `parked` node is NOT woken by the
-// `/v1/callback` endpoint (that endpoint serves the separate
-// AwaitAsyncCallback terminal, which keeps a node `running`; a Park
-// terminal registers no async_ack_id and the callback handler rejects a
-// parked run). A parked node is woken only by a cascade/runtime-synthetic
-// invalidate or the snooze sweep. This test uses the true park +
-// synthetic-invalidate wake path (via the harness's InvalidateNode helper,
-// which drives the same internal helper the retired admin invalidate route
-// used), modeled on parked_lifecycle_test.go::
-// TestParkedLifecycleResumeOnExternalInvalidate. This grounds the spec's
-// scenario-3 wording "awaiting an async callback" to the real parked-node
-// wake path; the spec's intent — "a parked node holds its frame open and
-// the instance is not terminated until the parked work resolves" — is
-// preserved exactly.
+// Template shape (load-bearing): two nodes — `root` (a structural-root
+// node that just succeeds) and `parker` (a downstream of `root` that
+// also subscribes to the typed wake message `test/wake/parker`). The
+// post-spec uniform wake pattern: the harness-emitted empty-message
+// wake fires `root` via the structural-root injection edge; `root`'s
+// success cascades to `parker` via author-declared subscription; the
+// typed-message wake re-fires `parker` post-park via cascade-walk on
+// its `test/wake/parker` subscription.
 package scenarios
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/control/controlapi"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
-// instanceProjection mirrors the fields of the control-api's GET
-// /instances/{id} JSON body that this test reads. The handler's struct is
-// unexported, so the test decodes the wire JSON into this local shape.
-// terminated_at is omitempty on the wire (nil pointer ⇒ field absent).
-type instanceProjection struct {
-	ID                string     `json:"id"`
-	TerminateAfterRun bool       `json:"terminate_after_run"`
-	TerminatedAt      *time.Time `json:"terminated_at,omitempty"`
+// heldFramesResponse mirrors the wire JSON of GET
+// /v1/admin/diagnostics/held-frames so the test can decode the
+// diagnostic surface without importing the unexported control-api
+// types. Only the fields the assertion reads are typed.
+type heldFramesResponse struct {
+	Frames []struct {
+		FrameID    string   `json:"frame_id"`
+		InstanceID string   `json:"instance_id"`
+		NodeIDs    []string `json:"node_ids"`
+	} `json:"frames"`
 }
 
+// TestParkedHoldsFrame_EndToEnd exhibits the parked-state flavor of the
+// "outstanding work holds the frame" property. A parked node-run keeps
+// its frame open; the held-frames diagnostic surfaces it; the instance
+// stays non-terminal under `terminate_after_run = true` until the
+// parked work resolves through the typed-message wake path.
 func TestParkedHoldsFrame_EndToEnd(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// @deliberate: The worker parks indefinitely on first dispatch (no resume_at), so the
-	// frame stays held until an external invalidate wakes it. The resolving
-	// Success script is registered after the parked-state probes below (the
-	// same ordering parked_lifecycle_test.go uses).
-	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "await_callback", []byte(`{"ticket":"R-7"}`), time.Time{}, "")
+	// @deliberate: `root` succeeds immediately so the empty-message
+	// harness wake settles it, cascading to `parker`. `parker`'s first
+	// dispatch parks indefinitely (no resume_at, no max_park_duration
+	// → SweepParkedNodes does not wake it); the typed-message wake is
+	// the only path out.
+	h.Stub.WhenType("root").Success(map[string]any{"r": 1}, true, "root")
+	h.Stub.WhenType("parker").Park(
+		genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK,
+		"waiting-for-wake", nil, time.Time{}, "",
+	)
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "parked-holds-frame", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/parker"},
+		},
 		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
+			// @deliberate: `root` is the structural root — no `subscribes:`
+			// block, so the runtime-injected structural-root edge under
+			// sender="" wakes it on the empty-message harness wake.
+			scenario.MakeNode(node.TemplateNodeDef{Type: "root", Executor: "stub"}),
+			// @deliberate: `parker` cascades from `root` on terminal/success
+			// (first dispatch → parks) AND subscribes to the typed wake
+			// envelope `test/wake/parker` (post-park resumption path).
+			// Both subscriptions carry wake_on_change: true; the typed
+			// wake's force_upstream_refresh is false because there is no
+			// upstream to refresh — the wake is the trigger.
+			scenario.MakeNode(
+				node.TemplateNodeDef{Type: "parker", Executor: "stub"},
+				scenario.WithSubscribes(
+					node.SubscriptionEntry{
+						Node: "root", Type: "terminal/success",
+						WakeOnChange:         node.BoolPtr(true),
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+					node.SubscriptionEntry{
+						Node: "test/wake/parker", Type: "terminal/success",
+						WakeOnChange:         node.BoolPtr(true),
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+				),
+			),
 		},
 	})
 
-	// @deliberate: Create the instance with terminate_after_run = true via the real HTTP
-	// create path (the harness CreateInstance helper does not set the flag).
+	// @deliberate: Create the instance with terminate_after_run = true via the real
+	// HTTP create path (the harness CreateInstance helper does not set
+	// the flag).
 	iid := createInstanceTerminateAfterRun(t, h, tid)
 
-	worker := h.FindNode(iid, "worker")
-	require.NotNil(t, worker)
+	root := h.FindNode(iid, "root")
+	parker := h.FindNode(iid, "parker")
+	require.NotNil(t, root)
+	require.NotNil(t, parker)
 
-	// @constraint: Parked: the frame is held, the instance is NOT terminated
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker should reach parked")
+	// @constraint: `parker` must reach the parked state via the
+	// cascade triggered by `root`'s terminal/success.
+	require.True(t, h.WaitForNodeState(parker.ID, cascade.NodeStateParked, 30*time.Second),
+		"parker should reach parked after root settles")
 
-	// @constraint: The instance must NOT be terminated while a node is parked, even with
-	// terminate_after_run set (Pass-3 parked-aware instance-terminal guard).
+	// @constraint: The instance must NOT be terminated while a node
+	// holds its frame open via the parked phase, even with
+	// terminate_after_run set (instance-terminal guard).
 	require.Nil(t, getInstance(t, h, iid).TerminatedAt,
 		"instance must NOT be terminated while a node is parked, even with terminate_after_run set")
 
-	// @constraint: The held-frames diagnostic must report this frame held (running) —
-	// the Pass-1 fix keeps the frame open while the node is parked, so the
-	// diagnostic (running frame + parked node_run) and the frame-end rule
-	// agree.
-	require.True(t, waitForHeldFrame(t, h, worker.ID.String(), 10*time.Second),
-		"held-frames diagnostic should report the frame held while the node is parked")
+	// @constraint: The held-frames diagnostic surfaces the parker's
+	// frame. The endpoint groups parked rows by frame_id; the only
+	// parked row at this point is `parker`, so its frame appears in
+	// the response.
+	require.True(t, waitForHeldFrame(t, h, iid, parker.ID, 10*time.Second),
+		"held-frames diagnostic should surface the parked node's frame")
 
-	// @deliberate: Wake: resume → resolve → frame ends → only THEN terminate
-	// Re-script the worker so the resume dispatch resolves to Success.
-	h.Stub.WhenType("worker").Success(map[string]any{}, true, "after-callback")
+	// @deliberate: Re-script parker to Success so the wake dispatch
+	// resolves cleanly. WhenType replaces the entire per-type script
+	// in the stub.
+	h.Stub.WhenType("parker").Success(map[string]any{"p": 1}, true, "resumed")
 
-	// @deliberate: Wake via the runtime-synthetic invalidate envelope (NOT
-	// /v1/callback — a parked node is not woken by the callback endpoint).
-	// The retired admin invalidate route used the same internal helper.
-	h.InvalidateNode(worker.InstanceID, worker.ID)
+	// @deliberate: Wake the parked node via the typed-message path —
+	// the only legitimate post-spec wake mechanism for a parked node
+	// outside the deadline-elapsed / max-park-overrun paths.
+	// @decision: test-harness-invalidate-node-retired
+	h.PostInstanceMessage(iid, "test/wake/parker", nil,
+		fmt.Sprintf("test-wake-%s-parker", t.Name()))
 
-	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 10*time.Second),
-		"synthetic invalidate should wake the parked node")
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker should resolve to Success after the wake dispatch")
+	require.True(t, h.WaitForNodeState(parker.ID, cascade.NodeStateFresh, 30*time.Second),
+		"parker should reach fresh after the typed-message wake")
 
-	// @constraint: Only after the real frame-end does terminate_after_run fire. terminated_at
-	// must not have been set while parked (asserted above); it becomes set once
-	// the resolved frame ends.
+	// @constraint: Only after the parked work resolves and the frame
+	// ends does terminate_after_run fire. terminated_at must not have
+	// been set while parked (asserted above); it becomes set once the
+	// resolved frame ends.
 	require.True(t, waitForInstanceTerminated(t, h, iid, 30*time.Second),
 		"instance must terminate only after the parked work resolves and the frame ends (terminate_after_run)")
 }
 
-// createInstanceTerminateAfterRun POSTs an instance-create with
-// terminate_after_run=true through the real HTTP create path, then waits
-// for root dispatch (mirroring the harness CreateInstance helper, which
-// does not expose the flag).
-func createInstanceTerminateAfterRun(t *testing.T, h *scenario.Harness, templateHash string) shared.UUID {
-	t.Helper()
-	body, err := json.Marshal(map[string]any{
-		"template":            templateHash,
-		"params":              map[string]any{},
-		"terminate_after_run": true,
-	})
-	require.NoError(t, err)
-	resp, err := http.Post(h.ControlBase+"/v1/instances", "application/json", bytes.NewReader(body))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		buf, _ := io.ReadAll(resp.Body)
-		t.Fatalf("create instance: status %d: %s", resp.StatusCode, string(buf))
-	}
-	var out struct {
-		InstanceID string `json:"instance_id"`
-	}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
-	id, err := uuid.Parse(out.InstanceID)
-	require.NoError(t, err)
-
-	// @deliberate: Confirm the flag round-trips on the GET projection (the thread-through
-	// is what makes terminate_after_run reach the instance-terminal predicate).
-	require.True(t, getInstance(t, h, id).TerminateAfterRun,
-		"created instance should report terminate_after_run=true")
-
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		var count int
-		h.QueryRowSQL(`SELECT count(*) FROM rimsky_node_runs d
-		               JOIN rimsky_nodes n ON n.id = d.node_id
-		               WHERE n.instance_id = $1`, []any{id}, &count)
-		if count > 0 {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	return id
-}
-
-// getInstance fetches GET /instances/{id} and decodes the projection.
-func getInstance(t *testing.T, h *scenario.Harness, id shared.UUID) instanceProjection {
-	t.Helper()
-	resp, err := http.Get(h.ControlBase + "/v1/instances/" + id.String())
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode, "GET /instances/{id} should return 200")
-	var item instanceProjection
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&item))
-	return item
-}
-
-func waitForInstanceTerminated(t *testing.T, h *scenario.Harness, id shared.UUID, timeout time.Duration) bool {
+// waitForHeldFrame polls GET /v1/admin/diagnostics/held-frames until a
+// frame for `instanceID` containing `nodeID` appears, or the deadline
+// elapses. Returns true on the first sighting.
+func waitForHeldFrame(t *testing.T, h *scenario.Harness, instanceID, nodeID shared.UUID, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	url := h.ControlBase + "/v1/admin/diagnostics/held-frames"
 	for time.Now().Before(deadline) {
-		if getInstance(t, h, id).TerminatedAt != nil {
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
-}
-
-// waitForHeldFrame polls GET /admin/diagnostics/held-frames until a held
-// frame bucket lists the given node id.
-func waitForHeldFrame(t *testing.T, h *scenario.Harness, nodeID string, timeout time.Duration) bool {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(h.ControlBase + "/v1/admin/diagnostics/held-frames")
-		if err == nil {
-			var body controlapi.HeldFramesResponse
-			decErr := json.NewDecoder(resp.Body).Decode(&body)
-			resp.Body.Close()
-			if decErr == nil {
+		resp, err := http.Get(url)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var body heldFramesResponse
+			derr := json.NewDecoder(resp.Body).Decode(&body)
+			_ = resp.Body.Close()
+			if derr == nil {
 				for _, f := range body.Frames {
+					if f.InstanceID != instanceID.String() {
+						continue
+					}
 					for _, nid := range f.NodeIDs {
-						if nid == nodeID {
+						if nid == nodeID.String() {
 							return true
 						}
 					}
 				}
 			}
+		} else if resp != nil {
+			_ = resp.Body.Close()
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

@@ -155,6 +155,12 @@ func createTerminateAfterRunInstance(t *testing.T, ep harness.RimskyEndpoint, te
 			"the flag did not thread through create → persist → projection: %s",
 			resp.InstanceID, string(graw))
 	}
+	// @constraint: instance creation is idle post-spec
+	// (story:instance-create-is-idle). Follow up with an empty
+	// message so the structural roots wake and the terminate-after-run
+	// path can settle.
+	// @decision: test-harness-create-instance-wakes-roots-after-create
+	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "terminate-after-run", instanceKey)
 	return resp.InstanceID
 }
 

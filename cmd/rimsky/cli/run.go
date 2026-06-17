@@ -206,6 +206,44 @@ func RunRun(ctx context.Context, args []string) int {
 		fmt.Fprintf(os.Stdout, "instance_id=%s\n", inst.UUID())
 	}
 
+	// @constraint: instance creation is idle post-spec
+	// (story:instance-create-is-idle). Emit an empty message to the
+	// newly created instance so the structural roots wake and the
+	// wait-and-cleanup loop has work to observe. The Idempotency-Key
+	// is shaped `run-wake-<instance_id>`: keying on the instance UUID
+	// (not a fresh nonce) makes the cross-invocation wake-replay safe.
+	// `rimsky run --instance-key=<k>` invoked twice against the same
+	// template hits the server's idempotent (template_hash, instance_key)
+	// resolve (`code:lib/control/controlapi/instances.go::CreateInstance`)
+	// and returns the same instance UUID, so the second invocation's
+	// wake POST carries the same Idempotency-Key as the first; the
+	// universal Idempotency-Key dedup on
+	// `route:POST /v1/instances/{id}/messages` then collapses it to a
+	// no-op replay (200 OK with the original message_id) rather than
+	// queueing a duplicate frame. Shape mirrors the compose driver's
+	// `compose-wake-<instance_key>` pattern for uniformity.
+	//
+	// @deliberate: skip the wake when the template has no structural
+	// root — an empty-message wake against a rootless template queues
+	// a frame nobody consumes; the wait-and-cleanup loop would then
+	// hang waiting for a terminal that never arrives. Operators of
+	// rootless templates drive their work via typed messages, not via
+	// `rimsky run`. The introspection mirrors `Harness.CreateInstance`
+	// and `runComposeRunCore`: a `GET /v1/templates/{hash}` resolves
+	// the spec; absence of any structural root (every node carries
+	// `subscribes:`) means the empty wake fires nothing.
+	// @decision: compose-driver-emits-empty-message-after-create
+	hasRoot, rerr := TemplateHasStructuralRoot(ctx, c, hash)
+	if rerr != nil {
+		return reportError(rerr)
+	}
+	if hasRoot {
+		if _, werr := c.CreateInstanceMessage(ctx, inst.UUID(), "run-wake-"+inst.UUID(),
+			CreateInstanceMessageRequest{}); werr != nil {
+			return reportError(werr)
+		}
+	}
+
 	if keep {
 		return 0
 	}

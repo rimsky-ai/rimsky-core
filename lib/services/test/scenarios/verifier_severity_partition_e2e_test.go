@@ -252,6 +252,10 @@ func deploySeverityPartitionTemplate(t *testing.T, ep harness.RimskyEndpoint, bo
 // createSeverityPartitionInstance POSTs a new instance and returns its
 // id. The verifier node has no params — every input is baked into the
 // template via JSON-schema defaults — so `params: {}` is correct.
+// Instance creation is idle post-spec; the helper follows up with an empty
+// message so the structural roots wake.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
 func createSeverityPartitionInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
@@ -271,6 +275,7 @@ func createSeverityPartitionInstance(t *testing.T, ep harness.RimskyEndpoint, te
 	if resp.InstanceID == "" {
 		t.Fatalf("instance_id empty: %s", string(raw))
 	}
+	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "severity-partition", instanceKey)
 	return resp.InstanceID
 }
 

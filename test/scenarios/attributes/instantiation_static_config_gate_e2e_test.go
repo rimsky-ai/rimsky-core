@@ -53,6 +53,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/executor"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -242,7 +243,12 @@ func TestAcceptance_InstantiationStaticConfigGate(t *testing.T) {
 		// was appended.
 		instanceID, err := uuid.Parse(instanceIDStr)
 		require.NoError(t, err, "instance_id must parse as a UUID")
-		root := h.FindNode(instanceID, "root")
+		// @constraint: post-spec instance creation is idle; emit an
+		// empty-message wake so the structural-root `root` node fires
+		// through the same path operators use in production.
+		// @decision: empty-message-as-root-trigger
+		h.PostInstanceMessage(shared.UUID(instanceID), "", nil, "static-gate-wake-"+instanceID.String())
+		root := h.FindNode(shared.UUID(instanceID), "root")
 		require.NotNil(t, root, "the instance must materialize its root node")
 		require.True(t, h.WaitForNodeState(root.ID, cascade.NodeStateFresh, 20*time.Second),
 			"the well-formed instance's root node must run to a terminal Complete state")

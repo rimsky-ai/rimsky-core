@@ -24,9 +24,9 @@ Owns: the envelope shape and the message ledger; the one-message-per-frame deliv
 
 ## Invariants
 
-- Two external emit sites and one internal: operator API (the message-emit endpoint with `sender_kind: "operator"`), publisher emissions (the same endpoint with `sender_kind: "publisher"` + a publisher-subscription capability token), and cascade-emit (a message-emitter node's dispatch, with `sender_kind: "instance"` + sender `instance:<id>`). All three paths land in the same ledger and follow the same delivery rules.
+- Two external emit sites and one internal: operator API (the message-emit endpoint with `sender_kind: "operator"`), publisher emissions (the same endpoint with `sender_kind: "publisher"` + a publisher-subscription capability token), and cascade-emit (a message-emitter node's dispatch, with `sender_kind: "instance"` + sender `instance:<id>`). All three paths land in the same ledger and follow the same delivery rules. `sender_kind: "instance"` is unambiguously cascade-emit; the runtime synthesizes no envelopes.
 - One message per frame. At each frame boundary, exactly one pending message delivers; the rest stay pending until the next frame.
-- Type lookup at receipt: a message whose `type` is not declared in the target template's message-schema registry is refused with an unknown-type response; loud miss, not silent dead-letter.
+- Type lookup at receipt: a message whose `type` is not declared in the target template's message-schema registry is refused with an unknown-type response; loud miss, not silent dead-letter. Every template's declared-types set carries an implicit empty-string entry seeded at registration, so empty-typed messages pass receipt under the same uniform check.
 - Delivery at frame boundary: the message-virtual-node settles in the new frame and emits `terminal/success`; nodes subscribing to that virtual node-type stale-mark; the message's `delivered_at` and `frame_id` populate.
 - Payload is inert (see `@blessed-invariant: 21`). Read only at the substitution leaf and the persistence-layer fetch.
 - Publisher requests are capability-checked at the existing publisher-subscription validation: rimsky validates that the publisher-subscription is a live, active binding for the target instance.

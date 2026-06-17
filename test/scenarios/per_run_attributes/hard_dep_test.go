@@ -16,6 +16,7 @@
 package per_run_attributes
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -63,9 +65,17 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-hard-dep", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/a"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/a", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -120,6 +130,11 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	require.NotNil(t, aN)
 	require.NotNil(t, bN)
 	require.NotNil(t, cN)
+	// @constraint: a was previously a structural root; the subscribes:
+	// entry added for the typed-message wake demoted it from root, so
+	// the harness's empty-wake doesn't fire it. Emit the typed message
+	// here to drive the boot cascade the test assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(cN.ID, cascade.NodeStateFresh, 15*time.Second),
 		"c should reach fresh after upstream-refresh cascade")
@@ -138,15 +153,11 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-2"}, true, "ok")
 	h.Stub.WhenType("c").Success(map[string]any{}, true, "ok")
 
-	// @deliberate: Invalidate a (the trigger, NOT b). The
-	// force_upstream_refresh: true edge from c to b drags b into
-	// the same frame so b's second-fire value is produced before c
-	// dispatches. h.InvalidateNode is the in-process supervisor
-	// invalidation — the admin-route invalidate was retired with
-	// the typed-message schema layer; the debug-channel override
-	// is for paused-instance / breakpoint-hit flows, not the
-	// running-instance invalidation under test here.
-	h.InvalidateNode(iid, aN.ID)
+	// @deliberate: Invalidate a (the trigger, NOT b) via a per-target
+	// typed-message wake. The force_upstream_refresh: true edge from c
+	// to b drags b into the same frame so b's second-fire value is
+	// produced before c dispatches.
+	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @deliberate: Wait until C's latest attribute row reflects both A's and B's second-fire values.
 	deadline := time.Now().Add(15 * time.Second)
@@ -194,7 +205,6 @@ func TestPerRunAttributes_HardDepPullsUpstream(t *testing.T) {
 // is the assertion that c's substitution context at re-dispatch
 // contains b's second-fire value.
 //
-//	@blessed-invariant: upstream-staled-before-receiver-dispatch
 //	@story: upstream-pull-on-invalidate
 func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *testing.T) {
 	t.Parallel()
@@ -205,6 +215,9 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-hard-dep-direct", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/c"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
@@ -232,6 +245,7 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 					node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 					node.SubscriptionEntry{Node: "a", Type: "attribute/a_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 					node.SubscriptionEntry{Node: "b", Type: "attribute/b_value/changed", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(true)},
+					node.SubscriptionEntry{Node: "test/wake/c", Type: "terminal/success", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)},
 				),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
@@ -287,16 +301,11 @@ func TestPerRunAttributes_HardDepPullsUpstream_DirectInvalidateOfReceiver(t *tes
 	h.Stub.WhenType("b").Success(map[string]any{"b_value": "from-b-2"}, true, "ok")
 	h.Stub.WhenType("c").Success(map[string]any{}, true, "ok")
 
-	// @deliberate: DIRECT invalidate of c (the receiver). This routes through
-	// runtime.InvalidateNode → invalidateInFrame /
-	// invalidateNextFrame → walkCascadeForInvalidatedNode for c,
-	// which is the load-bearing site under test (the added
-	// upstream-pull at lib/runtime/cascade_invalidate.go that
-	// drags c's own force_upstream_refresh upstreams into the
-	// frame BEFORE c dispatches). h.InvalidateNode is the
-	// in-process supervisor invalidation — the admin-route
-	// invalidate was retired with the typed-message schema layer.
-	h.InvalidateNode(iid, cN.ID)
+	// @deliberate: DIRECT invalidate of c (the receiver) via a
+	// per-target typed-message wake. The cascade walk for c (the load-
+	// bearing site under test) drags c's own force_upstream_refresh
+	// upstreams into the frame BEFORE c dispatches.
+	h.PostInstanceMessage(iid, "test/wake/c", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @deliberate: Diagnostic wait for b to re-run and produce its second-fire
 	// value. If this never happens, the upstream-pull failed to

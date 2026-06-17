@@ -174,6 +174,16 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 	require.Equal(t, http.StatusOK, resumeResp.status,
 		"create-time pause must release cleanly; body=%s", string(resumeResp.raw))
 
+	// @constraint: Post-spec, instance-create is idle (per
+	// `decision:empty-message-as-root-trigger`); structural roots
+	// wake only when a message arrives. `createInstanceWithPaused`
+	// bypasses `Harness.CreateInstance`, so it also bypasses the
+	// harness's wake-after-create empty-message emission. Post-
+	// resume the supervisor has nothing to dispatch until a wake
+	// message lands; emit one here so the breakpoint catches the
+	// worker dispatch.
+	h.PostInstanceMessage(iidPaused, "", nil, fmt.Sprintf("test-wake-%s-paused-init", t.Name()))
+
 	hitPaused := waitForFirstHit(t, h, bpIDPaused, 15*time.Second)
 	require.Equal(t, "before_dispatch", string(hitPaused.Checkpoint),
 		"the parked dispatch's hit must record the before_dispatch checkpoint")
@@ -265,6 +275,11 @@ func TestStoryDebugChannel_GateAndOverrideAcrossRealStack(t *testing.T) {
 		map[string]any{})
 	require.Equal(t, http.StatusOK, resumeBPResp.status,
 		"create-time pause must release cleanly; body=%s", string(resumeBPResp.raw))
+	// @constraint: instance-create is idle post-spec; emit an empty-
+	// message wake so the supervisor has something to dispatch.
+	// (Mirrors the rationale at the first paused-instance call site
+	// above; `createInstanceWithPaused` bypasses the harness wake.)
+	h.PostInstanceMessage(iidBP, "", nil, fmt.Sprintf("test-wake-%s-bp-init", t.Name()))
 	hitBP := waitForFirstHit(t, h, bpIDBP, 15*time.Second)
 	require.Equal(t, "before_dispatch", string(hitBP.Checkpoint))
 

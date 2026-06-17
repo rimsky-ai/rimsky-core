@@ -69,7 +69,7 @@ func TestRetryDoesNotPrematurelyEndFrame(t *testing.T) {
 
 	// @deliberate: Manually create a running frame; mark the worker stale via an
 	// in-flight pending run row pinned to the frame (simulating what
-	// advanceOneFrame does at frame-start). Pass 1 of the message-
+	// runAdvanceQueued does at frame-start). Pass 1 of the message-
 	// schema-layer plan added the rimsky_frames.triggering_message_id
 	// NOT NULL FK; seed a typed envelope first so the frame's FK
 	// resolves.

@@ -14,7 +14,7 @@ The asset presentation surface is a query alias over the claim-handle ledger fil
 
 ## Boundaries
 
-Owns: the compound definition, the control-api asset endpoints (list, detail, versions, materialization-history, materialize, delete), the matching CLI asset subcommands, the dashboard asset-primary panel. Does NOT own: any new primitive (assets are claims; see `concept:claim`, `concept:claim-lifetime`). Adjacent: `concept:claim-lifetime`, `concept:claim-handle`, `concept:data-processing`, `concept:lineage`.
+Owns: the compound definition, the control-api asset endpoints (list, detail, versions, materialization-history, delete), the matching CLI asset subcommands, the dashboard asset-primary panel. Does NOT own: any new primitive (assets are claims; see `concept:claim`, `concept:claim-lifetime`); re-materialization triggering (operators express re-materialization via messages — empty for whole-instance, typed for template-author-designed partial paths). Adjacent: `concept:claim-lifetime`, `concept:claim-handle`, `concept:data-processing`, `concept:lineage`.
 
 ## Invariants
 
@@ -22,4 +22,3 @@ Owns: the compound definition, the control-api asset endpoints (list, detail, ve
 - The producer MUST advertise the data-processing capability. A durable-lifetime claim against a producer lacking that capability is a held-durable claim, not an asset.
 - The asset's `data:` block in the template is producer-targeted and opaque to rimsky. Rimsky-aware fields outside `data:`: `producer`, `scope`, `lifetime`, `write_semantics`.
 - The asset-delete endpoint releases the claim handle via the producer's release verb; it refuses if any in-flight run holds the claim.
-- The asset-materialize endpoint drives the asset's producer to (re)materialize the asset by opening a new frame whose triggering message wakes the producer node.

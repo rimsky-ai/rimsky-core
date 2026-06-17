@@ -2,26 +2,34 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Acceptance gate for STORY-node-admin (spec
-// 2026-06-08-design-corpus-bootstrap). The operator-facing
-// invalidate routes (`POST /v1/nodes/{id}/invalidate` and the admin
-// double) are retired — invalidate is now expressed by posting a
-// typed message via `POST /v1/instances/{instance_id}/messages` (or
-// ad-hoc force-stale via `POST /v1/debug/override`) — so this file's
-// scope shrinks to the two remaining node-admin legs the story
-// names:
+// node_admin_e2e_test.go — exhibits the post-spec STORY-node-admin
+// operator surface end-to-end: inspect node state; clear retry
+// budget on failed-terminal nodes (with the 409-on-non-failed gate
+// preserved); the two-step retry workflow (reset followed by an
+// empty-message wake).
+//
+// The pre-spec force-invalidate and in-cascade-option sub-capabilities
+// retire: post-spec, node-reset is a pure retry-budget-clear verb
+// (per decision:node-reset-as-pure-retry-budget-clear) and operator
+// invalidation flows through the universal POST /messages surface
+// (empty-message for whole-instance, typed-message for partial paths).
+//
+// Legs the test exhibits:
 //
 //  1. GET — `GET /v1/nodes/{id}` returns the node's full state +
 //     settling signal type, observable through the real control-api
 //     against the assembled product.
 //
-//  2. Reset — `POST /v1/nodes/{id}/reset` on a node driven to a real
-//     failed terminal via an exhausted retry-then-give_up policy
-//     clears the persisted error counters (current_error_class +
-//     retry_counter) AND the supervisor genuinely re-dispatches the
-//     node (the falsifier guards against "reset clears the visible
-//     counter but the supervisor still treats the node as
-//     exhausted"). The error counter clearing is observed THROUGH
+//  2. 409 gate — `POST /v1/nodes/{id}/reset` against a non-failed
+//     node returns `409 Conflict` (the spec preserves this gate).
+//
+//  3. Two-step retry — `POST /v1/nodes/{id}/reset` on a node driven
+//     to a real failed terminal via an exhausted retry-then-give_up
+//     policy clears the persisted error counters AND a subsequent
+//     empty-message POST drives the supervisor to genuinely re-
+//     dispatch the node (the falsifier guards against "reset clears
+//     the visible counter but the supervisor still treats the node
+//     as exhausted"). The error counter clearing is observed THROUGH
 //     `GET /v1/nodes/{id}` — the same operator-facing surface the
 //     story names — not via raw SQL, so the proof exhibits the user
 //     outcome through the real surface.
@@ -31,11 +39,16 @@
 // executor dispatch, testcontainers Postgres. No hand-rolled state —
 // the failed terminal comes from the policy chain genuinely
 // exhausting through real dispatches.
+//
+// @story: node-admin
+// @decision: node-reset-as-pure-retry-budget-clear
+// @decision: empty-message-as-root-trigger
 package scenarios
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -180,6 +193,24 @@ func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, notFoundResp.StatusCode,
 		"GET /v1/nodes/{unknown} must 404 — silently returning 200 with a stub response is the falsifier")
 
+	// @constraint: 409 gate (preserved per
+	// decision:node-reset-as-pure-retry-budget-clear): a reset against
+	// a non-failed node is refused. The `worker` node is in state
+	// `fresh` (settled successfully above), so reset must return
+	// `409 Conflict`. Without this gate, reset would degenerate into
+	// an arbitrary cross-state mutation surface and the spec's
+	// "no generic node-invalidation outside the debug-channel surface"
+	// principle would leak.
+	freshResetResp, err := http.Post(
+		h.ControlBase+"/v1/nodes/"+worker.ID.String()+"/reset",
+		"application/json", bytes.NewReader([]byte(`{}`)),
+	)
+	require.NoError(t, err)
+	freshResetResp.Body.Close()
+	require.Equalf(t, http.StatusConflict, freshResetResp.StatusCode,
+		"POST /v1/nodes/{id}/reset on a non-failed node (state=fresh) must return 409 Conflict; got %d",
+		freshResetResp.StatusCode)
+
 	// @deliberate: Leg 2: POST /v1/nodes/{id}/reset
 	//
 	// The story's Acceptance: "resetting a failed node clears its
@@ -228,6 +259,17 @@ func TestAcceptance_NodeAdmin_GetAndReset(t *testing.T) {
 		"after POST /reset, GET /v1/nodes/{id} must surface action_index=0 AND current_error_class='' — "+
 			"the falsifier's 'reset clears the visible counter' shape is satisfied here, but only the "+
 			"next discriminator proves the supervisor isn't still treating the node as exhausted")
+
+	// @deliberate: Post-spec node-reset is a pure retry-budget-clear verb (per
+	// `decision:node-reset-as-pure-retry-budget-clear`): the
+	// endpoint no longer enqueues a wake envelope. The story's
+	// two-step recovery workflow is reset (clears the budget) THEN
+	// a message that invalidates the node (drives a fresh dispatch
+	// attempt). Empty-message wakes every structural root via
+	// `decision:empty-message-as-root-trigger`; `flaky` is a root
+	// in this template, so an empty-message POST is the
+	// canonical invalidation surface here.
+	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("test-wake-%s-after-reset", t.Name()))
 
 	// @deliberate: Discriminator 2 (the supervisor really re-fires the node — the
 	// falsifier's 'supervisor still treats the node as exhausted'

@@ -24,12 +24,14 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -54,9 +56,17 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	// detectable as a missing-source failure, not just a count drift.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "all-upstream-gating-diamond", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/a"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/a", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -122,6 +132,11 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	require.NotNil(t, b)
 	require.NotNil(t, c)
 	require.NotNil(t, d)
+	// @constraint: a was previously a structural root; the subscribes:
+	// entry added for the typed-message wake demoted it from root, so
+	// the harness's empty-wake doesn't fire it. Emit the typed message
+	// here to drive the initial cascade the test assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(d.ID, cascade.NodeStateFresh, 30*time.Second),
 		"d should reach fresh after the initial frame settles")
@@ -150,7 +165,7 @@ func TestAllUpstreamGating_DiamondSettlementPropagated(t *testing.T) {
 	// @deliberate: One invalidation of A, one frame. A re-runs; B's and C's staleness
 	// arrives via A's SETTLEMENT walk — the propagation path that seeds
 	// no next-tier wait-set gates for D.
-	h.InvalidateNode(iid, a.ID)
+	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should re-reach fresh")

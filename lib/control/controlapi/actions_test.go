@@ -235,12 +235,12 @@ func TestV1Registry(t *testing.T) {
 		"parked-node:read",
 		"waitset:read",
 		"claim-holders:read",
-		"asset:read", "asset:materialize", "asset:delete",
+		"asset:read", "asset:delete",
 		"diagnostics:read",
 		"auth:read", "auth:create", "auth:revoke", "auth:rotate",
 	}
-	if len(specTableActions) != 30 {
-		t.Fatalf("specTableActions length drifted from spec (got %d, want 30)", len(specTableActions))
+	if len(specTableActions) != 29 {
+		t.Fatalf("specTableActions length drifted from spec (got %d, want 29)", len(specTableActions))
 	}
 
 	got := r.AllActions()

@@ -141,46 +141,6 @@ func TestParkedLifecycleResumeOnDeadline(t *testing.T) {
 		"worker should reach fresh after deadline-elapsed resume")
 }
 
-// TestParkedLifecycleResumeOnExternalInvalidate covers E6 case (b). Park
-// indefinitely (no resume_at), then admin POSTs invalidate to wake.
-func TestParkedLifecycleResumeOnExternalInvalidate(t *testing.T) {
-	t.Parallel()
-	h := scenario.Start(t, scenario.HarnessOpts{})
-	// @deliberate: Indefinite park — no resume_at.
-	h.Stub.WhenType("worker").
-		Park(genv1.ParkReason_PARK_REASON_AWAIT_CALLBACK, "human_review", []byte(`{"ticket":"R-1"}`), time.Time{}, "")
-
-	tid := h.DeployTemplate(node.TemplateSpec{
-		Name: "parked-external", Version: "1",
-		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
-		},
-	})
-	iid := h.CreateInstance(tid, "ck-park-external", map[string]any{})
-	worker := h.FindNode(iid, "worker")
-	require.NotNil(t, worker)
-
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateParked, 30*time.Second),
-		"worker should reach parked (indefinite)")
-
-	// @deliberate: Reschedule the script so the resume completes.
-	h.Stub.WhenType("worker").Success(map[string]any{}, true, "after-review")
-
-	// @deliberate: External invalidate. The retired admin route is replaced by the
-	// runtime-synthetic envelope path (the same shape the route used
-	// internally). The parked-wake handler reads the envelope type and
-	// fires the `external_invalidate` resume reason.
-	h.InvalidateNode(worker.InstanceID, worker.ID)
-
-	require.True(t, h.WaitForEventKind(worker.ID, "parked_resume_started", 10*time.Second),
-		"admin invalidate should wake the parked node")
-	row := lastEventPayload(t, h, worker.ID, "parked_resume_started")
-	require.Equal(t, "external_invalidate", row["resume_reason"])
-
-	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
-		"worker should reach fresh after external resume")
-}
-
 // TestParkedLifecycleMaxParkDurationOverrun covers E6 case (c). Set
 // max_park_duration on the template; park indefinitely (no resume_at);
 // after the duration, the watchdog forces failure with

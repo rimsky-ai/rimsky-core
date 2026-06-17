@@ -47,6 +47,19 @@ type InMemoryState struct {
 	// being a strictly increasing cursor.
 	breakpointHits map[string][]map[string]any
 	nextHitSeq     int64
+
+	// messageIdem holds (instanceID, idempotencyKey) -> message_id so a
+	// replay returns the original id (200 OK), matching the live
+	// control-api's Idempotency-Key dedup semantics on
+	// POST /v1/instances/{id}/messages. The server rejects keyless
+	// requests at the HTTP boundary with 400
+	// (`code:cmd/rimsky/cli/internal/clitest/server.go` —
+	// handleCreateInstanceMessage), mirroring the live surface, so this
+	// map's keys are always non-empty. `RecordInstanceMessage` panics
+	// on an empty key to make any internal mis-call that bypasses the
+	// boundary gate loud rather than silently skipping dedup.
+	messageIdem map[string]string
+	nextMessage int64
 }
 
 type storedTemplate struct {
@@ -74,7 +87,37 @@ func NewInMemoryState() *InMemoryState {
 		instances:      map[string]*storedInstance{},
 		nodes:          map[string]map[string]*cli.Node{},
 		breakpointHits: map[string][]map[string]any{},
+		messageIdem:    map[string]string{},
 	}
+}
+
+// RecordInstanceMessage records a POST /v1/instances/{id}/messages call and
+// returns the message_id assigned to it. When a prior call recorded one for
+// (instanceID, idempotencyKey), the original message_id is returned with
+// fresh=false — matching the live control-api's dedup behavior. fresh=true
+// means a new id was minted.
+//
+// @constraint: idempotencyKey must be non-empty. The HTTP boundary
+// (`code:cmd/rimsky/cli/internal/clitest/server.go` —
+// handleCreateInstanceMessage) rejects keyless requests with 400 before
+// reaching this method; any caller that lands here with an empty key has
+// bypassed the gate, which is a programmer error. Panic so the mis-call
+// is loud rather than silently skipping dedup.
+// @decision: compose-driver-emits-empty-message-after-create
+func (s *InMemoryState) RecordInstanceMessage(instanceID, idempotencyKey string) (messageID string, fresh bool) {
+	if idempotencyKey == "" {
+		panic("clitest.RecordInstanceMessage: empty idempotencyKey — boundary gate bypassed")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idemBucket := instanceID + "\x00" + idempotencyKey
+	if existing, ok := s.messageIdem[idemBucket]; ok {
+		return existing, false
+	}
+	s.nextMessage++
+	id := fmt.Sprintf("msg-%d", s.nextMessage)
+	s.messageIdem[idemBucket] = id
+	return id, true
 }
 
 // hashSpec produces the canonical content hash for a spec map, matching

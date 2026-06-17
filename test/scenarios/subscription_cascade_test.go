@@ -10,12 +10,14 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/eventwait"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
@@ -93,8 +95,17 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "subscription-cascade-eligibility", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/a"},
+		},
 		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "a", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/a", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
+			),
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "b", Executor: "stub"},
 				scenario.WithSubscribes(node.SubscriptionEntry{Node: "a", Type: "terminal/*", WakeOnChange: node.BoolPtr(true), ForceUpstreamRefresh: node.BoolPtr(false)}),
@@ -117,6 +128,11 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 	b := h.FindNode(iid, "b")
 	c := h.FindNode(iid, "c")
 	r := h.FindNode(iid, "r")
+	// @constraint: a was previously a structural root; the subscribes:
+	// entry added for the typed-message wake demoted it from root, so
+	// the harness's empty-wake doesn't fire it. Emit the typed message
+	// here to drive the initial cascade the test assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 	require.NotNil(t, c)
@@ -149,7 +165,7 @@ func TestSubscriptionCascade_EligibilityRespectsMultipleSenders(t *testing.T) {
 
 	// @deliberate: One invalidation, one frame: A re-runs; its settlement marks B
 	// and C stale in the same frame and both dispatch into the holds.
-	h.InvalidateNode(iid, a.ID)
+	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 30*time.Second),
 		"a should re-reach fresh")
@@ -284,8 +300,17 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "subscription-cascade-crosscut-negative", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/worker"},
+		},
 		Nodes: []node.TemplateNodeDef{
-			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/worker", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
+			),
 			// @deliberate: Monitor declares no subscriptions: it's a stand-alone
 			// root node. Its initial frame will fire it once, then
 			// nothing the worker does should re-fire it.
@@ -295,15 +320,28 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-crosscut-neg", map[string]any{})
 	worker := h.FindNode(iid, "worker")
 	monitor := h.FindNode(iid, "monitor")
+	// @constraint: worker was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the initial dispatch the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 	require.NotNil(t, worker)
 	require.NotNil(t, monitor)
 
-	// @deliberate: Both nodes complete their initial frame; record monitor's
-	// terminal-complete count so a future re-dispatch is detectable.
+	// @deliberate: Both nodes complete an initial frame; record
+	// monitor's terminal-complete count so a future re-dispatch is
+	// detectable. Worker fires from the typed `test/wake/worker` emit
+	// above; monitor fires from the harness's auto-injected empty-
+	// message wake (`harness-wake-create-<iid>`, posted inside
+	// CreateInstance per decision:test-harness-create-instance-wakes-
+	// roots-after-create). Monitor has no `subscribes:` block so it
+	// remains a structural root and the harness's empty-wake stale-
+	// marks it.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),
 		"worker should reach fresh")
 	require.True(t, h.WaitForNodeState(monitor.ID, cascade.NodeStateFresh, 30*time.Second),
-		"monitor should reach fresh from its own initial frame")
+		"monitor should reach fresh on the harness-injected empty wake")
 
 	// @deliberate: Snapshot the monitor's ledger before the invalidate (it ran once
 	// in the initial frame). The steady-state sampler below can miss a
@@ -318,10 +356,15 @@ func TestSubscriptionCascade_CrossCuttingNegative(t *testing.T) {
 	}
 	monitorEventsBefore := monitorDispatchEvents()
 
-	// @constraint: Invalidate worker; monitor MUST NOT re-fire because no edge
-	// connects them.
+	// @constraint: Emit the typed `test/wake/worker` to drive a second
+	// worker run. The load-bearing assertion below is that this typed
+	// emit does NOT re-fire monitor — monitor has no edge from
+	// worker's typed-message virtual, and the cascade walker's
+	// `""`-key lookup gates structural-root edges to the empty-
+	// message virtual via SenderBoundToEmpty, so a non-empty sender
+	// must not consult them.
 	h.Stub.WhenType("worker").Success(map[string]any{"ok": true}, true, "w-ok-2")
-	h.InvalidateNode(iid, worker.ID)
+	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @constraint: Worker re-reaches fresh.
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 30*time.Second),

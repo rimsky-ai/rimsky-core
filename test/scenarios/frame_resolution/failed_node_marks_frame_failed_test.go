@@ -73,7 +73,7 @@ func TestFailedNodeMarksFrameFailed(t *testing.T) {
 
 	// @deliberate: Fire a second invalidate after re-scripting the stub to succeed.
 	h.Stub.WhenType("worker").Success(map[string]any{}, true, "ok")
-	fireInvalidate(t, h, iid, worker.ID)
+	postInvalidateMessage(t, h, iid)
 
 	require.True(t, h.WaitForNodeState(worker.ID, cascade.NodeStateFresh, 15*time.Second),
 		"worker did not reach fresh on second fire")

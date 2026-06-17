@@ -47,10 +47,13 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// @agent-contract: invalidate_node stale-marks every in-flight run of
-// the named node-type in the running frame; set_attribute merges a
-// single key into the named node-type's latest attribute bag and
-// stale-marks so the next cycle picks the new value up.
+// @agent-contract: invalidate_node is the gated debug-channel action —
+// distinct from the retired operator-invalidate route
+// (concept:debug-channel vs concept:message). The debug action stale-
+// marks every in-flight run of the named node-type in the running
+// frame; set_attribute merges a single key into the named node-type's
+// latest attribute bag and stale-marks so the next cycle picks the new
+// value up.
 const (
 	debugActionInvalidateNode = "invalidate_node"
 	debugActionSetAttribute   = "set_attribute"

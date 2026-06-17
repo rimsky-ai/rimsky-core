@@ -35,17 +35,10 @@
 //   - the cascade walker's `messagePayloadAsMap` decode below, used to
 //     populate the message-virtual-node settle signal's
 //     `attributes_delta` so subscriber CEL `when:` predicates can match
-//     against body fields;
+//     against body fields; and
 //   - the persistence-layer fetch in
 //     `code:control/controlapi/messages.go::handleGetMessage` (which
-//     surfaces the row verbatim to the operator); and
-//   - the scheduler's `advanceOneFrame` runtime-internal wake-field
-//     extraction (`code:graph/frame/engine.go::advanceOneFrame`), which
-//     pulls the rimsky-synthesized `wake_node_ids` array from the
-//     triggering message's payload inside the promotion tx — distinct
-//     surface from the four body-reading sites because the field is
-//     rimsky-owned and runtime-synthetic, not a user-authored body
-//     shape.
+//     surfaces the row verbatim to the operator).
 //
 // Same opacity discipline as the inert-payload invariants on other
 // envelope-shaped rows.
@@ -78,9 +71,10 @@ func EnqueueMessage(ctx context.Context, tx persistence.Tx, m persistence.Messag
 	if req.InstanceID == (shared.UUID{}) {
 		return errors.New("EnqueueMessage: instance_id required")
 	}
-	if req.Type == "" {
-		return errors.New("EnqueueMessage: type required")
-	}
+	// @constraint: type == "" is admitted — the empty-message wake
+	// trigger is the implicit registry entry seeded into every
+	// template's declared-types set.
+	// @decision: empty-message-as-root-trigger
 	if req.Sender == "" {
 		return errors.New("EnqueueMessage: sender required")
 	}
@@ -139,7 +133,7 @@ func SweepDeliverMessagesForRunningFrames(
 			return fmt.Errorf("SweepDeliverMessagesForRunningFrames: list: %w", err)
 		}
 		for _, f := range page.Rows {
-			if err := deliverForRunningFrame(ctx, persist, queue, f.InstanceID, f.FrameID, now); err != nil {
+			if err := deliverForRunningFrame(ctx, persist, queue, logger, f.InstanceID, f.FrameID, now); err != nil {
 				if logger != nil {
 					logger.Warn("SweepDeliverMessagesForRunningFrames: deliver failed",
 						"frame_id", f.FrameID.String(),
@@ -165,6 +159,7 @@ func SweepDeliverMessagesForRunningFrames(
 // virtual node-type.
 func deliverForRunningFrame(
 	ctx context.Context, persist persistence.Tables, queue persistence.Queue,
+	logger shared.Logger,
 	instanceID, frameID shared.UUID, now time.Time,
 ) error {
 	return persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
@@ -198,7 +193,7 @@ func deliverForRunningFrame(
 				return fmt.Errorf("emit message signal: %w", err)
 			}
 		}
-		return cascadeMessageVirtualNodeSettleInTx(ctx, persist, queue, tx,
+		return cascadeMessageVirtualNodeSettleInTx(ctx, persist, queue, logger, tx,
 			instanceID, frameID, delivered.Messages, signalsByMessageID, inst.TemplateHash,
 			inst.MainRunScopeID)
 	})
@@ -215,12 +210,24 @@ func deliverForRunningFrame(
 // @concept: message
 // @concept: signal
 func messageVirtualNodeSettleSignal(msg persistence.MessageRow) signalpkg.Signal {
+	// @deliberate: empty-typed messages (the implicit empty-message
+	// wake trigger seeded at template registration) carry a placeholder
+	// tail in change_summary so the field remains self-describing.
+	// Audit-row consumers and subscriber CEL `when:` predicates parse
+	// on the colon delimiter; a trailing-colon string would force a
+	// special case at every parse site.
+	// @decision: empty-message-as-root-trigger
+	// @story: empty-message-wakes-roots
+	summaryTail := msg.Type
+	if summaryTail == "" {
+		summaryTail = "empty-wake"
+	}
 	return signalpkg.Signal{
 		Type: signalpkg.TypePath("terminal/success"),
 		Payload: map[string]any{
 			"changed":          true,
 			"attributes_delta": messagePayloadAsMap(msg.Payload),
-			"change_summary":   "message-virtual-node:" + msg.Type,
+			"change_summary":   "message-virtual-node:" + summaryTail,
 		},
 	}
 }
@@ -300,8 +307,8 @@ func messagePayloadAsMap(payload []byte) map[string]any {
 // delivered_at stamped, so attribute-substitution against
 // {{messages.<type>.<field>}} resolves deterministically. The
 // scheduler-tick sequence is frame-end-detect → advance-queued
-// (promotes + wake_node_ids stale-marks) → message-delivery-sweep
-// (stamps delivered_at + frame_id) → runner-tick (consumes wait-sets,
+// (promotes the queued frame) → message-delivery-sweep (stamps
+// delivered_at + frame_id) → runner-tick (consumes wait-sets,
 // dispatches stale rows). Anyone rewiring the tick order must preserve
 // "deliver-before-walk" or fold the wait-set row in symmetrically.
 //
@@ -330,14 +337,6 @@ func messagePayloadAsMap(payload []byte) map[string]any {
 //     own frame F0 is still running when the envelope inserts; the
 //     new frame can't promote until F0 settles) and is structurally
 //     required for STORY-cascade-emit + STORY-cross-frame-coupling.
-//
-//   - Runtime-synthetic envelopes (`node/invalidate`, `node/reset`,
-//     `asset/materialize`, `instance/root`) enqueued via
-//     `EnqueueSyntheticWakeFrame` follow the same pattern as cascade-
-//     emit when triggered from inside a runner-tick (one-tick floor),
-//     or the operator-/publisher-tick pattern when triggered from a
-//     request tx (e.g. `controlapi/assets.go`'s asset-materialize
-//     path).
 //
 // @constraint: a future scheduler change that moves message-delivery-
 // sweep to BEFORE runner-tick (to shave operator-message latency) MUST
@@ -368,7 +367,9 @@ func messagePayloadAsMap(payload []byte) map[string]any {
 // @concept: cascade
 // @concept: signal
 func cascadeMessageVirtualNodeSettleInTx(
-	ctx context.Context, persist persistence.Tables, queue persistence.Queue, tx persistence.Tx,
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue,
+	logger shared.Logger,
+	tx persistence.Tx,
 	instanceID, frameID shared.UUID, messages []persistence.MessageRow,
 	signalsByMessageID map[shared.UUID]signalpkg.Signal,
 	templateHash string,
@@ -502,10 +503,99 @@ func cascadeMessageVirtualNodeSettleInTx(
 						return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: mark stale %s: %w", r.ID, err)
 					}
 				}
+				// @constraint: pull the receiver's declared
+				// force_upstream_refresh upstreams into the same frame
+				// so the receiver dispatches against a fresh upstream
+				// set (per `story:upstream-pull-on-invalidate`). The
+				// receiver's own downstream cascade fires naturally
+				// when the receiver settles via the standard cascade-
+				// on-settle walker — we do NOT call
+				// walkCascadeForInvalidatedNode here because that would
+				// eagerly cascade the receiver's downstream subscribers
+				// before the receiver has dispatched, breaking the
+				// settle-on-cascade idiom (notably the self-subscribes
+				// drain-the-queue idiom whose wait-set row depends on
+				// the settle-time path inserting it).
+				//
+				// @deliberate: complexity-shape trade-off accepted by the
+				// 2026-06-15 empty-message-wake spec. Pre-spec, the
+				// retired synthetic-envelope mechanism computed the
+				// receiver-upstream union ONCE per envelope at the
+				// operator-emit site (in `expandWakeWithUpstreamRefresh`)
+				// and pre-installed wait-set rows at frame promotion.
+				// Post-spec, the cascade walker runs the equivalent
+				// `pullForceRefreshUpstreams` (full hard-dep-cycle walk)
+				// ONCE PER RECEIVER of the typed-message envelope. For a
+				// frame with N receivers, that's N walks of the upstream-
+				// refresh graph at delivery time, not one. The spec
+				// accepts this shift from emit-time to per-receiver-
+				// delivery-time work as the price of retiring the
+				// synthetic-envelope chokepoint; a future optimization
+				// could compute the receiver-upstream union once per
+				// envelope and pass it in.
+				//
+				// @deliberate: skip the upstream-refresh pull for
+				// structural-root edges (SenderBoundToEmpty=true). A
+				// structural root is by definition a node with no
+				// upstream (per the root-detection rule in
+				// BuildSubscriptionEdges), so its upstream-refresh
+				// edges are necessarily empty — the helper would do
+				// only a hardDepEdgesForTemplate lookup that misses by
+				// construction. Empty-message wakes fan out to every
+				// structural root, so this hot-path branch avoids N
+				// redundant lookups per wake.
+				// @story: upstream-pull-on-invalidate
+				// @concept: cascade
+				// @decision: synthetic-envelope-mechanism-retired
+				if !e.SenderBoundToEmpty {
+					if err := pullForceRefreshUpstreamsForMessageReceiver(
+						ctx, persist, queue, logger, tx, r, runID, receiverScopeID, frameID,
+						templateHash, byType,
+					); err != nil {
+						return fmt.Errorf("cascadeMessageVirtualNodeSettleInTx: pull upstream-refresh for %s: %w", r.ID, err)
+					}
+				}
 			}
 		}
 	}
 	return nil
+}
+
+// pullForceRefreshUpstreamsForMessageReceiver pulls the receiver's
+// declared `force_upstream_refresh: true` upstreams into the same
+// frame, so the receiver dispatches against a fresh upstream set when
+// woken by a typed-message cascade. Mirrors the
+// `pullForceRefreshUpstreams` helper used by the cascade-on-invalidate
+// path; restricted here to the upstream-refresh pull (no downstream
+// cascade) because the receiver's downstream cascade fires naturally
+// when the receiver settles.
+//
+// @story: upstream-pull-on-invalidate
+// @concept: cascade
+func pullForceRefreshUpstreamsForMessageReceiver(
+	ctx context.Context, persist persistence.Tables, queue persistence.Queue,
+	logger shared.Logger,
+	tx persistence.Tx,
+	receiver persistence.NodeRow,
+	receiverRunID, targetRunScopeID, senderFrameID shared.UUID,
+	templateHash string,
+	byType map[string][]persistence.NodeRow,
+) error {
+	// @constraint: thread the sweep-level logger so diagnostic warnings
+	// from pullForceRefreshUpstreams (e.g. the parked-upstream fallback
+	// path) surface in operator logs at the same observability layer as
+	// the SweepDeliverMessagesForRunningFrames warns. A SilentLogger
+	// substitution here would swallow them.
+	if logger == nil {
+		logger = shared.SilentLogger{}
+	}
+	args := RunArgs{Persist: persist, Queue: queue, Logger: logger}
+	visited := map[shared.UUID]struct{}{receiver.ID: {}}
+	return pullForceRefreshUpstreams(
+		ctx, args, tx, receiver, byType,
+		receiverRunID, targetRunScopeID, senderFrameID,
+		templateHash, visited,
+	)
 }
 
 // DeliverPendingMessages selects pending messages for the instance, picks

@@ -48,10 +48,14 @@ type ApplyOpts struct {
 // caller — most importantly the `compose run` verb's terminal-wait
 // loop — can resolve the server-assigned instance UUID without
 // re-listing. Key is the manifest-prefixed instance key
-// (compose:<project>:<name>); ID is the control-api-returned UUID.
+// (compose:<project>:<name>); ID is the control-api-returned UUID;
+// TemplateHash is the content-hash of the template the instance was
+// created against (the compose-run wake step needs this to decide
+// whether the template has a structural root worth waking).
 type CreatedInstance struct {
-	Key string
-	ID  string
+	Key          string
+	ID           string
+	TemplateHash string
 }
 
 // ApplyPlan executes plan.Steps serially against c. Returns
@@ -190,7 +194,7 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 			return nil, err
 		}
 		logf("create", step.InstanceKey, "ok")
-		return &CreatedInstance{Key: step.InstanceKey, ID: resp.UUID()}, nil
+		return &CreatedInstance{Key: step.InstanceKey, ID: resp.UUID(), TemplateHash: resp.TemplateHash}, nil
 	case ActionTemplateDelete:
 		if err := c.DeleteTemplate(ctx, step.TemplateHash); err != nil {
 			if cli.IsConflict(err) || cli.IsNotFound(err) {

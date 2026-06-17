@@ -2,37 +2,66 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// Full-stack proof for STORY-instance-lifecycle's non-force-terminate legs:
-// create / list / get / pause / resume / delete-non-terminal-rejected /
-// delete-terminal-succeeds. The sibling lifecycle_force_terminate_fullstack
-// _test.go covers the force-terminate leg end-to-end; this file completes
-// the story.
+// instance_lifecycle_fullstack_test.go — exhibits the operator-driven
+// STORY-instance-lifecycle end-to-end: create (observe post-create
+// idle: empty frames + empty message ledger before any wake), post
+// the empty-message wake as a separate operator action and observe
+// the supervisor begin dispatching, pause, resume,
+// force-terminate-via-/terminate, delete. The sibling
+// lifecycle_force_terminate_fullstack_test.go covers the
+// force-terminate-from-wedge leg end-to-end; this file completes the
+// story.
 //
-// Load-bearing property the test protects against the spec's pause
-// falsifier ("pause is recorded but the supervisor keeps dispatching
-// against the instance"): we don't just assert the `paused` column was
-// flipped; we drive the supervisor's claim layer by INVALIDATING the
-// node (which the frame engine turns into a fresh pending dispatch row)
-// while the instance is paused, then assert that no new
-// `terminal/success` event for the node appears on
-// `GET /v1/events?instance_id=...&kind=terminal/success` during a fixed
-// pause window — i.e. the supervisor stops CLAIMING new dispatches for
-// the paused instance even when there is queued work waiting to run.
-// After /resume the same dispatch is picked up and a fresh
-// terminal/success event arrives. This is the spec's required acceptance:
-// the cheaper "the pause flag was written" shape is NOT the acceptance.
+// Load-bearing properties the test protects:
 //
+//  1. STORY-instance-lifecycle (post-spec): instance-create is idle.
+//     `POST /v1/instances` materializes the instance row and the
+//     per-instance node rows but enqueues no frame and lands no
+//     message in the ledger; the supervisor does not dispatch
+//     against the instance until a sender posts a message. The
+//     proof issues the create via the raw HTTP surface (the harness's
+//     `CreateInstance` helper now wakes after the create POST per
+//     decision:test-harness-create-instance-wakes-roots-after-create
+//     and would confound the observation).
+//
+//  2. STORY-instance-lifecycle (wake-as-separate-action): the empty-
+//     message wake is the legitimate trigger that flips an idle
+//     instance into running per
+//     decision:empty-message-as-root-trigger and
+//     story:empty-message-wakes-roots. The test posts the empty
+//     message via the public POST /v1/instances/{id}/messages route
+//     as an explicit operator action layered on top of the create,
+//     then asserts the structural-root worker reaches the fresh
+//     state — the supervisor-observable proxy for "began dispatching
+//     against the instance."
+//
+//  3. STORY-instance-lifecycle (pause falsifier): "pause is recorded
+//     but the supervisor keeps dispatching against the instance". We
+//     don't just assert the `paused` column was flipped; we drive
+//     the supervisor's claim layer by emitting an empty-message wake
+//     while the instance is paused, then assert that no new
+//     `terminal/success` event for the node appears on
+//     `GET /v1/events?instance_id=...&kind=terminal/success` during a
+//     fixed pause window — i.e. the supervisor stops CLAIMING new
+//     dispatches for the paused instance even when there is queued
+//     work waiting to run. After /resume the same dispatch is picked
+//     up and a fresh terminal/success event arrives. The cheaper
+//     "the pause flag was written" shape is NOT the acceptance.
+//
+// @story: instance-lifecycle
 // @concept: instance
 package scenarios
 
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
@@ -51,6 +80,15 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	// load-bearing signal under pause.
 	h.Stub.WhenType("worker").Success(map[string]any{"value": 1}, true, "ran")
 
+	// @deliberate: worker declares NO subscribes block and reads no
+	// upstream typed-message fields. Per
+	// decision:structural-root-edge-injection-at-registration and
+	// story:empty-message-wakes-roots, that makes worker a structural
+	// root: the registration-time edge builder injects a sender="",
+	// SenderBoundToEmpty=true edge for it, and an empty-message wake
+	// posted to the instance fires worker. The empty-message wake is
+	// then the supervisor-observable wake-as-separate-operator-action
+	// step the spec mandates for STORY-instance-lifecycle.
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "instance-lifecycle", Version: "1",
 		Nodes: []node.TemplateNodeDef{
@@ -66,21 +104,78 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 		},
 	})
 
-	// @deliberate: (1) CREATE: POST /v1/instances returns 201 with an instance_id and
-	// the supervisor begins driving the node. CreateInstance asserts the
-	// 201 status and waits for the root dispatch row to materialize, so
-	// reaching past it proves the create path is wired end-to-end.
-	iid := h.CreateInstance(tid, "ck-instance-lifecycle", map[string]any{})
-	require.NotEqual(t, shared.UUID{}, iid, "create must return a non-zero instance id")
+	// @constraint: (0) IDLE-ON-CREATE: STORY-instance-lifecycle's
+	// post-spec acceptance — POST /v1/instances must NOT enqueue any
+	// frame, land any message in the ledger, or dispatch any node-run
+	// until a sender posts a message. The proof issues the create via
+	// the raw HTTP surface (not via h.CreateInstance, which now emits
+	// an internal empty-message wake after the create POST per
+	// decision:test-harness-create-instance-wakes-roots-after-create
+	// and would confound the observation). After a small bounded
+	// settle window, the instance's frame collection AND its message
+	// ledger must both be empty. The same instance is then driven
+	// through the wake / pause / resume / terminate / delete legs so
+	// the empty-message wake is exercised against the same idle
+	// instance whose idle state was just observed.
+	iid := postCreateInstanceIdle(t, h.ControlBase, tid, "ck-instance-lifecycle-idle")
+	time.Sleep(500 * time.Millisecond)
+	idleFrames := getInstanceFramesInst(t, h.ControlBase, iid)
+	require.Emptyf(t, idleFrames,
+		"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d frames", len(idleFrames))
+	idleMessages := getInstanceMessagesInst(t, h.ControlBase, iid)
+	require.Emptyf(t, idleMessages,
+		"STORY-instance-lifecycle falsifier: instance must be idle after create — got %d messages in ledger", len(idleMessages))
 
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w, "worker node must materialize on create")
+	// @constraint: while idle (no wake posted yet), the supervisor
+	// must NOT have dispatched against the worker — the load-bearing
+	// proxy is the absence of any terminal/success event on the
+	// /v1/events surface. A freshly-created node's row carries
+	// state='fresh' by default (the implicit "no run row → fresh"
+	// rule in lib/foundation/persistence/postgres/nodes.go::Create);
+	// that's a static default, not evidence that a dispatch occurred.
+	// The event-log row is the supervisor-observable signal that a
+	// dispatch was actually claimed and run.
+	preWakeSuccessCount := countEvents(t, h.ControlBase, iid, w.ID, "terminal/success")
+	require.Equal(t, 0, preWakeSuccessCount,
+		"STORY-instance-create-is-idle falsifier: a terminal/success "+
+			"event appeared for the worker before any wake message was "+
+			"posted — the supervisor must not dispatch against an idle "+
+			"instance")
 
-	// @deliberate: The supervisor drives the first dispatch through the REAL claim
-	// path; reaching fresh proves create wired the instance into the
-	// dispatch queue, not just persisted a row.
+	// @deliberate: (1) WAKE-AS-SEPARATE-OPERATOR-ACTION: post the
+	// empty-message wake as an explicit operator action against the
+	// idle instance. Per
+	// decision:empty-message-as-root-trigger and
+	// story:empty-message-wakes-roots, the supervisor begins
+	// dispatching against the instance after this — the worker
+	// (structural root, no upstream subscriptions) is stale-marked by
+	// the cascade walker via the runtime-injected
+	// SenderBoundToEmpty=true edge under sender="" and the supervisor
+	// claims the resulting pending dispatch. The supervisor-observable
+	// proxy for "began dispatching" is the appearance of the first
+	// terminal/success event for the worker on /v1/events.
+	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
+	postWakeDeadline := time.Now().Add(15 * time.Second)
+	postWakeSuccessCount := 0
+	for time.Now().Before(postWakeDeadline) {
+		postWakeSuccessCount = countEvents(t, h.ControlBase, iid, w.ID, "terminal/success")
+		if postWakeSuccessCount > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.Greater(t, postWakeSuccessCount, 0,
+		"STORY-instance-lifecycle falsifier: no terminal/success event "+
+			"appeared for the worker after the empty-message wake — the "+
+			"supervisor must begin dispatching against the instance after "+
+			"the empty-message wake")
+	// @deliberate: with the dispatch landed, the worker's row reaches
+	// the fresh state. The pause/resume legs below count terminal/success
+	// events from this baseline.
 	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second),
-		"worker did not reach fresh on first run — create did not actually drive a dispatch")
+		"worker did not reach fresh after the empty-message wake")
 
 	// @constraint: (2) LIST: GET /v1/instances?template_hash=... must include this instance.
 	listBody := getJSONMapInst(t, h.ControlBase+"/v1/instances?template_hash="+tid)
@@ -124,19 +219,16 @@ func TestInstanceLifecycleFullStack(t *testing.T) {
 	getAfterPause := getJSONMapInst(t, h.ControlBase+"/v1/instances/"+iid.String())
 	require.Equal(t, true, getAfterPause["paused"], "paused must be true after /pause")
 
-	// @deliberate: Drive the supervisor's claim layer: INVALIDATE the worker. The
-	// frame engine flips the node to stale and enqueues a fresh pending
-	// dispatch row. On an UNPAUSED instance the supervisor's 100ms
-	// claim-poll would pick it up within ~1s and emit a new
-	// terminal/success. Under pause, the postgres queue's
-	// `i.paused = false` predicate (lib/foundation/persistence/postgres/
-	// queue.go) filters the row out and it sits in `pending`.
-	//
-	// The retired operator route `POST /v1/nodes/{id}/invalidate` is
-	// replaced by the same runtime-synthetic envelope it used to seed
-	// internally (`node/invalidate` + `wake_node_ids`), driven via the
-	// scenario harness helper. The frame-engine path is identical.
-	h.InvalidateNode(iid, w.ID)
+	// @deliberate: Drive the supervisor's claim layer by emitting an
+	// empty-message wake. The cascade walker stale-marks the
+	// structural-root worker via its SenderBoundToEmpty=true edge and
+	// enqueues a fresh pending dispatch row. On an UNPAUSED instance
+	// the supervisor's 100ms claim-poll would pick it up within ~1s
+	// and emit a new terminal/success. Under pause, the postgres
+	// queue's `i.paused = false` predicate
+	// (lib/foundation/persistence/postgres/queue.go) filters the row
+	// out and it sits in `pending`.
+	h.PostInstanceMessage(iid, "", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @deliberate: Pause window: wait 2s and assert no new terminal/success event
 	// appears on `GET /v1/events?instance_id=...&kind=terminal/success`.
@@ -299,4 +391,53 @@ func waitForInstanceTerminatedInst(t *testing.T, h *scenario.Harness, iid shared
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false
+}
+
+// postCreateInstanceIdle POSTs /v1/instances directly (bypassing the
+// harness's CreateInstance helper, which now emits an internal wake
+// message after the create POST per
+// decision:test-harness-create-instance-wakes-roots-after-create).
+// Returns the new instance_id. Used by the idle-on-create assertion
+// to observe the un-woken state directly.
+func postCreateInstanceIdle(t *testing.T, controlBase, templateHash, instanceKey string) shared.UUID {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"template":     templateHash,
+		"instance_key": instanceKey,
+		"params":       map[string]any{},
+	})
+	require.NoError(t, err)
+	resp, err := http.Post(controlBase+"/v1/instances", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	require.Equalf(t, http.StatusCreated, resp.StatusCode,
+		"POST /v1/instances: status=%d body=%s", resp.StatusCode, string(raw))
+	var out struct {
+		InstanceID string `json:"instance_id"`
+	}
+	require.NoErrorf(t, json.Unmarshal(raw, &out),
+		"POST /v1/instances: decode: %s", string(raw))
+	parsed, err := uuid.Parse(out.InstanceID)
+	require.NoErrorf(t, err, "POST /v1/instances: bad instance_id %q", out.InstanceID)
+	return shared.UUID(parsed)
+}
+
+// getInstanceFramesInst GETs /v1/instances/{id}/frames and returns
+// the `frames` array. The empty-on-idle invariant is asserted by the
+// caller.
+func getInstanceFramesInst(t *testing.T, controlBase string, instanceID shared.UUID) []any {
+	t.Helper()
+	body := getJSONMapInst(t, controlBase+"/v1/instances/"+instanceID.String()+"/frames")
+	frames, _ := body["frames"].([]any)
+	return frames
+}
+
+// getInstanceMessagesInst GETs /v1/instances/{id}/messages and
+// returns the `messages` array.
+func getInstanceMessagesInst(t *testing.T, controlBase string, instanceID shared.UUID) []any {
+	t.Helper()
+	body := getJSONMapInst(t, controlBase+"/v1/instances/"+instanceID.String()+"/messages")
+	messages, _ := body["messages"].([]any)
+	return messages
 }

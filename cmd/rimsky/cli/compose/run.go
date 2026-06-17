@@ -308,6 +308,51 @@ func runComposeRunCore(ctx context.Context, flags *composeRunFlags, logger *slog
 		return coord.Drain(context.Background(), ReasonAnyFailure)
 	}
 
+	// @constraint: instance creation is idle post-spec
+	// (story:instance-create-is-idle). Emit an empty message to each
+	// newly created instance via the universal message-emit path so
+	// the structural roots wake and the wait-for-terminal loop has
+	// work to observe. The Idempotency-Key is deterministic on the
+	// instance key so a manifest re-run does not enqueue a second
+	// wake frame.
+	//
+	// @deliberate: skip the wake when the instance's template has no
+	// structural root (every node carries `subscribes:`). An empty-
+	// message wake against a rootless template queues a frame nobody
+	// consumes; the wait-for-terminal loop would then hang waiting
+	// for a terminal that never arrives (especially under
+	// `terminate_after_run: true`). The introspection mirrors
+	// `Harness.CreateInstance` and `RunRun`: a `GET
+	// /v1/templates/{hash}` resolves the spec; absence of any
+	// structural root means the empty wake fires nothing.
+	// @decision: compose-driver-emits-empty-message-after-create
+	// @story: one-shot-to-terminal
+	rootByHash := map[string]bool{}
+	for _, ci := range created {
+		if ci.ID == "" {
+			continue
+		}
+		hasRoot, ok := rootByHash[ci.TemplateHash]
+		if !ok {
+			h, herr := cli.TemplateHasStructuralRoot(bootCtx, c, ci.TemplateHash)
+			if herr != nil {
+				fmt.Fprintln(os.Stderr, "rimsky compose run: inspect template:", herr)
+				return coord.Drain(context.Background(), ReasonAnyFailure)
+			}
+			rootByHash[ci.TemplateHash] = h
+			hasRoot = h
+		}
+		if !hasRoot {
+			continue
+		}
+		wakeKey := "compose-wake-" + ci.Key
+		if _, err := c.CreateInstanceMessage(bootCtx, ci.ID, wakeKey,
+			cli.CreateInstanceMessageRequest{}); err != nil {
+			fmt.Fprintln(os.Stderr, "rimsky compose run: emit wake message:", err)
+			return coord.Drain(context.Background(), ReasonAnyFailure)
+		}
+	}
+
 	// @deliberate: terminal-wait runs in a goroutine so the verb's main
 	// thread can multiplex over the four ready conditions (signal,
 	// timeout, role-failure, all-instances-terminated).

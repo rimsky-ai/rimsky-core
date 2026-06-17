@@ -98,7 +98,7 @@ type MessagesTable interface {
 	// @constraint: Use this from inside a transaction to avoid the SQLite
 	// MaxOpenConns=1 deadlock (a tx-less Get goes through the pool and blocks on
 	// the only connection, which is held by the open tx). The frame-engine's
-	// promotion path (graph/frame/engine.go::advanceOneFrame) and any other
+	// promotion path (graph/frame/engine.go::runAdvanceQueued) and any other
 	// inside-tx reader must use this variant.
 	GetInTx(ctx context.Context, tx Tx, id shared.UUID) (*MessageRow, error)
 

@@ -1393,85 +1393,14 @@ func provisionInstanceTx(
 		}
 	}
 
-	// @concept: message
-	// @concept: frame
-	// @constraint: phase 2 enqueues an initial frame covering every root
-	// node (no upstream subscriptions), reusing the caller's tx so the
-	// frame inserts are atomic with the instance+node creation above. A
-	// "root" is a node with no `subscribes:` entries naming an upstream
-	// node AND no substitution refs in its attribute schema. Cross-cutting
-	// (`instance:true`) entries don't disqualify a root because they fire
-	// on cascade-walks, not at instance create. Under the message-schema-
-	// layer redesign every frame carries a triggering message
-	// (`col:rimsky_frames.triggering_message_id` NOT NULL); the factory has
-	// no external triggering envelope here, so it seeds a synthetic
-	// instance-sourced message and encodes the wake targets on the message
-	// payload as `wake_node_ids`. The frame engine reads this list at
-	// promotion and stale-marks each in the same tx as the promotion,
-	// preserving the ordering the supervisor's `ListReadyForDispatch`
-	// relies on.
-	// @constraint: sub-graph internal nodes (everything declared inside a
-	// Graph other than `main`) are excluded from the root set — they only
-	// dispatch when the calling node invokes the sub-graph. This also
-	// covers the calling-node-absorption invariant per concept:delegation:
-	// a sub-graph entry's identity is absorbed into the calling node by
-	// the template canonicalizer, so the entry runs at the calling node's
-	// dispatch site rather than standalone.
-	subgraphInternal := make(map[string]struct{})
-	for _, g := range tpl.Spec.Graphs {
-		if g.Name == spec.MainGraphName {
-			continue
-		}
-		for _, n := range g.Nodes {
-			subgraphInternal[n.Type] = struct{}{}
-		}
-	}
-	rootWakeIDs := make([]foundationshared.UUID, 0, len(tpl.Spec.Nodes))
-	for _, def := range tpl.Spec.Nodes {
-		if _, ok := subgraphInternal[def.Type]; ok {
-			continue
-		}
-		hasUpstream := false
-		for _, s := range def.Subscribes {
-			if s.Node != "" && s.Node != def.Type {
-				hasUpstream = true
-				break
-			}
-		}
-		if !hasUpstream {
-			for _, ref := range nodepkg.UpstreamNodeTypesFromAttributes(def) {
-				if ref != def.Type {
-					hasUpstream = true
-					break
-				}
-			}
-		}
-		if hasUpstream {
-			continue
-		}
-		rootWakeIDs = append(rootWakeIDs, foundationshared.UUID(nodeIDs[def.Type]))
-	}
-	if len(rootWakeIDs) > 0 {
-		// @constraint: one initial frame for ALL roots, carrying the union
-		// wake list. Two-or-more separate initial frames would race a root
-		// through the second frame's promotion (re-stale-marking it and
-		// re-dispatching) because the serial-queue's frame promotion cannot
-		// cherry-pick.
-		// @constraint: runtime-synthetic envelope (NOT registry-declared,
-		// NOT subscriber-routed). The `"instance/root"` type bypasses the
-		// receipt-time registry gate by going through the in-process
-		// `EnqueueSyntheticWakeFrame` helper rather than the
-		// `route:POST /instances/{id}/messages` handler. Receivers are
-		// addressed by UUID through `payload.wake_node_ids`, read at frame
-		// promotion in `code:graph/frame/engine.go::advanceOneFrame`.
-		// Template authors cannot declare this type in `messages:` and the
-		// registry validator rejects subscriptions against it.
-		if _, _, err := runtime.EnqueueSyntheticWakeFrame(ctx, tx, deps.Persist,
-			inst.ID, "instance/root", "",
-			rootWakeIDs, nil); err != nil {
-			return createInstanceResponse{}, fmt.Errorf("instance-factory: seed root message: %w", err)
-		}
-	}
+	// @concept: instance
+	// @story: instance-create-is-idle
+	// @decision: synthetic-envelope-mechanism-retired
+	// @constraint: instance creation is idle. No initial frame is
+	// enqueued and no work begins until a sender posts a message to
+	// `route:POST /instances/{id}/messages`. The empty-message wake
+	// trigger (`story:empty-message-wakes-roots`) is the universal
+	// convenience for waking every structural root.
 
 	return createInstanceResponse{
 		InstanceID:   inst.ID.String(),

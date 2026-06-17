@@ -108,7 +108,7 @@ func TestPerInstanceOrderingInvariant_Concurrent(t *testing.T) {
 	for i := 0; i < N; i++ {
 		go func() {
 			defer wg.Done()
-			fireInvalidate(t, h, iid, worker.ID)
+			postInvalidateMessage(t, h, iid)
 		}()
 	}
 	wg.Wait()

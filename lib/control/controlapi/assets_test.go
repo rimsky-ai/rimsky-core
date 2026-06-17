@@ -8,9 +8,9 @@
 // DataProcessing registry). The asset surface works today; these tests
 // pin the observable response bodies/status so a future regression in the
 // alias resolution, the ListByInstanceAndState(committed, durable) row
-// discovery, the ListVersions proxy, the lineage join, or the
-// delete/materialize 409-if-in-flight gate surfaces as a red test rather
-// than a silent behavior change.
+// discovery, the ListVersions proxy, the lineage join, or the delete
+// 409-if-in-flight gate surfaces as a red test rather than a silent
+// behavior change.
 //
 // Why a bespoke harness (assetHarness) rather than newHarness: the asset
 // endpoints filter to producers that advertise `data_processing` and the
@@ -398,9 +398,8 @@ func TestAssetEndpoints_DeleteReleasesAndDeletes(t *testing.T) {
 }
 
 // TestAssetEndpoints_DeleteRefusesInFlightHolder pins the
-// 409-if-in-flight gate: an active claim_holder row makes both DELETE
-// (in-flight holder) and POST /materialize (instance still active uses a
-// different gate, so we assert the holder-driven delete refusal) return 409.
+// 409-if-in-flight gate: an active claim_holder row makes DELETE
+// return 409 (and Release does not fire).
 func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	t.Parallel()
 	ah, teardown := newAssetHarness(t, nil)
@@ -440,49 +439,4 @@ func TestAssetEndpoints_DeleteRefusesInFlightHolder(t *testing.T) {
 	for _, c := range ah.content.Calls() {
 		require.NotEqual(t, "release", c.Verb, "Release must not fire when delete is refused")
 	}
-}
-
-// TestAssetEndpoints_MaterializeEnqueuesAssetMaterialize exercises the
-// materialize endpoint (POST /materialize) and its 409-if-terminated
-// gate. The endpoint enqueues a runtime-synthetic envelope of type
-// `asset/materialize` carrying both `target_node` and `wake_node_ids`
-// — the latter is what `advanceOneFrame` reads at frame promotion to
-// stale-mark the resolved producer node. Without `wake_node_ids` the
-// frame promotes silently and the materialize call is a no-op success;
-// without the slash-bearing `asset/materialize` type the receipt-time
-// registry gate (or a future template's `messages:` typo) is the only
-// rejection path. Both are surfaced as part of this regression guard.
-func TestAssetEndpoints_MaterializeEnqueuesAssetMaterialize(t *testing.T) {
-	t.Parallel()
-	ah, teardown := newAssetHarness(t, nil)
-	t.Cleanup(teardown)
-	ctx := context.Background()
-
-	instID, _, _, _ := ah.seedAsset(t, "asset-mat")
-
-	status, out := ah.harness.httpJSON(t, "POST", "/v1/instances/"+instID.String()+"/assets/producer.dataset/materialize",
-		map[string]any{"reason": "operator-poke"})
-	require.Equal(t, http.StatusCreated, status, out)
-	msgID, _ := out["message_id"].(string)
-	require.NotEmpty(t, msgID)
-
-	var msgCount int
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
-		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'asset/materialize' AND convert_from(payload, 'UTF8')::jsonb->>'target_node' = 'producer'`,
-		[]any{instID}, &msgCount)
-	require.Equal(t, 1, msgCount, "synthetic envelope must carry the asset/materialize type and resolved target_node")
-
-	var wakeCount int
-	pgtest.QueryRowForTest(ctx, t, ah.harness.driver,
-		`SELECT count(*) FROM rimsky_messages WHERE instance_id = $1 AND type = 'asset/materialize' AND jsonb_array_length(convert_from(payload, 'UTF8')::jsonb->'wake_node_ids') = 1`,
-		[]any{instID}, &wakeCount)
-	require.Equal(t, 1, wakeCount, "wake_node_ids must carry exactly one resolved node uuid so advanceOneFrame stale-marks the producer")
-
-	// @constraint: drive the instance terminal — materialize must then refuse with 409.
-	pgtest.ExecForTest(ctx, t, ah.harness.driver,
-		`UPDATE rimsky_instances SET terminated_at = now() WHERE id = $1`, instID)
-	status, _ = ah.harness.httpJSON(t, "POST", "/v1/instances/"+instID.String()+"/assets/producer.dataset/materialize",
-		map[string]any{"reason": "too-late"})
-	require.Equal(t, http.StatusConflict, status)
-	_ = ctx
 }

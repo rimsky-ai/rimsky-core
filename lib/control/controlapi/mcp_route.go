@@ -157,7 +157,6 @@ func builtinSchemas() map[string][]byte {
 		"asset_get":                     []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
 		"asset_versions":                []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
 		"asset_materialization_history": []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
-		"asset_materialize":             []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"},"payload":{},"reason":{"type":"string"}},"required":["id","alias"]}`),
 		"asset_delete":                  []byte(`{"type":"object","properties":{"id":{"type":"string"},"alias":{"type":"string"}},"required":["id","alias"]}`),
 
 		"held_frames_list": obj,

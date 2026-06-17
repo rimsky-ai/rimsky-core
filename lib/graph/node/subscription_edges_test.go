@@ -244,6 +244,210 @@ func TestParseSubstitutionDirective_BareEventWithName(t *testing.T) {
 	}
 }
 
+// TestBuildSubscriptionEdges_StructuralRootInjection pins the
+// runtime-injected structural-root edge per
+// decision:structural-root-edge-injection-at-registration and
+// story:empty-message-wakes-roots: a top-level node whose subscribes:
+// block is empty and whose attribute schema has no upstream refs
+// gains a sender="" edge with SenderBoundToEmpty=true. Nodes with
+// upstream subscriptions or substitution refs are not roots and do
+// NOT get the injection.
+//
+//	@decision: structural-root-edge-injection-at-registration
+//	@story: empty-message-wakes-roots
+func TestBuildSubscriptionEdges_StructuralRootInjection(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		// @deliberate: pure root — no subscribes:, no substitution refs.
+		{Type: "root-a", Executor: "stub"},
+		// @deliberate: also a pure root — distinct receiver.
+		{Type: "root-b", Executor: "stub"},
+		// @deliberate: downstream — names an upstream in subscribes:,
+		// so NOT a structural root.
+		{Type: "downstream", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Node: "root-a", Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+			},
+		},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	// @deliberate: Match on sender="" returns both structural-root
+	// injected edges (root-a, root-b) on terminal/success.
+	matched := out.Match("", signal.TypePath("terminal/success"))
+	rootSeen := map[string]bool{}
+	for _, e := range matched {
+		if !e.SenderBoundToEmpty {
+			t.Errorf("Match(\"\", terminal/success) surfaced a non-root edge for %q (SenderBoundToEmpty=false)", e.ReceiverNodeType)
+		}
+		rootSeen[e.ReceiverNodeType] = true
+	}
+	for _, want := range []string{"root-a", "root-b"} {
+		if !rootSeen[want] {
+			t.Errorf("Match(\"\", terminal/success) missing structural-root edge for %q", want)
+		}
+	}
+	if rootSeen["downstream"] {
+		t.Errorf("downstream node must not have a structural-root edge — it has an upstream subscription")
+	}
+}
+
+// TestBuildSubscriptionEdges_StructuralRootInjection_CrossCuttingOnly
+// pins that a node whose ONLY subscribes entry is cross-cutting
+// (`instance: true`) is NOT classified as a structural root. The spec
+// language is "every node in the template whose author-declared
+// `subscribes:` block is empty or absent" — a cross-cutting entry IS
+// an author-declared subscription, and the author intent for an
+// `instance: true` subscriber is "fire on every event, do not be a
+// root." A monitor/cleanup node would otherwise get double coverage
+// (empty-message wake AND cross-cutting fan-in).
+//
+//	@decision: structural-root-edge-injection-at-registration
+func TestBuildSubscriptionEdges_StructuralRootInjection_CrossCuttingOnly(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		// @deliberate: cross-cutting-only — fires on every settled
+		// sender via its `instance: true` edge. Must NOT also gain a
+		// structural-root edge under sender="" with
+		// SenderBoundToEmpty=true.
+		{Type: "monitor", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Instance: true, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+			},
+		},
+		// @deliberate: a true structural root — for contrast.
+		{Type: "root", Executor: "stub"},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := out.Match("", signal.TypePath("terminal/success"))
+	for _, e := range matched {
+		if e.ReceiverNodeType == "monitor" && e.SenderBoundToEmpty {
+			t.Errorf("monitor is cross-cutting-only; must not gain a structural-root edge (SenderBoundToEmpty=true)")
+		}
+	}
+	sawRoot := false
+	for _, e := range matched {
+		if e.ReceiverNodeType == "root" && e.SenderBoundToEmpty {
+			sawRoot = true
+		}
+	}
+	if !sawRoot {
+		t.Errorf("Match(\"\", terminal/success) missing structural-root edge for \"root\"")
+	}
+}
+
+// TestBuildSubscriptionEdges_StructuralRootInjection_AttributeRef pins
+// that a node with an upstream substitution ref in its attribute
+// schema is NOT classified as a structural root (matching the
+// historic instance-create root-detection rule).
+//
+//	@decision: structural-root-edge-injection-at-registration
+func TestBuildSubscriptionEdges_StructuralRootInjection_AttributeRef(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		{Type: "upstream", Executor: "stub",
+			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"out": map[string]any{"type": "string", "source": "v"},
+				},
+			}}},
+		// @deliberate: receiver reads from upstream via a substitution
+		// ref. Per historic root-detection, this disqualifies the node
+		// from structural-root status even though Subscribes is empty.
+		// (Such a template fails the substitution-ref-coverage check at
+		// the validator; here we drive BuildSubscriptionEdges directly
+		// to pin the root-detection arithmetic.)
+		{Type: "receiver", Executor: "stub",
+			Attributes: &spec.NodeAttributesDef{Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"in": map[string]any{"type": "string", "source": "{{nodes.upstream.attribute.out}}"},
+				},
+			}}},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	matched := out.Match("", signal.TypePath("terminal/success"))
+	for _, e := range matched {
+		if e.ReceiverNodeType == "receiver" {
+			t.Errorf("receiver names an upstream via substitution ref; must not be classified a structural root")
+		}
+	}
+}
+
+// TestSubscriptionEdgeMap_Match_StructuralRootDisambiguation pins the
+// empty-sender-key edge disambiguation per
+// decision:empty-sender-key-edge-disambiguation. With both a
+// cross-cutting (SenderBoundToEmpty=false) edge and a structural-root
+// (SenderBoundToEmpty=true) edge living under sender="":
+//
+//   - Match(senderNodeType="executor-foo", terminal/success) returns
+//     the cross-cutting edge but NOT the structural-root edge — a
+//     real node-type settlement should not fire structural-roots.
+//
+//   - Match(senderNodeType="", terminal/success) returns BOTH edges —
+//     the actual sender is the empty-message virtual, so both kinds
+//     legitimately fire.
+//
+//     @decision: empty-sender-key-edge-disambiguation
+func TestSubscriptionEdgeMap_Match_StructuralRootDisambiguation(t *testing.T) {
+	tmpl := spec.TemplateSpec{Nodes: []spec.TemplateNodeDef{
+		// @deliberate: cross-cutting receiver — lives under sender="".
+		{Type: "cleanup", Executor: "stub",
+			Subscribes: []spec.SubscriptionEntry{
+				{Instance: true, Type: "terminal/success", WakeOnChange: spec.BoolPtr(true), ForceUpstreamRefresh: spec.BoolPtr(false)},
+			},
+		},
+		// @deliberate: structural root — also lives under sender="" but
+		// with SenderBoundToEmpty=true (injected by BuildSubscriptionEdges).
+		{Type: "root", Executor: "stub"},
+		// @deliberate: a regular sender node-type — to invoke Match from.
+		{Type: "executor-foo", Executor: "stub"},
+	}}
+	out, err := BuildSubscriptionEdges(tmpl, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildSubscriptionEdges: %v", err)
+	}
+	// @deliberate: real node-type settlement: cross-cutting fires;
+	// structural-root MUST NOT.
+	fromFoo := out.Match("executor-foo", signal.TypePath("terminal/success"))
+	sawCross := false
+	for _, e := range fromFoo {
+		if e.SenderBoundToEmpty {
+			t.Errorf("Match(executor-foo) surfaced structural-root edge for %q — must be suppressed under non-empty sender", e.ReceiverNodeType)
+		}
+		if e.ReceiverNodeType == "cleanup" && !e.SenderBoundToEmpty {
+			sawCross = true
+		}
+	}
+	if !sawCross {
+		t.Errorf("Match(executor-foo) missing cross-cutting edge for cleanup")
+	}
+	// @deliberate: empty-message virtual settlement: both kinds fire.
+	fromEmpty := out.Match("", signal.TypePath("terminal/success"))
+	sawCleanupCross := false
+	sawRootInjected := false
+	for _, e := range fromEmpty {
+		if e.ReceiverNodeType == "cleanup" && !e.SenderBoundToEmpty {
+			sawCleanupCross = true
+		}
+		if e.ReceiverNodeType == "root" && e.SenderBoundToEmpty {
+			sawRootInjected = true
+		}
+	}
+	if !sawCleanupCross {
+		t.Errorf("Match(\"\") missing cross-cutting edge for cleanup")
+	}
+	if !sawRootInjected {
+		t.Errorf("Match(\"\") missing structural-root edge for root")
+	}
+}
+
 // TestSubscriptionEdgeMap_PrefixWildcardMatch confirms that a
 // trailing-`*` edge inserted at one depth fires for any deeper-or-equal
 // signal path.

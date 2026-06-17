@@ -696,7 +696,10 @@ func deployObsTemplate(t *testing.T, ep harness.RimskyEndpoint, name string) str
 }
 
 // createObsInstance posts a new instance against templateID and
-// returns its instance_id.
+// returns its instance_id. Instance creation is idle post-spec; the helper
+// follows up with an empty message so the structural roots wake.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
 func createObsInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
@@ -716,6 +719,7 @@ func createObsInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, inst
 	if resp.InstanceID == "" {
 		t.Fatalf("instance_id empty: %s", string(raw))
 	}
+	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "claim-producer-obs", instanceKey)
 	return resp.InstanceID
 }
 

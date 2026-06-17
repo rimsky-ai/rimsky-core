@@ -52,6 +52,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -59,6 +60,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -89,11 +91,20 @@ func TestStoryReadWithoutWaking(t *testing.T) {
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name:    "explicit-attribute-context-read",
 		Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/trigger"},
+			{Type: "test/wake/context-sender"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			// @deliberate: trigger is a root; when invalidated its
 			// terminal/success fan-outs both senders into ONE frame.
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "trigger", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/trigger", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -124,6 +135,11 @@ func TestStoryReadWithoutWaking(t *testing.T) {
 				scenario.WithSubscribes(
 					node.SubscriptionEntry{
 						Node: "trigger", Type: "terminal/success",
+						WakeOnChange:         node.BoolPtr(true),
+						ForceUpstreamRefresh: node.BoolPtr(false),
+					},
+					node.SubscriptionEntry{
+						Node: "test/wake/context-sender", Type: "terminal/success",
 						WakeOnChange:         node.BoolPtr(true),
 						ForceUpstreamRefresh: node.BoolPtr(false),
 					},
@@ -191,6 +207,12 @@ func TestStoryReadWithoutWaking(t *testing.T) {
 	require.NotNil(t, gateN)
 	require.NotNil(t, ctxN)
 	require.NotNil(t, rcvN)
+	// @constraint: trigger was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the boot cascade the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/trigger", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	// @deliberate: boot-frame baseline must be zero receiver dispatches
 	// — gate-sender's "idle" payload fails the receiver's CEL `when:`,
@@ -221,7 +243,7 @@ func TestStoryReadWithoutWaking(t *testing.T) {
 	h.Stub.WhenType("receiver").Success(
 		map[string]any{"summary": "scenario-1"}, true, "scenario-1")
 
-	postAdminInvalidate(t, h, iid, ctxN.ID)
+	postAdminInvalidate(t, h, iid, "test/wake/context-sender", "1")
 
 	require.True(t, h.WaitForEventKind(ctxN.ID, "attribute/data/changed", 30*time.Second),
 		"context-sender's attribute/data/changed audit row must land in scenario 1")
@@ -262,7 +284,7 @@ func TestStoryReadWithoutWaking(t *testing.T) {
 	h.Stub.WhenType("receiver").Success(
 		map[string]any{"summary": "scenario-2"}, true, "scenario-2")
 
-	postAdminInvalidate(t, h, iid, trigN.ID)
+	postAdminInvalidate(t, h, iid, "test/wake/trigger", "2")
 
 	require.Eventually(t, func() bool {
 		return countObservedReceiverRuns(h) > scenario1ReceiverRuns
@@ -312,17 +334,16 @@ func countObservedReceiverRuns(h *scenario.Harness) int {
 	return n
 }
 
-// postAdminInvalidate routes through the harness's InvalidateNode
-// primitive, which enqueues a synthetic `node/invalidate` envelope and
-// the frame that delivers it. The messaging-schema-layer reshape
-// retired the operator-invalidate HTTP route (`/v1/admin/instances/{
-// id}/nodes/{id}/invalidate`) along with the entire UnifiedInvalidate /
-// InvalidateAdapter chain; the synthetic-envelope chokepoint is the
-// supported wake mechanism for re-firing a fresh node from inside a
-// test scenario.
+// postAdminInvalidate emits a per-target typed-message wake to invoke
+// invalidation of a specific node in the instance. Each call site uses a
+// distinct `wakeType` (declared in the template's `messages:` block and
+// covered by a `subscribes:` entry on the target node) and a unique
+// `callSiteID` so a re-run of the test produces a fresh frame, not a
+// 200-OK idempotency replay.
 //
 // @story: upstream-pull-on-invalidate
-func postAdminInvalidate(t *testing.T, h *scenario.Harness, instanceID, nodeID shared.UUID) {
+func postAdminInvalidate(t *testing.T, h *scenario.Harness, instanceID shared.UUID, wakeType, callSiteID string) {
 	t.Helper()
-	h.InvalidateNode(instanceID, nodeID)
+	h.PostInstanceMessage(instanceID, wakeType, nil,
+		fmt.Sprintf("test-wake-%s-%s", t.Name(), callSiteID))
 }

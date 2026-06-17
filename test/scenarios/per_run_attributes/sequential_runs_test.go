@@ -16,6 +16,7 @@
 package per_run_attributes
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -39,9 +41,17 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "per-run-two-runs", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/worker"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/worker", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -55,6 +65,12 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 	iid := h.CreateInstance(tid, "ck-two-runs", map[string]any{})
 	w := h.FindNode(iid, "worker")
 	require.NotNil(t, w)
+	// @constraint: worker was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the initial dispatch the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(w.ID, cascade.NodeStateFresh, 15*time.Second))
 	var first *persistence.NodeAttributesRow
@@ -69,10 +85,9 @@ func TestPerRunAttributes_SequentialRunsTwoRows(t *testing.T) {
 
 	h.Stub.WhenType("worker").Success(map[string]any{"value": "second"}, true, "ok")
 
-	// @deliberate: Trigger a fresh run via the runtime-synthetic invalidate
-	// envelope (the same path the retired admin invalidate route used
-	// internally).
-	h.InvalidateNode(iid, w.ID)
+	// @deliberate: Trigger a fresh run via a per-target typed-message
+	// wake — the universal post-spec trigger for in-test invalidation.
+	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @deliberate: Wait until the latest attribute row has a different run id and
 	// reflects the second invocation's value.

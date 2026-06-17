@@ -83,3 +83,39 @@ func TestRunMessagesTail_RequiresInstance(t *testing.T) {
 		t.Errorf("exit code: %d", code)
 	}
 }
+
+func TestClient_CreateInstanceMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method: %s", r.Method)
+		}
+		if r.URL.Path != "/v1/instances/abc/messages" {
+			t.Errorf("path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Idempotency-Key"); got != "test-key" {
+			t.Errorf("Idempotency-Key: got %q, want %q", got, "test-key")
+		}
+		var body struct {
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body.Type != "" {
+			t.Errorf("type: got %q, want empty", body.Type)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"message_id": "m1"})
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL)
+	resp, err := c.CreateInstanceMessage(context.Background(), "abc", "test-key", CreateInstanceMessageRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.MessageID != "m1" {
+		t.Errorf("MessageID: %s", resp.MessageID)
+	}
+}

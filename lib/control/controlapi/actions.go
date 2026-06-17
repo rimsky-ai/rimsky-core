@@ -497,7 +497,7 @@ var v1Actions = []ActionEntry{
 		Description: "List claim-holder rows for a claim handle."},
 
 	// @constraint: assets subsystem — per-instance asset lifecycle
-	// (read / materialize / delete).
+	// (read / delete).
 	{Action: "asset:read", IsWrite: false,
 		Routes: []Route{
 			{"GET", "/v1/instances/{id}/assets"},
@@ -507,10 +507,6 @@ var v1Actions = []ActionEntry{
 		},
 		MCPTools:    []string{"asset_list", "asset_get", "asset_versions", "asset_materialization_history"},
 		Description: "Read assets on an instance."},
-	{Action: "asset:materialize", IsWrite: true,
-		Routes:      []Route{{"POST", "/v1/instances/{id}/assets/{alias}/materialize"}},
-		MCPTools:    []string{"asset_materialize"},
-		Description: "Materialize (re-compute) an asset version."},
 	{Action: "asset:delete", IsWrite: true,
 		Routes:      []Route{{"DELETE", "/v1/instances/{id}/assets/{alias}"}},
 		MCPTools:    []string{"asset_delete"},

@@ -257,7 +257,7 @@ func dispatchMessages(args []string) int {
 
 func dispatchAsset(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky asset <list|show|materialize|versions|delete|lineage> ...")
+		fmt.Fprintln(os.Stderr, "usage: rimsky asset <list|show|versions|delete|lineage> ...")
 		return 2
 	}
 	ctx := context.Background()
@@ -267,8 +267,6 @@ func dispatchAsset(args []string) int {
 		return cli.RunAssetList(ctx, rest)
 	case "show":
 		return cli.RunAssetShow(ctx, rest)
-	case "materialize":
-		return cli.RunAssetMaterialize(ctx, rest)
 	case "versions":
 		return cli.RunAssetVersions(ctx, rest)
 	case "delete":
@@ -276,7 +274,7 @@ func dispatchAsset(args []string) int {
 	case "lineage":
 		return cli.RunAssetLineage(ctx, rest)
 	case "help", "--help", "-h":
-		fmt.Fprintln(os.Stdout, "usage: rimsky asset <list|show|materialize|versions|delete|lineage> ...")
+		fmt.Fprintln(os.Stdout, "usage: rimsky asset <list|show|versions|delete|lineage> ...")
 		return 0
 	}
 	fmt.Fprintf(os.Stderr, "rimsky asset: unknown subcommand %q\n", args[0])
@@ -353,7 +351,7 @@ func printRootUsage(w io.Writer) {
 	fmt.Fprintln(w, "  node get")
 	fmt.Fprintln(w, "  admin reset")
 	fmt.Fprintln(w, "  messages tail | show")
-	fmt.Fprintln(w, "  asset list | show | materialize | versions | delete | lineage")
+	fmt.Fprintln(w, "  asset list | show | versions | delete | lineage")
 	fmt.Fprintln(w, "  lineage prune")
 	fmt.Fprintln(w, "  parked list")
 	fmt.Fprintln(w, "")

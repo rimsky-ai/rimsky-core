@@ -435,10 +435,9 @@ func TestCreateMessage_MissingIdempotencyKeyRejected(t *testing.T) {
 
 	// @constraint: no envelope persisted by the rejected POST. The envelope
 	// insert is gated in the same tx as the (would-be) idempotency-row
-	// insert, so the only messages on the instance are the instance-
-	// factory's synthetic `instance/root` envelopes seeded at create (one
-	// per root node) — never an `invalidate` envelope from the rejected
-	// emit. Filter by type so the factory rows don't mask the assertion.
+	// insert. Post-spec instance creation is idle (no synthetic envelope
+	// at create), so the message ledger filtered by the rejected type
+	// stays empty.
 	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages?type=system/invalidate", instID), nil)
 	require.Equal(t, http.StatusOK, status, out)
 	msgs, _ := out["messages"].([]any)
@@ -617,48 +616,6 @@ func newInstanceWithMessageSchema(t *testing.T, h *harness, tag string) string {
 	return id
 }
 
-// TestCreateMessage_RejectsReservedWakeNodeIDsPayloadField pins the
-// privilege-escalation guard: an operator with `message:send` permission
-// MUST NOT be able to smuggle the runtime-internal `wake_node_ids`
-// field through an author-declared message type. Without this gate,
-// the frame-promotion path at advanceOneFrame would read the operator-
-// supplied array verbatim and stale-mark every named node UUID —
-// effectively a backdoor unconditional stale-mark against any UUID an
-// operator can name.
-//
-// Asserts HTTP 400 with the reserved_field diagnostic AND no envelope
-// persisted (the rejection runs BEFORE the idempotency insert + envelope
-// insert).
-func TestCreateMessage_RejectsReservedWakeNodeIDsPayloadField(t *testing.T) {
-	t.Parallel()
-	h, teardown := newHarness(t)
-	t.Cleanup(teardown)
-
-	instID := newInstanceWithMessageSchema(t, h, "no-wake-smuggle")
-
-	resp := h.httpJSONWithHeaders(t, "POST",
-		fmt.Sprintf("/v1/instances/%s/messages", instID),
-		map[string]any{
-			"type": "ping/recheck",
-			"payload": map[string]any{
-				"pong_status":   "needs_work",
-				"wake_node_ids": []string{"00000000-0000-0000-0000-000000000001"},
-			},
-		},
-		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
-	require.Equal(t, http.StatusBadRequest, resp.status, resp.body)
-	require.Equal(t, "reserved payload field", resp.body["error"])
-	require.Equal(t, "wake_node_ids", resp.body["reserved_field"])
-
-	// @constraint: no envelope persisted — the rejection runs in the same
-	// tx as the envelope insert, so a 400 leaves zero `ping/recheck` rows.
-	status, out := h.httpJSON(t, "GET",
-		fmt.Sprintf("/v1/instances/%s/messages?type=ping/recheck", instID), nil)
-	require.Equal(t, http.StatusOK, status, out)
-	msgs, _ := out["messages"].([]any)
-	require.Empty(t, msgs, "rejected receipt must persist no envelope")
-}
-
 // TestCreateMessage_AdmitsPayloadFailingBodySchema pins the spec's
 // "body bytes are read only at the sanctioned substitution leaf and the
 // persistence-layer fetch" rule (`@blessed-invariant: 21` + `concept:
@@ -709,4 +666,99 @@ func TestCreateMessage_AcceptsPayloadMatchingBodySchema(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.status, resp.body)
 	msgID, _ := resp.body["message_id"].(string)
 	require.NotEmpty(t, msgID)
+}
+
+// TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry pins the load-
+// bearing new affordance of the empty-message-wake-trigger spec: every
+// template's declared-types set carries an implicit `""` entry seeded
+// at registration, so a POST with `"type":""` and an Idempotency-Key is
+// admitted 201, persists one envelope (with type=""), and opens a
+// frame whose triggering_message_id points at it. Pins both the admit-
+// path branch (`if body.Type == "" { matched = true }`) and the
+// instance-create-is-idle baseline (ledger empty before the emit).
+//
+//	@story: empty-message-wakes-roots
+//	@decision: empty-message-as-root-trigger
+func TestCreateMessage_EmptyTypeAdmittedAsImplicitEntry(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+	ctx := context.Background()
+
+	instID := newInstanceForMessages(t, h, "empty-admit")
+
+	// @constraint: post-spec instance-create is idle — no synthetic
+	// envelope, no frame. The ledger is empty before the test's emit.
+	status, out := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	beforeMsgs, _ := out["messages"].([]any)
+	require.Empty(t, beforeMsgs, "instance creation is idle; ledger must be empty before the empty-type emit")
+
+	// @constraint: POST `{"type": ""}` with an Idempotency-Key — admitted
+	// 201 via the implicit empty-entry seeded into every template's
+	// declared-types set.
+	resp := h.httpJSONWithHeaders(t, "POST",
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
+		map[string]any{"type": ""},
+		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusCreated, resp.status, resp.body)
+	msgID, _ := resp.body["message_id"].(string)
+	require.NotEmpty(t, msgID, "201 must carry a message_id")
+
+	// @constraint: the envelope is persisted intact (type="").
+	mid, err := uuid.Parse(msgID)
+	require.NoError(t, err)
+	row, err := h.persist.Messages().Get(ctx, shared.UUID(mid))
+	require.NoError(t, err)
+	require.NotNil(t, row, "the empty-typed envelope must be persisted")
+	require.Equal(t, "", row.Type, "the row's type must be exactly the empty string")
+
+	// @constraint: GET surfaces exactly one row, with type="".
+	status, out = h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/messages", instID), nil)
+	require.Equal(t, http.StatusOK, status, out)
+	msgs, _ := out["messages"].([]any)
+	require.Len(t, msgs, 1, "the empty-typed emit must persist exactly one envelope")
+	first := msgs[0].(map[string]any)
+	require.Equal(t, "", first["type"], "the GET projection must echo type=\"\"")
+
+	// @constraint: a frame opens with this envelope as triggering_message_id.
+	// Pins the empty-message wake driving the frame engine through the
+	// same path any other typed message does.
+	status, framesOut := h.httpJSON(t, "GET", fmt.Sprintf("/v1/instances/%s/frames", instID), nil)
+	require.Equal(t, http.StatusOK, status, framesOut)
+	frames, _ := framesOut["frames"].([]any)
+	require.GreaterOrEqual(t, len(frames), 1, "the empty-typed emit must open at least one frame")
+	frame := frames[0].(map[string]any)
+	require.Equal(t, msgID, frame["triggering_message_id"],
+		"the frame's triggering_message_id must point at the empty-typed envelope")
+}
+
+// TestCreateMessage_UndeclaredTypeRefused_SurfacesImplicitTypes pins
+// that the 400-body response for an undeclared type carries the
+// `implicit_types: [""]` sibling field. A future change that drops
+// the field would mask the empty-message wake affordance from
+// operators who typo'd a message type and are inspecting the response
+// for the admissible set.
+//
+//	@story: empty-message-wakes-roots
+//	@decision: empty-message-as-root-trigger
+func TestCreateMessage_UndeclaredTypeRefused_SurfacesImplicitTypes(t *testing.T) {
+	t.Parallel()
+	h, teardown := newHarness(t)
+	t.Cleanup(teardown)
+
+	instID := newInstanceForMessages(t, h, "implicit-types")
+
+	resp := h.httpJSONWithHeaders(t, "POST",
+		fmt.Sprintf("/v1/instances/%s/messages", instID),
+		map[string]any{"type": "ping/recheck"},
+		map[string]string{"Idempotency-Key": "key-" + uuid.NewString()})
+	require.Equal(t, http.StatusBadRequest, resp.status, resp.body)
+	require.Equal(t, "unknown message type", resp.body["error"])
+	require.Equal(t, "ping/recheck", resp.body["type"])
+
+	implicit, ok := resp.body["implicit_types"].([]any)
+	require.True(t, ok, "implicit_types must be a JSON array, got %+v", resp.body)
+	require.ElementsMatch(t, []any{""}, implicit,
+		"the 400-body must advertise the runtime-implicit empty-type so an operator inspecting the response sees the admissible empty entry")
 }

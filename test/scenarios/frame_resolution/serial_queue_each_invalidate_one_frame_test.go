@@ -37,7 +37,7 @@ func TestSerialQueueEachInvalidateOneFrame(t *testing.T) {
 	// for 10 total invalidates → 10 frames.
 	const totalFrames = 10
 	for i := 0; i < totalFrames-1; i++ {
-		fireInvalidate(t, h, iid, worker.ID)
+		postInvalidateMessage(t, h, iid)
 	}
 
 	require.Eventually(t, func() bool {

@@ -3,8 +3,13 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // Scenario 2 — one pure-cascade node (no executor, no deps) is invalidated
-// via the runtime-synthetic envelope and transitions fresh → stale → fresh
-// inline.
+// via a per-target typed-message wake (the template declares a
+// `test/wake/hub` message; the node subscribes to it; the test body
+// emits an envelope of that type) and transitions fresh → stale →
+// fresh inline.
+//
+// @decision: empty-message-as-root-trigger
+// @story: empty-message-wakes-roots
 //
 // Migrated to the stores-redesign template grammar (spec §11): the node is
 // built via scenario.MakeNode. A pure-cascade node carries no executor,
@@ -14,6 +19,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,6 +27,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -31,27 +38,40 @@ func TestPureCascadeNode(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "pure-cascade", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/hub"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			// @deliberate: No executor → pure-cascade node. No stores, locks, or
 			// attributes wiring is required; the scheduler sweep promotes
 			// it to fresh on the first tick.
-			scenario.MakeNode(node.TemplateNodeDef{Type: "hub"}),
+			scenario.MakeNode(node.TemplateNodeDef{Type: "hub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/hub", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
+			),
 		},
 	})
 	iid := h.CreateInstance(tid, "ck-pc", map[string]any{})
 
 	hub := h.FindNode(iid, "hub")
 	require.NotNil(t, hub)
-	// @deliberate: Starts stale; pure-cascade sweep should promote it to fresh on the
-	// first scheduler tick.
+	// @constraint: hub was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the initial dispatch the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/hub", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
+	// @deliberate: The typed-message wake fires hub via the cascade
+	// walker; hub then settles to fresh per the no-executor pure-
+	// cascade transition.
 	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),
-		"hub did not reach fresh via initial pure-cascade sweep")
+		"hub did not reach fresh after the typed-message wake")
 
-	// @deliberate: Drive re-dispatch via the runtime-synthetic envelope.
-	// The operator-invalidate HTTP route was retired with the typed-message
-	// schema layer; admin invalidate now flows through the debug channel,
-	// and the test harness wraps the same internal entrypoint.
-	h.InvalidateNode(iid, hub.ID)
+	// @deliberate: Drive re-dispatch via typed-message wake.
+	h.PostInstanceMessage(iid, "test/wake/hub", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @deliberate: Expect fresh again after next tick.
 	require.True(t, h.WaitForNodeState(hub.ID, cascade.NodeStateFresh, 10*time.Second),

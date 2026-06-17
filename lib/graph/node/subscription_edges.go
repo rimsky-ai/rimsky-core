@@ -72,6 +72,17 @@ type SubscriptionEdge struct {
 	//	@concept: cascade
 	//	@concept: node-subscription
 	ForceUpstreamRefresh bool
+
+	// SenderBoundToEmpty distinguishes runtime-injected structural-root
+	// edges (true; fire only when the actual settling sender's type is
+	// "") from cross-cutting `instance: true` subscription edges (false;
+	// fire on every settled sender) — both live under the empty
+	// sender-key. Author-declared subscriptions cannot set this flag;
+	// the runtime owns it.
+	//
+	//	@concept: node-subscription
+	//	@concept: cascade
+	SenderBoundToEmpty bool
 }
 
 // SubscriptionEdgeMap is the inverse-edge structure: per-sender prefix
@@ -145,6 +156,29 @@ func (m *SubscriptionEdgeMap) Insert(senderNodeType string, edge SubscriptionEdg
 	}
 }
 
+// senderBoundFilter selects which edges under the `""` sender-key are
+// surfaced from a Match-style lookup against that bucket. Structural-
+// root edges (SenderBoundToEmpty=true) and cross-cutting edges
+// (SenderBoundToEmpty=false) coexist there but have different firing
+// semantics: cross-cutting edges fire on every settled sender;
+// structural-root edges fire only when the actual settling sender's
+// type is `""` (the implicit empty-message virtual).
+//
+//	@decision: empty-sender-key-edge-disambiguation
+type senderBoundFilter int
+
+// @constraint: edgeFilterAll surfaces every edge in the bucket — used
+// when the caller's senderNodeType is `""` so both kinds legitimately
+// fire (cross-cutting matches every sender; structural-root matches
+// the empty sender specifically). edgeFilterCrossCuttingOnly excludes
+// SenderBoundToEmpty=true edges — used when the caller's
+// senderNodeType is non-empty so only cross-cutting edges should fire
+// from the `""` bucket.
+const (
+	edgeFilterAll senderBoundFilter = iota
+	edgeFilterCrossCuttingOnly
+)
+
 // Match returns every edge whose (senderNodeType, type-pattern) tuple
 // accepts the emitted signal. The result combines:
 //
@@ -152,7 +186,10 @@ func (m *SubscriptionEdgeMap) Insert(senderNodeType string, edge SubscriptionEdg
 //     edges that match the full type-path plus trailing-`*` edges
 //     whose stripped prefix is a leading segment of the type-path;
 //   - cross-cutting edges keyed under "" (empty sender key): same
-//     matching rule.
+//     matching rule, with structural-root edges
+//     (SenderBoundToEmpty=true) suppressed when the caller's
+//     senderNodeType is non-empty per
+//     decision:empty-sender-key-edge-disambiguation.
 //
 // Returns nil when no edges match. Order is implementation-defined.
 func (m *SubscriptionEdgeMap) Match(senderNodeType string, signalType signal.TypePath) []SubscriptionEdge {
@@ -160,10 +197,20 @@ func (m *SubscriptionEdgeMap) Match(senderNodeType string, signalType signal.Typ
 		return nil
 	}
 	var out []SubscriptionEdge
-	out = appendMatches(out, m.bySender[senderNodeType], signalType)
-	if senderNodeType != "" {
-		out = appendMatches(out, m.bySender[""], signalType)
+	if senderNodeType == "" {
+		// @deliberate: actual sender is the empty-message virtual. The
+		// `""` bucket holds both structural-root edges (which exist for
+		// exactly this case) and cross-cutting edges (which fire for
+		// every sender including this one). Both should fire here.
+		out = appendMatches(out, m.bySender[""], signalType, edgeFilterAll)
+		return out
 	}
+	out = appendMatches(out, m.bySender[senderNodeType], signalType, edgeFilterAll)
+	// @deliberate: cross-cutting lookup under the `""` bucket must
+	// suppress structural-root edges — those are bound to the empty
+	// sender's settlement specifically and would mis-fire on a regular
+	// node-type settlement.
+	out = appendMatches(out, m.bySender[""], signalType, edgeFilterCrossCuttingOnly)
 	return out
 }
 
@@ -186,22 +233,36 @@ func (m *SubscriptionEdgeMap) Senders() []string {
 // senderNodeType != "", also under the empty cross-cutting key). Used
 // by post-commit fanout helpers that route a recalculate event per
 // subscribed receiver without evaluating the signal predicate.
+//
+// When walking the `""`-sender bucket, structural-root edges
+// (SenderBoundToEmpty=true) are suppressed iff senderNodeType is
+// non-empty per decision:empty-sender-key-edge-disambiguation — a
+// receiver bound to the empty sender's settlement does not become a
+// downstream of a regular node-type settlement.
 func (m *SubscriptionEdgeMap) ReceiverNodeTypesForSender(senderNodeType string) []string {
 	if m == nil || len(m.bySender) == 0 {
 		return nil
 	}
 	seen := map[string]struct{}{}
-	collect := func(root *prefixNode) {
+	collect := func(root *prefixNode, filter senderBoundFilter) {
 		if root == nil {
 			return
 		}
 		walkAllEdges(root, func(e SubscriptionEdge) {
+			if filter == edgeFilterCrossCuttingOnly && e.SenderBoundToEmpty {
+				return
+			}
 			seen[e.ReceiverNodeType] = struct{}{}
 		})
 	}
-	collect(m.bySender[senderNodeType])
-	if senderNodeType != "" {
-		collect(m.bySender[""])
+	if senderNodeType == "" {
+		// @deliberate: actual sender is the empty-message virtual; both
+		// kinds of edges in the `""` bucket name legitimate downstream
+		// receivers here.
+		collect(m.bySender[""], edgeFilterAll)
+	} else {
+		collect(m.bySender[senderNodeType], edgeFilterAll)
+		collect(m.bySender[""], edgeFilterCrossCuttingOnly)
 	}
 	if len(seen) == 0 {
 		return nil
@@ -258,19 +319,30 @@ func (m *SubscriptionEdgeMap) SenderNodeTypesForReceiver(receiverNodeType string
 // cascade walker's pessimistic seed at BFS depth ≥ 1, where the
 // downstream signal isn't in hand yet but the receiver still has to
 // be gated for safety.
+//
+// When walking the `""`-sender bucket, structural-root edges
+// (SenderBoundToEmpty=true) are suppressed iff senderNodeType is
+// non-empty per decision:empty-sender-key-edge-disambiguation.
 func (m *SubscriptionEdgeMap) ReceiverEdgesForSender(senderNodeType string) []SubscriptionEdge {
 	if m == nil || len(m.bySender) == 0 {
 		return nil
 	}
 	var out []SubscriptionEdge
-	walkAllEdges(m.bySender[senderNodeType], func(e SubscriptionEdge) {
-		out = append(out, e)
-	})
-	if senderNodeType != "" {
+	if senderNodeType == "" {
 		walkAllEdges(m.bySender[""], func(e SubscriptionEdge) {
 			out = append(out, e)
 		})
+		return out
 	}
+	walkAllEdges(m.bySender[senderNodeType], func(e SubscriptionEdge) {
+		out = append(out, e)
+	})
+	walkAllEdges(m.bySender[""], func(e SubscriptionEdge) {
+		if e.SenderBoundToEmpty {
+			return
+		}
+		out = append(out, e)
+	})
 	return out
 }
 
@@ -290,14 +362,20 @@ func (m *SubscriptionEdgeMap) AllEdges() []SubscriptionEdge {
 	return out
 }
 
-// CrossCuttingEdges returns the edges registered under the empty
-// sender key (the `instance: true` bucket).
+// CrossCuttingEdges returns the cross-cutting (`instance: true`)
+// edges registered under the empty sender key. Runtime-injected
+// structural-root edges (SenderBoundToEmpty=true) also live in the
+// `""` bucket but are NOT cross-cutting and are excluded here per
+// decision:empty-sender-key-edge-disambiguation.
 func (m *SubscriptionEdgeMap) CrossCuttingEdges() []SubscriptionEdge {
 	if m == nil {
 		return nil
 	}
 	var out []SubscriptionEdge
 	walkAllEdges(m.bySender[""], func(e SubscriptionEdge) {
+		if e.SenderBoundToEmpty {
+			return
+		}
 		out = append(out, e)
 	})
 	return out
@@ -322,7 +400,14 @@ func walkAllEdges(n *prefixNode, cb func(SubscriptionEdge)) {
 
 // appendMatches walks the prefix trie along the segments of `typ`,
 // collecting (a) every wildcard bucket encountered along the path
-// and (b) the exact bucket at the terminal node.
+// and (b) the exact bucket at the terminal node. The `filter`
+// parameter governs which SenderBoundToEmpty values are admitted —
+// see senderBoundFilter for the disambiguation rules used when
+// walking the `""`-sender bucket per
+// decision:empty-sender-key-edge-disambiguation. When walking a
+// non-empty sender bucket, callers pass edgeFilterAll because
+// SenderBoundToEmpty is structurally always false outside the `""`
+// bucket.
 //
 // Positional `*` segments are tolerated at match time even though
 // the operator-facing validator constrains explicit subscriptions to
@@ -331,7 +416,7 @@ func walkAllEdges(n *prefixNode, cb func(SubscriptionEdge)) {
 // first set. The defensive support keeps the matcher behavior stable
 // for any future internal usage and for runtime-synthesized patterns
 // that may opt into positional shapes.
-func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath) []SubscriptionEdge {
+func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath, filter senderBoundFilter) []SubscriptionEdge {
 	if root == nil {
 		return out
 	}
@@ -339,7 +424,7 @@ func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath
 	// any top-level kind — that's `type: *` semantics. Surface it for
 	// completeness; in practice templates don't write `type: *` but the
 	// trie supports it.
-	out = append(out, root.wildcard...)
+	out = appendFiltered(out, root.wildcard, filter)
 	segs := splitSegments(string(typ))
 	// @deliberate: frontier holds the set of trie nodes the walker is
 	// currently at. After consuming each segment, step every frontier
@@ -355,12 +440,12 @@ func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath
 			}
 			if child, ok := cur.children[seg]; ok {
 				next = append(next, child)
-				out = append(out, child.wildcard...)
+				out = appendFiltered(out, child.wildcard, filter)
 			}
 			if seg != "*" {
 				if child, ok := cur.children["*"]; ok {
 					next = append(next, child)
-					out = append(out, child.wildcard...)
+					out = appendFiltered(out, child.wildcard, filter)
 				}
 			}
 		}
@@ -370,9 +455,26 @@ func appendMatches(out []SubscriptionEdge, root *prefixNode, typ signal.TypePath
 		frontier = next
 	}
 	for _, cur := range frontier {
-		out = append(out, cur.exact...)
+		out = appendFiltered(out, cur.exact, filter)
 	}
 	return out
+}
+
+// appendFiltered appends the entries of `src` that pass the filter
+// onto `dst` and returns the extended slice. Centralizes the
+// SenderBoundToEmpty filter check so every collection point in
+// appendMatches is uniform.
+func appendFiltered(dst, src []SubscriptionEdge, filter senderBoundFilter) []SubscriptionEdge {
+	if filter == edgeFilterAll {
+		return append(dst, src...)
+	}
+	for _, e := range src {
+		if e.SenderBoundToEmpty {
+			continue
+		}
+		dst = append(dst, e)
+	}
+	return dst
 }
 
 // splitSegments splits a slash-delimited path. Empty input returns
@@ -409,7 +511,8 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 			existing.WhenExpr == e.WhenExpr &&
 			existing.SubscriptionScope == e.SubscriptionScope &&
 			existing.WakeOnChange == e.WakeOnChange &&
-			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh {
+			existing.ForceUpstreamRefresh == e.ForceUpstreamRefresh &&
+			existing.SenderBoundToEmpty == e.SenderBoundToEmpty {
 			return true
 		}
 	}
@@ -433,9 +536,26 @@ func containsEdge(edges []SubscriptionEdge, e SubscriptionEdge) bool {
 // `validateSubscribes` (which also admits message-type-shaped
 // `node:` values). Per the spec §Auto-subscribe rule extension.
 //
+// After the explicit-block population, the builder augments the map
+// with runtime-injected structural-root edges: one per top-level
+// template node whose `subscribes:` block names no upstream node and
+// whose attribute schema carries no upstream substitution refs. Each
+// structural-root edge keys under sender="" with
+// SenderBoundToEmpty=true, type-pattern matching `terminal/success`,
+// and `WakeOnChange: true` / `ForceUpstreamRefresh: false`. The
+// augmentation is template-determinable (the same root-detection rule
+// is used by instance-create), so it lives on the runtime's derived
+// in-memory map; the canonical template hash is over the spec bytes
+// only and is unaffected. The cascade walker's `""`-sender-key lookup
+// disambiguates structural-root edges from cross-cutting
+// (`instance: true`) edges by the SenderBoundToEmpty flag.
+//
 //	@concept: node-subscription
 //	@concept: signal
 //	@concept: message-schema
+//	@concept: cascade
+//	@decision: structural-root-edge-injection-at-registration
+//	@story: empty-message-wakes-roots
 func BuildSubscriptionEdges(
 	tmpl spec.TemplateSpec,
 	substitutionRefs map[string][]substitutionRef,
@@ -472,7 +592,105 @@ func BuildSubscriptionEdges(
 			out.Insert(ref.MessageType, edge)
 		}
 	}
+	// @deliberate: structural-root augmentation pass per
+	// decision:structural-root-edge-injection-at-registration and
+	// story:empty-message-wakes-roots. After canonicalization,
+	// `tmpl.Nodes` is the flattened list of every node from every
+	// graph; sub-graph internal nodes (everything in a non-main graph)
+	// are excluded here — they only dispatch when their calling node
+	// invokes the sub-graph, not on the implicit empty-message wake.
+	// A node is a structural root iff it lives in the main graph AND
+	// has no `subscribes:` entry naming an upstream `Node != ""`
+	// (and != self) AND no upstream node refs from its attribute
+	// substitution. Each root receives one edge keyed under sender=""
+	// with SenderBoundToEmpty=true so the cascade walker fires it
+	// only when the actual settling sender's type is "" (the implicit
+	// empty-message virtual).
+	subgraphInternal := subgraphInternalNodeTypes(tmpl)
+	for _, def := range tmpl.Nodes {
+		if subgraphInternal[def.Type] {
+			continue
+		}
+		// @deliberate: per story:empty-message-wakes-roots, a structural
+		// root is a node "whose author-declared `subscribes:` block is
+		// empty or absent." ANY subscribes entry disqualifies the node
+		// — a cross-cutting (`instance: true`) entry counts as an
+		// author-declared subscription, so a monitor/cleanup node that
+		// observes every settle is NOT a structural root. The
+		// classification is intentional: cross-cutting-only nodes own
+		// the "observe every event" surface and should not also wake
+		// at instance-create-equivalent empty-message wakes. A
+		// self-subscription (`node == def.Type`) does not establish an
+		// upstream and is excluded from the disqualification.
+		// @decision: structural-root-edge-injection-at-registration
+		hasUpstream := false
+		for _, s := range def.Subscribes {
+			if s.Node == def.Type {
+				continue
+			}
+			hasUpstream = true
+			break
+		}
+		if !hasUpstream {
+			for _, ref := range UpstreamNodeTypesFromAttributes(def) {
+				if ref != def.Type {
+					hasUpstream = true
+					break
+				}
+			}
+		}
+		// @deliberate: a `{{messages.<type>.<field>}}` ref auto-
+		// subscribes the receiver to the message-virtual-node's
+		// terminal/success (see the messageRefs leg above), which IS
+		// an upstream edge. A node that has no `subscribes:` block but
+		// reads a typed-message field is therefore not a structural
+		// root — the typed message wakes it, not the empty-message
+		// virtual. Mirror the substitution-ref check above.
+		// @decision: structural-root-edge-injection-at-registration
+		// @story: empty-message-wakes-roots
+		if !hasUpstream && len(messageRefs[def.Type]) > 0 {
+			hasUpstream = true
+		}
+		if hasUpstream {
+			continue
+		}
+		out.Insert("", SubscriptionEdge{
+			ReceiverNodeType:     def.Type,
+			TypePattern:          signal.TypePath("terminal/success"),
+			WhenExpr:             nil,
+			SubscriptionScope:    spec.SubscriptionScopeDirect,
+			WakeOnChange:         true,
+			ForceUpstreamRefresh: false,
+			SenderBoundToEmpty:   true,
+		})
+	}
 	return out, nil
+}
+
+// subgraphInternalNodeTypes returns the set of node types that are
+// declared inside a non-main GraphSpec (i.e. sub-graph internal
+// nodes). Templates that declare no `graphs:` (legacy flat-Nodes form)
+// or only the `main` graph return an empty set. Used by the
+// structural-root augmentation pass to exclude sub-graph internal
+// nodes — those nodes dispatch only when their calling node invokes
+// the sub-graph, never on the implicit empty-message wake.
+//
+// @concept: node-subscription
+// @decision: structural-root-edge-injection-at-registration
+func subgraphInternalNodeTypes(tmpl spec.TemplateSpec) map[string]bool {
+	out := make(map[string]bool, 8)
+	if len(tmpl.Graphs) == 0 {
+		return out
+	}
+	for _, g := range tmpl.Graphs {
+		if g.Name == spec.MainGraphName {
+			continue
+		}
+		for _, n := range g.Nodes {
+			out[n.Type] = true
+		}
+	}
+	return out
 }
 
 // edgeFromMessageRef synthesizes the implicit subscription edge for a

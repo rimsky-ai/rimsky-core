@@ -252,6 +252,10 @@ func deployHeldSwapTemplate(t *testing.T, ep harness.RimskyEndpoint, name, selec
 }
 
 // createHeldSwapInstance POSTs a new instance and returns its instance_id.
+// Instance creation is idle post-spec; the helper follows up with an empty
+// message so the structural roots wake.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
 func createHeldSwapInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
@@ -271,6 +275,7 @@ func createHeldSwapInstance(t *testing.T, ep harness.RimskyEndpoint, templateID,
 	if resp.InstanceID == "" {
 		t.Fatalf("instance_id empty: %s", string(raw))
 	}
+	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "held-swap", instanceKey)
 	return resp.InstanceID
 }
 

@@ -938,6 +938,41 @@ func (c *Client) GetMessage(ctx context.Context, id string) (*MessageItem, error
 	return &out, nil
 }
 
+// CreateInstanceMessageRequest is the POST /instances/{id}/messages
+// body shape. Type is REQUIRED (the server-side validator does not
+// accept omitempty); the empty-string value is the valid
+// empty-message wake trigger per `story:empty-message-wakes-roots`.
+type CreateInstanceMessageRequest struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// CreateInstanceMessageResponse is the POST /instances/{id}/messages
+// response body shape.
+type CreateInstanceMessageResponse struct {
+	MessageID string `json:"message_id"`
+}
+
+// CreateInstanceMessage calls POST /instances/{id}/messages with the
+// supplied idempotency key in the `Idempotency-Key` header.
+//
+// @decision: empty-message-as-root-trigger
+// @story: empty-message-wakes-roots
+func (c *Client) CreateInstanceMessage(ctx context.Context, instanceID string, idempotencyKey string, body CreateInstanceMessageRequest) (*CreateInstanceMessageResponse, error) {
+	req, err := c.request(ctx, http.MethodPost, "/v1/instances/"+url.PathEscape(instanceID)+"/messages", body)
+	if err != nil {
+		return nil, err
+	}
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	var out CreateInstanceMessageResponse
+	if err := c.do(req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // AssetItem is one element of GET /instances/{id}/assets. Mirrors the
 // server-side envelope at `code:control/controlapi/assets.go::assetItem`:
 // post-Stage-4 of the claim-handle state-column refactor the wire shape
@@ -1012,26 +1047,6 @@ func (c *Client) GetAssetVersions(ctx context.Context, instanceID, alias string)
 		return nil, err
 	}
 	return &out, nil
-}
-
-// MaterializeAssetRequest is the POST .../materialize body shape.
-type MaterializeAssetRequest struct {
-	Payload json.RawMessage `json:"payload,omitempty"`
-	Reason  string          `json:"reason,omitempty"`
-}
-
-// MaterializeAsset calls POST /instances/{id}/assets/{alias}/materialize.
-func (c *Client) MaterializeAsset(ctx context.Context, instanceID, alias string, body MaterializeAssetRequest) (map[string]any, error) {
-	path := "/v1/instances/" + url.PathEscape(instanceID) + "/assets/" + url.PathEscape(alias) + "/materialize"
-	req, err := c.request(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return nil, err
-	}
-	var out map[string]any
-	if err := c.do(req, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // DeleteAsset calls DELETE /instances/{id}/assets/{alias}.

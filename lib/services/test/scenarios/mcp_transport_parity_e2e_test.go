@@ -36,9 +36,8 @@
 //     category and the side effect is visible via the corresponding HTTP
 //     read (proving the handler ran, not a canned response).
 //
-// Categories where mutation is not naturally bounded (asset_materialize
-// requires a real upstream data-processing-capable producer; lineage_prune
-// is destructive) are sampled on the read axis only. Auth-parity is
+// Categories where mutation is not naturally bounded (lineage_prune is
+// destructive) are sampled on the read axis only. Auth-parity is
 // asserted for every category — that is the load-bearing falsifier.
 //
 // Falsifier: An MCP tool gate is weaker than the equivalent HTTP route's
@@ -86,8 +85,8 @@ type mcpTransportToolCategory struct {
 
 	// @deliberate: mutation tool fields are optional — empty mutationTool
 	// marks the category as sampled on the read axis only, used when the
-	// mutation is not naturally bounded (asset_materialize) or is already
-	// covered by another category's mutation flow.
+	// mutation is not naturally bounded or is already covered by another
+	// category's mutation flow.
 	mutationTool     string
 	mutationArgs     map[string]any
 	mutationHTTPVerb string
@@ -368,10 +367,10 @@ func TestMcpTransportParity(t *testing.T) {
 		},
 		// @deliberate: asset category — read-only sampling. The seed
 		// template doesn't declare a data-processing-capable producer so
-		// asset_materialize would need additional setup; the auth-parity
-		// assertion below still fires against the read route, covering the
-		// load-bearing falsifier (an MCP-side gate weaker than the HTTP-side
-		// gate).
+		// the bounded mutation is read-side; the auth-parity assertion
+		// below still fires against the read route, covering the
+		// load-bearing falsifier (an MCP-side gate weaker than the HTTP-
+		// side gate).
 		{
 			name:     "asset",
 			readTool: "asset_list",

@@ -21,6 +21,7 @@
 package breakpoints
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -39,9 +41,17 @@ func TestSoftInstancePause(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "bp-soft-pause", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/worker"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "worker", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/worker", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -58,6 +68,12 @@ func TestSoftInstancePause(t *testing.T) {
 	// has a running supervisor + the in-flight dispatch settled.
 	n := h.FindNode(iid, "worker")
 	require.NotNil(t, n)
+	// @constraint: worker was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the initial dispatch the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 	require.True(t, h.WaitForNodeState(n.ID, cascade.NodeStateFresh, 15*time.Second),
 		"initial dispatch should reach Fresh")
 	startCount := stubObservedCount(h, "worker")
@@ -68,11 +84,10 @@ func TestSoftInstancePause(t *testing.T) {
 	status, _ := instancePause(t, h, iid)
 	require.Equal(t, http.StatusOK, status)
 
-	// @deliberate: Provoke a re-dispatch by invalidating the worker node (a
-	// node-level invalidate is the simplest way to force the supervisor
-	// to enqueue another dispatch). The new dispatch should NOT fire
-	// because the candidate-selection filter excludes paused instances.
-	h.InvalidateNode(iid, n.ID)
+	// @deliberate: Provoke a re-dispatch by emitting a per-target
+	// typed-message wake. The new dispatch should NOT fire because the
+	// candidate-selection filter excludes paused instances.
+	h.PostInstanceMessage(iid, "test/wake/worker", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	// @constraint: Give the supervisor a few ticks to (not) pick the row up.
 	time.Sleep(1 * time.Second)

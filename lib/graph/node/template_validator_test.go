@@ -2515,9 +2515,14 @@ func TestValidateMessages_Ok_DeclaredTypeAndBodySchema(t *testing.T) {
 	assert.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
-// TestValidateMessages_Error_EmptyType rejects an entry whose `type:` is
-// blank — the type is the discriminator the wire and the cascade walker
-// route on, so it cannot be empty.
+// TestValidateMessages_Error_EmptyType rejects an entry whose `type:`
+// is blank — the empty type-path is reserved-for-runtime per
+// decision:empty-message-as-root-trigger (seeded automatically as the
+// implicit empty-message wake trigger), so an author-declared
+// `messages:` entry of type `""` is refused at registration with a
+// reserved-for-runtime diagnostic.
+//
+//	@decision: empty-message-as-root-trigger
 func TestValidateMessages_Error_EmptyType(t *testing.T) {
 	spec := &TemplateSpec{
 		Name:     "demo",
@@ -2528,6 +2533,33 @@ func TestValidateMessages_Error_EmptyType(t *testing.T) {
 	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
 	require.False(t, res.Ok())
 	hasErrorAt(t, res, "messages[0].type")
+	// @deliberate: pin the new reserved-for-runtime diagnostic by
+	// substring so the author sees the specific reservation reason and
+	// not a generic "type is required".
+	foundReservation := false
+	for _, e := range res.Errors {
+		if e.Path == "messages[0].type" && strings.Contains(e.Msg, "reserved-for-runtime") {
+			foundReservation = true
+			break
+		}
+	}
+	require.True(t, foundReservation, "expected reserved-for-runtime message; got %+v", res.Errors)
+}
+
+// TestValidateMessages_Ok_NoEmptyDeclaration sanity-checks that a
+// template with no `""` declaration registers cleanly (the implicit
+// entry is seeded by the runtime, not by the author).
+func TestValidateMessages_Ok_NoEmptyDeclaration(t *testing.T) {
+	spec := &TemplateSpec{
+		Name:    "demo",
+		Version: "1.0.0",
+		Messages: []MessageSchema{
+			{Type: "ping/recheck", BodySchema: []byte(`{"type": "object"}`)},
+		},
+		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
+	}
+	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
+	require.True(t, res.Ok(), "errors: %+v", res.Errors)
 }
 
 // TestValidateMessages_Error_DuplicateType pins the duplicate-rejection
@@ -2620,37 +2652,6 @@ func TestValidateMessages_Error_BodySchemaScalar(t *testing.T) {
 		Version: "1.0.0",
 		Messages: []MessageSchema{
 			{Type: "ping/recheck", BodySchema: []byte(`"a-string"`)},
-		},
-		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
-	}
-	res := ValidateTemplate(spec, RegistryHooks{StoreDeclared: storeDeclaredLookup(knownStores)})
-	require.False(t, res.Ok())
-	hasErrorAt(t, res, "messages[0].body_schema")
-}
-
-// TestValidateMessages_Error_BodySchemaDeclaresReservedWakeNodeIDs pins
-// the registration-side half of the structural ban on a body_schema
-// declaring a top-level `wake_node_ids` property. The receipt-side
-// (operator-supplied envelope) ban is exercised by
-// TestPublisher_CannotSmuggleWakeNodeIDs; this test fixes the
-// registration-side floor so a cascade-emit envelope (which bypasses
-// the receipt-time guard) cannot ride on a schema-blessed
-// `wake_node_ids` field to smuggle stale-mark targets.
-func TestValidateMessages_Error_BodySchemaDeclaresReservedWakeNodeIDs(t *testing.T) {
-	spec := &TemplateSpec{
-		Name:    "demo",
-		Version: "1.0.0",
-		Messages: []MessageSchema{
-			{
-				Type: "ping/recheck",
-				BodySchema: []byte(`{
-					"type": "object",
-					"properties": {
-						"reason": {"type": "string"},
-						"wake_node_ids": {"type": "array", "items": {"type": "string"}}
-					}
-				}`),
-			},
 		},
 		Nodes: []TemplateNodeDef{{Type: "a", Executor: "handler.a"}},
 	}

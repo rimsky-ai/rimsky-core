@@ -34,6 +34,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	pgpersist "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/postgres"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/signal"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/lib/runtime"
@@ -504,6 +505,13 @@ func (h *Harness) authedPost(path, bearerKey string, body []byte) *http.Response
 // consumerKey is omitted from the body so the row's instance_key column
 // stays NULL (the unique-index sentinel), rather than being persisted as
 // the empty string and immediately conflicting on the next call.
+//
+// Reserved Idempotency-Key prefix: the harness's post-create empty-
+// message wake uses the key `"harness-wake-create-"+instance_id`.
+// Test code that posts additional whole-instance empty wakes against
+// the same instance MUST pick a key outside the `harness-wake-create-`
+// prefix to avoid idempotent-dedup'ing into a no-op (a different
+// `harness-wake-...` suffix, or any other unique key, is fine).
 func (h *Harness) CreateInstance(templateHash string, consumerKey string, params map[string]any) shared.UUID {
 	h.T.Helper()
 	return h.CreateInstanceWithOverrides(templateHash, consumerKey, params, nil)
@@ -554,7 +562,90 @@ func (h *Harness) CreateInstanceWithOverrides(
 	if err != nil {
 		h.T.Fatalf("CreateInstance: bad instance_id %q: %v", out.InstanceID, err)
 	}
-	h.waitForRootDispatch(id, 5*time.Second)
+	// @constraint: instance creation is idle post-spec
+	// (story:instance-create-is-idle). The harness emits an empty
+	// wake message so the existing waitForRootDispatch semantics
+	// still hold without per-test changes. The Idempotency-Key
+	// carries the `harness-wake-create-` discriminator so tests
+	// posting a later whole-instance empty wake under the more
+	// natural `harness-wake-<iid>` shape do not collide with this
+	// envelope and silently get a replay-200.
+	//
+	// @deliberate: skip the wake + wait when the template has no
+	// structural root. Tests reinstrumented onto the `test/wake/<target>`
+	// idiom subscribe every formerly-root receiver to a typed wake
+	// envelope, which demotes them from structural-root status — the
+	// empty-message wake would fire nothing and waitForRootDispatch
+	// would burn its full 5-second budget on a guaranteed-noop wait.
+	// The introspection mirrors BuildSubscriptionEdges' root-detection
+	// rule (no SenderBoundToEmpty edge under sender="" ⇒ no roots).
+	// @decision: test-harness-create-instance-wakes-roots-after-create
+	if h.templateHasStructuralRoot(templateHash) {
+		h.PostInstanceMessage(id, "", nil, "harness-wake-create-"+id.String())
+		h.waitForRootDispatch(id, 5*time.Second)
+	}
+	return id
+}
+
+// PostInstanceMessage posts a typed (or empty-typed) message to the
+// instance via POST /v1/instances/{id}/messages. msgType may be ""
+// for the empty-message wake trigger. payload may be nil. The
+// idempotencyKey MUST be unique per call site to avoid replay-200.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
+// @decision: test-harness-invalidate-node-retired
+func (h *Harness) PostInstanceMessage(instanceID shared.UUID, msgType string, payload []byte, idempotencyKey string) shared.UUID {
+	return h.PostInstanceMessageWithAuth(instanceID, msgType, payload, idempotencyKey, "")
+}
+
+// PostInstanceMessageWithAuth is the auth-aware variant of
+// PostInstanceMessage. When the harness is configured to require api-key
+// auth on the write surface (e.g. the host-agent fixture's owner-key
+// setup) the caller threads the bearer plaintext through; an empty
+// bearer falls back to the anonymous path the other helpers use.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
+// @decision: test-harness-invalidate-node-retired
+func (h *Harness) PostInstanceMessageWithAuth(instanceID shared.UUID, msgType string, payload []byte, idempotencyKey, bearerKey string) shared.UUID {
+	h.T.Helper()
+	bodyMap := map[string]any{"type": msgType}
+	if len(payload) > 0 {
+		bodyMap["payload"] = json.RawMessage(payload)
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		h.T.Fatal(err)
+	}
+	url := h.ControlBase + "/v1/instances/" + instanceID.String() + "/messages"
+	req, err := http.NewRequest(http.MethodPost, url, bytesReader(body))
+	if err != nil {
+		h.T.Fatalf("PostInstanceMessage: build: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	if bearerKey != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.T.Fatalf("PostInstanceMessage: post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		buf := make([]byte, 4096)
+		n, _ := resp.Body.Read(buf)
+		h.T.Fatalf("PostInstanceMessage: status %d: %s", resp.StatusCode, string(buf[:n]))
+	}
+	var out struct {
+		MessageID string `json:"message_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		h.T.Fatalf("PostInstanceMessage: decode: %v", err)
+	}
+	id, err := parseUUIDStr(out.MessageID)
+	if err != nil {
+		h.T.Fatalf("PostInstanceMessage: bad message_id %q: %v", out.MessageID, err)
+	}
 	return id
 }
 
@@ -614,6 +705,24 @@ func (h *Harness) CreateInstanceWithServiceBindings(
 	if err != nil {
 		h.T.Fatalf("CreateInstanceWithServiceBindings: bad instance_id %q: %v", out.InstanceID, err)
 	}
+	// @constraint: instance creation is idle post-spec
+	// (story:instance-create-is-idle). The harness emits an empty
+	// wake message so the existing post-create dispatch semantics
+	// still hold without per-test changes. Thread the same bearer
+	// key through so the wake POST passes the auth gate (the host-
+	// agent fixture requires an owner key on the write surface).
+	// The Idempotency-Key carries the `harness-wake-create-`
+	// discriminator (see CreateInstance GoDoc); tests posting a
+	// second whole-instance wake against this instance must pick a
+	// key outside that prefix to avoid replay-200.
+	//
+	// @deliberate: skip the wake when the template has no structural
+	// root (see CreateInstance GoDoc) — no-op wake on a rootless
+	// template would queue a frame nobody consumes.
+	// @decision: test-harness-create-instance-wakes-roots-after-create
+	if h.templateHasStructuralRoot(templateHash) {
+		h.PostInstanceMessageWithAuth(id, "", nil, "harness-wake-create-"+id.String(), bearerKey)
+	}
 	return id
 }
 
@@ -652,6 +761,65 @@ func (h *Harness) MintAdminKey(name string) (plaintext, keyID string) {
 	return out.Plaintext, out.ID
 }
 
+// templateHasStructuralRoot returns true iff the deployed template
+// identified by templateHash has at least one structural root — a
+// node whose author-declared `subscribes:` block is empty or absent
+// (per decision:structural-root-edge-injection-at-registration).
+// Tests reinstrumented onto the `test/wake/<target>` idiom subscribe
+// every formerly-root receiver to a typed wake envelope, demoting
+// them from structural-root status; the harness uses this signal to
+// skip the post-create empty-message wake (and its waitForRootDispatch
+// poll) when no root exists, avoiding a 5-second guaranteed-noop wait.
+//
+// Mirrors BuildSubscriptionEdges' root-detection arithmetic: the
+// inverse-edge map injects one edge keyed under sender="" with
+// SenderBoundToEmpty=true per structural root, so a Match("",
+// terminal/success) returning any such edge proves at least one root
+// exists. On any lookup or parse failure the helper conservatively
+// returns true so the caller proceeds with the wake (the test still
+// works, it just pays the original cost).
+//
+// @source: cmd/rimsky/cli/structural_root.go::TemplateHasStructuralRoot
+// @diverged: true
+// @reason: scenario tests read the template spec straight from
+//
+//	persistence.Templates.GetByHash inside a harness Tx rather
+//	than dialing the control-api's GET /v1/templates/{hash}
+//	route, so the harness can run before the control-api is
+//	even mounted. The CLI helper has no in-process persistence
+//	handle and is the right tool for the deployed-API caller.
+//
+// @decision: structural-root-edge-injection-at-registration
+// @decision: test-harness-create-instance-wakes-roots-after-create
+func (h *Harness) templateHasStructuralRoot(templateHash string) bool {
+	h.T.Helper()
+	var tmplSpec *persistence.TemplateRow
+	err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
+		row, err := h.Persist.Templates().GetByHash(ctx, templateHash, tx)
+		tmplSpec = row
+		return err
+	})
+	if err != nil || tmplSpec == nil {
+		// @deliberate: conservative — if introspection fails, fall back to
+		// the original behavior (post wake + wait). A defensive false
+		// here would silently break tests whose templates DO have roots.
+		return true
+	}
+	subRefs := node.ExtractSubstitutionRefsFromTemplate(tmplSpec.Spec)
+	msgRefs := node.ExtractMessageRefsFromTemplate(tmplSpec.Spec)
+	edges, err := node.BuildSubscriptionEdges(tmplSpec.Spec, subRefs, msgRefs)
+	if err != nil || edges == nil {
+		return true
+	}
+	matched := edges.Match("", signal.TypePath("terminal/success"))
+	for _, e := range matched {
+		if e.SenderBoundToEmpty {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Duration) {
 	h.T.Helper()
 	deadline := time.Now().Add(timeout)
@@ -674,8 +842,17 @@ func (h *Harness) waitForRootDispatch(instanceID shared.UUID, timeout time.Durat
 
 func (h *Harness) driveFrameAndEnqueue(instanceID shared.UUID) {
 	h.T.Helper()
-	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue,
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger)
+	// @constraint: post-spec receivers wake exclusively via the
+	// subscriber-side cascade walker. With no real scheduler running
+	// in this harness flavor, the message-delivery sweep must run by
+	// hand so the empty-message wake the create-instance step posted
+	// actually fires the structural roots.
+	// @decision: empty-message-as-root-trigger
+	_ = runtime.SweepDeliverMessagesForRunningFrames(h.Ctx, h.Persist, h.Queue,
+		shared.SilentLogger{}, time.Now())
+	_ = frame.RunTick(h.Ctx, h.Persist, h.Queue, silentLogger)
 	var rows []persistence.NodeRow
 	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
 		r, err := h.Persist.Nodes().ListReadyForDispatch(ctx, tx)
@@ -869,63 +1046,6 @@ func (h *Harness) FindNode(instanceID shared.UUID, nodeType string) *persistence
 		}
 	}
 	return nil
-}
-
-// InvalidateNode drives a re-dispatch of the target node, replicating
-// what the retired operator route (`POST /v1/nodes/{id}/invalidate`)
-// used to do internally. The route's dispatch was state-aware: a
-// parked target was woken via the parked-resume helper (`wakeParkedNode`),
-// any other state queued a synthetic-envelope frame. This helper mirrors
-// that split so scenario tests covering parked-state corner cases stay
-// expressible without the retired HTTP surface.
-//
-// For non-parked targets the helper enqueues a synthetic
-// `node/invalidate` envelope + frame; the frame engine reads
-// `wake_node_ids` at promotion and stale-marks the target. For parked
-// targets the synthetic-envelope path stalls behind the running
-// parked-held frame, so the helper calls `runtime.WakeParkedNode`
-// directly — the same path the parked-resume sweep uses when the
-// resume_at deadline elapses.
-func (h *Harness) InvalidateNode(instanceID, nodeID shared.UUID) {
-	h.T.Helper()
-	// @deliberate: Probe the target's current state so we route to the right wake
-	// path (parked → wakeParkedNode; everything else → synthetic envelope).
-	var state cascade.NodeState
-	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		row, err := h.Persist.Nodes().Get(ctx, nodeID, tx)
-		if err != nil || row == nil {
-			return err
-		}
-		state = row.State
-		return nil
-	}); err != nil {
-		h.T.Fatalf("Harness.InvalidateNode: load target: %v", err)
-	}
-	if state == cascade.NodeStateParked {
-		// @constraint: Parked node holds the running frame open — a queued synthetic
-		// envelope's frame won't promote until the parked work resolves,
-		// so we wake the parked row directly via the same helper the
-		// parked-resume deadline sweep uses.
-		wakeArgs := runtime.WakeParkedArgs{
-			Persist:      h.Persist,
-			Queue:        h.Queue,
-			Logger:       shared.SilentLogger{},
-			TargetNodeID: nodeID,
-			SupervisorID: "scenario:test-helper",
-		}
-		if err := runtime.WakeParkedNode(h.Ctx, wakeArgs, runtime.WakeExternalInvalidate); err != nil {
-			h.T.Fatalf("Harness.InvalidateNode: wake parked: %v", err)
-		}
-		return
-	}
-	if err := h.Persist.Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		_, _, err := runtime.EnqueueSyntheticWakeFrame(ctx, tx, h.Persist,
-			instanceID, "node/invalidate", "scenario:test-helper",
-			[]shared.UUID{nodeID}, map[string]any{"reason": "scenario:invalidate-node"})
-		return err
-	}); err != nil {
-		h.T.Fatalf("Harness.InvalidateNode: %v", err)
-	}
 }
 
 // templateSpecToJSON converts a node.TemplateSpec into the snake_case

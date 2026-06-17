@@ -107,6 +107,17 @@ var templateDeclaredMessageTypes sync.Map
 // propagation) while still arming the floor on the happy path; a
 // template-missing condition is already surfaced loudly by every other
 // dispatch-time helper.
+//
+// Every template's declared-types set carries an implicit `""` entry
+// seeded here at first build, so empty-typed messages pass the
+// receipt-time registry-membership check uniformly with any declared
+// type. The implicit entry has a null body schema (no fields, no
+// substitution surface); receivers gate on the entry via subscription
+// edges, not via body substitution. The template_validator refuses an
+// author-declared `messages:` entry of type `""` as reserved-for-runtime.
+//
+//	@decision: empty-message-as-root-trigger
+//	@story: empty-message-wakes-roots
 func declaredMessageTypesForTemplate(
 	ctx context.Context, args RunArgs, templateHash string, tx persistence.Tx,
 ) map[string]struct{} {
@@ -123,10 +134,15 @@ func declaredMessageTypesForTemplate(
 	if err != nil || row == nil {
 		return nil
 	}
-	set := make(map[string]struct{}, len(row.Spec.Messages))
+	set := make(map[string]struct{}, len(row.Spec.Messages)+1)
 	for _, m := range row.Spec.Messages {
 		set[m.Type] = struct{}{}
 	}
+	// @deliberate: implicit empty-message-type seed — per
+	// decision:empty-message-as-root-trigger, every template admits the
+	// `""` type so the empty-message wake trigger passes the receipt-time
+	// registry-membership check uniformly with any declared type.
+	set[""] = struct{}{}
 	actual, _ := templateDeclaredMessageTypes.LoadOrStore(templateHash, set)
 	return actual.(map[string]struct{})
 }

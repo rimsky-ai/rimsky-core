@@ -12,18 +12,12 @@
 package frame_resolution
 
 import (
-	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
 
-	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
-	"github.com/rimsky-ai/rimsky-core/lib/graph/frame"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
 
@@ -72,48 +66,30 @@ func countFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUI
 	return n
 }
 
-// fireInvalidate seeds a synthetic operator-sourced message carrying a
-// wake_node_ids payload, and calls frame.EnqueueFrame in its own short
-// tx via the persistence driver. Used by tests that want to fire many
-// invalidates rapidly without going through the controlapi HTTP path.
+// postInvalidateMessage posts an empty-message wake to the instance to
+// drive a fresh-frame cycle through the real message-delivery /
+// cascade machinery, and returns the message_id assigned by the
+// control-api. Post-spec the runtime synthesizes no envelopes; the
+// empty-message wake trigger is the universal way to wake every
+// structural root via the same path operators use in production.
 //
-// Pass 4 of the 2026-06-14 message-schema-layer reshape: the legacy
-// rimsky_frames.source_node_ids column retired (Pass 1) along with the
-// frame-engine path that stale-marked source nodes at promotion. The
-// replacement is a `wake_node_ids` JSON array on the message payload —
-// the frame engine reads it at promotion and stale-marks each in the
-// same tx (promote + stale-mark co-committed).
-func fireInvalidate(t *testing.T, h *scenario.Harness, instanceID, targetNodeID shared.UUID) shared.UUID {
+// Scope warning: the wake fires EVERY structural root in the template,
+// not a named node. The frame_resolution tests use single-root
+// templates, where "every structural root" is equivalent to "the one
+// node". A multi-root template would see overreach; callers must own
+// that constraint at the call site (no targetNodeID parameter exists
+// for them to pinpoint a single node).
+//
+// Returns the message_id assigned by the control-api (NOT a frame_id
+// — both are `shared.UUID`; readers conflating the two would silently
+// misinterpret downstream lookups). The frame the message opens is
+// found via `listFrames` filtered by `triggering_message_id`.
+// @decision: empty-message-as-root-trigger
+// @story: empty-message-wakes-roots
+func postInvalidateMessage(t *testing.T, h *scenario.Harness, instanceID shared.UUID) shared.UUID {
 	t.Helper()
-	var fid uuid.UUID
-	require.NoError(t, h.Driver.Tables().Transaction(h.Ctx, func(ctx context.Context, tx persistence.Tx) error {
-		msgID := shared.UUID(uuid.New())
-		var payload []byte
-		if targetNodeID != (shared.UUID{}) {
-			b, _ := json.Marshal(map[string]any{
-				"wake_node_ids": []string{targetNodeID.String()},
-			})
-			payload = b
-		}
-		if err := runtime.EnqueueMessage(ctx, tx, h.Driver.Tables().Messages(), persistence.EnqueueMessageRequest{
-			ID:         msgID,
-			InstanceID: instanceID,
-			Type:       "node/invalidate",
-			Sender:     "test-helper",
-			SenderKind: "operator",
-			Payload:    payload,
-		}); err != nil {
-			return err
-		}
-		got, err := frame.EnqueueFrame(ctx, h.Driver.Tables(), tx,
-			uuid.UUID(instanceID), uuid.UUID(msgID))
-		if err != nil {
-			return err
-		}
-		fid = got
-		return nil
-	}))
-	return shared.UUID(fid)
+	idemKey := "post-invalidate-message-" + instanceID.String() + "-" + uuid.NewString()
+	return h.PostInstanceMessage(instanceID, "", nil, idemKey)
 }
 
 func waitForFramesByState(t *testing.T, h *scenario.Harness, instanceID shared.UUID, state string, want int, timeout time.Duration) bool {

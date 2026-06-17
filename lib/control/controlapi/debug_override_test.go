@@ -37,6 +37,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+	pgtest "github.com/rimsky-ai/rimsky-core/test/support/pgmigrate"
 )
 
 // pauseInstanceForTest toggles rimsky_instances.paused = true via the
@@ -64,6 +65,10 @@ func pauseInstanceForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 	t.Helper()
 	ctx := context.Background()
+	// @constraint: post-spec instance creation is idle (no frame is
+	// enqueued), so seed a triggering message + running frame BEFORE
+	// the tx for the breakpoint+hit insert.
+	frameID := seedRunningFrameForTest(ctx, t, h, instanceID)
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		bpID, err := h.persist.Breakpoints().Create(ctx, persistence.BreakpointRow{
 			InstanceID:     instanceID,
@@ -86,10 +91,6 @@ func seedPauseModeHitForTest(t *testing.T, h *harness, instanceID shared.UUID) {
 			return err
 		}
 		require.NotNil(t, inst)
-		frameID, err := ensureRunningFrameForTest(ctx, h, instanceID, tx)
-		if err != nil {
-			return err
-		}
 		var rootNodeID shared.UUID
 		nodes, err := h.persist.Nodes().ListByInstance(ctx, instanceID, tx)
 		if err != nil {
@@ -152,32 +153,25 @@ func findNodeIDByType(t *testing.T, h *harness, instanceID shared.UUID, typ stri
 	return *found
 }
 
-// @agent-contract: ensureRunningFrameForTest returns the instance's
-// running frame id, promoting a queued frame to running if none is
-// running yet. The runtime engine isn't booted in this harness so a
-// freshly-created instance has a queued root frame but no running
-// one; tests that need to seed a node-run inside a frame call this.
-func ensureRunningFrameForTest(ctx context.Context, h *harness, instanceID shared.UUID, tx persistence.Tx) (shared.UUID, error) {
-	running, err := h.persist.Frames().GetRunningFrameID(ctx, instanceID, tx)
-	if err != nil {
-		return shared.UUID{}, err
-	}
-	if running != nil {
-		return *running, nil
-	}
-	filter := persistence.FrameListFilter{InstanceID: &instanceID, State: persistence.FrameStateQueued}
-	page, err := h.persist.Frames().ListForObservability(ctx, filter, persistence.ListPagination{Limit: 1}, tx)
-	if err != nil {
-		return shared.UUID{}, err
-	}
-	if len(page.Rows) == 0 {
-		return shared.UUID{}, fmt.Errorf("ensureRunningFrameForTest: no queued frame to promote on instance %s", instanceID)
-	}
-	candidate := page.Rows[0].FrameID
-	if _, err := h.persist.Frames().PromoteQueuedFrameToRunning(ctx, candidate, tx); err != nil {
-		return shared.UUID{}, err
-	}
-	return candidate, nil
+// seedRunningFrameForTest synthesizes a triggering message + a running
+// frame directly via the test driver. Post-spec instance creation is
+// idle (no frame is enqueued), so tests that seed a node-run inside a
+// frame call this BEFORE entering the tx for the run-row insert.
+func seedRunningFrameForTest(ctx context.Context, t *testing.T, h *harness, instanceID shared.UUID) shared.UUID {
+	t.Helper()
+	msgID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_messages
+            (id, instance_id, type, sender_kind, sender, payload, received_at)
+        VALUES ($1, $2, '', 'operator', 'test', E'{}'::bytea, now())
+    `, msgID, instanceID)
+	frameID := uuid.New()
+	pgtest.ExecForTest(ctx, t, h.driver, `
+        INSERT INTO rimsky_frames
+            (frame_id, instance_id, state, queued_at, started_at, triggering_message_id, frame_timeout_ms)
+        VALUES ($1, $2, 'running', now(), now(), $3, 60000)
+    `, frameID, instanceID, msgID)
+	return shared.UUID(frameID)
 }
 
 // hasDebugOverrideAuditEvent reports whether the instance has any
@@ -340,6 +334,11 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 	// invalidate_node no-ops on nodes with no in-flight run by design.
 	rootNode := findNodeIDByType(t, h, instUUID, "root")
 
+	// @constraint: post-spec instance creation is idle (no frame is
+	// enqueued), so seed a triggering message + running frame BEFORE
+	// the tx for the run-row insert.
+	frameID := seedRunningFrameForTest(ctx, t, h, instUUID)
+
 	var inFlightRunID shared.UUID
 	require.NoError(t, h.persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		inst, err := h.persist.Instances().Get(ctx, instUUID, tx)
@@ -347,10 +346,6 @@ func TestDebugOverride_InvalidateNodeMutatesNodeRun(t *testing.T) {
 			return err
 		}
 		require.NotNil(t, inst)
-		frameID, err := ensureRunningFrameForTest(ctx, h, instUUID, tx)
-		if err != nil {
-			return err
-		}
 		if err := h.persist.Nodes().AffirmNodeRunRow(ctx, rootNode.ID, inst.MainRunScopeID, frameID, tx); err != nil {
 			return err
 		}
@@ -403,6 +398,11 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 
 	rootNode := findNodeIDByType(t, h, instUUID, "root")
 
+	// @constraint: post-spec instance creation is idle (no frame is
+	// enqueued), so seed a triggering message + running frame BEFORE
+	// the tx for the run-row insert.
+	frameID := seedRunningFrameForTest(ctx, t, h, instUUID)
+
 	// @deliberate: seed an in-flight run + an attribute row so
 	// MergeDelta has something to merge into.
 	var inFlightRunID shared.UUID
@@ -412,10 +412,6 @@ func TestDebugOverride_SetAttributeWritesAttribute(t *testing.T) {
 			return err
 		}
 		require.NotNil(t, inst)
-		frameID, err := ensureRunningFrameForTest(ctx, h, instUUID, tx)
-		if err != nil {
-			return err
-		}
 		if err := h.persist.Nodes().AffirmNodeRunRow(ctx, rootNode.ID, inst.MainRunScopeID, frameID, tx); err != nil {
 			return err
 		}

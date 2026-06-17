@@ -47,6 +47,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
+
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
@@ -158,5 +160,10 @@ func createInstanceViaHTTP(t *testing.T, h *scenario.Harness, templateHash strin
 	require.NoError(t, json.Unmarshal(got, &out), "instance create response must be JSON with instance_id")
 	id, err := uuid.Parse(out.InstanceID)
 	require.NoErrorf(t, err, "instance_id %q is not a valid UUID", out.InstanceID)
+	// @constraint: post-spec instance creation is idle; emit an
+	// empty-message wake so the structural roots dispatch through
+	// the same path operators use in production.
+	// @decision: empty-message-as-root-trigger
+	h.PostInstanceMessage(shared.UUID(id), "", nil, "canary-wake-"+id.String())
 	return id
 }

@@ -282,6 +282,10 @@ func postTemplate(t *testing.T, ep harness.RimskyEndpoint, body map[string]any) 
 }
 
 // postInstance POSTs a new instance and returns the instance_id.
+// Instance creation is idle post-spec; the helper follows up with an empty
+// message so the structural roots wake.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
 func postInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, key string) string {
 	t.Helper()
 	status, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
@@ -298,6 +302,10 @@ func postInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, key strin
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatalf("decode: %v: %s", err, string(raw))
 	}
+	if resp.InstanceID == "" {
+		t.Fatalf("instance_id empty: %s", string(raw))
+	}
+	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "openlineage-subscriber", key)
 	return resp.InstanceID
 }
 

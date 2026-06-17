@@ -22,6 +22,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -43,9 +45,17 @@ func TestCascadeInvalidate(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "chain", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/a"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "a", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/a", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type":       "object",
 					"properties": map[string]any{"a": map[string]any{"type": "integer"}},
@@ -83,6 +93,11 @@ func TestCascadeInvalidate(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 	require.NotNil(t, c)
+	// @constraint: a was previously a structural root; the subscribes:
+	// entry added for the typed-message wake demoted it from root, so
+	// the harness's empty-wake doesn't fire it. Emit the typed message
+	// here to drive the initial cascade the test assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 15*time.Second))
 	require.True(t, h.WaitForNodeState(b.ID, cascade.NodeStateFresh, 15*time.Second))
@@ -98,12 +113,9 @@ func TestCascadeInvalidate(t *testing.T) {
 	require.Contains(t, bRow.Data, "a", "b.attributes.data should contain `a` from nodes.a.attribute.a")
 	require.Contains(t, bRow.Data, "b", "b.attributes.data should contain `b` from executor delta")
 
-	// @constraint: invalidate A via the harness helper, not the retired
-	// `POST /v1/nodes/{id}/invalidate` operator route — the typed-message
-	// schema layer retired the admin route along with the runtime
-	// InvalidateNode chain wrapper; the harness helper drives the same
-	// synthetic-envelope wake the route used to drive internally.
-	h.InvalidateNode(iid, a.ID)
+	// @constraint: invalidate A via a typed-message wake — the universal
+	// trigger for in-test invalidation post-spec.
+	h.PostInstanceMessage(iid, "test/wake/a", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	require.True(t, h.WaitForNodeState(a.ID, cascade.NodeStateFresh, 20*time.Second),
 		"a did not re-reach fresh")

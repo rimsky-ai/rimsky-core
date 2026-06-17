@@ -2,9 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// asset.go — `rimsky asset {list,show,materialize,versions,
-// delete,lineage}` (plan G1). Thin wrapper over F5 + F6 control-api
-// routes.
+// asset.go — `rimsky asset {list,show,versions,delete,lineage}`
+// (plan G1). Thin wrapper over F5 + F6 control-api routes.
 //
 //	@concept: asset
 package cli
@@ -108,56 +107,6 @@ func RunAssetShow(ctx context.Context, args []string) int {
 		{"claimed_at", a.ClaimedAt.UTC().Format(time.RFC3339)},
 	}
 	EmitKV(os.Stdout, pairs)
-	return 0
-}
-
-// RunAssetMaterialize implements
-// `asset materialize --instance <id> <alias> [--reason ...]
-// [--payload @file|inline]`.
-func RunAssetMaterialize(ctx context.Context, args []string) int {
-	var instance, reason, payloadRaw string
-	fs, common, endpoint, code := runWithCommon("asset materialize", args, func(fs *flag.FlagSet) {
-		fs.StringVar(&instance, "instance", "", "instance UUID or instance_key (required)")
-		fs.StringVar(&reason, "reason", "", "operator-visible reason")
-		fs.StringVar(&payloadRaw, "payload", "", "JSON object or @file path")
-	})
-	if code != 0 {
-		return code
-	}
-	rest := fs.Args()
-	if instance == "" || len(rest) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: rimsky asset materialize --instance <id-or-key> <alias> [--reason ...] [--payload ...]")
-		return 2
-	}
-	body := MaterializeAssetRequest{Reason: reason}
-	if payloadRaw != "" {
-		pp, err := parseParams(payloadRaw)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 2
-		}
-		raw, _ := json.Marshal(pp)
-		body.Payload = raw
-	}
-	c := NewClient(endpoint)
-	c.SetAPIKey(common.ResolveAPIKey(os.Getenv("RIMSKY_API_KEY")))
-	id, err := resolveInstanceUUID(ctx, c, instance)
-	if err != nil {
-		return reportError(err)
-	}
-	out, err := c.MaterializeAsset(ctx, id, rest[0], body)
-	if err != nil {
-		return reportError(err)
-	}
-	if common.Format == FormatJSON {
-		_ = EmitJSON(os.Stdout, out)
-		return 0
-	}
-	if mid, ok := out["message_id"].(string); ok {
-		fmt.Fprintf(os.Stdout, "materialize message_id=%s\n", mid)
-	} else {
-		fmt.Fprintln(os.Stdout, "materialize accepted")
-	}
 	return 0
 }
 

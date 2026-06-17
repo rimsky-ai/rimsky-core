@@ -27,10 +27,21 @@
 //     history surfaces both terminal classes by name in the artifact;
 //  5. the per-run dir has a `blobs/` subdirectory (the filesystem
 //     blob backend's root, required for the audit artifact to be
-//     complete per the spec's @decision: artifact-layout).
+//     complete per the spec's @decision: artifact-layout);
+//  6. (post-spec STORY-one-shot-to-terminal preservation) the compose
+//     driver emits one empty-typed wake message per declared
+//     instance internally between ApplyPlan and the wait-for-terminal
+//     loop. The state.db's rimsky_message_idempotencies table records
+//     each emit's Idempotency-Key under the `compose-wake-<instance_key>`
+//     pattern (the deterministic key constructed at
+//     `code:cmd/rimsky/cli/compose/run.go::wakeKey`). This proves the
+//     wake step the spec mandates ran without an operator-visible
+//     manifest change — the user-facing one-shot contract preserved,
+//     the internal mechanism observed.
 //
 // @story: one-shot-to-terminal
 // @story: audit-artifact
+// @decision: compose-driver-emits-empty-message-after-create
 package scenarios
 
 import (
@@ -255,6 +266,60 @@ func TestComposeRunOneShotTerminal_E2E(t *testing.T) {
 		t.Fatalf("expected >=2 worker nodes recorded by name; got %d", workerNodeCount)
 	}
 
+	// @constraint: Falsifier #4 — STORY-one-shot-to-terminal
+	// preservation under the post-spec instance-create-is-idle rule.
+	// Post-spec, `POST /v1/instances` enqueues no frame; the compose
+	// driver MUST emit one empty-typed wake message per declared
+	// instance internally between ApplyPlan and the wait-for-terminal
+	// loop (per decision:compose-driver-emits-empty-message-after-create).
+	// The wake key is deterministic — `compose-wake-<instance_key>`
+	// per `code:cmd/rimsky/cli/compose/run.go::wakeKey` — so the
+	// audit artifact's rimsky_message_idempotencies table records one
+	// row per declared instance under the `compose-wake-` prefix.
+	// Without this emit, the supervisor would never claim either
+	// instance's nodes and the verb would wedge (the wait-for-terminal
+	// loop never converges). The exit-code-1 / node-runs assertions
+	// above already prove the run completed, but they cannot
+	// distinguish "the wake fired" from "instance-create still
+	// auto-wakes" — this falsifier closes that gap by reading the
+	// idempotency-key audit row directly.
+	var composeWakeCount int
+	if qerr := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM rimsky_message_idempotencies WHERE idempotency_key LIKE 'compose-wake-%'`).Scan(&composeWakeCount); qerr != nil {
+		t.Fatalf("count compose-wake idempotency rows: %v", qerr)
+	}
+	if composeWakeCount < 2 {
+		t.Fatalf("expected >=2 rimsky_message_idempotencies rows under 'compose-wake-%%' "+
+			"(one per declared instance); got %d. This means the compose driver "+
+			"did NOT emit the empty-message wake step between ApplyPlan and the "+
+			"wait-for-terminal loop, which is the spec's post-instance-create-is-idle "+
+			"contract preserver", composeWakeCount)
+	}
+
+	// @constraint: each emit must land as an empty-typed message in
+	// the ledger — sender_kind='operator' (the compose driver speaks
+	// the operator surface via the CLI client) and type='' (the
+	// implicit empty-message wake type-path per
+	// decision:empty-message-as-root-trigger). A wake row with the
+	// wrong type or sender_kind would mean the compose driver bypassed
+	// the universal message-emit surface and is using a parallel
+	// non-message path — exactly what the spec retires.
+	var composeWakeMessageCount int
+	if qerr := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM rimsky_messages m
+		 JOIN rimsky_message_idempotencies idm ON idm.message_id = m.id
+		 WHERE idm.idempotency_key LIKE 'compose-wake-%'
+		   AND m.type = ''
+		   AND m.sender_kind = 'operator'
+	`).Scan(&composeWakeMessageCount); qerr != nil {
+		t.Fatalf("count compose-wake empty-typed ledger rows: %v", qerr)
+	}
+	if composeWakeMessageCount < 2 {
+		t.Fatalf("expected >=2 empty-typed operator-sender rows in rimsky_messages tied "+
+			"to compose-wake idempotency keys; got %d. The compose driver's wake step "+
+			"must travel the universal POST /messages surface with type='' and "+
+			"sender_kind='operator' — a wake taking any other shape is the spec falsifier", composeWakeMessageCount)
+	}
 }
 
 // buildComposeStubExecutorBinary compiles the testdata stub-executor

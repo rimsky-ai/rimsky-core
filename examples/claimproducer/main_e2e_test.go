@@ -527,6 +527,10 @@ func deployClaimTemplateInternal(t *testing.T, ep harness.RimskyEndpoint, name, 
 }
 
 // createClaimInstance POSTs a new instance and returns its instance_id.
+// Instance creation is idle post-spec; the helper follows up with an empty
+// message so the structural roots wake.
+//
+// @decision: test-harness-create-instance-wakes-roots-after-create
 func createClaimInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, instanceKey string) string {
 	t.Helper()
 	statusCode, raw := ep.PostJSON(t, "/v1/instances", map[string]any{
@@ -546,6 +550,7 @@ func createClaimInstance(t *testing.T, ep harness.RimskyEndpoint, templateID, in
 	if resp.InstanceID == "" {
 		t.Fatalf("instance_id empty: %s", string(raw))
 	}
+	ep.EmptyWakeAfterCreate(t, resp.InstanceID, "claimproducer-example", instanceKey)
 	return resp.InstanceID
 }
 

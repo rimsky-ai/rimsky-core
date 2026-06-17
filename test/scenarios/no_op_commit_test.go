@@ -23,6 +23,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/cascade"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
+	"github.com/rimsky-ai/rimsky-core/lib/foundation/spec"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
 	"github.com/rimsky-ai/rimsky-core/test/support/scenario"
 )
@@ -44,9 +46,17 @@ func TestNoOpCommit(t *testing.T) {
 
 	tid := h.DeployTemplate(node.TemplateSpec{
 		Name: "noop", Version: "1",
+		Messages: []spec.MessageSchema{
+			{Type: "test/wake/producer"},
+		},
 		Nodes: []node.TemplateNodeDef{
 			scenario.MakeNode(
 				node.TemplateNodeDef{Type: "producer", Executor: "stub"},
+				scenario.WithSubscribes(node.SubscriptionEntry{
+					Node: "test/wake/producer", Type: "terminal/success",
+					WakeOnChange:         node.BoolPtr(true),
+					ForceUpstreamRefresh: node.BoolPtr(false),
+				}),
 				scenario.WithAttributes(map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -75,6 +85,12 @@ func TestNoOpCommit(t *testing.T) {
 	dep := h.FindNode(iid, "dependent")
 	require.NotNil(t, producer)
 	require.NotNil(t, dep)
+	// @constraint: producer was previously a structural root; the
+	// subscribes: entry added for the typed-message wake demoted it
+	// from root, so the harness's empty-wake doesn't fire it. Emit
+	// the typed message here to drive the initial cascade the test
+	// assertions expect.
+	h.PostInstanceMessage(iid, "test/wake/producer", nil, fmt.Sprintf("test-wake-%s-init", t.Name()))
 
 	require.True(t, h.WaitForNodeState(producer.ID, cascade.NodeStateFresh, 60*time.Second),
 		"producer did not reach fresh")
@@ -113,12 +129,9 @@ func TestNoOpCommit(t *testing.T) {
 	}))
 	priorCount := len(priorCommitted.Events)
 
-	// @deliberate: Under frame resolution, operator-driven invalidation goes through
-	// the runtime-synthetic `node/invalidate` envelope + frame path
-	// (the same one the retired operator route used internally). A
-	// direct UpdateState bypasses the frame engine and leaves the
-	// node stale-with-nil-frame_id.
-	h.InvalidateNode(iid, producer.ID)
+	// @deliberate: Drive a re-dispatch via the per-target typed-message
+	// wake — the universal post-spec trigger for in-test invalidation.
+	h.PostInstanceMessage(iid, "test/wake/producer", nil, fmt.Sprintf("test-wake-%s-1", t.Name()))
 
 	require.Eventually(t,
 		func() bool {

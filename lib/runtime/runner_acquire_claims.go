@@ -310,20 +310,17 @@ func evaluateClaimScopeConflict(
 		// @constraint: same-node re-materialization of an existing durable asset:
 		// a row that has already promoted to (state='committed',
 		// lifetime='durable') and whose holder_node_id equals the
-		// candidate's node is an asset belonging to THIS node. The
-		// operator's `POST /instances/{id}/assets/{alias}/materialize`
-		// path (and any other invalidate-driven re-dispatch of the
-		// producing node) MUST be able to re-acquire — the spec story
-		// "triggering a re-materialization causes the supervisor to
-		// dispatch the producing node again" turns on this allowing.
-		// Treat the prior asset row as same-node and skip the conflict
-		// check; the re-dispatch creates a fresh active row, drives to
-		// terminal, and Promotes that row to a new committed-durable
-		// asset row alongside the prior one (each materialization is
-		// its own asset row, mapping naturally to the per-claim-handle
-		// version-history and materialization-history surfaces). Cross-
-		// node acquisitions of the same scope still conflict — the
-		// guard is HolderNodeID-equality, not a blanket skip.
+		// candidate's node is an asset belonging to THIS node. Any
+		// message-driven re-dispatch of the producing node MUST be able
+		// to re-acquire — the story turns on this allowing. Treat the
+		// prior asset row as same-node and skip the conflict check; the
+		// re-dispatch creates a fresh active row, drives to terminal,
+		// and Promotes that row to a new committed-durable asset row
+		// alongside the prior one (each materialization is its own
+		// asset row, mapping naturally to the per-claim-handle version-
+		// history and materialization-history surfaces). Cross-node
+		// acquisitions of the same scope still conflict — the guard is
+		// HolderNodeID-equality, not a blanket skip.
 		// @concept: asset
 		if h.HolderNodeID == cand.NodeID &&
 			h.State == fspec.ClaimHandleStateCommitted &&

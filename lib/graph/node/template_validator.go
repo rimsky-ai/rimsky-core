@@ -3123,9 +3123,15 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 		base := fmt.Sprintf("messages[%d]", i)
 		t := strings.TrimSpace(m.Type)
 		if t == "" {
+			// @constraint: the empty type-path is reserved-for-runtime
+			// per decision:empty-message-as-root-trigger — every
+			// template's declared-types set carries an implicit `""`
+			// entry seeded automatically at registration; the
+			// author-declared form is refused so a template cannot
+			// claim a body shape against the implicit-virtual.
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".type",
-				Msg:  "type is required",
+				Msg:  `type "" is reserved-for-runtime (the implicit empty-message wake trigger seeded automatically at registration; author-declared empty-type entries are refused)`,
 			})
 			continue
 		}
@@ -3268,42 +3274,12 @@ func validateMessages(spec *TemplateSpec, declared map[string]int, res *Validati
 			})
 			continue
 		}
-		schemaMap, ok := schemaShape.(map[string]any)
-		if !ok {
+		if _, ok := schemaShape.(map[string]any); !ok {
 			res.Errors = append(res.Errors, ValidationError{
 				Path: base + ".body_schema",
 				Msg:  "body_schema must be a JSON Schema object",
 			})
 			continue
-		}
-		// @deliberate: privilege-escalation guard symmetric with the
-		// receipt-time reserved-field check in
-		// code:control/controlapi/messages.go: a body_schema MUST NOT
-		// declare a top-level `wake_node_ids` property. Otherwise a
-		// template-author-controlled cascade-emit (whose envelope
-		// bypasses the receipt-time guard because it goes through
-		// `runtime.EnqueueMessage` directly, not the
-		// POST /instances/{id}/messages handler) could craft an
-		// envelope carrying `wake_node_ids` on its payload, which
-		// code:graph/frame/engine.go::advanceOneFrame would read
-		// verbatim and stale-mark every named UUID — effectively a
-		// backdoor unconditional stale-mark against any node UUID the
-		// template author can name. Rejecting at registration makes the
-		// "wake_node_ids is a runtime-internal field" property
-		// structural across all envelope-creation paths (operator,
-		// publisher, cascade-emit), not only the operator one.
-		if props, ok := schemaMap["properties"].(map[string]any); ok {
-			if _, reserved := props["wake_node_ids"]; reserved {
-				res.Errors = append(res.Errors, ValidationError{
-					Path: base + ".body_schema",
-					Msg: "body_schema must not declare reserved top-level property " +
-						"\"wake_node_ids\" (runtime-internal wake mechanism; a " +
-						"cascade-emit envelope carrying this field would let a " +
-						"template author smuggle stale-mark targets through the " +
-						"runtime-synthetic wake path)",
-				})
-				continue
-			}
 		}
 		compiler := jsonschema.NewCompiler()
 		if err := compiler.AddResource("body-schema.json", bytes.NewReader(m.BodySchema)); err != nil {

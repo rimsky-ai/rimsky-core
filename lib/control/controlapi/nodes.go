@@ -29,7 +29,6 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 	"github.com/rimsky-ai/rimsky-core/lib/graph/node"
-	"github.com/rimsky-ai/rimsky-core/lib/runtime"
 )
 
 type nodeResponse struct {
@@ -236,35 +235,14 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 			writeError(w, err)
 			return
 		}
-		// @constraint: drive the reset through the frame engine. Every frame carries a
-		// triggering message (col:rimsky_frames.triggering_message_id is NOT NULL
-		// post-migration-010); the reset has no external triggering envelope,
-		// so it seeds a synthetic reset message and uses that as the frame's
-		// origin — atomic in one tx so a crash mid-flow cannot leave a frame
-		// with no envelope nor an envelope with no frame. The source-
-		// eligibility predicate at frame-start (advanceOneFrame) accepts
-		// state=failed.
-		//
-		// @constraint: the synthetic payload carries `wake_node_ids` (the typed-
-		// message replacement for the retired source_node_ids column); the
-		// frame engine reads this list at promotion and stale-marks each in
-		// the promotion tx, preserving the ordering the supervisor relies on.
-		//
-		// @deliberate: `sender_kind: "instance"` matches the runtime-synthetic-
-		// envelope convention even though the reset was operator-INITIATED —
-		// the envelope body is runtime-synthesized (the operator did not
-		// author the wake_node_ids list), so the discriminator marks it as
-		// instance-side per runner_emit_message.go::emitCascadeMessageInTx.
-		shouldID := shared.UUID(id)
-		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
-			_, _, err := runtime.EnqueueSyntheticWakeFrame(ctx, tx, deps.Persist,
-				row.InstanceID, "node/reset", "",
-				[]shared.UUID{shouldID}, nil)
-			return err
-		}); err != nil {
-			writeError(w, err)
-			return
-		}
+		// @story: node-admin
+		// @decision: node-reset-as-pure-retry-budget-clear
+		// @constraint: reset is a pure retry-budget-clear verb. No
+		// envelope is synthesized, no frame is opened. The operator's
+		// workflow for retrying an errored node is two explicit
+		// steps: reset (clears the retry budget), then a message
+		// (empty or typed) that invalidates the node so a fresh
+		// dispatch is attempted.
 		// @constraint: the reset audit event carries the owning instance_id so it
 		// surfaces on the instance-scoped /v1/events feed; without it, the
 		// row is dropped by the events read filter and the operator's
