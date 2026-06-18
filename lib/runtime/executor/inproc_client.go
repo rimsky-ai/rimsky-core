@@ -37,7 +37,7 @@ func NewInProcessClient(endpoint Endpoint, registry *InProcessRegistry, newHctx 
 	return &InProcessClient{registry: registry, url: endpoint.URL, newHctx: newHctx}, nil
 }
 
-// @concept: dispatch-deadlines
+// @decision: three-dispatch-deadlines
 func (c *InProcessClient) Execute(ctx context.Context, req *genv1.ExecuteRequest) (*genv1.Outcome, error) {
 	h, ok := c.registry.Lookup(c.url)
 	if !ok {

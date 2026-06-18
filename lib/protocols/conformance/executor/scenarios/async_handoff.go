@@ -14,7 +14,7 @@ import (
 	genv1 "github.com/rimsky-ai/rimsky-core/lib/protocols/proto/v1/gen"
 )
 
-// @concept: async-callback-persistence
+// @decision: async-callback-persistent-registry
 // @concept: executor
 func init() {
 	conformance.Register(conformance.Scenario{

@@ -130,7 +130,7 @@ func TestScratchRoundTripE2E_RetryAfterError(t *testing.T) {
 		scratchBytes, h.snapshot())
 }
 
-// @concept: opaque-executor-scratch
+// @story: opaque-executor-scratch
 
 func TestScratchRoundTripE2E_StaleRecovery(t *testing.T) {
 	t.Parallel()

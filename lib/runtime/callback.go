@@ -46,7 +46,7 @@ type ackOutcomeRecord struct {
 	Phase  string
 }
 
-// @concept: async-callback-persistence
+// @decision: async-callback-persistent-registry
 type CallbackRegistry struct {
 	mu      sync.RWMutex
 	pending map[string]AsyncContext
@@ -289,7 +289,7 @@ func (c *CallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// @concept: async-callback-persistence
+// @decision: async-callback-persistent-registry
 func (c *CallbackServer) lookupAsyncCtxByAck(ctx context.Context, ackID string) (*AsyncContext, error) {
 	if c.Persist == nil || c.Queue == nil {
 		return nil, nil

@@ -2,8 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @concept: async-callback-persistence
-// @decision: dispatch-deadlines
+// @decision: async-callback-persistent-registry
+// @decision: three-dispatch-deadlines
 
 package runtime
 

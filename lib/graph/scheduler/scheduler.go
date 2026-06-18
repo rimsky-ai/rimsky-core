@@ -22,7 +22,7 @@ type Config struct {
 	Clock          shared.Clock
 	Logger         shared.Logger
 	TickInterval   time.Duration
-	// @concept: dispatch-deadlines
+	// @decision: three-dispatch-deadlines
 	MaxQuietPeriodDefault   time.Duration
 	MaxRuntimeDefault       time.Duration
 	ClaimHandles            persistence.ClaimHandleTable

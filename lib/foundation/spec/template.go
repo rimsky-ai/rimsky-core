@@ -74,13 +74,13 @@ type TemplateNodeDef struct {
 
 	MaxRetriesWithoutProgress *int `yaml:"max_retries_without_progress,omitempty" json:"max_retries_without_progress,omitempty"`
 
-	// @concept: dispatch-deadlines
+	// @decision: three-dispatch-deadlines
 	SyncRPCDeadline string `yaml:"sync_rpc_deadline,omitempty" json:"sync_rpc_deadline,omitempty"`
 
-	// @concept: dispatch-deadlines
+	// @decision: three-dispatch-deadlines
 	MaxQuietPeriod string `yaml:"max_quiet_period,omitempty" json:"max_quiet_period,omitempty"`
 
-	// @concept: dispatch-deadlines
+	// @decision: three-dispatch-deadlines
 	MaxRuntime string `yaml:"max_runtime,omitempty" json:"max_runtime,omitempty"`
 
 	Delegate string `yaml:"delegate,omitempty" json:"delegate,omitempty"`

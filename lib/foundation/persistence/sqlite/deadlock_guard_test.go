@@ -253,7 +253,7 @@ func TestQueue_PoolWidthDoesNotStarveLockFreeRead(t *testing.T) {
 	}
 }
 
-// @concept: async-callback-persistence
+// @decision: async-callback-persistent-registry
 func TestQueue_RegisterAsyncAckAndLookupRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	d := openSQLite(t)

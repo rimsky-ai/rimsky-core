@@ -59,7 +59,7 @@ func builtinSchemas() map[string][]byte {
 		"instance_pause":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_resume":    []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_kill":      []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"reason":{"type":"string","description":"optional reason recorded on the teardown audit event"}},"required":["idOrKey"]}`),
-		// @concept: debug-channel — gated to paused / pause-mode-breakpoint
+		// @decision: debug-channel-gate-paused-or-breakpoint
 		// instances; applies an ad-hoc operator override on a node-type.
 		// Replaces the retired operator-invalidate route.
 		"instance_debug_override": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"action":{"type":"string","enum":["invalidate_node","set_attribute"]},"node_type":{"type":"string"},"attribute_key":{"type":"string"},"attribute_value":{}},"required":["id","action","node_type"]}`),

@@ -14,7 +14,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// @concept: dispatch-deadlines
+// @decision: three-dispatch-deadlines
 type ConductorArgs struct {
 	Persist               persistence.Tables
 	Queue                 persistence.Queue
@@ -24,8 +24,8 @@ type ConductorArgs struct {
 	MaxRuntimeDefault     time.Duration
 }
 
-// @concept: dispatch-deadlines
-// @decision: dispatch-deadlines
+// @decision: three-dispatch-deadlines
+// @decision: three-dispatch-deadlines
 func SweepExecutorDeadlines(ctx context.Context, args ConductorArgs) error {
 	log := args.Logger
 	if log == nil {

@@ -13,7 +13,7 @@ import (
 	conformance "github.com/rimsky-ai/rimsky-core/lib/protocols/conformance/executor"
 )
 
-// @concept: async-callback-persistence
+// @decision: async-callback-persistent-registry
 func init() {
 	conformance.Register(conformance.Scenario{
 		Name: "unknown_ack_id",

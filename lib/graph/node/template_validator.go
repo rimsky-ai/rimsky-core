@@ -1597,7 +1597,7 @@ func validateMaxParkDuration(n TemplateNodeDef, base string, res *ValidationResu
 	}
 }
 
-// @concept: dispatch-deadlines
+// @decision: three-dispatch-deadlines
 func validateDispatchDeadlines(n TemplateNodeDef, base string, res *ValidationResult) {
 	for _, kv := range []struct {
 		value string

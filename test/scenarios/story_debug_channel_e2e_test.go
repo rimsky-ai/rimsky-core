@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @story: debug-channel
-// @concept: debug-channel
+// @story: debug-channel
 // @concept: breakpoint
 package scenarios
 

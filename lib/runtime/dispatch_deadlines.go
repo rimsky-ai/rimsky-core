@@ -2,8 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @concept: dispatch-deadlines
-// @decision: dispatch-deadlines
+// @decision: three-dispatch-deadlines
+// @decision: three-dispatch-deadlines
 
 package runtime
 
@@ -19,7 +19,7 @@ const (
 	defaultMaxRuntime      = time.Duration(0)
 )
 
-// @concept: dispatch-deadlines
+// @decision: three-dispatch-deadlines
 func resolveSyncRPCDeadline(node *spec.TemplateNodeDef, deploymentDefault time.Duration) time.Duration {
 	if node != nil && node.SyncRPCDeadline != "" {
 		if d, ok := parseDispatchDeadline(node.SyncRPCDeadline); ok {
@@ -32,7 +32,7 @@ func resolveSyncRPCDeadline(node *spec.TemplateNodeDef, deploymentDefault time.D
 	return defaultSyncRPCDeadline
 }
 
-// @concept: dispatch-deadlines
+// @decision: three-dispatch-deadlines
 func resolveMaxQuietPeriod(node *spec.TemplateNodeDef, deploymentDefault time.Duration) time.Duration {
 	if node != nil && node.MaxQuietPeriod != "" {
 		if d, ok := parseDispatchDeadline(node.MaxQuietPeriod); ok {
@@ -45,7 +45,7 @@ func resolveMaxQuietPeriod(node *spec.TemplateNodeDef, deploymentDefault time.Du
 	return defaultMaxQuietPeriod
 }
 
-// @concept: dispatch-deadlines
+// @decision: three-dispatch-deadlines
 func resolveMaxRuntime(node *spec.TemplateNodeDef, deploymentDefault time.Duration) time.Duration {
 	if node != nil && node.MaxRuntime != "" {
 		if d, ok := parseDispatchDeadline(node.MaxRuntime); ok {
@@ -69,8 +69,8 @@ func parseDispatchDeadline(s string) (time.Duration, bool) {
 	return d, true
 }
 
-// @concept: dispatch-deadlines
-// @decision: dispatch-deadlines
+// @decision: three-dispatch-deadlines
+// @decision: three-dispatch-deadlines
 func computeEffectiveDeadlineSecs(node *spec.TemplateNodeDef, quietDefault, runtimeDefault time.Duration) (*int, *int) {
 	quiet := resolveMaxQuietPeriod(node, quietDefault)
 	runtime := resolveMaxRuntime(node, runtimeDefault)

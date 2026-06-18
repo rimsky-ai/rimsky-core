@@ -66,7 +66,7 @@ func (e *Executor) Execute(_ context.Context, req *genv1.ExecuteRequest) (*genv1
 		}}}, nil
 
 	case "async_callback":
-		// @concept: async-callback-persistence
+		// @decision: async-callback-persistent-registry
 		ackID := stringAttr(req, "async_ack_id")
 		if ackID == "" {
 			return &genv1.Outcome{Outcome: &genv1.Outcome_Error{Error: &genv1.Error{
