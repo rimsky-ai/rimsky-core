@@ -3,27 +3,7 @@
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-# @story: cross-frame-coupling — proof script for the typed-message
-# cross-frame back-edge: node A runs, emit-node E composes a
-# loop/iterate message from A's data, node R wakes in the next frame
-# and reads {{messages.loop/iterate.<field>}} as its inputs.
-#
-# Prerequisites:
-#   1. Rimsky stack reachable at RIMSKY_ENDPOINT (default
-#      http://127.0.0.1:8080).
-#   2. `verifier-shape-checks` executor reachable from the stack — see
-#      examples/README.md for the wiring; the services-scenarios driver
-#      at lib/services/test/scenarios/cross_frame_coupling_demo_e2e_test.go
-#      wires it automatically via testcontainers.
-#   3. `curl`, `jq`, and `yq` on $PATH.
-#
-# @constraint: exits 0 only when every frame line in the captured
-# observability output carries a non-empty triggering_message_id AND
-# the captured output contains both the wake frame (type=loop/wake) and
-# the back-edge frame (type=loop/iterate); anything else exits non-zero
-# with a diagnostic. The grep falsifier turns a missing back-edge or a
-# missing triggering_message_id into a structural failure, not a flaky
-# timing assertion.
+# @story: cross-frame-coupling
 
 set -euo pipefail
 

@@ -40,16 +40,7 @@ func main() {
 
 	svc.SetBackend("memory", NewMemoryLister())
 
-	// @story: sensor-object-store — env RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT,
-	// when set, names the host- (or volume-) provided base directory the
-	// lister treats as the object-store root, with buckets mapping to
-	// first-level subdirectories under it. Empty env omits "filesystem"
-	// from Capabilities and Subscribe rejects it; setting it makes
-	// "filesystem" a first-class backend (advertised, accepted, polled
-	// through the real loop) on this binary without dragging in cloud
-	// SDKs. The cross-stack proof uses this path because it exhibits the
-	// pluggable-backend contract end-to-end with a backend the test
-	// process can mutate externally (drop a file into the mounted volume).
+	// @story: sensor-object-store
 	if fsRoot := os.Getenv("RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT"); fsRoot != "" {
 		svc.SetBackend("filesystem", NewFilesystemLister(fsRoot))
 		slog.Info("sensor-object-store filesystem backend registered", "root", fsRoot)

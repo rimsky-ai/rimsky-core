@@ -132,10 +132,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	slog.Info("hostagent starting", "rimsky_url", cfg.RimskyURL, "agent_label", cfg.AgentLabel, "local_base_url", baseURL)
 
-	// @story: host-agent-control-plane — clear any stale status file from
-	// a crash before publishing fresh state, and remove it on shutdown so
-	// a `status` reader can't see a phantom `connected:true` after the
-	// daemon is gone (status truthfulness).
+	// @story: host-agent-control-plane
 	clearStatusFile(cfg.StatusFile)
 	defer clearStatusFile(cfg.StatusFile)
 

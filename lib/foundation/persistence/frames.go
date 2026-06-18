@@ -105,8 +105,6 @@ type FrameTable interface {
 
 	CountHeldFrames(ctx context.Context, tx Tx) (int, error)
 
-	// @concept: frame trace retention. Default `recentFramesKept` = 100
-	// (via cfg:retention.recent_frames_kept); default trailing window via
-	// cfg:retention.trace_trailing.
+	// @concept: frame
 	PruneTraceForRetention(ctx context.Context, recentFramesKept int, cutoff time.Time) (int, error)
 }

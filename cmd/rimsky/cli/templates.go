@@ -54,7 +54,7 @@ func reportError(err error) int {
 	return 1
 }
 
-// @concept: rimsky (CLI-side source_file: resolution)
+// @concept: rimsky
 func readSpecFile(path string) (node.TemplateSpec, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

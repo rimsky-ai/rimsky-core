@@ -175,12 +175,7 @@ func failOverdueParkedRow(ctx context.Context, args ParkedSweepArgs, row persist
 			cascade.NodeStateFailed, cascade.ReasonParkTimeout, &parkTimeoutSig, tx); err != nil {
 			return err
 		}
-		// @concept: wait-set — parked → failed is a transition between
-		// settled states, but any wait-set rows that landed between
-		// park-time and timeout (e.g. via a concurrent cascade walk) must
-		// release per the invariant "Bulk-delete on sender resolution
-		// covers every topic kind uniformly." Post-stage-5 the wait-set
-		// keys on sender_run_id; the parked row's DispatchID is the run id.
+		// @concept: wait-set
 		if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, row.FrameID, row.DispatchID, tx); err != nil {
 			return err
 		}

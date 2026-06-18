@@ -517,17 +517,7 @@ func buildResolveContextForDispatch(
 		}
 		claims[lk.Alias] = lk.ClaimResult
 	}
-	// @concept: claim-co-holdership — held claims (per the node's template `holds:` block)
-	// are populated at the co-holder's own acquire-tx by loadInheritedClaimsForNode. They
-	// carry the same `claimproducer.ClaimResult` shape (Address + ClaimScope)
-	// that an opened claim carries, so the substitution grammar resolves
-	// `{{claim.<alias>.address|payload.<f>|claim_scope}}` identically whether
-	// the alias was opened (acq.Locks) or co-held (acq.HeldClaims).
-	//
-	// Acquired claims win on alias collision: if the node both `claims:`
-	// and `holds:` the same alias, the opened entry in claims[] is
-	// authoritative and the held entry is informational. Mirrors the
-	// precedence at buildStoreHandles below.
+	// @concept: claim-co-holdership
 	for alias, held := range acq.HeldClaims {
 		if _, alreadyPresent := claims[alias]; alreadyPresent {
 			continue
@@ -862,13 +852,7 @@ func buildExecuteRequest(ctx context.Context, dctx dispatchContext) (*genv1.Exec
 	req := &genv1.ExecuteRequest{
 		NodeId:     acq.NodeID.String(),
 		InstanceId: acq.InstanceID.String(),
-		// @concept: host-agent-proxy — RunScopeId keys per-run-scope spawn isolation in the
-		// host-agent-proxy: two concurrent run-scopes of one instance
-		// must land on distinct late-bound child processes. Opaque to
-		// in-process executors. Empty (not the zero-UUID string) when the
-		// run-scope is unset, so the proxy's empty→instance-id fallback
-		// keeps the non-fanned-out happy path keyed per instance rather
-		// than collapsing every instance onto one shared zero-UUID child.
+		// @concept: host-agent-proxy
 		RunScopeId:       runScopeIDString(acq.RunScopeID),
 		NodeType:         acq.NodeType,
 		Attributes:       attrStruct,

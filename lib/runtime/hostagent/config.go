@@ -21,7 +21,7 @@ type Config struct {
 	LogLevel          string
 	HeartbeatInterval time.Duration
 	ReapGracePeriod   time.Duration
-	// @story: host-agent-control-plane — the falsifier "status reports
+	// @story: host-agent-control-plane
 	StatusFile string
 }
 

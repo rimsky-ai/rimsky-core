@@ -111,7 +111,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 		nodeID := resolveWorkerNodeID(t, ep, iid, "worker")
 		waitNodeSettledClaudeAgent(t, ep, nodeID, "fresh", "", 120*time.Second)
 
-		// @story: claude-agent Acceptance clause (4)(a). The persisted
+		// @story: claude-agent
 		bag := getLatestAttributesClaudeAgent(t, ep, nodeID)
 		obs, ok := bag["cli_observation"].(map[string]any)
 		if !ok {
@@ -124,11 +124,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 				gotDigest, wantDigest)
 		}
 
-		// @story: claude-agent Acceptance clause (4)(b). The
-		// plaintext token bytes must NOT appear anywhere in the persisted
-		// attribute bag — neither as a header value, a stringified ref,
-		// nor a leaked log line. Scan the serialized bag recursively; any
-		// hit fails the clause.
+		// @story: claude-agent
 		raw, err := json.Marshal(bag)
 		if err != nil {
 			t.Fatalf("re-marshal latest_attributes: %v", err)
@@ -138,10 +134,7 @@ func TestClaudeAgentCrossStack(t *testing.T) {
 				validatorPlaintextToken, string(raw))
 		}
 
-		// @story: claude-agent Acceptance clause (4)(c). The
-		// reference form in cli.mcp_servers persists as
-		// `{ref: "validator"}` — the dispatch's cli.mcp_servers entry kept
-		// its catalog reference, never resolved to inline.
+		// @story: claude-agent
 		cli, _ := bag["cli"].(map[string]any)
 		servers, _ := cli["mcp_servers"].([]any)
 		if len(servers) != 1 {

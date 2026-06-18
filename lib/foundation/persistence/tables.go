@@ -27,13 +27,13 @@ type Tables interface {
 	PublisherSubscriptions() PublisherSubscriptionsTable
 	RunTree() RunTreeTable
 
-	// @concept: run-scope — first-class execution-context rows on rimsky_run_scopes.
+	// @concept: run-scope
 	RunScopes() RunScopeTable
 
-	// @concept: api-key — Bearer-token auth keys for control-api on rimsky_api_keys.
+	// @concept: api-key
 	APIKeys() APIKeyTable
 
-	// @concept: breakpoint — accessors on rimsky_breakpoints / rimsky_breakpoint_hits.
+	// @concept: breakpoint
 	Breakpoints() BreakpointTable
 	BreakpointHits() BreakpointHitTable
 

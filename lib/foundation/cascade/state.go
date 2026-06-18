@@ -22,15 +22,6 @@ const (
 var ErrIllegalTransition = errors.New("illegal state transition")
 
 // @concept: transition-reason
-//
-// Audit-grade enum carried on every node-state transition. Identifies
-// WHY a state transition was requested. The cascade-fire predicate is
-// purely subscriber-driven post-2026-05-23 (subscription-edge match +
-// CEL `when:` predicate over the emitted signal); `transition_reason`
-// is no longer consulted by cascade-fire and lives strictly as audit.
-//
-// TransitionReason identifies WHY a state transition was requested. Preserved
-// from TS v1's discriminated union plus the Go port's `pure_cascade` addition.
 type TransitionReason struct {
 	Kind string
 }

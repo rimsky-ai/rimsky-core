@@ -3,17 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: asset
-//
-// "Asset" is a documented compound, not a primitive: it's a claim
-// against a `DataProcessing`-capable producer with `lifetime: durable`.
-// The address-space is `rimsky_claim_handles` filtered to
-// state = 'committed' AND lifetime = 'durable' + producer advertising
-// data_processing.
-//
-// The `{alias}` path parameter is the dotted
-// `{template_node_alias}.{claim_alias}` form. We resolve to a
-// concrete claim handle by walking the instance's template for the
-// node's `stores:` entry whose alias matches.
 
 package controlapi
 

@@ -2,7 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @decision: termination, instance-self-termination
+// @decision: termination
+// @decision: instance-self-termination
 // @story: one-shot-to-terminal
 package compose
 
@@ -15,7 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/cmd/rimsky/cli"
 )
 
-// @decision: progress-default — the operator-observable live cadence
+// @decision: progress-default
 const DefaultWaitPollInterval = 1 * time.Second
 
 // @decision: progress-default
@@ -23,12 +24,7 @@ const maxWaitPollInterval = 5 * time.Second
 
 const waitPollBackoffAfter = 5
 
-// @decision: exit-codes — instance outcome strings shared between the
-// wait loop and the verb's exit-code classification. The control-api
-// returns terminal nodes with `state` in {"success", "failed",
-// "parked"} (the last meaning the node parked itself with a timeout);
-// the verb maps "failed" to failure and "parked" to parked-timeout
-// for the operator-facing summary.
+// @decision: exit-codes
 const (
 	OutcomeSuccess       = "success"
 	OutcomeFailure       = "failure"
@@ -133,10 +129,7 @@ func WaitForInstancesTerminal(
 		case <-timer.C:
 		}
 
-		// @decision: progress-default — back off after the warm-up
-		// window so a long-running wait stops hammering the local
-		// control-api (and the audit-row writer) at the original
-		// cadence.
+		// @decision: progress-default
 		tickCount++
 		if tickCount >= waitPollBackoffAfter && currentInterval < maxWaitPollInterval {
 			currentInterval *= 2

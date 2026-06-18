@@ -63,10 +63,6 @@ func (q *queueImpl) EnqueueInTx(ctx context.Context, req persistence.DispatchReq
 	}
 	priorDisposition := nullableText(req.PriorDispatchDisposition)
 	// @concept: executor
-	//
-	// @constraint: single-branch NOT EXISTS guard keyed on (node_id, run_scope_id)
-	// is unambiguous per uq_node_runs_in_flight_per_run_scope; the
-	// rimsky_run_scopes JOIN enforces closed_at IS NULL at INSERT time.
 	tag, err := q.q(tx).Exec(ctx,
 		`INSERT INTO rimsky_node_runs (id, node_id, executor_name, required_stores, enqueued_at, phase, frame_id, run_scope_id, prior_dispatch_id, prior_dispatch_disposition, scratch_inline, scratch_handle, scratch_handle_backend)
 		 SELECT gen_random_uuid(), $1, $2, $3, $4, 'pending', $5, rs.id, $7, $8, $9, $10, $11

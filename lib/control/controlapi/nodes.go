@@ -173,16 +173,6 @@ func handleResetNode(deps AppDeps) http.HandlerFunc {
 		}
 		// @story: node-admin
 		// @decision: node-reset-as-pure-retry-budget-clear
-		// @constraint: reset is a pure retry-budget-clear verb. No
-		// envelope is synthesized, no frame is opened. The operator's
-		// workflow for retrying an errored node is two explicit
-		// steps: reset (clears the retry budget), then a message
-		// (empty or typed) that invalidates the node so a fresh
-		// dispatch is attempted.
-		// @constraint: the reset audit event carries the owning instance_id so it
-		// surfaces on the instance-scoped /v1/events feed; without it, the
-		// row is dropped by the events read filter and the operator's
-		// instance-scoped audit trail loses the reset action.
 		resetInstanceID := row.InstanceID
 		if err := deps.Persist.Transaction(req.Context(), func(ctx context.Context, tx persistence.Tx) error {
 			return deps.Persist.Events().Append(ctx, persistence.EventAppendInput{

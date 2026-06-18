@@ -3,49 +3,7 @@
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-# @story: producer-error-passthrough — runnable proof.
-#
-# An operator whose store fails during an API-triggered operation can
-# read the store's OWN error class and message in the API response —
-# under a status that distinguishes "your producer rejected this" (502)
-# from "rimsky broke internally" (500) — instead of grepping rimsky's
-# logs.
-#
-# The demo drives the story's Acceptance against a REAL assembled stack:
-#
-#   1. Boots `rimsky-all-in-one:latest`, the bundled
-#      `rimsky-store-filesystem:latest` (backing root on a host bind
-#      mount), and `rimsky-executor-http-node:latest` in stub mode.
-#   2. Registers + deploys a template whose single node holds a
-#      `lifetime: durable` claim on the store, creates an instance, and
-#      waits for the node to run to terminal — the committed durable
-#      claim is now a visible asset on the instance.
-#   3. Sabotages the store's backing path: the configured root
-#      directory is deleted out from under the running store container
-#      (the unmounted-volume / misconfigured-path failure).
-#   4. DELETE /v1/instances/{id}/assets/{alias} — rimsky calls the
-#      store's ClaimProducer.Release, the store rejects with its
-#      classed `fs/root_unavailable` error, and the API response is
-#      printed VERBATIM. The proof asserts:
-#        * HTTP status 502 (producer failed — not rimsky-internal 500),
-#        * body.producer_name names the operator's configured store,
-#        * body.error_class carries the store's own class
-#          (`fs/root_unavailable`) transmitted across the gRPC boundary,
-#        * body.message carries the store's own message (naming the
-#          inaccessible root) — diagnosis the store already did, intact.
-#
-# Prerequisites the operator must satisfy BEFORE running this script:
-#
-#   1. Docker running, with the locally-built images present:
-#      `make core-images service-images` produces
-#      `rimsky-all-in-one:latest`, `rimsky-store-filesystem:latest`
-#      and `rimsky-executor-http-node:latest`.
-#   2. `curl` and `python3` on $PATH (python3 parses the JSON
-#      responses; no jq dependency).
-#
-# Output discipline: exits 0 only when the final response exhibited the
-# class, the message, the producer name, AND the distinguishing status.
-# Anything else exits non-zero with a diagnostic.
+# @story: producer-error-passthrough
 
 set -euo pipefail
 

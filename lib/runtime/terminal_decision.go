@@ -118,12 +118,6 @@ func ResolveClaimHandleTerminal(
 	}
 	// @concept: claim-tree
 	// @concept: cancel-siblings
-	// @constraint: child settlement (counter bump + sibling cancel +
-	// parent walk) routes through the unified settle-children primitive
-	// and is a no-op for root claims (td.ParentClaimHandleID == nil).
-	// Spec .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-	// §Recursive claim-tree resolution + §State aggregation rules +
-	// §Error policy / `strict.cancel_siblings: true`.
 	if td.ParentClaimHandleID == nil {
 		return nil
 	}

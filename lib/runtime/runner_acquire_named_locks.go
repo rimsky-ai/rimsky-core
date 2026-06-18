@@ -84,13 +84,7 @@ func acquireNamedLock(
 	if err := args.ClaimHandles.Insert(ctx, in, tx); err != nil {
 		return AcquiredLock{}, false, fmt.Errorf("acquireNamedLock: Insert: %w", err)
 	}
-	// @story: named-lock-metric — named-lock acquisitions move a labeled
-	// counter (rimsky_named_lock_acquisitions_total) so saturation is
-	// graphable, not just reconstructable from the events ledger. The
-	// "acquired" increment does NOT happen here: this runs inside the
-	// per-candidate tx, and a later spec failing would roll the tx back
-	// while the counter kept the +1. It lands post-commit in
-	// acquireCandidate's audit step, beside the lock_acquired events.
+	// @story: named-lock-metric
 	return AcquiredLock{
 		Spec:          spec,
 		ClaimHandleID: rowID,

@@ -39,9 +39,7 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 
 	specPath := repoExampleSpecPath(t, "examples/compose/template-a.yml")
 
-	// @story: operator-onboarding — drive the SHIPPED example file through
-	// the real `rimsky run` verb, capturing human-format stdout to read back
-	// the printed instance_id.
+	// @story: operator-onboarding
 	stdout, code := captureRunRun(t, ctx, []string{"--endpoint", ep.BaseURL, specPath})
 	if code != 0 {
 		t.Fatalf("rimsky run %s exited %d (want 0)\nstdout:\n%s", specPath, code, stdout)
@@ -52,9 +50,7 @@ func TestCLIExampleSpec_RunReachesTerminal(t *testing.T) {
 	}
 	instanceID := match[1]
 
-	// @story: operator-onboarding — the instance must be reachable via the
-	// real `rimsky instance get` verb, the operator-facing read path the
-	// story names.
+	// @story: operator-onboarding
 	if _, getCode := captureRun(t, func() int {
 		return cli.RunInstanceGet(ctx, []string{"--endpoint", ep.BaseURL, instanceID})
 	}); getCode != 0 {

@@ -4,7 +4,6 @@
 
 // @story: loop-counter-cap
 // @concept: terminal-tag
-// @blessed-invariant: terminal-atomic-commit — exercised by the
 package scenarios
 
 import (

@@ -28,7 +28,7 @@ func producerErrorClassOf(err error) string {
 	return ""
 }
 
-// @concept: attribute (L5 matcher overlay's graph-key derivation)
+// @concept: attribute
 func lookupGraphName(graphs []spec.GraphSpec, nodeType string) string {
 	for _, g := range graphs {
 		for _, n := range g.Nodes {
@@ -46,7 +46,7 @@ type acquisition struct {
 	InstanceID shared.UUID
 	NodeType   string
 	Executor   string
-	// @concept: attribute (L5 matcher overlay)
+	// @concept: attribute
 	GraphName string
 
 	// @concept: run-scope
@@ -299,12 +299,7 @@ func tryAcquire(
 	tmpl := lookupTemplate(ctx, args, tx, inst)
 	nodeDef := lookupNodeDef(tmpl, nd.NodeType)
 	templateAttributeDefaults := templateAttributeDefaultsFor(tmpl, nd.Executor)
-	// @concept: attribute — derive the dispatch-time graph name for the L5
-	// matcher-overlay layer. Graph name comes from the bound template's
-	// Graphs list (or `spec.MainGraphName` for legacy flat-Nodes
-	// templates). RunScopeID comes from the run-tree row; partition_key /
-	// parent_run_id are looked up on demand via the RunScope
-	// (resolveAcqScopeTuple / resolveAcqPartitionKey).
+	// @concept: attribute
 	graphName := spec.MainGraphName
 	if tmpl != nil {
 		graphName = lookupGraphName(tmpl.Graphs, nd.NodeType)
@@ -446,27 +441,9 @@ func tryAcquire(
 	if err := restampLinkedSubClaimHolders(ctx, args, tx, cand); err != nil {
 		return acquisition{}, false, err
 	}
-	// @concept: fan-out — E4 leaf candidate-handle binding. A fan-out LEAF
-	// (a child run in a fanout_partition RunScope) Open's a fresh
-	// parent-selector claim of its own at acquisition above, but the
-	// candidate handle the producer minted for THIS partition lives on the
-	// linked sub-claim row (whose node_run_id was repointed to this leaf
-	// in `child_execution.go::DispatchChildren`). Resolve it now and carry
-	// it onto the matching AcquiredLock so `makeClaimHandle` can stamp
-	// `StoreHandle.candidate_handle` at dispatch. Best-effort: a lookup
-	// failure logs and leaves the candidate empty (degrades to the pre-E4
-	// behaviour) rather than failing the leaf dispatch.
+	// @concept: fan-out
 	bindLeafCandidateHandles(ctx, args, tx, &out, cand)
-	// @concept: claim-co-holdership — E4b co-holder row registration. For
-	// each `holds:` declaration on this node, find the upstream's claim
-	// handle and INSERT a `rimsky_claim_holders` row with
-	// `holder_run_id = this run`. The co-holder's dispatch-time INSERT
-	// replaces the eager acquire-time INSERTs the previous model used.
-	// Done inside the acquisition tx for atomicity per plan E4b step 2 — a
-	// co-holder run is either fully bound (own claims acquired AND
-	// co-held claims registered) or not bound at all.
-	//
-	// `@blessed-invariant 13`: the holders set is the auto-terminal's input.
+	// @concept: claim-co-holdership
 	if err := insertCoHolderClaimHoldersAtAcquire(ctx, args, tx, cand, nodeDef, tmpl); err != nil {
 		return acquisition{}, false, fmt.Errorf("tryAcquire: co-holder rows: %w", err)
 	}

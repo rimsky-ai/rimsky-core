@@ -57,6 +57,6 @@ type EventTable interface {
 	List(ctx context.Context, filter EventListFilter, pag ListPagination, tx Tx) (EventListResult, error)
 	LastTerminalByNodes(ctx context.Context, nodeIDs []shared.UUID, tx Tx) (map[shared.UUID]EventRow, error)
 
-	// @concept: event-log trace retention.
+	// @concept: event-log
 	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 }

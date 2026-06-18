@@ -238,7 +238,7 @@ func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash 
 	return n, nil
 }
 
-// @concept: attribute (L5 matcher overlay)
+// @concept: attribute
 func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	ctx context.Context,
 	instanceID foundationshared.UUID,

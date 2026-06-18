@@ -48,10 +48,7 @@ func (c ChildState) IsSuccess() bool {
 	if c.State != cascade.NodeStateFresh {
 		return false
 	}
-	// @concept: error-policy — `terminal/success` is the canonical
-	// fresh-success signal; `terminal/error/*` with state==fresh is a
-	// `pass`-colored settle; `pure_cascade` is the scheduler's stale→fresh
-	// shortcut.
+	// @concept: error-policy
 	if c.SettlingSignalType == "" {
 		return true
 	}

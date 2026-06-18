@@ -185,10 +185,6 @@ func (s *framesImpl) MarkSourceNodeStale(
 		return false, fmt.Errorf("frames.MarkSourceNodeStale: bind frame: %w", err)
 	}
 	// @concept: run-scope
-	// @deliberate: frame source's run row lives in the instance's main
-	// RunScope (the only RunScope a frame source's run can belong to —
-	// sub-graph + fan-out children allocate via AffirmNodeRunRow /
-	// DispatchChildren, not via the frame source path).
 	tag, err := s.q(tx).Exec(ctx, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)

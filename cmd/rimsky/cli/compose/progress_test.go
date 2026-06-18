@@ -158,7 +158,7 @@ func TestNewProgressPrinter_FlagDispatch(t *testing.T) {
 	if _, ok := newProgressPrinter(&buf, false, false, true).(*jsonPrinter); !ok {
 		t.Errorf("--json should produce *jsonPrinter")
 	}
-	// @decision: progress-flags — --json wins over --quiet / --verbose.
+	// @decision: progress-flags
 	if _, ok := newProgressPrinter(&buf, true, false, true).(*jsonPrinter); !ok {
 		t.Errorf("--quiet --json should still produce *jsonPrinter")
 	}

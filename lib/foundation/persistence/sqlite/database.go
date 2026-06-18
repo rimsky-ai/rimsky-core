@@ -22,19 +22,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/shared"
 )
 
-// @decision: persistence-driver — the in-process unified stack
-// (compose-run verb) and the supervisor's settle tx + control-api's
-// request handlers all open their own Begin against the same driver.
-// At MaxOpenConns=1, a long-running tx (the supervisor's dispatch
-// settle, typically tens of ms) blocks every other goroutine's Begin
-// in the process; under the verb's terminal-wait poll loop this
-// manifests as control-api handlers and the wait-loop polls they
-// back receiving context-deadline-exceeded errors after ~30s. The
-// SQLite writer slot at the FILE level is still 1 (writers serialize
-// via busy_timeout=5000ms), so widening the pool does not break the
-// writer-slot invariant; read-only paths under WAL run lock-free and
-// benefit from the wider pool. The pool size is decoupled from the
-// writer-slot count.
+// @decision: persistence-driver
 const sqliteMaxOpenConns = 8
 
 func init() {

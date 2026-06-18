@@ -60,11 +60,9 @@ func builtinSchemas() map[string][]byte {
 		"instance_resume":    []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"instance_kill":      []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"reason":{"type":"string","description":"optional reason recorded on the teardown audit event"}},"required":["idOrKey"]}`),
 		// @decision: debug-channel-gate-paused-or-breakpoint
-		// instances; applies an ad-hoc operator override on a node-type.
-		// Replaces the retired operator-invalidate route.
 		"instance_debug_override": []byte(`{"type":"object","properties":{"id":{"type":"string","description":"instance id"},"action":{"type":"string","enum":["invalidate_node","set_attribute"]},"node_type":{"type":"string"},"attribute_key":{"type":"string"},"attribute_value":{}},"required":["id","action","node_type"]}`),
 
-		// @concept: breakpoint — instance-debugger surface.
+		// @concept: breakpoint
 		"breakpoint_list":       []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"}},"required":["idOrKey"]}`),
 		"breakpoint_create":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"checkpoint":{"type":"string","enum":["before_dispatch","after_terminal"]},"matcher":{"type":"object"},"signal_type":{"type":"string","description":"only valid on after_terminal checkpoints"},"mode":{"type":"string","enum":["pause","notify_only"]},"overflow_policy":{"type":"string","enum":["drop_oldest","block_dispatch","auto_resume_after_ttl"]},"hit_ttl_seconds":{"type":"integer"},"ttl_seconds":{"type":"integer"}},"required":["idOrKey","checkpoint"]}`),
 		"breakpoint_delete":     []byte(`{"type":"object","properties":{"idOrKey":{"type":"string","description":"instance id or instance_key"},"breakpoint_id":{"type":"string","description":"breakpoint UUID"}},"required":["idOrKey","breakpoint_id"]}`),

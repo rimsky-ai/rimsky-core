@@ -138,7 +138,7 @@ type AcquiredLock struct {
 	UnavailableClass        string
 }
 
-// @concept: supervisor (this claim-and-execute cycle is the supervisor's
+// @concept: supervisor
 func RunNode(
 	ctx context.Context,
 	args RunArgs,

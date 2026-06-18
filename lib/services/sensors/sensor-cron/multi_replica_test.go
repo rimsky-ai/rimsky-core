@@ -91,9 +91,7 @@ func TestMultiReplica_TwoInProcessInstancesEachFireIndependently(t *testing.T) {
 		}
 	}
 
-	// @concept: replica — advancing both clocks must fire both ticks;
-	// the v1 contract is single-replica and rimsky does not coordinate
-	// across replicas, so N replicas yield N× fan-out.
+	// @concept: replica
 	for _, s := range []*SensorService{replicaA, replicaB} {
 		s.clock = func() time.Time { return registerTime.Add(6 * time.Minute) }
 		s.Tick(context.Background())

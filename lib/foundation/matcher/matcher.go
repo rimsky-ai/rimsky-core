@@ -2,7 +2,7 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @concept: inertness (sanctioned attribute-value read site lives in Evaluate's attrs branch)
+// @concept: inertness
 package matcher
 
 import (
@@ -22,7 +22,7 @@ type Context struct {
 	NodeType     string
 	Graph        string
 	ChildKey     string
-	AttributeBag map[string]any // @concept: attribute — post-L5 merged attribute bag
+	AttributeBag map[string]any // @concept: attribute
 }
 
 var allowedKeys = map[string]struct{}{
@@ -72,7 +72,7 @@ func Evaluate(m Matcher, ctx Context, logger shared.Logger, entryIndex int) bool
 		}
 	}
 	if v, ok := m["attrs"]; ok {
-		// @concept: inertness (sanctioned attribute-value read site)
+		// @concept: inertness
 		attrsMatcher, _ := v.(map[string]any)
 		for path, want := range attrsMatcher {
 			got, found := walkAttrPath(ctx.AttributeBag, path)

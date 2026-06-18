@@ -3,10 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: run-scope
-// @source: lib/foundation/persistence/postgres/run_scopes.go
-// @diverged: true
-// @reason: parallel driver — SQLite dialect (positional ? params, database/sql) vs Postgres (pgx, $-params)
-// @constraint: SQLite is dev-only; multi-host deployments must use postgres. Do not add multi-host coordination to the sqlite driver.
 
 package sqlite
 

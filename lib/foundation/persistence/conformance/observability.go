@@ -166,11 +166,7 @@ func testEventsListDescending(t *testing.T, d persistence.Database) {
 	}); err != nil {
 		t.Fatalf("template/instance insert: %v", err)
 	}
-	// @decision: event-log-kind-enum — real operational kinds (work_started,
-	// state_transition, work_completed) exercise the read path through
-	// ParseKindString at the unmarshal boundary; the three kinds are
-	// stand-ins for "three rows" and ordering assertions rely on
-	// insertion order.
+	// @decision: event-log-kind-enum
 	cases := []struct {
 		kind events.Kind
 		wire string

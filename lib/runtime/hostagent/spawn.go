@@ -101,14 +101,7 @@ func (a *agent) handleSpawn(ctx context.Context, sp *genv1.Spawn) *genv1.SpawnAc
 		return spawnFailed(sp.GetSpawnId(), fmt.Sprintf("path %q not permitted by --allow-paths", path))
 	}
 
-	// @story: host-agent-per-binding-overrides — argv, working directory,
-	// and env are carried on the Binding wire message. A binding that declares
-	// none of them spawns exactly as before (no extra args, the instance-level
-	// cwd, inherited env), so this stays backward compatible.
-	//
-	// @deliberate: per-binding cwd overrides the instance-level cwd only when
-	// set; otherwise fall back to the Spawn frame's instance-level cwd
-	// (today's behavior).
+	// @story: host-agent-per-binding-overrides
 	cwd := sp.GetBinding().GetCwd()
 	if cwd == "" {
 		cwd = sp.GetCwd()

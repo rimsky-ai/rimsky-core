@@ -165,7 +165,7 @@ func assertSuggestedEntryShape(t *testing.T, entry map[string]any, expectedSende
 	require.Equal(t, false, suggested["force_upstream_refresh"],
 		"the suggested entry's force_upstream_refresh default must be false (conservative)")
 
-	// @decision: uncovered-substitution-error-shape — the note must
+	// @decision: uncovered-substitution-error-shape
 	_, hasNoteInside := suggested["_note"]
 	require.False(t, hasNoteInside,
 		"suggested_subscribes_entry must not embed a _note field "+

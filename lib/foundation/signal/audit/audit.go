@@ -27,10 +27,7 @@ func EmitSignal(
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	// @decision: event-log-kind-enum — signal-class kinds carry the
-	// canonical type-path as the event-log discriminator. Taxonomy
-	// validation has happened at the signal emit site via
-	// signal.ValidateTypePath; here we wrap the path opaquely.
+	// @decision: event-log-kind-enum
 	in := persistence.EventAppendInput{
 		InstanceID: &instanceID,
 		Kind:       eventskinds.SignalKind(string(sig.Type)),

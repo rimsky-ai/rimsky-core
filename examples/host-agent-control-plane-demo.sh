@@ -3,50 +3,7 @@
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-# @story: host-agent-control-plane — runnable proof.
-#
-# An operator running rimsky-dispatched workflows on a dev machine manages
-# the host-agent's lifecycle from the same CLI that drives the rimsky
-# stack: `rimsky agent start` brings the daemon up against a configured
-# proxy, `rimsky agent status` reports the connection state, and `rimsky
-# agent stop` brings it down cleanly (children reaped, no zombies).
-#
-# The script exercises three load-bearing properties named in the story's
-# Falsifier:
-#
-#   1. `start` REFUSES with a clear diagnostic on a misconfigured proxy
-#      URL — it does NOT silently succeed and leave a daemon
-#      loop-dialing forever. The failure-path block runs FIRST so a
-#      stale pid/status file from a real prior run cannot mask the
-#      diagnostic.
-#
-#   2. `status` reports `connected` only when the bidi stream is
-#      actually up — it reads the daemon's connection sentinel, not
-#      just the pid file.
-#
-#   3. `stop` brings the daemon down cleanly (exit code 0) and the OS
-#      process actually goes away — confirmed by polling the pid until
-#      it is no longer alive.
-#
-# Prerequisites the operator must satisfy BEFORE running this script:
-#
-#   1. A running `rimsky-host-agent-proxy` reachable at $PROXY_ADDR.
-#      For containerized deployments the operator boots
-#      `rimsky-host-agent-proxy:latest` and exposes its gRPC port;
-#      for local dev `RIMSKY_PROXY_BIN` can point at a freshly-built
-#      binary which this script spawns directly. The driver test
-#      under `test/scenarios/host_agent_control_plane_demo_test.go`
-#      uses the binary path so the full flow runs in CI without
-#      Docker.
-#
-#   2. The `rimsky` CLI binary on $PATH (or `RIMSKY_BIN` pointing at a
-#      built binary). `make cli` builds it for bare-metal use.
-#
-# Output discipline: exits 0 only when all three properties were
-# exhibited. Any deviation (a successful `start` against a bogus proxy,
-# a `connected` report against a torn-down stream, a `stop` that fails
-# to shut the process down) exits non-zero with a diagnostic.
-
+# @story: host-agent-control-plane
 set -euo pipefail
 
 RIMSKY_BIN="${RIMSKY_BIN:-rimsky}"

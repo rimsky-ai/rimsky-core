@@ -4,48 +4,6 @@
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
 # @story: frame-origin-audit
-#
-# frame-origin-audit-demo.sh: An operator answers "why did this frame
-# open" for every frame the cascade-graph observability endpoint
-# surfaces. The story's acceptance is "every frame carries a pointer
-# back to the message ledger entry that triggered it." The demo
-# script:
-#
-#   1. Boots / connects to a rimsky stack.
-#   2. Registers + deploys the demo template (a two-frame bounded
-#      back-edge so both origins — operator-posted, cascade-emitted —
-#      are exhibited).
-#   3. Creates an instance.
-#   4. Posts the initial kick message.
-#   5. Polls GET /v1/instances/{id}/frames until both frames appear.
-#   6. For each frame, prints frame_id, triggering_message_id, and the
-#      joined envelope's type + sender (the observability surface the
-#      spec calls out: "looking up a frame returns the originating
-#      message envelope (sender, type, body)").
-#   7. Self-checks: every frame line MUST carry a non-empty
-#      triggering_message_id, non-empty joined sender + type, and at
-#      least one operator-origin frame plus at least one cascade-emit
-#      (sender_kind=instance) origin frame. The script exits non-zero
-#      if any requirement is missing.
-#
-# Prerequisites the operator must satisfy BEFORE running this script:
-#
-#   1. A running rimsky stack reachable at RIMSKY_ENDPOINT
-#      (default http://127.0.0.1:8080).
-#   2. The bundled `verifier-shape-checks` executor declared in
-#      rimsky.yml under `executors:`. The services-scenarios driver
-#      test (lib/services/test/scenarios/frame_origin_audit_demo_e2e_test.go)
-#      wires this automatically via testcontainers. For a bare-metal
-#      stack, see examples/README.md for the wiring.
-#   3. `curl`, `jq`, and `yq` on $PATH.
-#
-# Output discipline: exits 0 only when EVERY frame line carries a
-# non-empty triggering_message_id, EVERY frame has a joined sender +
-# type populated (not the LEFT JOIN fallback's empty string), AND at
-# least one frame is a cascade-emit (sender_kind=instance) — so the
-# audit surface is exercised for both operator-posted and
-# cascade-emitted frame origins.
-
 set -euo pipefail
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"

@@ -29,22 +29,6 @@ import (
 )
 
 // @concept: node
-//
-// `RegistryDeclaredTypes` is intentionally nil here: the
-// `{{messages.<type>.<field>}}` resolver's registry-floor block runs
-// first but is a nil-skip (the block only triggers when the caller
-// supplied a non-nil declared-types set), so resolution falls through
-// to the `TriggerMessageType == ""` check immediately after — and
-// instance-creation tag substitution binds no trigger message, so
-// that check returns ErrMissingSource. Net effect: the directive
-// cannot succeed at this phase, which is the intended floor (tags
-// resolve against params only at materialization time). The runtime
-// ResolveContext build sites
-// (`code:runtime/runner_dispatch.go::buildResolveContextForDispatch`,
-// `code:runtime/runner_locks.go::buildLockSpecs`,
-// `code:runtime/runner_acquire_helpers.go::substituteFanOutPartitionRequest`)
-// do thread the registry so the dynamic floor is armed where it can
-// matter.
 func resolveNodeTags(rawTags []string, paramsBytes json.RawMessage) ([]string, error) {
 	if len(rawTags) == 0 {
 		return nil, nil
@@ -156,9 +140,7 @@ func handlePauseInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		// @concept: dry-run — the envelope is written BEFORE any state
-		// change so a dry_run request never flips the paused flag (the
-		// dry-run never-mutates property).
+		// @concept: dry-run
 		if WriteDryRunResponse(w, req, "would_have_paused", map[string]any{
 			"instance_id": inst.ID.String(),
 		}) {
@@ -192,9 +174,7 @@ func handleResumeInstance(deps AppDeps) http.HandlerFunc {
 			notFoundResp(w, foundationshared.ErrInstanceNotFound.Error())
 			return
 		}
-		// @concept: dry-run — the envelope is written BEFORE any state
-		// change so a dry_run request never flips the paused flag (the
-		// dry-run never-mutates property).
+		// @concept: dry-run
 		if WriteDryRunResponse(w, req, "would_have_resumed", map[string]any{
 			"instance_id": inst.ID.String(),
 		}) {
@@ -511,9 +491,7 @@ func handleGetInstance(deps AppDeps) http.HandlerFunc {
 		}
 		redact := instanceRedact(req.Context(), deps, inst.TemplateHash, inst.ID)
 		item := toInstanceItem(*inst, redact)
-		// @concept: publisher-subscription — per-subscription publisher
-		// state, the operator-visible mounting → active lifecycle, with
-		// the failure reason for non-retryable failed rows.
+		// @concept: publisher-subscription
 		subs, err := deps.Persist.PublisherSubscriptions().ListByInstance(req.Context(), inst.ID)
 		if err != nil {
 			writeError(w, err)
@@ -551,8 +529,7 @@ func handleDeleteInstance(deps AppDeps) http.HandlerFunc {
 			})
 			return
 		}
-		// @concept: dry-run — validation passed; skip the fan-out + row
-		// delete.
+		// @concept: dry-run
 		if WriteDryRunResponse(w, req, "would_have_terminated", map[string]any{
 			"instance_id": inst.ID.String(),
 		}) {
@@ -690,8 +667,7 @@ func handleTerminateInstance(deps AppDeps) http.HandlerFunc {
 			return
 		}
 
-		// @concept: dry-run — validation passed; list what would be
-		// force-failed and mutate nothing.
+		// @concept: dry-run
 		wouldFail := make([]string, 0, len(toFail))
 		for _, n := range toFail {
 			wouldFail = append(wouldFail, n.ID.String())
@@ -882,18 +858,7 @@ func provisionInstanceTx(
 	tpl *persistence.TemplateRow,
 	args provisionArgs,
 ) (createInstanceResponse, error) {
-	// @concept: run-scope — allocate the instance + main RunScope ids up
-	// front so the two inserts (rimsky_run_scopes, rimsky_instances)
-	// reference each other. Every instance has exactly one main RunScope
-	// rooted at the top of the run-tree (parent_run_scope_id IS NULL,
-	// parent_run_id IS NULL, graph_name = spec.MainGraphName).
-	// rimsky_instances.main_run_scope_id has an FK to
-	// rimsky_run_scopes(id), so the RunScope insert must precede the
-	// instance insert. The RunScope row in turn has
-	// rimsky_run_scopes.instance_id → rimsky_instances(id), which is
-	// satisfied because both FKs are declared `DEFERRABLE INITIALLY
-	// DEFERRED` — the FK check is postponed to COMMIT, by which time
-	// both rows exist.
+	// @concept: run-scope
 	instanceID := foundationshared.UUID(uuid.New())
 	mainRunScopeID := foundationshared.UUID(uuid.New())
 	if err := deps.Persist.RunScopes().Create(ctx, tx, persistence.RunScopeRow{
@@ -928,12 +893,7 @@ func provisionInstanceTx(
 		nodeIDs[def.Type] = uuid.New()
 	}
 
-	// @concept: message-schema — index the template's declared
-	// message-virtual-node-types so the subscription-validity check below
-	// admits them as legal `node:` targets. The template-time validator
-	// (code:lib/graph/node/template_validator.go) already enforces this;
-	// without this index the factory's instance-time check would reject
-	// every receiver that subscribes to a message-virtual-node.
+	// @concept: message-schema
 	declaredMessageTypes := make(map[string]struct{}, len(tpl.Spec.Messages))
 	for _, m := range tpl.Spec.Messages {
 		declaredMessageTypes[m.Type] = struct{}{}
@@ -957,10 +917,7 @@ func provisionInstanceTx(
 			if _, ok := nodeIDs[s.Node]; ok {
 				continue
 			}
-			// @concept: message-schema — a `node:` value naming a declared
-			// message-type IS a virtual node-type the cascade walker resolves
-			// through the messages registry, not a real node-type. The
-			// template validator admits both shapes; the factory must too.
+			// @concept: message-schema
 			if _, ok := declaredMessageTypes[s.Node]; ok {
 				continue
 			}
@@ -986,11 +943,6 @@ func provisionInstanceTx(
 	// @concept: instance
 	// @story: instance-create-is-idle
 	// @decision: synthetic-envelope-mechanism-retired
-	// @constraint: instance creation is idle. No initial frame is
-	// enqueued and no work begins until a sender posts a message to
-	// `route:POST /instances/{id}/messages`. The empty-message wake
-	// trigger (`story:empty-message-wakes-roots`) is the universal
-	// convenience for waking every structural root.
 
 	return createInstanceResponse{
 		InstanceID:   inst.ID.String(),

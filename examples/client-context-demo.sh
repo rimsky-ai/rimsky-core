@@ -3,34 +3,7 @@
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-# @story: client-context — runnable proof. Walks through the full
-# `rimsky ctx` lifecycle (add / use / current / rm) against TWO real
-# local control-api endpoints so the switch is observable: subsequent
-# CLI commands actually hit the endpoint named by the active context,
-# not the other one.
-#
-# Assumed-already-running state (the script does NOT bring up the
-# stacks; the driver test cmd/rimsky/cli/ctx_demo_test.go does that):
-#
-#   * Two `rimsky-all-in-one` containers, each on its own host port.
-#   * Their host-mapped base URLs are passed in via STAGING_URL and
-#     PROD_URL env vars.
-#   * The rimsky CLI binary is on PATH (the driver test builds it from
-#     ./cmd/rimsky/ and prepends a temp bin/ dir to PATH).
-#   * HOME points at an empty tempdir so this run's config writes do
-#     not stomp the developer's real ~/.rimsky/config.yml.
-#
-# Each step prints a `step: <name>` marker line on stdout so the driver
-# test can assert the script reached the right points in the right
-# order. Failures `set -e`'s the script with a non-zero exit.
-#
-# Run by hand (after `make core-images` and after starting two
-# rimsky-all-in-one containers manually):
-#
-#   STAGING_URL=http://127.0.0.1:18080 \
-#   PROD_URL=http://127.0.0.1:18081 \
-#   HOME=$(mktemp -d) \
-#     bash examples/client-context-demo.sh
+# @story: client-context
 
 set -euo pipefail
 

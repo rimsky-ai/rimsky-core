@@ -268,9 +268,7 @@ func (s *framesImpl) MarkSourceNodeStale(
     `, frameID.String(), nowUTC(), instanceID.String(), nodeID.String()); err != nil {
 		return false, fmt.Errorf("frames.MarkSourceNodeStale: bind frame: %w", err)
 	}
-	// @concept: run-scope — under RunScope-first the new row lives in
-	// the instance's main RunScope (the only RunScope a frame source's
-	// run can belong to).
+	// @concept: run-scope
 	res, err := s.q(tx).ExecContext(ctx, `
         INSERT INTO rimsky_node_runs
             (id, node_id, executor_name, required_stores, enqueued_at, phase, state, frame_id, run_scope_id)

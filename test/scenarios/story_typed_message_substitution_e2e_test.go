@@ -102,7 +102,7 @@ func TestStoryTypedMessageSubstitution_RejectsEmitterExtraFieldAtRegistration(t 
 					"type": "object",
 					"properties": map[string]any{
 						"pong_status": map[string]any{"type": "string"},
-						// @concept: message-emitter-node — extra field
+						// @concept: message-emitter-node
 						"extra_field": map[string]any{"type": "string"},
 					},
 					"required": []any{"pong_status"},

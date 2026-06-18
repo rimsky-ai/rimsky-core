@@ -42,10 +42,6 @@ type TemplateAttributeDefaults struct {
 }
 
 // @concept: frame
-// @constraint: per-frame timeout floor and default come from the design; the
-// pre-message-schema `frame_resolution_mode:` toggle (coalesce | serial_queue)
-// is retired — the message-schema layer collapses frame resolution to a single
-// shape (one message per frame).
 const (
 	FrameTimeoutDefaultMs = int64(600000)
 	FrameTimeoutMinMs     = int64(60000)

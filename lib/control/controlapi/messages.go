@@ -3,10 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: message
-//
-// Payload bytes are inert per @blessed-invariant 21: the handler
-// never logs or formats `payload`; readers carry through to the wire
-// unchanged.
 package controlapi
 
 import (

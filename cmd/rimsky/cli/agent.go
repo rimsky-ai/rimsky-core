@@ -3,7 +3,7 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: host-agent
-// @story: host-agent-control-plane — `start` performs a synchronous
+// @story: host-agent-control-plane
 package cli
 
 import (
@@ -23,7 +23,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
-// @story: host-agent-control-plane — falsifier "start silently succeeds
+// @story: host-agent-control-plane
 const agentReadinessTimeout = 10 * time.Second
 
 const agentReadinessPollInterval = 100 * time.Millisecond
@@ -102,7 +102,7 @@ func runAgentStart(args []string) int {
 	return daemonizeAgent(args, dir, statusPath, cfg.RimskyURL)
 }
 
-// @story: host-agent-control-plane.
+// @story: host-agent-control-plane
 func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int {
 	self, err := os.Executable()
 	if err != nil {
@@ -163,7 +163,7 @@ func daemonizeAgent(startArgs []string, stateDir, statusPath, proxy string) int 
 	return 1
 }
 
-// @story: host-agent-control-plane.
+// @story: host-agent-control-plane
 func runAgentStatus(args []string) int {
 	fs := flag.NewFlagSet("agent status", flag.ContinueOnError)
 	stateDir := fs.String("state-dir", "", "directory for pid and status files (default ~/.rimsky)")

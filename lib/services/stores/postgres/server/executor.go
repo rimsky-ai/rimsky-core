@@ -68,8 +68,7 @@ func (e *ExecutorServer) executeCore(ctx context.Context, req *genv1.ExecuteRequ
 	}
 	pool := e.store.Pool()
 	if pool == nil {
-		// @concept: signal — no live pool is a transient connection-state
-		// defect, not an attribute defect, so emit `pg/connection_lost`.
+		// @concept: signal
 		return verifierErrorOutcome("pg/connection_lost", "postgres store has no live connection pool", nil), nil
 	}
 	conn := pgxPoolConn{pool: pool}

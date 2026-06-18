@@ -13,9 +13,6 @@ import (
 )
 
 // @concept: lineage
-// @constraint: discriminates the two row shapes persisted on rimsky_lineage;
-// claim_terminal (post 2026-05-16 forensics extension renaming claim_commit)
-// covers natural Abandon + force-cancelled terminals as well as Commit.
 const (
 	LineageRecordKindLeafRun       = "leaf_run"
 	LineageRecordKindClaimTerminal = "claim_terminal"

@@ -4,7 +4,6 @@
 
 // @concept: message
 // @concept: frame
-// @blessed-invariant: message-inertness — messages are inert in rimsky. The
 
 package runtime
 
@@ -208,22 +207,6 @@ func cascadeMessageVirtualNodeSettleInTx(
 			receivers := byType[e.ReceiverNodeType]
 			for _, r := range receivers {
 				// @concept: cascade
-				// @constraint: wake-up effects (affirm + mark-stale +
-				// enqueue-frame) gate on wake_on_change. A subscription
-				// with wake_on_change: false skips the wake-up path here —
-				// the message is still routed via the signal-emit above
-				// for audit, but the receiver is not stale-marked or
-				// enqueued.
-				//
-				// @deliberate: message cascade has no wait-set surface
-				// (the receiver reads from the delivered message envelope
-				// itself, not from a sender node's attribute), so there
-				// is no wait-set insert to preserve outside this gate.
-				// The equivalent "still needs to read the sender's value"
-				// property for messages is automatic: the message row
-				// stays delivered_at/frame_id stamped and is readable via
-				// the receiver's substitution context whenever the
-				// receiver eventually dispatches via another edge.
 				if !e.WakeOnChange {
 					continue
 				}
@@ -234,12 +217,7 @@ func cascadeMessageVirtualNodeSettleInTx(
 					receiverScopeID = instanceMainRunScopeID
 				}
 				if err := persist.Nodes().AffirmNodeRunRow(ctx, r.ID, receiverScopeID, frameID, tx); err != nil {
-					// @concept: run-scope — the walker MUST NOT cross
-					// into closed RunScopes; a closed scope means the
-					// receiver's parent rendezvous has fired. Skip this
-					// receiver and continue the cascade walk so a benign
-					// race with scope closure doesn't strand the rest of
-					// the receivers.
+					// @concept: run-scope
 					if errors.Is(err, persistence.ErrRunScopeClosed) {
 						continue
 					}

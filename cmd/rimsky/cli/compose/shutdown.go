@@ -16,7 +16,7 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/runtime/hostagent"
 )
 
-// @decision: exit-codes.
+// @decision: exit-codes
 type ShutdownReason int
 
 const ReasonAllSuccess ShutdownReason = 0

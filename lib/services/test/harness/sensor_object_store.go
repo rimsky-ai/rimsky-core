@@ -89,12 +89,7 @@ func runSensorObjectStoreContainer(ctx context.Context, t testing.TB, networkNam
 		"RIMSKY_SENSOR_OBJECT_STORE_FS_ROOT": sensorObjectStoreBucketRoot,
 	}
 	if stateDSN != "" {
-		// @story: sensor-object-store — when set, sensor-object-store
-		// persists active publisher-subscriptions + their watermark cursors
-		// (watermark_name | watermark_time) to the configured Postgres so a process
-		// restart resumes the cursor instead of treating every already-listed object
-		// as new. Empty → in-memory default (loses watches AND cursors on restart;
-		// the durability acceptance is not observable).
+		// @story: sensor-object-store
 		env["RIMSKY_SENSOR_OBJECT_STORE_STATE_DSN"] = stateDSN
 	}
 	c, err := testcontainers.Run(ctx, sensorObjectStoreImage,

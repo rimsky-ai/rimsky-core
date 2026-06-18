@@ -2,9 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// @story: executor-protocol — fast in-process tests pinning the
-// dispatch happy path + declared-class + tagged-Success modes against
-// the unary executor protocol.
+// @story: executor-protocol
 
 package main
 

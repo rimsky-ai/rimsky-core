@@ -136,7 +136,7 @@ type matchCounterPersist interface {
 	Instances() persistence.InstanceTable
 }
 
-// @concept: attribute (L5 matcher overlay)
+// @concept: attribute
 func incrementMatchCountersAfterMerge(
 	ctx context.Context,
 	persist matchCounterPersist,

@@ -197,11 +197,7 @@ func TestWriteSyntheticRimskyYAML_ClaimProducersFromManifest(t *testing.T) {
 	}
 }
 
-// @decision: services-source fold-through: when a sibling rimsky.yml
-// next to the manifest declares publishers + named_locks, the verb
-// loads them and the synthetic config carries both blocks verbatim.
-// Without this wiring a publisher-bearing manifest would surface as
-// `unknown_publisher` at instance-create time.
+// @decision: services-source
 func TestLoadSiblingBlocks_PublishersAndNamedLocksFromSibling(t *testing.T) {
 	tmp := t.TempDir()
 	runDir, err := EnsureRunDir(tmp, "2026-06-13T10-08-00Z", "demo")

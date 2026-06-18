@@ -47,13 +47,7 @@ func TestPGFusedStore_ClaimProducerConformance(t *testing.T) {
 		t.Fatalf("%d/%d claim-producer conformance checks failed", failed, len(results))
 	}
 
-	// @story: claim-producer-conformance — the suite MUST drive the full
-	// claim lifecycle (Commit, Abandon, Release on real claims it Open'd)
-	// plus a retried-terminal idempotency check, each reported as its own
-	// pass/fail row. Against the real fused postgres producer (whose
-	// terminal verbs are idempotent in claim_id per
-	// code:lib/services/stores/postgres/store.go::Commit), every one of
-	// these rows MUST be present AND passing (Err == nil).
+	// @story: claim-producer-conformance
 	for _, name := range []string{"Commit", "Abandon", "Release", "TerminalIdempotency"} {
 		assertResultPassing(t, results, name)
 	}

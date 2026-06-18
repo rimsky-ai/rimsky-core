@@ -224,10 +224,7 @@ var v1Actions = []ActionEntry{
 		MCPTools:    []string{"instance_debug_override"},
 		Description: "Apply an ad-hoc debug override (invalidate_node or set_attribute) on a paused or breakpoint-held instance."},
 
-	// @concept: cascade-graph — frames-read surface. The
-	// triggering_message_id filter on the list endpoint surfaces the
-	// message → frames reverse join the frame-origin-audit story
-	// consumes.
+	// @concept: cascade-graph
 	{Action: "instance:list-frames", IsWrite: false,
 		Routes:      []Route{{"GET", "/v1/instances/{id}/frames"}},
 		Description: "List frames for an instance; supports filter by triggering_message_id."},
@@ -235,7 +232,7 @@ var v1Actions = []ActionEntry{
 		Routes:      []Route{{"GET", "/v1/instances/{id}/frames/{frame_id}"}},
 		Description: "Fetch one frame joined with its triggering message envelope."},
 
-	// @concept: breakpoint — instance-debugger surface.
+	// @concept: breakpoint
 	{Action: "breakpoint:read", IsWrite: false,
 		Routes: []Route{
 			{"GET", "/v1/instances/{idOrKey}/breakpoints"},

@@ -97,9 +97,7 @@ func Suite(
 	t.Run("EventsListAuthPayloadFilters", func(t *testing.T) { testEventsListAuthPayloadFilters(t, factory(t)) })
 	t.Run("MessagesListByFrameID", func(t *testing.T) { testMessagesListByFrameID(t, factory(t)) })
 	t.Run("WaitSet", func(t *testing.T) { testWaitSet(t, factory(t)) })
-	// @decision: claimant-guard-helper — no-op coverage for invariant 4:
-	// every ownership mutation must be a provable no-op for the wrong
-	// supervisor; see claimant_guard.go for the operation-family map.
+	// @decision: claimant-guard-helper
 	t.Run("ClaimantGuard", func(t *testing.T) {
 		t.Run("HandleUpdates", func(t *testing.T) { testClaimantGuardHandleUpdates(t, factory(t)) })
 		t.Run("HandleCounterBumps", func(t *testing.T) { testClaimantGuardHandleCounterBumps(t, factory(t)) })

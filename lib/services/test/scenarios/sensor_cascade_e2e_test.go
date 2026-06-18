@@ -66,18 +66,15 @@ func TestSensorHTTP_RealExternalChangeFiresDownstreamNode(t *testing.T) {
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 
-	// @story: sensor-http — fire the REAL external change: swap the host server's body so the
+	// @story: sensor-http
 	bodyMu.Lock()
 	body = `{"state":"changed"}`
 	bodyMu.Unlock()
 
-	// @story: cascade-signal-blind — Gate 1: the reactor transitions stale (cascade fired) then re-runs to
+	// @story: cascade-signal-blind
 	requireReactorReran(t, ep, instanceID, reactorTargetNode, 120*time.Second)
 
-	// @story: publisher-protocol — Gate 8: the persisted message carries sender_kind=publisher and a
-	// sender derived from the publisher identity (the publisher_name "watcher", NOT the request
-	// body's `sender` which the sensor sets to "sensor-http"). rimsky overwrites `sender` from
-	// the publisher-subscription row for trust.
+	// @story: publisher-protocol
 	requirePublisherMessagePersisted(t, ep, instanceID, "watcher")
 
 	requireBystanderDidNotReRun(t, ep, instanceID, "bystander", bystanderBaseline)
@@ -127,14 +124,10 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 	waitForDispatchQuiescent(t, ep, instanceID, "bystander", 60*time.Second)
 	bystanderBaseline := workStartedCount(t, ep, instanceID, "bystander")
 
-	// @story: terminate-after-run — after the initial frame settled, the durable instance must
-	// already be un-terminated; this is the first place the old auto-terminate-on-drain would
-	// have stamped terminated_at.
+	// @story: terminate-after-run
 	requireInstanceNotTerminated(t, ep, instanceID)
 
-	// @story: sensor-http — fire the REAL external change N≥3 times. Each distinct body is a new
-	// content-hash; the sensor's next poll observes it and emits an invalidate message that
-	// re-runs the reactor through the cascade.
+	// @story: sensor-http
 	const fires = 3
 	for i := 1; i <= fires; i++ {
 		reactorBefore := workStartedCount(t, ep, instanceID, reactorTargetNode)
@@ -143,9 +136,7 @@ func TestSensorHTTP_DurableAcrossFires(t *testing.T) {
 		body = fmt.Sprintf(`{"state":"changed-%d"}`, i)
 		bodyMu.Unlock()
 
-		// @story: cascade-signal-blind — the reactor must re-run (work_started grows) on THIS fire, settle
-		// back to fresh, and the instance must STILL be un-terminated (the durable property
-		// after each drain — never reaped).
+		// @story: cascade-signal-blind
 		requireWorkStartedGrew(t, ep, instanceID, reactorTargetNode, reactorBefore, 120*time.Second,
 			fmt.Sprintf("fire %d/%d", i, fires))
 		waitForSensorNodeState(t, ep, instanceID, reactorTargetNode, "fresh", 30*time.Second)

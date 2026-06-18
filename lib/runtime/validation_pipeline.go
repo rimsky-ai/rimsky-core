@@ -91,7 +91,7 @@ func runExecutorRoleCheck(
 	if !ok || !clientAdvertisesRole(client, "executor") {
 		return nil
 	}
-	// @concept: validation.
+	// @concept: validation
 	var nodeSchema map[string]any
 	if n.Attributes != nil && len(n.Attributes.Schema) > 0 {
 		nodeSchema = n.Attributes.Schema

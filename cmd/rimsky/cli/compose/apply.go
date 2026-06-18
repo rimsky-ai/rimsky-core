@@ -133,11 +133,7 @@ func applyStep(ctx context.Context, c *cli.Client, step Step, w io.Writer, opts 
 			InstanceKey: &key,
 			Params:      step.Params,
 		}
-		// @decision: instance-self-termination — `compose run` opts every
-		// instance into self-termination so the verb's terminal-wait
-		// loop sees `terminated_at` flip once the nodes settle. The
-		// other compose verbs leave opts.TerminateAfterRun false and
-		// thus produce durable instances unchanged.
+		// @decision: instance-self-termination
 		if opts.TerminateAfterRun {
 			body.TerminateAfterRun = true
 		}

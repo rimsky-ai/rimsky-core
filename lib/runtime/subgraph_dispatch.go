@@ -2,10 +2,9 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-//	@concept: sub-graph
-//	@concept: delegation
-//	@concept: run-scope
-//     `@blessed-invariant: exit-node-writeback` annotation at the carry
+// @concept: sub-graph
+// @concept: delegation
+// @concept: run-scope
 
 package runtime
 

@@ -23,7 +23,7 @@ const retentionSeconds uint64 = 3600
 
 const defaultStreamIdleTimeout = 5 * time.Minute
 
-// @concept: inertness — the structural-inertness discipline scopes
+// @concept: inertness
 type traceRecord struct {
 	events     []*genv1.TraceEvent
 	terminal   bool

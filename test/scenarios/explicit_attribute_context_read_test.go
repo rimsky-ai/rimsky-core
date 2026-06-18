@@ -179,7 +179,7 @@ func TestStoryReadWithoutWaking(t *testing.T) {
 		map[string]any{"tick": "scenario-2"}, true, "scenario-2")
 	h.Stub.WhenType("gate-sender").Success(
 		map[string]any{"status": "needs_work"}, true, "scenario-2")
-	// @decision: substitution-grammar-fallback-routing — authors who
+	// @decision: substitution-grammar-fallback-routing
 	h.Stub.WhenType("context-sender").Delay(500*time.Millisecond).Success(
 		map[string]any{"data": "ctx-s2"}, true, "scenario-2")
 	h.Stub.WhenType("receiver").Success(

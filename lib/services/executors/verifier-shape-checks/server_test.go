@@ -72,7 +72,7 @@ func TestExecute_FailureClassifiesAsHierarchicalCheckFailed(t *testing.T) {
 	if errOut == nil {
 		t.Fatalf("expected Error, got %T", outcome.GetOutcome())
 	}
-	// @concept: signal — the hierarchical leaf carries the failed check's kind suffix.
+	// @concept: signal
 	if errOut.GetErrorClass() != "verifier/check_failed/pk_unique" {
 		t.Errorf("error_class: got %q, want verifier/check_failed/pk_unique", errOut.GetErrorClass())
 	}

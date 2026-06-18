@@ -118,10 +118,7 @@ func (s *eventsImpl) List(ctx context.Context, filter persistence.EventListFilte
 		if err := rows.Scan(&eventID, &instanceID, &nodeID, &kindRaw, &payload, &occurredAt); err != nil {
 			return persistence.EventListResult{}, err
 		}
-		// @decision: event-log-kind-enum — defensive parse at the
-		// unmarshal boundary. An unknown string is a real error —
-		// surface it, don't synthesize a Kind. The raw value lands
-		// in the logger so an operator can find the offending row.
+		// @decision: event-log-kind-enum
 		k, err := events.ParseKindString(kindRaw)
 		if err != nil {
 			slog.Error("events.unknown_kind_at_unmarshal", slog.String("raw", kindRaw))

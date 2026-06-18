@@ -113,9 +113,7 @@ func walkUpwards(
 		if err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: list children %s: %w", current, err)
 		}
-		// @concept: signal — each child's settling signal type +
-		// payload.changed is projected forward into the pure aggregation
-		// function's input for the parent aggregator.
+		// @concept: signal
 		inputs := make([]ChildState, len(children))
 		for i, c := range children {
 			var sigType signalpkg.TypePath
@@ -174,9 +172,7 @@ func walkUpwards(
 		if !isSettled(result.ParentState) {
 			return actions, settlements, nil
 		}
-		// @concept: run-scope — walk further up via the parent's
-		// RunScope; RunTreeRow no longer projects parent_run_id inline,
-		// the tree shape lives on rimsky_run_scopes.
+		// @concept: run-scope
 		parentScope, err := args.RunScopes.GetByID(ctx, tx, parent.RunScopeID)
 		if err != nil {
 			return actions, settlements, fmt.Errorf("walkUpwards: load run scope %s: %w", parent.RunScopeID, err)
@@ -229,7 +225,7 @@ func PropagateIfChildAfterTerminal(
 	if scopes == nil {
 		return nil, nil
 	}
-	// @concept: run-scope — the run-tree shape lives on
+	// @concept: run-scope
 	var parentID *shared.UUID
 	if err := args.Persist.Transaction(ctx, func(ctx context.Context, tx persistence.Tx) error {
 		row, err := rt.GetByID(ctx, tx, runID)
@@ -262,13 +258,6 @@ func PropagateIfChildAfterTerminal(
 		}
 		// @concept: cascade
 		// @concept: run-scope
-		// @constraint: cross-scope cascade bridge — for each parent
-		// that settled to a terminal state via aggregation, fire the
-		// standard subscription cascade walker rooted at the parent's
-		// run. Without this, fan-out / sub-graph parents that settle
-		// here leave their main-scope subscribers ungated; the parent
-		// never went through a terminal handler that would naturally
-		// fire the walker.
 		for _, s := range settlements {
 			if s.FrameID == (shared.UUID{}) {
 				if args.Logger != nil {
@@ -287,11 +276,7 @@ func PropagateIfChildAfterTerminal(
 			if nodeRow == nil {
 				continue
 			}
-			// @concept: signal — synthesize a parent-settlement signal
-			// so the cascade walker can apply subscriber CEL
-			// predicates. The parent's settling signal-type from the
-			// aggregator drives the envelope; payload.changed comes
-			// from the aggregator's projected ParentChanged.
+			// @concept: signal
 			parentSig := parentSettlementSignal(s.NewState, s.NewSettlingSignalType, s.NewChanged)
 			if err := cascadeSubscribersStaleInTx(
 				ctx, args, tx,
@@ -305,14 +290,6 @@ func PropagateIfChildAfterTerminal(
 				return fmt.Errorf("PropagateIfChildAfterTerminal: cascade parent %s: %w", s.ParentRunID, err)
 			}
 			// @concept: wait-set
-			// @constraint: drain wait-set rows where the just-settled
-			// parent is the gating sender. The cascade walker above
-			// inserts rows keyed on (sender=parent_run_id,
-			// receiver=downstream); without the drain, those rows stay
-			// blocking forever — downstream pending receivers never
-			// advance to dispatch. Mirrors the standard
-			// applyTerminalComplete pattern (cascade then drain) for
-			// the cross-scope bridge.
 			if err := args.Persist.WaitSet().MarkDrainedBySender(ctx, s.FrameID, s.ParentRunID, tx); err != nil {
 				return fmt.Errorf("PropagateIfChildAfterTerminal: drain wait-set for parent %s: %w", s.ParentRunID, err)
 			}

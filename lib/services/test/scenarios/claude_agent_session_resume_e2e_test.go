@@ -103,18 +103,6 @@ func TestClaudeAgentSessionResume(t *testing.T) {
 	requireFakeCliResumedWith(t, sub.attributes, "")
 
 	// @concept: run-scope
-	//
-	// @constraint: the sub-graph dispatch's RunScope MUST be distinct
-	// from the main RunScope AND MUST be a `graph_name='subworker'`
-	// RunScope. The same node-kind (claude-agent) firing in a
-	// DIFFERENT RunScope is the platform-level proof the sub-graph
-	// hydration boundary held — fresh-state in a new RunScope is the
-	// "Carry-forward boundary" property. The graph_name check guards
-	// against a regression where the sub-graph carve-out routed the
-	// exit's dispatch through the parent scope
-	// (which would silently pass the "different RunScope" check via
-	// some other unrelated scope but defeat the actual sub-graph
-	// boundary).
 	if sub.runScopeID == "" || sub.runScopeID == d1.runScopeID {
 		t.Fatalf("sub_agent MUST run in a RunScope distinct from the main worker (main scope=%q, sub scope=%q)",
 			d1.runScopeID, sub.runScopeID)

@@ -44,15 +44,7 @@ type yamlRetention struct {
 
 const capabilitiesHandshakeTimeout = 30 * time.Second
 
-// @concept: service — the protocol-role vocabulary a service may
-// claim. ProtocolClaimProducer / ProtocolExecutor / ProtocolPublisher
-// enumerate the wire protocols a peer may speak. Validated at parse
-// time; any unknown value fails startup. The mix-in protocols
-// (lifecycle_subscriber, validation, data_processing) live in
-// protocols/claimproducer — the wire-vocabulary owner — and are
-// referenced from there. Only the three role-anchor protocols specific
-// to rimsky.yml's three top-level blocks (claim_producers, executors,
-// publishers) are declared here.
+// @concept: service
 const (
 	ProtocolClaimProducer = "claim_producer"
 	ProtocolExecutor      = "executor"

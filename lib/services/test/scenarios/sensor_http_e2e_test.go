@@ -74,11 +74,11 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 
 	ep.WaitForSubscriptionsActive(t, instanceID, 90*time.Second)
 
-	// @story: sensor-http — body filter is honored (Falsifier prong 2).
+	// @story: sensor-http
 	waitForUpstreamPolls(t, &pollHits, 3, 30*time.Second)
 	requirePublisherMessageCount(t, ep, instanceID, 0, "body-filter-not-matching")
 
-	// @story: sensor-http — body change with matching filter causes an emit
+	// @story: sensor-http
 	bodyMu.Lock()
 	body = `{"deployment":{"status":"healthy","gen":1}}`
 	bodyMu.Unlock()
@@ -94,14 +94,7 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	t.Logf("sensor-http persisted subscription %s with last_hash=%s before restart",
 		subID, originalLastHash)
 
-	// @story: sensor-http — restart preserves the watermark (Falsifier prong 3).
-	// Stop the sensor container; rimsky stays up. With rimsky's
-	// ResyncPublisherSubscriptions running only at control-api startup
-	// (NOT periodically), no fresh Subscribe will be re-issued to the
-	// new sensor container. Watch recovery is solely the sensor's job:
-	// AttachStateDB MUST rebuild the in-memory watch from the durable
-	// row (subscription_id, url, poll interval, body filter, LAST HASH)
-	// or no polling resumes at all.
+	// @story: sensor-http
 	preRestartCount := publisherMessageCount(t, ep, instanceID)
 	preRestartPolls := pollHits.Load()
 	sensor.Stop(ctx)
@@ -123,7 +116,7 @@ func TestSensorHttp_BodyFilterAndDurableWatermark(t *testing.T) {
 	requirePublisherMessageCountStable(t, ep, instanceID, preRestartCount,
 		5*httpPollInterval, "watermark-suppressed-re-emit-after-restart")
 
-	// @story: sensor-http — recovered sensor is fully live (the filter, the
+	// @story: sensor-http
 	bodyMu.Lock()
 	body = `{"deployment":{"status":"healthy","gen":2}}`
 	bodyMu.Unlock()

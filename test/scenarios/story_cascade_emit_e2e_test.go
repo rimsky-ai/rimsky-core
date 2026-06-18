@@ -173,7 +173,7 @@ func TestStoryCascadeEmit_SchemaMismatchRejectsAtRegistration(t *testing.T) {
 	t.Parallel()
 	h := scenario.Start(t, scenario.HarnessOpts{})
 
-	// @concept: message-emitter-node — emit-node attribute schema
+	// @concept: message-emitter-node
 	specMap := map[string]any{
 		"name":    "story-cascade-emit-mismatch",
 		"version": "1",

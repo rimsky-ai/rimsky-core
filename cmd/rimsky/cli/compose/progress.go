@@ -2,7 +2,8 @@
 // Dual-licensed under AGPL-3.0-or-later or a Fall Guy Consulting commercial
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
-// @decision: progress-default, progress-flags
+// @decision: progress-default
+// @decision: progress-flags
 // @story: live-progress
 package compose
 

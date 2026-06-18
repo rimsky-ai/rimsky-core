@@ -45,15 +45,6 @@ func applyTerminal(
 		return nil, err
 	}
 	// @story: work-completed-emitted
-	// @deliberate: pair the post-acquisition `work_started` append
-	// (runner_acquire.go::tryAcquire) with a `work_completed` append on
-	// every terminal kind that ends the dispatch (Complete / Errored /
-	// Infra — Errored covers all four policy dispositions: a retry ends
-	// THIS dispatch and the re-enqueued successor emits its own
-	// work_started, so per-dispatch pairing holds). Wrapped around the
-	// handler's postCommit so the append runs after the outer
-	// state-mutation tx commits, mirroring work_started's best-effort
-	// audit-tx placement.
 	inner := pc
 	kind := t.Kind
 	return func(ctx context.Context) {
@@ -130,38 +121,9 @@ func terminalClassFor(k terminalKind) string {
 }
 
 // @concept: signal
-//
-// Writes the cascade-firing gate enum on every terminal. The historical
-// last_outcome / transition_reason surfaces were collapsed into the
-// unified signal type-path taxonomy (see concept:signal).
-//
-// applyTerminalComplete runs the §7.6 success-branch release tx
-// alongside the state→fresh transition, final attribute upsert, and
-// cascade message-pass to dependents.
-//
-// Sub-graph caller routing (E6): when this run is a sub-graph caller
-// (the canonicalizer-emitted `IsSubgraphEntryAbsorbed` marker is set
-// on the node-def), the success branch routes through
-// `applyTerminalCompleteSubgraphCaller` instead. The sub-graph caller
-// holds its locks across the internal-cascade fire and only releases
-// at the parent run's aggregated terminal (driven by
-// `state_propagation.go::PropagateFromChildState` on the last internal
-// child's terminal). Per spec
-// .ok-planner/specs/2026-05-15-data-platform-extensions-design.md
-// §Sub-graphs / Invocation semantics + §Identity and absorption.
-//
-//	@concept: sub-graph
-//	@concept: delegation
-//	@concept: terminal-tag
-//
-// @blessed-invariant: terminal-atomic-commit — the settling verdict
-// (run-state mutation), `attributes_delta` writeback, and `tags`
-// persistence all ride the caller-provided tx and commit together.
-// A crash between the verdict and either side-effect would corrupt
-// the cascade — subscribers would fire on a verdict whose tags
-// hadn't landed, or carry-forward attributes would diverge from the
-// dispatch they originated in. The tx is the unit of recovery here;
-// none of these writes are deferred to a separate Persist.Transaction.
+// @concept: sub-graph
+// @concept: delegation
+// @concept: terminal-tag
 func applyTerminalComplete(
 	ctx context.Context, args RunArgs, acq *acquisition,
 	resolvedAttrs map[string]any, schema map[string]any,
@@ -185,15 +147,6 @@ func applyTerminalComplete(
 					"error", appendErr.Error())
 			}
 			// @concept: executor
-			// @deliberate: route through the scratch-aware policy entry so the
-			// executor's terminal-attached scratch lands on the dispatch
-			// row BEFORE the retry branch reads it for carry-forward into
-			// the successor's InitialScratch* enqueue. Schema-validation
-			// rejection of a Success terminal is a recovery class (the
-			// dispatch is retried with policy intervention); using the
-			// non-scratch entry here would drop the executor's scratch on
-			// every reject, violating STORY-opaque-executor-scratch's
-			// round-trip contract.
 			return applyErrorPolicyWithScratch(ctx, args, acq, "attributes_schema_failed",
 				map[string]any{"error": err.Error()}, t.Tags, t.Scratch, tx)
 		}
@@ -211,33 +164,6 @@ func applyTerminalComplete(
 	}
 
 	// @concept: message-emitter-node
-	// @deliberate: message-emitter node-kind. Construct the envelope from
-	// the resolved attribute set and insert into the message ledger inside
-	// THIS tx. Two load-bearing properties:
-	//
-	//   - Envelope insert is atomic with the sender's terminal-resolution
-	//     tx. The insert goes through the caller's outer `tx` — the same
-	//     one releaseLocksInTx / upsertFinalAttributesTx / UpdateState
-	//     below also use. A subsequent error (or a forced tx-rollback
-	//     test) rolls the envelope back atomically. There is no separate
-	//     tx, no post-commit closure, no async dispatch.
-	//
-	//   - Idempotency on cascade-emit is deterministic on
-	//     `(node_id, frame_id)`. `emitCascadeMessageInTx` derives the
-	//     Idempotency-Key as `cascade-emit:<node_id>:<frame_id>`; the
-	//     MessageIdempotencies table dedups so any retry against the same
-	//     (node, frame) pair produces exactly one envelope row. Keying on
-	//     the dispatch_id (the run-row's id) was unsafe: every supervisor-
-	//     side hard-failure re-enqueue mints a fresh run id, so the dedup
-	//     row would not collide and the retry would duplicate envelopes.
-	//
-	// `merged` is the source-of-truth attribute bag because it folds in
-	// any `t.AttributesDel` carried in the terminal verdict — under the
-	// emits_message path that delta is normally empty (the dispatch stub
-	// does not return a delta), but the merged path is the canonical
-	// attribute view at commit, and using it here keeps the emit shape
-	// consistent with what the standard terminal-resolution code writes
-	// into the attribute ledger.
 	if acq.NodeDef != nil && acq.NodeDef.EmitsMessage != "" {
 		if _, _, err := emitCascadeMessageInTx(ctx, args.Persist, tx,
 			acq.InstanceID, acq.NodeID, acq.FrameID, acq.NodeDef.EmitsMessage, merged); err != nil {
@@ -257,20 +183,6 @@ func applyTerminalComplete(
 		}
 	}
 	// @concept: executor
-	// @deliberate: persist executor-attached scratch onto the dispatch row inside
-	// the terminal tx. Inline vs. spilled-handle picked via the same
-	// threshold as the parked-payload site. Empty scratch short-
-	// circuits before the UPDATE — see applyTerminalScratchInTx for
-	// the rationale; the row's existing scratch (none, a mid-dispatch
-	// callback write, or recovery-copied prior bytes) is preserved.
-	// Per STORY-opaque-executor-scratch the scratch round-trips across
-	// the executor's Success terminal under any of the three recovery
-	// dispositions that stamp prior_dispatch_id.
-	//
-	// The sub-graph exit carve-out lives inside applyTerminalScratchInTx
-	// (centralized so Success / Error / Infra terminals stay in sync on
-	// the "exit's row stays empty" rule).
-	// @concept: executor
 	if err := applyTerminalScratchInTx(ctx, args, tx, acq, t.Scratch); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: %w", err)
 	}
@@ -283,55 +195,12 @@ func applyTerminalComplete(
 	}
 	// @concept: node-run
 	// @concept: cascade
-	// @deliberate: flip the just-completed run row to a terminal phase BEFORE the
-	// cascade walk fires. Without this the row stays in
-	// phase='active' until the outer supervisor.go / callback.go
-	// post-apply `Queue.Complete` call, which means
-	// `MarkStaleForCascade`'s `NOT EXISTS (phase IN
-	// pending/active/held/parked)` guard rejects self-edges during
-	// the walk — `frame: in` self-subscriptions can't insert their
-	// new pending run because runOld is still active. Mirrors the
-	// in-tx phase flip every other terminal already does
-	// (`applyErrorPolicy` / `applyTerminalInfraError` at
-	// runner_error_policy.go:217/239/283; `applyTerminalPark` via
-	// `ParkActiveInTx`). Outer `Queue.Complete` calls in
-	// `supervisor.go` and `callback.go` become idempotent no-ops on
-	// every known happy path (their WHERE clauses filter on active
-	// phase set); kept as belt-and-suspenders cleanup.
 	if err := args.Queue.RemoveForNodeInTx(ctx, acq.NodeID, acq.RunScopeID, args.SupervisorID, tx); err != nil {
 		return nil, fmt.Errorf("applyTerminalComplete: remove for node: %w", err)
 	}
 	// @concept: cascade
 	// @concept: signal
 	// @concept: wait-set
-	// @deliberate: cascade walk on settlement. Under the 2026-05-23 signal-taxonomy
-	// reshape, the cascade-fire gate is purely subscriber-driven: a
-	// subscription edge fires iff its TypePattern matches the emitted
-	// signal AND its CEL when: predicate evaluates true. The
-	// pre-reshape `last_outcome == fresh_changed` sender-side gate
-	// retired with this spec; settled-color is informational, not a
-	// fire condition. Subscribers that want to react only to
-	// `payload.changed` set `when: payload.changed` on their
-	// terminal/success subscription.
-	//
-	// This walk is complementary to the cascade-on-invalidation
-	// walks at `walkCascadeForInvalidatedNode` (heartbeat-loss
-	// recovery, parked-resume wake) / applyResolvedAction / etc.: the
-	// invalidation-side walks gate receivers across multiple in-flight
-	// senders (multi-invalidator); the settlement-side walk gates the
-	// initial-instance case + the deeper-level pessimistic seed.
-	//
-	// @constraint: consolidate every signal this terminal emits — the
-	// success envelope and one attribute/<key>/changed per merged
-	// attribute — into a single cascade walk. One walk visits each
-	// (receiver, frame) at most once across the full signal set,
-	// preserving the once-per-frame dispatch invariant. Per
-	// concept:signal each signal matches the subscriber edge map
-	// independently; a shared visited set across the per-signal loop
-	// ensures receivers seeded by an earlier signal don't get re-seeded
-	// by a later one. Per TD-collapse-named-event-to-tags the historic
-	// event/<name> signal is gone — its observable discriminator now
-	// rides as payload.tags on the success envelope below.
 	visited := map[foundationshared.UUID]struct{}{}
 	successSig := signalpkg.Signal{
 		Type: "terminal/success",
@@ -468,31 +337,6 @@ func cascadeSubscribersStaleInTxWithVisited(
 		byType[n.NodeType] = append(byType[n.NodeType], n)
 	}
 	// @concept: run-scope
-	// @deliberate: resolve the sender's RunScope: same-scope cascade is the common
-	// case — the receiver inherits the sender's RunScope. Cross-scope
-	// propagation is bridged by the caller:
-	//
-	//   - Sub-graph entry-success cascading into sub-graph internal
-	//     nodes: handled by the entry-absorbed marker path in
-	//     code:runtime/subgraph_dispatch.go.
-	//   - Fan-out / sub-graph parent settlement cascading to the parent's
-	//     downstream subscribers: handled by
-	//     code:runtime/state_propagation.go::PropagateIfChildAfterTerminal,
-	//     which fires a fresh cascadeSubscribersStaleInTx rooted at the
-	//     parent run's main-scope id when the propagation walker settles
-	//     a parent at a terminal state.
-	//
-	// @deliberate: non-main scopes (fanout_partition, sub-graph) are CLOSED contexts:
-	// only nodes that have been explicitly dispatched into them belong.
-	// When the sender lives in a non-main scope and a receiver does NOT
-	// already have an in-flight row in that scope, the receiver is not
-	// a member of the scope — it lives in some ancestor scope (typically
-	// main). The walker MUST NOT lazy-allocate a new row for that
-	// receiver in the sender's scope: doing so creates an orphan row in
-	// the wrong scope (which then never gets dispatched cleanly because
-	// the scope closes during parent aggregation) and bypasses the
-	// cross-scope bridge. Per concept:run-scope §"Lifecycle / RunScope
-	// closure" + the F1/strict-cascade scenario invariants.
 	senderRun, err := args.Persist.RunTree().GetByID(ctx, tx, senderRunID)
 	if err != nil {
 		return fmt.Errorf("cascadeSubscribersStaleInTx: load sender run: %w", err)
@@ -510,11 +354,6 @@ func cascadeSubscribersStaleInTxWithVisited(
 	}
 	senderScopeIsMain := senderRunScope.ParentRunID == nil
 	// @concept: signal
-	// @deliberate: subscriber-driven gate: an edge fires iff its
-	// TypePattern matches the emitted signal AND its CEL when:
-	// predicate evaluates true. No deeper BFS — each receiver's own
-	// terminal eventually fires its own cascade walk with the
-	// receiver's real signal, propagating gates one level at a time.
 	candidateEdges := edges.Match(senderNodeType, sig.Type)
 	if len(candidateEdges) == 0 {
 		return nil
@@ -540,32 +379,6 @@ func cascadeSubscribersStaleInTxWithVisited(
 				// @concept: node-subscription
 				// @concept: parked-state
 				// @concept: run-scope
-				// @deliberate: the cascade walker has one path under the
-				// message-schema-layer redesign: in-tx, in-frame. Every
-				// matching subscription stale-marks the receiver inside
-				// the sender's frame in the sender's settlement tx.
-				// Cross-frame coupling is expressed by message-emitter
-				// nodes (concept:message-emitter-node), not by a
-				// per-subscription `frame:` modifier.
-				//
-				// Self-edges are first-class "drain my own queue".
-				// Insert-then-drain-in-same-tx makes the in-frame
-				// self-edge safe: the wait-set row inserted below
-				// (gating the new pending run on this commit's run)
-				// gets cleared by drainWaitSetOnSettled at the end of
-				// applyTerminalComplete in the same tx, before the
-				// supervisor sees it. MarkStaleForCascade does NOT
-				// touch rimsky_nodes.state (only inserts a new run
-				// row + re-stamps frame_id), so the just-committed
-				// state=fresh, settling_signal_type=terminal/success
-				// survives intact for downstream consumers. The
-				// visited set blocks indirect re-seeding.
-				//
-				// Parked receivers need their parked node-run row
-				// resumed alongside the stale stamp; without that
-				// the queue still carries phase='parked' and the
-				// supervisor never picks the row up.
-
 				receiverRunScopeID := senderRunScopeID
 				if !senderScopeIsMain {
 					existingID, existingOK, err := args.Queue.GetInFlightRunForNode(ctx, tx, r.ID, receiverRunScopeID)
@@ -684,18 +497,6 @@ func pullForceRefreshUpstreams(
 		// @concept: parked-state
 		// @concept: run-scope
 		// @concept: cascade
-		// @deliberate: parked-upstream handling (BEFORE AffirmNodeRunRow).
-		//
-		// Under RunScope-first GetInFlightRunForNode includes phase=
-		// 'parked' rows (the unique-per-RunScope in-flight predicate
-		// covers the four in-flight phases). So we can't rely on
-		// hasRun=false to detect parked upstreams. Probe explicitly via
-		// GetParkedByNode (frame-agnostic) first, wake the parked run
-		// if any, and only then fall through to the affirm-and-read
-		// path. The wake transitions parked → pending in-place at the
-		// new frame so AffirmNodeRunRow's NOT EXISTS guard correctly
-		// no-ops and the subsequent GetInFlightRunForNode resolves the
-		// resumed row.
 		upstreamRunScopeID := targetRunScopeID
 		parked, err := args.Queue.GetParkedByNode(ctx, upstreamNode.ID, upstreamRunScopeID)
 		if err != nil {
@@ -710,33 +511,6 @@ func pullForceRefreshUpstreams(
 		}
 
 		// @concept: cascade
-		// @deliberate: settled-this-frame guard — with two or more upstream-refresh
-		// upstreams settling independently in one frame, the later
-		// settler's own cascade walk re-visits the receiver, and this
-		// pull would otherwise re-affirm the EARLIER upstream — which
-		// already settled this frame and so has no in-flight row. The
-		// re-affirm creates a fresh pending run; that re-run settles,
-		// walks back to the receiver, and re-affirms the OTHER settled
-		// upstream: mutual re-seeding, the frame never terminates
-		// (regression pin:
-		// test/scenarios/multi_hard_dep_test.go). An upstream that
-		// already has a run row in this frame but NO in-flight row is
-		// settled-this-frame: in the common path its value is already in
-		// the receiver's drained wait-set (inserted when it was first
-		// pulled into the frame by `pullForceRefreshUpstreams`, or by its
-		// own settle walk via the matching explicit `subscribes:` entry
-		// when the receiver was already in-flight at that settle). Skip
-		// in either case — there is nothing to gate on and nothing to
-		// re-run. The wait-set row may be absent when the upstream
-		// settled BEFORE the receiver entered the frame on a
-		// `wake_on_change: false` edge — `BuildAttributeDeps` then
-		// returns ErrMissingSource and the substitution grammar's
-		// fallback / lenient / optional routing governs the dispatch
-		// outcome (see decision:substitution-grammar-fallback-unchanged).
-		// The in-flight probe comes first so a still-running (or just-
-		// woken parked) upstream in this frame falls through to the
-		// normal gate-insert path — the guard protects frame termination
-		// without weakening the rendezvous.
 		_, hasInFlightRun, err := args.Queue.GetInFlightRunForNode(
 			ctx, tx, upstreamNode.ID, upstreamRunScopeID,
 		)
@@ -759,12 +533,6 @@ func pullForceRefreshUpstreams(
 		}
 
 		// @concept: run-scope
-		// @blessed-invariant: affirm-node-run-row — AffirmNodeRunRow no-return-value-dependency.
-		// @deliberate: affirm-then-read — the upstream lives in the same RunScope as
-		// the receiver (upstream-refresh is intra-scope by construction
-		// — cross-scope upstream-refresh is not expressible).
-		// AffirmNodeRunRow INSERTs a pending row keyed on
-		// (upstream_node_id, target_run_scope_id) when none exists.
 		if err := args.Persist.Nodes().AffirmNodeRunRow(ctx, upstreamNode.ID, upstreamRunScopeID, senderFrameID, tx); err != nil {
 			if errors.Is(err, persistence.ErrRunScopeClosed) {
 				continue

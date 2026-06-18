@@ -15,15 +15,7 @@ import (
 	pgsqlite "github.com/rimsky-ai/rimsky-core/lib/foundation/persistence/sqlite"
 )
 
-// @decision: persistence-driver: a transaction holding its
-// connection MUST NOT block a parallel read on a different connection
-// from making progress. The previous MaxOpenConns=1 setting caused the
-// read to queue behind the writer; the wider pool lets it acquire its
-// own connection and complete. The falsifier this rules out is exactly
-// the symptom the compose-run verb's terminal-wait loop hit before the
-// fix — control-api request handlers receiving context-deadline-
-// exceeded errors after ~30s under any sustained supervisor write
-// activity.
+// @decision: persistence-driver
 func TestSQLitePoolSizeIsWide_HeldWriterDoesNotStarveReader(t *testing.T) {
 	dir := t.TempDir()
 	d, err := persistence.Open(context.Background(), persistence.Config{

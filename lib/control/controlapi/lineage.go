@@ -3,10 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: lineage-record
-//
-// The lineage projection is rebuildable from `rimsky_events` +
-// `rimsky_claim_handles`; this surface is the read-side projection over
-// `table:rimsky_lineage`.
 
 package controlapi
 

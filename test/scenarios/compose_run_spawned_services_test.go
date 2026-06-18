@@ -3,7 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @story: spawned-local-services
-// @blessed-invariant: spawn-child-reaped-on-exit — verifies the
 package scenarios
 
 import (

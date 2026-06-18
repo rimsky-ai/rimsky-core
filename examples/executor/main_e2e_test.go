@@ -2,60 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 // repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-// @story: executor-protocol — cross-stack proof for STORY-executor-protocol.
-// Boots a real rimsky-all-in-one container (testcontainers; Postgres state
-// DB), runs the example Executor as an in-process gRPC server on a host
-// port that the rimsky container reaches via `host.testcontainers.internal`,
-// and exhibits each promised protocol surface end-to-end against the
-// assembled product:
-//
-//  1. **Tag-keyed cascade.** A template whose worker carries
-//     `mode: emit_event` causes the executor to return Success with
-//     `tags: ["work_started"]`; a downstream subscriber declared
-//     `subscribes: [{node: worker, type: terminal/success, when:
-//     "work_started" in payload.tags}]` dispatches under the real
-//     supervisor. The audit row for the worker's terminal/success
-//     carries `payload.tags` containing the declared tag.
-//
-//  2. **Declared error class routes through `error_types:`.** A template
-//     whose worker carries `mode: raise_error` and declares
-//     `error_types: { example/forbidden: { policy: [give_up] } }` causes
-//     the executor to settle as Error{error_class: example/forbidden};
-//     the worker node settles `failed` with `current_error_class`
-//     equal to the declared class — proving the routing keys on the
-//     executor-declared class, not a generic fallback.
-//
-//  3. **Async-callback registration + delivery + persistent-registry
-//     survival across supervisor restart.** A template whose worker
-//     carries `mode: async_callback` causes the executor to return
-//     `Outcome{AwaitAsyncCallback{async_ack_id}}` synchronously; the
-//     supervisor persists the ack id to
-//     `col:rimsky_node_runs.async_ack_id` (per
-//     TD-persist-async-callback-registry). The test confirms the
-//     persisted ack id via `/v1/observability/node-runs`, then
-//     `RimskyHandle.Restart()` recreates the rimsky-all-in-one
-//     container — dropping the in-memory `code:CallbackRegistry`
-//     completely — and POSTs `AsyncCallbackBody{success:{...}}` to
-//     the new supervisor's `route:POST /v1/callback/{async_ack_id}`.
-//     The fresh supervisor's callback handler falls through to
-//     `code:Queue.LookupRunByAsyncAckID` against the persisted
-//     column, drives the dispatch to terminal/success, and the node
-//     reaches `fresh`. This is the leg the Falsifier names: "an
-//     async-callback POST is dropped after the supervisor that
-//     registered it restarts."
-//
-//  4. **Attribute schema rejects misshapen template at registration.**
-//     A template whose worker carries a static default `count: -1`
-//     violates the executor's advertised `count.minimum: 0` constraint;
-//     rimsky's registration-time validator (default mode `all`) refuses
-//     the template with HTTP 400 — proving the executor's Capabilities
-//     handshake reached the validator.
-//
-// The unit tests at `examples/executor/executor_test.go` prove the
-// executor surfaces in isolation (Success / Error / tagged-Success /
-// AwaitAsync); this test's job is to prove the cross-stack wiring
-// through the real supervisor / control-api / executor catalog.
-
+// @story: executor-protocol
 package main
 
 import (

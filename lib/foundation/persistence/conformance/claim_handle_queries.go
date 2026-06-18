@@ -154,9 +154,7 @@ func testClaimHandleAnchorsAndRepoint(t *testing.T, d persistence.Database) {
 		t.Fatalf("ListByNodeRun(runB) = %v, want [%s]", got, h3.ID)
 	}
 
-	// @concept: claim-handle — fan-out repoint moves a sub-claim from the
-	// parent run's anchor to its own child leaf run so the leaf resolves it
-	// by node_run_id; the parent's anchor no longer carries it.
+	// @concept: claim-handle
 	if err := inTx(ctx, store, func(tx persistence.Tx) error {
 		return ch.UpdateNodeRunID(ctx, h2.ID, runB, tx)
 	}); err != nil {

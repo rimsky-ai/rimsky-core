@@ -857,7 +857,7 @@ func validateEmitsMessage(n TemplateNodeDef, base string, spec *TemplateSpec, de
 	if n.Attributes != nil {
 		nodeSchema = n.Attributes.Schema
 	}
-	// @concept: message-emitter-node — the attributes block IS the body.
+	// @concept: message-emitter-node
 	var bodyShape map[string]any
 	if len(dest.BodySchema) > 0 {
 		var raw any

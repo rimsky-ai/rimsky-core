@@ -3,8 +3,6 @@
 // license. See LICENSE.agpl and COPYRIGHT at the repo root.
 
 // @concept: wait-set
-// @spec: 2026-05-14-subscription-cascade-and-quality-of-life-design
-// @spec: 2026-05-20-attribute-pull-resolution-design
 package conformance
 
 import (

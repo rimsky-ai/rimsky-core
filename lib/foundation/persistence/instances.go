@@ -18,7 +18,7 @@ type InstanceRow struct {
 	InstanceKey        *string        `json:"instance_key"`
 	Params             map[string]any `json:"params"`
 	AttributeOverrides map[string]any `json:"attribute_overrides"`
-	// @concept: attribute (L5 matcher overlay)
+	// @concept: attribute
 	AttributeOverridesMatchCounts []int64 `json:"attribute_overrides_match_counts,omitempty"`
 	// @concept: run-scope
 	MainRunScopeID shared.UUID `json:"main_run_scope_id"`

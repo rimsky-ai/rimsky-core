@@ -197,13 +197,6 @@ func (s *instancesImpl) List(
 func (s *instancesImpl) Delete(ctx context.Context, id foundationshared.UUID, tx persistence.Tx) error {
 	ex := s.q(tx)
 	// @concept: run-scope
-	// @constraint: schema migrations 007/008 declare ON DELETE CASCADE on
-	// rimsky_run_scopes.instance_id, rimsky_run_scopes.parent_run_id,
-	// rimsky_run_scopes.parent_run_scope_id, and rimsky_node_runs.run_scope_id,
-	// so deleting the instance row walks the entire scope/dispatch tree
-	// atomically inside the DB. rimsky_instances.main_run_scope_id is
-	// DEFERRABLE INITIALLY DEFERRED so the simultaneous deletion of the
-	// instance and its main scope satisfies the FK at commit time.
 	_, err := ex.Exec(ctx, `DELETE FROM rimsky_instances WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("instances.delete: %w", err)
@@ -238,7 +231,7 @@ func (s *instancesImpl) CountActiveByTemplate(ctx context.Context, templateHash 
 	return n, nil
 }
 
-// @concept: attribute (L5 matcher overlay)
+// @concept: attribute
 func (s *instancesImpl) IncrementAttributeOverrideMatchCounts(
 	ctx context.Context,
 	instanceID foundationshared.UUID,

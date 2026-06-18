@@ -376,10 +376,7 @@ func spawnServices(
 			return nil, nil, fmt.Errorf("--service %q: path is empty", raw)
 		}
 		if !explicit {
-			// @decision: service-spawn-flag — bare `--service <name>`
-			// resolves via the same alias file `rimsky run` uses
-			// (cli.LoadServiceAliases: ~/.rimsky/aliases.yml overlaid
-			// by .rimsky/aliases.yml). Loaded lazily, once.
+			// @decision: service-spawn-flag
 			if aliases == nil {
 				aliases = cli.LoadServiceAliases()
 			}

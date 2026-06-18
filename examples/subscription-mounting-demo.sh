@@ -3,45 +3,7 @@
 # Licensed under the Apache License, Version 2.0. See LICENSE.apache at the
 # repo root, or http://www.apache.org/licenses/LICENSE-2.0.
 
-# @story: subscription-mounting — runnable proof.
-#
-# An operator deploying an instance whose template declares publishers
-# observes each publisher subscription progress from `mounting` to
-# `active` on the instance surface — instead of trusting a create
-# response that can silently mean "failed."
-#
-# The demo drives the story's Acceptance against a REAL assembled stack:
-#
-#   1. Boots `rimsky-all-in-one:latest` plus the bundled
-#      `rimsky-sensor-object-store:latest` as the publisher peer, then
-#      PAUSES the sensor container — the "publisher deliberately slow to
-#      respond" condition (its gRPC server is frozen; Subscribe RPCs
-#      black-hole until it wakes).
-#   2. Registers a template with a `publishers:` block and creates an
-#      instance: the create returns 201 IMMEDIATELY (no inline
-#      Subscribe handshake), elapsed time printed.
-#   3. GET /v1/instances/{id} shows the subscription visibly in state
-#      `mounting` — the operator can SEE the publisher has not
-#      acknowledged yet.
-#   4. Unpauses the sensor; the reconciler retries Subscribe with no
-#      attempt cap and the same GET flips to `active` WITHOUT any
-#      operator action.
-#   5. Drops an object into the sensor's bucket and tails the
-#      instance's messages until the sensor's emit arrives — proof the
-#      mounted subscription actually feeds the instance.
-#
-# Prerequisites the operator must satisfy BEFORE running this script:
-#
-#   1. Docker running, with the locally-built images present:
-#      `make core-images service-images` produces
-#      `rimsky-all-in-one:latest` and `rimsky-sensor-object-store:latest`.
-#   2. `curl` and `python3` on $PATH (python3 parses the JSON
-#      responses; no jq dependency).
-#
-# Output discipline: exits 0 only when every stage exhibited what the
-# story promises — immediate 201, observable `mounting`, unattended
-# flip to `active`, and a persisted publisher message. Anything else
-# exits non-zero with a diagnostic.
+# @story: subscription-mounting
 
 set -euo pipefail
 

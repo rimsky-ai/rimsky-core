@@ -10,9 +10,8 @@ import (
 	"github.com/rimsky-ai/rimsky-core/lib/foundation/persistence"
 )
 
-// @concept: terminal-resolution.
-//
-//	@concept: error-policy
+// @concept: terminal-resolution
+// @concept: error-policy
 func handleAcquireUnavailable(ctx context.Context, args RunArgs, acq acquisition, cand persistence.Candidate) {
 	if acq.NodeDef == nil {
 		return
